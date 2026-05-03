@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,22 @@ from .routes import events as event_routes  # safe to import in setup mode
 from .services.event_bus import bus
 
 log = logging.getLogger(__name__)
+
+# Force-correct MIME types for SPA assets. On Windows, the registry can have
+# .js mapped to text/plain (legacy IIS / dev-tool installs), which makes
+# Starlette serve ES modules with the wrong Content-Type and the browser
+# refuses to execute them with a strict-MIME error → black screen.
+# add_type() overrides whatever the registry says.
+for _ext, _mime in (
+    (".js", "application/javascript"),
+    (".mjs", "application/javascript"),
+    (".css", "text/css"),
+    (".wasm", "application/wasm"),
+    (".svg", "image/svg+xml"),
+    (".json", "application/json"),
+    (".map", "application/json"),
+):
+    mimetypes.add_type(_mime, _ext)
 
 WEBUI_DIST = _paths.ADMIN_ROOT / "webui" / "dist"
 
