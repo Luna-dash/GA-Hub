@@ -1,0 +1,392 @@
+"""AgentService — singleton wrapper around GeneraticAgent.
+
+Owns one GeneraticAgent instance for the whole web backend. Bridges its
+blocking ``put_task → display_queue.get()`` flow to async consumers via
+asyncio.to_thread polling.
+
+Imports `agentmain` and `frontends.continue_cmd` from the GenericAgent
+project at the path resolved by ``_paths.GA_ROOT``. This module fails
+fast if GA_ROOT is not configured — the backend should run in setup mode
+in that case (see server.main).
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import queue as _q
+import threading
+import time
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from typing import Any, AsyncIterator
+
+from .. import _paths
+
+if _paths.GA_ROOT is None:
+    raise RuntimeError("AgentService imported before GA_ROOT is configured")
+
+from agentmain import GeneraticAgent  # noqa: E402  (resolved via _paths sys.path)
+from frontends.continue_cmd import install as install_continue, reset_conversation  # noqa: E402
+
+from .event_bus import bus  # noqa: E402
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class AgentStatus:
+    is_running: bool
+    llm_no: int
+    llm_name: str
+    llm_model: str
+    last_reply_time: int
+    queued_tasks: int
+    history_lines: int
+
+
+@dataclass
+class StreamHandle:
+    """A live agent task stream. Multiple WS clients may attach to the same stream."""
+    stream_id: str
+    display_queue: "_q.Queue"
+    started_at: float = field(default_factory=time.time)
+    finished: bool = False
+    last_chunk: str = ""
+    final_text: str = ""
+
+
+# ── chat replay snapshot (so a /ws/chat client that reconnects after a tab
+#    switch can rebuild the running conversation) ───────────────────────
+@dataclass
+class ChatSnapshot:
+    stream_id: str
+    source: str
+    query: str
+    started_at: float
+    content: str = ""           # latest cumulative assistant text
+    done: bool = False
+    finished_at: float = 0.0
+    aborted: bool = False
+
+
+class AgentService:
+    _instance: "AgentService | None" = None
+    _SNAPSHOT_CAP = 20  # keep last N submissions for /ws/chat replay
+    # Per-stream content cap for completed streams in the initial /ws/chat
+    # snapshot. Heavy multi-turn agent runs can produce 100KB+ of text per
+    # stream; sending the full text for every snapshot blocks the WebView's
+    # JS main thread for several seconds on launch ("can't click for ~5s").
+    # In-flight streams are still sent in full so the live conversation
+    # rebuilds correctly.
+    _SNAPSHOT_CONTENT_CAP = 6000
+
+    def __init__(self) -> None:
+        # Patch /continue and /new before instantiating
+        install_continue(GeneraticAgent)
+        self.agent = GeneraticAgent()
+        # Default to incremental output for WS streaming
+        self.agent.inc_out = False
+        self.agent.verbose = False
+        self._streams: dict[str, StreamHandle] = {}
+        # Per-stream UI snapshot (LRU-capped) for replay on reconnect
+        self._snapshots: "OrderedDict[str, ChatSnapshot]" = OrderedDict()
+        self._lock = threading.Lock()
+        self._next_id = 0
+        self._run_thread: threading.Thread | None = None
+
+        # last_reply_time may be missing on older agentmain.py — patch defensively.
+        if not hasattr(self.agent, "last_reply_time"):
+            self.agent.last_reply_time = int(time.time())
+
+        # Wire turn_end_hook to broadcast events
+        if not hasattr(self.agent, "_turn_end_hooks"):
+            self.agent._turn_end_hooks = {}
+        self.agent._turn_end_hooks["webui"] = self._on_turn_end
+
+        # User-preferred LLM. Persisted to admin config so it survives restarts;
+        # also used to detect (and log) drift caused by other call sites
+        # (autonomous tasks, /llm wechat command, code_run inline_eval, etc.)
+        self._wrap_next_llm_with_persistence()
+        self._restore_preferred_llm()
+
+    # ── lifecycle ────────────────────────────────────────────────
+    @classmethod
+    def instance(cls) -> "AgentService":
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def start_run_thread(self) -> None:
+        if self._run_thread and self._run_thread.is_alive():
+            return
+        self._run_thread = threading.Thread(target=self.agent.run, daemon=True, name="agent-run")
+        self._run_thread.start()
+        log.info("agent run thread started")
+
+    # ── status ───────────────────────────────────────────────────
+    def status(self) -> AgentStatus:
+        a = self.agent
+        try:
+            llm_name = a.get_llm_name()
+            llm_model = a.get_llm_name(model=True)
+        except Exception:
+            llm_name = "unknown"
+            llm_model = "unknown"
+        return AgentStatus(
+            is_running=bool(a.is_running),
+            llm_no=int(a.llm_no),
+            llm_name=llm_name,
+            llm_model=llm_model,
+            last_reply_time=int(getattr(a, "last_reply_time", 0)),
+            queued_tasks=a.task_queue.qsize() if hasattr(a, "task_queue") else 0,
+            history_lines=len(a.history) if hasattr(a, "history") else 0,
+        )
+
+    def list_llms(self) -> list[dict]:
+        out = []
+        for i, name, current in self.agent.list_llms():
+            out.append({"index": int(i), "name": name, "current": bool(current)})
+        return out
+
+    def switch_llm(self, n: int) -> dict:
+        self.agent.next_llm(int(n))
+        # Mark this as the user's explicit preference (separate from the
+        # transient agent.llm_no which any code path can mutate).
+        self._save_preferred_llm(int(self.agent.llm_no))
+        return {"llm_no": self.agent.llm_no, "name": self.agent.get_llm_name()}
+
+    # ── llm preference persistence ───────────────────────────────
+    def _save_preferred_llm(self, n: int) -> None:
+        try:
+            cfg = _paths.load_config()
+            if cfg.get("preferred_llm_no") == n:
+                return
+            cfg["preferred_llm_no"] = int(n)
+            _paths.save_config(cfg)
+            log.info("preferred_llm_no persisted: %s", n)
+        except Exception as e:
+            log.warning("failed to persist preferred_llm_no=%s: %s", n, e)
+
+    def _restore_preferred_llm(self) -> None:
+        try:
+            saved = _paths.load_config().get("preferred_llm_no")
+            if saved is None:
+                return
+            n = int(saved)
+            clients = getattr(self.agent, "llmclients", None) or []
+            if n < 0 or n >= len(clients):
+                log.info("preferred_llm_no=%s out of range (have %d), skipping", saved, len(clients))
+                return
+            if int(self.agent.llm_no) == n:
+                return
+            self.agent.next_llm(n)
+            log.info("restored preferred_llm_no=%s (%s)", n, self.agent.get_llm_name())
+        except Exception as e:
+            log.warning("failed to restore preferred llm: %s", e)
+
+    def _wrap_next_llm_with_persistence(self) -> None:
+        """Monkey-patch ``agent.next_llm`` so any caller — admin, wechat slash
+        command, autonomous SOP via code_run inline_eval, etc. — surfaces the
+        change in admin logs and (optionally) updates the user-preferred slot.
+
+        We only persist on USER-initiated changes (``switch_llm`` calls this
+        helper directly via ``_save_preferred_llm``). For other sources we
+        just log so the user can spot unexpected drift.
+        """
+        import inspect, traceback
+        original = self.agent.next_llm
+        # Already wrapped (singleton may be re-init'd in tests)
+        if getattr(original, "_admin_wrapped", False):
+            return
+
+        def _wrapped(n: int = -1):
+            before = int(getattr(self.agent, "llm_no", 0))
+            ret = original(n)
+            after = int(self.agent.llm_no)
+            if before != after:
+                # Capture caller frame for diagnostic — skip our own frames.
+                stack = traceback.extract_stack(limit=8)[:-1]
+                tail = " <- ".join(f"{os.path.basename(f.filename)}:{f.lineno}" for f in stack[-4:])
+                try: name = self.agent.get_llm_name()
+                except Exception: name = "?"
+                log.info("agent.llm_no %s → %s (%s)  caller: %s", before, after, name, tail)
+            return ret
+
+        _wrapped._admin_wrapped = True  # type: ignore[attr-defined]
+        self.agent.next_llm = _wrapped  # type: ignore[assignment]
+
+    def abort(self) -> None:
+        self.agent.abort()
+        bus.publish("agent:abort", {"ts": time.time()})
+        # The agent's run loop will emit a final {'done': ...} which our
+        # fan-out drainer turns into a chat:done — we deliberately don't
+        # publish a parallel chat:aborted to keep the event stream simple.
+
+    # ── tasks ────────────────────────────────────────────────────
+    def submit(self, query: str, *, source: str = "user", images: list[str] | None = None) -> StreamHandle:
+        """Enqueue a task; spawn a single fan-out drainer that publishes
+        chat:* events to the bus AND keeps the StreamHandle's display_queue
+        full for legacy sync consumers (wechat_service)."""
+        # User-initiated submissions reassert the persisted preference so that
+        # autonomous tasks (or other call sites) can't strand the user on a
+        # different LLM than they picked. Other sources (autonomous, wechat,
+        # reflect) keep whatever llm_no is currently active.
+        if source in ("user", "webui"):
+            self._restore_preferred_llm()
+        with self._lock:
+            self._next_id += 1
+            sid = f"s{self._next_id:08d}"
+        # The agent's own queue (drained by our fan-out below).
+        src_q = self.agent.put_task(query, source=source, images=images or [])
+        # The handle queue we hand to callers (kept in sync by the drainer).
+        out_q: "_q.Queue" = _q.Queue()
+        h = StreamHandle(stream_id=sid, display_queue=out_q)
+        snap = ChatSnapshot(
+            stream_id=sid, source=source, query=query or "",
+            started_at=time.time(),
+        )
+        with self._lock:
+            self._streams[sid] = h
+            self._snapshots[sid] = snap
+            # LRU eviction
+            while len(self._snapshots) > self._SNAPSHOT_CAP:
+                self._snapshots.popitem(last=False)
+        bus.publish("agent:submit", {"stream_id": sid, "source": source, "query_preview": (query or "")[:120]})
+        bus.publish("chat:started", {
+            "stream_id": sid, "source": source,
+            "query": query or "",
+            "ts": snap.started_at,
+        })
+        threading.Thread(
+            target=self._fanout, args=(src_q, out_q, h, snap),
+            daemon=True, name=f"agent-fanout-{sid}",
+        ).start()
+        return h
+
+    def _fanout(self, src_q: "_q.Queue", out_q: "_q.Queue", h: StreamHandle, snap: ChatSnapshot) -> None:
+        """Drain the agent's display_queue. For each item:
+          - mirror to the StreamHandle's queue (for legacy sync consumers).
+          - update the snapshot.
+          - publish chat:next / chat:done to the bus.
+        """
+        try:
+            while True:
+                try:
+                    item = src_q.get(timeout=300)
+                except _q.Empty:
+                    # Liveness ping so subscribers know we're still here.
+                    bus.publish("chat:heartbeat", {"stream_id": h.stream_id})
+                    continue
+                # mirror first so wechat_service keeps working
+                out_q.put(item)
+                if "next" in item:
+                    content = item["next"]
+                    h.last_chunk = content
+                    snap.content = content
+                    bus.publish("chat:next", {
+                        "stream_id": h.stream_id,
+                        "source": snap.source,
+                        "content": content,
+                    })
+                if "done" in item:
+                    content = item["done"]
+                    h.final_text = content
+                    h.finished = True
+                    snap.content = content
+                    snap.done = True
+                    snap.finished_at = time.time()
+                    self.agent.last_reply_time = int(time.time())
+                    bus.publish("chat:done", {
+                        "stream_id": h.stream_id,
+                        "source": snap.source,
+                        "content": content,
+                    })
+                    bus.publish("agent:done", {"stream_id": h.stream_id, "len": len(content)})
+                    return
+        except Exception as e:
+            log.exception("fanout crashed for %s: %s", h.stream_id, e)
+            snap.done = True
+            snap.aborted = True
+            snap.finished_at = time.time()
+            bus.publish("chat:done", {
+                "stream_id": h.stream_id,
+                "source": snap.source,
+                "content": snap.content + f"\n[stream error: {e}]",
+            })
+
+    # ── replay (used by /ws/chat on connect) ────────────────────
+    def chat_state_snapshot(self) -> list[dict]:
+        """Return a flat list of recent / in-flight chat streams so a
+        reconnecting WS client can rebuild its UI atomically.
+
+        Order is insertion order (oldest → newest). Each entry is a single
+        stream's full state — frontend replaces its message list with this.
+        """
+        out: list[dict] = []
+        with self._lock:
+            snaps = list(self._snapshots.values())
+        cap = self._SNAPSHOT_CONTENT_CAP
+        for snap in snaps:
+            content = snap.content
+            # Only truncate already-finished streams. Live ones keep full text
+            # so the user sees current progress correctly on reconnect.
+            if snap.done and content and len(content) > cap:
+                head = content[: cap // 3]
+                tail = content[-(cap - cap // 3 - 80):]
+                content = f"{head}\n\n…[truncated {len(snap.content) - cap} chars for fast reload]…\n\n{tail}"
+            out.append({
+                "stream_id": snap.stream_id,
+                "source": snap.source,
+                "query": snap.query,
+                "content": content,
+                "done": snap.done,
+                "started_at": snap.started_at,
+                "finished_at": snap.finished_at,
+            })
+        return out
+
+    async def stream(self, h: StreamHandle, *, poll_interval: float = 0.4) -> AsyncIterator[dict]:
+        """Async generator that yields {next:...} chunks then a final {done:...}."""
+        while True:
+            try:
+                item = await asyncio.to_thread(h.display_queue.get, True, poll_interval)
+            except _q.Empty:
+                # heartbeat
+                yield {"type": "heartbeat", "stream_id": h.stream_id}
+                continue
+            if "next" in item:
+                h.last_chunk = item["next"]
+                yield {"type": "next", "stream_id": h.stream_id, "content": item["next"], "source": item.get("source")}
+            if "done" in item:
+                h.final_text = item["done"]
+                h.finished = True
+                self.agent.last_reply_time = int(time.time())
+                bus.publish("agent:done", {"stream_id": h.stream_id, "len": len(item["done"])})
+                yield {"type": "done", "stream_id": h.stream_id, "content": item["done"], "source": item.get("source")}
+                return
+
+    # ── conversation control ────────────────────────────────────
+    def new_conversation(self) -> str:
+        # Wipe per-stream UI snapshots so a reconnecting WS doesn't replay
+        # stale bubbles from the previous conversation.
+        with self._lock:
+            self._snapshots.clear()
+        bus.publish("chat:reset", {"reason": "new_conversation"})
+        return reset_conversation(self.agent)
+
+    def get_history(self) -> list[str]:
+        return list(getattr(self.agent, "history", []))
+
+    # ── hooks ────────────────────────────────────────────────────
+    def _on_turn_end(self, ctx: dict) -> None:
+        bus.publish("agent:turn", {
+            "turn": ctx.get("turn"),
+            "summary": ctx.get("summary"),
+            "exit_reason": ctx.get("exit_reason"),
+        })
+
+
+# convenience accessor
+def get_agent_service() -> AgentService:
+    return AgentService.instance()

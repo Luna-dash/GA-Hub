@@ -1,0 +1,124 @@
+# Auto-build macOS .dmg and Windows setup.exe and attach them to a GitHub
+# Release whenever a tag like `v0.2.0` is pushed.
+#
+# Manually re-run for an existing tag:  Actions tab → Release → Run workflow
+# Triggering a fresh release:           git tag v<x.y.z> && git push origin v<x.y.z>
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Allow rebuilding without a new tag (uploads artifacts only, no Release).
+  workflow_dispatch:
+
+permissions:
+  contents: write   # required to create / upload to Releases
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-latest is currently arm64 (M-series). For broader Intel-Mac
+          # compatibility, swap to macos-13 — Rosetta 2 lets the resulting
+          # x86_64 .app run on both arches, at the cost of slower startup
+          # on Apple Silicon.
+          - os: macos-latest
+            artifact: build/GenericAgent-Admin-*.dmg
+            asset_name: GenericAgent-Admin-macOS.dmg
+          - os: windows-latest
+            artifact: build/GenericAgent-Admin-*-Setup.exe
+            asset_name: GenericAgent-Admin-Windows-Setup.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Install pyinstaller
+        run: python -m pip install --upgrade "pyinstaller>=6.0"
+
+      # ── platform-specific installer tooling ──────────────────────
+      - name: Install create-dmg (mac)
+        if: runner.os == 'macOS'
+        run: brew install create-dmg
+
+      - name: Install Inno Setup (win)
+        if: runner.os == 'Windows'
+        run: choco install innosetup -y --no-progress
+
+      # ── build ───────────────────────────────────────────────────
+      - name: Build (mac)
+        if: runner.os == 'macOS'
+        run: bash build/build_mac.sh
+
+      - name: Build (win)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: build\build_win.bat
+
+      # ── collect artifact ────────────────────────────────────────
+      # Rename to a stable filename so the release page is predictable
+      # (the tag in the source name moves with each tag).
+      - name: Collect artifact (mac)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p out
+          cp build/GenericAgent-Admin-*.dmg "out/${{ matrix.asset_name }}"
+
+      - name: Collect artifact (win)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p out
+          cp build/GenericAgent-Admin-*-Setup.exe "out/${{ matrix.asset_name }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: out/${{ matrix.asset_name }}
+          if-no-files-found: error
+
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name '*.dmg' -o -name '*.exe' \) -exec cp {} release/ \;
+          ls -la release
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          body: |
+            ## 安装
+
+            - **macOS**: 下载 `.dmg` → 双击 → 拖到 Applications。第一次启动**右键 → 打开**（Gatekeeper 拦截绕过，仅一次）。
+            - **Windows**: 下载 `-Setup.exe` → 双击。SmartScreen 警告：**更多信息 → 仍要运行**。
+
+            首次启动会让你选 GenericAgent 项目目录（`agentmain.py` 所在那个）。
