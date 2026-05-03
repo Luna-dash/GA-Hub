@@ -67,6 +67,10 @@ if sys.platform == "win32":
         "cffi",
         "_cffi_backend",
     ]
+    # pystray powers the system-tray icon on Windows. Its backend is
+    # selected at import time via __init__ machinery PyInstaller can't see
+    # statically, so list both the package and the win32 backend module.
+    hiddenimports += collect_submodules("pystray")
 # Misc shims uvicorn/anyio occasionally import indirectly.
 hiddenimports += [
     "uvicorn.lifespan.on",

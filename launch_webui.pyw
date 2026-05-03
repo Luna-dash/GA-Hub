@@ -471,7 +471,15 @@ def main() -> int:
         text_select=True,
     )
     _arm_macos_activation(win)
-    webview.start()
+    tray = _try_start_windows_tray(win) if os.name == "nt" else None
+    try:
+        webview.start()
+    finally:
+        if tray is not None:
+            try:
+                tray.stop()
+            except Exception:
+                pass
     return 0
 
 
@@ -629,6 +637,93 @@ def _arm_macos_activation(window) -> None:
             _schedule(f"watchdog@{delay}s")
 
     threading.Thread(target=_watchdog, daemon=True, name="macos-activate").start()
+
+
+def _try_start_windows_tray(window):
+    """Attach a Windows system-tray icon to ``window``.
+
+    Behavior change vs default pywebview:
+      • clicking the X button hides the window instead of destroying it,
+        so the backend keeps running in the background;
+      • left-click on the tray icon (or "显示主窗口") brings the window
+        back;
+      • only "退出" actually destroys the window — which lets
+        ``webview.start()`` return so atexit handlers tear down the
+        backend / dev_proc subprocesses.
+
+    Returns the started ``pystray.Icon`` (so caller can ``.stop()`` it on
+    exit), or ``None`` if pystray / Pillow aren't available — in that
+    case we leave the window's default close behavior intact (= quit).
+    """
+    try:
+        import pystray  # type: ignore
+        from PIL import Image, ImageDraw, ImageFont  # type: ignore
+    except ImportError as e:
+        print(f"[Launch] pystray/Pillow unavailable, tray disabled: {e}",
+              file=sys.stderr)
+        return None
+
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([(0, 0), (63, 63)], radius=14, fill=(91, 155, 255, 255))
+    try:
+        font = ImageFont.truetype("arial.ttf", 32)
+    except Exception:
+        font = ImageFont.load_default()
+    try:
+        bbox = d.textbbox((0, 0), "GA", font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        d.text(((64 - tw) // 2 - bbox[0], (64 - th) // 2 - bbox[1]),
+               "GA", font=font, fill=(255, 255, 255, 255))
+    except Exception:
+        d.text((16, 18), "GA", fill=(255, 255, 255, 255))
+
+    def _show(icon, item):
+        try:
+            window.show()
+        except Exception as e:
+            print(f"[Launch] tray show failed: {e}", file=sys.stderr)
+
+    def _quit(icon, item):
+        try:
+            window.destroy()
+        except Exception:
+            pass
+        try:
+            icon.stop()
+        except Exception:
+            pass
+
+    def _on_closing():
+        # Returning False cancels the default destroy; we hide instead so
+        # the tray icon remains the single way to fully quit.
+        try:
+            window.hide()
+        except Exception as e:
+            print(f"[Launch] hide on close failed: {e}", file=sys.stderr)
+        return False
+
+    try:
+        window.events.closing += _on_closing
+    except Exception:
+        try:
+            window.events.closing.connect(_on_closing)
+        except Exception as e:
+            print(f"[Launch] could not hook closing event ({e}); "
+                  f"close button will quit (no tray hide).",
+                  file=sys.stderr)
+
+    menu = pystray.Menu(
+        pystray.MenuItem("显示主窗口", _show, default=True),
+        pystray.MenuItem("退出", _quit),
+    )
+    icon = pystray.Icon(
+        "GenericAgent-Admin", img,
+        "GenericAgent · 管理控制台", menu,
+    )
+    icon.run_detached()
+    print("[Launch] Windows tray icon started", file=sys.stderr)
+    return icon
 
 
 def _safe_term(proc: subprocess.Popen | None) -> None:

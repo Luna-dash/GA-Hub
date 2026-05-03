@@ -37,6 +37,46 @@ from .event_bus import bus  # noqa: E402
 log = logging.getLogger(__name__)
 
 
+# ── Windows: suppress flashing console windows from agent-spawned processes ──
+def _patch_ga_subprocess_for_windows() -> None:
+    """Force CREATE_NO_WINDOW on every subprocess.Popen called from the
+    GA module namespace.
+
+    Why: ``GenericAgent/ga.py:code_run`` builds Popen with only
+    ``startupinfo.wShowWindow = SW_HIDE``. SW_HIDE is read by the child
+    *after* conhost has already attached a console — when the parent
+    (this server, started by pythonw / a no-console frozen exe) lacks a
+    console of its own, Windows allocates a fresh one for the child and
+    the user sees a black window flash on every code_run.
+    ``CREATE_NO_WINDOW`` (0x08000000) tells the OS not to allocate a
+    console at all, which is the actual fix.
+
+    We do not edit ``ga.py`` on disk so the GA repo can be updated
+    independently. Instead we override the Popen reference inside ga's
+    module namespace at import time.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ga as _ga  # type: ignore  # resolved via GA sys.path
+        import subprocess as _sp
+        _orig_popen = _sp.Popen
+        CREATE_NO_WINDOW = 0x08000000
+
+        def _no_window_popen(*args, **kwargs):
+            cf = kwargs.get("creationflags") or 0
+            kwargs["creationflags"] = cf | CREATE_NO_WINDOW
+            return _orig_popen(*args, **kwargs)
+
+        _ga.subprocess.Popen = _no_window_popen
+        log.info("patched ga.subprocess.Popen with CREATE_NO_WINDOW")
+    except Exception:
+        log.exception("could not patch ga.subprocess.Popen — code_run may flash console windows")
+
+
+_patch_ga_subprocess_for_windows()
+
+
 @dataclass
 class AgentStatus:
     is_running: bool
