@@ -82,6 +82,12 @@ def _popen(cmd: list[str], cwd: Path, env_extra: dict | None = None) -> subproce
     return subprocess.Popen(cmd, **kwargs)
 
 
+# Windows-only: extra Popen kwargs to suppress the brief console window that
+# pops up when pythonw (.pyw, no parent console) spawns a console subprocess
+# like netstat / taskkill / lsof. CREATE_NO_WINDOW = 0x08000000.
+_NO_WINDOW: dict = {"creationflags": 0x08000000} if os.name == "nt" else {}
+
+
 def _check_python_deps() -> tuple[bool, str]:
     try:
         import fastapi  # noqa: F401
@@ -117,6 +123,7 @@ def _find_port_holders(port: int) -> list[int]:
             out = subprocess.check_output(
                 ["netstat", "-ano"],
                 stderr=subprocess.DEVNULL, text=True, timeout=3,
+                **_NO_WINDOW,
             )
             needle = f":{port}"
             for line in out.splitlines():
@@ -170,6 +177,7 @@ def _kill_pid(pid: int) -> bool:
                 timeout=5,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                **_NO_WINDOW,
             )
             return True
         os.kill(pid, signal.SIGTERM)

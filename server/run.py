@@ -14,6 +14,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "frontends"))
 
+# When the parent launcher is started via .pyw (Windows pythonw.exe — no
+# console) and spawns us with CREATE_NO_WINDOW, sys.stdout/sys.stderr inherit
+# as None. uvicorn's default ColourizedFormatter calls sys.stdout.isatty()
+# during logging config and crashes. Patch before importing uvicorn.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
 
 def _read_config() -> tuple[str, int]:
     host, port = "127.0.0.1", 8765
