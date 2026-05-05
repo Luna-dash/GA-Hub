@@ -112,6 +112,7 @@ export const api = {
   },
   wxSend: (uid: string, text?: string, file_path?: string, context_token = '') =>
     http<{ ok: boolean }>('POST', '/api/wechat/send', { uid, text, file_path, context_token }),
+  wxClearMessages: () => http<{ ok: boolean }>('DELETE', '/api/wechat/messages'),
   wxAllowlist: () => http<{ allowlist: string[] }>('GET', '/api/wechat/allowlist'),
   wxSetAllowlist: (allowlist: string[]) =>
     http<{ ok: boolean; allowlist: string[] }>('PUT', '/api/wechat/allowlist', { allowlist }),

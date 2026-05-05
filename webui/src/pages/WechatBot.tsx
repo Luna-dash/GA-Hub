@@ -1,15 +1,20 @@
-// WeChat bot management — QR login, contacts, message log, manual send,
-// allowlist, polling control. Subscribes to /ws/events?prefix=wechat: for
-// live updates. Replaces the entire UI surface of frontends/wechatapp.py.
+// WeChat bot management — QR login, single-stream chat view, manual send.
+//
+// UI model: a personal bot binds to ONE WeChat account. The page shows
+// every inbound/outbound message in time order; no contacts sidebar
+// because in real personal-bot use one talks to oneself or a small set
+// of people, not a CRM-style contact roster. The composer auto-targets
+// the most recent inbound sender; if the log contains multiple senders,
+// a small dropdown lets the user switch. Allowlist + log-clear live in
+// an overflow menu so the main surface stays clean.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { EventSocket, api } from '@/api/client'
-import type { BusEvent, WxContact, WxLogEntry } from '@/api/types'
+import type { BusEvent, WxLogEntry } from '@/api/types'
 import { ImagePasteInput, type PasteAttachment } from '@/components/ImagePasteInput'
 import { PageShell } from '@/components/PageShell'
 import { QRCodeDisplay } from '@/components/QRCodeDisplay'
-import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
 
 export function WechatBot() {
@@ -19,32 +24,24 @@ export function WechatBot() {
     queryFn: api.wxStatus,
     refetchInterval: 3000,
   })
-  const { data: contactsData } = useQuery({
-    queryKey: ['wxContacts'],
-    queryFn: api.wxContacts,
-    refetchInterval: 5000,
-  })
-  const contacts = contactsData?.contacts ?? []
 
-  const [selected, setSelected] = useState<string | null>(null)
-  useEffect(() => {
-    if (!selected && contacts.length) setSelected(contacts[0].uid)
-  }, [contacts, selected])
-
+  // Pull the full log (all uids, time-sorted on server). 1000 entries is
+  // plenty for the scroll buffer; older history sits on disk and reloads
+  // on next launch.
   const { data: msgData } = useQuery({
-    queryKey: ['wxMessages', selected],
-    queryFn: () => api.wxMessages(selected ?? undefined, 500),
-    enabled: !!selected,
+    queryKey: ['wxMessages'],
+    queryFn: () => api.wxMessages(undefined, 1000),
     refetchInterval: 4000,
+    enabled: !!status?.logged_in,
   })
+  const messages = msgData?.messages ?? []
 
-  // Live event push: refresh on incoming messages
+  // Live event push: refresh on incoming/outgoing
   useEffect(() => {
     const s = new EventSocket('wechat:', 0)
     s.onEvent = (e: BusEvent) => {
-      if (e.topic === 'wechat:message_in' || e.topic === 'wechat:message_out') {
+      if (e.topic === 'wechat:message_in' || e.topic === 'wechat:message_out' || e.topic === 'wechat:log_cleared') {
         qc.invalidateQueries({ queryKey: ['wxMessages'] })
-        qc.invalidateQueries({ queryKey: ['wxContacts'] })
       }
       if (e.topic === 'wechat:qr_status' || e.topic === 'wechat:logout' || e.topic === 'wechat:polling') {
         qc.invalidateQueries({ queryKey: ['wxStatus'] })
@@ -54,20 +51,52 @@ export function WechatBot() {
     return () => s.close()
   }, [qc])
 
+  // Auto-track the most recent inbound sender as reply target. User can
+  // override via the dropdown; their pick persists until they clear it.
+  const recentInbounds = useMemo(() => {
+    const seen = new Map<string, { uid: string; nickname: string; ts: number }>()
+    for (const m of messages) {
+      if (m.direction !== 'in') continue
+      const prev = seen.get(m.uid)
+      if (!prev || m.ts > prev.ts) {
+        seen.set(m.uid, { uid: m.uid, nickname: m.nickname || '', ts: m.ts })
+      }
+    }
+    return Array.from(seen.values()).sort((a, b) => b.ts - a.ts)
+  }, [messages])
+
+  const [replyTo, setReplyTo] = useState<string | null>(null)
+  const [replyManual, setReplyManual] = useState(false)
+  useEffect(() => {
+    if (replyManual) return
+    if (recentInbounds.length && recentInbounds[0].uid !== replyTo) {
+      setReplyTo(recentInbounds[0].uid)
+    }
+  }, [recentInbounds, replyTo, replyManual])
+
+  // Auto-scroll to bottom on new message (unless user has scrolled up).
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
+  useEffect(() => {
+    const el = scrollerRef.current
+    if (!el) return
+    if (stickToBottomRef.current) el.scrollTop = el.scrollHeight
+  }, [messages])
+
   // ── send composer ──
   const [text, setText] = useState('')
   const [atts, setAtts] = useState<PasteAttachment[]>([])
   const [busy, setBusy] = useState(false)
 
   const send = async () => {
-    if (!selected) return
+    if (!replyTo) return
     const t = text.trim()
     if (!t && atts.length === 0) return
     setBusy(true)
     try {
-      if (t) await api.wxSend(selected, t)
+      if (t) await api.wxSend(replyTo, t)
       for (const a of atts) {
-        await api.wxSend(selected, undefined, a.path)
+        await api.wxSend(replyTo, undefined, a.path)
       }
       setText('')
       setAtts([])
@@ -93,15 +122,23 @@ export function WechatBot() {
     await api.wxLogout()
     qc.invalidateQueries({ queryKey: ['wxStatus'] })
   }
+  const clearLog = async () => {
+    const ok = await dialog.confirm('清空微信对话记录？', '本地与磁盘上的 wechat_log.jsonl 都会被删除，无法撤销。', {
+      confirmText: '清空',
+      tone: 'danger',
+    })
+    if (!ok) return
+    await api.wxClearMessages()
+    qc.invalidateQueries({ queryKey: ['wxMessages'] })
+  }
 
   const [showAllow, setShowAllow] = useState(false)
-
-  const messages = msgData?.messages ?? []
+  const [showMenu, setShowMenu] = useState(false)
 
   return (
     <PageShell
       title="微信机器人"
-      description="管理个人微信 Bot：扫码登录、查看消息、手动发消息（支持图片粘贴）、白名单。"
+      description="管理个人微信 Bot：扫码登录、查看并回复消息（支持图片粘贴）。"
       actions={
         <div className="flex items-center gap-2 text-sm">
           <span className={`px-2 py-0.5 rounded ${status?.logged_in ? 'bg-emerald-900/40 text-emerald-300' : 'bg-rose-900/40 text-rose-300'}`}>
@@ -112,70 +149,132 @@ export function WechatBot() {
               {status.polling ? '轮询中' : '轮询已停止'}
             </span>
           )}
-          <button onClick={() => setShowAllow(true)}
-                  className="px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5">
-            白名单
-          </button>
           {status?.logged_in
             ? <button onClick={logout} className="px-3 py-1.5 rounded-lg border border-rose-700/60 text-rose-300 hover:bg-rose-900/20">退出登录</button>
             : <button onClick={startLogin} className="px-3 py-1.5 rounded-lg bg-accent text-white">扫码登录</button>}
+          <div className="relative">
+            <button
+              onClick={() => setShowMenu((v) => !v)}
+              className="px-2.5 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5"
+              aria-label="更多"
+              title="更多"
+            >⋯</button>
+            {showMenu && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
+                <div className="absolute right-0 mt-1 w-40 bg-bg-soft border border-line rounded-lg shadow-lg z-20 overflow-hidden">
+                  <MenuItem onClick={() => { setShowMenu(false); setShowAllow(true) }}>白名单</MenuItem>
+                  <MenuItem onClick={() => { setShowMenu(false); clearLog() }} danger>清空记录</MenuItem>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       }
     >
       {!status?.logged_in ? (
         <LoginPanel status={status} />
       ) : (
-        <div className="flex h-full">
-          {/* contacts */}
-          <div className="w-72 border-r border-line bg-bg-soft overflow-y-auto">
-            {contacts.length === 0 && (
-              <div className="p-6 text-sm text-slate-500">
-                还没有联系人。让用户给 Bot 发一条消息试试。
+        <div className="flex flex-col h-full">
+          <div
+            ref={scrollerRef}
+            className="flex-1 overflow-y-auto p-6 space-y-2"
+            onScroll={(e) => {
+              const t = e.currentTarget
+              stickToBottomRef.current =
+                t.scrollHeight - t.scrollTop - t.clientHeight < 40
+            }}
+          >
+            {messages.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+                尚无消息记录。让用户给 Bot 发一条消息试试。
               </div>
+            ) : (
+              messages.map((m, i) => {
+                const prev = i > 0 ? messages[i - 1] : undefined
+                const showSender =
+                  m.direction === 'in' && (!prev || prev.uid !== m.uid || prev.direction !== 'in')
+                return <WxMessage key={i} m={m} showSender={showSender} />
+              })
             )}
-            {contacts.map((c) => (
-              <ContactRow
-                key={c.uid}
-                contact={c}
-                active={selected === c.uid}
-                onClick={() => setSelected(c.uid)}
-              />
-            ))}
           </div>
-          {/* message stream + composer */}
-          <div className="flex-1 flex flex-col min-w-0">
-            <div className="flex-1 overflow-y-auto p-6 space-y-3">
-              {!selected && (
-                <div className="h-full flex items-center justify-center text-slate-500">
-                  选择一个联系人查看对话
-                </div>
-              )}
-              {selected && messages.length === 0 && (
-                <div className="text-slate-500 text-sm">尚无消息记录</div>
-              )}
-              {messages.map((m, i) => (
-                <WxMessage key={i} m={m} />
-              ))}
-            </div>
-            {selected && (
-              <div className="border-t border-line bg-bg-soft p-4">
-                <ImagePasteInput
-                  text={text}
-                  onText={setText}
-                  attachments={atts}
-                  onAttachments={setAtts}
-                  onSubmit={send}
-                  disabled={busy}
-                  placeholder={`给 ${selected.slice(0, 24)}… 发消息（粘贴图片直接发图）`}
-                />
-              </div>
-            )}
+          <div className="border-t border-line bg-bg-soft p-4">
+            <ReplyTargetBar
+              replyTo={replyTo}
+              recentInbounds={recentInbounds}
+              onChange={(uid) => { setReplyTo(uid); setReplyManual(true) }}
+              onAuto={() => setReplyManual(false)}
+              manual={replyManual}
+            />
+            <ImagePasteInput
+              text={text}
+              onText={setText}
+              attachments={atts}
+              onAttachments={setAtts}
+              onSubmit={send}
+              disabled={busy || !replyTo}
+              placeholder={
+                replyTo
+                  ? `回复消息（粘贴图片直接发图）`
+                  : '等对方先发一条消息再回复…'
+              }
+            />
           </div>
         </div>
       )}
 
       {showAllow && <AllowlistDrawer onClose={() => setShowAllow(false)} />}
     </PageShell>
+  )
+}
+
+function MenuItem({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${danger ? 'text-rose-300' : 'text-slate-200'}`}
+    >{children}</button>
+  )
+}
+
+function ReplyTargetBar({
+  replyTo, recentInbounds, onChange, onAuto, manual,
+}: {
+  replyTo: string | null
+  recentInbounds: { uid: string; nickname: string; ts: number }[]
+  onChange: (uid: string) => void
+  onAuto: () => void
+  manual: boolean
+}) {
+  if (!replyTo) return null
+  const cur = recentInbounds.find((r) => r.uid === replyTo)
+  const label = cur?.nickname || replyTo.slice(0, 16) + '…'
+  return (
+    <div className="flex items-center gap-2 text-xs text-slate-500 mb-2">
+      <span>回复给:</span>
+      {recentInbounds.length > 1 ? (
+        <select
+          value={replyTo}
+          onChange={(e) => onChange(e.target.value)}
+          className="bg-bg-card border border-line rounded px-2 py-0.5 text-slate-300 text-xs outline-none focus:border-accent"
+        >
+          {recentInbounds.map((r) => (
+            <option key={r.uid} value={r.uid}>
+              {r.nickname || r.uid.slice(0, 16) + '…'}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <span className="text-slate-300">{label}</span>
+      )}
+      {manual && (
+        <button
+          onClick={onAuto}
+          className="text-slate-500 hover:text-slate-300 underline-offset-2 hover:underline"
+          title="跟随最新发言者"
+        >自动跟随</button>
+      )}
+    </div>
   )
 }
 
@@ -203,48 +302,32 @@ function LoginPanel({ status }: { status?: any }) {
   )
 }
 
-function ContactRow({ contact, active, onClick }: { contact: WxContact; active: boolean; onClick: () => void }) {
-  const initial = (contact.nickname || contact.uid || '?').slice(0, 1).toUpperCase()
-  return (
-    <div
-      onClick={onClick}
-      className={`px-3 py-2.5 cursor-pointer flex gap-3 items-center border-b border-line/60 ${active ? 'bg-accent-soft' : 'hover:bg-white/5'}`}
-    >
-      <div className="w-9 h-9 rounded-full bg-accent/30 text-accent flex items-center justify-center font-semibold shrink-0">
-        {initial}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-2">
-          <div className="text-sm text-slate-200 truncate font-medium">
-            {contact.nickname || contact.uid.slice(0, 16) + '…'}
-          </div>
-          <div className="text-xs text-slate-500 shrink-0">{relTime(contact.last_ts)}</div>
-        </div>
-        <div className="text-xs text-slate-500 truncate">{contact.last_text || '—'}</div>
-      </div>
-    </div>
-  )
-}
-
-function WxMessage({ m }: { m: WxLogEntry }) {
+function WxMessage({ m, showSender }: { m: WxLogEntry; showSender: boolean }) {
   const isOut = m.direction === 'out'
   return (
     <div className={`flex ${isOut ? 'justify-end' : 'justify-start'}`}>
-      <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 text-sm ${isOut ? 'bg-emerald-700/80 text-white' : 'bg-bg-card border border-line'}`}>
-        {m.text && <div className="whitespace-pre-wrap break-words leading-6">{m.text}</div>}
-        {m.media?.length > 0 && (
-          <div className="flex flex-wrap gap-2 mt-2">
-            {m.media.map((p, i) => (
-              <a key={i} href={api.fileUrlByPath(p)} target="_blank" rel="noreferrer">
-                {/\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(p)
-                  ? <img src={api.fileUrlByPath(p)} alt="" className="h-28 rounded-lg" />
-                  : <div className="px-2 py-1 rounded bg-black/20 text-xs">📎 {p.split('/').pop()}</div>}
-              </a>
-            ))}
+      <div className="flex flex-col max-w-[75%]">
+        {showSender && (
+          <div className="text-[11px] text-slate-500 mb-0.5 ml-2 truncate">
+            {m.nickname || m.uid.slice(0, 16) + '…'}
           </div>
         )}
-        <div className={`text-[10px] mt-1 ${isOut ? 'text-white/70' : 'text-slate-500'}`}>
-          {new Date(m.ts * 1000).toLocaleTimeString()}
+        <div className={`rounded-2xl px-3.5 py-2 text-sm ${isOut ? 'bg-emerald-700/80 text-white' : 'bg-bg-card border border-line'}`}>
+          {m.text && <div className="whitespace-pre-wrap break-words leading-6">{m.text}</div>}
+          {m.media?.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {m.media.map((p, i) => (
+                <a key={i} href={api.fileUrlByPath(p)} target="_blank" rel="noreferrer">
+                  {/\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(p)
+                    ? <img src={api.fileUrlByPath(p)} alt="" className="h-28 rounded-lg" />
+                    : <div className="px-2 py-1 rounded bg-black/20 text-xs">📎 {p.split('/').pop()}</div>}
+                </a>
+              ))}
+            </div>
+          )}
+          <div className={`text-[10px] mt-1 ${isOut ? 'text-white/70' : 'text-slate-500'}`}>
+            {new Date(m.ts * 1000).toLocaleTimeString()}
+          </div>
         </div>
       </div>
     </div>

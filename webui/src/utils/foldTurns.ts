@@ -8,6 +8,14 @@ export type Segment =
 
 const PH_MARK = '\u0000PH'
 
+// Strip CLOSED <summary>...</summary> blocks. Half-open ones (still
+// streaming) are left intact so partial tokens don't render as plain
+// "<summary>" text for one frame and then disappear when the close
+// tag arrives — that flicker is more annoying than a brief tag.
+function stripClosedSummary(s: string): string {
+  return s.replace(/<summary>[\s\S]*?<\/summary>\s*/g, '')
+}
+
 export function foldTurns(text: string): Segment[] {
   if (!text) return []
   const placeholders: string[] = []
@@ -26,10 +34,15 @@ export function foldTurns(text: string): Segment[] {
     s.replace(new RegExp(`${PH_MARK}(\\d+)\\u0000`, 'g'), (_, i) => placeholders[+i] ?? '')
 
   const parts = safe.split(/(\**LLM Running \(Turn \d+\) \.{3}\**)/).map(restore)
-  if (parts.length < 4) return [{ type: 'text', content: text }]
+  if (parts.length < 4) {
+    return [{ type: 'text', content: stripClosedSummary(text) }]
+  }
 
   const segments: Segment[] = []
-  if (parts[0].trim()) segments.push({ type: 'text', content: parts[0] })
+  if (parts[0].trim()) {
+    const cleaned0 = stripClosedSummary(parts[0])
+    if (cleaned0.trim()) segments.push({ type: 'text', content: cleaned0 })
+  }
 
   const turns: Array<{ marker: string; content: string }> = []
   for (let i = 1; i < parts.length; i += 2) {
@@ -53,9 +66,11 @@ export function foldTurns(text: string): Segment[] {
       const title = m
         ? m[1].trim().split('\n').map((s) => s.trim()).filter(Boolean).join(' · ')
         : t.marker.replace(/\*+/g, '').trim()
-      segments.push({ type: 'fold', title, content: t.content })
+      // Body of the <details>: drop the <summary> we just lifted into
+      // the title so it doesn't show up twice when expanded.
+      segments.push({ type: 'fold', title, content: stripClosedSummary(t.content) })
     } else {
-      segments.push({ type: 'text', content: (t.marker + t.content) })
+      segments.push({ type: 'text', content: stripClosedSummary(t.marker + t.content) })
     }
   })
 

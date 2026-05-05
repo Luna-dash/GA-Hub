@@ -52,6 +52,12 @@ async def messages(uid: str | None = None, limit: int = 200):
     return {"messages": svc().get_messages(uid=uid, limit=min(limit, 1000))}
 
 
+@router.delete("/api/wechat/messages")
+async def clear_messages():
+    svc().clear_log()
+    return {"ok": True}
+
+
 @router.post("/api/wechat/send")
 async def send(req: WxSendReq):
     s = svc()

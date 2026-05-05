@@ -3,6 +3,8 @@
 Wraps the transport-only :class:`WxBotClient` with:
   * QR login flow that emits status events on the EventBus
   * Per-user contacts + message log (in-memory, capped) for UI display
+  * Persistent log on disk (``ADMIN_DATA/wechat_log.jsonl``) so message
+    history survives restarts. Contacts are reconstructed from the log.
   * Allowlist enforcement (sourced from mykey.wechat_allowed_users)
   * Inbound message → GeneraticAgent.put_task → streamed reply
   * Outbound media auto-detection ([FILE:path] markers)
@@ -12,6 +14,7 @@ all output through the EventBus so the React UI sees live updates.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import queue as _q
@@ -20,6 +23,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .. import _paths
@@ -112,9 +116,69 @@ class WxLogEntry:
     text: str
     media: list[str] = field(default_factory=list)
     context_token: str = ""
+    nickname: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+# ── persistence ──────────────────────────────────────────────────
+WX_LOG_FILE = _paths.ADMIN_DATA / "wechat_log.jsonl"
+# Compact the on-disk log when it exceeds this size — we only keep the
+# most recent ``log_capacity`` entries in memory anyway, so a multi-MB
+# tail of churned-out lines wastes space without any user benefit.
+WX_LOG_COMPACT_BYTES = 10 * 1024 * 1024
+
+
+def _load_log_tail(file: Path, n: int) -> list[WxLogEntry]:
+    if not file.is_file():
+        return []
+    try:
+        size = file.stat().st_size
+        if size <= 5 * 1024 * 1024:
+            text = file.read_text("utf-8", errors="replace")
+        else:
+            # Seek-tail to avoid loading huge files. Drop the (likely
+            # truncated) first line.
+            with file.open("rb") as f:
+                f.seek(-2 * 1024 * 1024, os.SEEK_END)
+                text = f.read().decode("utf-8", errors="replace")
+            text = text.split("\n", 1)[1] if "\n" in text else text
+        lines = text.splitlines()
+        out: list[WxLogEntry] = []
+        for line in lines[-n:]:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+                out.append(WxLogEntry(
+                    ts=int(d.get("ts", 0)),
+                    direction=str(d.get("direction", "")),
+                    uid=str(d.get("uid", "")),
+                    text=str(d.get("text", "")),
+                    media=list(d.get("media", []) or []),
+                    context_token=str(d.get("context_token", "")),
+                    nickname=str(d.get("nickname", "")),
+                ))
+            except Exception:
+                continue
+        return out
+    except Exception as e:
+        log.warning("wechat log load failed: %s", e)
+        return []
+
+
+def _compact_log(file: Path, entries: list[WxLogEntry]) -> None:
+    try:
+        file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = file.with_suffix(".jsonl.tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            for e in entries:
+                f.write(json.dumps(e.to_dict(), ensure_ascii=False) + "\n")
+        tmp.replace(file)
+    except Exception as e:
+        log.warning("wechat log compact failed: %s", e)
 
 
 # ── service ──────────────────────────────────────────────────────
@@ -126,13 +190,57 @@ class WeChatService:
         self.agent_service = agent_service
         self.bot = WxBotClient()
         self.contacts: dict[str, WxContact] = {}
-        self.log: deque[WxLogEntry] = deque(maxlen=log_capacity)
         self.allowlist = to_allowed_set(allowlist if allowlist is not None else ["*"])
         self._poll_thread: threading.Thread | None = None
         self._stop_flag = False
         self._qr_thread: threading.Thread | None = None
         self._qr_state: dict = {"status": "idle"}
         self._qr_lock = threading.Lock()
+
+        # Persistence: load tail of the on-disk JSONL into the in-memory
+        # deque, then compact the file if it has grown unboundedly large.
+        self._log_lock = threading.Lock()
+        loaded = _load_log_tail(WX_LOG_FILE, log_capacity)
+        self.log: deque[WxLogEntry] = deque(loaded, maxlen=log_capacity)
+        for e in loaded:
+            c = self.contacts.setdefault(e.uid, WxContact(uid=e.uid))
+            if e.nickname and not c.nickname:
+                c.nickname = e.nickname
+            if e.ts > c.last_ts:
+                c.last_text = (e.text or ("[media]" if e.media else ""))[:200]
+                c.last_ts = e.ts
+            if e.direction == "in":
+                c.msg_count += 1
+        try:
+            if WX_LOG_FILE.is_file() and WX_LOG_FILE.stat().st_size > WX_LOG_COMPACT_BYTES:
+                _compact_log(WX_LOG_FILE, list(self.log))
+        except Exception as ex:
+            log.warning("wechat log size probe failed: %s", ex)
+
+    def _persist_entry(self, entry: WxLogEntry) -> None:
+        try:
+            WX_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with self._log_lock:
+                with WX_LOG_FILE.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
+        except Exception as e:
+            log.warning("wechat persist failed: %s", e)
+
+    def clear_log(self) -> None:
+        """Wipe both in-memory and on-disk wechat history.
+
+        Contacts are also cleared because they're a reduction of the log;
+        rebuilding them from a now-empty deque would zero them anyway.
+        """
+        with self._log_lock:
+            self.log.clear()
+            self.contacts.clear()
+            try:
+                if WX_LOG_FILE.is_file():
+                    WX_LOG_FILE.unlink()
+            except Exception as e:
+                log.warning("wechat clear failed: %s", e)
+        bus.publish("wechat:log_cleared", {})
 
     @classmethod
     def instance(cls, agent_service: AgentService | None = None) -> "WeChatService":
@@ -247,8 +355,10 @@ class WeChatService:
         entry = WxLogEntry(
             ts=int(time.time()), direction="in", uid=uid,
             text=text, media=list(media), context_token=ctx,
+            nickname=c.nickname,
         )
         self.log.append(entry)
+        self._persist_entry(entry)
         bus.publish("wechat:message_in", entry.to_dict())
 
         # commands (compatibility with frontends/wechatapp.py)
@@ -341,11 +451,14 @@ class WeChatService:
 
     # ── outbound ─────────────────────────────────────────────────
     def _record_outbound(self, uid: str, text: str, media: list[str], ctx: str) -> None:
+        nick = self.contacts.get(uid).nickname if uid in self.contacts else ""
         entry = WxLogEntry(
             ts=int(time.time()), direction="out", uid=uid,
             text=text, media=media, context_token=ctx,
+            nickname=nick,
         )
         self.log.append(entry)
+        self._persist_entry(entry)
         bus.publish("wechat:message_out", entry.to_dict())
 
     def _send_text(self, uid: str, text: str, ctx: str = "") -> dict:

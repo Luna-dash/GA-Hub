@@ -90,6 +90,7 @@ export interface WxLogEntry {
   text: string
   media: string[]
   context_token: string
+  nickname?: string
 }
 
 // ── Conversations ─────────────────────────────────────────

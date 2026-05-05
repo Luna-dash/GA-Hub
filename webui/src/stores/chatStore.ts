@@ -55,10 +55,18 @@ interface ChatState {
   pushSystem: (content: string) => void
 }
 
+// LiveChat shows the user's own webui session + admin-side flows
+// (autonomous evolution, reflect, /llm internal). It does NOT show the
+// wechat bot — those live in the dedicated WechatBot page so the two
+// channels don't pollute each other.
+const HIDDEN_SOURCES = new Set(['wechat'])
+const isHiddenSource = (s?: string) => !!s && HIDDEN_SOURCES.has(s)
+
 /** Build the UI msg list from a server snapshot — used on (re)connect. */
 function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
   const out: ChatMsg[] = []
   for (const s of streams) {
+    if (isHiddenSource(s.source)) continue
     if (s.query) {
       out.push({
         role: 'user',
@@ -93,6 +101,7 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
     const sid = evt.stream_id
     const source = evt.source ?? 'user'
     const query = evt.query ?? ''
+    if (isHiddenSource(source)) return prev
     // 1. If our local pre-add bubble is still pending and source is webui,
     //    adopt this stream_id rather than creating a duplicate.
     if (source === 'webui') {
@@ -118,6 +127,7 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   }
   if (evt.type === 'next') {
     const sid = evt.stream_id
+    if (isHiddenSource(evt.source)) return prev
     const idx = prev.findIndex((m) => m.role === 'assistant' && m.streamId === sid)
     if (idx === -1) {
       // started not yet seen — create on the fly
@@ -129,6 +139,7 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   }
   if (evt.type === 'done') {
     const sid = evt.stream_id
+    if (isHiddenSource(evt.source)) return prev
     const idx = prev.findIndex((m) => m.role === 'assistant' && m.streamId === sid)
     if (idx === -1) {
       return [...prev, { role: 'assistant', content: evt.content, streamId: sid, source: evt.source, streaming: false }]
