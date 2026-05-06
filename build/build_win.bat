@@ -85,6 +85,8 @@ python -m nuitka launch_webui.pyw ^
     --include-package=clr_loader ^
     --include-package=pythonnet ^
     --include-package=cffi ^
+    --include-package=socks ^
+    --include-package=urllib3 ^
     --include-data-dir=webui\dist=webui\dist ^
     --nofollow-import-to=tkinter ^
     --nofollow-import-to=test ^
