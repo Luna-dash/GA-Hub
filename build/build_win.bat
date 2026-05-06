@@ -65,16 +65,12 @@ python -m nuitka launch_webui.pyw ^
     --windows-console-mode=disable ^
     --output-dir=build\dist ^
     --output-filename=GenericAgent-Admin.exe ^
+    --enable-plugin=pywebview ^
     --include-package=server ^
     --include-package=uvicorn ^
     --include-package=apscheduler ^
     --include-package=websockets ^
     --include-package=pystray ^
-    --include-package=webview ^
-    --include-package=clr_loader ^
-    --include-package=pythonnet ^
-    --include-package=cffi ^
-    --include-package-data=webview ^
     --include-data-dir=webui\dist=webui\dist ^
     --nofollow-import-to=tkinter ^
     --nofollow-import-to=test ^
