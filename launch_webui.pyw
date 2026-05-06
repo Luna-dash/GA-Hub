@@ -31,15 +31,58 @@ from urllib.request import urlopen
 WINDOW_WIDTH, WINDOW_HEIGHT = 1320, 860
 
 
+def _is_frozen_binary() -> bool:
+    """True when this code runs from a packaged binary (PyInstaller OR Nuitka).
+
+    PyInstaller sets ``sys.frozen`` and ``sys._MEIPASS``. Nuitka does NEITHER
+    by default — it sets ``__compiled__`` on each compiled module instead.
+    Earlier versions of this file checked only ``sys.frozen``, so under
+    Nuitka the launcher silently fell into "dev mode" branches and tried to
+    spawn ``GenericAgent-Admin.exe -m server.run`` as the backend, which is
+    not a valid command — the parent then exited without surfacing any
+    error because ``--windows-console-mode=disable`` swallowed stderr.
+    """
+    return (
+        getattr(sys, "frozen", False)        # PyInstaller
+        or "__compiled__" in globals()       # Nuitka standalone
+        or hasattr(sys, "_MEIPASS")          # PyInstaller belt-and-braces
+    )
+
+
+# When running as a windowed frozen binary (PyInstaller --windowed or
+# Nuitka --windows-console-mode=disable) the OS gives us no console, so
+# ``print`` / tracebacks vanish and silent crashes leave nothing behind.
+# Tee stdout+stderr into ~/.genericagent-admin/launcher.log on first import
+# so post-mortems are possible. Skipped for ``--server-mode`` because the
+# parent already redirects the backend subprocess's logs (see ``_popen``
+# ``log_path``) into a separate file.
+if _is_frozen_binary() and "--server-mode" not in sys.argv[1:]:
+    try:
+        _laundir = Path.home() / ".genericagent-admin"
+        _laundir.mkdir(parents=True, exist_ok=True)
+        _launf = open(_laundir / "launcher.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = _launf
+        sys.stderr = _launf
+        import datetime as _dt
+        print(f"\n=== launcher start {_dt.datetime.now().isoformat()} pid={os.getpid()} "
+              f"argv={sys.argv} executable={sys.executable} ===")
+    except Exception:
+        pass
+
+
 def _resource_root() -> Path:
     """Return the directory containing bundled resources (webui/dist, server/).
 
     Under PyInstaller (frozen), bundled data lives at ``sys._MEIPASS``.
+    Under Nuitka standalone, data files included via ``--include-data-dir``
+    sit next to the compiled binary, so we use ``sys.executable``'s dir.
     In dev mode it's the directory of this script.
     """
-    if getattr(sys, "frozen", False):
+    if hasattr(sys, "_MEIPASS"):                                # PyInstaller
         return Path(sys._MEIPASS)  # type: ignore[attr-defined]
-    return Path(os.path.dirname(os.path.abspath(__file__)))
+    if _is_frozen_binary():                                     # Nuitka
+        return Path(os.path.dirname(os.path.abspath(sys.executable)))
+    return Path(os.path.dirname(os.path.abspath(__file__)))     # Dev
 
 
 SCRIPT_DIR = _resource_root()
@@ -60,7 +103,7 @@ def _helper_executable() -> str | None:
     present (e.g. ``pyinstaller`` without the helper BUNDLE block, or a
     dev run). Callers should fall back to ``sys.executable`` in that case.
     """
-    if not (sys.platform == "darwin" and getattr(sys, "frozen", False)):
+    if not (sys.platform == "darwin" and _is_frozen_binary()):
         return None
     try:
         main_macos = Path(sys.executable).resolve().parent             # …/Contents/MacOS
@@ -388,7 +431,7 @@ def main() -> int:
                 NSApplication.sharedApplication().setActivationPolicy_(2)
             except Exception:
                 pass
-        if getattr(sys, "frozen", False):
+        if _is_frozen_binary():
             # uvicorn does string-import "server.main:app"; ensure the bundle
             # root is on sys.path so that resolves against the frozen modules.
             sys.path.insert(0, str(_resource_root()))
@@ -431,7 +474,7 @@ def main() -> int:
     # a second Dock icon. Falls back to sys.executable if the helper
     # isn't bundled (older builds / dev). In dev we use the regular
     # Python module form.
-    if getattr(sys, "frozen", False):
+    if _is_frozen_binary():
         backend_cmd = [_helper_executable() or sys.executable, "--server-mode"]
     else:
         backend_cmd = [sys.executable, "-m", "server.run"]
