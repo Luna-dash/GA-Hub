@@ -168,20 +168,60 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   start: () => {
     if (get().sock) return
+
+    // Coalesce chat:next bursts. Background:
+    //   When the agent streams a long markdown answer, the backend emits a
+    //   {type:'next', content: <cumulative-so-far>} every ~50 ms. Without
+    //   throttling, each one triggers set() → React re-render →
+    //   ReactMarkdown re-parses the entire (growing) bubble. Past ~50 KB
+    //   the WKWebView renderer falls behind its GPU watchdog, the WebKit
+    //   process is killed, pywebview reload-recovers the URL, the new tab
+    //   reconnects → snapshot replays the same in-flight stream → crashes
+    //   again. From the user's POV the connection-status badge cycles
+    //   "连接中…/断开" and 停止/LLM-切换 buttons are unclickable because
+    //   React never reaches an idle frame.
+    //
+    //   Strategy: leading-edge + trailing flush, 100 ms quiet window.
+    //   First next of a quiet period applies immediately so streaming
+    //   feels live. Subsequent ones in the next 100 ms are merged
+    //   keyed by stream_id — content is cumulative so we keep only
+    //   the newest. Non-next events (snapshot/started/done/aborted/reset)
+    //   flush pending nexts first then apply, ensuring 'done' always
+    //   lands AFTER the latest visible content.
+    const pendingNext: Map<string, ChatWSOut & { type: 'next' }> = new Map()
+    let nextTimer: number | null = null
+    let lastFlush = 0
+    const FLUSH_MS = 100
+
+    const flushNext = () => {
+      if (nextTimer != null) {
+        window.clearTimeout(nextTimer)
+        nextTimer = null
+      }
+      if (pendingNext.size === 0) return
+      const evts = Array.from(pendingNext.values())
+      pendingNext.clear()
+      lastFlush = Date.now()
+      set((st) => {
+        let msgs = st.msgs
+        for (const e of evts) msgs = applyEvent(msgs, e)
+        return { msgs, streaming: anyStreaming(msgs) }
+      })
+    }
+
     const sock = new ChatSocket()
     sock.onState = (s) => {
       set({ conn: s })
       if (s === 'connecting') set({ hydrating: true })
     }
     sock.onMessage = (m) => {
-      // The very first message after connect is the chat-state snapshot. If
-      // the user has been heavy-chatting, parsing + rendering it synchronously
-      // blocks the WebView's main thread for ~3-5 seconds on launch ("can't
-      // click for a while"). Defer applying it past the next paint so the UI
-      // becomes interactive first; the restored bubbles fade in a moment
-      // later. Subsequent live events stay synchronous so streaming feels
-      // immediate.
+      // Snapshot is large; defer past the next paint so the WebView
+      // becomes interactive first (preserved from prior behaviour).
       if (m.type === 'snapshot') {
+        // Drop any in-flight next throttle — the snapshot is the
+        // authoritative state.
+        pendingNext.clear()
+        if (nextTimer != null) { window.clearTimeout(nextTimer); nextTimer = null }
         const apply = () => set((st) => {
           const msgs = applyEvent(st.msgs, m)
           return { msgs, streaming: anyStreaming(msgs), hydrating: false }
@@ -193,6 +233,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         return
       }
+
+      if (m.type === 'next') {
+        pendingNext.set(m.stream_id, m)
+        const since = Date.now() - lastFlush
+        if (since >= FLUSH_MS) {
+          flushNext()
+        } else if (nextTimer == null) {
+          nextTimer = window.setTimeout(flushNext, FLUSH_MS - since)
+        }
+        return
+      }
+
+      // Any other event (started / done / aborted / reset / error / pong):
+      // flush queued next first so done's final content lands AFTER the
+      // most recent streaming chunk, not before.
+      if (pendingNext.size > 0) flushNext()
       set((st) => {
         const msgs = applyEvent(st.msgs, m)
         return { msgs, streaming: anyStreaming(msgs) }

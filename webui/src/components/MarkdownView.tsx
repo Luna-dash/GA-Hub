@@ -9,33 +9,58 @@
 //      Code (fenced or inline) is left untouched so we don't mangle scripts.
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ReactNode } from 'react'
+import { memo, ReactNode, useMemo } from 'react'
 import { useCopy } from '@/utils/clipboard'
 import { api } from '@/api/client'
 
-export function MarkdownView({ children }: { children: string }) {
+// Stable component map. Defined at module scope so React.memo's shallow
+// children-equality on <MarkdownView> isn't undermined by ReactMarkdown
+// internally seeing a fresh `components` prop on every render.
+const MD_COMPONENTS = {
+  // Attach copy chip to fenced code blocks
+  pre: ({ children }: any) => <CodeBlock>{children}</CodeBlock>,
+  // Linkify paths in flowing prose
+  p: ({ children }: any) => <p>{linkifyChildren(children)}</p>,
+  li: ({ children }: any) => <li>{linkifyChildren(children)}</li>,
+  td: ({ children }: any) => <td>{linkifyChildren(children)}</td>,
+  th: ({ children }: any) => <th>{linkifyChildren(children)}</th>,
+  em: ({ children }: any) => <em>{linkifyChildren(children)}</em>,
+  strong: ({ children }: any) => <strong>{linkifyChildren(children)}</strong>,
+  // Don't touch <code>; leave inline + block code alone.
+} as const
+
+const MD_REMARK_PLUGINS = [remarkGfm]
+
+// Memoized so historical (non-streaming) bubbles don't re-parse markdown
+// when an unrelated bubble streams. Combined with chatStore's chat:next
+// throttle (≤10 Hz), this keeps the WKWebView renderer below its GPU
+// watchdog even on long markdown answers — see the comment in chatStore.ts
+// for the failure mode this guards against.
+//
+// The single `children: string` prop makes the default shallow comparison
+// optimal — if the string reference equals (or, with React's auto-string
+// dedup, is value-equal at the call site), we skip ReactMarkdown's whole
+// re-parse. The actively-streaming bubble still re-renders because its
+// content string changes; everyone else short-circuits.
+export const MarkdownView = memo(function MarkdownView({
+  children,
+}: {
+  children: string
+}) {
+  // useMemo on the empty-string fallback is overkill but cheap; it keeps the
+  // string identity stable across renders so children-equality holds.
+  const text = useMemo(() => children || '', [children])
   return (
     <div className="prose-chat max-w-none break-words">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          // Attach copy chip to fenced code blocks
-          pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-          // Linkify paths in flowing prose
-          p: ({ children }) => <p>{linkifyChildren(children)}</p>,
-          li: ({ children }) => <li>{linkifyChildren(children)}</li>,
-          td: ({ children }) => <td>{linkifyChildren(children)}</td>,
-          th: ({ children }) => <th>{linkifyChildren(children)}</th>,
-          em: ({ children }) => <em>{linkifyChildren(children)}</em>,
-          strong: ({ children }) => <strong>{linkifyChildren(children)}</strong>,
-          // Don't touch <code>; leave inline + block code alone.
-        }}
+        remarkPlugins={MD_REMARK_PLUGINS}
+        components={MD_COMPONENTS}
       >
-        {children || ''}
+        {text}
       </ReactMarkdown>
     </div>
   )
-}
+})
 
 function CodeBlock({ children }: { children: any }) {
   const { copied, copy } = useCopy()
