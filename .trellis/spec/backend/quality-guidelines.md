@@ -40,6 +40,8 @@ Questions to answer:
 
 #### 2. Signatures
 - `server._paths.discover_user_python(ga_root: Path | None = None) -> str | None`
+- `server._paths.external_python_site_paths(ga_root: Path | None = None) -> list[str]`
+- `server._paths.bootstrap_sys_path(ga_root: Path | None = None) -> Path | None`
 - `server._paths.python_status(ga_root: Path | None = None) -> dict[str, str | None]`
 - `POST /api/setup/save` request fields:
   - `ga_root: string`
@@ -58,6 +60,7 @@ Questions to answer:
   5. Known platform install locations.
   6. Only then fall back to the current process executable.
 - Runtime patching must replace GA `code_run` commands whose argv starts with Admin's `sys.executable` with the resolved external interpreter.
+- In-process GA tools can import optional packages before spawning a child process. `bootstrap_sys_path()` must add the resolved external Python environment's site-packages/user-site paths so tools such as `web_scan` can import dependencies like `simple_websocket_server` from the same environment that `code_run` uses.
 - Windows runtime patching must preserve `CREATE_NO_WINDOW` while still doing interpreter replacement.
 - Do not modify the GenericAgent repository to achieve this; patch at Admin startup.
 
@@ -71,10 +74,12 @@ Questions to answer:
 - Good: `GA_ROOT/.venv/bin/python3` exists and no override is set -> `resolved_python_source == "ga_venv"`.
 - Base: no GA venv exists but `python3` is on `PATH` -> use `PATH:python3`.
 - Bad: packaged Admin `sys.executable` is used for SOP `code_run` while a GA venv or configured interpreter exists.
+- Bad: packaged Admin can launch external `code_run`, but in-process `web_scan` still fails importing `simple_websocket_server` because external site-packages were not added to `sys.path`.
 
 #### 6. Tests Required
 - Unit tests for discovery priority: env > config > GA venv > PATH.
 - Unit tests that invalid explicit `python_path` is rejected before config write.
+- Unit tests that `bootstrap_sys_path()` appends external Python site-packages.
 - Frontend type/build check when setup/status response fields change.
 
 #### 7. Wrong vs Correct

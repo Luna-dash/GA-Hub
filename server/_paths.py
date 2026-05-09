@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -216,6 +217,54 @@ def python_status(ga_root: Path | None = None) -> dict[str, str | None]:
     }
 
 
+def external_python_site_paths(ga_root: Path | None = None) -> list[str]:
+    """Return import paths from the resolved external Python environment.
+
+    Some GA tools (notably ``web_scan``) import optional packages in the
+    Admin backend process instead of inside ``code_run``. Adding the resolved
+    interpreter's site-packages to ``sys.path`` lets those in-process GA tools
+    use the same environment that ``code_run`` will launch.
+    """
+    python = discover_user_python(ga_root)
+    if not python:
+        return []
+    try:
+        if Path(python).resolve() == Path(sys.executable).resolve():
+            return []
+    except Exception:
+        pass
+
+    code = (
+        "import json, site, sys\n"
+        "paths = []\n"
+        "try: paths.extend(site.getsitepackages())\n"
+        "except Exception: pass\n"
+        "try: paths.append(site.getusersitepackages())\n"
+        "except Exception: pass\n"
+        "print(json.dumps([p for p in paths if p and p not in sys.path]))\n"
+    )
+    try:
+        out = subprocess.check_output(
+            [python, "-c", code],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+        paths = json.loads(out)
+    except Exception as e:
+        log.warning("failed to inspect external Python site-packages %s: %s", python, e)
+        return []
+
+    result: list[str] = []
+    for raw in paths:
+        p = Path(str(raw)).expanduser()
+        if p.is_dir():
+            sp = str(p.resolve())
+            if sp not in result:
+                result.append(sp)
+    return result
+
+
 def set_ga_root(path: str, python_path: str | None | object = _UNSET) -> Path:
     """Validate path, persist to config, return resolved Path. Raises ValueError on bad input."""
     if not path or not str(path).strip():
@@ -247,7 +296,7 @@ GA_ROOT: Path | None = discover_ga_root()
 
 
 def bootstrap_sys_path(ga_root: Path | None = None) -> Path | None:
-    """Insert GA root + frontends/ into sys.path so we can import agentmain etc.
+    """Insert GA root, frontends/, and external Python packages into sys.path.
 
     Idempotent. Returns the path used (or None if not configured).
     """
@@ -258,6 +307,9 @@ def bootstrap_sys_path(ga_root: Path | None = None) -> Path | None:
     for p in (str(target), str(target / "frontends")):
         if p not in sys.path:
             sys.path.insert(0, p)
+    for p in external_python_site_paths(target):
+        if p not in sys.path:
+            sys.path.append(p)
     return target
 
 

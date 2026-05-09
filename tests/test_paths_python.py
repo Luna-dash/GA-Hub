@@ -1,4 +1,5 @@
 import json
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -80,6 +81,25 @@ class PythonDiscoveryTests(unittest.TestCase):
             saved = json.loads(config_file.read_text("utf-8"))
             self.assertEqual(saved["ga_root"], str(ga_root.resolve()))
             self.assertEqual(saved["python_path"], str(python_path.resolve()))
+
+    def test_bootstrap_sys_path_adds_external_python_site_packages(self):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            ga_root = root / "GenericAgent"
+            (ga_root / "frontends").mkdir(parents=True)
+            site_path = root / "site-packages"
+            site_path.mkdir()
+
+            original_sys_path = list(sys.path)
+            try:
+                with mock.patch.object(_paths, "external_python_site_paths", return_value=[str(site_path)]):
+                    _paths.bootstrap_sys_path(ga_root)
+
+                self.assertIn(str(ga_root.resolve()), sys.path)
+                self.assertIn(str((ga_root / "frontends").resolve()), sys.path)
+                self.assertIn(str(site_path), sys.path)
+            finally:
+                sys.path[:] = original_sys_path
 
 
 class ChatRetryConfigTests(unittest.TestCase):
