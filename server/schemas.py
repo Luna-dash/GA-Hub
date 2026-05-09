@@ -58,3 +58,34 @@ class ScheduleUpsert(BaseModel):
     idle_minutes: int | None = None
     cron: str | None = None
     interval_minutes: int | None = None
+
+
+# ── scheduled tasks ──────────────────────────────────────────────
+class TaskScheduleUpsert(BaseModel):
+    id: str | None = None
+    type: Literal["cron", "interval"] = "cron"
+    name: str = ""
+    enabled: bool = True
+    prompt: str = ""
+    cron: str | None = None
+    interval_minutes: int | None = None
+    notify_email: bool = False
+    email_to: str = ""
+    email_subject: str = ""
+
+
+class EmailConfigReq(BaseModel):
+    host: str = ""
+    port: int = 587
+    username: str = ""
+    password: str = ""
+    from_addr: str = ""
+    default_to: str = ""
+    use_tls: bool = True
+    use_ssl: bool = False
+
+
+class EmailTestReq(BaseModel):
+    to: str = ""
+    subject: str = "GenericAgent 邮件测试"
+    body: str = "这是一封来自 GenericAgent-Admin 的测试邮件。"

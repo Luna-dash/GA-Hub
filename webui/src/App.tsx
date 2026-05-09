@@ -19,10 +19,13 @@ import { Llms } from '@/pages/Llms'
 import { MyKey } from '@/pages/MyKey'
 import { Settings } from '@/pages/Settings'
 
-// Autonomous page pulls in cron-parser + cronstrue (~60KB gzipped).
-// Lazy-load it so visitors who never open /autonomous don't pay for it.
+// Autonomous/Tasks pages pull in cron-parser + cronstrue (~60KB gzipped).
+// Lazy-load them so visitors who never open scheduler pages don't pay for it.
 const Autonomous = lazy(() =>
   import('@/pages/Autonomous').then((m) => ({ default: m.Autonomous })),
+)
+const Tasks = lazy(() =>
+  import('@/pages/Tasks').then((m) => ({ default: m.Tasks })),
 )
 
 export default function App() {
@@ -123,6 +126,7 @@ export default function App() {
             <Route path="/skills" element={<Skills />} />
             <Route path="/llms" element={<Llms />} />
             <Route path="/mykey" element={<MyKey />} />
+            <Route path="/tasks" element={<Tasks />} />
             <Route path="/autonomous" element={<Autonomous />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>

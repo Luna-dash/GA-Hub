@@ -53,6 +53,8 @@ interface ChatState {
   clearLocal: () => void
   /** Push a system / banner bubble (e.g. /new ack, LLM switched, restore notice). */
   pushSystem: (content: string) => void
+  /** Clear stale local streaming locks when the backend is already idle. */
+  markIdle: () => void
 }
 
 // LiveChat shows the user's own webui session + admin-side flows
@@ -300,4 +302,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   clearLocal: () => set({ msgs: [], streaming: false }),
   pushSystem: (content) =>
     set((st) => ({ msgs: [...st.msgs, { role: 'assistant', content, source: 'system' }] })),
+  markIdle: () =>
+    set((st) => ({
+      msgs: st.msgs.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
+      streaming: false,
+    })),
 }))

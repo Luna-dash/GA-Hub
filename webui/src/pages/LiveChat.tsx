@@ -16,6 +16,7 @@ import { PageShell } from '@/components/PageShell'
 import { relTime } from '@/utils/foldTurns'
 import { detectLLMCapability, llmBadgeText, llmBadgeTitle } from '@/utils/llm'
 import { dialog } from '@/stores/dialogStore'
+import { useAgentStore } from '@/stores/agentStore'
 import { useChatStore } from '@/stores/chatStore'
 
 interface RestoreState {
@@ -35,10 +36,12 @@ export function LiveChat() {
   const streaming = useChatStore((s) => s.streaming)
   const conn = useChatStore((s) => s.conn)
   const hydrating = useChatStore((s) => s.hydrating)
+  const agentRunning = useAgentStore((s) => s.status?.is_running ?? false)
   const submitWebui = useChatStore((s) => s.submitWebui)
   const abortFn = useChatStore((s) => s.abort)
   const clearLocal = useChatStore((s) => s.clearLocal)
   const pushSystem = useChatStore((s) => s.pushSystem)
+  const markIdle = useChatStore((s) => s.markIdle)
 
   const [text, setText] = useState('')
   const [atts, setAtts] = useState<PasteAttachment[]>([])
@@ -60,6 +63,10 @@ export function LiveChat() {
   const llms = llmsData?.llms ?? []
   const currentLlm = llms.find((l) => l.current)
   const cap = detectLLMCapability(currentLlm?.name ?? '')
+
+  useEffect(() => {
+    if (streaming && !agentRunning) markIdle()
+  }, [streaming, agentRunning, markIdle])
 
   // Apply navigation-state restore once (e.g. coming from Conversations page).
   useEffect(() => {
@@ -156,10 +163,18 @@ export function LiveChat() {
 
   const switchLlm = async (idx: number) => {
     if (idx === currentLlm?.index) return
-    await api.switchLLM(idx)
-    qc.invalidateQueries({ queryKey: ['llms'] })
-    qc.invalidateQueries({ queryKey: ['status'] })
-    pushSystem(`_已切换到 [${idx}] ${llms.find((l) => l.index === idx)?.name ?? ''}_`)
+    if (streaming || agentRunning) {
+      pushSystem('_当前回复还在进行中。请先点「停止」或等待完成后再切换 LLM。_')
+      return
+    }
+    try {
+      await api.switchLLM(idx)
+      qc.invalidateQueries({ queryKey: ['llms'] })
+      qc.invalidateQueries({ queryKey: ['status'] })
+      pushSystem(`_已切换到 [${idx}] ${llms.find((l) => l.index === idx)?.name ?? ''}_`)
+    } catch (e: any) {
+      pushSystem(`_切换 LLM 失败：${e?.body?.detail || e?.message || String(e)}_`)
+    }
   }
 
   return (
@@ -173,8 +188,9 @@ export function LiveChat() {
               <select
                 value={currentLlm?.index ?? 0}
                 onChange={(e) => switchLlm(Number(e.target.value))}
-                className="bg-bg-card border border-line rounded-lg px-2 py-1.5 text-xs outline-none focus:border-accent max-w-[260px] truncate"
-                title="切换 LLM"
+                disabled={streaming || agentRunning}
+                className="bg-bg-card border border-line rounded-lg px-2 py-1.5 text-xs outline-none focus:border-accent max-w-[260px] truncate disabled:opacity-50"
+                title={streaming || agentRunning ? '当前回复进行中，请先停止或等待完成后再切换 LLM' : '切换 LLM'}
               >
                 {llms.map((l) => (
                   <option key={l.index} value={l.index}>
@@ -282,6 +298,10 @@ function sourceLabel(source: string): string {
       return '💬 [微信]'
     case 'task':
       return '📋 [任务模式]'
+    case 'scheduled_task':
+      return '⏰ [定时任务]'
+    case 'auto_continue':
+      return '🔁 [自动继续]'
     default:
       return `[${source}]`
   }

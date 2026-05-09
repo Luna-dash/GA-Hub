@@ -78,7 +78,10 @@ async def list_llms():
 
 @router.post("/api/llms/switch")
 async def switch_llm(req: LLMSwitch):
-    return svc().switch_llm(req.index)
+    try:
+        return svc().switch_llm(req.index)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
 
 
 @router.post("/api/llms/{idx}/test")

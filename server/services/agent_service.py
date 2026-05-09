@@ -37,6 +37,10 @@ from .event_bus import bus  # noqa: E402
 
 log = logging.getLogger(__name__)
 
+_AUTO_CONTINUE_MAX = 2
+_AUTO_CONTINUE_MARKERS = ("[!!! 流异常中断", "[!!! Response truncated: max_tokens")
+_AUTO_CONTINUE_PROMPT = "继续上一条回复，从中断处继续，不要重复已经完成的内容。"
+
 
 # ── Suppress GA-spawned subprocess UI side-effects (per-platform) ────────────
 def _patch_ga_subprocess() -> None:
@@ -150,6 +154,7 @@ class StreamHandle:
     finished: bool = False
     last_chunk: str = ""
     final_text: str = ""
+    auto_continue_count: int = 0
 
 
 # ── chat replay snapshot (so a /ws/chat client that reconnects after a tab
@@ -239,6 +244,8 @@ class AgentService:
         return out
 
     def switch_llm(self, n: int) -> dict:
+        if bool(getattr(self.agent, "is_running", False)):
+            raise RuntimeError("agent is running; wait for the current reply or stop it before switching LLM")
         self.agent.next_llm(int(n))
         # Mark this as the user's explicit preference (separate from the
         # transient agent.llm_no which any code path can mutate).
@@ -313,7 +320,14 @@ class AgentService:
         # publish a parallel chat:aborted to keep the event stream simple.
 
     # ── tasks ────────────────────────────────────────────────────
-    def submit(self, query: str, *, source: str = "user", images: list[str] | None = None) -> StreamHandle:
+    def submit(
+        self,
+        query: str,
+        *,
+        source: str = "user",
+        images: list[str] | None = None,
+        auto_continue_count: int = 0,
+    ) -> StreamHandle:
         """Enqueue a task; spawn a single fan-out drainer that publishes
         chat:* events to the bus AND keeps the StreamHandle's display_queue
         full for legacy sync consumers (wechat_service)."""
@@ -330,7 +344,7 @@ class AgentService:
         src_q = self.agent.put_task(query, source=source, images=images or [])
         # The handle queue we hand to callers (kept in sync by the drainer).
         out_q: "_q.Queue" = _q.Queue()
-        h = StreamHandle(stream_id=sid, display_queue=out_q)
+        h = StreamHandle(stream_id=sid, display_queue=out_q, auto_continue_count=auto_continue_count)
         snap = ChatSnapshot(
             stream_id=sid, source=source, query=query or "",
             started_at=time.time(),
@@ -392,6 +406,7 @@ class AgentService:
                         "content": content,
                     })
                     bus.publish("agent:done", {"stream_id": h.stream_id, "len": len(content)})
+                    self._maybe_auto_continue(h, snap, content)
                     return
         except Exception as e:
             log.exception("fanout crashed for %s: %s", h.stream_id, e)
@@ -403,6 +418,18 @@ class AgentService:
                 "source": snap.source,
                 "content": snap.content + f"\n[stream error: {e}]",
             })
+
+    def _maybe_auto_continue(self, h: StreamHandle, snap: ChatSnapshot, content: str) -> None:
+        if snap.source not in ("user", "webui", "auto_continue", "scheduled_task", "autonomous", "reflect"):
+            return
+        if h.auto_continue_count >= _AUTO_CONTINUE_MAX:
+            return
+        tail = (content or "")[-300:]
+        if not any(marker in tail for marker in _AUTO_CONTINUE_MARKERS):
+            return
+        next_count = h.auto_continue_count + 1
+        log.info("auto-continuing interrupted stream %s (%d/%d)", h.stream_id, next_count, _AUTO_CONTINUE_MAX)
+        self.submit(_AUTO_CONTINUE_PROMPT, source="auto_continue", auto_continue_count=next_count)
 
     # ── replay (used by /ws/chat on connect) ────────────────────
     def chat_state_snapshot(self) -> list[dict]:

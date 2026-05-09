@@ -12,6 +12,7 @@ const items = [
   { to: '/skills', label: '技能库', icon: '🌳' },
   { to: '/llms', label: 'LLM', icon: '⚡' },
   { to: '/mykey', label: '链路配置', icon: '🔑' },
+  { to: '/tasks', label: '定时任务', icon: '⏰' },
   { to: '/autonomous', label: '自主进化', icon: '🌀' },
   { to: '/settings', label: '设置', icon: '⚙️' },
 ]

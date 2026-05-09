@@ -223,6 +223,18 @@ def runs_file() -> Path:
     return ADMIN_DATA / "autonomous_runs.jsonl"
 
 
+def tasks_schedules_file() -> Path:
+    return ADMIN_DATA / "tasks_schedules.json"
+
+
+def tasks_runs_file() -> Path:
+    return ADMIN_DATA / "tasks_runs.jsonl"
+
+
+def email_config_file() -> Path:
+    return ADMIN_DATA / "email_config.json"
+
+
 def reports_dir() -> Path:
     """GenericAgent's autonomous reports directory (under GA's temp/)."""
     return temp_dir() / "autonomous_reports"

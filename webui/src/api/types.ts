@@ -143,6 +143,50 @@ export interface AutonomousRun {
 
 export interface ReportItem { name: string; size: number; mtime: number }
 
+// ── Scheduled Tasks ───────────────────────────────────────
+export type TaskScheduleType = 'cron' | 'interval'
+
+export interface TaskSchedule {
+  id: string
+  type: TaskScheduleType
+  enabled: boolean
+  prompt: string
+  cron: string
+  interval_minutes: number
+  notify_email: boolean
+  email_to: string
+  email_subject: string
+  last_fired_at: number
+  fire_count: number
+  name: string
+}
+
+export interface TaskRun {
+  id: string
+  task_id: string
+  task_name: string
+  fired_at: number
+  stream_id: string
+  finished_at: number
+  status: 'running' | 'done' | 'error' | 'timeout' | string
+  prompt_preview: string
+  result_preview: string
+  email_sent: boolean
+  email_error: string
+  note: string
+}
+
+export interface EmailConfig {
+  host: string
+  port: number
+  username: string
+  from_addr: string
+  default_to: string
+  use_tls: boolean
+  use_ssl: boolean
+  password_set: boolean
+}
+
 // ── Upload ────────────────────────────────────────────────
 export interface UploadResult {
   file_id: string

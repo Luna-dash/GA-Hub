@@ -172,6 +172,7 @@ def create_app() -> FastAPI:
         # Lazy imports after _paths is set
         from .services.agent_service import AgentService
         from .services.autonomous_scheduler import AutonomousScheduler
+        from .services.task_scheduler import TaskScheduler
         from .services.wechat_service import WeChatService
 
         agent_svc = AgentService.instance()
@@ -199,12 +200,24 @@ def create_app() -> FastAPI:
         except Exception as e:
             log.warning("autonomous scheduler init skipped: %s", e)
 
+        try:
+            task_sched = TaskScheduler.instance(agent_svc)
+            task_sched.start()
+            log.info("task scheduler started (%d schedules)", len(task_sched.schedules))
+        except Exception as e:
+            log.warning("task scheduler init skipped: %s", e)
+
     @app.on_event("shutdown")
     async def _shutdown():
         if not setup_mode:
             try:
                 from .services.autonomous_scheduler import AutonomousScheduler
                 AutonomousScheduler.instance().shutdown()
+            except Exception:
+                pass
+            try:
+                from .services.task_scheduler import TaskScheduler
+                TaskScheduler.instance().shutdown()
             except Exception:
                 pass
 
@@ -236,6 +249,13 @@ def create_app() -> FastAPI:
             }
         except Exception:
             pass
+        try:
+            from .services.task_scheduler import TaskScheduler
+            out["tasks"] = {
+                "schedule_count": len(TaskScheduler.instance().schedules),
+            }
+        except Exception:
+            pass
         return out
 
     if not setup_mode:
@@ -247,6 +267,7 @@ def create_app() -> FastAPI:
             memory as memory_routes,
             mykey as mykey_routes,
             notify as notify_routes,
+            tasks as task_routes,
             upload as upload_routes,
             wechat as wechat_routes,
         )
@@ -259,6 +280,7 @@ def create_app() -> FastAPI:
         app.include_router(log_routes.router)
         app.include_router(mykey_routes.router)
         app.include_router(notify_routes.router)
+        app.include_router(task_routes.router)
 
     _mount_static(app)
     return app

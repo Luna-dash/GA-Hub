@@ -9,6 +9,7 @@ import type {
   ChatWSOut,
   Conversation,
   ConversationSummary,
+  EmailConfig,
   LLMInfo,
   LLMTestResult,
   MyKeyBackup,
@@ -19,6 +20,9 @@ import type {
   Schedule,
   ScheduleType,
   SessionSnapshot,
+  TaskRun,
+  TaskSchedule,
+  TaskScheduleType,
   SetupStatus,
   SOPItem,
   SkillItem,
@@ -158,6 +162,19 @@ export const api = {
   runs: (limit = 100) => http<{ runs: AutonomousRun[] }>('GET', `/api/autonomous/runs?limit=${limit}`),
   reports: () => http<{ reports: ReportItem[] }>('GET', '/api/autonomous/reports'),
   report: (name: string) => http<{ name: string; content: string }>('GET', `/api/autonomous/reports/${encodeURIComponent(name)}`),
+
+  // ── scheduled tasks ──────────────────────────────────
+  taskSchedules: () => http<{ schedules: TaskSchedule[] }>('GET', '/api/tasks/schedules'),
+  upsertTaskSchedule: (s: Partial<TaskSchedule> & { type: TaskScheduleType }) =>
+    http<TaskSchedule>('POST', '/api/tasks/schedules', s),
+  deleteTaskSchedule: (id: string) => http<{ ok: boolean }>('DELETE', `/api/tasks/schedules/${id}`),
+  triggerTaskSchedule: (id: string) => http<{ run_id: string; stream_id: string }>('POST', `/api/tasks/schedules/${id}/trigger`),
+  taskRuns: (limit = 100) => http<{ runs: TaskRun[] }>('GET', `/api/tasks/runs?limit=${limit}`),
+  taskEmailConfig: () => http<EmailConfig>('GET', '/api/tasks/email-config'),
+  saveTaskEmailConfig: (cfg: Partial<EmailConfig> & { password?: string }) =>
+    http<EmailConfig>('PUT', '/api/tasks/email-config', cfg),
+  testTaskEmail: (to: string, subject: string, body: string) =>
+    http<{ ok: boolean; to: string; error?: string }>('POST', '/api/tasks/email-test', { to, subject, body }),
 
   // ── upload ───────────────────────────────────────────
   upload: async (file: File): Promise<UploadResult> => {
