@@ -54,6 +54,7 @@ WEBUI_DIST = _paths.ADMIN_ROOT / "webui" / "dist"
 
 class SetupReq(BaseModel):
     ga_root: str
+    python_path: str | None = None
 
 
 def _setup_router() -> APIRouter:
@@ -87,6 +88,7 @@ def _setup_router() -> APIRouter:
             "ga_root": str(_paths.GA_ROOT) if _paths.GA_ROOT else None,
             "admin_data": str(_paths.ADMIN_DATA),
             "candidates": candidates,
+            **_paths.python_status(),
         }
 
     @r.post("/validate")
@@ -99,10 +101,11 @@ def _setup_router() -> APIRouter:
     @r.post("/save")
     async def setup_save(req: SetupReq):
         try:
-            p = _paths.set_ga_root(req.ga_root)
+            python_arg = req.python_path if "python_path" in req.model_fields_set else _paths._UNSET
+            p = _paths.set_ga_root(req.ga_root, python_arg)
         except ValueError as e:
             raise HTTPException(400, str(e))
-        return {"ok": True, "ga_root": str(p), "restart_required": True}
+        return {"ok": True, "ga_root": str(p), "restart_required": True, **_paths.python_status(p)}
 
     return r
 
@@ -230,6 +233,7 @@ def create_app() -> FastAPI:
         out: dict[str, Any] = {
             "configured": _paths.GA_ROOT is not None,
             "ga_root": str(_paths.GA_ROOT) if _paths.GA_ROOT else None,
+            **_paths.python_status(),
         }
         if setup_mode:
             out["mode"] = "setup"

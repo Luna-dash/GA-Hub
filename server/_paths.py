@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -37,6 +38,7 @@ log = logging.getLogger(__name__)
 ADMIN_ROOT = Path(__file__).resolve().parent.parent             # the admin checkout
 ADMIN_DATA = Path(os.environ.get("GA_ADMIN_DATA") or (Path.home() / ".genericagent-admin")).resolve()
 CONFIG_FILE = ADMIN_DATA / "config.json"
+_UNSET = object()
 
 
 # ── config load/save ────────────────────────────────────────────
@@ -109,7 +111,77 @@ def discover_ga_root() -> Path | None:
     return None
 
 
-def discover_user_python() -> str | None:
+def validate_python_path(path: str | None) -> str | None:
+    """Normalize an optional Python interpreter path from user config."""
+    raw = str(path or "").strip()
+    if not raw:
+        return None
+    p = Path(raw).expanduser().resolve()
+    if not p.is_file():
+        raise ValueError(f"Python 解释器不存在：{p}")
+    return str(p)
+
+
+def _ga_venv_python_candidates(ga_root: Path | None) -> list[Path]:
+    if ga_root is None:
+        return []
+    roots = [ga_root / name for name in (".venv", "venv", "env")]
+    out: list[Path] = []
+    for root in roots:
+        if os.name == "nt":
+            out.append(root / "Scripts" / "python.exe")
+            out.append(root / "Scripts" / "python3.exe")
+        else:
+            out.append(root / "bin" / "python3")
+            out.append(root / "bin" / "python")
+    return out
+
+
+def _discover_user_python_with_source(ga_root: Path | None = None) -> tuple[str | None, str]:
+    target_root = ga_root or GA_ROOT
+
+    env = os.environ.get("GA_PYTHON", "").strip()
+    if env:
+        try:
+            return validate_python_path(env), "GA_PYTHON"
+        except ValueError:
+            log.warning("$GA_PYTHON=%s is not a valid Python executable; ignoring", env)
+
+    saved = load_config().get("python_path")
+    if saved:
+        try:
+            return validate_python_path(str(saved)), "config.python_path"
+        except ValueError:
+            log.warning("configured python_path=%s is not a valid Python executable; ignoring", saved)
+
+    for cand in _ga_venv_python_candidates(target_root):
+        if cand.is_file():
+            return str(cand.resolve()), "ga_venv"
+
+    for name in ("python3", "python"):
+        found = shutil.which(name)
+        if found:
+            return str(Path(found).resolve()), f"PATH:{name}"
+
+    candidates = [
+        "/opt/homebrew/bin/python3",        # Apple Silicon Homebrew
+        "/usr/local/bin/python3",           # Intel Homebrew / python.org installer
+        f"{Path.home()}/.pyenv/shims/python3",
+        "/usr/bin/python3",                 # Apple stub (last resort, no user pkgs)
+    ]
+    if os.name == "nt":
+        candidates.extend([
+            str(Path.home() / "AppData/Local/Programs/Python/Python312/python.exe"),
+            str(Path.home() / "AppData/Local/Programs/Python/Python311/python.exe"),
+            str(Path.home() / "AppData/Local/Programs/Python/Python310/python.exe"),
+        ])
+    for cand in candidates:
+        if Path(cand).is_file():
+            return str(Path(cand).resolve()), "known_location"
+    return None, "current_process"
+
+
+def discover_user_python(ga_root: Path | None = None) -> str | None:
     """Resolve a system Python suitable for running GA's ``code_run``.
 
     Why this exists: in a PyInstaller-frozen ``.app`` build, ``sys.executable``
@@ -121,38 +193,30 @@ def discover_user_python() -> str | None:
     one. Resolution order:
 
       1. ``$GA_PYTHON`` env override (escape hatch for tests / weird setups)
-      2. saved config: ``python_path`` (UI-configured path, future-proofing)
-      3. ``shutil.which("python3")`` against the parent process's PATH
-      4. macOS Homebrew (Apple Silicon then Intel), pyenv shim, Apple stub
+      2. saved config: ``python_path`` (UI-configured path)
+      3. GenericAgent project virtualenvs (``.venv``, ``venv``, ``env``)
+      4. ``python3`` / ``python`` against the parent process's PATH
+      5. macOS Homebrew, pyenv shim, Apple stub, common Windows installs
 
     Returns absolute path, or ``None`` if nothing usable was found. Callers
     should treat ``None`` as "fall back to ``sys.executable``" — acceptable
     in dev (where ``sys.executable`` is already a real interpreter) but a
     fatal misconfiguration in frozen-mac builds.
     """
-    import shutil
-    env = os.environ.get("GA_PYTHON", "").strip()
-    if env and Path(env).is_file():
-        return env
+    return _discover_user_python_with_source(ga_root)[0]
+
+
+def python_status(ga_root: Path | None = None) -> dict[str, str | None]:
+    resolved, source = _discover_user_python_with_source(ga_root)
     saved = load_config().get("python_path")
-    if saved and Path(str(saved)).is_file():
-        return str(saved)
-    found = shutil.which("python3")
-    if found:
-        return found
-    candidates = [
-        "/opt/homebrew/bin/python3",        # Apple Silicon Homebrew
-        "/usr/local/bin/python3",           # Intel Homebrew / python.org installer
-        f"{Path.home()}/.pyenv/shims/python3",
-        "/usr/bin/python3",                 # Apple stub (last resort, no user pkgs)
-    ]
-    for cand in candidates:
-        if Path(cand).is_file():
-            return cand
-    return None
+    return {
+        "python_path": str(saved) if saved else None,
+        "resolved_python": resolved,
+        "resolved_python_source": source,
+    }
 
 
-def set_ga_root(path: str) -> Path:
+def set_ga_root(path: str, python_path: str | None | object = _UNSET) -> Path:
     """Validate path, persist to config, return resolved Path. Raises ValueError on bad input."""
     if not path or not str(path).strip():
         raise ValueError("路径为空")
@@ -164,8 +228,16 @@ def set_ga_root(path: str) -> Path:
             f"该目录不是 GenericAgent 项目根目录\n"
             f"（缺少 agentmain.py 或 memory/）：{p}"
         )
+    normalized_python = None
+    if python_path is not _UNSET:
+        normalized_python = validate_python_path(python_path if isinstance(python_path, str) else None)
     cfg = load_config()
     cfg["ga_root"] = str(p)
+    if python_path is not _UNSET:
+        if normalized_python:
+            cfg["python_path"] = normalized_python
+        else:
+            cfg.pop("python_path", None)
     save_config(cfg)
     return p
 

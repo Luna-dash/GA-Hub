@@ -63,14 +63,18 @@ async function http<T>(method: string, path: string, body?: unknown, init?: Requ
 
 export const api = {
   // ── status ───────────────────────────────────────────
-  status: () => http<{ configured: boolean; ga_root: string | null; mode?: string; agent?: AgentStatus; wechat?: WxStatus; autonomous?: any }>('GET', '/api/status'),
+  status: () => http<{ configured: boolean; ga_root: string | null; python_path?: string | null; resolved_python?: string | null; resolved_python_source?: string; mode?: string; agent?: AgentStatus; wechat?: WxStatus; autonomous?: any }>('GET', '/api/status'),
 
   // ── setup (always available, even in setup mode) ────
   setupStatus: () => http<SetupStatus>('GET', '/api/setup/status'),
   setupValidate: (ga_root: string) =>
     http<{ valid: boolean; resolved: string }>('POST', '/api/setup/validate', { ga_root }),
-  setupSave: (ga_root: string) =>
-    http<{ ok: boolean; ga_root: string; restart_required: boolean }>('POST', '/api/setup/save', { ga_root }),
+  setupSave: (ga_root: string, python_path?: string) =>
+    http<{ ok: boolean; ga_root: string; python_path: string | null; resolved_python: string | null; resolved_python_source: string; restart_required: boolean }>(
+      'POST',
+      '/api/setup/save',
+      { ga_root, python_path },
+    ),
 
   // ── agent ────────────────────────────────────────────
   agentStatus: () => http<AgentStatus>('GET', '/api/agent/status'),

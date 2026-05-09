@@ -13,6 +13,7 @@ export function Settings({ initialMode = 'settings' }: { initialMode?: 'settings
   const qc = useQueryClient()
   const { data: setup, refetch } = useQuery({ queryKey: ['setup'], queryFn: api.setupStatus })
   const [input, setInput] = useState('')
+  const [pythonInput, setPythonInput] = useState('')
   const [validating, setValidating] = useState(false)
   const [validResult, setValidResult] = useState<{ valid: boolean; resolved: string } | null>(null)
   const [saving, setSaving] = useState(false)
@@ -20,8 +21,10 @@ export function Settings({ initialMode = 'settings' }: { initialMode?: 'settings
   const [saveErr, setSaveErr] = useState<string | null>(null)
 
   useEffect(() => {
-    if (setup && !input) setInput(setup.ga_root || '')
-  }, [setup, input])
+    if (!setup) return
+    if (!input) setInput(setup.ga_root || '')
+    if (!pythonInput) setPythonInput(setup.python_path || '')
+  }, [setup, input, pythonInput])
 
   const validate = async (path: string) => {
     if (!path.trim()) { setValidResult(null); return }
@@ -39,7 +42,7 @@ export function Settings({ initialMode = 'settings' }: { initialMode?: 'settings
   const save = async () => {
     setSaveMsg(null); setSaveErr(null); setSaving(true)
     try {
-      const r = await api.setupSave(input.trim())
+      const r = await api.setupSave(input.trim(), pythonInput.trim())
       setSaveMsg(`✓ 已保存：${r.ga_root}\n请重启后端（关闭并重开窗口）以加载新配置。`)
       qc.invalidateQueries({ queryKey: ['setup'] })
       qc.invalidateQueries({ queryKey: ['status'] })
@@ -73,11 +76,20 @@ export function Settings({ initialMode = 'settings' }: { initialMode?: 'settings
           <div className="text-xs text-slate-500 mt-2">
             Admin 数据目录：<span className="font-mono">{setup?.admin_data}</span>
           </div>
+          <div className="text-xs text-slate-500 mt-2">
+            Python 执行环境：
+            <span className="font-mono text-slate-300 break-all">
+              {setup?.resolved_python || '未找到，将回退当前进程'}
+            </span>
+            {setup?.resolved_python_source && (
+              <span className="ml-1 text-slate-600">({setup.resolved_python_source})</span>
+            )}
+          </div>
         </div>
 
         {/* picker */}
         <div className="rounded-xl border border-line bg-bg-card p-4">
-          <div className="text-sm font-semibold mb-3">选择目录</div>
+          <div className="text-sm font-semibold mb-3">选择目录与执行环境</div>
           <div className="text-xs text-slate-500 mb-3">
             必须包含 <code>agentmain.py</code> 与 <code>memory/</code>。
           </div>
@@ -104,6 +116,19 @@ export function Settings({ initialMode = 'settings' }: { initialMode?: 'settings
                 : '✗ 该目录不是 GenericAgent 项目（缺少 agentmain.py 或 memory/）'}
             </div>
           )}
+
+          <div className="mt-4">
+            <div className="text-xs text-slate-500 mb-1">Python 解释器（可选）</div>
+            <input
+              value={pythonInput}
+              onChange={(e) => setPythonInput(e.target.value)}
+              placeholder="/path/to/python；留空则自动使用 GA 虚拟环境或本机 Python"
+              className="w-full bg-bg-soft border border-line rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"
+            />
+            <div className="text-xs text-slate-500 mt-1">
+              用于 SOP / code_run 执行 Python。优先级：GA_PYTHON 环境变量 → 此处配置 → GA 项目虚拟环境 → 本机 Python。
+            </div>
+          </div>
 
           <div className="mt-4 flex items-center gap-2">
             <button

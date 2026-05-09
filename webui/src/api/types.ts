@@ -9,6 +9,9 @@ export interface SetupCandidate {
 export interface SetupStatus {
   configured: boolean
   ga_root: string | null
+  python_path: string | null
+  resolved_python: string | null
+  resolved_python_source: string
   admin_data: string
   candidates: SetupCandidate[]
 }
