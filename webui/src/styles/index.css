@@ -1,0 +1,162 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────
+   Theme tokens
+   ─────────────────────────────────────────────────────────────
+   Default = dark. Adding `light` to <html> swaps the palette for
+   the entire app. Tailwind's custom colors (bg, line, accent in
+   tailwind.config.js) reference these vars, so existing utility
+   classes — `bg-bg-card`, `border-line`, etc — adapt automatically.
+
+   Slate text utilities are heavily used and aren't theme-aware on
+   their own. Rather than refactoring 100+ files we override the
+   most common slate-* utilities directly when the light class is
+   active, biasing toward darker text on light surfaces.
+*/
+:root {
+  --c-bg: #0b0d10;
+  --c-bg-soft: #12161b;
+  --c-bg-card: #171c22;
+  --c-line: #252b33;
+  --c-accent: #5b9bff;
+  --c-accent-soft: #1a3656;
+  --c-scrollbar-thumb: #2a313a;
+  --c-scrollbar-thumb-hover: #3a4350;
+  --c-overlay-soft: rgba(255, 255, 255, 0.05);
+  --c-overlay-soft-strong: rgba(255, 255, 255, 0.1);
+  color-scheme: dark;
+}
+
+html.light {
+  --c-bg: #ffffff;
+  --c-bg-soft: #f8fafc;       /* slate-50  */
+  --c-bg-card: #ffffff;
+  --c-line: #e2e8f0;          /* slate-200 */
+  --c-accent: #2563eb;        /* blue-600  */
+  --c-accent-soft: #dbeafe;   /* blue-100  */
+  --c-scrollbar-thumb: #cbd5e1;
+  --c-scrollbar-thumb-hover: #94a3b8;
+  --c-overlay-soft: rgba(15, 23, 42, 0.05);
+  --c-overlay-soft-strong: rgba(15, 23, 42, 0.10);
+  color-scheme: light;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  background-color: var(--c-bg);
+  color: #e2e8f0;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+html.light body {
+  color: #0f172a; /* slate-900 */
+}
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--c-scrollbar-thumb); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--c-scrollbar-thumb-hover); }
+
+/* ─── Light-mode utility overrides ──────────────────────────
+   The dark UI uses slate-50…600 for text, white/N for hover/border
+   accents. In light mode we remap them to readable equivalents on
+   bright surfaces. Selectors are scoped under html.light so dark
+   mode stays a no-op (zero CSS specificity churn there).
+*/
+html.light .text-slate-50,
+html.light .text-slate-100,
+html.light .text-slate-200 { color: #0f172a; }    /* slate-900 */
+html.light .text-slate-300 { color: #1e293b; }    /* slate-800 */
+html.light .text-slate-400 { color: #475569; }    /* slate-600 */
+html.light .text-slate-500 { color: #64748b; }    /* slate-500 */
+html.light .text-slate-600 { color: #94a3b8; }    /* slate-400 */
+html.light .hover\:text-slate-100:hover,
+html.light .hover\:text-slate-200:hover { color: #0f172a; }
+html.light .hover\:text-slate-300:hover { color: #1e293b; }
+
+html.light .placeholder\:text-slate-500::placeholder { color: #94a3b8; }
+
+/* white/black overlay utilities used for hovers / dividers */
+html.light .bg-white\/5  { background-color: var(--c-overlay-soft); }
+html.light .bg-white\/10 { background-color: var(--c-overlay-soft-strong); }
+html.light .hover\:bg-white\/5:hover  { background-color: var(--c-overlay-soft); }
+html.light .hover\:bg-white\/10:hover { background-color: var(--c-overlay-soft-strong); }
+html.light .border-white\/10 { border-color: rgba(15, 23, 42, 0.10); }
+
+html.light .bg-black\/40,
+html.light .bg-black\/55,
+html.light .bg-black\/60 {
+  background-color: rgba(15, 23, 42, 0.35);
+}
+
+/* Tinted state badges originally tuned for dark backgrounds — soften
+   their bg/border so they remain legible on white. The text colors
+   stay vivid for status semantics. */
+html.light .bg-emerald-900\/40 { background-color: #d1fae5; }
+html.light .bg-amber-900\/40   { background-color: #fef3c7; }
+html.light .bg-rose-900\/40    { background-color: #ffe4e6; }
+html.light .bg-amber-900\/20   { background-color: #fef3c7; }
+html.light .border-amber-700\/60 { border-color: #fcd34d; }
+html.light .text-amber-200 { color: #b45309; }
+html.light .text-amber-300 { color: #b45309; }
+html.light .text-emerald-300 { color: #047857; }
+html.light .text-emerald-400 { color: #059669; }
+html.light .text-rose-300 { color: #be123c; }
+html.light .text-rose-400 { color: #e11d48; }
+
+/* Markdown */
+.prose-chat pre {
+  @apply bg-bg-soft border border-line rounded-lg p-3 overflow-x-auto text-sm;
+}
+.prose-chat code {
+  @apply font-mono text-[0.92em] text-amber-200;
+}
+html.light .prose-chat code { color: #b45309; }
+.prose-chat pre code { @apply text-slate-200; }
+html.light .prose-chat pre code { color: #0f172a; }
+.prose-chat h1 { @apply text-xl font-semibold mt-3 mb-2; }
+.prose-chat h2 { @apply text-lg font-semibold mt-3 mb-2; }
+.prose-chat h3 { @apply text-base font-semibold mt-2 mb-1; }
+.prose-chat p { @apply leading-7 my-1; }
+.prose-chat ul { @apply list-disc list-inside ml-2; }
+.prose-chat ol { @apply list-decimal list-inside ml-2; }
+.prose-chat blockquote { @apply border-l-2 border-line pl-3 text-slate-400; }
+.prose-chat table { @apply text-sm border border-line; }
+.prose-chat th, .prose-chat td { @apply border border-line px-2 py-1; }
+.prose-chat a { @apply text-accent underline; }
+
+.turn-fold {
+  @apply rounded-lg border border-line bg-bg-soft my-2;
+}
+.turn-fold > summary {
+  @apply cursor-pointer select-none px-3 py-2 text-sm text-slate-400 hover:text-slate-200;
+  list-style: none;
+  /* Long titles (multi-line <summary> from the agent) used to be chopped
+     at 80 chars with an ellipsis. We now show them in full and let the
+     summary line wrap so users can scan agent reasoning at a glance. */
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.5;
+}
+.turn-fold > summary::-webkit-details-marker { display: none; }
+.turn-fold > summary::before {
+  content: '▸';
+  @apply mr-2 text-slate-500 transition-transform inline-block;
+}
+.turn-fold[open] > summary::before { transform: rotate(90deg); }
+.turn-fold[open] > summary { @apply text-slate-300; }
+.turn-fold > div { @apply px-3 pb-3; }
+
+.cursor-blink::after {
+  content: '▌';
+  @apply ml-0.5 text-accent;
+  animation: blink 1s steps(2) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
