@@ -36,7 +36,7 @@ Questions to answer:
 
 #### 1. Scope / Trigger
 - Trigger: Any change to GenericAgent tool execution, packaged runtime startup, setup/config endpoints, or code paths that affect `ga.py:code_run`.
-- Contract: GenericAgent-Admin must not require user/SOP Python dependencies to be bundled into the Admin package. GA Python code execution must use an external interpreter.
+- Contract: GA-Hub must not require user/SOP Python dependencies to be bundled into the Admin package. GA Python code execution must use an external interpreter.
 
 #### 2. Signatures
 - `server._paths.discover_user_python(ga_root: Path | None = None) -> str | None`

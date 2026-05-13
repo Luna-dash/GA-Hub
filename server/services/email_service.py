@@ -112,4 +112,4 @@ def send_email(to: str, subject: str, body: str) -> dict[str, Any]:
 
 
 def test_email(to: str = "", subject: str = "GenericAgent 邮件测试", body: str = "") -> dict[str, Any]:
-    return send_email(to, subject, body or "这是一封来自 GenericAgent-Admin 的测试邮件。")
+    return send_email(to, subject, body or "这是一封来自 GA-Hub 的测试邮件。")

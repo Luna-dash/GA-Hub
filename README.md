@@ -22,7 +22,7 @@
 ### macOS / Linux
 
 ```bash
-cd GenericAgent-Admin
+cd GA-Hub
 ./install_webui.sh    # 一次性装依赖 + 构建前端
 ./start.command       # 启动；之后双击 start.command 即可
 ```
@@ -106,7 +106,7 @@ npm run dev   # → http://localhost:5173
 ## 目录结构
 
 ```
-GenericAgent-Admin/                  # 本项目 — 完全独立
+GA-Hub/                              # 本项目 — 完全独立
 ├── pyproject.toml
 ├── README.md
 ├── install_webui.sh / .bat          # 一键装依赖 + 构建

@@ -93,4 +93,4 @@ class EmailConfigReq(BaseModel):
 class EmailTestReq(BaseModel):
     to: str = ""
     subject: str = "GenericAgent 邮件测试"
-    body: str = "这是一封来自 GenericAgent-Admin 的测试邮件。"
+    body: str = "这是一封来自 GA-Hub 的测试邮件。"

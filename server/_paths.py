@@ -1,4 +1,4 @@
-"""Path discovery & configuration for GenericAgent-Admin.
+"""Path discovery & configuration for GA-Hub.
 
 The admin tool lives in its own directory (sibling of the GenericAgent
 project, or anywhere on disk). It discovers the GenericAgent project root
@@ -251,11 +251,12 @@ def external_python_site_paths(ga_root: Path | None = None) -> list[str]:
         "print(json.dumps([p for p in paths if p and p not in sys.path]))\n"
     )
     try:
+        kwargs: dict = dict(text=True, stderr=subprocess.DEVNULL, timeout=5)
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         out = subprocess.check_output(
             [python, "-c", code],
-            text=True,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
+            **kwargs,
         )
         paths = json.loads(out)
     except Exception as e:

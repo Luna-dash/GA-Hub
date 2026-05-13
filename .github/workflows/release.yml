@@ -29,11 +29,11 @@ jobs:
           # x86_64 .app run on both arches, at the cost of slower startup
           # on Apple Silicon.
           - os: macos-latest
-            artifact: build/GenericAgent-Admin-*.dmg
-            asset_name: GenericAgent-Admin-macOS.dmg
+            artifact: build/GA-Hub-*.dmg
+            asset_name: GA-Hub-macOS.dmg
           - os: windows-latest
-            artifact: build/GenericAgent-Admin-*-Setup.exe
-            asset_name: GenericAgent-Admin-Windows-Setup.exe
+            artifact: build/GA-Hub-*-Setup.exe
+            asset_name: GA-Hub-Windows-Setup.exe
 
     steps:
       - uses: actions/checkout@v4
@@ -119,14 +119,14 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           mkdir -p out
-          cp build/GenericAgent-Admin-*.dmg "out/${{ matrix.asset_name }}"
+          cp build/GA-Hub-*.dmg "out/${{ matrix.asset_name }}"
 
       - name: Collect artifact (win)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           mkdir -p out
-          cp build/GenericAgent-Admin-*-Setup.exe "out/${{ matrix.asset_name }}"
+          cp build/GA-Hub-*-Setup.exe "out/${{ matrix.asset_name }}"
 
       - name: VirusTotal scan (win)
         # Uploads the freshly built setup.exe to VirusTotal and prints the

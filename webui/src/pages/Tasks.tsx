@@ -261,7 +261,7 @@ function EmailSettings() {
     try {
       await api.saveTaskEmailConfig(cfg)
       await qc.invalidateQueries({ queryKey: ['tasks.emailConfig'] })
-      const r = await api.testTaskEmail(testRecipient, 'GenericAgent 邮件测试', '这是一封来自 GenericAgent-Admin 的测试邮件。')
+      const r = await api.testTaskEmail(testRecipient, 'GenericAgent 邮件测试', '这是一封来自 GA-Hub 的测试邮件。')
       const msg = r.ok ? `测试邮件已发送到 ${r.to}` : `发送失败: ${r.error || 'unknown'}`
       setResult(msg)
       if (r.ok) {

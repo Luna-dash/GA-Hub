@@ -29,6 +29,19 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 WINDOW_WIDTH, WINDOW_HEIGHT = 1320, 860
+WINDOWS_APP_ID = "GAHub.SourceLauncher"
+WINDOWS_ICON = Path(__file__).resolve().parent / "assets" / "genericagent_admin.ico"
+
+
+def _init_windows_identity() -> None:
+    """Give the source-launched app a stable taskbar identity on Windows."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_ID)
+    except Exception as e:
+        print(f"[Launch] failed to set AppUserModelID: {e}", file=sys.stderr)
 
 
 def _is_frozen_binary() -> bool:
@@ -38,7 +51,7 @@ def _is_frozen_binary() -> bool:
     by default — it sets ``__compiled__`` on each compiled module instead.
     Earlier versions of this file checked only ``sys.frozen``, so under
     Nuitka the launcher silently fell into "dev mode" branches and tried to
-    spawn ``GenericAgent-Admin.exe -m server.run`` as the backend, which is
+    spawn ``GA-Hub.exe -m server.run`` as the backend, which is
     not a valid command — the parent then exited without surfacing any
     error because ``--windows-console-mode=disable`` swallowed stderr.
     """
@@ -119,6 +132,58 @@ BACKEND_PORT = 8765
 LOCK_PORT = BACKEND_PORT + 1   # matches server/run.py:_ensure_single_instance
 BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
 DEV_URL = "http://localhost:5173"
+
+
+# ── Windows window icon ─────────────────────────────────────────
+def _arm_windows_window_icon(window) -> None:
+    """Set the Win32 window/taskbar icon for pywebview-launched windows."""
+    if os.name != "nt" or not WINDOWS_ICON.is_file():
+        return
+
+    def _apply(_reason: str = ""):
+        try:
+            import ctypes
+            hwnd = None
+            for _ in range(40):
+                try:
+                    hwnd = getattr(window.gui, "Window", None)
+                except Exception:
+                    hwnd = None
+                if hwnd:
+                    break
+                time.sleep(0.1)
+            if not hwnd:
+                print("[Launch] Windows hwnd not ready; skip icon apply", file=sys.stderr)
+                return
+            WM_SETICON = 0x0080
+            ICON_SMALL = 0
+            ICON_BIG = 1
+            IMAGE_ICON = 1
+            LR_LOADFROMFILE = 0x0010
+            LR_DEFAULTSIZE = 0x0040
+            user32 = ctypes.windll.user32
+            hinst = ctypes.windll.kernel32.GetModuleHandleW(None)
+            hicon_big = user32.LoadImageW(hinst, str(WINDOWS_ICON), IMAGE_ICON, 0, 0, LR_LOADFROMFILE)
+            hicon_small = user32.LoadImageW(hinst, str(WINDOWS_ICON), IMAGE_ICON, 16, 16, LR_LOADFROMFILE | LR_DEFAULTSIZE)
+            if hicon_big:
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+            if hicon_small:
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
+        except Exception as e:
+            print(f"[Launch] WM_SETICON failed: {e}", file=sys.stderr)
+
+    def _hook(*_args, **_kwargs):
+        threading.Thread(target=_apply, daemon=True, name="win-icon-apply").start()
+
+    for ev in ("shown", "loaded"):
+        try:
+            getattr(window.events, ev).__iadd__(_hook)
+        except Exception:
+            try:
+                getattr(window.events, ev).connect(_hook)
+            except Exception:
+                pass
+    _hook()
 
 
 # ── helpers ─────────────────────────────────────────────────────
@@ -290,7 +355,7 @@ def _cleanup_stale_backend() -> None:
     Earlier versions reused a healthy prior backend to make double-launch
     cheap. That turned out to be the root cause of two user-visible bugs:
       1. Each `start.command` double-click spawned a brand-new pywebview
-         window pointing at the old backend → multiple "GenericAgent-Admin"
+         window pointing at the old backend → multiple "GA-Hub"
          dock icons piling up.
       2. The new pywebview's WKWebView would happily serve stale, cached
          JS bundles from the old backend's `webui/dist`. After a rebuild,
@@ -413,6 +478,7 @@ def _ensure_ga_root() -> str | None:
 
 # ── main ────────────────────────────────────────────────────────
 def main() -> int:
+    _init_windows_identity()
     # Dual-mode dispatch. The launcher and the backend share one binary in
     # frozen builds (PyInstaller produces a single .app/.exe and we re-spawn
     # ourselves with this flag instead of forking a Python interpreter,
@@ -563,7 +629,7 @@ def main() -> int:
         return 0
 
     win = webview.create_window(
-        title="GenericAgent · 管理控制台",
+        title="GA-Hub · 管理控制台",
         url=target_url,
         width=WINDOW_WIDTH,
         height=WINDOW_HEIGHT,
@@ -571,6 +637,7 @@ def main() -> int:
         text_select=True,
     )
     _arm_macos_activation(win)
+    _arm_windows_window_icon(win)
     tray = _try_start_windows_tray(win) if os.name == "nt" else None
     try:
         webview.start()
@@ -779,7 +846,16 @@ def _try_start_windows_tray(window):
               file=sys.stderr)
         return None
 
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    if WINDOWS_ICON.is_file():
+        try:
+            img = Image.open(WINDOWS_ICON)
+        except Exception:
+            img = None
+    else:
+        img = None
+
+    if img is None:
+        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     d.rounded_rectangle([(0, 0), (63, 63)], radius=14, fill=(91, 155, 255, 255))
     try:
@@ -805,7 +881,7 @@ def _try_start_windows_tray(window):
     # cancelling destroy events — otherwise window.destroy() below gets
     # transparently rewritten into window.hide(), webview.start() never
     # returns, the main thread is stuck, atexit doesn't fire, and the
-    # backend subprocess + GenericAgent-Admin.exe both leak. Mutable
+    # backend subprocess + GA-Hub.exe both leak. Mutable
     # one-element list because Python 3.10 closures can't rebind enclosing
     # scope without nonlocal, and a single bool would force adding nonlocal
     # in two places — list mutation is simpler and equally explicit.
@@ -850,8 +926,8 @@ def _try_start_windows_tray(window):
         pystray.MenuItem("退出", _quit),
     )
     icon = pystray.Icon(
-        "GenericAgent-Admin", img,
-        "GenericAgent · 管理控制台", menu,
+        "GA-Hub", img,
+        "GA-Hub · 管理控制台", menu,
     )
     icon.run_detached()
     print("[Launch] Windows tray icon started", file=sys.stderr)
