@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -158,6 +159,12 @@ class _ExternalGaWebTools:
             [self.python, "-u", "-c", _WEB_TOOL_WORKER_SCRIPT],
             **popen_kwargs,
         )
+        log.info(
+            "GA web worker spawned pid=%s python=%s ga_root=%s",
+            self._proc.pid,
+            self.python,
+            self.ga_root,
+        )
         threading.Thread(target=self._read_stdout, args=(self._proc,), daemon=True, name="ga-web-worker-out").start()
         threading.Thread(target=self._read_stderr, args=(self._proc,), daemon=True, name="ga-web-worker-err").start()
 
@@ -189,7 +196,16 @@ class _ExternalGaWebTools:
     def _read_stderr(self, proc: subprocess.Popen[str]) -> None:
         if proc.stderr is None:
             return
+        first = True
         for line in proc.stderr:
             text = line.rstrip()
-            if text:
+            if not text:
+                continue
+            # First line of worker stderr almost always carries init-failure
+            # context (missing GA deps, ga import errors). Surface it once at
+            # WARNING so packaged Admin operators can see it without DEBUG.
+            if first:
+                log.warning("GA web worker stderr (first line): %s", text)
+                first = False
+            else:
                 log.debug("GA web worker: %s", text)
