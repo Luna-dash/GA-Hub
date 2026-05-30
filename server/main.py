@@ -213,6 +213,12 @@ def create_app() -> FastAPI:
     @app.on_event("shutdown")
     async def _shutdown():
         if not setup_mode:
+            # Archive current WebUI conversation so it persists across restarts
+            try:
+                from .services.agent_service import AgentService
+                AgentService.instance()._archive_snapshots_to_chat_history()
+            except Exception:
+                pass
             try:
                 from .services.autonomous_scheduler import AutonomousScheduler
                 AutonomousScheduler.instance().shutdown()

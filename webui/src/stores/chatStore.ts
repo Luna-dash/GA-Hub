@@ -180,9 +180,11 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
     const sid = evt.stream_id
     if (isHiddenSource(evt.source)) return prev
     const next = ensureRetryStartNotice(prev, evt)
-    const idx = next.findIndex((m) => m.role === 'assistant' && m.streamId === sid)
+    // /btw side-question answers come with source='system' — render as system role
+    const role = evt.source === 'system' ? 'system' : 'assistant'
+    const idx = next.findIndex((m) => (m.role === 'assistant' || m.role === 'system') && m.streamId === sid)
     if (idx === -1) {
-      return [...next, { role: 'assistant', content: evt.content, streamId: sid, source: evt.source, streaming: false }]
+      return [...next, { role, content: evt.content, streamId: sid, source: evt.source, streaming: false }]
     }
     const updated = next.slice()
     updated[idx] = { ...updated[idx], content: evt.content, streaming: false }
@@ -219,6 +221,19 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   if (evt.type === 'aborted') {
     // Mark every still-streaming bubble as finished — server confirmed abort.
     return prev.map((m) => (m.streaming ? { ...m, streaming: false } : m))
+  }
+  if (evt.type === 'rewound') {
+    // Server-driven rewind: drop bubbles whose streamId belongs to any removed
+    // base sid. Derived ids (e.g. `${sid}:retry:N` for retry-notice bubbles)
+    // are matched by prefix so their hint bubbles disappear together.
+    const sids = new Set(evt.removed_sids || [])
+    if (sids.size === 0) return prev
+    return prev.filter((m) => {
+      if (!m.streamId) return true
+      if (sids.has(m.streamId)) return false
+      const base = m.streamId.split(':')[0]
+      return !sids.has(base)
+    })
   }
   return prev
 }

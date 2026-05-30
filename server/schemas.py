@@ -13,6 +13,20 @@ class ChatSubmit(BaseModel):
     source: str = "user"
 
 
+class BtwReq(BaseModel):
+    text: str = ""
+
+
+class BtwResp(BaseModel):
+    ok: bool
+    content: str = ""
+    error: str = ""
+
+
+class AgentTitleReq(BaseModel):
+    title: str = ""
+
+
 class ChatStreamMsg(BaseModel):
     type: Literal["heartbeat", "next", "done", "error"]
     stream_id: str | None = None
@@ -29,6 +43,25 @@ class LLMSwitch(BaseModel):
 class ChatRetryConfigReq(BaseModel):
     enabled: bool = True
     max_attempts: int = Field(default=2, ge=0, le=5)
+
+
+# ── rewind ───────────────────────────────────────────────────────
+class RewindReq(BaseModel):
+    """Rewind chat turns.
+
+    Provide one of:
+      - sid: stream_id of the turn to rewind back to (that turn + all later ones removed)
+      - n:   number of most-recent turns to remove (1 = undo last turn)
+    sid takes precedence if both provided.
+    """
+    sid: str | None = None
+    n: int | None = Field(default=None, ge=1)
+
+
+class RewindResp(BaseModel):
+    removed_sids: list[str]
+    kept: int
+    history_lines: int
 
 
 # ── wechat ───────────────────────────────────────────────────────

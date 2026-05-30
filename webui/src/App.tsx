@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect } from 'react'
-import { Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { SidebarNav } from '@/components/SidebarNav'
 import { DialogHost } from '@/components/DialogHost'
@@ -117,7 +117,8 @@ export default function App() {
       <main className="flex-1 min-w-0 bg-bg">
         <Suspense fallback={<div className="h-full flex items-center justify-center text-slate-500 text-sm">载入中…</div>}>
           <Routes>
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<Navigate to="/chat" replace />} />
+            <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/chat" element={<LiveChat />} />
             <Route path="/wechat" element={<WechatBot />} />
             <Route path="/conversations" element={<Conversations />} />

@@ -24,12 +24,16 @@ export interface AgentStatus {
   last_reply_time: number
   queued_tasks: number
   history_lines: number
+  current_title: string
 }
 
 export interface LLMInfo {
   index: number
   name: string
   current: boolean
+  model?: string
+  api_base?: string
+  api_key_masked?: string
 }
 
 export interface LLMTestResult {
@@ -223,6 +227,8 @@ export interface MyKeyData {
   mtime: number
   structured: {
     sessions: MyKeySession[]
+    mixins: MyKeySession[]
+    /** Back-compat alias: first item of mixins, if any. */
     mixin: MyKeySession | null
     globals: Record<string, any>
   }
@@ -280,6 +286,12 @@ export interface ChatRetryReason {
   marker: string
 }
 
+export interface BtwResp {
+  ok: boolean
+  content: string
+  error?: string
+}
+
 export type ChatWSOut =
   | { type: 'snapshot'; streams: ChatStreamSnapshot[] }
   | { type: 'reset'; reason?: string }
@@ -292,3 +304,4 @@ export type ChatWSOut =
   | { type: 'aborted' }
   | { type: 'pong' }
   | { type: 'error'; error: string }
+  | { type: 'rewound'; removed_sids: string[]; kept: number; history_lines: number }

@@ -22,6 +22,10 @@ interface Props {
   content: string
   streaming?: boolean
   attachments?: PasteAttachment[]
+  /** Stream id of this turn — required to enable the rewind chip. */
+  streamId?: string
+  /** Rewind callback. When provided + streamId set, a "回退" chip appears. */
+  onRewind?: (sid: string) => void
 }
 
 const FILE_HINT = 'If you need to show files to user, use [FILE:filepath] in your response.'
@@ -41,8 +45,10 @@ function cleanUserContent(s: string): string {
     .trim()
 }
 
-export function MessageBubble({ role, content, streaming, attachments }: Props) {
+export function MessageBubble({ role, content, streaming, attachments, streamId, onRewind }: Props) {
   const isUser = role === 'user'
+  const isSystem = role === 'system'
+  
   if (isUser) {
     const cleaned = cleanUserContent(content)
     return (
@@ -64,8 +70,21 @@ export function MessageBubble({ role, content, streaming, attachments }: Props) 
   const segs = foldTurns(content)
   return (
     <div className="flex justify-start group/msg">
-      <div className="max-w-[92%] relative rounded-2xl bg-bg-card border border-line px-4 py-3 shadow-sm">
+      <div className={clsx(
+        "max-w-[92%] relative rounded-2xl px-4 py-3 shadow-sm",
+        isSystem 
+          ? "bg-amber-50/50 dark:bg-amber-950/20 border-2 border-amber-400/60" 
+          : "bg-bg-card border border-line"
+      )}>
+        {isSystem && (
+          <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-amber-400 flex items-center justify-center text-sm shadow">
+            🟡
+          </div>
+        )}
         <CopyChip text={content} />
+        {streamId && onRewind && !streaming && (
+          <RewindChip onClick={() => onRewind(streamId)} />
+        )}
         {segs.map((seg, i) =>
           seg.type === 'fold' ? (
             <details key={i} className="turn-fold">
@@ -140,6 +159,20 @@ function CopyChip({ text }: { text: string }) {
                  opacity-0 group-hover/msg:opacity-100 transition hover:text-slate-200"
     >
       {copied ? '✓ 已复制' : '复制'}
+    </button>
+  )
+}
+
+function RewindChip({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title="回退此轮对话（删除本轮提问与回复）"
+      className="absolute top-1.5 right-14 px-2 py-0.5 text-[11px] rounded
+                 bg-bg-soft/80 backdrop-blur border border-line text-slate-400
+                 opacity-0 group-hover/msg:opacity-100 transition hover:text-amber-300"
+    >
+      ↺ 回退
     </button>
   )
 }

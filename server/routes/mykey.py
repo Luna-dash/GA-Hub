@@ -15,9 +15,9 @@ GA 已经支持 mykey.py 热更新：``llmcore.reload_mykeys()`` 基于 mtime，
 from __future__ import annotations
 
 import ast
+import json
 import logging
 import os
-import pprint
 import time
 from pathlib import Path
 from typing import Any
@@ -73,12 +73,12 @@ def _structurize(raw: str) -> dict:
     user can still edit those via the raw editor.
     """
     sessions: list[dict] = []
-    mixin = None
+    mixins: list[dict] = []
     globals_: dict[str, Any] = {}
     try:
         tree = ast.parse(raw)
     except SyntaxError:
-        return {"sessions": [], "mixin": None, "globals": {}}
+        return {"sessions": [], "mixins": [], "mixin": None, "globals": {}}
     for node in tree.body:
         if not isinstance(node, ast.Assign): continue
         if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name): continue
@@ -102,10 +102,10 @@ def _structurize(raw: str) -> dict:
             "end_lineno": getattr(node, "end_lineno", node.lineno),
         }
         if kind == "mixin":
-            mixin = entry
+            mixins.append(entry)
         else:
             sessions.append(entry)
-    return {"sessions": sessions, "mixin": mixin, "globals": globals_}
+    return {"sessions": sessions, "mixins": mixins, "mixin": (mixins[0] if mixins else None), "globals": globals_}
 
 
 # ── write helpers ──────────────────────────────────────────────────────
@@ -180,12 +180,61 @@ def _trigger_reload() -> tuple[list[dict], list[str]]:
 
 
 # ── render dict back to Python source ──────────────────────────────────
-def _render_dict(d: dict) -> str:
-    """Pretty-print a dict literal that round-trips through ast.literal_eval.
+def _render_value(value: Any, level: int = 0, width: int = 88) -> str:
+    """Render a literal as Python source matching the hand-written mykey.py style.
 
-    Keeps insertion order (sort_dicts=False) so the file diff is human-friendly.
+    Style rules (so the file diff stays human-friendly and the edited block
+    looks identical to the surrounding hand-written config):
+      * 4-space indentation per nesting level
+      * double-quoted strings, insertion order preserved
+      * trailing comma on multi-line dicts / sequences
+      * short dicts/lists stay inline when they fit within ``width``
+
+    Unlike ``pprint.pformat`` the continuation indentation is computed from the
+    nesting level (column 0), not from the column where the opening brace lands
+    after a ``var = `` prefix — that mismatch is what produced the ugly hanging
+    indentation when a mixin's ``llm_nos`` was reordered via the webui.
     """
-    return pprint.pformat(d, indent=2, width=88, sort_dicts=False)
+    ind = "    " * level
+    ind1 = "    " * (level + 1)
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    if value is None:
+        return "None"
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        items = [
+            f"{ind1}{_render_value(k)}: {_render_value(v, level + 1, width)}"
+            for k, v in value.items()
+        ]
+        return "{\n" + ",\n".join(items) + ",\n" + ind + "}"
+    if isinstance(value, (list, tuple)):
+        open_b, close_b = ("[", "]") if isinstance(value, list) else ("(", ")")
+        if not value:
+            return open_b + close_b
+        rendered = [_render_value(v, level + 1, width) for v in value]
+        inline = open_b + ", ".join(rendered) + close_b
+        if len(ind) + len(inline) <= width and "\n" not in inline:
+            return inline
+        return (
+            open_b + "\n"
+            + ",\n".join(f"{ind1}{r}" for r in rendered)
+            + ",\n" + ind + close_b
+        )
+    return repr(value)
+
+
+def _render_dict(d: dict) -> str:
+    """Render a dict literal that round-trips through ast.literal_eval.
+
+    Keeps insertion order so the file diff is human-friendly.
+    """
+    return _render_value(d, 0)
 
 
 def _render_assign(var: str, value: dict, header_comment: str | None = None) -> str:
@@ -216,7 +265,7 @@ async def get_mykey():
             "path": str(p),
             "exists": False,
             "raw": "",
-            "structured": {"sessions": [], "mixin": None, "globals": {}},
+            "structured": {"sessions": [], "mixins": [], "mixin": None, "globals": {}},
             "mtime": 0,
         }
     raw = p.read_text(encoding="utf-8")

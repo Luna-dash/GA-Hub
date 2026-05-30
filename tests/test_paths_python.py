@@ -206,11 +206,11 @@ class AgentServiceWebToolPatchTests(unittest.TestCase):
                  mock.patch.dict(sys.modules, {"ga": fake_ga}):
                 svc._patch_ga_web_tools()
 
-            self.assertEqual(fake_ga.web_scan(tabs_only=True, switch_tab_id="tab-1", text_only=True)["tool"], "web_scan")
+            self.assertEqual(fake_ga.web_scan(tabs_only=True, switch_tab_id="tab-1", text_only=True, maxlen=1234)["tool"], "web_scan")
             self.assertEqual(fake_ga.web_execute_js("return 1", switch_tab_id="tab-2", no_monitor=True)["tool"], "web_execute_js")
             self.assertEqual(calls[0], (
                 "web_scan",
-                {"tabs_only": True, "switch_tab_id": "tab-1", "text_only": True},
+                {"tabs_only": True, "switch_tab_id": "tab-1", "text_only": True, "maxlen": 1234},
                 "/tmp/ga-python",
                 ga_root,
             ))

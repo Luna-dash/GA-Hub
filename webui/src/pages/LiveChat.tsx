@@ -36,7 +36,9 @@ export function LiveChat() {
   const streaming = useChatStore((s) => s.streaming)
   const conn = useChatStore((s) => s.conn)
   const hydrating = useChatStore((s) => s.hydrating)
-  const agentRunning = useAgentStore((s) => s.status?.is_running ?? false)
+  const agentStatus = useAgentStore((s) => s.status)
+  const refreshAgentStatus = useAgentStore((s) => s.refreshStatus)
+  const agentRunning = agentStatus?.is_running ?? false
   const submitWebui = useChatStore((s) => s.submitWebui)
   const abortFn = useChatStore((s) => s.abort)
   const clearLocal = useChatStore((s) => s.clearLocal)
@@ -46,6 +48,8 @@ export function LiveChat() {
   const [text, setText] = useState('')
   const [atts, setAtts] = useState<PasteAttachment[]>([])
   const [restoreOpen, setRestoreOpen] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const [titleSaving, setTitleSaving] = useState(false)
 
   // Smart auto-scroll state. We pin to bottom only when the user is *already*
   // near the bottom; otherwise we surface a "↓ N 条新消息" floating button so
@@ -67,6 +71,29 @@ export function LiveChat() {
   useEffect(() => {
     if (streaming && !agentRunning) markIdle()
   }, [streaming, agentRunning, markIdle])
+
+  useEffect(() => {
+    setTitleDraft(agentStatus?.current_title ?? '')
+  }, [agentStatus?.current_title])
+
+  const saveTitle = async () => {
+    const title = titleDraft.trim()
+    if (title === (agentStatus?.current_title ?? '')) return
+    setTitleSaving(true)
+    try {
+      const r = await api.agentSetTitle(title)
+      useAgentStore.setState((st) => ({
+        status: st.status ? { ...st.status, current_title: r.title } : st.status,
+      }))
+      setTitleDraft(r.title)
+      pushSystem(r.title ? `_对话标题已设为「${r.title}」_` : '_已清空对话标题，将按首条消息自动命名_')
+      await refreshAgentStatus()
+    } catch (e: any) {
+      pushSystem(`_保存对话标题失败：${e?.body?.detail || e?.message || String(e)}_`)
+    } finally {
+      setTitleSaving(false)
+    }
+  }
 
   // Apply navigation-state restore once (e.g. coming from Conversations page).
   useEffect(() => {
@@ -161,6 +188,25 @@ export function LiveChat() {
     pushSystem(r.message)
   }
 
+  const handleRewind = async (sid: string) => {
+    if (streaming || agentRunning) {
+      pushSystem('_当前回复还在进行中。请先停止后再回退。_')
+      return
+    }
+    const ok = await dialog.confirm(
+      '回退此轮对话？',
+      '本轮的用户提问与所有 Assistant 回复都会从历史与界面中删除，且不可恢复。',
+      { confirmText: '回退', tone: 'danger' },
+    )
+    if (!ok) return
+    try {
+      const r = await api.rewindTurns({ sid })
+      pushSystem(`_已回退 1 轮（保留 ${r.kept} 条历史）。_`)
+    } catch (e: any) {
+      await dialog.alert('回退失败', e?.message || String(e))
+    }
+  }
+
   const switchLlm = async (idx: number) => {
     if (idx === currentLlm?.index) return
     if (streaming || agentRunning) {
@@ -182,6 +228,21 @@ export function LiveChat() {
       title="实时聊天"
       actions={
         <div className="flex items-center gap-2 text-sm">
+          <div className="hidden md:flex items-center gap-1.5 mr-1" title="对话标题：回车或失焦保存，清空后按首条消息自动命名">
+            <input
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={saveTitle}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur()
+                if (e.key === 'Escape') setTitleDraft(agentStatus?.current_title ?? '')
+              }}
+              disabled={titleSaving}
+              placeholder="对话标题"
+              className="w-44 bg-bg-card border border-line rounded-lg px-2 py-1.5 text-xs outline-none focus:border-accent placeholder:text-slate-500 disabled:opacity-60"
+            />
+            {titleSaving && <span className="text-[10px] text-slate-400">保存中…</span>}
+          </div>
           {/* LLM picker + capability badge */}
           {llms.length > 0 && (
             <div className="flex items-center gap-1.5">
@@ -245,6 +306,8 @@ export function LiveChat() {
                 content={tag ? `${tag}\n\n${m.content}` : m.content}
                 streaming={m.streaming}
                 attachments={m.attachments}
+                streamId={role === 'assistant' ? m.streamId : undefined}
+                onRewind={role === 'assistant' ? handleRewind : undefined}
               />
             )
           })}

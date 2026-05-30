@@ -136,39 +136,54 @@ DEV_URL = "http://localhost:5173"
 
 # ── Windows window icon ─────────────────────────────────────────
 def _arm_windows_window_icon(window) -> None:
-    """Set the Win32 window/taskbar icon for pywebview-launched windows."""
+    """Set the Win32 window/taskbar icon for pywebview-launched windows.
+
+    Uses win32gui.FindWindow by title to reliably locate the hwnd across
+    pywebview versions (the internal .gui/.native structure varies).
+    """
     if os.name != "nt" or not WINDOWS_ICON.is_file():
         return
 
     def _apply(_reason: str = ""):
         try:
             import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+
+            # ctypes defaults to 32-bit int; HWND/HICON must be pointer-sized on 64-bit Windows.
+            user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+            user32.FindWindowW.restype = wintypes.HWND
+            user32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+            user32.LoadImageW.restype = wintypes.HANDLE
+            user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            user32.SendMessageW.restype = wintypes.LPARAM
+
+            # Find hwnd by window title (most reliable across pywebview versions)
             hwnd = None
-            for _ in range(40):
-                try:
-                    hwnd = getattr(window.gui, "Window", None)
-                except Exception:
-                    hwnd = None
+            title = window.title
+            for _ in range(80):  # up to 8 seconds
+                hwnd = user32.FindWindowW(None, title)
                 if hwnd:
                     break
                 time.sleep(0.1)
             if not hwnd:
-                print("[Launch] Windows hwnd not ready; skip icon apply", file=sys.stderr)
+                print(f"[Launch] FindWindowW('{title}') failed; skip icon", file=sys.stderr)
                 return
+
             WM_SETICON = 0x0080
             ICON_SMALL = 0
             ICON_BIG = 1
             IMAGE_ICON = 1
             LR_LOADFROMFILE = 0x0010
             LR_DEFAULTSIZE = 0x0040
-            user32 = ctypes.windll.user32
-            hinst = ctypes.windll.kernel32.GetModuleHandleW(None)
-            hicon_big = user32.LoadImageW(hinst, str(WINDOWS_ICON), IMAGE_ICON, 0, 0, LR_LOADFROMFILE)
-            hicon_small = user32.LoadImageW(hinst, str(WINDOWS_ICON), IMAGE_ICON, 16, 16, LR_LOADFROMFILE | LR_DEFAULTSIZE)
+            ico_path = str(WINDOWS_ICON)
+            hicon_big = user32.LoadImageW(None, ico_path, IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE)
+            hicon_small = user32.LoadImageW(None, ico_path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE | LR_DEFAULTSIZE)
             if hicon_big:
                 user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
             if hicon_small:
                 user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
+            print(f"[Launch] window icon applied (hwnd={int(hwnd):#x}, icon={ico_path})")
         except Exception as e:
             print(f"[Launch] WM_SETICON failed: {e}", file=sys.stderr)
 
@@ -583,7 +598,12 @@ def main() -> int:
     print(f"[Launch] backend ready at {BACKEND_URL}")
 
     # decide UI source
-    target_url = BACKEND_URL
+    # Open the SPA directly on the live-chat route instead of relying on the
+    # client-side redirect from "/" -> "/chat". Some embedded webview/history
+    # combinations have been observed to keep the initial location at "/"
+    # longer than a regular browser, leaving the chat page not visibly active
+    # on first paint.
+    target_url = f"{BACKEND_URL}/chat"
     dev_proc: subprocess.Popen | None = None
 
     if DIST_INDEX.is_file():
@@ -599,13 +619,13 @@ def main() -> int:
                 continue
             atexit.register(lambda: _safe_term(dev_proc))
             if _wait_url(DEV_URL, timeout=60):
-                target_url = DEV_URL
+                target_url = f"{DEV_URL}/chat"
                 print(f"[Launch] vite dev ready at {DEV_URL}")
                 break
             else:
                 _safe_term(dev_proc)
                 dev_proc = None
-        if target_url == BACKEND_URL and not DIST_INDEX.is_file():
+        if target_url == f"{BACKEND_URL}/chat" and not DIST_INDEX.is_file():
             print(
                 "[Launch] webui not built and no Node.js found.\n"
                 "         Run install_webui.sh / install_webui.bat or install Node.js.\n"
@@ -628,6 +648,38 @@ def main() -> int:
             pass
         return 0
 
+    # ── js_api: expose native file-save for pywebview (WebView2/WKWebView
+    #    swallow blob/data downloads triggered by <a download>; route the
+    #    export endpoint's payload through a SAVE_DIALOG instead). ──
+    class _ExportApi:
+        def save_export(self, filename: str, content: str) -> dict:
+            try:
+                import webview as _wv  # type: ignore
+                _w = _wv.windows[0] if _wv.windows else None
+                if _w is None:
+                    return {"ok": False, "error": "no window"}
+                # Pick extension filter from filename suffix
+                ext = (filename.rsplit(".", 1)[-1] or "").lower()
+                if ext == "md":
+                    filt = ("Markdown (*.md)", "All files (*.*)")
+                elif ext == "json":
+                    filt = ("JSON (*.json)", "All files (*.*)")
+                else:
+                    filt = ("All files (*.*)",)
+                target = _w.create_file_dialog(
+                    _wv.SAVE_DIALOG,
+                    save_filename=filename,
+                    file_types=filt,
+                )
+                if not target:
+                    return {"ok": False, "cancelled": True}
+                path = target if isinstance(target, str) else target[0]
+                with open(path, "w", encoding="utf-8", newline="") as f:
+                    f.write(content)
+                return {"ok": True, "path": path}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
     win = webview.create_window(
         title="GA-Hub · 管理控制台",
         url=target_url,
@@ -635,6 +687,7 @@ def main() -> int:
         height=WINDOW_HEIGHT,
         resizable=True,
         text_select=True,
+        js_api=_ExportApi(),
     )
     _arm_macos_activation(win)
     _arm_windows_window_icon(win)
@@ -647,6 +700,14 @@ def main() -> int:
                 tray.stop()
             except Exception:
                 pass
+        # Archive current conversation before killing backend
+        try:
+            from urllib.request import Request, urlopen
+            req = Request(f"{BACKEND_URL}/api/agent/archive", method="POST",
+                          data=b"", headers={"Content-Type": "application/json"})
+            urlopen(req, timeout=3)
+        except Exception:
+            pass
         # Belt-and-braces: kill child processes here in addition to the
         # atexit hooks above. Under Nuitka --windows-console-mode=disable
         # the GUI subsystem teardown path doesn't always reach atexit

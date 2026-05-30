@@ -5,6 +5,7 @@ import type {
   AgentStatus,
   AutonomousRun,
   BusEvent,
+  BtwResp,
   ChatRetryConfig,
   ChatWSIn,
   ChatWSOut,
@@ -80,7 +81,10 @@ export const api = {
   // ── agent ────────────────────────────────────────────
   agentStatus: () => http<AgentStatus>('GET', '/api/agent/status'),
   agentAbort: () => http<{ ok: boolean }>('POST', '/api/agent/abort'),
+  btw: (text: string) => http<BtwResp>('POST', '/api/agent/btw', { text }),
   agentNew: () => http<{ ok: boolean; message: string }>('POST', '/api/agent/new'),
+  agentSetTitle: (title: string) =>
+    http<{ ok: boolean; title: string }>('PUT', '/api/agent/title', { title }),
   chatRetryConfig: () => http<ChatRetryConfig>('GET', '/api/agent/chat-retry-config'),
   saveChatRetryConfig: (cfg: ChatRetryConfig) =>
     http<ChatRetryConfig>('PUT', '/api/agent/chat-retry-config', cfg),
@@ -197,6 +201,14 @@ export const api = {
   // ── logs ─────────────────────────────────────────────
   wechatLog: (tail = 200) => http<{ lines: string[] }>('GET', `/api/logs/wechat?tail=${tail}`),
   agentLog: (tail = 200) => http<{ lines: string[]; file: string | null }>('GET', `/api/logs/agent?tail=${tail}`),
+
+  // ── rewind ───────────────────────────────────────────
+  rewindTurns: (req: { sid?: string; n?: number }) =>
+    http<{ ok: boolean; removed_sids: string[]; kept: number; history_lines: number; removed_history_entries?: number }>(
+      'POST',
+      '/api/agent/rewind',
+      req,
+    ),
 }
 
 // ── WebSocket helpers ──────────────────────────────────────

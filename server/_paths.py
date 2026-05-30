@@ -120,6 +120,14 @@ def validate_python_path(path: str | None) -> str | None:
     p = Path(raw).expanduser().resolve()
     if not p.is_file():
         raise ValueError(f"Python 解释器不存在：{p}")
+    # Windows Store app-execution aliases (WindowsApps/python*.exe) are tiny
+    # launchers, not usable interpreters for subprocess worker execution.  They
+    # commonly exit with 9009 when invoked with Python argv; skip them so
+    # discovery can continue to a real Python.
+    if os.name == "nt":
+        parts = {part.lower() for part in p.parts}
+        if "windowsapps" in parts and p.name.lower() in {"python.exe", "python3.exe"}:
+            raise ValueError(f"Python 解释器是 WindowsApps 启动别名，不可用：{p}")
     return str(p)
 
 
@@ -139,20 +147,25 @@ def _ga_venv_python_candidates(ga_root: Path | None) -> list[Path]:
 
 
 def _known_python_candidates() -> list[str]:
+    try:
+        home = Path.home()
+    except RuntimeError:
+        home = None
     candidates = [
         "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3",
         "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3",
         "/Library/Frameworks/Python.framework/Versions/3.10/bin/python3",
         "/opt/homebrew/bin/python3",        # Apple Silicon Homebrew
         "/usr/local/bin/python3",           # Intel Homebrew / python.org installer
-        f"{Path.home()}/.pyenv/shims/python3",
         "/usr/bin/python3",                 # Apple stub (last resort, no user pkgs)
     ]
-    if os.name == "nt":
+    if home is not None:
+        candidates.append(f"{home}/.pyenv/shims/python3")
+    if os.name == "nt" and home is not None:
         candidates.extend([
-            str(Path.home() / "AppData/Local/Programs/Python/Python312/python.exe"),
-            str(Path.home() / "AppData/Local/Programs/Python/Python311/python.exe"),
-            str(Path.home() / "AppData/Local/Programs/Python/Python310/python.exe"),
+            str(home / "AppData/Local/Programs/Python/Python312/python.exe"),
+            str(home / "AppData/Local/Programs/Python/Python311/python.exe"),
+            str(home / "AppData/Local/Programs/Python/Python310/python.exe"),
         ])
     return candidates
 
@@ -176,17 +189,30 @@ def _discover_user_python_with_source(ga_root: Path | None = None) -> tuple[str 
 
     for cand in _ga_venv_python_candidates(target_root):
         if cand.is_file():
-            return str(cand.resolve()), "ga_venv"
+            try:
+                return validate_python_path(str(cand)), "ga_venv"
+            except ValueError:
+                log.warning("GA venv python=%s is not a valid Python executable; ignoring", cand)
 
     for cand in _known_python_candidates():
         if Path(cand).is_file():
-            return str(Path(cand).resolve()), "known_location"
+            try:
+                return validate_python_path(cand), "known_location"
+            except ValueError:
+                log.warning("known python=%s is not a valid Python executable; ignoring", cand)
 
     for name in ("python3", "python"):
         found = shutil.which(name)
         if found:
-            return str(Path(found).resolve()), f"PATH:{name}"
-    return None, "current_process"
+            try:
+                return validate_python_path(found), f"PATH:{name}"
+            except ValueError:
+                log.warning("PATH %s=%s is not a valid Python executable; ignoring", name, found)
+
+    try:
+        return validate_python_path(sys.executable), "current_process"
+    except ValueError:
+        return None, "current_process"
 
 
 def discover_user_python(ga_root: Path | None = None) -> str | None:

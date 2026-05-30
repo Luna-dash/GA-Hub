@@ -7,7 +7,16 @@ import logging
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
-from ..schemas import ChatRetryConfigReq, ChatSubmit, LLMSwitch
+from ..schemas import (
+    AgentTitleReq,
+    BtwReq,
+    BtwResp,
+    ChatRetryConfigReq,
+    ChatSubmit,
+    LLMSwitch,
+    RewindReq,
+    RewindResp,
+)
 from ..services.agent_service import AgentService
 from ..services.chat_retry import load_chat_retry_config, save_chat_retry_config
 from ..services.event_bus import bus
@@ -25,6 +34,12 @@ async def status():
     return svc().status().__dict__
 
 
+@router.put("/api/agent/title")
+async def set_agent_title(req: AgentTitleReq):
+    title = svc().set_title(req.title)
+    return {"ok": True, "title": title}
+
+
 @router.post("/api/agent/abort")
 async def abort():
     svc().abort()
@@ -35,6 +50,47 @@ async def abort():
 async def new_conv():
     msg = svc().new_conversation()
     return {"ok": True, "message": msg}
+
+
+@router.post("/api/agent/archive")
+async def archive_current():
+    """Persist current conversation to chat_history.json without starting a new one."""
+    try:
+        svc()._archive_snapshots_to_chat_history()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@router.post("/api/agent/btw", response_model=BtwResp)
+async def btw(req: BtwReq):
+    """Run a side question against current agent history without touching chat stream."""
+    q = (req.text or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="empty btw question")
+    try:
+        return BtwResp(ok=True, content=await asyncio.to_thread(svc().btw, q))
+    except Exception as e:
+        log.exception("btw failed: %s", e)
+        return BtwResp(ok=False, error=str(e))
+
+
+@router.post("/api/agent/rewind", response_model=RewindResp)
+async def rewind(req: RewindReq):
+    """Drop the most-recent completed turn(s) from live LLM history.
+
+    Body: ``{"sid": "..."}`` (preferred) or ``{"n": 1}``.
+    Refuses while agent is running. Broadcasts ``chat:rewound`` on the bus
+    for multi-tab sync.
+    """
+    if not req.sid and not req.n:
+        raise HTTPException(status_code=400, detail="provide sid or n")
+    try:
+        return svc().rewind_turns(sid=req.sid, n=req.n)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @router.get("/api/agent/history")

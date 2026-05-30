@@ -4,13 +4,13 @@ import { useAgentStore } from '@/stores/agentStore'
 import { useThemeStore } from '@/stores/themeStore'
 
 const items = [
-  { to: '/', label: '仪表盘', icon: '📊' },
+  { to: '/dashboard', label: '仪表盘', icon: '📊' },
   { to: '/chat', label: '实时聊天', icon: '💬' },
   { to: '/wechat', label: '微信机器人', icon: '🤖' },
   { to: '/conversations', label: '对话管理', icon: '🗂️' },
   { to: '/memory', label: '记忆 & SOP', icon: '🧠' },
   { to: '/skills', label: '技能库', icon: '🌳' },
-  { to: '/llms', label: 'LLM', icon: '⚡' },
+  { to: '/llms', label: '选择LLM', icon: '⚡' },
   { to: '/mykey', label: '链路配置', icon: '🔑' },
   { to: '/tasks', label: '定时任务', icon: '⏰' },
   { to: '/autonomous', label: '自主进化', icon: '🌀' },
@@ -25,8 +25,7 @@ export function SidebarNav() {
     <aside className="w-56 shrink-0 border-r border-line bg-bg-soft flex flex-col">
       <div className="px-4 py-4 border-b border-line flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-base font-semibold tracking-wide">GenericAgent</div>
-          <div className="text-xs text-slate-500">管理控制台 · v0.1</div>
+          <div className="text-base font-semibold tracking-wide">GA-Hub</div>
         </div>
         <button
           onClick={toggleTheme}

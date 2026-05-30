@@ -49,6 +49,7 @@ export function ImagePasteInput({
   const lastCompEndRef = useRef(0)
   const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(0)
+  const [btwOpen, setBtwOpen] = useState(false)
 
   // auto-resize
   useEffect(() => {
@@ -212,11 +213,19 @@ export function ImagePasteInput({
           />
         </label>
         <button
+          type="button"
+          onClick={() => setBtwOpen(true)}
+          className="px-3 py-1.5 rounded-lg border border-amber-600/50 bg-amber-600/60 text-amber-950 text-[13px] font-medium hover:bg-amber-600/70"
+          title="BTW 旁路提问，不打断主任务"
+        >BTW</button>
+        <button
           onClick={onSubmit}
           disabled={disabled || (!text.trim() && attachments.length === 0)}
           className="px-3 py-1.5 rounded-lg bg-accent text-white text-sm hover:brightness-110 disabled:opacity-40"
         >发送</button>
       </div>
+
+      {btwOpen && <BtwDialog onClose={() => setBtwOpen(false)} />}
 
       {uploading > 0 && (
         <div className="absolute -top-6 right-2 text-xs text-slate-400 bg-bg/80 backdrop-blur px-2 py-0.5 rounded">
@@ -231,3 +240,132 @@ export function ImagePasteInput({
     </div>
   )
 }
+
+interface BtwTurn {
+  id: number
+  q: string
+  a?: string
+  error?: string
+}
+
+function BtwDialog({ onClose }: { onClose: () => void }) {
+  const [text, setText] = useState('')
+  const [turns, setTurns] = useState<BtwTurn[]>([])
+  const [loading, setLoading] = useState(false)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const [position, setPosition] = useState({ x: 0, y: 0 })
+  const [dragging, setDragging] = useState(false)
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const t = window.setTimeout(() => inputRef.current?.focus(), 0)
+    return () => window.clearTimeout(t)
+  }, [])
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button, textarea')) return
+    setDragging(true)
+    setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y })
+  }
+
+  useEffect(() => {
+    if (!dragging) return
+    const handleMouseMove = (e: MouseEvent) => {
+      setPosition({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y })
+    }
+    const handleMouseUp = () => setDragging(false)
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [dragging, dragStart])
+
+  const ask = async () => {
+    const q = text.trim()
+    if (!q || loading) return
+    const id = Date.now()
+    setTurns((xs) => [...xs, { id, q }])
+    setText('')
+    setLoading(true)
+    try {
+      const r = await api.btw(q)
+      setTurns((xs) => xs.map((x) => x.id === id ? { ...x, a: r.ok ? r.content : '', error: r.ok ? '' : (r.error || 'BTW 请求失败') } : x))
+    } catch (e: any) {
+      setTurns((xs) => xs.map((x) => x.id === id ? { ...x, error: e?.message || String(e) } : x))
+    } finally {
+      setLoading(false)
+      window.setTimeout(() => inputRef.current?.focus(), 0)
+    }
+  }
+
+  return (
+    <div 
+      ref={dialogRef}
+      onMouseDown={handleMouseDown}
+      style={{
+        transform: `translate(${position.x}px, ${position.y}px)`,
+        cursor: dragging ? 'grabbing' : 'grab'
+      }}
+      className="absolute bottom-full right-2 z-30 mb-2 w-[min(520px,calc(100vw-2rem))] rounded-2xl border border-amber-600/40 bg-amber-600/25 backdrop-blur-sm shadow-2xl shadow-black/40 overflow-hidden">
+      <div className="flex items-center justify-between border-b border-amber-600/30 px-3 py-2 bg-amber-600/20">
+        <div>
+          <div className="text-sm font-medium text-amber-950">BTW 旁路提问</div>
+          <div className="text-[11px] text-amber-900/70">不打断主任务，答案只显示在这个小窗里</div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="h-7 w-7 rounded-lg text-slate-300 hover:bg-white/10 hover:text-white"
+          aria-label="关闭 BTW"
+        >×</button>
+      </div>
+
+      <div className="max-h-80 overflow-y-auto p-3 space-y-3 text-sm">
+        {turns.length === 0 && (
+          <div className="text-xs text-slate-400 leading-relaxed">
+            可以问：当前做到哪一步？为什么要这样做？有没有风险？
+          </div>
+        )}
+        {turns.map((t) => (
+          <div key={t.id} className="space-y-2">
+            <div className="ml-auto max-w-[85%] rounded-xl bg-amber-400/15 border border-amber-400/20 px-3 py-2 text-amber-950 whitespace-pre-wrap break-words">
+              {t.q}
+            </div>
+            <div className="max-w-[92%] rounded-xl bg-bg-soft border border-line px-3 py-2 text-slate-200 whitespace-pre-wrap break-words">
+              {t.error ? <span className="text-rose-300">{t.error}</span> : (t.a ?? '思考中…')}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="border-t border-line p-2 flex items-end gap-2">
+        <textarea
+          ref={inputRef}
+          value={text}
+          rows={2}
+          disabled={loading}
+          placeholder="输入旁路问题…"
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') onClose()
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              ask()
+            }
+          }}
+          className="flex-1 resize-none rounded-xl border border-line bg-bg px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-600 focus:border-amber-400/50 disabled:opacity-60"
+        />
+        <button
+          type="button"
+          onClick={ask}
+          disabled={loading || !text.trim()}
+          className="px-3 py-2 rounded-xl bg-amber-500 text-slate-950 text-sm font-medium hover:brightness-110 disabled:opacity-40"
+        >提问</button>
+      </div>
+    </div>
+  )
+}
+

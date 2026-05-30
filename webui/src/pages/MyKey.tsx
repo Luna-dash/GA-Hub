@@ -84,14 +84,16 @@ export function MyKey() {
 function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKeyWriteResult) => void }) {
   const [editor, setEditor] = useState<MyKeySession | null>(null)
   const [creating, setCreating] = useState<MyKeySessionType | null>(null)
+  const [openRows, setOpenRows] = useState<Set<number>>(new Set())
 
   const sessions = data.structured.sessions
-  const mixin = data.structured.mixin
+  const mixins = data.structured.mixins ?? (data.structured.mixin ? [data.structured.mixin] : [])
+  const allEntries = [...mixins, ...sessions]
   const globals_ = data.structured.globals
 
   const startCreate = (type: MyKeySessionType) => {
     setCreating(type)
-    setEditor({ var: defaultVarName(type, sessions), type, fields: defaultFields(type) })
+    setEditor({ var: defaultVarName(type, allEntries), type, fields: defaultFields(type) })
   }
 
   const startEdit = (s: MyKeySession) => {
@@ -130,30 +132,35 @@ function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
           <h2 className="text-sm font-semibold text-slate-300">LLM 链路（{sessions.length}）</h2>
           <div className="flex items-center gap-2">
             <button onClick={() => startCreate('native_claude')}
-              className="px-3 py-1.5 text-xs rounded-lg bg-accent text-white">+ Claude</button>
+              className="px-3 py-1.5 text-xs rounded-lg border border-purple-300/60 bg-purple-100/80 text-purple-700 hover:bg-purple-100 dark:border-purple-500/30 dark:bg-purple-900/40 dark:text-purple-300">+ Claude</button>
             <button onClick={() => startCreate('native_oai')}
-              className="px-3 py-1.5 text-xs rounded-lg bg-accent text-white">+ OpenAI</button>
+              className="px-3 py-1.5 text-xs rounded-lg border border-emerald-300/60 bg-emerald-100/80 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-900/40 dark:text-emerald-300">+ OpenAI</button>
             <button onClick={() => startCreate('mixin')}
-              className="px-3 py-1.5 text-xs rounded-lg border border-line text-slate-300 hover:bg-white/5"
-              disabled={!!mixin}
-              title={mixin ? '已有 mixin 配置；先删旧的再新增' : '新增故障转移路由'}
+              className="px-3 py-1.5 text-xs rounded-lg border border-amber-300/70 bg-amber-100/80 text-amber-700 hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-900/40 dark:text-amber-300"
+              title="新增一条故障转移路由；可同时保留多条 mixin 配置"
             >+ Mixin 路由</button>
           </div>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          {sessions.map((s) => (
-            <SessionCard key={s.var} s={s}
-              onEdit={() => startEdit(s)}
-              onDuplicate={() => startDuplicate(s)}
-              onDelete={() => remove(s)} />
-          ))}
-          {mixin && (
-            <SessionCard s={mixin}
-              onEdit={() => startEdit(mixin)}
-              onDuplicate={() => startDuplicate(mixin)}
-              onDelete={() => remove(mixin)} />
-          )}
-          {sessions.length === 0 && !mixin && (
+          {allEntries.map((entry, idx) => {
+            const row = Math.floor(idx / 2)
+            const expanded = openRows.has(row)
+            return (
+              <SessionCard key={entry.var} s={entry} expanded={expanded}
+                onToggle={() => {
+                  setOpenRows((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(row)) next.delete(row)
+                    else next.add(row)
+                    return next
+                  })
+                }}
+                onEdit={() => startEdit(entry)}
+                onDuplicate={() => startDuplicate(entry)}
+                onDelete={() => remove(entry)} />
+            )
+          })}
+          {sessions.length === 0 && mixins.length === 0 && (
             <div className="md:col-span-2 text-slate-500 text-sm py-8 text-center border border-dashed border-line rounded-xl">
               尚未配置任何链路。点上方 <strong>+ Claude</strong> 或 <strong>+ OpenAI</strong> 添加第一条。
             </div>
@@ -167,6 +174,7 @@ function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
         <SessionDialog
           mode={creating ? 'create' : 'edit'}
           session={editor}
+          allSessions={allEntries}
           onClose={() => { setEditor(null); setCreating(null) }}
           onSaved={(r) => { onWrite(r); setEditor(null); setCreating(null) }}
         />
@@ -175,45 +183,99 @@ function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
   )
 }
 
-function SessionCard({ s, onEdit, onDuplicate, onDelete }: {
+function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
   s: MyKeySession
+  expanded: boolean
+  onToggle: () => void
   onEdit: () => void
   onDuplicate: () => void
   onDelete: () => void
 }) {
   const meta = sessionMeta(s.type)
+  const title = s.fields.name || s.var
+  const isClaude = s.type === 'native_claude'
+  const isOpenAI = s.type === 'native_oai' || s.type === 'oai'
+  const colorTone = isClaude
+    ? 'from-fuchsia-100/72 via-fuchsia-50/56 to-slate-200/84 dark:from-fuchsia-950/28 dark:via-slate-950/72 dark:to-slate-900/48 shadow-[0_8px_22px_rgba(15,23,42,0.07)]'
+    : isOpenAI
+      ? 'from-cyan-300/95 via-cyan-200/88 to-slate-300/94 dark:from-cyan-950/34 dark:via-slate-950/74 dark:to-slate-900/50 shadow-[0_8px_22px_rgba(15,23,42,0.08)]'
+      : 'from-amber-300/94 via-amber-200/86 to-slate-300/94 dark:from-amber-950/30 dark:via-slate-950/74 dark:to-slate-900/50 shadow-[0_8px_22px_rgba(15,23,42,0.08)]'
+  const accentTone = isClaude
+    ? 'bg-fuchsia-300 shadow-[0_0_10px_rgba(244,114,182,0.28)]'
+    : isOpenAI
+      ? 'bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,0.28)]'
+      : 'bg-amber-200 shadow-[0_0_10px_rgba(253,230,138,0.25)]'
+  const mixinTargets = s.fields.llm_nos || []
+  const summary = s.type !== 'mixin'
+    ? (s.fields.model || '未设置模型')
+    : (mixinTargets.join(' → ') || '未设置路由目标')
+
   return (
-    <div className="rounded-xl border border-line bg-bg-card p-4">
-      <div className="flex items-baseline justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <span className={`text-[10px] px-1.5 py-0.5 rounded ${meta.tone}`}>{meta.label}</span>
-          <span className="text-sm font-semibold">{s.fields.name || s.var}</span>
+    <div className={`group overflow-hidden rounded-2xl border border-slate-300/85 bg-gradient-to-br from-slate-200/95 via-slate-200/90 to-slate-300/92 text-slate-900 shadow-sm shadow-slate-900/6 transition-all dark:border-white/8 dark:from-slate-900/65 dark:via-slate-950/55 dark:to-slate-900/35 dark:text-slate-100 ${colorTone} ${expanded ? 'border-slate-400/90 dark:border-white/12' : ''}`}>
+      <button type="button" onClick={onToggle} className="w-full text-left px-4 py-3 hover:bg-black/[0.02] dark:hover:bg-white/[0.03] transition-colors">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className={`shrink-0 text-[10px] tracking-[0.12em] uppercase px-2 py-1 rounded-full border backdrop-blur-[2px] ${meta.tone}`}>{meta.label}</span>
+              <span className="min-w-0 truncate text-[15px] leading-5 font-semibold tracking-[0.01em] text-slate-900 dark:text-slate-100">{title}</span>
+            </div>
+            {!expanded && (
+              <div className="mt-1.5 flex items-center gap-2 min-w-0">
+                <div className={`h-2 w-2 rounded-full shrink-0 ${accentTone}`} />
+                <div className="min-w-0 truncate text-[13px] leading-5 text-slate-500 dark:text-slate-400 font-medium tracking-[0.01em]" title={String(summary)}>
+                  {summary}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2 shrink-0 pl-2">
+            {expanded && <span className="text-[11px] text-slate-500 font-mono">L{s.lineno}</span>}
+            <span className={`flex h-8 w-8 items-center justify-center rounded-full border border-white/8 bg-white/[0.04] text-slate-300 shadow-inner shadow-white/5 transition-all duration-200 group-hover:bg-white/[0.07] ${expanded ? 'rotate-180 text-white' : ''}`}>
+              <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
+                <path d="M5 7.5L10 12.5L15 7.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+          </div>
         </div>
-        <span className="text-xs text-slate-500 font-mono">L{s.lineno}</span>
-      </div>
-      <div className="text-xs text-slate-500 font-mono mb-2 truncate" title={s.var}>{s.var}</div>
-      {s.type !== 'mixin' ? (
-        <dl className="space-y-1 text-xs">
-          <KV k="model" v={s.fields.model} mono />
-          <KV k="apibase" v={s.fields.apibase} mono />
-          <KV k="apikey" v={s.fields.apikey_masked} mono />
-          {s.fields.thinking_type && <KV k="thinking" v={s.fields.thinking_type} />}
-          {s.fields.api_mode && <KV k="api_mode" v={s.fields.api_mode} />}
-          {s.fields.reasoning_effort && <KV k="effort" v={s.fields.reasoning_effort} />}
-          {s.fields.fake_cc_system_prompt && <KV k="fake_cc_sysprompt" v="✓" />}
-        </dl>
-      ) : (
-        <dl className="space-y-1 text-xs">
-          <KV k="llm_nos" v={(s.fields.llm_nos || []).join(' → ')} mono />
-          <KV k="max_retries" v={String(s.fields.max_retries ?? '—')} />
-          <KV k="base_delay" v={String(s.fields.base_delay ?? '—')} />
-        </dl>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-slate-300/80 bg-slate-200/90 px-4 py-3 dark:border-white/8 dark:bg-white/[0.03]">
+          <div className={`grid gap-x-6 gap-y-3 ${s.type !== 'mixin' ? 'md:grid-cols-2' : ''}`}>
+            {s.type !== 'mixin' ? (
+              <dl className="space-y-1.5 text-xs">
+                <KV k="model" v={s.fields.model} mono />
+                <KV k="apibase" v={s.fields.apibase} mono />
+                <KV k="apikey" v={s.fields.apikey_masked} mono />
+              </dl>
+            ) : (
+              <dl className="space-y-1.5 text-xs">
+                <div className="flex items-start gap-2">
+                  <dt className="text-slate-500 shrink-0 w-24">apis</dt>
+                  <dd className="min-w-0 flex-1 font-mono text-slate-300 break-all leading-5">
+                    {Array.isArray(s.fields.llm_nos) && s.fields.llm_nos.length > 0 ? s.fields.llm_nos.join(' → ') : <span className="text-slate-600">—</span>}
+                  </dd>
+                </div>
+                <KV k="max_retries" v={String(s.fields.max_retries ?? '—')} />
+                <KV k="base_delay" v={String(s.fields.base_delay ?? '—')} />
+              </dl>
+            )}
+            {s.type !== 'mixin' ? (
+              <dl className="space-y-1.5 text-xs">
+                {s.fields.thinking_type && <KV k="thinking" v={s.fields.thinking_type} />}
+                {s.fields.api_mode && <KV k="api_mode" v={s.fields.api_mode} />}
+                {s.fields.reasoning_effort && <KV k="effort" v={s.fields.reasoning_effort} />}
+                {s.fields.fake_cc_system_prompt && <KV k="fake_cc_sysprompt" v="✓" />}
+              </dl>
+            ) : null}
+          </div>
+          <div className="mt-3 flex gap-2 flex-wrap">
+            <button onClick={onEdit} className="text-xs px-3 py-1.5 rounded-xl bg-accent text-white shadow-sm shadow-accent/20">编辑</button>
+            <button onClick={onDuplicate} className="text-xs px-3 py-1.5 rounded-xl border border-white/10 text-slate-300 hover:bg-white/5">复制</button>
+            <button onClick={onDelete} className="text-xs px-3 py-1.5 rounded-xl border border-rose-700/60 text-rose-300 hover:bg-rose-900/20">删除</button>
+          </div>
+        </div>
       )}
-      <div className="mt-3 flex gap-1.5 flex-wrap">
-        <button onClick={onEdit} className="text-xs px-2.5 py-1 rounded bg-accent text-white">编辑</button>
-        <button onClick={onDuplicate} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5">复制为新链路</button>
-        <button onClick={onDelete} className="text-xs px-2.5 py-1 rounded border border-rose-700/60 text-rose-300 hover:bg-rose-900/20">删除</button>
-      </div>
     </div>
   )
 }
@@ -240,9 +302,10 @@ function sessionMeta(type: MyKeySessionType) {
 }
 
 // ── Edit / Create dialog ────────────────────────────────────────────
-function SessionDialog({ mode, session, onClose, onSaved }: {
+function SessionDialog({ mode, session, allSessions, onClose, onSaved }: {
   mode: 'create' | 'edit'
   session: MyKeySession
+  allSessions: MyKeySession[]
   onClose: () => void
   onSaved: (r: MyKeyWriteResult) => void
 }) {
@@ -367,7 +430,7 @@ function SessionDialog({ mode, session, onClose, onSaved }: {
           </>
         )}
 
-        {s.type === 'mixin' && <MixinFields s={s} setS={setS} />}
+        {s.type === 'mixin' && <MixinFields s={s} setS={setS} allSessions={allSessions} />}
 
         <details className="mt-3">
           <summary className="text-xs text-slate-400 cursor-pointer">高级（max_retries / read_timeout / temperature / max_tokens / context_win / proxy）</summary>
@@ -405,8 +468,14 @@ function SessionDialog({ mode, session, onClose, onSaved }: {
   )
 }
 
-function MixinFields({ s, setS }: { s: MyKeySession; setS: (v: MyKeySession) => void }) {
+function MixinFields({ s, setS, allSessions }: { s: MyKeySession; setS: (v: MyKeySession) => void; allSessions: MyKeySession[] }) {
   const llmNos: string[] = Array.isArray(s.fields.llm_nos) ? s.fields.llm_nos.map(String) : []
+  const candidates = Array.from(new Set(
+    allSessions
+      .filter((x) => x.type !== 'mixin')
+      .map((x) => String(x.fields.name || '').trim())
+      .filter(Boolean),
+  ))
   const setNos = (next: string[]) => setS({ ...s, fields: { ...s.fields, llm_nos: next } })
   const move = (i: number, dir: -1 | 1) => {
     const next = [...llmNos]
@@ -423,7 +492,7 @@ function MixinFields({ s, setS }: { s: MyKeySession; setS: (v: MyKeySession) => 
             <div key={i} className="flex items-center gap-1">
               <input value={n} onChange={(e) => {
                 const next = [...llmNos]; next[i] = e.target.value; setNos(next)
-              }} className={inp + ' font-mono flex-1'} />
+              }} list="mixin-name-candidates" className={inp + ' font-mono flex-1 rounded-md bg-slate-200/80 border-slate-400/70 text-slate-800 dark:bg-slate-700/45 dark:border-slate-500/60 dark:text-slate-100'} />
               <button onClick={() => move(i, -1)} disabled={i === 0}
                 className="px-2 py-1.5 text-xs rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-30">↑</button>
               <button onClick={() => move(i, 1)} disabled={i === llmNos.length - 1}
@@ -432,8 +501,29 @@ function MixinFields({ s, setS }: { s: MyKeySession; setS: (v: MyKeySession) => 
                 className="px-2 py-1.5 text-xs rounded border border-rose-700/60 text-rose-300 hover:bg-rose-900/20">×</button>
             </div>
           ))}
-          <button onClick={() => setNos([...llmNos, ''])}
-            className="px-2.5 py-1 text-xs rounded border border-line text-slate-300 hover:bg-white/5">+ 新增名字</button>
+          {candidates.length > 0 && (
+            <div className="flex flex-wrap gap-1 pt-1">
+              {candidates.map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  onClick={() => {
+                    if (llmNos.includes(name)) return
+                    setNos([...llmNos, name])
+                  }}
+                  className="px-2 py-0.5 text-[11px] rounded border border-line text-slate-300 hover:bg-white/5"
+                  title="点击加入 llm_nos"
+                >
+                  + {name}
+                </button>
+              ))}
+            </div>
+          )}
+          {candidates.length > 0 && (
+            <datalist id="mixin-name-candidates">
+              {candidates.map((name) => <option key={name} value={name} />)}
+            </datalist>
+          )}
         </div>
       </Field>
       <NumField label="max_retries" v={s.fields.max_retries} onChange={(v) => setS({ ...s, fields: { ...s.fields, max_retries: v } })} />

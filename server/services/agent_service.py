@@ -50,6 +50,23 @@ _ERROR_RETRY_PROMPT_TEMPLATE = (
 )
 
 
+def _mask_secret(s: str) -> str:
+    """Return a short, non-recoverable preview of a secret.
+
+    Keeps only the first/last few characters so the UI can show that the
+    key changed (visual diff after mykey reload) without exposing it.
+    """
+    if not isinstance(s, str):
+        return ""
+    s = s.strip()
+    n = len(s)
+    if n == 0:
+        return ""
+    if n <= 8:
+        return "*" * n
+    return f"{s[:4]}…{s[-4:]}"
+
+
 # ── Suppress GA-spawned subprocess UI side-effects (per-platform) ────────────
 def _patch_ga_subprocess() -> None:
     """Patch ``ga.subprocess.Popen`` so ``code_run`` doesn't pollute the UI.
@@ -187,6 +204,7 @@ def call_tool(tool, args):
             tabs_only=bool(args.get("tabs_only", False)),
             switch_tab_id=args.get("switch_tab_id"),
             text_only=bool(args.get("text_only", False)),
+            maxlen=int(args.get("maxlen", 35000)),
         )
     if tool == "web_execute_js":
         return ga.web_execute_js(
@@ -350,11 +368,12 @@ def _patch_ga_web_tools() -> None:
 
     worker = _ExternalGaWebTools(real_python, _paths.GA_ROOT)
 
-    def _admin_web_scan(tabs_only=False, switch_tab_id=None, text_only=False):
+    def _admin_web_scan(tabs_only=False, switch_tab_id=None, text_only=False, maxlen=35000):
         return worker.call("web_scan", {
             "tabs_only": tabs_only,
             "switch_tab_id": switch_tab_id,
             "text_only": text_only,
+            "maxlen": maxlen,
         })
 
     def _admin_web_execute_js(script, switch_tab_id=None, no_monitor=False):
@@ -383,6 +402,7 @@ class AgentStatus:
     last_reply_time: int
     queued_tasks: int
     history_lines: int
+    current_title: str
 
 
 @dataclass
@@ -435,6 +455,8 @@ class AgentService:
         self._lock = threading.Lock()
         self._next_id = 0
         self._run_thread: threading.Thread | None = None
+        # ── conversation title ────────────────────────────────────
+        self._current_title: str = ""
 
         # last_reply_time may be missing on older agentmain.py — patch defensively.
         if not hasattr(self.agent, "last_reply_time"):
@@ -482,12 +504,51 @@ class AgentService:
             last_reply_time=int(getattr(a, "last_reply_time", 0)),
             queued_tasks=a.task_queue.qsize() if hasattr(a, "task_queue") else 0,
             history_lines=len(a.history) if hasattr(a, "history") else 0,
+            current_title=self._current_title,
         )
 
+    def set_title(self, title: str) -> str:
+        """Set the current WebUI conversation title used by archive/history."""
+        title = (title or "").strip()
+        if len(title) > 120:
+            title = title[:120]
+        self._current_title = title
+        bus.publish("agent:title", {"title": title})
+        return title
+
     def list_llms(self) -> list[dict]:
+        try:
+            self.agent.load_llm_sessions()
+        except Exception as e:
+            log.warning("list_llms hot reload failed: %s", e)
         out = []
+        clients = getattr(self.agent, "llmclients", []) or []
         for i, name, current in self.agent.list_llms():
-            out.append({"index": int(i), "name": name, "current": bool(current)})
+            client = clients[i] if i < len(clients) else None
+            backend = getattr(client, "backend", None)
+            model = ""
+            api_base = ""
+            api_key_masked = ""
+            try:
+                if backend is not None:
+                    model = str(getattr(backend, "model", "") or "").lower()
+                    # MixinSession proxies attribute access to its current
+                    # session via __getattr__; plain BaseSession holds these
+                    # directly.
+                    api_base = str(getattr(backend, "api_base", "") or "")
+                    raw_key = getattr(backend, "api_key", "") or ""
+                    if isinstance(raw_key, str) and raw_key:
+                        api_key_masked = _mask_secret(raw_key)
+            except Exception:
+                pass
+            out.append({
+                "index": int(i),
+                "name": name,
+                "current": bool(current),
+                "model": model,
+                "api_base": api_base,
+                "api_key_masked": api_key_masked,
+            })
         return out
 
     def switch_llm(self, n: int) -> dict:
@@ -567,6 +628,22 @@ class AgentService:
         # publish a parallel chat:aborted to keep the event stream simple.
 
     # ── tasks ────────────────────────────────────────────────────
+    def btw(self, question: str) -> str:
+        """Run /btw as an isolated side question and return its text.
+
+        This intentionally bypasses ``put_task``/bus fan-out so the answer stays
+        inside the small BTW dialog instead of being appended to the main chat.
+        """
+        q = (question or "").strip()
+        if not q:
+            return ""
+        if q == "/btw" or q.startswith("/btw ") or q.startswith("/btw\t"):
+            raw = q
+        else:
+            raw = "/btw " + q
+        from frontends.btw_cmd import handle_frontend_command  # type: ignore
+        return handle_frontend_command(self.agent, raw) or ""
+
     def submit(
         self,
         query: str,
@@ -874,6 +951,7 @@ class AgentService:
         # stale bubbles from the previous conversation.
         with self._lock:
             self._snapshots.clear()
+        self.set_title("")
         bus.publish("chat:reset", {"reason": "new_conversation"})
         return reset_conversation(self.agent)
 
@@ -920,9 +998,13 @@ class AgentService:
         if not messages:
             return
 
-        title = (first_user_text[:30].replace("\n", " ") or "Web 对话")
-        if len(first_user_text) > 30:
-            title += "…"
+        explicit_title = (self._current_title or "").strip()
+        if explicit_title:
+            title = explicit_title
+        else:
+            title = (first_user_text[:30].replace("\n", " ") or "Web 对话")
+            if len(first_user_text) > 30:
+                title += "…"
         entry = {
             "id": datetime.now().strftime("%Y%m%d_%H%M%S_%f"),
             "title": title,
@@ -953,6 +1035,126 @@ class AgentService:
 
     def get_history(self) -> list[str]:
         return list(getattr(self.agent, "history", []))
+
+    # ── rewind ───────────────────────────────────────────────────
+    def rewind_turns(self, *, sid: str | None = None, n: int | None = None) -> dict:
+        """Drop the most-recent completed turn(s) from the live LLM history.
+
+        If ``sid`` is given, that turn AND all later turns are removed.
+        Else ``n`` last done turns are removed (1 = undo last).
+
+        Mirrors GA TUI ``/rewind`` (frontends/tuiapp.py:_cmd_rewind) but
+        operates on GA-Hub's per-stream snapshots so the frontend can sync
+        precisely by stream_id. Refuses while the agent is running.
+        """
+        with self._lock:
+            if bool(getattr(self.agent, "is_running", False)):
+                raise RuntimeError(
+                    "cannot rewind while agent is running; abort first"
+                )
+
+            all_items = list(self._snapshots.items())
+            done_items = [(s, snap) for s, snap in all_items if snap.done]
+            if not done_items:
+                raise ValueError("no completed turns to rewind")
+
+            # 1. Resolve how many turns to drop.
+            if sid:
+                idxs = [i for i, (s, _) in enumerate(done_items) if s == sid]
+                if not idxs:
+                    raise ValueError(f"sid {sid!r} not found among done turns")
+                n_eff = len(done_items) - idxs[0]
+            elif n is not None:
+                if n < 1 or n > len(done_items):
+                    raise ValueError(
+                        f"n out of range 1..{len(done_items)}"
+                    )
+                n_eff = n
+            else:
+                raise ValueError("either sid or n required")
+
+            # 2. Locate cut position in real LLM history.
+            #    Logic mirrors GA frontends/tuiapp.py:_cmd_rewind (453-511):
+            #    a "real" user turn = role==user AND content is not a pure
+            #    tool_result block.
+            try:
+                backend_history = self.agent.llmclient.backend.history
+            except AttributeError as e:
+                raise RuntimeError(
+                    f"agent has no llmclient.backend.history: {e}"
+                ) from e
+
+            user_turn_idxs: list[int] = []
+            for i, msg in enumerate(backend_history):
+                if msg.get("role") != "user":
+                    continue
+                content = msg.get("content")
+                if isinstance(content, str):
+                    user_turn_idxs.append(i)
+                    continue
+                if isinstance(content, list):
+                    has_tool_result = any(
+                        isinstance(b, dict) and b.get("type") == "tool_result"
+                        for b in content
+                    )
+                    if has_tool_result:
+                        continue
+                    if any(
+                        isinstance(b, dict)
+                        and b.get("type") == "text"
+                        and (b.get("text") or "").strip()
+                        for b in content
+                    ):
+                        user_turn_idxs.append(i)
+
+            if n_eff > len(user_turn_idxs):
+                raise RuntimeError(
+                    f"_snapshots/backend.history mismatch: want -{n_eff} turns "
+                    f"but only {len(user_turn_idxs)} user-turns in history"
+                )
+            cut_at = user_turn_idxs[-n_eff]
+            removed_lines = len(backend_history) - cut_at
+            backend_history[:] = backend_history[:cut_at]
+
+            # 3. Drop snapshots from first_removed onwards (insertion order).
+            #    This also discards any non-done tail snapshots created after
+            #    the cut point (defensive).
+            first_removed_sid = done_items[-n_eff][0]
+            removed_sids: list[str] = []
+            hit = False
+            for s, _snap in all_items:
+                if s == first_removed_sid:
+                    hit = True
+                if hit:
+                    removed_sids.append(s)
+            for s in removed_sids:
+                self._snapshots.pop(s, None)
+
+            # 4. Mark in GA working-memory log (TUI parity).
+            try:
+                self.agent.history.append(f"[USER]: /rewind {n_eff}")
+            except Exception:
+                pass
+
+            result = {
+                "removed_sids": removed_sids,
+                "kept": len(self._snapshots),
+                "history_lines": len(backend_history),
+                "removed_history_entries": removed_lines,
+            }
+
+        # 5. Broadcast outside the lock — multi-tab sync via EventBus prefix
+        #    "chat:" already fans out through /api/events (routes/events.py).
+        bus.publish("chat:rewound", {
+            "removed_sids": removed_sids,
+            "kept": result["kept"],
+            "history_lines": result["history_lines"],
+        })
+        log.info(
+            "rewind: dropped %d turn(s), removed %d history entries, sids=%s",
+            n_eff, removed_lines, removed_sids,
+        )
+        return result
 
     # ── hooks ────────────────────────────────────────────────────
     def _on_turn_end(self, ctx: dict) -> None:

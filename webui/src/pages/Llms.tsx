@@ -86,6 +86,28 @@ function LlmCard({
         </div>
       </div>
       <div className="text-sm text-slate-200 break-words mb-3">{l.name}</div>
+      {(l.model || l.api_base || l.api_key_masked) && (
+        <div className="mb-3 space-y-0.5 text-[11px] font-mono leading-snug">
+          {l.model && (
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-14 shrink-0">model</span>
+              <span className="text-slate-300 break-all">{l.model}</span>
+            </div>
+          )}
+          {l.api_base && (
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-14 shrink-0">base</span>
+              <span className="text-slate-300 break-all">{l.api_base}</span>
+            </div>
+          )}
+          {l.api_key_masked && (
+            <div className="flex gap-2">
+              <span className="text-slate-500 w-14 shrink-0">key</span>
+              <span className="text-slate-300 break-all">{l.api_key_masked}</span>
+            </div>
+          )}
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <button
           onClick={onSwitch}
