@@ -95,6 +95,60 @@ def _turn_parts(t: str) -> tuple[list[str], str]:
     return ([parts[0]] if parts[0].strip() else []) + turns[:-1], turns[-1]
 
 
+# ── pure helpers (extracted from _on_message for unit testability) ───────
+_FILE_MARKER_BAD = frozenset({
+    "filepath", "<filepath>", "path", "<path>", "file_path", "<file_path>", "...",
+})
+
+
+def _build_agent_prompt(text: str, media: list[str]) -> str:
+    """Compose the prompt sent to the agent for an inbound WeChat message.
+
+    Mirrors the original inline format so existing agent prompts remain
+    bit-identical:
+      * If media files are attached, append ``[用户发送文件: <path>]`` markers
+        on new lines after the user text.
+      * Always prepend the ``[FILE:filepath]`` instruction so the agent
+        knows how to surface outbound files.
+    """
+    body = text
+    if media:
+        body = (text + "\n" if text else "") + "\n".join(
+            f"[用户发送文件: {p}]" for p in media
+        )
+    return (
+        "If you need to show files to user, use [FILE:filepath] in your "
+        "response.\n\n" + body
+    )
+
+
+def _extract_file_paths(
+    result: str,
+    sent_media: list[str],
+    default_dir: str,
+) -> list[str]:
+    """Pull ``[FILE:...]`` paths out of the agent's reply, filtered.
+
+    Drops:
+      * placeholder strings (``filepath``, ``<path>``, etc.) the LLM emits
+        when it copies the prompt template literally,
+      * paths that match files the user just uploaded (echoed back).
+
+    Relative paths are resolved against ``default_dir`` (the GA temp
+    directory) before the dedup check, matching the original behavior.
+    """
+    raw = re.findall(r"\[FILE:([^\]]+)\]", result)
+    out: list[str] = []
+    for f in raw:
+        if f.strip().lower() in _FILE_MARKER_BAD:
+            continue
+        resolved = f if os.path.isabs(f) else os.path.join(default_dir, f)
+        if resolved in sent_media:
+            continue
+        out.append(f)
+    return out
+
+
 # ── data shapes ──────────────────────────────────────────────────
 @dataclass
 class WxContact:
@@ -332,21 +386,7 @@ class WeChatService:
             bus.publish("wechat:error", {"error": str(e)})
 
     # ── inbound ──────────────────────────────────────────────────
-    def _on_message(self, bot: WxBotClient, msg: dict) -> None:
-        uid = msg.get("from_user_id", "")
-        ctx = msg.get("context_token", "")
-        text = bot.extract_text(msg).strip()
-        media = download_media(msg.get("item_list", []), WX_MEDIA_DIR)
-
-        if not text and not media:
-            return
-
-        if not self.is_allowed(uid):
-            log.info("[wx] blocked uid=%s (not in allowlist)", uid[:20])
-            bus.publish("wechat:blocked", {"uid": uid, "preview": text[:80]})
-            return
-
-        # update contact
+    def _record_inbound(self, uid: str, text: str, media: list[str], ctx: str) -> None:
         c = self.contacts.setdefault(uid, WxContact(uid=uid))
         c.last_text = (text or ("[media]" if media else ""))[:200]
         c.last_ts = int(time.time())
@@ -361,93 +401,113 @@ class WeChatService:
         self._persist_entry(entry)
         bus.publish("wechat:message_in", entry.to_dict())
 
-        # commands (compatibility with frontends/wechatapp.py)
+    def _dispatch_command(self, uid: str, text: str, ctx: str) -> bool:
+        """Handle WeChat slash commands. Return True when consumed."""
         if text in ("/stop", "/abort"):
             self.agent_service.abort()
             self._send_text(uid, "已停止", ctx)
-            return
-        if text.startswith("/llm"):
-            args = text.split()
-            if len(args) > 1:
-                try:
-                    n = int(args[1])
-                    self.agent_service.switch_llm(n)
-                    self._send_text(uid, f"切换到 [{self.agent_service.agent.llm_no}] {self.agent_service.agent.get_llm_name()}", ctx)
-                except (ValueError, IndexError):
-                    self._send_text(uid, f"用法: /llm <0-{len(self.agent_service.list_llms())-1}>", ctx)
-            else:
-                lines = [f"{'→' if cur else '  '} [{i}] {name}"
-                         for i, name, cur in self.agent_service.agent.list_llms()]
-                self._send_text(uid, "LLMs:\n" + "\n".join(lines), ctx)
-            return
+            return True
+        if not text.startswith("/llm"):
+            return False
 
-        # forward to agent in a worker thread
-        prompt_text = text
-        if media:
-            prompt_text = (text + "\n" if text else "") + "\n".join(f"[用户发送文件: {p}]" for p in media)
-        prompt = f"If you need to show files to user, use [FILE:filepath] in your response.\n\n{prompt_text}"
-
-        def _handle():
-            handle = self.agent_service.submit(prompt, source="wechat")
+        args = text.split()
+        if len(args) > 1:
             try:
-                self.bot.send_typing(uid)
-            except Exception:
-                pass
+                n = int(args[1])
+                self.agent_service.switch_llm(n)
+                self._send_text(
+                    uid,
+                    f"切换到 [{self.agent_service.agent.llm_no}] {self.agent_service.agent.get_llm_name()}",
+                    ctx,
+                )
+            except (ValueError, IndexError):
+                self._send_text(uid, f"用法: /llm <0-{len(self.agent_service.list_llms())-1}>", ctx)
+        else:
+            lines = [f"{'→' if cur else '  '} [{i}] {name}"
+                     for i, name, cur in self.agent_service.agent.list_llms()]
+            self._send_text(uid, "LLMs:\n" + "\n".join(lines), ctx)
+        return True
 
-            sent = 0
-            mi = 0
-            last_send = 0.0
-            result = ""
+    def _run_agent_stream(self, uid: str, prompt: str, media: list[str], ctx: str) -> None:
+        handle = self.agent_service.submit(prompt, source="wechat")
+        try:
+            self.bot.send_typing(uid)
+        except Exception:
+            pass
+
+        sent = 0
+        mi = 0
+        last_send = 0.0
+        result = ""
+        try:
+            while True:
+                item = handle.display_queue.get(timeout=300)
+                if "done" in item:
+                    result = item["done"]
+                    break
+                raw = item.get("next", "")
+                done, _partial = _turn_parts(raw)
+                if len(done) <= sent:
+                    continue
+                merged = _clean("\n\n".join(done[sent:]))
+                now = time.time()
+                if mi < 9 and merged.strip():
+                    if mi and (now - last_send) < 6 * mi:
+                        continue
+                    try:
+                        self._send_text(uid, merged[:2000], ctx)
+                        mi += 1
+                        last_send = time.time()
+                        sent = len(done)
+                    except Exception as e:
+                        log.warning("wx mid send err: %s", e)
+        except _q.Empty:
+            result = "[超时]"
+
+        done_segs, partial = _turn_parts(result)
+        rest = "\n\n".join(done_segs[sent:] + [partial] + ["\n\n[任务已完成]"])
+        if rest.strip():
             try:
-                while True:
-                    item = handle.display_queue.get(timeout=300)
-                    if "done" in item:
-                        result = item["done"]
-                        break
-                    raw = item.get("next", "")
-                    done, _partial = _turn_parts(raw)
-                    if len(done) > sent:
-                        merged = _clean("\n\n".join(done[sent:]))
-                        now = time.time()
-                        if mi < 9 and merged.strip():
-                            if mi and (now - last_send) < 6 * mi:
-                                continue
-                            try:
-                                self._send_text(uid, merged[:2000], ctx)
-                                mi += 1
-                                last_send = time.time()
-                                sent = len(done)
-                            except Exception as e:
-                                log.warning("wx mid send err: %s", e)
-            except _q.Empty:
-                result = "[超时]"
+                self._send_text(uid, _clean(rest)[-2000:], ctx)
+            except Exception as e:
+                log.warning("wx final send err: %s", e)
 
-            done_segs, partial = _turn_parts(result)
-            rest = "\n\n".join(done_segs[sent:] + [partial] + ["\n\n[任务已完成]"])
-            if rest.strip():
-                try:
-                    self._send_text(uid, _clean(rest)[-2000:], ctx)
-                except Exception as e:
-                    log.warning("wx final send err: %s", e)
+        files = _extract_file_paths(result, media, str(_paths.temp_dir()))
+        for fpath in set(files):
+            if not os.path.isabs(fpath):
+                fpath = os.path.join(str(_paths.temp_dir()), fpath)
+            try:
+                if not os.path.exists(fpath):
+                    raise FileNotFoundError(fpath)
+                self._send_file_smart(uid, fpath, ctx)
+            except Exception as e:
+                log.warning("wx send media err: %s", e)
 
-            files = re.findall(r"\[FILE:([^\]]+)\]", result)
-            bad = {"filepath", "<filepath>", "path", "<path>", "file_path", "<file_path>", "..."}
-            files = [
-                f for f in files
-                if f.strip().lower() not in bad
-                and (f if os.path.isabs(f) else os.path.join(str(_paths.temp_dir()), f)) not in media
-            ]
-            for fpath in set(files):
-                if not os.path.isabs(fpath):
-                    fpath = os.path.join(str(_paths.temp_dir()), fpath)
-                try:
-                    if not os.path.exists(fpath):
-                        raise FileNotFoundError(fpath)
-                    self._send_file_smart(uid, fpath, ctx)
-                except Exception as e:
-                    log.warning("wx send media err: %s", e)
+    def _on_message(self, bot: WxBotClient, msg: dict) -> None:
+        uid = msg.get("from_user_id", "")
+        ctx = msg.get("context_token", "")
+        text = bot.extract_text(msg).strip()
+        media = download_media(msg.get("item_list", []), WX_MEDIA_DIR)
 
-        threading.Thread(target=_handle, daemon=True, name="wx-handle").start()
+        if not text and not media:
+            return
+
+        if not self.is_allowed(uid):
+            log.info("[wx] blocked uid=%s (not in allowlist)", uid[:20])
+            bus.publish("wechat:blocked", {"uid": uid, "preview": text[:80]})
+            return
+
+        self._record_inbound(uid, text, media, ctx)
+        if self._dispatch_command(uid, text, ctx):
+            return
+
+        prompt = _build_agent_prompt(text, media)
+        threading.Thread(
+            target=self._run_agent_stream,
+            args=(uid, prompt, media, ctx),
+            daemon=True,
+            name="wx-handle",
+        ).start()
 
     # ── outbound ─────────────────────────────────────────────────
     def _record_outbound(self, uid: str, text: str, media: list[str], ctx: str) -> None:
