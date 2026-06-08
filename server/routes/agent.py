@@ -233,19 +233,31 @@ async def test_llm(idx: int):
 #     rebuilds in-flight + recent state atomically.
 @router.websocket("/ws/chat")
 async def ws_chat(ws: WebSocket):
+    source_filter = (ws.query_params.get("source") or "").strip()
     await ws.accept()
     s = svc()
+
+    def _matches_source(payload: dict) -> bool:
+        if not source_filter:
+            return True
+        source = payload.get("source")
+        return source == source_filter
 
     # 1. Send current chat state snapshot so a tab-switch / reload doesn't
     #    lose the running conversation.
     try:
-        await ws.send_json({"type": "snapshot", "streams": s.chat_state_snapshot()})
+        streams = s.chat_state_snapshot()
+        if source_filter:
+            streams = [item for item in streams if item.get("source") == source_filter]
+        await ws.send_json({"type": "snapshot", "streams": streams})
     except Exception:
         log.exception("ws_chat snapshot failed")
 
     # 2. Subscribe to chat:* events and forward to this socket.
     async def _forward():
         async for evt in bus.subscribe("chat:"):
+            if not _matches_source(evt.payload):
+                continue
             topic = evt.topic.split(":", 1)[1] if ":" in evt.topic else evt.topic
             msg = {"type": topic, **evt.payload}
             try:

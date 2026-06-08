@@ -172,7 +172,7 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
     onClose()
   }
   return (
-    <div className="fixed inset-0 z-30 bg-black/60 flex items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 z-30 bg-black/60 flex items-center justify-center" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="bg-bg-soft border border-line rounded-xl p-6 w-[34rem] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-base font-semibold mb-4">{initial.id ? '编辑计划' : '新建自主进化计划'}</h3>
         <Field label="名称">
@@ -229,7 +229,7 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
 
 function ReportDrawer({ name, content, onClose }: { name: string; content: string; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-30 bg-black/60 flex items-end justify-end" onClick={onClose}>
+    <div className="fixed inset-0 z-30 bg-black/60 flex items-end justify-end" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="w-[42rem] h-full bg-bg-soft border-l border-line p-6 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-baseline justify-between mb-3">
           <h3 className="text-sm font-mono text-slate-300">{name}</h3>

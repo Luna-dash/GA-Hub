@@ -351,7 +351,7 @@ function AllowlistDrawer({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-30 bg-black/50 flex items-end justify-end" onClick={onClose}>
+    <div className="fixed inset-0 z-30 bg-black/50 flex items-end justify-end" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="w-[28rem] h-full bg-bg-soft border-l border-line p-5 overflow-y-auto"
            onClick={(e) => e.stopPropagation()}>
         <div className="flex items-baseline justify-between mb-4">

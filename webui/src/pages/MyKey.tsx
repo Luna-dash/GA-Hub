@@ -337,7 +337,7 @@ function SessionDialog({ mode, session, allSessions, onClose, onSaved }: {
   }
 
   return (
-    <div className="fixed inset-0 z-30 bg-black/60 flex items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 z-30 bg-black/60 flex items-center justify-center" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="bg-bg-soft border border-line rounded-xl p-6 w-[40rem] max-w-[92vw] max-h-[88vh] overflow-y-auto"
            onClick={(e) => e.stopPropagation()}>
         <div className="flex items-baseline justify-between mb-4">
@@ -715,7 +715,7 @@ function BackupDrawer({ onClose, onRestored }: {
   }
 
   return (
-    <div className="fixed inset-0 z-30 bg-black/55 flex items-end justify-end" onClick={onClose}>
+    <div className="fixed inset-0 z-30 bg-black/55 flex items-end justify-end" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="w-[28rem] h-full bg-bg-soft border-l border-line flex flex-col"
            onClick={(e) => e.stopPropagation()}>
         <header className="px-5 py-3 border-b border-line flex items-baseline justify-between">

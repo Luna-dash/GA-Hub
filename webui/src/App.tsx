@@ -15,6 +15,7 @@ import { FeishuBot } from '@/pages/FeishuBot'
 import { Conversations } from '@/pages/Conversations'
 import { Memory } from '@/pages/Memory'
 import { Skills } from '@/pages/Skills'
+import { GoalHive } from '@/pages/GoalHive'
 
 import { Llms } from '@/pages/Llms'
 import { MyKey } from '@/pages/MyKey'
@@ -127,6 +128,7 @@ export default function App() {
             <Route path="/conversations/:id" element={<Conversations />} />
             <Route path="/memory" element={<Memory />} />
             <Route path="/skills" element={<Skills />} />
+            <Route path="/goal-hive" element={<GoalHive />} />
             <Route path="/llms" element={<Llms />} />
             <Route path="/mykey" element={<MyKey />} />
             <Route path="/tasks" element={<Tasks />} />

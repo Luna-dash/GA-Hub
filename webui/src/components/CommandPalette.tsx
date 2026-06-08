@@ -112,6 +112,7 @@ export function CommandPalette() {
       { p: '/conversations', label: '对话管理 / Conversations', icon: '🗂️' },
       { p: '/memory', label: '记忆 & SOP / Memory', icon: '🧠' },
       { p: '/llms', label: 'LLM 链路', icon: '⚡' },
+      { p: '/goal-hive', label: 'Goal Hive', icon: '🐝' },
       { p: '/autonomous', label: '自主进化 / Autonomous', icon: '🌀' },
       { p: '/settings', label: '设置 / Settings', icon: '⚙️' },
     ]
@@ -253,7 +254,7 @@ export function CommandPalette() {
   return (
     <div
       className="fixed inset-0 z-40 bg-black/55 backdrop-blur-sm flex items-start justify-center pt-[12vh] px-4"
-      onClick={close}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}
     >
       <div
         className="w-full max-w-xl bg-bg-soft border border-line rounded-xl shadow-2xl overflow-hidden flex flex-col"

@@ -202,7 +202,7 @@ export function FeishuBot() {
         </div>}
       </main>
 
-      {showKeys && <div className="absolute inset-0 z-20 grid place-items-center bg-black/30 p-4" onClick={() => setShowKeys(false)}>
+      {showKeys && <div className="absolute inset-0 z-20 grid place-items-center bg-black/30 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowKeys(false) }}>
         <div className="w-full max-w-md rounded-2xl border border-[#E8DFD1] bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
           <div className="mb-3 flex items-center justify-between">
             <div>

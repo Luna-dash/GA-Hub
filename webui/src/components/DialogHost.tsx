@@ -65,7 +65,7 @@ export function DialogHost() {
   return (
     <div
       className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center px-4"
-      onClick={cancel}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) cancel() }}
     >
       <div
         role="dialog"

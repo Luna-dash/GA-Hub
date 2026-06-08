@@ -11,6 +11,7 @@ const items = [
   { to: '/mykey', label: '链路配置', icon: '🔑' },
   { to: '/memory', label: 'SOP 记忆', icon: '🧠' },
   { to: '/tasks', label: '定时任务', icon: '⏰' },
+  { to: '/goal-hive', label: 'Goal Hive', icon: '🐝' },
   { to: '/autonomous', label: '自主进化', icon: '🌀' },
   { to: '/settings', label: '设置', icon: '⚙️' },
 ]

@@ -233,11 +233,15 @@ function wsUrl(path: string): string {
 
 export class ChatSocket {
   ws?: WebSocket
-  private readonly url = wsUrl('/ws/chat')
+  private readonly url: string
   private reconnectTimer?: number
   private explicitlyClosed = false
   onMessage: (m: ChatWSOut) => void = () => {}
   onState: (s: 'connecting' | 'open' | 'closed') => void = () => {}
+
+  constructor(path = '/ws/chat') {
+    this.url = wsUrl(path)
+  }
 
   open() {
     this.explicitlyClosed = false

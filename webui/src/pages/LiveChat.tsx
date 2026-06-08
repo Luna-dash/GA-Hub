@@ -405,7 +405,7 @@ function RestoreDrawer({ onClose, onRestored }: {
   }
 
   return (
-    <div className="fixed inset-0 z-30 bg-black/35 flex items-end justify-end" onClick={onClose}>
+    <div className="fixed inset-0 z-30 bg-black/35 flex items-end justify-end" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="w-[34rem] h-full bg-bg-soft border-l border-line flex flex-col"
            onClick={(e) => e.stopPropagation()}>
         <header className="px-5 py-3 border-b border-line flex items-baseline justify-between">
