@@ -11,7 +11,7 @@ export function Memory() {
   const [tab, setTab] = useState<Tab>('global')
   return (
     <PageShell
-      title="记忆 & SOP"
+      title="SOP 记忆"
       description="编辑 GenericAgent 的长期记忆与流程文档（global_mem · insight · *_sop.md）"
       actions={
         <div className="flex gap-1 text-sm">

@@ -146,4 +146,4 @@ class EventBus:
 
 
 # Process-global singleton
-bus = EventBus()
+bus = EventBus(history=1000)

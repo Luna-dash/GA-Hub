@@ -11,10 +11,11 @@ import { useDesktopNotifyEffects } from '@/utils/useDesktopNotifyEffects'
 import { api } from '@/api/client'
 import { Dashboard } from '@/pages/Dashboard'
 import { LiveChat } from '@/pages/LiveChat'
-import { WechatBot } from '@/pages/WechatBot'
+import { FeishuBot } from '@/pages/FeishuBot'
 import { Conversations } from '@/pages/Conversations'
 import { Memory } from '@/pages/Memory'
 import { Skills } from '@/pages/Skills'
+
 import { Llms } from '@/pages/Llms'
 import { MyKey } from '@/pages/MyKey'
 import { Settings } from '@/pages/Settings'
@@ -37,7 +38,7 @@ export default function App() {
   // Reflect agent / chat state in the browser tab title.
   useDocumentTitle()
 
-  // Fire OS notifications when streams finish / wechat msgs arrive (opt-in).
+  // Fire OS notifications when streams finish / bot messages arrive (opt-in).
   useDesktopNotifyEffects()
 
   // Probe setup status — if backend has no GA_ROOT, force the Settings page
@@ -102,8 +103,8 @@ export default function App() {
   // Setup mode: backend has no GA_ROOT yet. Show only the Settings page.
   if (!setup?.configured) {
     return (
-      <div className="flex h-screen w-screen overflow-hidden">
-        <main className="flex-1 min-w-0 bg-bg">
+      <div className="app-aurora flex h-screen w-screen overflow-hidden">
+        <main className="flex-1 min-w-0 bg-transparent">
           <Settings initialMode="setup" />
         </main>
         <DialogHost />
@@ -112,15 +113,16 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
+    <div className="app-aurora flex h-screen w-screen overflow-hidden">
       <SidebarNav />
-      <main className="flex-1 min-w-0 bg-bg">
+      <main className="flex-1 min-w-0 bg-transparent">
         <Suspense fallback={<div className="h-full flex items-center justify-center text-slate-500 text-sm">载入中…</div>}>
           <Routes>
             <Route path="/" element={<Navigate to="/chat" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/chat" element={<LiveChat />} />
-            <Route path="/wechat" element={<WechatBot />} />
+            <Route path="/feishu" element={<FeishuBot />} />
+            <Route path="/wechat" element={<Navigate to="/feishu" replace />} />
             <Route path="/conversations" element={<Conversations />} />
             <Route path="/conversations/:id" element={<Conversations />} />
             <Route path="/memory" element={<Memory />} />

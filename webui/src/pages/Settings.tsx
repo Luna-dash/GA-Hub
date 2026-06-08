@@ -279,7 +279,7 @@ function NotifyPanel() {
   const test = async () => {
     setTesting('发送中…')
     try {
-      const r = await api.notify('🔔 测试通知', '通知通道工作正常。Agent 完成回复或微信新消息时会主动提醒。')
+      const r = await api.notify('🔔 测试通知', '通知通道工作正常。Agent 完成回复或飞书 Bot 新消息时会主动提醒。')
       setTesting(r.ok ? `✅ 已发送（${r.backend}）` : `⚠ 发送失败：${r.error || r.backend}`)
     } catch (e) {
       setTesting(`⚠ 网络异常：${(e as Error).message}`)
@@ -297,7 +297,7 @@ function NotifyPanel() {
     <div className="rounded-xl border border-line bg-bg-card p-4">
       <div className="text-sm font-semibold mb-1">桌面通知</div>
       <div className="text-xs text-slate-500 mb-3">
-        Agent 完成长任务、微信收到新消息时弹系统通知。仅在窗口失焦/最小化时触发，不会打断当前查看。
+        Agent 完成长任务、飞书 Bot 收到新消息时弹系统通知。仅在窗口失焦/最小化时触发，不会打断当前查看。
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">

@@ -34,15 +34,16 @@ export function useDesktopNotifyEffects() {
   const lastWxAnnouncedRef = useRef<number>(Math.floor(Date.now() / 1000))
   useEffect(() => {
     for (const e of recent) {
-      if (e.topic !== 'wechat:message_in') continue
-      if (e.ts <= lastWxAnnouncedRef.current) break    // recent is newest-first
-      const uid = e.payload?.uid || ''
-      const text = e.payload?.text || '(媒体消息)'
+      if (!('topic' in e) || e.topic !== 'wechat:message_in') continue
+      if (!('ts' in e) || e.ts <= lastWxAnnouncedRef.current) break
+      const p = 'payload' in e ? e.payload : {}
+      const uid = p?.uid || ''
+      const text = p?.text || '(媒体消息)'
       notify(`💬 微信 · ${uid.slice(0, 16) || '联系人'}`, {
         body: text.slice(0, 140),
         tag: `wechat-${uid}`,
       })
-      lastWxAnnouncedRef.current = Math.max(lastWxAnnouncedRef.current, e.ts)
+      lastWxAnnouncedRef.current = Math.max(lastWxAnnouncedRef.current, 'ts' in e ? e.ts : 0)
     }
   }, [recent])
 }

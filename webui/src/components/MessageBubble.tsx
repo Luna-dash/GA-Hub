@@ -26,6 +26,8 @@ interface Props {
   streamId?: string
   /** Rewind callback. When provided + streamId set, a "回退" chip appears. */
   onRewind?: (sid: string) => void
+  /** Compact mode: hide role labels and reduce padding (for FeishuBot) */
+  compact?: boolean
 }
 
 const FILE_HINT = 'If you need to show files to user, use [FILE:filepath] in your response.'
@@ -45,20 +47,28 @@ function cleanUserContent(s: string): string {
     .trim()
 }
 
-export function MessageBubble({ role, content, streaming, attachments, streamId, onRewind }: Props) {
+export function MessageBubble({ role, content, streaming, attachments, streamId, onRewind, compact }: Props) {
   const isUser = role === 'user'
   const isSystem = role === 'system'
-  
+
   if (isUser) {
     const cleaned = cleanUserContent(content)
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[80%] flex flex-col items-end gap-2">
+      <div className="flex justify-start group/msg">
+        <div className="max-w-[80%] flex flex-col items-start gap-2">
           {attachments && attachments.length > 0 && (
             <UserAttachments atts={attachments} />
           )}
           {cleaned && (
-            <div className="rounded-2xl bg-accent text-white px-4 py-2.5 leading-7 whitespace-pre-wrap break-words shadow">
+            <div className={clsx(
+              "rounded-lg bg-[#8A6438] text-[#FFF4DF] whitespace-pre-wrap break-words shadow-[0_2px_6px_rgba(45,34,22,0.16)] border border-[#6F4D28]",
+              compact ? "px-3 py-2 leading-6" : "px-3.5 py-2.5 leading-7"
+            )}>
+              {!compact && (
+                <div className="mb-1.5 flex items-center justify-start gap-2 text-[11px] font-medium text-[#FFF4DF]/75">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#FFF4DF]/70" /> You
+                </div>
+              )}
               {cleaned}
             </div>
           )}
@@ -71,20 +81,29 @@ export function MessageBubble({ role, content, streaming, attachments, streamId,
   return (
     <div className="flex justify-start group/msg">
       <div className={clsx(
-        "max-w-[92%] relative rounded-2xl px-4 py-3 shadow-sm",
-        isSystem 
-          ? "bg-amber-50/50 dark:bg-amber-950/20 border-2 border-amber-400/60" 
-          : "bg-bg-card border border-line"
+        "max-w-[92%] relative rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.13)]",
+        compact ? "px-3 py-2 text-xs" : "px-3.5 py-3",
+        isSystem
+          ? "bg-[#E8D8B8] border border-[#B69761] text-[#3C2C19]"
+          : "bg-bg-card border border-line text-[#2C2418]"
       )}>
         {isSystem && (
           <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-amber-400 flex items-center justify-center text-sm shadow">
             🟡
           </div>
         )}
-        <CopyChip text={content} />
-        {streamId && onRewind && !streaming && (
-          <RewindChip onClick={() => onRewind(streamId)} />
+        {!compact && (
+          <div className={clsx("mb-2 flex items-center gap-2 text-[11px] font-medium", isSystem ? "text-[#7B5A2E]" : "text-[#665741]")}>
+            <span className={clsx("h-1.5 w-1.5 rounded-full", isSystem ? "bg-[#A2783F]" : "bg-[#54735D]")} />
+            {isSystem ? 'System Event' : 'GA Agent'}
+          </div>
         )}
+        <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+          {streamId && onRewind && !streaming && (
+            <RewindChip onClick={() => onRewind(streamId)} />
+          )}
+          <CopyChip text={content} />
+        </div>
         {segs.map((seg, i) =>
           seg.type === 'fold' ? (
             <details key={i} className="turn-fold">
@@ -104,7 +123,7 @@ export function MessageBubble({ role, content, streaming, attachments, streamId,
 
 function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
   return (
-    <div className="flex flex-wrap gap-2 justify-end">
+    <div className="flex flex-wrap gap-2 justify-start">
       {atts.map((a) => {
         // Prefer the local upload-result url; fall back to files-by-path for
         // restored snapshots where only the abs path is around.
@@ -123,7 +142,7 @@ function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
               <img
                 src={src}
                 alt={a.name}
-                className="max-h-44 max-w-[14rem] rounded-xl border border-line object-cover shadow"
+                className="max-h-44 max-w-[14rem] rounded-md border border-line object-cover shadow-sm"
               />
             </a>
           )
@@ -135,11 +154,11 @@ function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
             target="_blank"
             rel="noreferrer"
             title={a.name}
-            className="px-3 py-2 rounded-xl border border-line bg-bg-card text-xs text-slate-300 hover:bg-white/5 inline-flex items-center gap-2 max-w-[16rem]"
+            className="px-3 py-2 rounded-md border border-line bg-bg-card text-xs text-[#2C2418] hover:bg-bg-soft inline-flex items-center gap-2 max-w-[16rem]"
           >
             <span>📎</span>
             <span className="truncate">{a.name}</span>
-            {!!a.size && <span className="text-slate-500 shrink-0">{fmtSize(a.size)}</span>}
+            {!!a.size && <span className="text-[#86775F] shrink-0">{fmtSize(a.size)}</span>}
           </a>
         )
       })}
@@ -154,9 +173,9 @@ function CopyChip({ text }: { text: string }) {
     <button
       onClick={() => copy(text)}
       title="复制完整回复"
-      className="absolute top-1.5 right-1.5 px-2 py-0.5 text-[11px] rounded
-                 bg-bg-soft/80 backdrop-blur border border-line text-slate-400
-                 opacity-0 group-hover/msg:opacity-100 transition hover:text-slate-200"
+      className="px-2.5 py-1 text-[11px] leading-none rounded-md
+                 bg-bg-soft border border-line text-[#665741]
+                 hover:text-[#2C2418] hover:bg-bg-card transition-colors"
     >
       {copied ? '✓ 已复制' : '复制'}
     </button>
@@ -168,9 +187,9 @@ function RewindChip({ onClick }: { onClick: () => void }) {
     <button
       onClick={onClick}
       title="回退此轮对话（删除本轮提问与回复）"
-      className="absolute top-1.5 right-14 px-2 py-0.5 text-[11px] rounded
-                 bg-bg-soft/80 backdrop-blur border border-line text-slate-400
-                 opacity-0 group-hover/msg:opacity-100 transition hover:text-amber-300"
+      className="px-2.5 py-1 text-[11px] leading-none rounded-md
+                 bg-bg-soft border border-line text-[#665741]
+                 hover:text-accent hover:bg-bg-card transition-colors"
     >
       ↺ 回退
     </button>

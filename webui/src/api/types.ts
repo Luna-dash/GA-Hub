@@ -105,6 +105,37 @@ export interface WxLogEntry {
   nickname?: string
 }
 
+// ── Feishu ────────────────────────────────────────────────
+export interface FsStatus {
+  running: boolean
+  pid?: number | null
+  returncode?: number | null
+  external?: boolean
+  fsapp_path: string
+  fsapp_exists: boolean
+  python: string
+  log_file: string
+  log_exists: boolean
+  last_check?: FsCheckResult | null
+  last_check_ts?: number
+}
+
+export interface FsCheckResult {
+  ok?: boolean
+  ready?: boolean
+  returncode?: number
+  error?: string
+  raw?: string
+  app_id_masked?: string
+  app_secret_masked?: string
+  allowed_users?: string[]
+  public_access?: boolean
+  pattern_count?: number
+  agent_ok?: boolean
+  agent_error?: string
+  [key: string]: any
+}
+
 // ── Conversations ─────────────────────────────────────────
 export interface ConversationSummary {
   id: string
@@ -252,13 +283,6 @@ export interface MyKeyBackup {
   size: number
 }
 
-// ── Events ────────────────────────────────────────────────
-export interface BusEvent {
-  topic: string
-  payload: Record<string, any>
-  ts: number
-}
-
 // ── Chat WS protocol ─────────────────────────────────────
 export type ChatWSIn =
   | { type: 'submit'; text: string; images?: string[]; source?: string }
@@ -305,3 +329,11 @@ export type ChatWSOut =
   | { type: 'pong' }
   | { type: 'error'; error: string }
   | { type: 'rewound'; removed_sids: string[]; kept: number; history_lines: number }
+
+export interface EventBusEnvelope {
+  topic: string
+  payload: Record<string, any>
+  ts: number
+}
+
+export type BusEvent = EventBusEnvelope

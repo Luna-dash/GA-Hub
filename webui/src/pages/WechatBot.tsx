@@ -40,6 +40,7 @@ export function WechatBot() {
   useEffect(() => {
     const s = new EventSocket('wechat:', 0)
     s.onEvent = (e: BusEvent) => {
+      if (!('topic' in e)) return
       if (e.topic === 'wechat:message_in' || e.topic === 'wechat:message_out' || e.topic === 'wechat:log_cleared') {
         qc.invalidateQueries({ queryKey: ['wxMessages'] })
       }

@@ -12,6 +12,8 @@ import type {
   Conversation,
   ConversationSummary,
   EmailConfig,
+  FsCheckResult,
+  FsStatus,
   LLMInfo,
   LLMTestResult,
   MyKeyBackup,
@@ -65,7 +67,7 @@ async function http<T>(method: string, path: string, body?: unknown, init?: Requ
 
 export const api = {
   // ── status ───────────────────────────────────────────
-  status: () => http<{ configured: boolean; ga_root: string | null; python_path?: string | null; resolved_python?: string | null; resolved_python_source?: string; mode?: string; agent?: AgentStatus; wechat?: WxStatus; autonomous?: any }>('GET', '/api/status'),
+  status: () => http<{ configured: boolean; ga_root: string | null; python_path?: string | null; resolved_python?: string | null; resolved_python_source?: string; mode?: string; agent?: AgentStatus; feishu?: FsStatus; autonomous?: any }>('GET', '/api/status'),
 
   // ── setup (always available, even in setup mode) ────
   setupStatus: () => http<SetupStatus>('GET', '/api/setup/status'),
@@ -113,7 +115,19 @@ export const api = {
   restoreMyKeyBackup: (name: string) =>
     http<MyKeyWriteResult>('POST', `/api/mykey/backups/${encodeURIComponent(name)}/restore`),
 
-  // ── wechat ───────────────────────────────────────────
+  // ── feishu ───────────────────────────────────────────
+  fsStatus: () => http<FsStatus>('GET', '/api/feishu/status'),
+  fsCheck: (initAgent = false) => http<FsCheckResult>('POST', `/api/feishu/check?init_agent=${initAgent ? 'true' : 'false'}`),
+  fsStart: () => http<{ started: boolean; running: boolean; pid?: number | null; log_file?: string }>('POST', '/api/feishu/start'),
+  fsStop: () => http<{ stopped: boolean; running: boolean; pid?: number | null }>('POST', '/api/feishu/stop'),
+  fsLogs: (tail = 300) => http<{ lines: string[]; file: string }>('GET', `/api/feishu/logs?tail=${tail}`),
+  fsRecentEvents: (limit = 100) => http<{ events: BusEvent[] }>('GET', `/api/events/recent?prefix=feishu:chat&limit=${limit}`),
+  fsSaveKeys: (app_id: string, app_secret: string, allowed_users = '') =>
+    http<{ ok: boolean; app_id_masked?: string; allowed_users_saved?: boolean }>('PUT', '/api/feishu/keys', { app_id, app_secret, allowed_users }),
+  fsSend: (receive_id: string, text: string, receive_id_type = 'open_id', use_card = false) =>
+    http<{ ok: boolean; message_id?: string; raw?: string }>('POST', '/api/feishu/send', { receive_id, text, receive_id_type, use_card }),
+
+  // ── wechat (legacy endpoints kept for compatibility) ─
   wxStatus: () => http<WxStatus>('GET', '/api/wechat/status'),
   wxLogin: () => http<any>('POST', '/api/wechat/login'),
   wxLogout: () => http<{ ok: boolean }>('POST', '/api/wechat/logout'),

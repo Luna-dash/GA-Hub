@@ -19,7 +19,7 @@ export function Dashboard() {
   })
 
   const a = status?.agent
-  const w = status?.wechat
+  const f = status?.feishu
   const idleSec = a ? Math.max(0, Math.floor(Date.now() / 1000) - (a.last_reply_time || 0)) : 0
 
   // Derive sparkline series from `recent[]`. The buffer is capped at 200, so
@@ -27,17 +27,16 @@ export function Dashboard() {
   // trend strip; current activity is what matters.
   const trends = useMemo(() => {
     const ts = (pred: (t: string) => boolean) =>
-      recent.filter((e) => pred(e.topic)).map((e) => e.ts)
+      recent.filter((e) => 'topic' in e && pred(e.topic)).map((e) => 'ts' in e ? e.ts : 0)
     return {
       agent: bucketTimestamps(ts((t) => /^agent:(submit|done|turn)/.test(t)), WINDOW_SEC, BUCKETS),
-      wxIn:  bucketTimestamps(ts((t) => t === 'wechat:message_in'),           WINDOW_SEC, BUCKETS),
-      wxOut: bucketTimestamps(ts((t) => t === 'wechat:message_out'),          WINDOW_SEC, BUCKETS),
+      fs:    bucketTimestamps(ts((t) => t.startsWith('feishu:')),             WINDOW_SEC, BUCKETS),
       auto:  bucketTimestamps(ts((t) => t.startsWith('autonomous:')),         WINDOW_SEC, BUCKETS),
     }
   }, [recent])
 
   return (
-    <PageShell title="仪表盘" description="实时观察 GenericAgent 与微信机器人的运行状态">
+    <PageShell title="仪表盘" description="实时观察 GenericAgent 与飞书 Bot 的运行状态">
       <div className="p-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         <Card title="Agent 状态" tone={a?.is_running ? 'amber' : 'green'}
               footer={<TrendStrip label="活动" values={trends.agent} />}>
@@ -49,21 +48,15 @@ export function Dashboard() {
           <Stat label="空闲" value={a?.last_reply_time ? `${idleSec}s` : '—'} />
         </Card>
 
-        <Card title="微信机器人" tone={w?.logged_in ? 'green' : 'red'}
-              footer={
-                <div className="space-y-1">
-                  <TrendStrip label="收" values={trends.wxIn} />
-                  <TrendStrip label="发" values={trends.wxOut} strokeClass="text-emerald-400" />
-                </div>
-              }>
-          <Stat label="登录" value={w?.logged_in ? '在线' : '未登录'} />
-          <Stat label="bot_id" value={w?.bot_id || '—'} mono />
-          <Stat label="轮询" value={w?.polling ? '运行中' : '已停止'} />
-          <Stat label="联系人" value={String(w?.contacts ?? 0)} />
-          <Stat label="日志" value={String(w?.log_count ?? 0)} />
-          <Stat label="白名单" value={(w?.allowlist || ['*']).join(', ')} />
+        <Card title="飞书 Bot" tone={f?.running ? 'green' : (f?.fsapp_exists ? 'amber' : 'red')}
+              footer={<TrendStrip label="事件" values={trends.fs} strokeClass="text-emerald-400" />}>
+          <Stat label="进程" value={f?.running ? `运行中${f?.pid ? ` #${f.pid}` : ''}` : '已停止'} />
+          <Stat label="脚本" value={f?.fsapp_exists ? '已找到' : '缺失'} />
+          <Stat label="检查" value={f?.last_check?.ready || f?.last_check?.ok ? '通过' : '未通过/未检查'} />
+          <Stat label="日志" value={f?.log_exists ? '已创建' : '未创建'} />
+          <Stat label="Python" value={f?.python || '—'} mono />
           <div className="pt-2">
-            <Link to="/wechat" className="text-accent text-sm hover:underline">→ 前往管理</Link>
+            <Link to="/feishu" className="text-accent text-sm hover:underline">→ 前往管理</Link>
           </div>
         </Card>
 
@@ -83,13 +76,16 @@ export function Dashboard() {
         <Card title="最近事件" className="md:col-span-2 xl:col-span-3">
           <div className="space-y-1 text-sm font-mono max-h-72 overflow-y-auto">
             {recent.length === 0 && <div className="text-slate-500">尚无事件…</div>}
-            {recent.slice(0, 60).map((e, i) => (
-              <div key={i} className="flex items-baseline gap-3">
-                <span className="text-slate-500 shrink-0">{relTime(Math.floor(e.ts))}</span>
-                <span className="text-accent shrink-0 w-44 truncate">{e.topic}</span>
-                <span className="text-slate-300 truncate">{JSON.stringify(e.payload)}</span>
-              </div>
-            ))}
+            {recent.slice(0, 60).map((e, i) => {
+              if (!('topic' in e)) return null
+              return (
+                <div key={i} className="flex items-baseline gap-3">
+                  <span className="text-slate-500 shrink-0">{relTime(Math.floor('ts' in e ? e.ts || 0 : 0))}</span>
+                  <span className="text-accent shrink-0 w-44 truncate">{e.topic}</span>
+                  <span className="text-slate-300 truncate">{JSON.stringify('payload' in e ? e.payload : {})}</span>
+                </div>
+              )
+            })}
           </div>
         </Card>
       </div>

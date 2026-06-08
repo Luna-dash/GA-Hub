@@ -107,12 +107,10 @@ export function CommandPalette() {
     const acts: Action[] = []
     // Page jumps
     const pages = [
-      { p: '/', label: '仪表盘 / Dashboard', icon: '📊' },
       { p: '/chat', label: '实时聊天 / Live Chat', icon: '💬' },
-      { p: '/wechat', label: '微信机器人 / WeChat Bot', icon: '🤖' },
+      { p: '/feishu', label: '飞书 Bot / Feishu Bot', icon: '🪽' },
       { p: '/conversations', label: '对话管理 / Conversations', icon: '🗂️' },
       { p: '/memory', label: '记忆 & SOP / Memory', icon: '🧠' },
-      { p: '/skills', label: '技能库 / Skills', icon: '🌳' },
       { p: '/llms', label: 'LLM 链路', icon: '⚡' },
       { p: '/autonomous', label: '自主进化 / Autonomous', icon: '🌀' },
       { p: '/settings', label: '设置 / Settings', icon: '⚙️' },

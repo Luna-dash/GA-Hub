@@ -108,8 +108,8 @@ export function ImagePasteInput({
   return (
     <div
       className={clsx(
-        'relative rounded-2xl border bg-bg-card transition',
-        dragOver ? 'border-accent' : 'border-line',
+        'relative rounded-3xl border bg-bg-card/85 transition shadow-[0_18px_55px_rgba(2,6,23,0.22)] backdrop-blur-xl',
+        dragOver ? 'border-accent ring-4 ring-accent/10' : 'border-line/80 hover:border-accent/25',
         disabled && 'opacity-60',
       )}
       onDragOver={(e) => {
@@ -201,9 +201,9 @@ export function ImagePasteInput({
             e.preventDefault()
             if (!disabled) onSubmit()
           }}
-          className="flex-1 bg-transparent resize-none outline-none text-slate-200 placeholder:text-slate-500 px-2 py-1 max-h-60"
+          className="flex-1 bg-transparent resize-none outline-none text-slate-200 placeholder:text-slate-500 px-3 py-2 max-h-60 leading-7"
         />
-        <label className="cursor-pointer text-slate-400 hover:text-slate-200 px-2 py-1.5 rounded-lg hover:bg-white/5 text-sm">
+        <label className="cursor-pointer text-slate-400 hover:text-slate-200 px-3 py-2 rounded-xl hover:bg-white/5 text-sm transition">
           📎
           <input
             type="file"
@@ -215,13 +215,13 @@ export function ImagePasteInput({
         <button
           type="button"
           onClick={() => setBtwOpen(true)}
-          className="px-3 py-1.5 rounded-lg border border-amber-600/50 bg-amber-600/60 text-amber-950 text-[13px] font-medium hover:bg-amber-600/70"
+          className="px-3 py-2 rounded-xl border border-amber-500/30 bg-amber-500/15 text-amber-200 text-[13px] font-medium hover:bg-amber-500/25 transition"
           title="BTW 旁路提问，不打断主任务"
         >BTW</button>
         <button
           onClick={onSubmit}
           disabled={disabled || (!text.trim() && attachments.length === 0)}
-          className="px-3 py-1.5 rounded-lg bg-accent text-white text-sm hover:brightness-110 disabled:opacity-40"
+          className="px-4 py-2 rounded-xl bg-accent text-white text-sm font-medium shadow-lg shadow-accent/20 hover:brightness-110 disabled:opacity-40 disabled:shadow-none transition"
         >发送</button>
       </div>
 
@@ -233,7 +233,7 @@ export function ImagePasteInput({
         </div>
       )}
       {dragOver && (
-        <div className="pointer-events-none absolute inset-0 rounded-2xl border-2 border-dashed border-accent bg-accent/5 flex items-center justify-center text-accent text-sm">
+        <div className="pointer-events-none absolute inset-0 rounded-3xl border-2 border-dashed border-accent bg-accent/5 flex items-center justify-center text-accent text-sm">
           松开以上传
         </div>
       )}
@@ -302,7 +302,7 @@ function BtwDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div 
+    <div
       ref={dialogRef}
       onMouseDown={handleMouseDown}
       style={{

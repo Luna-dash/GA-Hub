@@ -31,8 +31,7 @@ export const useAgentStore = create<State>((set, get) => ({
         const recent = [e, ...st.recent].slice(0, 200)
         return { recent }
       })
-      if (e.topic.startsWith('agent:')) {
-        // refresh on agent state change
+      if ('topic' in e && e.topic.startsWith('agent:')) {
         get().refreshStatus()
       }
     }

@@ -176,25 +176,17 @@ def create_app() -> FastAPI:
         from .services.agent_service import AgentService
         from .services.autonomous_scheduler import AutonomousScheduler
         from .services.task_scheduler import TaskScheduler
-        from .services.wechat_service import WeChatService
+        from .services.feishu_service import FeishuService
 
         agent_svc = AgentService.instance()
         agent_svc.start_run_thread()
 
         try:
-            try:
-                import mykey  # type: ignore
-                allowed = getattr(mykey, "wechat_allowed_users", None)
-            except Exception:
-                allowed = None
-            wx = WeChatService.instance(agent_svc)
-            if allowed is not None:
-                wx.set_allowlist(allowed)
-            if wx.bot.has_token:
-                wx.start_polling()
-                log.info("wechat polling auto-resumed (bot_id=%s)", wx.bot.bot_id)
+            fs = FeishuService.instance()
+            fs.start_log_watcher()
+            log.info("feishu log watcher started")
         except Exception as e:
-            log.warning("wechat init skipped: %s", e)
+            log.warning("feishu log watcher init skipped: %s", e)
 
         try:
             sched = AutonomousScheduler.instance(agent_svc)
@@ -217,6 +209,11 @@ def create_app() -> FastAPI:
             try:
                 from .services.agent_service import AgentService
                 AgentService.instance()._archive_snapshots_to_chat_history()
+            except Exception:
+                pass
+            try:
+                from .services.feishu_service import FeishuService
+                FeishuService.instance().shutdown()
             except Exception:
                 pass
             try:
@@ -248,10 +245,10 @@ def create_app() -> FastAPI:
         from .services.agent_service import AgentService
         out["agent"] = AgentService.instance().status().__dict__
         try:
-            from .services.wechat_service import WeChatService
-            out["wechat"] = WeChatService.instance().status()
+            from .services.feishu_service import FeishuService
+            out["feishu"] = FeishuService.instance().status()
         except Exception as e:
-            out["wechat"] = {"error": str(e)}
+            out["feishu"] = {"error": str(e)}
         try:
             from .services.autonomous_scheduler import AutonomousScheduler
             out["autonomous"] = {
@@ -279,10 +276,10 @@ def create_app() -> FastAPI:
             notify as notify_routes,
             tasks as task_routes,
             upload as upload_routes,
-            wechat as wechat_routes,
+            feishu as feishu_routes,
         )
         app.include_router(agent_routes.router)
-        app.include_router(wechat_routes.router)
+        app.include_router(feishu_routes.router)
         app.include_router(conv_routes.router)
         app.include_router(memory_routes.router)
         app.include_router(autonomous_routes.router)

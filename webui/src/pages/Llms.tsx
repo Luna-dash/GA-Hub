@@ -70,13 +70,13 @@ function LlmCard({
 }) {
   const cap = detectLLMCapability(l.name)
   return (
-    <div className={`rounded-xl border p-4 ${l.current ? 'border-accent bg-accent-soft/30' : 'border-line bg-bg-card'}`}>
+    <div className={`rounded-xl border p-4 shadow-sm ${l.current ? 'border-accent bg-accent-soft/30' : 'border-line bg-bg-card'}`}>
       <div className="flex items-baseline justify-between mb-2 gap-2">
         <div className="text-xs text-slate-500">#{l.index}</div>
         <div className="flex items-center gap-1.5">
           <span
-            className={`text-[10px] px-1.5 py-0.5 rounded ${
-              cap.multimodal ? 'bg-emerald-900/40 text-emerald-300' : 'bg-slate-700/60 text-slate-300'
+            className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+              cap.multimodal ? 'bg-[#DDEACF] text-[#4F6F3F]' : 'bg-bg-soft text-slate-500'
             }`}
             title={llmBadgeTitle(cap)}
           >
@@ -112,7 +112,7 @@ function LlmCard({
         <button
           onClick={onSwitch}
           disabled={l.current}
-          className="px-3 py-1.5 rounded-lg bg-accent text-white text-sm disabled:opacity-40"
+          className="px-3 py-1.5 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-40 hover:bg-accent/90 transition-colors"
         >
           {l.current ? '已激活' : '切换'}
         </button>
@@ -120,7 +120,7 @@ function LlmCard({
           onClick={onTest}
           disabled={test?.status === 'pending' || disableTest}
           title={disableTest ? '当前 LLM 正在执行任务中，无法测试以避免上下文冲突' : '发送一条 ping，验证连通性 / 延迟'}
-          className="px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm disabled:opacity-40"
+          className="px-3 py-1.5 rounded-lg border border-line text-slate-400 hover:bg-bg-soft text-sm disabled:opacity-40 transition-colors"
         >
           {test?.status === 'pending' ? '测试中…' : '测试 ping'}
         </button>

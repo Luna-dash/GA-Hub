@@ -227,7 +227,7 @@ export function LiveChat() {
     <PageShell
       title="实时聊天"
       actions={
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 text-sm flex-wrap justify-end">
           <div className="hidden md:flex items-center gap-1.5 mr-1" title="对话标题：回车或失焦保存，清空后按首条消息自动命名">
             <input
               value={titleDraft}
@@ -239,9 +239,9 @@ export function LiveChat() {
               }}
               disabled={titleSaving}
               placeholder="对话标题"
-              className="w-44 bg-bg-card border border-line rounded-lg px-2 py-1.5 text-xs outline-none focus:border-accent placeholder:text-slate-500 disabled:opacity-60"
+              className="w-48 bg-bg-card border border-line rounded-md px-3 py-2 text-xs outline-none focus:border-accent/80 focus:ring-2 focus:ring-accent/15 placeholder:text-[#86775F] disabled:opacity-60 shadow-inner"
             />
-            {titleSaving && <span className="text-[10px] text-slate-400">保存中…</span>}
+            {titleSaving && <span className="text-[10px] text-[#665741]">保存中…</span>}
           </div>
           {/* LLM picker + capability badge */}
           {llms.length > 0 && (
@@ -250,7 +250,7 @@ export function LiveChat() {
                 value={currentLlm?.index ?? 0}
                 onChange={(e) => switchLlm(Number(e.target.value))}
                 disabled={streaming || agentRunning}
-                className="bg-bg-card border border-line rounded-lg px-2 py-1.5 text-xs outline-none focus:border-accent max-w-[260px] truncate disabled:opacity-50"
+                className="bg-bg-card border border-line rounded-md px-3 py-2 text-xs outline-none focus:border-accent/80 focus:ring-2 focus:ring-accent/15 max-w-[260px] truncate disabled:opacity-50"
                 title={streaming || agentRunning ? '当前回复进行中，请先停止或等待完成后再切换 LLM' : '切换 LLM'}
               >
                 {llms.map((l) => (
@@ -260,37 +260,37 @@ export function LiveChat() {
                 ))}
               </select>
               <span
-                className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${cap.multimodal
-                  ? 'bg-emerald-900/40 text-emerald-300'
-                  : 'bg-slate-700/60 text-slate-300'}`}
+                className={`text-[10px] px-2 py-1 rounded-full shrink-0 border ${cap.multimodal
+                  ? 'bg-[#D6E1D0] text-[#355C43] border-[#8FA67D]'
+                  : 'bg-bg-soft text-[#3A3020] border-line'}`}
                 title={llmBadgeTitle(cap)}
               >
                 {llmBadgeText(cap)}
               </span>
             </div>
           )}
-          <span className={`px-2 py-0.5 rounded ${conn === 'open' ? 'bg-emerald-900/40 text-emerald-300' : conn === 'connecting' ? 'bg-amber-900/40 text-amber-300' : 'bg-rose-900/40 text-rose-300'}`}>
+          <span className={`px-2.5 py-1 rounded-full border text-[11px] ${conn === 'open' ? 'bg-[#D6E1D0] text-[#355C43] border-[#8FA67D]' : conn === 'connecting' ? 'bg-[#E7D3A8] text-[#7A5527] border-[#B99A5B]' : 'bg-[#E2C5BD] text-[#7A3D32] border-[#B98578]'}`}>
             {conn === 'open' ? '已连接' : conn === 'connecting' ? '连接中…' : '断开'}
           </span>
-          <button onClick={() => setRestoreOpen(true)} className="px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm" title="从历史快照恢复对话">↩ 恢复历史</button>
-          <button onClick={newConv} className="px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm">新对话</button>
+          <button onClick={() => setRestoreOpen(true)} className="px-3 py-2 rounded-md border border-line text-[#3A3020] hover:bg-bg-soft hover:border-accent/30 text-sm transition" title="从历史快照恢复对话">↩ 恢复历史</button>
+          <button onClick={newConv} className="px-3 py-2 rounded-md border border-line text-[#3A3020] hover:bg-bg-soft hover:border-accent/30 text-sm transition">新对话</button>
           <button onClick={abortFn} disabled={!streaming}
-            className="px-3 py-1.5 rounded-lg border border-rose-700/60 text-rose-300 hover:bg-rose-900/20 text-sm disabled:opacity-40">
+            className="px-3 py-2 rounded-md border border-[#B98578] text-[#7A3D32] hover:bg-[#E2C5BD] text-sm disabled:opacity-40 transition">
             停止
           </button>
         </div>
       }
     >
       <div className="flex flex-col h-full relative">
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+        <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-4 py-4 space-y-3">
           {hydrating && msgs.length === 0 && (
-            <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-500 text-sm">
+            <div className="h-full flex flex-col items-center justify-center gap-3 text-[#86775F] text-sm">
               <div className="w-6 h-6 rounded-full border-2 border-slate-600 border-t-accent animate-spin" />
               <div>正在恢复历史对话…</div>
             </div>
           )}
           {!hydrating && msgs.length === 0 && (
-            <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+            <div className="h-full flex items-center justify-center text-[#86775F] text-sm">
               开始一段对话，或粘贴一张图问个问题。
             </div>
           )}
@@ -319,14 +319,14 @@ export function LiveChat() {
             onClick={jumpToBottom}
             className="absolute right-8 bottom-28 z-10 px-3 py-1.5 rounded-full
                        bg-bg-soft/95 backdrop-blur border border-line shadow-lg
-                       text-xs text-slate-200 hover:bg-bg-card flex items-center gap-1.5"
+                       text-xs text-[#2C2418] hover:bg-bg-card flex items-center gap-1.5"
             title="跳到最新消息"
           >
             ↓ {unread > 0 ? `${unread} 条新消息` : '回到底部'}
           </button>
         )}
 
-        <div className="border-t border-line bg-bg-soft p-4">
+        <div className="border-t border-line bg-bg-soft/75 backdrop-blur-xl p-4 shadow-[0_-12px_36px_rgba(15,23,42,0.20)]">
           <ImagePasteInput
             text={text}
             onText={setText}
@@ -357,6 +357,8 @@ function sourceLabel(source: string): string {
     case 'autonomous':
     case 'reflect':
       return '🤖 [自主进化触发]'
+    case 'feishu':
+      return '🪽 [飞书]'
     case 'wechat':
       return '💬 [微信]'
     case 'task':
@@ -403,29 +405,29 @@ function RestoreDrawer({ onClose, onRestored }: {
   }
 
   return (
-    <div className="fixed inset-0 z-30 bg-black/55 flex items-end justify-end" onClick={onClose}>
+    <div className="fixed inset-0 z-30 bg-black/35 flex items-end justify-end" onClick={onClose}>
       <div className="w-[34rem] h-full bg-bg-soft border-l border-line flex flex-col"
            onClick={(e) => e.stopPropagation()}>
         <header className="px-5 py-3 border-b border-line flex items-baseline justify-between">
           <div>
             <h3 className="text-base font-semibold">恢复历史对话</h3>
-            <p className="text-xs text-slate-500 mt-0.5">来自 temp/model_responses/ 的运行时快照（完整恢复 native context）</p>
+            <p className="text-xs text-[#86775F] mt-0.5">来自 temp/model_responses/ 的运行时快照（完整恢复 native context）</p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-200 text-xl leading-none">×</button>
+          <button onClick={onClose} className="text-[#665741] hover:text-[#2C2418] text-xl leading-none">×</button>
         </header>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {isLoading && <div className="text-slate-500 text-sm p-4">载入中…</div>}
+          {isLoading && <div className="text-[#86775F] text-sm p-4">载入中…</div>}
           {!isLoading && sessions.length === 0 && (
-            <div className="text-slate-500 text-sm p-6 text-center">
+            <div className="text-[#86775F] text-sm p-6 text-center">
               尚无可恢复快照<br/>
-              <span className="text-slate-600 text-xs">（agent 运行后会在 temp/model_responses 留下快照）</span>
+              <span className="text-[#9A8B70] text-xs">（agent 运行后会在 temp/model_responses 留下快照）</span>
             </div>
           )}
           {sessions.map((s, idx) => (
             <div key={s.path} className="rounded-lg border border-line bg-bg-card p-3">
               <div className="flex items-baseline justify-between gap-2 mb-1">
-                <div className="text-xs text-slate-400">{relTime(s.mtime)} · <span className="text-accent">{s.rounds} 轮</span></div>
+                <div className="text-xs text-[#665741]">{relTime(s.mtime)} · <span className="text-accent">{s.rounds} 轮</span></div>
                 <button
                   onClick={() => restore(idx)}
                   disabled={busyIdx !== null}
@@ -434,13 +436,13 @@ function RestoreDrawer({ onClose, onRestored }: {
                   {busyIdx === idx ? '恢复中…' : '↩ 恢复'}
                 </button>
               </div>
-              <div className="text-sm text-slate-200 line-clamp-2 leading-snug">{s.preview || '(无预览)'}</div>
-              <div className="text-[10px] text-slate-600 mt-1 truncate font-mono" title={s.path}>{s.path}</div>
+              <div className="text-sm text-[#2C2418] line-clamp-2 leading-snug">{s.preview || '(无预览)'}</div>
+              <div className="text-[10px] text-[#9A8B70] mt-1 truncate font-mono" title={s.path}>{s.path}</div>
             </div>
           ))}
         </div>
 
-        <footer className="border-t border-line px-4 py-2 text-xs text-slate-500 flex items-center justify-between">
+        <footer className="border-t border-line px-4 py-2 text-xs text-[#86775F] flex items-center justify-between">
           <span>恢复后会覆盖当前 Agent 上下文</span>
           <button onClick={() => refetch()} className="text-accent hover:underline">↻ 刷新</button>
         </footer>

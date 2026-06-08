@@ -43,7 +43,9 @@ async def trigger_schedule(sid: str):
 
 @router.get("/runs")
 async def list_runs(limit: int = 100):
-    return {"runs": svc().list_runs(limit=limit)}
+    import asyncio
+    runs = await asyncio.get_event_loop().run_in_executor(None, svc().list_runs, limit)
+    return {"runs": runs}
 
 
 @router.get("/email-config")

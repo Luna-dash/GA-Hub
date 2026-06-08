@@ -10,8 +10,8 @@ import { dialog } from '@/stores/dialogStore'
 
 export function Tasks() {
   const qc = useQueryClient()
-  const { data: schData } = useQuery({ queryKey: ['tasks.schedules'], queryFn: api.taskSchedules, refetchInterval: 8000 })
-  const { data: runData } = useQuery({ queryKey: ['tasks.runs'], queryFn: () => api.taskRuns(80), refetchInterval: 8000 })
+  const { data: schData } = useQuery({ queryKey: ['tasks.schedules'], queryFn: api.taskSchedules, refetchInterval: 60000 })
+  const { data: runData } = useQuery({ queryKey: ['tasks.runs'], queryFn: () => api.taskRuns(80), refetchInterval: 60000 })
   const [editor, setEditor] = useState<Partial<TaskSchedule> | null>(null)
 
   const schedules = schData?.schedules ?? []
