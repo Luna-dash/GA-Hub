@@ -127,3 +127,23 @@ class EmailTestReq(BaseModel):
     to: str = ""
     subject: str = "GenericAgent 邮件测试"
     body: str = "这是一封来自 GA-Hub 的测试邮件。"
+
+
+# ── conductor ──────────────────────────────────────────────────────────────────
+class ConductorChatIn(BaseModel):
+    msg: str
+    role: Literal["conductor", "system", "user"] = "conductor"
+
+
+class ConductorStartSubagent(BaseModel):
+    prompt: str
+
+
+class ConductorSubagentAction(BaseModel):
+    action: Literal["keyinfo", "input", "reply", "append", "message", "msg", "abort", "stop"]
+    msg: str = ""
+
+
+class ConductorApproval(BaseModel):
+    prompt: str
+    source: str = ""

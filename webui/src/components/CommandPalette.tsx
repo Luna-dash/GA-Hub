@@ -111,6 +111,7 @@ export function CommandPalette() {
       { p: '/feishu', label: '飞书 Bot / Feishu Bot', icon: '🪽' },
       { p: '/conversations', label: '对话管理 / Conversations', icon: '🗂️' },
       { p: '/memory', label: '记忆 & SOP / Memory', icon: '🧠' },
+      { p: '/conductor', label: 'Conductor / 多 Agent 编排', icon: '🎼' },
       { p: '/llms', label: 'LLM 链路', icon: '⚡' },
       { p: '/goal-hive', label: 'Goal Hive', icon: '🐝' },
       { p: '/autonomous', label: '自主进化 / Autonomous', icon: '🌀' },

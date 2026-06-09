@@ -10,6 +10,7 @@ const items = [
   { to: '/llms', label: '选择LLM', icon: '⚡' },
   { to: '/mykey', label: '链路配置', icon: '🔑' },
   { to: '/memory', label: 'SOP 记忆', icon: '🧠' },
+  { to: '/conductor', label: 'Conductor', icon: '🎼' },
   { to: '/tasks', label: '定时任务', icon: '⏰' },
   { to: '/goal-hive', label: 'Goal Hive', icon: '🐝' },
   { to: '/autonomous', label: '自主进化', icon: '🌀' },

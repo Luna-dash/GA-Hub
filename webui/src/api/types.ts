@@ -337,3 +337,40 @@ export interface EventBusEnvelope {
 }
 
 export type BusEvent = EventBusEnvelope
+
+// ── Conductor ─────────────────────────────────────────────
+export interface ConductorChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  ts: number
+}
+
+export interface ConductorSubagent {
+  id: string
+  prompt: string
+  status: 'running' | 'stopped'
+  reply: string
+  created_at: number
+  updated_at: number
+}
+
+export interface ConductorLogItem {
+  id: string
+  ts: number
+  event: string
+  turn: number
+  text: string
+}
+
+export interface ConductorStatus {
+  started: boolean
+  subagents: { running: number; stopped: number }
+  chat_count: number
+}
+
+export interface ConductorApprovalItem {
+  id: string
+  prompt: string
+  source: string
+}

@@ -29,6 +29,9 @@ const Autonomous = lazy(() =>
 const Tasks = lazy(() =>
   import('@/pages/Tasks').then((m) => ({ default: m.Tasks })),
 )
+const Conductor = lazy(() =>
+  import('@/pages/Conductor').then((m) => ({ default: m.default })),
+)
 
 export default function App() {
   const start = useAgentStore((s) => s.start)
@@ -129,6 +132,7 @@ export default function App() {
             <Route path="/memory" element={<Memory />} />
             <Route path="/skills" element={<Skills />} />
             <Route path="/goal-hive" element={<GoalHive />} />
+            <Route path="/conductor" element={<Conductor />} />
             <Route path="/llms" element={<Llms />} />
             <Route path="/mykey" element={<MyKey />} />
             <Route path="/tasks" element={<Tasks />} />

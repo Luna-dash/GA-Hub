@@ -9,6 +9,10 @@ import type {
   ChatRetryConfig,
   ChatWSIn,
   ChatWSOut,
+  ConductorChatMessage,
+  ConductorLogItem,
+  ConductorStatus,
+  ConductorSubagent,
   Conversation,
   ConversationSummary,
   EmailConfig,
@@ -223,6 +227,23 @@ export const api = {
       '/api/agent/rewind',
       req,
     ),
+
+  // ── conductor ────────────────────────────────────────
+  conductorReadme: (topic = 'api') => http<{ content: string }>('GET', `/api/conductor/readme${topic !== 'api' ? `/${topic}` : ''}`),
+  conductorChat: (last = 50) => http<{ items: ConductorChatMessage[] }>('GET', `/api/conductor/chat?last=${last}`),
+  conductorSendChat: (msg: string, role: 'user' | 'assistant' = 'user') =>
+    http<{ id: string; role: string; content: string; ts: number }>('POST', '/api/conductor/chat', { msg, role }),
+  conductorSubagents: () => http<{ items: ConductorSubagent[] }>('GET', '/api/conductor/subagent'),
+  conductorSubagent: (sid: string, max_len = 5000) => http<ConductorSubagent>('GET', `/api/conductor/subagent/${sid}?max_len=${max_len}`),
+  conductorStartSubagent: (prompt: string) => http<{ id: string }>('POST', '/api/conductor/subagent', { prompt }),
+  conductorSubagentAction: (sid: string, action: 'keyinfo' | 'done', msg: string) =>
+    http<{ ok: boolean }>('POST', `/api/conductor/subagent/${sid}`, { action, msg }),
+  conductorApproval: (prompt: string, source: string) =>
+    http<{ ok: boolean }>('POST', '/api/conductor/approval', { prompt, source }),
+  conductorLog: () => http<{ log: ConductorLogItem[] }>('GET', '/api/conductor/log'),
+  conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),
+  conductorStart: () => http<{ ok: boolean }>('POST', '/api/conductor/start'),
+  conductorStop: () => http<{ ok: boolean }>('POST', '/api/conductor/stop'),
 }
 
 // ── WebSocket helpers ──────────────────────────────────────

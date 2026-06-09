@@ -269,6 +269,7 @@ def create_app() -> FastAPI:
         from .routes import (
             agent as agent_routes,
             autonomous as autonomous_routes,
+            conductor as conductor_routes,
             conversations as conv_routes,
             logs as log_routes,
             memory as memory_routes,
@@ -283,6 +284,7 @@ def create_app() -> FastAPI:
         app.include_router(conv_routes.router)
         app.include_router(memory_routes.router)
         app.include_router(autonomous_routes.router)
+        app.include_router(conductor_routes.router)
         app.include_router(upload_routes.router)
         app.include_router(log_routes.router)
         app.include_router(mykey_routes.router)
