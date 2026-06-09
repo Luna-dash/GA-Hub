@@ -23,7 +23,17 @@ export default function Conductor() {
   const chatEndRef = useRef<HTMLDivElement>(null)
   const logEndRef = useRef<HTMLDivElement>(null)
 
-  const store = useConductorStore()
+  // Extract store actions (stable references) to avoid socket churn
+  const addChatMessage = useConductorStore((s) => s.addChatMessage)
+  const setSubagents = useConductorStore((s) => s.setSubagents)
+  const setChatMessages = useConductorStore((s) => s.setChatMessages)
+  const setLog = useConductorStore((s) => s.setLog)
+  const addLogItem = useConductorStore((s) => s.addLogItem)
+  const addApproval = useConductorStore((s) => s.addApproval)
+  const chatMessages = useConductorStore((s) => s.chatMessages)
+  const subagents = useConductorStore((s) => s.subagents)
+  const log = useConductorStore((s) => s.log)
+  const approvals = useConductorStore((s) => s.approvals)
 
   // Poll status
   const { data: status } = useQuery({
@@ -37,7 +47,7 @@ export default function Conductor() {
     queryKey: ['conductor', 'subagents'],
     queryFn: async () => {
       const res = await api.conductorSubagents()
-      store.setSubagents(res.items)
+      setSubagents(res.items)
       return res.items
     },
     refetchInterval: 2000,
@@ -48,7 +58,7 @@ export default function Conductor() {
     queryKey: ['conductor', 'chat'],
     queryFn: async () => {
       const res = await api.conductorChat(50)
-      store.setChatMessages(res.items)
+      setChatMessages(res.items)
       return res.items
     },
     refetchInterval: 2000,
@@ -59,52 +69,65 @@ export default function Conductor() {
     queryKey: ['conductor', 'log'],
     queryFn: async () => {
       const res = await api.conductorLog()
-      store.setLog(res.log)
+      setLog(res.log)
       return res.log
     },
     refetchInterval: 2000,
   })
 
-  // EventSocket for real-time updates
+  // EventSocket for real-time updates (CORRECTED topic names)
   useEffect(() => {
     const sock = new EventSocket('conductor:', 0)
     sock.onEvent = (evt) => {
-      if (evt.topic === 'conductor:chat_msg' && evt.payload.item) {
-        store.addChatMessage(evt.payload.item)
+      if (evt.topic === 'conductor:chat' && evt.payload.item) {
+        addChatMessage(evt.payload.item)
         qc.invalidateQueries({ queryKey: ['conductor', 'chat'] })
       }
-      if (evt.topic === 'conductor:subagent_cards' && evt.payload.items) {
-        store.setSubagents(evt.payload.items)
+      if (evt.topic === 'conductor:subagents' && evt.payload.items) {
+        setSubagents(evt.payload.items)
         qc.invalidateQueries({ queryKey: ['conductor', 'subagents'] })
       }
       if (evt.topic === 'conductor:log' && evt.payload.item) {
-        store.addLogItem(evt.payload.item)
+        addLogItem(evt.payload.item)
       }
       if (evt.topic === 'conductor:approval' && evt.payload.item) {
-        store.addApproval(evt.payload.item)
+        addApproval(evt.payload.item)
       }
     }
     sock.open()
     return () => sock.close()
-  }, [qc, store])
+  }, [qc, addChatMessage, setSubagents, addLogItem, addApproval])
 
   // Auto-scroll chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [store.chatMessages])
+  }, [chatMessages])
 
   // Auto-scroll log
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [store.log])
+  }, [log])
 
   const sendChat = async (e: FormEvent) => {
     e.preventDefault()
     if (!userMsg.trim()) return
     const msg = userMsg.trim()
     setUserMsg('')
-    await api.conductorSendChat(msg, 'user')
-    qc.invalidateQueries({ queryKey: ['conductor', 'chat'] })
+    
+    // Send and use returned item (with real id) for instant display.
+    // EventBus + 2s poll will dedupe by id, no duplicates.
+    try {
+      const item = await api.conductorSendChat(msg, 'user')
+      addChatMessage({
+        id: item.id,
+        role: item.role as 'user' | 'assistant',
+        msg: item.msg,
+        ts: item.ts,
+      })
+    } catch (err) {
+      console.error('sendChat failed', err)
+      setUserMsg(msg)  // restore on failure
+    }
   }
 
   const startConductor = async () => {
@@ -117,18 +140,20 @@ export default function Conductor() {
     qc.invalidateQueries({ queryKey: ['conductor', 'status'] })
   }
 
+  const removeApproval = useConductorStore((s) => s.removeApproval)
+
   const approveTask = async (item: ConductorApprovalItem) => {
     await api.conductorStartSubagent(item.prompt)
-    store.removeApproval(item.id)
+    removeApproval(item.id)
     qc.invalidateQueries({ queryKey: ['conductor', 'subagents'] })
   }
 
   const rejectTask = (item: ConductorApprovalItem) => {
-    store.removeApproval(item.id)
+    removeApproval(item.id)
   }
 
   const selectedDetail = selectedSubagent
-    ? store.subagents.find((s) => s.id === selectedSubagent)
+    ? subagents.find((s) => s.id === selectedSubagent)
     : null
 
   return (
@@ -180,10 +205,10 @@ export default function Conductor() {
             <h2 className="text-sm font-semibold text-slate-300">Subagents</h2>
           </div>
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {store.subagents.length === 0 && (
+            {subagents.length === 0 && (
               <p className="text-xs text-slate-500 text-center mt-4">暂无 subagent</p>
             )}
-            {store.subagents.map((sub) => (
+            {subagents.map((sub) => (
               <SubagentCard
                 key={sub.id}
                 sub={sub}
@@ -200,7 +225,7 @@ export default function Conductor() {
             <h2 className="text-sm font-semibold text-slate-300">Chat with Conductor</h2>
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {store.chatMessages.map((msg) => (
+            {chatMessages.map((msg) => (
               <div
                 key={msg.id}
                 className={clsx(
@@ -216,7 +241,7 @@ export default function Conductor() {
                   </span>
                   <span className="text-xs text-slate-500">{relTime(msg.ts)}</span>
                 </div>
-                <pre className="whitespace-pre-wrap font-sans">{msg.content}</pre>
+                <pre className="whitespace-pre-wrap font-sans">{msg.msg}</pre>
               </div>
             ))}
             <div ref={chatEndRef} />
@@ -289,7 +314,7 @@ export default function Conductor() {
                 <h2 className="text-sm font-semibold text-slate-300">Log Stream</h2>
               </div>
               <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
-                {store.log.map((item) => (
+                {log.map((item) => (
                   <div key={item.id} className="text-xs text-slate-400 font-mono">
                     <span className="text-slate-600">[T{item.turn}]</span>{' '}
                     <span className="text-accent/70">{item.event}</span> {item.text}
@@ -303,9 +328,9 @@ export default function Conductor() {
       </div>
 
       {/* Approval floating cards */}
-      {store.approvals.length > 0 && (
+      {approvals.length > 0 && (
         <div className="fixed bottom-6 right-6 w-96 space-y-2">
-          {store.approvals.map((item) => (
+          {approvals.map((item) => (
             <div key={item.id} className="bg-bg-soft border border-accent/50 rounded-lg p-4 shadow-xl">
               <div className="text-sm font-semibold text-slate-200 mb-2">待批准任务</div>
               <div className="text-xs text-slate-400 mb-1">来源: {item.source}</div>

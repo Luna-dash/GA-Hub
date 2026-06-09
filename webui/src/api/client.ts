@@ -232,7 +232,7 @@ export const api = {
   conductorReadme: (topic = 'api') => http<{ content: string }>('GET', `/api/conductor/readme${topic !== 'api' ? `/${topic}` : ''}`),
   conductorChat: (last = 50) => http<{ items: ConductorChatMessage[] }>('GET', `/api/conductor/chat?last=${last}`),
   conductorSendChat: (msg: string, role: 'user' | 'assistant' = 'user') =>
-    http<{ id: string; role: string; content: string; ts: number }>('POST', '/api/conductor/chat', { msg, role }),
+    http<{ id: string; role: string; msg: string; ts: number }>('POST', '/api/conductor/chat', { msg, role }),
   conductorSubagents: () => http<{ items: ConductorSubagent[] }>('GET', '/api/conductor/subagent'),
   conductorSubagent: (sid: string, max_len = 5000) => http<ConductorSubagent>('GET', `/api/conductor/subagent/${sid}?max_len=${max_len}`),
   conductorStartSubagent: (prompt: string) => http<{ id: string }>('POST', '/api/conductor/subagent', { prompt }),

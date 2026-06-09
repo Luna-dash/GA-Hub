@@ -342,7 +342,7 @@ export type BusEvent = EventBusEnvelope
 export interface ConductorChatMessage {
   id: string
   role: 'user' | 'assistant'
-  content: string
+  msg: string  // Backend uses "msg", not "content"
   ts: number
 }
 

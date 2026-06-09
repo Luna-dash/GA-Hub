@@ -134,3 +134,17 @@ async def get_status():
         "subagents": {"running": running, "stopped": stopped},
         "chat_count": len(svc().chat_messages),
     }
+
+
+@router.post("/api/conductor/start")
+async def start_conductor():
+    """Start the conductor supervisor."""
+    svc().start()
+    return {"ok": True, "started": svc()._started}
+
+
+@router.post("/api/conductor/stop")
+async def stop_conductor():
+    """Stop the conductor supervisor."""
+    svc()._started = False
+    return {"ok": True, "started": svc()._started}
