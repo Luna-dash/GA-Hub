@@ -1,3 +1,5 @@
+@import './ga-actions.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -92,6 +94,13 @@ body {
 .border-amber-700\/60 { border-color: #C49A55; }
 .text-amber-200 { color: #8A5A1F; }
 .text-amber-300 { color: #8A5A1F; }
+
+.bg-green-600\/20 { background-color: rgba(82, 127, 58, 0.16); }
+.hover\:bg-green-600\/30:hover { background-color: rgba(82, 127, 58, 0.24); }
+.text-green-400 { color: #4F7D39; }
+.bg-red-600\/20 { background-color: rgba(150, 68, 52, 0.14); }
+.hover\:bg-red-600\/30:hover { background-color: rgba(150, 68, 52, 0.22); }
+.text-red-400 { color: #9A4433; }
 .text-emerald-300 { color: #4F6F3F; }
 .text-emerald-400 { color: #5A7E4A; }
 .text-rose-300 { color: #A24A4A; }
@@ -226,15 +235,16 @@ html.dark .ga-panel {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 0.7rem;
-  margin: 0.42rem 0.6rem;
-  padding: 0.78rem 0.95rem 0.78rem 1.05rem;
-  border-radius: 9px;
+  gap: 0.78rem;
+  margin: 0.38rem 0.62rem;
+  padding: 0.72rem 0.82rem 0.72rem 1rem;
+  border-radius: 10px;
   font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', Georgia, serif;
-  font-size: 0.98rem;
-  font-weight: 500;
-  letter-spacing: 0.05em;
-  color: rgba(232, 223, 201, 0.78);
+  font-size: 1.02rem;
+  line-height: 1.15;
+  font-weight: 600;
+  letter-spacing: 0.035em;
+  color: rgba(232, 223, 201, 0.84);
   background: linear-gradient(180deg, rgba(255, 244, 215, 0.018), rgba(255, 244, 215, 0.006));
   border: 1px solid transparent;
   box-shadow: none;
@@ -291,24 +301,45 @@ html.dark .ga-panel {
 /* icon chip（左圆盒） */
 .ga-sidebar .ga-nav-icon {
   flex-shrink: 0;
-  width: 26px;
-  height: 26px;
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
-  border-radius: 7px;
-  font-size: 0.95rem;
-  background: linear-gradient(180deg, rgba(255, 244, 215, 0.07), rgba(255, 244, 215, 0.025));
-  border: 1px solid rgba(255, 244, 215, 0.10);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  transition: background 180ms ease, border-color 180ms ease, transform 180ms ease;
+  border-radius: 10px;
+  color: rgba(255, 232, 190, 0.92);
+  background:
+    radial-gradient(circle at 30% 24%, rgba(255, 242, 206, 0.20), transparent 44%),
+    linear-gradient(180deg, rgba(255, 244, 215, 0.12), rgba(255, 244, 215, 0.035));
+  border: 1px solid rgba(255, 244, 215, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 2px 7px rgba(0, 0, 0, 0.16);
+  transition: background 180ms ease, border-color 180ms ease, transform 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+.ga-sidebar .ga-nav-svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.22));
 }
 .ga-sidebar .ga-sidebar-item:hover .ga-nav-icon {
-  background: linear-gradient(180deg, rgba(255, 244, 215, 0.14), rgba(255, 244, 215, 0.05));
-  border-color: rgba(255, 244, 215, 0.20);
+  color: #FFF2D2;
+  background:
+    radial-gradient(circle at 30% 24%, rgba(255, 242, 206, 0.28), transparent 44%),
+    linear-gradient(180deg, rgba(255, 244, 215, 0.18), rgba(255, 244, 215, 0.07));
+  border-color: rgba(255, 244, 215, 0.30);
+  transform: translateX(1px) scale(1.02);
 }
 .ga-sidebar .ga-sidebar-item.active .ga-nav-icon {
-  background: linear-gradient(180deg, rgba(216, 154, 91, 0.32), rgba(138, 90, 36, 0.22));
-  border-color: rgba(255, 220, 175, 0.50);
+  color: #FFF6DE;
+  background:
+    radial-gradient(circle at 30% 24%, rgba(255, 237, 194, 0.32), transparent 46%),
+    linear-gradient(180deg, rgba(216, 154, 91, 0.42), rgba(138, 90, 36, 0.28));
+  border-color: rgba(255, 220, 175, 0.62);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 3px 10px rgba(0, 0, 0, 0.24),
+    0 0 0 1px rgba(216, 154, 91, 0.18);
 }
 /* label */
 .ga-sidebar .ga-nav-label {
@@ -339,6 +370,143 @@ html.dark .ga-panel {
   color: #FFE6B8;
 }
 
+
+/* Sidebar global LLM selector */
+.ga-sidebar .ga-sidebar-llm-card {
+  min-width: 0;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 244, 215, 0.14);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 235, 190, 0.10), transparent 34%),
+    linear-gradient(180deg, rgba(255, 244, 215, 0.070), rgba(0, 0, 0, 0.120));
+  padding: 0.72rem 0.78rem;
+  color: #EFE5CA;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 8px 18px rgba(0, 0, 0, 0.13);
+}
+.ga-sidebar .ga-sidebar-llm-field {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin-top: 0.5rem;
+}
+.ga-sidebar .ga-sidebar-llm-field:first-of-type {
+  margin-top: 0.42rem;
+}
+.ga-sidebar .ga-sidebar-llm-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0 0.18rem 0.24rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  color: rgba(255, 231, 184, 0.82);
+  text-transform: uppercase;
+}
+.ga-sidebar .ga-sidebar-llm-field-head span:last-child {
+  font-size: 0.62rem;
+  color: rgba(255, 241, 207, 0.48);
+  text-transform: none;
+  font-weight: 500;
+}
+.ga-sidebar .ga-sidebar-llm-arrow {
+  position: absolute;
+  bottom: 0.52rem;
+  right: 0.62rem;
+  font-size: 0.7rem;
+  color: rgba(255, 241, 207, 0.7);
+  pointer-events: none;
+  z-index: 1;
+}
+.ga-sidebar .ga-sidebar-llm-select {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 244, 215, 0.18);
+  background: rgba(5, 24, 18, 0.72);
+  color: #FFF1CF;
+  padding: 0.48rem 1.55rem 0.48rem 0.66rem;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  outline: none;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+.ga-sidebar .ga-sidebar-llm-select:hover:not(:disabled) {
+  border-color: rgba(255, 220, 175, 0.4);
+}
+.ga-sidebar .ga-sidebar-llm-select:focus {
+  border-color: rgba(255, 220, 175, 0.58);
+  box-shadow: 0 0 0 2px rgba(201, 135, 74, 0.20);
+}
+.ga-sidebar .ga-sidebar-llm-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+.ga-sidebar .ga-sidebar-llm-select option {
+  color: #FFF1CF;
+  background: #0B261D;
+}
+.ga-sidebar .ga-sidebar-llm-combobox {
+  position: relative;
+}
+.ga-sidebar .ga-sidebar-llm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 998;
+}
+.ga-sidebar .ga-sidebar-llm-trigger {
+  text-align: left;
+}
+.ga-sidebar .ga-sidebar-llm-menu {
+  position: absolute;
+  z-index: 999;
+  bottom: calc(100% + 4px);
+  left: 0;
+  width: 100%;
+  max-height: 240px;
+  overflow-y: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 220, 175, 0.32);
+  background: rgba(11, 38, 29, 0.98);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.ga-sidebar .ga-sidebar-llm-option {
+  display: block;
+  width: 100%;
+  padding: 0.48rem 0.66rem;
+  text-align: left;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  color: #FFF1CF;
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background 0.1s;
+}
+.ga-sidebar .ga-sidebar-llm-option:hover {
+  background: rgba(255, 244, 215, 0.12);
+}
+.ga-sidebar .ga-sidebar-llm-option.active {
+  background: rgba(201, 135, 74, 0.22);
+  color: #FFE6B8;
+}
+
 /* Accent button helper */
 .btn-accent {
   background: linear-gradient(180deg, #C9874A, #B8793E);
@@ -350,17 +518,39 @@ html.dark .ga-panel {
 .btn-accent:hover { filter: brightness(1.04); }
 .btn-accent:active { filter: brightness(0.96); }
 
-/* Sidebar brand mark */
+/* Sidebar brand row and mark */
+.ga-sidebar-brand-row {
+  padding: 0.92rem 0.42rem 0.92rem 1.62rem;
+}
 .ga-brand-mark {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  padding-right: 2.55rem;
+}
+.ga-brand-core {
   display: flex;
   align-items: center;
   gap: 0.62rem;
+}
+.ga-brand-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   min-width: 0;
+}
+.ga-brand-topline {
+  display: flex;
+  align-items: center;
+  gap: 0.46rem;
 }
 .ga-brand-orb {
   position: relative;
-  width: 42px;
-  height: 42px;
+  width: 48px;
+  height: 48px;
   display: grid;
   place-items: center;
   border-radius: 12px;
@@ -399,7 +589,7 @@ html.dark .ga-panel {
   position: relative;
   z-index: 1;
   font-family: Georgia, 'Times New Roman', serif;
-  font-size: 1.22rem;
+  font-size: 1.42rem;
   line-height: 1;
   font-weight: 800;
   letter-spacing: -0.06em;
@@ -414,11 +604,39 @@ html.dark .ga-panel {
   min-width: 0;
 }
 .ga-brand-hub {
-  font-size: 0.92rem;
-  font-weight: 500;
-  letter-spacing: 0.11em;
+  font-size: 1.14rem;
+  font-weight: 600;
+  letter-spacing: 0.13em;
   color: rgba(238, 229, 202, 0.92);
-  text-transform: lowercase;
+  text-transform: uppercase;
+}
+.ga-brand-settings {
+  position: absolute;
+  right: 2.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: rgba(255, 232, 190, 0.92);
+  background: transparent;
+  border: 1px solid transparent;
+  box-shadow: none;
+  transition: background 180ms ease, border-color 180ms ease, transform 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+.ga-brand-settings:hover {
+  color: #FFF2D2;
+  background: transparent;
+  border-color: transparent;
+  transform: translateY(-50%) translateX(1px) scale(1.02);
+}
+.ga-brand-settings.active {
+  color: #FFF6DE;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
 }
 .ga-brand-sub {
   margin-top: 0.28rem;
@@ -428,4 +646,3 @@ html.dark .ga-panel {
   text-transform: uppercase;
   white-space: nowrap;
 }
-

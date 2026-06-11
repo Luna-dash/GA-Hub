@@ -47,7 +47,7 @@ export function Autonomous() {
       actions={
         <button
           onClick={() => setEditor({ type: 'idle', enabled: true, name: '' })}
-          className="px-3 py-1.5 rounded-lg bg-accent text-white text-sm"
+          className="ga-btn-primary"
         >+ 新建计划</button>
       }
     >

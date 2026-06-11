@@ -36,6 +36,16 @@ log = logging.getLogger(__name__)
 HOST = "127.0.0.1"
 PORT = None  # Not needed, integrated into main GA-Hub server
 
+
+def _get_webui_port() -> int:
+    """Read the actual webui port (used by conductor prompt)."""
+    try:
+        import mykey  # type: ignore
+        port = int(getattr(mykey, "webui_port", 8765) or 8765)
+        return port
+    except Exception:
+        return 8765
+
 _TURN_SPLIT_RE = re.compile(r'\**LLM Running \(Turn \d+\) \.\.\.\**')
 _SUMMARY_RE = re.compile(r'<summary>(.*?)</summary>\s*', re.DOTALL)
 
@@ -310,12 +320,20 @@ class Conductor:
     def _build_prompt(self, events: list) -> str:
         running, stopped = self.pool.counts()
         unread = sum(1 for m in self.chat_messages if m.get("role") == "user" and not m.get("read"))
+        # Mark user messages as read now that the conductor is processing them.
+        # (Front-end polling of GET /chat must NOT mark read; only the conductor does.)
+        if unread:
+            for m in self.chat_messages:
+                if m.get("role") == "user" and not m.get("read"):
+                    m["read"] = True
+            bus.publish("conductor:chat_read", {})
         done_count = sum(1 for e in events if e.get("type") == "subagent_done")
         summary = (
             f"subagents: {running} running, {stopped} stopped | "
             f"{unread}条用户未读消息, {done_count}个subagent完成报告"
         )
-        base = f"http://{HOST}:{{ga_hub_port}}/api/conductor"  # placeholder, requests will resolve
+        port = _get_webui_port()
+        base = f"http://{HOST}:{port}/api/conductor"
         return f"""你是agent总管。用户只和你对话，你负责调度、验收、交付，目标是降低用户管理多个agent的负担。
 API: {base}；先requests，GET /api/conductor/readme查用法，GET /api/conductor/chat读未读对话，GET /api/conductor/subagent看状态；POST /api/conductor/chat是唯一对用户说话方式。
 流程文档按需读取: GET /api/conductor/readme/usermsg | GET /api/conductor/readme/subagent
@@ -429,17 +447,18 @@ class ConductorService:
         self.conductor.notify(event)
 
     def get_chat_messages(self, last: int = 20) -> list:
-        """Get recent chat messages and mark user messages as read."""
-        for m in self.chat_messages:
-            if m.get("role") == "user" and not m.get("read"):
-                m["read"] = True
-        bus.publish("conductor:chat_read", {})
+        """Get recent chat messages (does NOT mark as read)."""
         return self.chat_messages[-last:]
 
     def add_chat_message(self, msg: str, role: str = "conductor") -> dict:
-        """Add message to chat and notify conductor if from user."""
+        """Add message to chat and notify/start conductor if from user."""
         item = add_chat(msg, role, self.chat_messages)
         if role == "user":
+            # A user typing into the Conductor chat is an implicit wake-up.
+            # Previously messages sent while stopped only entered the inbox,
+            # but no conductor loop consumed them, making the input look dead.
+            if not self._started:
+                self.start()
             self.notify({"type": "user_message", "msg": msg})
         return item
 

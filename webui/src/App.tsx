@@ -9,12 +9,10 @@ import { useChatStore } from '@/stores/chatStore'
 import { useDocumentTitle } from '@/utils/useDocumentTitle'
 import { useDesktopNotifyEffects } from '@/utils/useDesktopNotifyEffects'
 import { api } from '@/api/client'
-import { Dashboard } from '@/pages/Dashboard'
 import { LiveChat } from '@/pages/LiveChat'
 import { FeishuBot } from '@/pages/FeishuBot'
 import { Conversations } from '@/pages/Conversations'
 import { Memory } from '@/pages/Memory'
-import { Skills } from '@/pages/Skills'
 import { GoalHive } from '@/pages/GoalHive'
 
 import { Llms } from '@/pages/Llms'
@@ -123,14 +121,11 @@ export default function App() {
         <Suspense fallback={<div className="h-full flex items-center justify-center text-slate-500 text-sm">载入中…</div>}>
           <Routes>
             <Route path="/" element={<Navigate to="/chat" replace />} />
-            <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/chat" element={<LiveChat />} />
             <Route path="/feishu" element={<FeishuBot />} />
-            <Route path="/wechat" element={<Navigate to="/feishu" replace />} />
             <Route path="/conversations" element={<Conversations />} />
             <Route path="/conversations/:id" element={<Conversations />} />
             <Route path="/memory" element={<Memory />} />
-            <Route path="/skills" element={<Skills />} />
             <Route path="/goal-hive" element={<GoalHive />} />
             <Route path="/conductor" element={<Conductor />} />
             <Route path="/llms" element={<Llms />} />
@@ -138,6 +133,7 @@ export default function App() {
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/autonomous" element={<Autonomous />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="*" element={<Navigate to="/chat" replace />} />
           </Routes>
         </Suspense>
       </main>

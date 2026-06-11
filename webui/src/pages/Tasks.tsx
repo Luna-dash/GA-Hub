@@ -35,7 +35,7 @@ export function Tasks() {
       actions={
         <button
           onClick={() => setEditor({ type: 'cron', enabled: true, cron: '0 8 * * *', name: '', notify_email: false })}
-          className="px-3 py-1.5 rounded-lg bg-accent text-white text-sm"
+          className="ga-btn-primary"
         >+ 新建任务</button>
       }
     >

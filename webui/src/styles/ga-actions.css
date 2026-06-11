@@ -1,0 +1,38 @@
+/* GA-Hub 标准动作按钮 — 统一尺寸/字号/间距，基准为实时聊天页 */
+
+@layer components {
+  .ga-btn {
+    @apply px-3 py-2 rounded-md border border-line text-sm transition;
+    @apply text-[#3A3020] hover:bg-bg-soft hover:border-accent;
+  }
+
+  .ga-btn-primary {
+    @apply px-3 py-2 rounded-md text-sm transition;
+    @apply bg-accent text-white hover:opacity-90 disabled:opacity-50;
+  }
+
+  .ga-btn-danger {
+    @apply px-3 py-2 rounded-md border text-sm transition;
+    @apply border-[#B98578] text-[#7A3D32] hover:bg-[#E2C5BD] disabled:opacity-40;
+  }
+
+  .ga-btn-sm {
+    @apply px-3 py-1.5 rounded-lg text-sm transition;
+  }
+
+  .ga-badge {
+    @apply px-2.5 py-1 rounded-full border text-[11px];
+  }
+
+  .ga-badge-connected {
+    @apply bg-[#D6E1D0] text-[#355C43] border-[#8FA67D];
+  }
+
+  .ga-badge-connecting {
+    @apply bg-[#E7D3A8] text-[#7A5527] border-[#B99A5B];
+  }
+
+  .ga-badge-offline {
+    @apply bg-[#E2C5BD] text-[#7A3D32] border-[#B98578];
+  }
+}

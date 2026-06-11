@@ -1,11 +1,11 @@
 // CommandPalette — Cmd/Ctrl+K global searchable launcher.
 //
-// Aggregates actions from across the app into one searchable list:
-//   • Page jumps              (Dashboard, Chat, Memory, …)
+// Aggregates allowed actions from across the app into one searchable list:
+//   • Page jumps              (Chat, Memory, LLM, …)
 //   • LLM switching            (every entry from /api/llms)
 //   • Agent control            (新对话 / 停止 / 恢复历史)
 //   • Autonomous schedules     (立即触发 *)
-//   • SOPs / skills            (open in their respective viewers)
+//   • SOPs / memory            (open in the memory viewer)
 //   • Conversations            (jump to detail)
 //
 // Keyboard model: ↑/↓ navigate, Enter executes, Esc closes. Typing filters
@@ -57,14 +57,21 @@ export function CommandPalette() {
   // Global open hotkey: Cmd+K (mac) or Ctrl+K (win/linux). Captures even
   // when focus is in textarea/select; consumers commonly want it.
   useEffect(() => {
+    const openPalette = () => setOpen(true)
+    const togglePalette = () => setOpen((v) => !v)
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        setOpen((v) => !v)
+        e.stopPropagation()
+        togglePalette()
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, { capture: true })
+    window.addEventListener('gahub:command-palette', openPalette)
+    return () => {
+      window.removeEventListener('keydown', onKey, { capture: true })
+      window.removeEventListener('gahub:command-palette', openPalette)
+    }
   }, [])
 
   // When opened, clear filter + autofocus
@@ -111,9 +118,11 @@ export function CommandPalette() {
       { p: '/feishu', label: '飞书 Bot / Feishu Bot', icon: '🪽' },
       { p: '/conversations', label: '对话管理 / Conversations', icon: '🗂️' },
       { p: '/memory', label: '记忆 & SOP / Memory', icon: '🧠' },
-      { p: '/conductor', label: 'Conductor / 多 Agent 编排', icon: '🎼' },
       { p: '/llms', label: 'LLM 链路', icon: '⚡' },
+      { p: '/conductor', label: 'Conductor / 多 Agent 编排', icon: '🎼' },
       { p: '/goal-hive', label: 'Goal Hive', icon: '🐝' },
+      { p: '/mykey', label: 'MyKey / 密钥同步', icon: '🔐' },
+      { p: '/tasks', label: '任务队列 / Tasks', icon: '☑' },
       { p: '/autonomous', label: '自主进化 / Autonomous', icon: '🌀' },
       { p: '/settings', label: '设置 / Settings', icon: '⚙️' },
     ]
@@ -254,7 +263,7 @@ export function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 z-40 bg-black/55 backdrop-blur-sm flex items-start justify-center pt-[12vh] px-4"
+      className="fixed inset-0 z-40 bg-black/55 backdrop-blur-sm flex items-start justify-center pt-[9vh] px-4"
       onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}
     >
       <div
@@ -297,7 +306,7 @@ export function CommandPalette() {
             </div>
           ))}
         </div>
-        <div className="border-t border-line px-3 py-1.5 text-[10px] text-slate-500 flex items-center gap-3">
+        <div className="border-t border-line px-3 py-1.5 text-[10px] text-slate-500 flex items-center gap-x-3 gap-y-1 flex-wrap">
           <span>↑↓ 导航</span>
           <span>↵ 执行</span>
           <span>Esc 关闭</span>

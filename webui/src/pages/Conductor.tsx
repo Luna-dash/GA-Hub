@@ -1,19 +1,85 @@
-import { FormEvent, useEffect, useRef, useState } from 'react'
+import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { api, EventSocket } from '@/api/client'
 import { useConductorStore } from '@/stores/conductorStore'
-import type { ConductorApprovalItem, ConductorSubagent } from '@/api/types'
+import type { ConductorApprovalItem, ConductorLogItem, ConductorSubagent } from '@/api/types'
+import { PageShell } from '@/components/PageShell'
 
-function relTime(ts: number): string {
-  const sec = Math.floor((Date.now() - ts) / 1000)
-  if (sec < 60) return `${sec}秒前`
-  const min = Math.floor(sec / 60)
-  if (min < 60) return `${min}分钟前`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}小时前`
-  const day = Math.floor(hr / 24)
-  return `${day}天前`
+const TECHNICAL_ACTION_RE = /^\s*\[Action\]\s+Running\s+([^:\n]+)(?:\s+in\s+([^:\n]+))?/i
+const LLM_RUNNING_RE = /\*{0,2}LLM Running \(Turn \d+\) \.{3}\*{0,2}/gi
+const scrollMemory = { chatTop: 0, logTop: 0 }
+
+function agentTooltip(sub: ConductorSubagent, index: number): string {
+  const status = sub.status === 'running' ? '运行中' : '已停止'
+  const prompt = sub.prompt?.trim() || '暂无任务内容'
+  return `子代理 ${index + 1} · ${status}\n${prompt}`
+}
+
+function normalizeLogText(text: string): string {
+  return text
+    .replace(/<\/?summary>/gi, '')
+    .replace(LLM_RUNNING_RE, '')
+    .replace(/\[Stdout\][\s\S]*$/i, '')
+    .replace(/^\s*(?:system|assistant|user)\s*[:：]\s*/gim, '')
+    .replace(/\r?\n{3,}/g, '\n\n')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function summarizeTechnicalLog(text: string): string | null {
+  const action = text.match(TECHNICAL_ACTION_RE)
+  if (!action) return null
+  const tool = action[1]?.trim()
+  const location = action[2]?.trim()
+  if (tool?.toLowerCase().includes('python')) {
+    return location ? `执行本地脚本检查（${location}）` : '执行本地脚本检查'
+  }
+  return tool ? `执行${tool}检查` : '执行技术检查'
+}
+
+function logFingerprint(item: Pick<ConductorLogItem, 'event' | 'text'>): string {
+  const text = normalizeLogText(item.text)
+    .replace(/^已注入\s*/i, '')
+    .replace(/^Conductor\s*编排思考\s*/i, '')
+    .replace(/任务|布局|反馈|要求/g, '')
+    .replace(/[\s，。,.：:；;（）()【】\[\]_*`"'“”]+/g, '')
+    .slice(0, 80)
+  return text
+}
+
+function isUsefulLogItem(item: ConductorLogItem): boolean {
+  const text = normalizeLogText(item.text)
+  if (!text) return false
+
+  const event = item.event || ''
+  const usefulEvents = ['user_msg', 'subagent_done', 'approval', 'chat']
+  if (usefulEvents.some((key) => event.includes(key))) return true
+
+  if (summarizeTechnicalLog(item.text)) return true
+  return text.length >= 60 && !/^(ok|done|收到|已处理|wake)$/i.test(text)
+}
+
+function logEventLabel(event: string): string {
+  if (event.includes('user_msg')) return '用户需求'
+  if (event.includes('subagent_done')) return '子代理交付'
+  if (event.includes('approval')) return '等待审批'
+  if (event.includes('chat')) return 'Conductor 回复'
+  return '编排摘要'
+}
+
+function cleanLogText(text: string): string {
+  return summarizeTechnicalLog(text) || normalizeLogText(text)
+}
+
+function isNearScrollBottom(el: HTMLDivElement | null): boolean {
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 96
+}
+
+function isNearScrollTop(el: HTMLDivElement | null): boolean {
+  if (!el) return true
+  return el.scrollTop < 96
 }
 
 export default function Conductor() {
@@ -21,7 +87,12 @@ export default function Conductor() {
   const [userMsg, setUserMsg] = useState('')
   const [selectedSubagent, setSelectedSubagent] = useState<string | null>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
-  const logEndRef = useRef<HTMLDivElement>(null)
+  const chatScrollRef = useRef<HTMLDivElement>(null)
+  const logScrollRef = useRef<HTMLDivElement>(null)
+  const chatInputRef = useRef<HTMLTextAreaElement>(null)
+  const shouldFollowChatRef = useRef(false)
+  const shouldFollowLogRef = useRef(scrollMemory.logTop < 96)
+  const restoredScrollRef = useRef({ chat: false, log: false })
 
   // Extract store actions (stable references) to avoid socket churn
   const addChatMessage = useConductorStore((s) => s.addChatMessage)
@@ -34,6 +105,19 @@ export default function Conductor() {
   const subagents = useConductorStore((s) => s.subagents)
   const log = useConductorStore((s) => s.log)
   const approvals = useConductorStore((s) => s.approvals)
+  const visibleLog = useMemo(() => {
+    const seen = new Set<string>()
+    return [...log]
+      .reverse()
+      .filter(isUsefulLogItem)
+      .map((item) => ({ ...item, text: cleanLogText(item.text) }))
+      .filter((item) => {
+        const fingerprint = logFingerprint(item)
+        if (!fingerprint || seen.has(fingerprint)) return false
+        seen.add(fingerprint)
+        return true
+      })
+  }, [log])
 
   // Poll status
   const { data: status } = useQuery({
@@ -80,6 +164,7 @@ export default function Conductor() {
     const sock = new EventSocket('conductor:', 0)
     sock.onEvent = (evt) => {
       if (evt.topic === 'conductor:chat' && evt.payload.item) {
+        shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
         addChatMessage(evt.payload.item)
         qc.invalidateQueries({ queryKey: ['conductor', 'chat'] })
       }
@@ -88,6 +173,7 @@ export default function Conductor() {
         qc.invalidateQueries({ queryKey: ['conductor', 'subagents'] })
       }
       if (evt.topic === 'conductor:log' && evt.payload.item) {
+        shouldFollowLogRef.current = isNearScrollTop(logScrollRef.current)
         addLogItem(evt.payload.item)
       }
       if (evt.topic === 'conductor:approval' && evt.payload.item) {
@@ -98,26 +184,56 @@ export default function Conductor() {
     return () => sock.close()
   }, [qc, addChatMessage, setSubagents, addLogItem, addApproval])
 
-  // Auto-scroll chat
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    return () => {
+      scrollMemory.chatTop = chatScrollRef.current?.scrollTop ?? scrollMemory.chatTop
+      scrollMemory.logTop = logScrollRef.current?.scrollTop ?? scrollMemory.logTop
+    }
+  }, [])
+
+  useEffect(() => {
+    const el = chatScrollRef.current
+    if (restoredScrollRef.current.chat || !el) return
+    requestAnimationFrame(() => {
+      el.scrollTop = Math.min(scrollMemory.chatTop, el.scrollHeight)
+      restoredScrollRef.current.chat = true
+    })
+  }, [chatMessages.length])
+
+  useEffect(() => {
+    const el = logScrollRef.current
+    if (restoredScrollRef.current.log || !el) return
+    requestAnimationFrame(() => {
+      el.scrollTop = Math.min(scrollMemory.logTop, el.scrollHeight)
+      shouldFollowLogRef.current = isNearScrollTop(el)
+      restoredScrollRef.current.log = true
+    })
+  }, [visibleLog.length])
+
+  // Auto-scroll only while the reader is already at the live edge.
+  useEffect(() => {
+    if (shouldFollowChatRef.current) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [chatMessages])
 
-  // Auto-scroll log
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [log])
+    if (shouldFollowLogRef.current) {
+      logScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }, [visibleLog])
 
   const sendChat = async (e: FormEvent) => {
     e.preventDefault()
     if (!userMsg.trim()) return
     const msg = userMsg.trim()
     setUserMsg('')
-    
+
     // Send and use returned item (with real id) for instant display.
     // EventBus + 2s poll will dedupe by id, no duplicates.
     try {
       const item = await api.conductorSendChat(msg, 'user')
+      shouldFollowChatRef.current = true
       addChatMessage({
         id: item.id,
         role: item.role as 'user' | 'assistant',
@@ -142,6 +258,13 @@ export default function Conductor() {
 
   const removeApproval = useConductorStore((s) => s.removeApproval)
 
+  useLayoutEffect(() => {
+    const el = chatInputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  }, [userMsg])
+
   const approveTask = async (item: ConductorApprovalItem) => {
     await api.conductorStartSubagent(item.prompt)
     removeApproval(item.id)
@@ -153,200 +276,214 @@ export default function Conductor() {
   }
 
   const selectedDetail = selectedSubagent
-    ? subagents.find((s) => s.id === selectedSubagent)
+    ? subagents.find((s) => s.id === selectedSubagent && s.status === 'running')
     : null
+  const activeSubagents = useMemo(
+    () => subagents.filter((sub) => sub.status === 'running'),
+    [subagents]
+  )
+
+  useEffect(() => {
+    if (selectedSubagent && !activeSubagents.some((sub) => sub.id === selectedSubagent)) {
+      setSelectedSubagent(null)
+    }
+  }, [activeSubagents, selectedSubagent])
+
+  const conductorStateLabel = status?.started ? '运行中' : '未运行'
 
   return (
-    <div className="flex flex-col h-screen bg-bg text-fg">
-      {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-line bg-bg-soft">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-100">Conductor</h1>
-          <p className="text-sm text-slate-400 mt-1">
-            多 Agent 编排 · Supervisor + Subagent 池
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="text-sm text-slate-400">
-            {status?.started ? (
-              <span className="text-green-400">● 运行中</span>
-            ) : (
-              <span className="text-slate-500">○ 未启动</span>
+    <PageShell
+      title="Conductor"
+      description="多代理编排与任务并行"
+      actions={
+        <>
+          <span className={clsx('ga-badge', status?.started ? 'ga-badge-connected' : 'ga-badge-offline')}>
+            {status?.started ? '运行中' : '未运行'}
+          </span>
+          <span
+            className={clsx(
+              'rounded-full border px-2.5 py-1 text-xs font-medium',
+              status?.started
+                ? 'border-[#B58C43]/40 bg-[#FFF7E8] text-[#6E4B12]'
+                : 'border-line bg-bg-card/70 text-[#7B6D5A]'
             )}
-            {status && (
-              <span className="ml-3">
-                {status.subagents.running} running / {status.subagents.stopped} stopped
+          >
+            {conductorStateLabel}
+          </span>
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8A7A63]">subagent</span>
+          <div className="flex min-w-0 justify-start gap-1.5 overflow-x-auto pb-0.5">
+            {activeSubagents.length === 0 ? (
+              <span className="rounded border border-line bg-bg-card/70 px-2 py-1 text-xs text-[#7B6D5A]">
+                暂无运行子代理
               </span>
+            ) : (
+              activeSubagents.map((sub, index) => (
+                <SubagentChip
+                  key={sub.id}
+                  sub={sub}
+                  index={index}
+                  selected={selectedSubagent === sub.id}
+                  onClick={() => setSelectedSubagent(sub.id)}
+                />
+              ))
             )}
           </div>
           {status?.started ? (
             <button
+              type="button"
               onClick={stopConductor}
-              className="px-3 py-1.5 text-sm rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30"
+              className="ga-btn-danger shrink-0"
             >
               停止
             </button>
           ) : (
             <button
+              type="button"
               onClick={startConductor}
-              className="px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:brightness-110"
+              className="ga-btn-primary shrink-0"
             >
               启动
             </button>
           )}
-        </div>
-      </header>
-
-      {/* Main 3-col */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left: Subagents */}
-        <div className="w-80 border-r border-line flex flex-col bg-bg-soft">
-          <div className="px-4 py-3 border-b border-line">
-            <h2 className="text-sm font-semibold text-slate-300">Subagents</h2>
-          </div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {subagents.length === 0 && (
-              <p className="text-xs text-slate-500 text-center mt-4">暂无 subagent</p>
-            )}
-            {subagents.map((sub) => (
-              <SubagentCard
-                key={sub.id}
-                sub={sub}
-                selected={selectedSubagent === sub.id}
-                onClick={() => setSelectedSubagent(sub.id)}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Middle: Chat */}
-        <div className="flex-1 flex flex-col">
-          <div className="px-4 py-3 border-b border-line bg-bg-soft">
-            <h2 className="text-sm font-semibold text-slate-300">Chat with Conductor</h2>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {chatMessages.map((msg) => (
-              <div
-                key={msg.id}
-                className={clsx(
-                  'p-3 rounded-lg text-sm',
-                  msg.role === 'user'
-                    ? 'bg-accent/10 text-slate-100 ml-8'
-                    : 'bg-bg-soft text-slate-200 mr-8'
-                )}
-              >
-                <div className="flex items-baseline gap-2 mb-1">
-                  <span className="text-xs font-medium text-slate-400">
-                    {msg.role === 'user' ? 'You' : 'Conductor'}
-                  </span>
-                  <span className="text-xs text-slate-500">{relTime(msg.ts)}</span>
-                </div>
-                <pre className="whitespace-pre-wrap font-sans">{msg.msg}</pre>
-              </div>
-            ))}
-            <div ref={chatEndRef} />
-          </div>
-          <form onSubmit={sendChat} className="border-t border-line p-4 bg-bg-soft">
-            <div className="flex gap-2">
-              <input
-                value={userMsg}
-                onChange={(e) => setUserMsg(e.target.value)}
-                placeholder="给 Conductor 发消息..."
-                className="flex-1 px-3 py-2 rounded-lg border border-line bg-bg text-slate-100 text-sm placeholder:text-slate-500 outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-              />
-              <button
-                type="submit"
-                disabled={!userMsg.trim()}
-                className="px-4 py-2 rounded-lg bg-accent text-white text-sm hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                发送
-              </button>
-            </div>
-          </form>
-        </div>
-
-        {/* Right: Log or Detail */}
-        <div className="w-96 border-l border-line flex flex-col bg-bg-soft">
-          {selectedDetail ? (
-            <>
-              <div className="px-4 py-3 border-b border-line flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-300">Subagent Detail</h2>
-                <button
-                  onClick={() => setSelectedSubagent(null)}
-                  className="text-xs text-slate-500 hover:text-slate-300"
+        </>
+      }
+    >
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+          {/* Main: Chat */}
+          <div className="flex min-w-0 flex-1 flex-col bg-bg-soft">
+            <div
+              ref={chatScrollRef}
+              onScroll={() => {
+                shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
+                scrollMemory.chatTop = chatScrollRef.current?.scrollTop ?? scrollMemory.chatTop
+              }}
+              className="flex-1 space-y-3 overflow-y-auto p-4"
+            >
+              {chatMessages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={clsx(
+                    'max-w-[92%] rounded-lg border p-3 text-sm shadow-[0_2px_6px_rgba(45,34,22,0.13)]',
+                    msg.role === 'user'
+                      ? 'ml-8 border-[#6F4D28] bg-[#8A6438] text-[#FFF4DF]'
+                      : 'mr-8 border-line bg-bg-card text-[#2C2418]'
+                  )}
                 >
-                  关闭
+                  <div className="mb-1 flex items-baseline gap-2">
+                    <span className="text-xs font-medium text-[#665741]">
+                      {msg.role === 'user' ? 'You' : 'Conductor'}
+                    </span>
+                  </div>
+                  <pre className="whitespace-pre-wrap font-sans">{msg.msg}</pre>
+                </div>
+              ))}
+              <div ref={chatEndRef} />
+            </div>
+            <form onSubmit={sendChat} className="border-t border-line bg-bg-soft/75 p-4 shadow-[0_-12px_36px_rgba(15,23,42,0.20)] backdrop-blur-xl">
+              <div className="flex items-end gap-2">
+                <textarea
+                  ref={chatInputRef}
+                  value={userMsg}
+                  onChange={(e) => setUserMsg(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+                    e.preventDefault()
+                    e.currentTarget.form?.requestSubmit()
+                  }}
+                  rows={1}
+                  wrap="soft"
+                  placeholder="向 Conductor 发送消息..."
+                  className="min-h-10 max-h-40 flex-1 min-w-0 resize-none overflow-y-auto overflow-x-hidden rounded border border-line bg-bg px-3 py-2 text-sm leading-6 text-[#2C2418] placeholder:text-[#8A7A63] focus:border-accent focus:outline-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+                />
+                <button
+                  type="submit"
+                  disabled={!userMsg.trim()}
+                  className="shrink-0 rounded bg-accent px-4 py-2 text-sm text-white hover:bg-accent/90 disabled:opacity-50"
+                >
+                  发送
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                <div>
-                  <div className="text-xs text-slate-500 mb-1">ID</div>
-                  <div className="text-sm text-slate-300 font-mono">{selectedDetail.id}</div>
+            </form>
+          </div>
+
+          {/* Right: Details / Log */}
+          <div className="flex w-80 flex-col border-l border-line bg-bg-card/80">
+            {selectedDetail ? (
+              <>
+                <div className="border-b border-line/70 bg-bg-card/70 px-4 py-3">
+                  <h2 className="text-sm font-semibold text-[#2C2418]">Subagent 详情</h2>
                 </div>
-                <div>
-                  <div className="text-xs text-slate-500 mb-1">Prompt</div>
-                  <pre className="text-sm text-slate-300 whitespace-pre-wrap bg-bg rounded p-2">
-                    {selectedDetail.prompt}
-                  </pre>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500 mb-1">Status</div>
-                  <div
-                    className={clsx(
-                      'text-sm',
-                      selectedDetail.status === 'running' ? 'text-green-400' : 'text-slate-500'
-                    )}
-                  >
-                    {selectedDetail.status}
+                <div className="flex-1 space-y-4 overflow-y-auto p-4">
+                  <div>
+                    <div className="mb-1 text-xs text-[#665741]">ID</div>
+                    <div className="break-all font-mono text-sm text-[#2C2418]">{selectedDetail.id}</div>
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs text-[#665741]">状态</div>
+                    <div className="text-sm text-[#2C2418]">{selectedDetail.status}</div>
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs text-[#665741]">Reply ({selectedDetail.reply.length} chars)</div>
+                    <pre className="max-h-64 overflow-y-auto rounded border border-line bg-bg-soft p-2 text-xs whitespace-pre-wrap text-[#2C2418]">
+                      {selectedDetail.reply || '(无回复)'}
+                    </pre>
                   </div>
                 </div>
-                <div>
-                  <div className="text-xs text-slate-500 mb-1">Reply ({selectedDetail.reply.length} chars)</div>
-                  <pre className="text-xs text-slate-300 whitespace-pre-wrap bg-bg rounded p-2 max-h-96 overflow-y-auto">
-                    {selectedDetail.reply || '(无输出)'}
-                  </pre>
+              </>
+            ) : (
+              <>
+                <div className="border-b border-line/70 bg-bg-card/70 px-4 py-3">
+                  <h2 className="text-sm font-semibold text-[#2C2418]">任务编排</h2>
                 </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="px-4 py-3 border-b border-line">
-                <h2 className="text-sm font-semibold text-slate-300">Log Stream</h2>
-              </div>
-              <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
-                {log.map((item) => (
-                  <div key={item.id} className="text-xs text-slate-400 font-mono">
-                    <span className="text-slate-600">[T{item.turn}]</span>{' '}
-                    <span className="text-accent/70">{item.event}</span> {item.text}
-                  </div>
-                ))}
-                <div ref={logEndRef} />
-              </div>
-            </>
-          )}
+                <div
+                  ref={logScrollRef}
+                  onScroll={() => {
+                    shouldFollowLogRef.current = isNearScrollTop(logScrollRef.current)
+                    scrollMemory.logTop = logScrollRef.current?.scrollTop ?? scrollMemory.logTop
+                  }}
+                  className="flex-1 space-y-2 overflow-y-auto p-3"
+                >
+                  {visibleLog.length === 0 ? (
+                    <p className="mt-4 text-center text-xs text-[#665741]">暂无关键事件</p>
+                  ) : (
+                    visibleLog.map((item) => (
+                      <div key={item.id} className="rounded-lg border border-line bg-bg-card p-2 text-xs text-[#2C2418] shadow-[0_2px_6px_rgba(45,34,22,0.10)]">
+                        <div className="mb-1 flex items-center gap-2 text-[11px] text-[#665741]">
+                          <span className="rounded bg-accent/10 px-1.5 py-0.5 text-accent/80">
+                            {logEventLabel(item.event)}
+                          </span>
+                          <span>T{item.turn}</span>
+                        </div>
+                        <div className="line-clamp-4 whitespace-pre-wrap break-words">{item.text}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
-      </div>
 
       {/* Approval floating cards */}
       {approvals.length > 0 && (
-        <div className="fixed bottom-6 right-6 w-96 space-y-2">
+        <div className="fixed bottom-6 right-6 z-30 w-96 space-y-2">
           {approvals.map((item) => (
-            <div key={item.id} className="bg-bg-soft border border-accent/50 rounded-lg p-4 shadow-xl">
-              <div className="text-sm font-semibold text-slate-200 mb-2">待批准任务</div>
-              <div className="text-xs text-slate-400 mb-1">来源: {item.source}</div>
-              <pre className="text-xs text-slate-300 whitespace-pre-wrap bg-bg rounded p-2 mb-3 max-h-32 overflow-y-auto">
+            <div key={item.id} className="rounded-lg border border-accent/45 bg-bg-card p-4 shadow-[0_6px_18px_rgba(45,34,22,0.16)]">
+              <div className="mb-2 text-sm font-semibold text-[#2C2418]">待批准任务</div>
+              <div className="mb-1 text-xs text-[#665741]">来源: {item.source}</div>
+              <pre className="mb-3 max-h-32 overflow-y-auto rounded border border-line bg-bg-soft p-2 text-xs whitespace-pre-wrap text-[#2C2418]">
                 {item.prompt}
               </pre>
               <div className="flex gap-2">
                 <button
                   onClick={() => approveTask(item)}
-                  className="flex-1 px-3 py-1.5 text-sm rounded bg-green-600/20 text-green-400 hover:bg-green-600/30"
+                  className="flex-1 rounded bg-accent px-3 py-1.5 text-sm text-white hover:bg-accent/90"
                 >
                   批准
                 </button>
                 <button
                   onClick={() => rejectTask(item)}
-                  className="flex-1 px-3 py-1.5 text-sm rounded bg-red-600/20 text-red-400 hover:bg-red-600/30"
+                  className="flex-1 rounded border border-line bg-bg-card/80 px-3 py-1.5 text-sm text-[#9E3328] hover:border-[#E1B5A9] hover:bg-[#FFF2EF]"
                 >
                   拒绝
                 </button>
@@ -355,44 +492,38 @@ export default function Conductor() {
           ))}
         </div>
       )}
-    </div>
+    </PageShell>
   )
 }
 
-function SubagentCard({
+function SubagentChip({
   sub,
+  index,
   selected,
   onClick,
 }: {
   sub: ConductorSubagent
+  index: number
   selected: boolean
   onClick: () => void
 }) {
+  const running = sub.status === 'running'
+
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
+      title={agentTooltip(sub, index)}
+      aria-label={agentTooltip(sub, index)}
       className={clsx(
-        'p-3 rounded-lg border cursor-pointer transition',
-        selected
-          ? 'border-accent bg-accent/10'
-          : 'border-line bg-bg hover:bg-bg-soft hover:border-accent/50'
+        'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-[11px] font-semibold transition',
+        running
+          ? 'border-[#B58C43]/45 bg-[#FFF3D8] text-[#7A4F08] shadow-[0_1px_0_rgba(255,255,255,0.55)]'
+          : 'border-line bg-bg-card/70 text-[#8A7A63]',
+        selected && 'ring-2 ring-accent/45'
       )}
     >
-      <div className="flex items-start justify-between mb-2">
-        <span className="text-xs font-mono text-slate-400">{sub.id}</span>
-        <span
-          className={clsx(
-            'text-xs px-1.5 py-0.5 rounded',
-            sub.status === 'running'
-              ? 'bg-green-600/20 text-green-400'
-              : 'bg-slate-600/20 text-slate-500'
-          )}
-        >
-          {sub.status}
-        </span>
-      </div>
-      <div className="text-xs text-slate-300 line-clamp-2">{sub.prompt}</div>
-      <div className="text-xs text-slate-500 mt-2">{relTime(sub.updated_at)}</div>
-    </div>
+      {index + 1}
+    </button>
   )
 }

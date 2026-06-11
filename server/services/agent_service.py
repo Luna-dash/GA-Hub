@@ -286,6 +286,7 @@ class AgentService:
                 "index": int(i),
                 "name": name,
                 "current": bool(current),
+                "kind": "mixin" if type(backend).__name__ == "MixinSession" else "single",
                 "model": model,
                 "api_base": api_base,
                 "api_key_masked": api_key_masked,

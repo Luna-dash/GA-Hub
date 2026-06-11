@@ -16,6 +16,7 @@ import { ImagePasteInput, type PasteAttachment } from '@/components/ImagePasteIn
 import { PageShell } from '@/components/PageShell'
 import { QRCodeDisplay } from '@/components/QRCodeDisplay'
 import { dialog } from '@/stores/dialogStore'
+import { useDraftStore } from '@/stores/draftStore'
 
 export function WechatBot() {
   const qc = useQueryClient()
@@ -85,8 +86,12 @@ export function WechatBot() {
   }, [messages])
 
   // ── send composer ──
-  const [text, setText] = useState('')
-  const [atts, setAtts] = useState<PasteAttachment[]>([])
+  const draftKey = 'wechatBot'
+  const text = useDraftStore((state) => state.texts[draftKey] ?? '')
+  const atts = useDraftStore((state) => state.attachments[draftKey] ?? [])
+  const setText = (value: string) => useDraftStore.getState().setText(draftKey, value)
+  const setAtts = (value: PasteAttachment[]) => useDraftStore.getState().setAttachments(draftKey, value)
+  const clearDraft = () => useDraftStore.getState().clearDraft(draftKey)
   const [busy, setBusy] = useState(false)
 
   const send = async () => {
@@ -99,8 +104,7 @@ export function WechatBot() {
       for (const a of atts) {
         await api.wxSend(replyTo, undefined, a.path)
       }
-      setText('')
-      setAtts([])
+      clearDraft()
       qc.invalidateQueries({ queryKey: ['wxMessages'] })
     } catch (e: any) {
       await dialog.alert('发送失败', e?.message || String(e))
@@ -151,12 +155,12 @@ export function WechatBot() {
             </span>
           )}
           {status?.logged_in
-            ? <button onClick={logout} className="px-3 py-1.5 rounded-lg border border-rose-700/60 text-rose-300 hover:bg-rose-900/20">退出登录</button>
-            : <button onClick={startLogin} className="px-3 py-1.5 rounded-lg bg-accent text-white">扫码登录</button>}
+            ? <button onClick={logout} className="ga-btn-danger">退出登录</button>
+            : <button onClick={startLogin} className="ga-btn-primary">扫码登录</button>}
           <div className="relative">
             <button
               onClick={() => setShowMenu((v) => !v)}
-              className="px-2.5 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5"
+              className="ga-btn"
               aria-label="更多"
               title="更多"
             >⋯</button>

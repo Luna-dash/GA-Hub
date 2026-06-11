@@ -1,6 +1,8 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ChatSocket } from '@/api/client'
+import { PageShell } from '@/components/PageShell'
+import { useDraftStore } from '@/stores/draftStore'
 import type { ChatStreamSnapshot, ChatWSOut } from '@/api/types'
 
 type GoalMode = 'goal' | 'hive'
@@ -79,12 +81,22 @@ function applyGoalEvent(prev: GoalMessage[], evt: ChatWSOut): GoalMessage[] {
 
 export function GoalHive() {
   const [mode, setMode] = useState<GoalMode>('goal')
-  const [target, setTarget] = useState('')
-  const [condition, setCondition] = useState('')
+  const targetDraftKey = `goalHive:${mode}:target`
+  const conditionDraftKey = `goalHive:${mode}:condition`
+  const target = useDraftStore((state) => state.texts[targetDraftKey] ?? '')
+  const condition = useDraftStore((state) => state.texts[conditionDraftKey] ?? '')
+  const setTarget = (value: string) => useDraftStore.getState().setText(targetDraftKey, value)
+  const setCondition = (value: string) => useDraftStore.getState().setText(conditionDraftKey, value)
+  const clearGoalDraft = () => {
+    useDraftStore.getState().clearDraft(targetDraftKey)
+    useDraftStore.getState().clearDraft(conditionDraftKey)
+  }
   const [conn, setConn] = useState<ConnState>('connecting')
   const [msgs, setMsgs] = useState<GoalMessage[]>([])
   const socketRef = useRef<ChatSocket | null>(null)
   const logRef = useRef<HTMLDivElement | null>(null)
+  const targetRef = useRef<HTMLTextAreaElement | null>(null)
+  const conditionRef = useRef<HTMLTextAreaElement | null>(null)
 
   const config = modeConfigs[mode]
   const streaming = msgs.some((m) => m.streaming)
@@ -111,22 +123,27 @@ export function GoalHive() {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' })
   }, [msgs])
 
+  useLayoutEffect(() => {
+    for (const el of [targetRef.current, conditionRef.current]) {
+      if (!el) continue
+      el.style.height = 'auto'
+      el.style.height = `${Math.min(el.scrollHeight, 280)}px`
+    }
+  }, [target, condition])
+
   const submit = (event: FormEvent) => {
     event.preventDefault()
     if (!canSubmit) return
     socketRef.current?.send({ type: 'submit', text: preview, images: [], source: GOAL_HIVE_SOURCE })
-    setTarget('')
-    setCondition('')
+    clearGoalDraft()
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col bg-transparent">
-      <header className="px-6 py-4 border-b border-line bg-bg-card/80 backdrop-blur flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Long-horizon agent mode</div>
-          <h1 className="text-xl font-semibold text-slate-100">Goal Hive</h1>
-        </div>
-        <div className="flex items-center gap-3">
+    <PageShell
+      title="Goal Hive"
+      description="Long-horizon agent mode"
+      actions={
+        <>
           <div className="inline-flex rounded-xl border border-line bg-bg-soft p-1">
             {(['goal', 'hive'] as GoalMode[]).map((item) => (
               <button
@@ -135,103 +152,107 @@ export function GoalHive() {
                 onClick={() => setMode(item)}
                 className={clsx(
                   'px-4 py-2 rounded-lg text-sm transition',
-                  mode === item ? 'bg-accent text-white shadow-sm' : 'text-slate-400 hover:text-slate-100',
+                  mode === item ? 'bg-accent text-white shadow-sm' : 'text-[#665741] hover:text-[#2C2418]',
                 )}
               >
                 {modeConfigs[item].title}
               </button>
             ))}
           </div>
-          <span className={clsx('text-xs px-2 py-1 rounded-full border', conn === 'open' ? 'border-emerald-500/40 text-emerald-300' : 'border-line text-slate-400')}>
+          <span className={clsx('text-xs px-2 py-1 rounded-full border', conn === 'open' ? 'border-emerald-500/40 text-emerald-700' : 'border-line text-[#665741]')}>
             {conn === 'open' ? '独立通道已连接' : conn === 'connecting' ? '连接中' : '已断开'}
           </span>
-        </div>
-      </header>
+        </>
+      }
+    >
+      <div className="grid grid-cols-1 xl:grid-cols-[420px_minmax(0,1fr)] gap-6 h-full min-h-0 p-6">
+        <section className="rounded-2xl border border-line bg-bg-card p-5 shadow-sm overflow-auto">
+          <div className="space-y-2 mb-5">
+            <div className="text-sm text-accent font-medium">{config.title}</div>
+            <h2 className="text-2xl font-semibold text-[#2C2418]">{config.subtitle}</h2>
+            <p className="text-sm text-[#665741] leading-6">启动输出会留在本页面的独立日志区，不跳转、不混入普通聊天页。</p>
+          </div>
 
-      <main className="flex-1 min-h-0 p-6 overflow-hidden">
-        <div className="grid grid-cols-1 xl:grid-cols-[420px_minmax(0,1fr)] gap-6 h-full min-h-0">
-          <section className="rounded-2xl border border-line bg-bg-card p-5 shadow-sm overflow-auto">
-            <div className="space-y-2 mb-5">
-              <div className="text-sm text-accent font-medium">{config.title}</div>
-              <h2 className="text-2xl font-semibold text-slate-100">{config.subtitle}</h2>
-              <p className="text-sm text-slate-400 leading-6">启动输出会留在本页面的独立日志区，不跳转、不混入普通聊天页。</p>
+          <div className="flex flex-wrap gap-2 mb-5">
+            {config.chips.map((chip) => (
+              <span key={chip} className="text-xs px-2.5 py-1 rounded-full border border-line bg-bg-soft text-[#665741]">
+                {chip}
+              </span>
+            ))}
+          </div>
+
+          <form onSubmit={submit} className="space-y-4">
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-[#2C2418]">目标</span>
+              <textarea
+                ref={targetRef}
+                value={target}
+                rows={4}
+                onChange={(event) => setTarget(event.target.value)}
+                placeholder={config.placeholder}
+                wrap="soft"
+                className="w-full min-w-0 max-h-[280px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line bg-bg-soft px-4 py-3 text-sm leading-6 text-[#2C2418] placeholder:text-[#8A7B65] outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+              />
+            </label>
+
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-[#2C2418]">补充约束（可选）</span>
+              <textarea
+                ref={conditionRef}
+                value={condition}
+                rows={3}
+                onChange={(event) => setCondition(event.target.value)}
+                placeholder="例如：先汇报计划；不得修改记忆；预算到期后总结验证结果。"
+                wrap="soft"
+                className="w-full min-w-0 max-h-[280px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line bg-bg-soft px-4 py-3 text-sm leading-6 text-[#2C2418] placeholder:text-[#8A7B65] outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+              />
+            </label>
+
+            <div className="rounded-xl border border-line bg-bg-soft/70 p-4 space-y-2">
+              <div className="text-xs uppercase tracking-[0.16em] text-[#8A7B65]">将发送到本页独立通道</div>
+              <pre className="whitespace-pre-wrap break-words text-sm text-[#3B3326] font-mono">{preview || `${config.command} ...`}</pre>
             </div>
 
-            <div className="flex flex-wrap gap-2 mb-5">
-              {config.chips.map((chip) => (
-                <span key={chip} className="text-xs px-2.5 py-1 rounded-full border border-line bg-bg-soft text-slate-400">
-                  {chip}
-                </span>
-              ))}
-            </div>
-
-            <form onSubmit={submit} className="space-y-4">
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-slate-200">目标</span>
-                <textarea
-                  value={target}
-                  onChange={(event) => setTarget(event.target.value)}
-                  placeholder={config.placeholder}
-                  className="w-full min-h-40 resize-y rounded-xl border border-line bg-bg-soft px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-                />
-              </label>
-
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-slate-200">补充约束（可选）</span>
-                <textarea
-                  value={condition}
-                  onChange={(event) => setCondition(event.target.value)}
-                  placeholder="例如：先汇报计划；不得修改记忆；预算到期后总结验证结果。"
-                  className="w-full min-h-24 resize-y rounded-xl border border-line bg-bg-soft px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-                />
-              </label>
-
-              <div className="rounded-xl border border-line bg-bg-soft/70 p-4 space-y-2">
-                <div className="text-xs uppercase tracking-[0.16em] text-slate-500">将发送到本页独立通道</div>
-                <pre className="whitespace-pre-wrap break-words text-sm text-slate-300 font-mono">{preview || `${config.command} ...`}</pre>
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-xs text-slate-500">{streaming ? '当前任务输出中，完成后可启动下一项。' : config.helper}</p>
-                <button
-                  type="submit"
-                  disabled={!canSubmit}
-                  className="shrink-0 px-4 py-2 rounded-lg bg-accent text-white text-sm hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  启动 {config.title}
-                </button>
-              </div>
-            </form>
-          </section>
-
-          <section className="rounded-2xl border border-line bg-bg-card shadow-sm flex flex-col min-h-0 overflow-hidden">
-            <div className="px-5 py-4 border-b border-line flex items-center justify-between">
-              <div>
-                <div className="text-sm font-medium text-slate-100">独立输出</div>
-                <div className="text-xs text-slate-500">source: {GOAL_HIVE_SOURCE}</div>
-              </div>
-              <button type="button" onClick={() => setMsgs([])} className="text-xs px-3 py-1.5 rounded-lg border border-line text-slate-400 hover:text-slate-100">
-                清空本地显示
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-[#665741]">{streaming ? '当前任务输出中，完成后可启动下一项。' : config.helper}</p>
+              <button
+                type="submit"
+                disabled={!canSubmit}
+                className="shrink-0 px-4 py-2 rounded-lg bg-accent text-white text-sm hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                启动 {config.title}
               </button>
             </div>
-            <div ref={logRef} className="flex-1 min-h-0 overflow-auto p-5 space-y-4">
-              {msgs.length === 0 ? (
-                <div className="h-full min-h-64 grid place-items-center text-sm text-slate-500">尚无 Goal / Hive 输出。</div>
-              ) : (
-                msgs.map((msg) => (
-                  <article key={msg.id} className={clsx('rounded-xl border p-4', msg.role === 'user' ? 'border-accent/30 bg-accent/10' : msg.role === 'system' ? 'border-amber-500/30 bg-amber-500/10' : 'border-line bg-bg-soft/70')}>
-                    <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-slate-500">
-                      {msg.role}
-                      {msg.streaming && <span className="text-accent normal-case tracking-normal">streaming</span>}
-                    </div>
-                    <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-200 font-sans">{msg.content}</pre>
-                  </article>
-                ))
-              )}
+          </form>
+        </section>
+
+        <section className="rounded-2xl border border-line bg-bg-card shadow-sm flex flex-col min-h-0 overflow-hidden">
+          <div className="px-5 py-4 border-b border-line flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-[#2C2418]">独立输出</div>
+              <div className="text-xs text-[#8A7B65]">source: {GOAL_HIVE_SOURCE}</div>
             </div>
-          </section>
-        </div>
-      </main>
-    </div>
+            <button type="button" onClick={() => setMsgs([])} className="text-xs px-3 py-1.5 rounded-lg border border-line text-[#665741] hover:text-[#2C2418]">
+              清空本地显示
+            </button>
+          </div>
+          <div ref={logRef} className="flex-1 min-h-0 overflow-auto p-5 space-y-4">
+            {msgs.length === 0 ? (
+              <div className="h-full min-h-64 grid place-items-center text-sm text-[#8A7B65]">尚无 Goal / Hive 输出。</div>
+            ) : (
+              msgs.map((msg) => (
+                <article key={msg.id} className={clsx('rounded-xl border p-4', msg.role === 'user' ? 'border-accent/30 bg-accent/10' : msg.role === 'system' ? 'border-amber-500/30 bg-amber-500/10' : 'border-line bg-bg-soft/70')}>
+                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#8A7B65]">
+                    {msg.role}
+                    {msg.streaming && <span className="text-accent normal-case tracking-normal">streaming</span>}
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-[#2C2418] font-sans">{msg.content}</pre>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+    </PageShell>
   )
 }

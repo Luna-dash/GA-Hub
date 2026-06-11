@@ -5,7 +5,7 @@
 // text input separately. Pressing Enter (without Shift, while not composing)
 // triggers onSubmit.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { api } from '@/api/client'
 import type { UploadResult } from '@/api/types'
@@ -51,12 +51,14 @@ export function ImagePasteInput({
   const [uploading, setUploading] = useState(0)
   const [btwOpen, setBtwOpen] = useState(false)
 
-  // auto-resize
-  useEffect(() => {
+  // Auto-resize the main chat textarea before paint so long input adds
+  // visual rows (growing the composer upward) instead of briefly scrolling
+  // horizontally or squeezing neighboring controls.
+  useLayoutEffect(() => {
     const el = taRef.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight, 240) + 'px'
+    el.style.height = `${Math.min(el.scrollHeight, 240)}px`
   }, [text])
 
   // Auto-focus on mount + every time we re-enable. Mount focus matters
@@ -201,7 +203,8 @@ export function ImagePasteInput({
             e.preventDefault()
             if (!disabled) onSubmit()
           }}
-          className="flex-1 bg-transparent resize-none outline-none text-slate-200 placeholder:text-slate-500 px-3 py-2 max-h-60 leading-7"
+          wrap="soft"
+          className="flex-1 min-w-0 w-0 bg-transparent resize-none outline-none text-slate-200 placeholder:text-slate-500 px-3 py-2 max-h-60 leading-7 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
         />
         <label className="cursor-pointer text-slate-400 hover:text-slate-200 px-3 py-2 rounded-xl hover:bg-white/5 text-sm transition">
           📎
@@ -262,6 +265,13 @@ function BtwDialog({ onClose }: { onClose: () => void }) {
     const t = window.setTimeout(() => inputRef.current?.focus(), 0)
     return () => window.clearTimeout(t)
   }, [])
+
+  useLayoutEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 240)}px`
+  }, [text])
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button, textarea')) return
@@ -356,7 +366,7 @@ function BtwDialog({ onClose }: { onClose: () => void }) {
               ask()
             }
           }}
-          className="flex-1 resize-none rounded-xl border border-line bg-bg px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-600 focus:border-amber-400/50 disabled:opacity-60"
+          className="flex-1 resize-none overflow-y-auto rounded-xl border border-line bg-bg px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-600 focus:border-amber-400/50 disabled:opacity-60"
         />
         <button
           type="button"

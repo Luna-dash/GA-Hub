@@ -55,10 +55,7 @@ export function MyKey() {
               </button>
             ))}
           </div>
-          <button
-            onClick={() => refetch()}
-            className="px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5"
-          >↻ 刷新</button>
+          <button onClick={() => refetch()} className="ga-btn">↻ 刷新</button>
         </div>
       }
     >

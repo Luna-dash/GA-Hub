@@ -7,17 +7,17 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { Message } from '@/api/types'
 import { ImagePasteInput, type PasteAttachment } from '@/components/ImagePasteInput'
 import { MessageBubble } from '@/components/MessageBubble'
 import { PageShell } from '@/components/PageShell'
 import { relTime } from '@/utils/foldTurns'
-import { detectLLMCapability, llmBadgeText, llmBadgeTitle } from '@/utils/llm'
 import { dialog } from '@/stores/dialogStore'
 import { useAgentStore } from '@/stores/agentStore'
 import { useChatStore } from '@/stores/chatStore'
+import { useDraftStore } from '@/stores/draftStore'
 
 interface RestoreState {
   restoredFrom?: string
@@ -27,7 +27,6 @@ interface RestoreState {
 }
 
 export function LiveChat() {
-  const qc = useQueryClient()
   const location = useLocation()
   const nav = useNavigate()
   const restoreState = (location.state as RestoreState | null) || null
@@ -45,8 +44,12 @@ export function LiveChat() {
   const pushSystem = useChatStore((s) => s.pushSystem)
   const markIdle = useChatStore((s) => s.markIdle)
 
-  const [text, setText] = useState('')
-  const [atts, setAtts] = useState<PasteAttachment[]>([])
+  const draftKey = 'liveChat'
+  const text = useDraftStore((state) => state.texts[draftKey] ?? '')
+  const atts = useDraftStore((state) => state.attachments[draftKey] ?? [])
+  const setText = (value: string) => useDraftStore.getState().setText(draftKey, value)
+  const setAtts = (value: PasteAttachment[]) => useDraftStore.getState().setAttachments(draftKey, value)
+  const clearDraft = () => useDraftStore.getState().clearDraft(draftKey)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [titleSaving, setTitleSaving] = useState(false)
@@ -57,16 +60,6 @@ export function LiveChat() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [stuckBottom, setStuckBottom] = useState(true)
   const [unread, setUnread] = useState(0)
-
-  // LLM list — kept fresh, used by the header picker
-  const { data: llmsData } = useQuery({
-    queryKey: ['llms'],
-    queryFn: api.llms,
-    refetchInterval: 8000,
-  })
-  const llms = llmsData?.llms ?? []
-  const currentLlm = llms.find((l) => l.current)
-  const cap = detectLLMCapability(currentLlm?.name ?? '')
 
   useEffect(() => {
     if (streaming && !agentRunning) markIdle()
@@ -165,12 +158,11 @@ export function LiveChat() {
         clearLocal()
         pushSystem(r.message)
       })
-      setText('')
+      clearDraft()
       return
     }
     submitWebui(t, atts)
-    setText('')
-    setAtts([])
+    clearDraft()
     // Sending always implies "I want to see the response" — re-stick to bottom.
     setStuckBottom(true)
     setUnread(0)
@@ -207,27 +199,12 @@ export function LiveChat() {
     }
   }
 
-  const switchLlm = async (idx: number) => {
-    if (idx === currentLlm?.index) return
-    if (streaming || agentRunning) {
-      pushSystem('_当前回复还在进行中。请先点「停止」或等待完成后再切换 LLM。_')
-      return
-    }
-    try {
-      await api.switchLLM(idx)
-      qc.invalidateQueries({ queryKey: ['llms'] })
-      qc.invalidateQueries({ queryKey: ['status'] })
-      pushSystem(`_已切换到 [${idx}] ${llms.find((l) => l.index === idx)?.name ?? ''}_`)
-    } catch (e: any) {
-      pushSystem(`_切换 LLM 失败：${e?.body?.detail || e?.message || String(e)}_`)
-    }
-  }
-
   return (
     <PageShell
       title="实时聊天"
+      description="与 GenericAgent 进行多模态实时对话，支持图片粘贴与历史快照恢复"
       actions={
-        <div className="flex items-center gap-2 text-sm flex-wrap justify-end">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           <div className="hidden md:flex items-center gap-1.5 mr-1" title="对话标题：回车或失焦保存，清空后按首条消息自动命名">
             <input
               value={titleDraft}
@@ -243,41 +220,12 @@ export function LiveChat() {
             />
             {titleSaving && <span className="text-[10px] text-[#665741]">保存中…</span>}
           </div>
-          {/* LLM picker + capability badge */}
-          {llms.length > 0 && (
-            <div className="flex items-center gap-1.5">
-              <select
-                value={currentLlm?.index ?? 0}
-                onChange={(e) => switchLlm(Number(e.target.value))}
-                disabled={streaming || agentRunning}
-                className="bg-bg-card border border-line rounded-md px-3 py-2 text-xs outline-none focus:border-accent/80 focus:ring-2 focus:ring-accent/15 max-w-[260px] truncate disabled:opacity-50"
-                title={streaming || agentRunning ? '当前回复进行中，请先停止或等待完成后再切换 LLM' : '切换 LLM'}
-              >
-                {llms.map((l) => (
-                  <option key={l.index} value={l.index}>
-                    [{l.index}] {l.name}
-                  </option>
-                ))}
-              </select>
-              <span
-                className={`text-[10px] px-2 py-1 rounded-full shrink-0 border ${cap.multimodal
-                  ? 'bg-[#D6E1D0] text-[#355C43] border-[#8FA67D]'
-                  : 'bg-bg-soft text-[#3A3020] border-line'}`}
-                title={llmBadgeTitle(cap)}
-              >
-                {llmBadgeText(cap)}
-              </span>
-            </div>
-          )}
-          <span className={`px-2.5 py-1 rounded-full border text-[11px] ${conn === 'open' ? 'bg-[#D6E1D0] text-[#355C43] border-[#8FA67D]' : conn === 'connecting' ? 'bg-[#E7D3A8] text-[#7A5527] border-[#B99A5B]' : 'bg-[#E2C5BD] text-[#7A3D32] border-[#B98578]'}`}>
+          <span className={`ga-badge ${conn === 'open' ? 'ga-badge-connected' : conn === 'connecting' ? 'ga-badge-connecting' : 'ga-badge-offline'}`}>
             {conn === 'open' ? '已连接' : conn === 'connecting' ? '连接中…' : '断开'}
           </span>
-          <button onClick={() => setRestoreOpen(true)} className="px-3 py-2 rounded-md border border-line text-[#3A3020] hover:bg-bg-soft hover:border-accent/30 text-sm transition" title="从历史快照恢复对话">↩ 恢复历史</button>
-          <button onClick={newConv} className="px-3 py-2 rounded-md border border-line text-[#3A3020] hover:bg-bg-soft hover:border-accent/30 text-sm transition">新对话</button>
-          <button onClick={abortFn} disabled={!streaming}
-            className="px-3 py-2 rounded-md border border-[#B98578] text-[#7A3D32] hover:bg-[#E2C5BD] text-sm disabled:opacity-40 transition">
-            停止
-          </button>
+          <button onClick={() => setRestoreOpen(true)} className="ga-btn" title="从历史快照恢复对话">↩ 恢复历史</button>
+          <button onClick={newConv} className="ga-btn">新对话</button>
+          <button onClick={abortFn} disabled={!streaming} className="ga-btn-danger">停止</button>
         </div>
       }
     >

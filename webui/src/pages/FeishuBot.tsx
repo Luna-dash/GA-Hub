@@ -138,19 +138,10 @@ export function FeishuBot() {
           <span className={clsx('h-1.5 w-1.5 rounded-full', state.dot)} />
           {state.label}
         </span>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="bg-bg-card border border-line rounded-md px-3 py-2 text-xs outline-none hover:border-accent/80 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
+        <button onClick={handleRefresh} disabled={refreshing} className="ga-btn disabled:opacity-50 disabled:cursor-not-allowed">
           {refreshing ? '刷新中…' : '刷新'}
         </button>
-        <button
-          onClick={() => setShowKeys((v) => !v)}
-          className="bg-bg-card border border-line rounded-md px-3 py-2 text-xs outline-none hover:border-accent/80"
-        >
-          飞书 Key
-        </button>
+        <button onClick={() => setShowKeys((v) => !v)} className="ga-btn">设置</button>
       </div>
     }
   >

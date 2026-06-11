@@ -31,6 +31,7 @@ export interface LLMInfo {
   index: number
   name: string
   current: boolean
+  kind?: 'mixin' | 'single'
   model?: string
   api_base?: string
   api_key_masked?: string
