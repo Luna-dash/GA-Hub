@@ -365,9 +365,10 @@ class AgentService:
     def abort(self) -> None:
         self.agent.abort()
         bus.publish("agent:abort", {"ts": time.time()})
-        # The agent's run loop will emit a final {'done': ...} which our
-        # fan-out drainer turns into a chat:done — we deliberately don't
-        # publish a parallel chat:aborted to keep the event stream simple.
+        # Immediately publish chat:aborted to unblock the UI.
+        # The agent's run loop may still emit a final {'done': ...} if it
+        # manages to break out, but when LLM is stuck we can't wait for that.
+        bus.publish("chat:aborted", {"ts": time.time()})
 
     # ── tasks ────────────────────────────────────────────────────
     def btw(self, question: str) -> str:
