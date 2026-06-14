@@ -28,7 +28,82 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
+# Preferred (max) window size on large displays. On smaller screens the
+# window is scaled down to fit the available work area (see _compute_window_geometry).
 WINDOW_WIDTH, WINDOW_HEIGHT = 1320, 860
+WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT = 960, 600
+
+
+def _get_screen_workarea():
+    """Return (work_w, work_h) of the primary monitor's work area in logical
+    pixels (taskbar excluded). Falls back to the full screen / a sane default
+    when the platform query is unavailable."""
+    # Windows: SystemParametersInfo(SPI_GETWORKAREA) excludes the taskbar.
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            # Make this process DPI-aware so the returned metrics match the
+            # logical pixels pywebview uses for window sizing.
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PER_MONITOR_AWARE
+            except Exception:
+                try:
+                    user32.SetProcessDPIAware()
+                except Exception:
+                    pass
+            rect = wintypes.RECT()
+            SPI_GETWORKAREA = 0x0030
+            if user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rect), 0):
+                w = rect.right - rect.left
+                h = rect.bottom - rect.top
+                if w > 0 and h > 0:
+                    return int(w), int(h)
+            # Fallback to full screen metrics.
+            w = user32.GetSystemMetrics(0)  # SM_CXSCREEN
+            h = user32.GetSystemMetrics(1)  # SM_CYSCREEN
+            if w > 0 and h > 0:
+                return int(w), int(h)
+        except Exception:
+            pass
+    # Cross-platform fallback via tkinter (no extra deps).
+    try:
+        import tkinter
+
+        root = tkinter.Tk()
+        root.withdraw()
+        w = root.winfo_screenwidth()
+        h = root.winfo_screenheight()
+        root.destroy()
+        if w > 0 and h > 0:
+            return int(w), int(h)
+    except Exception:
+        pass
+    # Last-resort default (assume a common 1080p panel).
+    return 1920, 1080
+
+
+def _compute_window_geometry():
+    """Compute a window size/position that fits the current display.
+
+    - Caps at WINDOW_WIDTH x WINDOW_HEIGHT on large screens.
+    - Otherwise scales down to ~92% of the work area, never below the minimum.
+    - Returns (width, height, x, y) centred in the work area.
+    """
+    work_w, work_h = _get_screen_workarea()
+    margin = 0.92
+    w = min(WINDOW_WIDTH, int(work_w * margin))
+    h = min(WINDOW_HEIGHT, int(work_h * margin))
+    # Respect a usable minimum, but never exceed the work area itself.
+    w = max(min(WINDOW_MIN_WIDTH, work_w), w)
+    h = max(min(WINDOW_MIN_HEIGHT, work_h), h)
+    x = max(0, (work_w - w) // 2)
+    y = max(0, (work_h - h) // 2)
+    return w, h, x, y
+
+
 WINDOWS_APP_ID = "GAHub.SourceLauncher"
 WINDOWS_ICON = Path(__file__).resolve().parent / "assets" / "genericagent_admin.ico"
 
@@ -680,11 +755,15 @@ def main() -> int:
             except Exception as e:
                 return {"ok": False, "error": str(e)}
 
+    _win_w, _win_h, _win_x, _win_y = _compute_window_geometry()
     win = webview.create_window(
         title="GA-Hub · 管理控制台",
         url=target_url,
-        width=WINDOW_WIDTH,
-        height=WINDOW_HEIGHT,
+        width=_win_w,
+        height=_win_h,
+        x=_win_x,
+        y=_win_y,
+        min_size=(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT),
         resizable=True,
         text_select=True,
         js_api=_ExportApi(),
