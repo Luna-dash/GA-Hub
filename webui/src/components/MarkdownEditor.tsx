@@ -11,13 +11,13 @@ interface Props {
   readOnly?: boolean
 }
 
-export function MarkdownEditor({ value, onChange, height = 480, readOnly }: Props) {
+export function MarkdownEditor({ value, onChange, height, readOnly }: Props) {
   const [preview, setPreview] = useState(false)
   const [v, setV] = useState(value)
   useEffect(() => setV(value), [value])
 
   return (
-    <div className="rounded-lg border border-line overflow-hidden flex flex-col" style={{ height }}>
+    <div className="rounded-lg border border-line overflow-hidden flex flex-col h-full">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-line bg-bg-soft text-xs">
         <div className="text-slate-400">
           {readOnly ? '只读' : 'Markdown 编辑'}

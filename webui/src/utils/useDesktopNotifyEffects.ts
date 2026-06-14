@@ -9,12 +9,14 @@
 import { useEffect, useRef } from 'react'
 import { useChatStore } from '@/stores/chatStore'
 import { useAgentStore } from '@/stores/agentStore'
+import { useConductorStore } from '@/stores/conductorStore'
 import { notify } from './notify'
 
 export function useDesktopNotifyEffects() {
   const streaming = useChatStore((s) => s.streaming)
   const msgs = useChatStore((s) => s.msgs)
   const recent = useAgentStore((s) => s.recent)
+  const conductorMsgs = useConductorStore((s) => s.chatMessages)
 
   // ── (1) stream done ──
   const wasStreamingRef = useRef(false)
@@ -46,4 +48,21 @@ export function useDesktopNotifyEffects() {
       lastWxAnnouncedRef.current = Math.max(lastWxAnnouncedRef.current, 'ts' in e ? e.ts : 0)
     }
   }, [recent])
+
+  // ── (3) conductor task done ──
+  // Watch for new assistant messages in Conductor chatMessages array.
+  // Fire notification when a new assistant message appears (task completed).
+  const lastConductorCountRef = useRef(0)
+  useEffect(() => {
+    const assistantMsgs = conductorMsgs.filter((m) => m.role === 'assistant')
+    const newCount = assistantMsgs.length
+    
+    if (newCount > lastConductorCountRef.current && lastConductorCountRef.current > 0) {
+      const lastMsg = assistantMsgs[assistantMsgs.length - 1]
+      const preview = (lastMsg?.msg || '').replace(/\s+/g, ' ').slice(0, 140)
+      notify('Conductor 任务完成', { body: preview, tag: 'conductor-task-done' })
+    }
+    
+    lastConductorCountRef.current = newCount
+  }, [conductorMsgs])
 }

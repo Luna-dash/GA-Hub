@@ -12,8 +12,9 @@
   }
 
   .ga-btn-danger {
-    @apply px-3 py-2 rounded-md border text-sm transition;
-    @apply border-[#B98578] text-[#7A3D32] hover:bg-[#E2C5BD] disabled:opacity-40;
+    @apply px-3 py-2 rounded-md text-sm transition;
+    @apply bg-[#C94A3A] text-white hover:bg-[#B03A2A];
+    @apply disabled:bg-[#C5BFB8] disabled:text-[#8A7F74] disabled:border disabled:border-[#A99572] disabled:cursor-not-allowed;
   }
 
   .ga-btn-sm {

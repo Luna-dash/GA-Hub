@@ -141,28 +141,31 @@ export function GoalHive() {
   return (
     <PageShell
       title="Goal Hive"
+      titleExtra={
+        <span className={`ga-badge ${streaming ? 'ga-badge-connected' : conn === 'connecting' ? 'ga-badge-connecting' : 'ga-badge-offline'}`}>
+          {streaming ? '运行中' : conn === 'connecting' ? '连接中' : '未运行'}
+        </span>
+      }
       description="Long-horizon agent mode"
       actions={
-        <>
+        <div className="flex items-center gap-2">
           <div className="inline-flex rounded-xl border border-line bg-bg-soft p-1">
             {(['goal', 'hive'] as GoalMode[]).map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => setMode(item)}
-                className={clsx(
-                  'px-4 py-2 rounded-lg text-sm transition',
-                  mode === item ? 'bg-accent text-white shadow-sm' : 'text-[#665741] hover:text-[#2C2418]',
-                )}
-              >
-                {modeConfigs[item].title}
-              </button>
-            ))}
+            <button
+              key={item}
+              type="button"
+              onClick={() => setMode(item)}
+              className={clsx(
+                'px-4 py-1 rounded-lg text-sm transition',
+                mode === item ? 'bg-accent text-white shadow-sm' : 'text-[#665741] hover:text-[#2C2418]',
+              )}
+            >
+              {modeConfigs[item].title}
+            </button>
+          ))}
           </div>
-          <span className={clsx('text-xs px-2 py-1 rounded-full border', conn === 'open' ? 'border-emerald-500/40 text-emerald-700' : 'border-line text-[#665741]')}>
-            {conn === 'open' ? '独立通道已连接' : conn === 'connecting' ? '连接中' : '已断开'}
-          </span>
-        </>
+          <button onClick={() => socketRef.current?.close()} disabled={!streaming} className="ga-btn-danger">停止</button>
+        </div>
       }
     >
       <div className="grid grid-cols-1 xl:grid-cols-[420px_minmax(0,1fr)] gap-6 h-full min-h-0 p-6">

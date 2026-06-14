@@ -15,7 +15,6 @@ import { Conversations } from '@/pages/Conversations'
 import { Memory } from '@/pages/Memory'
 import { GoalHive } from '@/pages/GoalHive'
 
-import { Llms } from '@/pages/Llms'
 import { MyKey } from '@/pages/MyKey'
 import { Settings } from '@/pages/Settings'
 
@@ -128,7 +127,6 @@ export default function App() {
             <Route path="/memory" element={<Memory />} />
             <Route path="/goal-hive" element={<GoalHive />} />
             <Route path="/conductor" element={<Conductor />} />
-            <Route path="/llms" element={<Llms />} />
             <Route path="/mykey" element={<MyKey />} />
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/autonomous" element={<Autonomous />} />

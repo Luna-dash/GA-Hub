@@ -25,11 +25,29 @@ def _upload_dir() -> str:
     return str(_paths.admin_uploads_dir())
 
 
+# Generous content allowlist: covers everything a user realistically pastes
+# or drag-drops (images, docs, office, code, media, archives) while keeping
+# out executables / scripts / active markup that could be abused if the file
+# is later opened or served back. Kept broad on purpose so normal use never
+# hits a wall — only genuinely dangerous extensions are rejected.
 _SAFE_EXT = {
-    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
-    ".pdf", ".txt", ".md", ".csv", ".json", ".log",
-    ".zip", ".tar", ".gz",
-    ".mp4", ".mov", ".m4v", ".webm", ".mp3", ".wav", ".silk",
+    # images
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".tiff", ".heic",
+    # documents / text / data
+    ".pdf", ".txt", ".md", ".rst", ".csv", ".tsv", ".json", ".jsonl",
+    ".log", ".yaml", ".yml", ".toml", ".ini", ".xml",
+    # office
+    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp",
+    # ebooks
+    ".epub", ".mobi",
+    # code (served as text, never executed by the server)
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".c", ".cpp", ".h", ".hpp",
+    ".go", ".rs", ".rb", ".php", ".sql", ".sh", ".css", ".vue",
+    # archives
+    ".zip", ".tar", ".gz", ".tgz", ".7z", ".rar",
+    # media
+    ".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi",
+    ".mp3", ".wav", ".silk", ".m4a", ".flac", ".ogg", ".aac",
 }
 
 
@@ -44,7 +62,11 @@ async def upload(file: UploadFile = File(...)):
     name = file.filename or "untitled"
     ext = (Path(name).suffix or "").lower()
     if ext and ext not in _SAFE_EXT:
-        log.info("upload with non-allowlisted ext: %s", ext)
+        log.warning("rejected upload with non-allowlisted ext: %s", ext)
+        raise HTTPException(
+            415,
+            f"file type '{ext}' is not allowed",
+        )
     file_id = uuid.uuid4().hex
     safe_name = f"{file_id}{ext}"
     path = os.path.join(_upload_dir(), safe_name)
@@ -64,7 +86,9 @@ async def upload(file: UploadFile = File(...)):
 
 @router.get("/api/files/{fname}")
 async def get_file(fname: str):
-    if "/" in fname or ".." in fname:
+    # Reject any separator or traversal token. Backslash matters on Windows
+    # where it is a valid path separator, so guard against both forms.
+    if "/" in fname or "\\" in fname or ".." in fname or os.sep in fname:
         raise HTTPException(400, "bad name")
     p = os.path.join(_upload_dir(), fname)
     if not os.path.isfile(p):

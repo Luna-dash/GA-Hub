@@ -80,32 +80,28 @@ export function FeishuBot() {
   }, [st, connected, configured])
 
   const grouped = useMemo(() => {
-    const map = new Map<string, FeishuMsg[]>()
-    for (const m of remoteMsgs) {
-      const key = m.taskId || `${m.chatId}:${m.ts}`
-      if (!map.has(key)) map.set(key, [])
-      map.get(key)!.push(m)
+    const result: FeishuMsg[][] = []
+    let currentGroup: FeishuMsg[] = []
+    let lastRole: 'user' | 'assistant' | null = null
+    
+    // 按时间戳排序所有消息
+    const sorted = [...remoteMsgs].sort((a, b) => a.ts - b.ts)
+    
+    for (const m of sorted) {
+      // 角色切换时，开始新分组
+      if (m.role !== lastRole && currentGroup.length > 0) {
+        result.push(currentGroup)
+        currentGroup = []
+      }
+      currentGroup.push(m)
+      lastRole = m.role
     }
-    // 先对每个task内部排序：user消息在前，assistant消息在后
-    const tasks = Array.from(map.values()).map((msgs) => {
-      msgs.sort((a, b) => {
-        // 按 role 排序：user=0, assistant=1
-        const roleOrder = { user: 0, assistant: 1 }
-        const aOrder = roleOrder[a.role] ?? 99
-        const bOrder = roleOrder[b.role] ?? 99
-        if (aOrder !== bOrder) return aOrder - bOrder
-        // role 相同时按时间戳升序
-        return a.ts - b.ts
-      })
-      return msgs
-    })
-    // 再对外层task数组排序：按每个task的最新消息时间戳升序（旧对话在上面）
-    tasks.sort((a, b) => {
-      const aMax = Math.max(...a.map(m => m.ts))
-      const bMax = Math.max(...b.map(m => m.ts))
-      return aMax - bMax
-    })
-    return tasks
+    
+    if (currentGroup.length > 0) {
+      result.push(currentGroup)
+    }
+    
+    return result
   }, [remoteMsgs])
 
   async function saveKeys() {
@@ -124,20 +120,15 @@ export function FeishuBot() {
   }
 
   return <PageShell 
-    title="飞书 Bot" 
+    title="飞书BOT" 
+    titleExtra={
+      <span className={`ga-badge ${connected ? 'ga-badge-connected' : configured ? 'ga-badge-offline' : 'ga-badge-connecting'}`}>
+        {state.label}
+      </span>
+    }
     description="远程飞书对话流"
     actions={
       <div className="flex items-center gap-2 text-sm flex-wrap justify-end">
-        <span className={clsx(
-          'flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full border',
-          !st ? 'bg-bg-soft text-[#3A3020] border-line'
-            : !configured ? 'bg-[#F3D6D6] text-[#8A3A3A] border-[#C98A8A]'
-            : connected ? 'bg-[#D6E1D0] text-[#355C43] border-[#8FA67D]'
-            : 'bg-bg-soft text-[#3A3020] border-line'
-        )}>
-          <span className={clsx('h-1.5 w-1.5 rounded-full', state.dot)} />
-          {state.label}
-        </span>
         <button onClick={handleRefresh} disabled={refreshing} className="ga-btn disabled:opacity-50 disabled:cursor-not-allowed">
           {refreshing ? '刷新中…' : '刷新'}
         </button>
@@ -154,7 +145,7 @@ export function FeishuBot() {
             <div className="font-medium text-slate-700">暂无飞书远程对话</div>
             <div className="mt-1">飞书用户发来的消息和 GA 回复会显示在这里。</div>
           </div>
-        </div> : <div className="space-y-3">
+        </div> : <div className="space-y-2">
           {grouped.map((task, ti) => {
             const expanded = expandedTasks.has(ti)
             const summaryIdx: number[] = []
@@ -168,7 +159,7 @@ export function FeishuBot() {
               next.has(ti) ? next.delete(ti) : next.add(ti)
               return next
             })
-            return <div key={ti} className="space-y-1.5 rounded-xl border border-[#E8DFD1] bg-white p-2 shadow-sm">
+            return <div key={ti} className="mb-2">
               {task.map((m, mi) => {
                 // 折叠区间：仅折叠 summary，且未展开时
                 if (hideFrom >= 0 && !expanded && m.type === 'summary' && mi >= hideFrom) {
@@ -181,9 +172,9 @@ export function FeishuBot() {
                   return null
                 }
                 if (m.type === 'summary') {
-                  return <div key={mi} className="rounded-lg bg-slate-50 px-3 py-1.5 text-xs text-slate-600">⏳ {m.content}</div>
+                  return <div key={mi} className="rounded-lg bg-[#F5F0E8] border border-[#E8DFD1] px-3 py-1.5 text-xs text-[#665741] my-1">⏳ {m.content}</div>
                 }
-                return <MessageBubble key={mi} role={m.role} content={m.content} streaming={false} streamId={m.taskId} compact />
+                return <MessageBubble key={mi} role={m.role} content={m.content} streaming={false} streamId={m.taskId} />
               })}
               {hideFrom >= 0 && expanded && <button onClick={toggle} className="w-full rounded-lg border border-dashed border-[#D8CBB4] bg-slate-50/60 px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100 transition-colors">
                 收起中间步骤 ▴

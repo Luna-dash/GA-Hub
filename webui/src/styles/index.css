@@ -140,7 +140,7 @@ html.dark .text-slate-600 { color: #6E5A38; }
   border-radius: 0.6rem;
   border: 1px solid var(--c-line);
   background: var(--c-bg-soft);
-  margin: 0.5rem 0;
+  margin: 0;
 }
 .turn-fold > summary {
   cursor: pointer; user-select: none;

@@ -46,8 +46,12 @@ def _backup_dir() -> Path:
 
 # ── apikey masking ─────────────────────────────────────────────────────
 def _mask(key: Any) -> str:
-    if not isinstance(key, str): return ""
-    if len(key) <= 8: return "*" * len(key)
+    if not isinstance(key, str) or not key: return ""
+    # Anything short enough that a 4+4 reveal would expose most of the secret
+    # gets fully masked with a fixed-width placeholder (also hides the real
+    # length). Only genuinely long keys (real API tokens) keep the
+    # head/tail hint that helps a human tell two keys apart.
+    if len(key) <= 12: return "*" * 8
     return f"{key[:4]}***{key[-4:]}"
 
 
@@ -426,6 +430,72 @@ async def delete_session(var: str):
         "warnings": warnings,
         "structured": _structurize(new_text),
     }
+
+
+@router.post("/sessions/{var}/test")
+async def test_session(var: str):
+    """Ping a single mykey session by variable name.
+
+    This avoids fragile /api/llms index mapping: mykey cards know their
+    assignment variable, so resolve a fresh client directly from mykey.py.
+    Mixin routes are intentionally not tested here.
+    """
+    if _classify(var) == "mixin":
+        return {"ok": False, "error": "mixin session cannot be ping-tested here"}
+
+    try:
+        from llmcore import resolve_client
+        client = resolve_client(var)
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "name": var}
+
+    backend = getattr(client, "backend", None)
+    if backend is None:
+        return {"ok": False, "error": "client has no backend", "name": var}
+
+    saved_history = list(getattr(backend, "history", []))
+    saved_tools = getattr(backend, "tools", None)
+    try:
+        if hasattr(backend, "history"):
+            backend.history = []
+        if hasattr(backend, "tools"):
+            backend.tools = None
+
+        messages = [
+            {"role": "system", "content": "Reply with exactly: pong"},
+            {"role": "user", "content": "ping"},
+        ]
+        text = ""
+        start = time.time()
+        gen = client.chat(messages=messages, tools=None)
+        for chunk in gen:
+            if isinstance(chunk, str):
+                text += chunk
+            if len(text) > 80:
+                break
+        elapsed_ms = int((time.time() - start) * 1000)
+        name = f"{type(backend).__name__}/{getattr(backend, 'name', var)}"
+        return {
+            "ok": True,
+            "latency_ms": elapsed_ms,
+            "preview": (text or "").strip()[:120],
+            "model": getattr(backend, "model", None),
+            "name": name,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": f"{type(e).__name__}: {e}",
+            "name": f"{type(backend).__name__}/{getattr(backend, 'name', var)}",
+        }
+    finally:
+        try:
+            if hasattr(backend, "history"):
+                backend.history = saved_history
+            if hasattr(backend, "tools"):
+                backend.tools = saved_tools
+        except Exception:
+            pass
 
 
 @router.get("/backups")

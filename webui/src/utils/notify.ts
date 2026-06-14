@@ -16,7 +16,13 @@ import { api } from '@/api/client'
 const LS_KEY = 'ga.desktopNotifications.v1'
 
 function readOptIn(): boolean {
-  try { return localStorage.getItem(LS_KEY) === '1' } catch { return false }
+  try {
+    const v = localStorage.getItem(LS_KEY)
+    // Default to ON if user never set it (null). They can turn it off in Settings.
+    return v === null ? true : v === '1'
+  } catch {
+    return true  // Default to enabled if localStorage unavailable
+  }
 }
 function writeOptIn(v: boolean) {
   try { v ? localStorage.setItem(LS_KEY, '1') : localStorage.removeItem(LS_KEY) } catch {}

@@ -294,22 +294,17 @@ export default function Conductor() {
   return (
     <PageShell
       title="Conductor"
+      titleExtra={
+        <span className={clsx('ga-badge', status?.started ? 'ga-badge-connected' : 'ga-badge-offline')}>
+          {status?.started ? '运行中' : '未运行'}
+        </span>
+      }
       description="多代理编排与任务并行"
       actions={
-        <>
-          <span className={clsx('ga-badge', status?.started ? 'ga-badge-connected' : 'ga-badge-offline')}>
-            {status?.started ? '运行中' : '未运行'}
-          </span>
-          <span
-            className={clsx(
-              'rounded-full border px-2.5 py-1 text-xs font-medium',
-              status?.started
-                ? 'border-[#B58C43]/40 bg-[#FFF7E8] text-[#6E4B12]'
-                : 'border-line bg-bg-card/70 text-[#7B6D5A]'
-            )}
-          >
-            {conductorStateLabel}
-          </span>
+        <button onClick={stopConductor} disabled={!status?.started} className="ga-btn-danger">停止</button>
+      }
+      middleArea={
+        <div className="flex items-center gap-3">
           <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8A7A63]">subagent</span>
           <div className="flex min-w-0 justify-start gap-1.5 overflow-x-auto pb-0.5">
             {activeSubagents.length === 0 ? (
@@ -328,58 +323,44 @@ export default function Conductor() {
               ))
             )}
           </div>
-          {status?.started ? (
-            <button
-              type="button"
-              onClick={stopConductor}
-              className="ga-btn-danger shrink-0"
-            >
-              停止
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={startConductor}
-              className="ga-btn-primary shrink-0"
-            >
-              启动
-            </button>
-          )}
-        </>
+        </div>
       }
     >
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex h-full min-h-0 gap-6 p-6">
           {/* Main: Chat */}
-          <div className="flex min-w-0 flex-1 flex-col bg-bg-soft">
+          <div className="flex min-w-0 flex-1 flex-col rounded-2xl border border-line bg-bg-card shadow-sm overflow-hidden">
             <div
               ref={chatScrollRef}
               onScroll={() => {
                 shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
                 scrollMemory.chatTop = chatScrollRef.current?.scrollTop ?? scrollMemory.chatTop
               }}
-              className="flex-1 space-y-3 overflow-y-auto p-4"
+              className="flex-1 overflow-y-auto divide-y divide-line border-y border-line text-sm"
             >
               {chatMessages.map((msg) => (
                 <div
                   key={msg.id}
                   className={clsx(
-                    'max-w-[92%] rounded-lg border p-3 text-sm shadow-[0_2px_6px_rgba(45,34,22,0.13)]',
+                    'flex gap-3 px-4 py-2',
                     msg.role === 'user'
-                      ? 'ml-8 border-[#6F4D28] bg-[#8A6438] text-[#FFF4DF]'
-                      : 'mr-8 border-line bg-bg-card text-[#2C2418]'
+                      ? 'bg-[#8A6438] text-[#FFF4DF]'
+                      : 'bg-bg-card text-[#2C2418]'
                   )}
                 >
-                  <div className="mb-1 flex items-baseline gap-2">
-                    <span className="text-xs font-medium text-[#665741]">
-                      {msg.role === 'user' ? 'You' : 'Conductor'}
-                    </span>
-                  </div>
-                  <pre className="whitespace-pre-wrap font-sans">{msg.msg}</pre>
+                  <span
+                    className={clsx(
+                      'shrink-0 w-16 select-none text-xs font-medium uppercase tracking-wide pt-0.5',
+                      msg.role === 'user' ? 'text-[#FFF4DF]/70' : 'text-[#665741]'
+                    )}
+                  >
+                    {msg.role === 'user' ? '' : 'Conductor'}
+                  </span>
+                  <pre className="flex-1 whitespace-pre-wrap font-sans leading-relaxed">{msg.msg}</pre>
                 </div>
               ))}
               <div ref={chatEndRef} />
             </div>
-            <form onSubmit={sendChat} className="border-t border-line bg-bg-soft/75 p-4 shadow-[0_-12px_36px_rgba(15,23,42,0.20)] backdrop-blur-xl">
+            <form onSubmit={sendChat} className="rounded-b-2xl border-t border-line bg-bg-soft/75 p-4 shadow-[0_-12px_36px_rgba(15,23,42,0.20)] backdrop-blur-xl">
               <div className="flex items-end gap-2">
                 <textarea
                   ref={chatInputRef}
@@ -407,7 +388,7 @@ export default function Conductor() {
           </div>
 
           {/* Right: Details / Log */}
-          <div className="flex w-80 flex-col border-l border-line bg-bg-card/80">
+          <div className="flex w-80 flex-col rounded-2xl border border-line bg-bg-card shadow-sm overflow-hidden">
             {selectedDetail ? (
               <>
                 <div className="border-b border-line/70 bg-bg-card/70 px-4 py-3">

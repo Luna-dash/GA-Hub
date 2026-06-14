@@ -118,6 +118,8 @@ export const api = {
   mykeyBackups: () => http<{ backups: MyKeyBackup[] }>('GET', '/api/mykey/backups'),
   restoreMyKeyBackup: (name: string) =>
     http<MyKeyWriteResult>('POST', `/api/mykey/backups/${encodeURIComponent(name)}/restore`),
+  testMyKeySession: (varName: string) =>
+    http<LLMTestResult>('POST', `/api/mykey/sessions/${encodeURIComponent(varName)}/test`),
 
   // ── feishu ───────────────────────────────────────────
   fsStatus: () => http<FsStatus>('GET', '/api/feishu/status'),

@@ -16,14 +16,17 @@ The webui ``dist/`` folder lives next to ``server/`` in the admin checkout
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import mimetypes
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -32,6 +35,51 @@ from .routes import events as event_routes  # safe to import in setup mode
 from .services.event_bus import bus
 
 log = logging.getLogger(__name__)
+
+
+# ── Host-header allow-list (anti DNS-rebinding) ──────────────────────────────
+# The backend binds to 127.0.0.1 by default, but a malicious web page can still
+# reach it via a DNS-rebinding attack: the attacker's domain resolves to
+# 127.0.0.1, so the browser sends our backend a request carrying
+# ``Host: evil.example``. Since rebinding always uses a *domain name* (never a
+# raw IP), we defeat it by only accepting Host values that are either:
+#   * a literal IP address (loopback / LAN — what a real user types), or
+#   * ``localhost`` / ``*.localhost``.
+# Power users who front the app with a custom hostname can extend the list via
+# the ``GAHUB_ALLOWED_HOSTS`` env var (comma-separated). This adds **zero**
+# friction to the default localhost workflow.
+_EXTRA_ALLOWED_HOSTS = {
+    h.strip().lower()
+    for h in os.environ.get("GAHUB_ALLOWED_HOSTS", "").split(",")
+    if h.strip()
+}
+
+
+def _host_only(host_header: str) -> str:
+    """Strip the optional ``:port`` from a Host header, handling ``[::1]``."""
+    h = host_header.strip()
+    if not h:
+        return ""
+    if h.startswith("["):  # bracketed IPv6, e.g. [::1]:8765
+        return h[1 : h.index("]")] if "]" in h else h[1:]
+    if h.count(":") == 1:  # host:port  (bare IPv6 never appears unbracketed here)
+        return h.rsplit(":", 1)[0]
+    return h
+
+
+def _is_allowed_host(host_header: str) -> bool:
+    host = _host_only(host_header).lower()
+    if not host:
+        return False
+    if host in _EXTRA_ALLOWED_HOSTS:
+        return True
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        ipaddress.ip_address(host)  # any IP literal is safe vs rebinding
+        return True
+    except ValueError:
+        return False
 
 # Force-correct MIME types for SPA assets. On Windows, the registry can have
 # .js mapped to text/plain (legacy IIS / dev-tool installs), which makes
@@ -139,10 +187,18 @@ def _mount_static(app: FastAPI) -> None:
 
     @app.get("/{path:path}", include_in_schema=False)
     async def _spa(path: str):
-        full = WEBUI_DIST / path
-        if full.is_file():
+        # Resolve and confine to WEBUI_DIST so a crafted path (e.g.
+        # ``../../etc/passwd`` or backslash variants on Windows) can never
+        # escape the static root and serve arbitrary files.
+        dist_root = WEBUI_DIST.resolve()
+        try:
+            full = (dist_root / path).resolve()
+            within = full == dist_root or full.is_relative_to(dist_root)
+        except (ValueError, OSError):
+            within = False
+        if within and full.is_file():
             return FileResponse(str(full))
-        idx = WEBUI_DIST / "index.html"
+        idx = dist_root / "index.html"
         if idx.is_file():
             return FileResponse(str(idx), headers=_NO_CACHE)
         return JSONResponse({"detail": "not found"}, status_code=404)
@@ -150,18 +206,41 @@ def _mount_static(app: FastAPI) -> None:
 
 def create_app() -> FastAPI:
     setup_mode = _paths.GA_ROOT is None
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        await _startup()
+        try:
+            yield
+        finally:
+            await _shutdown()
+
     app = FastAPI(
         title="GenericAgent Admin API" + (" (setup mode)" if setup_mode else ""),
         version="0.2.0",
+        lifespan=_lifespan,
     )
 
+    # CORS: the SPA is served same-origin, so a wildcard policy only serves to
+    # let *arbitrary* external web pages script the local API. Restrict to
+    # localhost origins (covers the Vite dev server too).
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"], allow_credentials=False,
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
+        allow_credentials=False,
         allow_methods=["*"], allow_headers=["*"],
     )
 
-    @app.on_event("startup")
+    # Host-header guard: reject requests whose Host isn't localhost or an IP
+    # literal — defeats DNS-rebinding attacks against the loopback-bound backend.
+    @app.middleware("http")
+    async def _host_guard(request: Request, call_next):
+        host_header = request.headers.get("host", "")
+        allowed = _is_allowed_host(host_header)
+        log.info(f"[HOST-GUARD] Host={host_header!r} allowed={allowed}")
+        if not allowed:
+            return PlainTextResponse("Forbidden host", status_code=403)
+        return await call_next(request)
+
     async def _startup():
         bus.attach_loop(asyncio.get_running_loop())
         if setup_mode:
@@ -202,7 +281,6 @@ def create_app() -> FastAPI:
         except Exception as e:
             log.warning("task scheduler init skipped: %s", e)
 
-    @app.on_event("shutdown")
     async def _shutdown():
         if not setup_mode:
             # Archive current WebUI conversation so it persists across restarts

@@ -202,6 +202,11 @@ export function LiveChat() {
   return (
     <PageShell
       title="实时聊天"
+      titleExtra={
+        <span className={`ga-badge ${conn === 'open' ? 'ga-badge-connected' : conn === 'connecting' ? 'ga-badge-connecting' : 'ga-badge-offline'}`}>
+          {conn === 'open' ? '已连接' : conn === 'connecting' ? '连接中…' : '断开'}
+        </span>
+      }
       description="与 GenericAgent 进行多模态实时对话，支持图片粘贴与历史快照恢复"
       actions={
         <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -220,9 +225,6 @@ export function LiveChat() {
             />
             {titleSaving && <span className="text-[10px] text-[#665741]">保存中…</span>}
           </div>
-          <span className={`ga-badge ${conn === 'open' ? 'ga-badge-connected' : conn === 'connecting' ? 'ga-badge-connecting' : 'ga-badge-offline'}`}>
-            {conn === 'open' ? '已连接' : conn === 'connecting' ? '连接中…' : '断开'}
-          </span>
           <button onClick={() => setRestoreOpen(true)} className="ga-btn" title="从历史快照恢复对话">↩ 恢复历史</button>
           <button onClick={newConv} className="ga-btn">新对话</button>
           <button onClick={abortFn} disabled={!streaming} className="ga-btn-danger">停止</button>
@@ -230,7 +232,7 @@ export function LiveChat() {
       }
     >
       <div className="flex flex-col h-full relative">
-        <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-4 py-4 space-y-3">
+        <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-4 py-4 space-y-2">
           {hydrating && msgs.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center gap-3 text-[#86775F] text-sm">
               <div className="w-6 h-6 rounded-full border-2 border-slate-600 border-t-accent animate-spin" />

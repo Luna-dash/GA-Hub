@@ -18,7 +18,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
-import type { MyKeyData, MyKeySession, MyKeySessionType, MyKeyWriteResult } from '@/api/types'
+import type { LLMTestResult, MyKeyData, MyKeySession, MyKeySessionType, MyKeyWriteResult } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { dialog } from '@/stores/dialogStore'
 
@@ -40,7 +40,7 @@ export function MyKey() {
 
   return (
     <PageShell
-      title="链路配置"
+      title="LLM管理"
       description="编辑 GenericAgent 的 mykey.py — 新增 / 修改 LLM 链路、apikey 与第三方平台 token。保存后自动热更新，无需重启。"
       actions={
         <div className="flex items-center gap-2 text-sm">
@@ -190,6 +190,21 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
 }) {
   const meta = sessionMeta(s.type)
   const title = s.fields.name || s.var
+  const canTest = s.type !== 'mixin'
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<LLMTestResult | null>(null)
+  const runTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const r = await api.testMyKeySession(s.var)
+      setTestResult(r)
+    } catch (e: any) {
+      setTestResult({ ok: false, error: String(e?.message || e) })
+    } finally {
+      setTesting(false)
+    }
+  }
   const isClaude = s.type === 'native_claude'
   const isOpenAI = s.type === 'native_oai' || s.type === 'oai'
   const colorTone = isClaude
@@ -270,7 +285,29 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
             <button onClick={onEdit} className="text-xs px-3 py-1.5 rounded-xl bg-accent text-white shadow-sm shadow-accent/20">编辑</button>
             <button onClick={onDuplicate} className="text-xs px-3 py-1.5 rounded-xl border border-white/10 text-slate-300 hover:bg-white/5">复制</button>
             <button onClick={onDelete} className="text-xs px-3 py-1.5 rounded-xl border border-rose-700/60 text-rose-300 hover:bg-rose-900/20">删除</button>
+            {canTest && (
+              <button onClick={runTest} disabled={testing} className="text-xs px-3 py-1.5 rounded-xl border border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/20 disabled:opacity-50">
+                {testing ? '测试中…' : '测 ping'}
+              </button>
+            )}
           </div>
+          {canTest && testResult && (
+            <div className="mt-2 text-xs">
+              {testResult.ok ? (
+                <div className="space-y-0.5">
+                  <div className="text-emerald-400">
+                    ✓ {testResult.latency_ms ?? '?'} ms
+                    {testResult.model && <span className="text-slate-500 ml-2 font-mono">{testResult.model}</span>}
+                  </div>
+                  {testResult.preview && (
+                    <div className="text-slate-400 break-words font-mono leading-snug">→ {testResult.preview}</div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-rose-400 break-words font-mono leading-snug">✗ {testResult.error || '失败'}</div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

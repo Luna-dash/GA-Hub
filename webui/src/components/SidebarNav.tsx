@@ -11,7 +11,6 @@ type NavIconName =
   | 'feishu'
   | 'conversations'
   | 'memory'
-  | 'llms'
   | 'conductor'
   | 'goalHive'
   | 'mykey'
@@ -27,14 +26,13 @@ interface NavItem {
 
 const items: NavItem[] = [
   { to: '/chat', label: '实时聊天', icon: 'chat' },
-  { to: '/feishu', label: '飞书助手', icon: 'feishu' },
-  { to: '/conversations', label: '对话管理', icon: 'conversations' },
-  { to: '/memory', label: '记忆文档', icon: 'memory' },
-  { to: '/llms', label: '模型链路', icon: 'llms' },
-  { to: '/conductor', label: '协同编排', icon: 'conductor' },
-  { to: '/goal-hive', label: '目标蜂巢', icon: 'goalHive' },
-  { to: '/mykey', label: '密钥管家', icon: 'mykey' },
-  { to: '/tasks', label: '任务队列', icon: 'tasks' },
+  { to: '/conductor', label: 'Conductor', icon: 'conductor' },
+  { to: '/goal-hive', label: 'Goal Hive', icon: 'goalHive' },
+  { to: '/feishu', label: '飞书BOT', icon: 'feishu' },
+  { to: '/conversations', label: '历史对话', icon: 'conversations' },
+  { to: '/memory', label: '记忆体系', icon: 'memory' },
+  { to: '/mykey', label: 'LLM管理', icon: 'mykey' },
+  { to: '/tasks', label: '定时任务', icon: 'tasks' },
   { to: '/autonomous', label: '自主进化', icon: 'autonomous' },
 ]
 
@@ -74,13 +72,6 @@ function NavIcon({ name }: { name: NavIconName }) {
           <path {...common} d="M6.2 5.2h7.3a2.4 2.4 0 0 1 2.4 2.4v12H8.1a2 2 0 0 1-2-2z" />
           <path {...common} d="M8.9 5.2v14M11.2 8.3h3.1M11.2 11.3h4.7" />
           <path {...common} d="M15.9 7.6h1.7a1.3 1.3 0 0 1 1.3 1.3v10.7h-3" />
-        </>
-      )}
-      {name === 'llms' && (
-        <>
-          <path {...common} d="M12 4.7 18.5 8v8L12 19.3 5.5 16V8z" />
-          <path {...common} d="M12 8.3v7.4M8.7 10.2h6.6M8.7 13.8h6.6" />
-          <circle {...filledDot} cx="12" cy="12" r="1.25" />
         </>
       )}
       {name === 'conductor' && (

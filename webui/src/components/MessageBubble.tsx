@@ -64,11 +64,6 @@ export function MessageBubble({ role, content, streaming, attachments, streamId,
               "rounded-lg bg-[#8A6438] text-[#FFF4DF] whitespace-pre-wrap break-words shadow-[0_2px_6px_rgba(45,34,22,0.16)] border border-[#6F4D28]",
               compact ? "px-3 py-2 leading-6" : "px-3.5 py-2.5 leading-7"
             )}>
-              {!compact && (
-                <div className="mb-1.5 flex items-center justify-start gap-2 text-[11px] font-medium text-[#FFF4DF]/75">
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#FFF4DF]/70" /> You
-                </div>
-              )}
               {cleaned}
             </div>
           )}

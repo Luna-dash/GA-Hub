@@ -141,7 +141,7 @@ export function Conversations() {
 
   return (
     <PageShell
-      title="对话管理"
+      title="历史对话"
       description={`memory/chat_history.json — 共 ${total} 条会话`}
       actions={
         <div className="flex items-center gap-2">
