@@ -45,15 +45,6 @@ def _get_screen_workarea():
             from ctypes import wintypes
 
             user32 = ctypes.windll.user32
-            # Make this process DPI-aware so the returned metrics match the
-            # logical pixels pywebview uses for window sizing.
-            try:
-                ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PER_MONITOR_AWARE
-            except Exception:
-                try:
-                    user32.SetProcessDPIAware()
-                except Exception:
-                    pass
             rect = wintypes.RECT()
             SPI_GETWORKAREA = 0x0030
             if user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rect), 0):
@@ -102,6 +93,69 @@ def _compute_window_geometry():
     x = max(0, (work_w - w) // 2)
     y = max(0, (work_h - h) // 2)
     return w, h, x, y
+
+
+def _ensure_windows_window_visible(reason: str = "") -> None:
+    """Clamp the GA-Hub window back into the current Windows work area.
+
+    Some WebView2/Windows restore paths can ignore the initial pywebview x/y
+    and resurrect the window at the lower-right, partly off-screen.  We fix it
+    at the Win32 layer after the native HWND exists; this is intentionally a
+    no-op on non-Windows platforms.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        rect = wintypes.RECT()
+        SPI_GETWORKAREA = 0x0030
+        if not user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rect), 0):
+            return
+        work_l, work_t, work_r, work_b = rect.left, rect.top, rect.right, rect.bottom
+
+        matches: list[int] = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def _enum(hwnd, _lparam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            n = user32.GetWindowTextLengthW(hwnd)
+            if n <= 0:
+                return True
+            buf = ctypes.create_unicode_buffer(n + 1)
+            user32.GetWindowTextW(hwnd, buf, n + 1)
+            if "GA-Hub" in buf.value or "管理控制台" in buf.value:
+                matches.append(int(hwnd))
+            return True
+
+        user32.EnumWindows(_enum, 0)
+        for hwnd in matches:
+            wr = wintypes.RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(wr)):
+                continue
+            width = max(1, wr.right - wr.left)
+            height = max(1, wr.bottom - wr.top)
+            max_w = max(1, work_r - work_l)
+            max_h = max(1, work_b - work_t)
+            new_w = min(width, max_w)
+            new_h = min(height, max_h)
+            new_x = min(max(wr.left, work_l), work_r - new_w)
+            new_y = min(max(wr.top, work_t), work_b - new_h)
+            visible_w = min(wr.right, work_r) - max(wr.left, work_l)
+            visible_h = min(wr.bottom, work_b) - max(wr.top, work_t)
+            needs_move = (
+                new_w != width or new_h != height or
+                new_x != wr.left or new_y != wr.top or
+                visible_w < min(240, new_w) or visible_h < min(180, new_h)
+            )
+            if needs_move:
+                user32.MoveWindow(hwnd, int(new_x), int(new_y), int(new_w), int(new_h), True)
+                print(f"[Launch] clamped window into work area ({reason})", file=sys.stderr)
+    except Exception as e:
+        print(f"[Launch] window visibility clamp failed ({reason}): {e}", file=sys.stderr)
 
 
 WINDOWS_APP_ID = "GAHub.SourceLauncher"
@@ -770,6 +824,7 @@ def main() -> int:
     )
     _arm_macos_activation(win)
     _arm_windows_window_icon(win)
+    _arm_windows_visibility_clamp(win)
     tray = _try_start_windows_tray(win) if os.name == "nt" else None
     try:
         webview.start()
@@ -962,6 +1017,34 @@ def _arm_macos_activation(window) -> None:
     threading.Thread(target=_watchdog, daemon=True, name="macos-activate").start()
 
 
+def _arm_windows_visibility_clamp(window) -> None:
+    """Run the Win32 visibility clamp after pywebview creates/shows HWND."""
+    if os.name != "nt":
+        return
+
+    def _schedule(reason: str):
+        def _worker():
+            for delay in (0.05, 0.25, 0.8, 1.8):
+                time.sleep(delay)
+                _ensure_windows_window_visible(reason)
+        threading.Thread(target=_worker, daemon=True, name="win-window-clamp").start()
+
+    def _hook_factory(name: str):
+        def _hook(*_args, **_kwargs):
+            _schedule(f"event:{name}")
+        return _hook
+
+    for ev in ("shown", "loaded"):
+        try:
+            getattr(window.events, ev).__iadd__(_hook_factory(ev))
+        except Exception:
+            try:
+                getattr(window.events, ev).connect(_hook_factory(ev))
+            except Exception as e:
+                print(f"[Launch] cannot hook windows visibility event {ev}: {e}", file=sys.stderr)
+    _schedule("startup")
+
+
 def _try_start_windows_tray(window):
     """Attach a Windows system-tray icon to ``window``.
 
@@ -1013,6 +1096,7 @@ def _try_start_windows_tray(window):
     def _show(icon, item):
         try:
             window.show()
+            _ensure_windows_window_visible("tray-show")
         except Exception as e:
             print(f"[Launch] tray show failed: {e}", file=sys.stderr)
 

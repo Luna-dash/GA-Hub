@@ -113,7 +113,7 @@ function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
     setEditor({
       var: `${s.var}_copy`,
       type: s.type,
-      fields: { ...s.fields, apikey_masked: undefined },
+      fields: { ...s.fields, apikey: undefined },
     })
   }
 
@@ -268,7 +268,7 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
               <dl className="space-y-1.5 text-xs">
                 <KV k="model" v={s.fields.model} mono />
                 <KV k="apibase" v={s.fields.apibase} mono />
-                <KV k="apikey" v={s.fields.apikey_masked} mono />
+                <KV k="apikey" v={s.fields.apikey} mono />
               </dl>
             ) : (
               <dl className="space-y-1.5 text-xs">
@@ -365,7 +365,7 @@ function SessionDialog({ mode, session, allSessions, onClose, onSaved }: {
   const save = async () => {
     setErr(null); setSaving(true)
     try {
-      // Strip apikey_masked, normalize empty strings to undefined for non-required fields.
+      // Normalize empty strings to undefined for non-required fields.
       const fields = stripUiOnly(s.fields)
       const r = await api.upsertMyKeySession({ var: s.var, type: s.type, fields })
       onSaved(r)
@@ -410,7 +410,7 @@ function SessionDialog({ mode, session, allSessions, onClose, onSaved }: {
                   onChange={(e) => setField('apikey', e.target.value)}
                   type={showKey ? 'text' : 'password'}
                   className={inp + ' font-mono flex-1'}
-                  placeholder={mode === 'edit' ? `当前: ${s.fields.apikey_masked || '—'}` : 'sk-...'}
+                  placeholder={mode === 'edit' ? `当前: ${s.fields.apikey || '—'}` : 'sk-...'}
                   autoComplete="off"
                 />
                 <button onClick={() => setShowKey(!showKey)} type="button"
@@ -868,7 +868,6 @@ function defaultFields(type: MyKeySessionType): Record<string, any> {
 function stripUiOnly(fields: Record<string, any>): Record<string, any> {
   const out: Record<string, any> = {}
   for (const [k, v] of Object.entries(fields)) {
-    if (k === 'apikey_masked') continue
     if (v === undefined) continue
     if (typeof v === 'string' && v.trim() === '' && k !== 'apikey') continue
     out[k] = v

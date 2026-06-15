@@ -247,7 +247,7 @@ export type MyKeySessionType = 'native_claude' | 'native_oai' | 'claude' | 'oai'
 export interface MyKeySession {
   var: string
   type: MyKeySessionType
-  fields: Record<string, any>     // apikey omitted; apikey_masked present
+  fields: Record<string, any>     // backend no longer masks apikey
   lineno?: number
   end_lineno?: number
 }

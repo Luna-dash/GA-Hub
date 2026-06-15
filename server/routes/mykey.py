@@ -94,14 +94,11 @@ def _structurize(raw: str) -> dict:
             globals_[var] = value
             continue
         if not isinstance(value, dict): continue
-        # mask apikey for transport
-        masked_fields = dict(value)
-        if "apikey" in masked_fields:
-            masked_fields["apikey_masked"] = _mask(masked_fields.pop("apikey"))
+        # no longer mask apikey - show full key in webui
         entry = {
             "var": var,
             "type": kind,
-            "fields": masked_fields,
+            "fields": dict(value),
             "lineno": node.lineno,
             "end_lineno": getattr(node, "end_lineno", node.lineno),
         }
