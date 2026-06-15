@@ -38,6 +38,15 @@ export function MyKey() {
     qc.invalidateQueries({ queryKey: ['status'] })
   }
 
+  const handleOpenFile = async () => {
+    try {
+      const result = await api.openMyKeyFile()
+      dialog.alert('已打开文件', result.path)
+    } catch (e: any) {
+      dialog.alert('打开文件失败', e.message || String(e))
+    }
+  }
+
   return (
     <PageShell
       title="LLM管理"
@@ -56,6 +65,7 @@ export function MyKey() {
             ))}
           </div>
           <button onClick={() => refetch()} className="ga-btn">↻ 刷新</button>
+          <button onClick={handleOpenFile} className="ga-btn">📂 打开文件</button>
         </div>
       }
     >

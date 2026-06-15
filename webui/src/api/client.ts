@@ -120,6 +120,7 @@ export const api = {
     http<MyKeyWriteResult>('POST', `/api/mykey/backups/${encodeURIComponent(name)}/restore`),
   testMyKeySession: (varName: string) =>
     http<LLMTestResult>('POST', `/api/mykey/sessions/${encodeURIComponent(varName)}/test`),
+  openMyKeyFile: () => http<{ ok: boolean; path: string }>('POST', '/api/mykey/open'),
 
   // ── feishu ───────────────────────────────────────────
   fsStatus: () => http<FsStatus>('GET', '/api/feishu/status'),

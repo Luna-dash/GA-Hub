@@ -537,3 +537,25 @@ async def restore_backup(name: str):
         "warnings": warnings,
         "structured": _structurize(text),
     }
+
+
+@router.post("/open")
+async def open_mykey_file():
+    """Open mykey.py in system default editor."""
+    import subprocess
+    import sys
+    
+    p = _mykey_path()
+    if not p.is_file():
+        raise HTTPException(404, "mykey.py 不存在")
+    
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(["cmd", "/c", "start", "", str(p)], shell=True)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(p)])
+        else:
+            subprocess.Popen(["xdg-open", str(p)])
+        return {"ok": True, "path": str(p)}
+    except Exception as e:
+        raise HTTPException(500, f"打开文件失败: {str(e)}")
