@@ -69,7 +69,7 @@ export function MyKey() {
         </div>
       }
     >
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="p-6 max-w-5xl mx-auto h-full flex flex-col">
         {isLoading && <div className="text-slate-500 text-sm">载入中…</div>}
         {data && !data.exists && (
           <div className="rounded-xl border border-amber-700/60 bg-amber-900/20 p-4 text-sm text-amber-200">
@@ -133,7 +133,7 @@ function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
   }
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6 flex-1 min-h-0">
       <section>
         <div className="flex items-baseline justify-between mb-3">
           <h2 className="text-sm font-semibold text-slate-300">LLM 链路（{sessions.length}）</h2>
@@ -611,7 +611,7 @@ function GlobalsSection({ globals_, onWrite, rawText }: {
   const otherGlobals = Object.entries(globals_).filter(([k]) => k !== 'proxy')
 
   return (
-    <section>
+    <section className="mt-auto">
       <h2 className="text-sm font-semibold text-slate-300 mb-3">全局配置</h2>
       <div className="rounded-xl border border-line bg-bg-card p-4 space-y-3">
         <div className="flex items-end gap-2">

@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { ChatSocket } from '@/api/client'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { api, ChatSocket } from '@/api/client'
 import { PageShell } from '@/components/PageShell'
 import { useDraftStore } from '@/stores/draftStore'
 import type { ChatStreamSnapshot, ChatWSOut } from '@/api/types'
@@ -80,6 +81,7 @@ function applyGoalEvent(prev: GoalMessage[], evt: ChatWSOut): GoalMessage[] {
 }
 
 export function GoalHive() {
+  const qc = useQueryClient()
   const [mode, setMode] = useState<GoalMode>('goal')
   const targetDraftKey = `goalHive:${mode}:target`
   const conditionDraftKey = `goalHive:${mode}:condition`
@@ -97,6 +99,20 @@ export function GoalHive() {
   const logRef = useRef<HTMLDivElement | null>(null)
   const targetRef = useRef<HTMLTextAreaElement | null>(null)
   const conditionRef = useRef<HTMLTextAreaElement | null>(null)
+
+  // LLM switcher
+  const { data: llmsData } = useQuery({
+    queryKey: ['llms'],
+    queryFn: api.llms,
+  })
+  const llms = llmsData?.llms ?? []
+  const switchMut = useMutation({
+    mutationFn: (index: number) => api.switchLLM(index),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['llms'] })
+      qc.invalidateQueries({ queryKey: ['status'] })
+    },
+  })
 
   const config = modeConfigs[mode]
   const streaming = msgs.some((m) => m.streaming)
@@ -149,6 +165,19 @@ export function GoalHive() {
       description="Long-horizon agent mode"
       actions={
         <div className="flex items-center gap-2">
+          <select
+            value={llms.findIndex((l) => l.preferred) ?? -1}
+            onChange={(e) => switchMut.mutate(Number(e.target.value))}
+            disabled={switchMut.isPending}
+            className="rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
+            title="切换 LLM 链路（Goal/Hive 任务将使用当前选择的链路）"
+          >
+            {llms.map((llm, i) => (
+              <option key={i} value={i}>
+                {llm.name} {llm.preferred ? '✓' : ''}
+              </option>
+            ))}
+          </select>
           <div className="inline-flex rounded-xl border border-line bg-bg-soft p-1">
             {(['goal', 'hive'] as GoalMode[]).map((item) => (
             <button

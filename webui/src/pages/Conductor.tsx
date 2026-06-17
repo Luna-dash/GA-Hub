@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { api, EventSocket } from '@/api/client'
 import { useConductorStore } from '@/stores/conductorStore'
@@ -124,6 +124,20 @@ export default function Conductor() {
     queryKey: ['conductor', 'status'],
     queryFn: () => api.conductorStatus(),
     refetchInterval: 3000,
+  })
+
+  // LLM list and switcher
+  const { data: llmsData } = useQuery({
+    queryKey: ['llms'],
+    queryFn: api.llms,
+  })
+  const llms = llmsData?.llms ?? []
+  const switchMut = useMutation({
+    mutationFn: (index: number) => api.switchLLM(index),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['llms'] })
+      qc.invalidateQueries({ queryKey: ['status'] })
+    },
   })
 
   // Poll subagents
@@ -301,7 +315,22 @@ export default function Conductor() {
       }
       description="多代理编排与任务并行"
       actions={
-        <button onClick={stopConductor} disabled={!status?.started} className="ga-btn-danger">停止</button>
+        <div className="flex items-center gap-2">
+          <select
+            value={llms.findIndex((l) => l.preferred) ?? -1}
+            onChange={(e) => switchMut.mutate(Number(e.target.value))}
+            disabled={switchMut.isPending}
+            className="rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
+            title="切换 LLM 链路（Conductor 和子代理将在下次启动时使用）"
+          >
+            {llms.map((llm, i) => (
+              <option key={i} value={i}>
+                {llm.name} {llm.preferred ? '✓' : ''}
+              </option>
+            ))}
+          </select>
+          <button onClick={stopConductor} disabled={!status?.started} className="ga-btn-danger">停止</button>
+        </div>
       }
       middleArea={
         <div className="flex items-center gap-3">

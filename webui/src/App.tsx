@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { SidebarNav } from '@/components/SidebarNav'
 import { DialogHost } from '@/components/DialogHost'
 import { CommandPalette } from '@/components/CommandPalette'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useAgentStore } from '@/stores/agentStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useDocumentTitle } from '@/utils/useDocumentTitle'
@@ -117,23 +118,25 @@ export default function App() {
     <div className="app-aurora flex h-screen w-screen overflow-hidden">
       <SidebarNav />
       <main className="flex-1 min-w-0 bg-transparent">
-        <Suspense fallback={<div className="h-full flex items-center justify-center text-slate-500 text-sm">载入中…</div>}>
-          <Routes>
-            <Route path="/" element={<Navigate to="/chat" replace />} />
-            <Route path="/chat" element={<LiveChat />} />
-            <Route path="/feishu" element={<FeishuBot />} />
-            <Route path="/conversations" element={<Conversations />} />
-            <Route path="/conversations/:id" element={<Conversations />} />
-            <Route path="/memory" element={<Memory />} />
-            <Route path="/goal-hive" element={<GoalHive />} />
-            <Route path="/conductor" element={<Conductor />} />
-            <Route path="/mykey" element={<MyKey />} />
-            <Route path="/tasks" element={<Tasks />} />
-            <Route path="/autonomous" element={<Autonomous />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="*" element={<Navigate to="/chat" replace />} />
-          </Routes>
-        </Suspense>
+        <ErrorBoundary>
+          <Suspense fallback={<div className="h-full flex items-center justify-center text-slate-500 text-sm">载入中…</div>}>
+            <Routes>
+              <Route path="/" element={<Navigate to="/chat" replace />} />
+              <Route path="/chat" element={<LiveChat />} />
+              <Route path="/feishu" element={<FeishuBot />} />
+              <Route path="/conversations" element={<Conversations />} />
+              <Route path="/conversations/:id" element={<Conversations />} />
+              <Route path="/memory" element={<Memory />} />
+              <Route path="/goal-hive" element={<GoalHive />} />
+              <Route path="/conductor" element={<Conductor />} />
+              <Route path="/mykey" element={<MyKey />} />
+              <Route path="/tasks" element={<Tasks />} />
+              <Route path="/autonomous" element={<Autonomous />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="*" element={<Navigate to="/chat" replace />} />
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
       </main>
       <DialogHost />
       <CommandPalette />

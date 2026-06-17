@@ -46,6 +46,18 @@ def _get_webui_port() -> int:
     except Exception:
         return 8765
 
+
+def _get_preferred_llm() -> Optional[int]:
+    """Read user's preferred LLM index from config."""
+    try:
+        cfg = _paths.load_config()
+        preferred = cfg.get("preferred_llm_no")
+        if preferred is not None:
+            return int(preferred)
+    except Exception as e:
+        log.debug("Failed to read preferred_llm_no: %s", e)
+    return None
+
 _TURN_SPLIT_RE = re.compile(r'\**LLM Running \(Turn \d+\) \.\.\.\**')
 _SUMMARY_RE = re.compile(r'<summary>(.*?)</summary>\s*', re.DOTALL)
 
@@ -216,6 +228,17 @@ class SubagentPool:
         agent.inc_out = True
         agent.verbose = False
         agent.no_print = True
+        # Inherit user's preferred LLM
+        preferred = _get_preferred_llm()
+        if preferred is not None:
+            try:
+                agent.load_llm_sessions()
+                clients = getattr(agent, "llmclients", []) or []
+                if 0 <= preferred < len(clients):
+                    agent.next_llm(preferred)
+                    log.info("Subagent %s inherited preferred_llm_no=%s", sid, preferred)
+            except Exception as e:
+                log.warning("Failed to set preferred LLM for subagent %s: %s", sid, e)
         th = start_agent_runner(agent, f"subagent-{sid}")
         state = SubAgentState(id=sid, agent=agent, prompt=prompt, status="running", thread=th)
         with self.lock:
@@ -389,6 +412,17 @@ API: {base}；先requests，GET /api/conductor/readme查用法，GET /api/conduc
     def _run(self):
         self.agent = GenericAgent()
         self.agent.inc_out = True
+        # Inherit user's preferred LLM
+        preferred = _get_preferred_llm()
+        if preferred is not None:
+            try:
+                self.agent.load_llm_sessions()
+                clients = getattr(self.agent, "llmclients", []) or []
+                if 0 <= preferred < len(clients):
+                    self.agent.next_llm(preferred)
+                    log.info("Conductor agent inherited preferred_llm_no=%s", preferred)
+            except Exception as e:
+                log.warning("Failed to set preferred LLM for conductor: %s", e)
         start_agent_runner(self.agent, "conductor-agent")
         self.started = True
         while True:

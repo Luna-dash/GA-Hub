@@ -262,6 +262,17 @@ class AgentService:
             self.agent.load_llm_sessions()
         except Exception as e:
             log.warning("list_llms hot reload failed: %s", e)
+        
+        # Read user's preferred LLM index
+        preferred_no = None
+        try:
+            cfg = _paths.load_config()
+            preferred_no = cfg.get("preferred_llm_no")
+            if preferred_no is not None:
+                preferred_no = int(preferred_no)
+        except Exception:
+            pass
+        
         out = []
         clients = getattr(self.agent, "llmclients", []) or []
         for i, name, current in self.agent.list_llms():
@@ -286,6 +297,7 @@ class AgentService:
                 "index": int(i),
                 "name": name,
                 "current": bool(current),
+                "preferred": (preferred_no is not None and i == preferred_no),
                 "kind": "mixin" if type(backend).__name__ == "MixinSession" else "single",
                 "model": model,
                 "api_base": api_base,
