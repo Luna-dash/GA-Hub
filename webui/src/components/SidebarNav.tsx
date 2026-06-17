@@ -168,15 +168,17 @@ export function SidebarNav() {
     ? formatSingleLabel(currentLlm, currentSingleDisplayNo)
     : singlePlaceholder
   const agentRunning = status?.is_running ?? false
-  const llmDisabled = streaming || agentRunning || switching || llms.length === 0
+  const llmDisabled = switching || llms.length === 0
   const singleMenuDisabled = llmDisabled || singleLlms.length === 0
-  const llmDisabledTitle = streaming || agentRunning
-    ? '当前回复进行中，请先停止或等待完成后再切换 LLM'
-    : switching
-      ? '正在切换 LLM…'
-      : llms.length === 0
-        ? '尚未加载到 LLM 列表'
-        : '全局切换 LLM'
+  const llmDisabledTitle = switching
+    ? '正在切换 LLM…'
+    : llms.length === 0
+      ? '尚未加载到 LLM 列表'
+      : agentRunning
+        ? 'Agent 任务运行中，仍可切换全局 LLM'
+        : streaming
+          ? '当前回复进行中，仍可切换全局 LLM'
+          : '全局切换 LLM'
   const openCommandPalette = () => window.dispatchEvent(new Event('gahub:command-palette'))
   const switchLlm = async (idx: number) => {
     if (idx === currentLlm?.index || llmDisabled) return

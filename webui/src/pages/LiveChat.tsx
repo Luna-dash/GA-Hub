@@ -227,7 +227,14 @@ export function LiveChat() {
           </div>
           <button onClick={() => setRestoreOpen(true)} className="ga-btn" title="从历史快照恢复对话">↩ 恢复历史</button>
           <button onClick={newConv} className="ga-btn">新对话</button>
-          <button onClick={abortFn} disabled={!streaming} className="ga-btn-danger">停止</button>
+          <button
+            onClick={abortFn}
+            disabled={!agentRunning}
+            className="ga-btn-danger"
+            title={agentRunning ? '停止当前任务' : '当前无进行中的任务'}
+          >
+            停止
+          </button>
         </div>
       }
     >
