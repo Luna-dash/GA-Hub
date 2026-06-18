@@ -7,6 +7,7 @@ import { PageShell } from '@/components/PageShell'
 import { MarkdownView } from '@/components/MarkdownView'
 import { previewText } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
+import { toast } from '@/stores/toastStore'
 
 type ViewMode = 'round' | 'flat'
 type Msg = { role?: string; content?: string; [key: string]: any }
@@ -55,6 +56,15 @@ export function Conversations() {
 
   const total = data?.total ?? 0
   const items = data?.items ?? []
+
+  // Clamp page when the result set shrinks (e.g. after deleting the last item
+  // on a trailing page, or narrowing the search) so we never get stranded on
+  // an out-of-range empty page.
+  useEffect(() => {
+    if (total > 0 && page > 0 && page * limit >= total) {
+      setPage(Math.max(0, Math.ceil(total / limit) - 1))
+    }
+  }, [total, page, limit])
   const rounds = useMemo(() => buildRounds((detail?.messages || []) as Msg[]), [detail])
 
   const handleRename = async (id: string, current: string) => {
@@ -82,6 +92,8 @@ export function Conversations() {
         if (r && r.ok === false && !r.cancelled) {
           throw new Error(r.error || 'save failed')
         }
+        if (r && r.cancelled) return
+        toast.success(`已导出 ${filename}`)
         return
       }
       // Browser fallback
@@ -106,9 +118,14 @@ export function Conversations() {
       { confirmText: '删除', tone: 'danger' },
     )
     if (!ok) return
-    await api.deleteConversation(id)
-    qc.invalidateQueries({ queryKey: ['conversations'] })
-    if (active === id) setActive(null)
+    try {
+      await api.deleteConversation(id)
+      qc.invalidateQueries({ queryKey: ['conversations'] })
+      if (active === id) setActive(null)
+      toast.success('会话已删除')
+    } catch (e: any) {
+      dialog.alert('删除失败', e?.body?.detail || e?.message || String(e))
+    }
   }
 
   const handleRestore = async (id: string) => {

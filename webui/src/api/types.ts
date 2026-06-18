@@ -287,7 +287,7 @@ export interface MyKeyBackup {
 
 // ── Chat WS protocol ─────────────────────────────────────
 export type ChatWSIn =
-  | { type: 'submit'; text: string; images?: string[]; source?: string }
+  | { type: 'submit'; text: string; images?: string[]; source?: string; llm_index?: number | null }
   | { type: 'abort' }
   | { type: 'ping' }
 

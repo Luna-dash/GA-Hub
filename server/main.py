@@ -369,6 +369,10 @@ def create_app() -> FastAPI:
         app.include_router(notify_routes.router)
         app.include_router(task_routes.router)
 
+        # GoalHive independent route
+        from .routes import goalhive as goalhive_routes
+        app.include_router(goalhive_routes.router)
+
     _mount_static(app)
     return app
 

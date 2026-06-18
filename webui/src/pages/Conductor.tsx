@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { api, EventSocket } from '@/api/client'
 import { useConductorStore } from '@/stores/conductorStore'
@@ -86,6 +86,7 @@ export default function Conductor() {
   const qc = useQueryClient()
   const [userMsg, setUserMsg] = useState('')
   const [selectedSubagent, setSelectedSubagent] = useState<string | null>(null)
+  const [selectedLlmIndex, setSelectedLlmIndex] = useState<number | null>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const logScrollRef = useRef<HTMLDivElement>(null)
@@ -126,19 +127,14 @@ export default function Conductor() {
     refetchInterval: 3000,
   })
 
-  // LLM list and switcher
+  // Page-local LLM selector. It does not mutate the global sidebar preference.
   const { data: llmsData } = useQuery({
     queryKey: ['llms'],
     queryFn: api.llms,
   })
   const llms = llmsData?.llms ?? []
-  const switchMut = useMutation({
-    mutationFn: (index: number) => api.switchLLM(index),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['llms'] })
-      qc.invalidateQueries({ queryKey: ['status'] })
-    },
-  })
+  const preferredLlmIndex = llms.findIndex((l) => l.preferred)
+  const effectiveLlmIndex = selectedLlmIndex ?? (preferredLlmIndex >= 0 ? preferredLlmIndex : null)
 
   // Poll subagents
   useQuery({
@@ -246,7 +242,7 @@ export default function Conductor() {
     // Send and use returned item (with real id) for instant display.
     // EventBus + 2s poll will dedupe by id, no duplicates.
     try {
-      const item = await api.conductorSendChat(msg, 'user')
+      const item = await api.conductorSendChat(msg, 'user', effectiveLlmIndex)
       shouldFollowChatRef.current = true
       addChatMessage({
         id: item.id,
@@ -261,7 +257,7 @@ export default function Conductor() {
   }
 
   const startConductor = async () => {
-    await api.conductorStart()
+    await api.conductorStart(effectiveLlmIndex)
     qc.invalidateQueries({ queryKey: ['conductor', 'status'] })
   }
 
@@ -280,7 +276,7 @@ export default function Conductor() {
   }, [userMsg])
 
   const approveTask = async (item: ConductorApprovalItem) => {
-    await api.conductorStartSubagent(item.prompt)
+    await api.conductorStartSubagent(item.prompt, effectiveLlmIndex)
     removeApproval(item.id)
     qc.invalidateQueries({ queryKey: ['conductor', 'subagents'] })
   }
@@ -317,15 +313,15 @@ export default function Conductor() {
       actions={
         <div className="flex items-center gap-2">
           <select
-            value={llms.findIndex((l) => l.preferred) ?? -1}
-            onChange={(e) => switchMut.mutate(Number(e.target.value))}
-            disabled={switchMut.isPending}
+            value={effectiveLlmIndex ?? -1}
+            onChange={(e) => setSelectedLlmIndex(Number(e.target.value))}
+            disabled={!llms.length}
             className="rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
-            title="切换 LLM 链路（Conductor 和子代理将在下次启动时使用）"
+            title="选择本页 LLM 链路（不影响侧边栏全局选择；未手动选择时使用全局保底）"
           >
             {llms.map((llm, i) => (
               <option key={i} value={i}>
-                {llm.name} {llm.preferred ? '✓' : ''}
+                {llm.name}{llm.preferred ? '（全局）' : ''}{i === selectedLlmIndex ? ' ✓' : ''}
               </option>
             ))}
           </select>

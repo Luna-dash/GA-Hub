@@ -58,6 +58,33 @@ def _get_preferred_llm() -> Optional[int]:
         log.debug("Failed to read preferred_llm_no: %s", e)
     return None
 
+
+def _resolve_llm_index(llm_index: Optional[int] = None) -> Optional[int]:
+    """Page-scoped LLM wins; persisted/global preference is fallback."""
+    if llm_index is not None:
+        try:
+            return int(llm_index)
+        except Exception:
+            return None
+    return _get_preferred_llm()
+
+
+def _apply_llm_selection(agent: GenericAgent, llm_index: Optional[int], label: str) -> None:
+    selected = _resolve_llm_index(llm_index)
+    if selected is None:
+        return
+    try:
+        agent.load_llm_sessions()
+        clients = getattr(agent, "llmclients", []) or []
+        if 0 <= selected < len(clients):
+            agent.next_llm(selected)
+            source = "page" if llm_index is not None else "preferred_llm_no"
+            log.info("%s selected LLM %s via %s", label, selected, source)
+        else:
+            log.warning("%s requested invalid LLM index %s (available=%s)", label, selected, len(clients))
+    except Exception as e:
+        log.warning("Failed to set LLM for %s: %s", label, e)
+
 _TURN_SPLIT_RE = re.compile(r'\**LLM Running \(Turn \d+\) \.\.\.\**')
 _SUMMARY_RE = re.compile(r'<summary>(.*?)</summary>\s*', re.DOTALL)
 
@@ -222,23 +249,13 @@ class SubagentPool:
             if to_abort:
                 push_subagent_cards(self.snapshot())
 
-    def start_subagent(self, prompt: str) -> dict:
+    def start_subagent(self, prompt: str, llm_index: Optional[int] = None) -> dict:
         sid = short_id()
         agent = GenericAgent()
         agent.inc_out = True
         agent.verbose = False
         agent.no_print = True
-        # Inherit user's preferred LLM
-        preferred = _get_preferred_llm()
-        if preferred is not None:
-            try:
-                agent.load_llm_sessions()
-                clients = getattr(agent, "llmclients", []) or []
-                if 0 <= preferred < len(clients):
-                    agent.next_llm(preferred)
-                    log.info("Subagent %s inherited preferred_llm_no=%s", sid, preferred)
-            except Exception as e:
-                log.warning("Failed to set preferred LLM for subagent %s: %s", sid, e)
+        _apply_llm_selection(agent, llm_index, f"Subagent {sid}")
         th = start_agent_runner(agent, f"subagent-{sid}")
         state = SubAgentState(id=sid, agent=agent, prompt=prompt, status="running", thread=th)
         with self.lock:
@@ -412,17 +429,7 @@ API: {base}；先requests，GET /api/conductor/readme查用法，GET /api/conduc
     def _run(self):
         self.agent = GenericAgent()
         self.agent.inc_out = True
-        # Inherit user's preferred LLM
-        preferred = _get_preferred_llm()
-        if preferred is not None:
-            try:
-                self.agent.load_llm_sessions()
-                clients = getattr(self.agent, "llmclients", []) or []
-                if 0 <= preferred < len(clients):
-                    self.agent.next_llm(preferred)
-                    log.info("Conductor agent inherited preferred_llm_no=%s", preferred)
-            except Exception as e:
-                log.warning("Failed to set preferred LLM for conductor: %s", e)
+        _apply_llm_selection(self.agent, self.llm_index, "Conductor agent")
         start_agent_runner(self.agent, "conductor-agent")
         self.started = True
         while True:
@@ -469,10 +476,12 @@ class ConductorService:
                     cls._instance = cls()
         return cls._instance
 
-    def start(self):
+    def start(self, llm_index: Optional[int] = None):
         """Bootstrap conductor agent loop."""
+        if llm_index is not None:
+            self.conductor.llm_index = llm_index
         if not self._started:
-            self.conductor.start()
+            self.conductor.start(llm_index=llm_index)
             self._started = True
             log.info("ConductorService started")
 
@@ -484,15 +493,17 @@ class ConductorService:
         """Get recent chat messages (does NOT mark as read)."""
         return self.chat_messages[-last:]
 
-    def add_chat_message(self, msg: str, role: str = "conductor") -> dict:
+    def add_chat_message(self, msg: str, role: str = "conductor", llm_index: Optional[int] = None) -> dict:
         """Add message to chat and notify/start conductor if from user."""
         item = add_chat(msg, role, self.chat_messages)
         if role == "user":
             # A user typing into the Conductor chat is an implicit wake-up.
             # Previously messages sent while stopped only entered the inbox,
             # but no conductor loop consumed them, making the input look dead.
+            if llm_index is not None:
+                self.conductor.llm_index = llm_index
             if not self._started:
-                self.start()
+                self.start(llm_index=llm_index)
             self.notify({"type": "user_message", "msg": msg})
         return item
 

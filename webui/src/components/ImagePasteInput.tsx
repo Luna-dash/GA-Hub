@@ -86,6 +86,13 @@ export function ImagePasteInput({
     return () => cancelAnimationFrame(r)
   }, [disabled, autoFocus])
 
+  // Keep a live mirror of `attachments` so concurrent / rapid-fire uploads
+  // (e.g. paste then drop before React re-renders) accumulate onto the latest
+  // list instead of a stale closure value — otherwise the second upload would
+  // overwrite the first batch.
+  const attachmentsRef = useRef(attachments)
+  useEffect(() => { attachmentsRef.current = attachments }, [attachments])
+
   const upload = async (files: File[]) => {
     if (!files.length) return
     setUploading((n) => n + files.length)
@@ -101,7 +108,11 @@ export function ImagePasteInput({
           console.error('upload failed', e)
         }
       }
-      onAttachments([...attachments, ...results])
+      if (results.length) {
+        const next = [...attachmentsRef.current, ...results]
+        attachmentsRef.current = next
+        onAttachments(next)
+      }
     } finally {
       setUploading((n) => Math.max(0, n - files.length))
     }

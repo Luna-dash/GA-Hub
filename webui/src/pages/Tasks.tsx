@@ -146,10 +146,46 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
     email_subject: 'GenericAgent 定时任务结果: {name}',
     ...initial,
   })
+  const [saving, setSaving] = useState(false)
   const save = async () => {
-    await api.upsertTaskSchedule({ ...s, type: (s.type ?? 'cron') as TaskScheduleType })
-    qc.invalidateQueries({ queryKey: ['tasks.schedules'] })
-    onClose()
+    if (saving) return
+    const type = (s.type ?? 'cron') as TaskScheduleType
+    if (!(s.name || '').trim()) {
+      await dialog.alert('请填写名称', '任务名称不能为空。')
+      return
+    }
+    if (!(s.prompt || '').trim()) {
+      await dialog.alert('请填写 Prompt', '任务 Prompt 不能为空，否则 Agent 无事可做。')
+      return
+    }
+    if (type === 'cron') {
+      try {
+        CronExpressionParser.parse((s.cron || '').trim())
+      } catch {
+        await dialog.alert('cron 表达式无效', '请检查 cron 表达式格式，例如 0 8 * * *。')
+        return
+      }
+    } else if (type === 'interval') {
+      const mins = Number(s.interval_minutes)
+      if (!Number.isFinite(mins) || mins < 1) {
+        await dialog.alert('周期无效', '执行周期必须为不小于 1 的分钟数。')
+        return
+      }
+    }
+    if (s.notify_email && !(s.email_to || '').trim()) {
+      await dialog.alert('请填写收件人', '已开启邮件通知，但收件人为空。')
+      return
+    }
+    setSaving(true)
+    try {
+      await api.upsertTaskSchedule({ ...s, type })
+      qc.invalidateQueries({ queryKey: ['tasks.schedules'] })
+      onClose()
+    } catch (e: any) {
+      await dialog.alert('保存失败', e?.body?.detail || e?.message || String(e))
+    } finally {
+      setSaving(false)
+    }
   }
   return (
     <div className="fixed inset-0 z-30 bg-black/60 flex items-center justify-center" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -209,7 +245,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
         </Field>
         <div className="flex justify-end gap-2 mt-4">
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg border border-line text-slate-300">取消</button>
-          <button onClick={save} className="px-3 py-1.5 rounded-lg bg-accent text-white">保存</button>
+          <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-50">{saving ? '保存中…' : '保存'}</button>
         </div>
       </div>
     </div>
@@ -239,11 +275,22 @@ function EmailSettings() {
     setEditing(true)
     setResult('')
   }
+  const [savingCfg, setSavingCfg] = useState(false)
   const save = async () => {
-    await api.saveTaskEmailConfig(cfg)
-    await qc.invalidateQueries({ queryKey: ['tasks.emailConfig'] })
-    setEditing(false)
-    setResult('已保存')
+    if (savingCfg) return
+    setSavingCfg(true)
+    try {
+      await api.saveTaskEmailConfig(cfg)
+      await qc.invalidateQueries({ queryKey: ['tasks.emailConfig'] })
+      setEditing(false)
+      setResult('已保存')
+    } catch (e: any) {
+      const msg = e?.body?.detail || e?.message || String(e)
+      setResult(`保存失败: ${msg}`)
+      await dialog.alert('保存失败', msg)
+    } finally {
+      setSavingCfg(false)
+    }
   }
   const test = async () => {
     if (testing) return
@@ -315,7 +362,7 @@ function EmailSettings() {
               </button>
               <div className="flex gap-2">
                 <button onClick={() => setEditing(false)} className="px-3 py-1.5 rounded-lg border border-line text-slate-300">取消</button>
-                <button onClick={save} className="px-3 py-1.5 rounded-lg bg-accent text-white">保存</button>
+                <button onClick={save} disabled={savingCfg} className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-50 disabled:cursor-not-allowed">{savingCfg ? '保存中…' : '保存'}</button>
               </div>
             </div>
           </div>

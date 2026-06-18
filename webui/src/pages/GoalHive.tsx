@@ -1,13 +1,13 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api, ChatSocket } from '@/api/client'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '@/api/client'
 import { PageShell } from '@/components/PageShell'
 import { useDraftStore } from '@/stores/draftStore'
-import type { ChatStreamSnapshot, ChatWSOut } from '@/api/types'
+import { useGoalHiveStore } from '@/stores/goalhiveStore'
+import type { LLMInfo } from '@/api/types'
 
 type GoalMode = 'goal' | 'hive'
-type ConnState = 'connecting' | 'open' | 'closed'
 
 interface ModeConfig {
   title: string
@@ -17,15 +17,6 @@ interface ModeConfig {
   helper: string
   chips: string[]
 }
-
-interface GoalMessage {
-  id: string
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  streaming?: boolean
-}
-
-const GOAL_HIVE_SOURCE = 'goal_hive'
 
 const modeConfigs: Record<GoalMode, ModeConfig> = {
   goal: {
@@ -46,42 +37,7 @@ const modeConfigs: Record<GoalMode, ModeConfig> = {
   },
 }
 
-function snapshotToMessages(streams: ChatStreamSnapshot[]): GoalMessage[] {
-  const msgs: GoalMessage[] = []
-  streams.forEach((s) => {
-    if (s.query) msgs.push({ id: `${s.stream_id}:user`, role: 'user', content: s.query })
-    msgs.push({ id: s.stream_id, role: 'assistant', content: s.content || '已启动，等待输出…', streaming: !s.done })
-  })
-  return msgs
-}
-
-function applyGoalEvent(prev: GoalMessage[], evt: ChatWSOut): GoalMessage[] {
-  if (evt.type === 'snapshot') return snapshotToMessages(evt.streams)
-  if (evt.type === 'started') {
-    const sid = evt.stream_id
-    const userMsg: GoalMessage = { id: `${sid}:user`, role: 'user', content: evt.query || '' }
-    const assistantMsg: GoalMessage = { id: sid, role: 'assistant', content: '已启动，等待输出…', streaming: true }
-    return [...prev, userMsg, assistantMsg].filter((m) => m.content)
-  }
-  if (evt.type === 'next' || evt.type === 'done') {
-    const sid = evt.stream_id
-    const exists = prev.some((m) => m.id === sid)
-    const nextMsg: GoalMessage = {
-      id: sid,
-      role: 'assistant',
-      content: evt.content || '',
-      streaming: evt.type !== 'done',
-    }
-    return exists ? prev.map((m) => (m.id === sid ? nextMsg : m)) : [...prev, nextMsg]
-  }
-  if (evt.type === 'error') {
-    return [...prev, { id: `error:${Date.now()}`, role: 'system', content: `错误：${evt.error}` }]
-  }
-  return prev
-}
-
 export function GoalHive() {
-  const qc = useQueryClient()
   const [mode, setMode] = useState<GoalMode>('goal')
   const targetDraftKey = `goalHive:${mode}:target`
   const conditionDraftKey = `goalHive:${mode}:condition`
@@ -93,26 +49,23 @@ export function GoalHive() {
     useDraftStore.getState().clearDraft(targetDraftKey)
     useDraftStore.getState().clearDraft(conditionDraftKey)
   }
-  const [conn, setConn] = useState<ConnState>('connecting')
-  const [msgs, setMsgs] = useState<GoalMessage[]>([])
-  const socketRef = useRef<ChatSocket | null>(null)
+
+  // Independent WebSocket state from zustand
+  const { messages: msgs, conn, setMessages, setConn } = useGoalHiveStore()
+  const wsRef = useRef<WebSocket | null>(null)
   const logRef = useRef<HTMLDivElement | null>(null)
   const targetRef = useRef<HTMLTextAreaElement | null>(null)
   const conditionRef = useRef<HTMLTextAreaElement | null>(null)
 
-  // LLM switcher
+  // Page-local LLM selector
+  const [selectedLlmIndex, setSelectedLlmIndex] = useState<number | null>(null)
   const { data: llmsData } = useQuery({
     queryKey: ['llms'],
     queryFn: api.llms,
   })
   const llms = llmsData?.llms ?? []
-  const switchMut = useMutation({
-    mutationFn: (index: number) => api.switchLLM(index),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['llms'] })
-      qc.invalidateQueries({ queryKey: ['status'] })
-    },
-  })
+  const preferredLlmIndex = llms.findIndex((l) => l.preferred)
+  const effectiveLlmIndex = selectedLlmIndex ?? (preferredLlmIndex >= 0 ? preferredLlmIndex : null)
 
   const config = modeConfigs[mode]
   const streaming = msgs.some((m) => m.streaming)
@@ -123,17 +76,67 @@ export function GoalHive() {
     return `${config.command} ${parts.join('\n')}`.trim()
   }, [condition, config.command, target])
 
+  // Independent /ws/goalhive WebSocket connection
   useEffect(() => {
-    const socket = new ChatSocket('/ws/chat?source=goal_hive')
-    socket.onMessage = (evt) => setMsgs((prev) => applyGoalEvent(prev, evt))
-    socket.onState = setConn
-    socketRef.current = socket
-    socket.open()
-    return () => {
-      socketRef.current = null
-      socket.close()
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const url = `${proto}//${location.host}/ws/goalhive`
+    const ws = new WebSocket(url)
+    wsRef.current = ws
+
+    setConn('connecting')
+
+    ws.onopen = () => setConn('open')
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data)
+        if (msg.type === 'snapshot' || msg.type === 'update') {
+          setMessages(msg.messages ?? [])
+        }
+      } catch {}
     }
-  }, [])
+    ws.onclose = () => {
+      setConn('closed')
+      // Auto-reconnect after 2s
+      setTimeout(() => {
+        if (wsRef.current === ws) {
+          const newWs = new WebSocket(url)
+          wsRef.current = newWs
+          bindWsHandlers(newWs)
+        }
+      }, 2000)
+    }
+    ws.onerror = () => ws.close()
+
+    function bindWsHandlers(socket: WebSocket) {
+      socket.onopen = () => setConn('open')
+      socket.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data)
+          if (msg.type === 'snapshot' || msg.type === 'update') {
+            setMessages(msg.messages ?? [])
+          }
+        } catch {}
+      }
+      socket.onclose = () => {
+        setConn('closed')
+        setTimeout(() => {
+          if (wsRef.current === socket) {
+            const newWs = new WebSocket(url)
+            wsRef.current = newWs
+            bindWsHandlers(newWs)
+          }
+        }, 2000)
+      }
+      socket.onerror = () => socket.close()
+    }
+
+    bindWsHandlers(ws)
+
+    return () => {
+      wsRef.current = null
+      ws.close()
+    }
+  }, [setConn, setMessages])
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' })
@@ -149,9 +152,31 @@ export function GoalHive() {
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    if (!canSubmit) return
-    socketRef.current?.send({ type: 'submit', text: preview, images: [], source: GOAL_HIVE_SOURCE })
+    if (!canSubmit || !wsRef.current) return
+    
+    // Build combined text for goal/hive prompt
+    const parts = [target.trim(), condition.trim()].filter(Boolean)
+    const text = parts.join('\n')
+    
+    wsRef.current.send(JSON.stringify({
+      type: 'submit',
+      text,
+      mode,
+      llm_index: effectiveLlmIndex,
+    }))
     clearGoalDraft()
+  }
+
+  const abort = () => {
+    if (wsRef.current) {
+      wsRef.current.send(JSON.stringify({ type: 'abort' }))
+    }
+  }
+
+  const reset = () => {
+    if (wsRef.current) {
+      wsRef.current.send(JSON.stringify({ type: 'reset' }))
+    }
   }
 
   return (
@@ -166,15 +191,15 @@ export function GoalHive() {
       actions={
         <div className="flex items-center gap-2">
           <select
-            value={llms.findIndex((l) => l.preferred) ?? -1}
-            onChange={(e) => switchMut.mutate(Number(e.target.value))}
-            disabled={switchMut.isPending}
+            value={effectiveLlmIndex ?? -1}
+            onChange={(e) => setSelectedLlmIndex(Number(e.target.value))}
+            disabled={!llms.length}
             className="rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
-            title="切换 LLM 链路（Goal/Hive 任务将使用当前选择的链路）"
+            title="选择本页 LLM 链路（不影响侧边栏全局选择；未手动选择时使用全局保底）"
           >
             {llms.map((llm, i) => (
               <option key={i} value={i}>
-                {llm.name} {llm.preferred ? '✓' : ''}
+                {llm.name}{llm.preferred ? '（全局）' : ''}{i === selectedLlmIndex ? ' ✓' : ''}
               </option>
             ))}
           </select>
@@ -193,7 +218,7 @@ export function GoalHive() {
             </button>
           ))}
           </div>
-          <button onClick={() => socketRef.current?.close()} disabled={!streaming} className="ga-btn-danger">停止</button>
+          <button onClick={abort} disabled={!streaming} className="ga-btn-danger">停止</button>
         </div>
       }
     >
@@ -262,10 +287,10 @@ export function GoalHive() {
           <div className="px-5 py-4 border-b border-line flex items-center justify-between">
             <div>
               <div className="text-sm font-medium text-[#2C2418]">独立输出</div>
-              <div className="text-xs text-[#8A7B65]">source: {GOAL_HIVE_SOURCE}</div>
+              <div className="text-xs text-[#8A7B65]">独立 GoalHive 通道</div>
             </div>
-            <button type="button" onClick={() => setMsgs([])} className="text-xs px-3 py-1.5 rounded-lg border border-line text-[#665741] hover:text-[#2C2418]">
-              清空本地显示
+            <button type="button" onClick={reset} className="text-xs px-3 py-1.5 rounded-lg border border-line text-[#665741] hover:text-[#2C2418]">
+              清空历史
             </button>
           </div>
           <div ref={logRef} className="flex-1 min-h-0 overflow-auto p-5 space-y-4">
@@ -275,7 +300,7 @@ export function GoalHive() {
               msgs.map((msg) => (
                 <article key={msg.id} className={clsx('rounded-xl border p-4', msg.role === 'user' ? 'border-accent/30 bg-accent/10' : msg.role === 'system' ? 'border-amber-500/30 bg-amber-500/10' : 'border-line bg-bg-soft/70')}>
                   <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#8A7B65]">
-                    {msg.role}
+                    {msg.role === 'user' ? 'YOU' : mode === 'hive' ? 'HIVE MASTER' : 'GOAL AGENT'}
                     {msg.streaming && <span className="text-accent normal-case tracking-normal">streaming</span>}
                   </div>
                   <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-[#2C2418] font-sans">{msg.content}</pre>

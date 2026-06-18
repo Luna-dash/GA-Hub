@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { SidebarNav } from '@/components/SidebarNav'
 import { DialogHost } from '@/components/DialogHost'
+import { ToastHost } from '@/components/ToastHost'
 import { CommandPalette } from '@/components/CommandPalette'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useAgentStore } from '@/stores/agentStore'
@@ -140,6 +141,7 @@ export default function App() {
       </main>
       <DialogHost />
       <CommandPalette />
+      <ToastHost />
     </div>
   )
 }

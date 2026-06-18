@@ -234,18 +234,18 @@ export const api = {
   // ── conductor ────────────────────────────────────────
   conductorReadme: (topic = 'api') => http<{ content: string }>('GET', `/api/conductor/readme${topic !== 'api' ? `/${topic}` : ''}`),
   conductorChat: (last = 50) => http<{ items: ConductorChatMessage[] }>('GET', `/api/conductor/chat?last=${last}`),
-  conductorSendChat: (msg: string, role: 'user' | 'assistant' = 'user') =>
-    http<{ id: string; role: string; msg: string; ts: number }>('POST', '/api/conductor/chat', { msg, role }),
+  conductorSendChat: (msg: string, role: 'user' | 'assistant' = 'user', llm_index?: number | null) =>
+    http<{ id: string; role: string; msg: string; ts: number }>('POST', '/api/conductor/chat', { msg, role, llm_index }),
   conductorSubagents: () => http<{ items: ConductorSubagent[] }>('GET', '/api/conductor/subagent'),
   conductorSubagent: (sid: string, max_len = 5000) => http<ConductorSubagent>('GET', `/api/conductor/subagent/${sid}?max_len=${max_len}`),
-  conductorStartSubagent: (prompt: string) => http<{ id: string }>('POST', '/api/conductor/subagent', { prompt }),
+  conductorStartSubagent: (prompt: string, llm_index?: number | null) => http<{ id: string }>('POST', '/api/conductor/subagent', { prompt, llm_index }),
   conductorSubagentAction: (sid: string, action: 'keyinfo' | 'done', msg: string) =>
     http<{ ok: boolean }>('POST', `/api/conductor/subagent/${sid}`, { action, msg }),
   conductorApproval: (prompt: string, source: string) =>
     http<{ ok: boolean }>('POST', '/api/conductor/approval', { prompt, source }),
   conductorLog: () => http<{ log: ConductorLogItem[] }>('GET', '/api/conductor/log'),
   conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),
-  conductorStart: () => http<{ ok: boolean }>('POST', '/api/conductor/start'),
+  conductorStart: (llm_index?: number | null) => http<{ ok: boolean }>('POST', '/api/conductor/start', { llm_index }),
   conductorStop: () => http<{ ok: boolean }>('POST', '/api/conductor/stop'),
 }
 

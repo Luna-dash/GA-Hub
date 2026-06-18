@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { MarkdownEditor } from '@/components/MarkdownEditor'
+import { toast } from '@/stores/toastStore'
 import { PageShell } from '@/components/PageShell'
 
 type Tab = 'sop' | 'skill' | 'insight' | 'global'
@@ -50,7 +51,7 @@ function GlobalMem() {
       value={v}
       dirty={dirty}
       onChange={(s) => { setV(s); setDirty(true) }}
-      onSave={async () => { await api.setGlobalMem(v); setDirty(false); qc.invalidateQueries({ queryKey: ['mem.global'] }) }}
+      onSave={async () => { try { await api.setGlobalMem(v); setDirty(false); qc.invalidateQueries({ queryKey: ['mem.global'] }); toast.success('已保存 global_mem.txt') } catch (e: any) { toast.error('保存失败：' + (e?.message || String(e))) } }}
     />
   )
 }
@@ -66,7 +67,7 @@ function Insight() {
       value={v}
       dirty={dirty}
       onChange={(s) => { setV(s); setDirty(true) }}
-      onSave={async () => { await api.setInsight(v); setDirty(false); qc.invalidateQueries({ queryKey: ['mem.insight'] }) }}
+      onSave={async () => { try { await api.setInsight(v); setDirty(false); qc.invalidateQueries({ queryKey: ['mem.insight'] }); toast.success('已保存 insight') } catch (e: any) { toast.error('保存失败：' + (e?.message || String(e))) } }}
     />
   )
 }
@@ -108,7 +109,7 @@ function SopList() {
             value={v}
             dirty={dirty}
             onChange={(s) => { setV(s); setDirty(true) }}
-            onSave={async () => { await api.setSop(active, v); setDirty(false); qc.invalidateQueries({ queryKey: ['sop', active] }) }}
+            onSave={async () => { try { await api.setSop(active, v); setDirty(false); qc.invalidateQueries({ queryKey: ['sop', active] }); toast.success('已保存 ' + active) } catch (e: any) { toast.error('保存失败：' + (e?.message || String(e))) } }}
           />
         )}
       </div>

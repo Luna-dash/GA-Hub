@@ -21,6 +21,7 @@ import { api } from '@/api/client'
 import type { LLMTestResult, MyKeyData, MyKeySession, MyKeySessionType, MyKeyWriteResult } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { dialog } from '@/stores/dialogStore'
+import { toast } from '@/stores/toastStore'
 
 type Tab = 'structured' | 'raw'
 
@@ -32,6 +33,8 @@ export function MyKey() {
   const onWriteResult = (r: MyKeyWriteResult) => {
     if (r.warnings && r.warnings.length) {
       dialog.alert('保存成功，但有警告', r.warnings.join('\n'))
+    } else {
+      toast.success('已保存到 mykey.py')
     }
     qc.invalidateQueries({ queryKey: ['mykey'] })
     qc.invalidateQueries({ queryKey: ['llms'] })
@@ -41,9 +44,9 @@ export function MyKey() {
   const handleOpenFile = async () => {
     try {
       const result = await api.openMyKeyFile()
-      dialog.alert('已打开文件', result.path)
+      toast.success(`已打开 ${result.path}`)
     } catch (e: any) {
-      dialog.alert('打开文件失败', e.message || String(e))
+      toast.error('打开文件失败：' + (e?.message || String(e)))
     }
   }
 
@@ -750,6 +753,7 @@ function BackupDrawer({ onClose, onRestored }: {
     try {
       const r = await api.restoreMyKeyBackup(name)
       onRestored(r)
+      toast.success('已回滚到该备份')
       onClose()
     } catch (e: any) {
       dialog.alert('回滚失败', e?.body?.detail || e?.message || String(e))

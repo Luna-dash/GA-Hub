@@ -280,7 +280,7 @@ async def ws_chat(ws: WebSocket):
             if mt == "submit":
                 payload = ChatSubmit(**{k: v for k, v in msg.items() if k != "type"})
                 # Just kick it off — events come back via bus subscription above.
-                s.submit(payload.text, source=payload.source, images=payload.images)
+                s.submit(payload.text, source=payload.source, images=payload.images, llm_index=payload.llm_index)
             elif mt == "abort":
                 s.abort()
                 # The agent's run loop emits a final {'done': ...} which the

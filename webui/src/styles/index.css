@@ -646,3 +646,55 @@ html.dark .ga-panel {
   text-transform: uppercase;
   white-space: nowrap;
 }
+
+/* ─── Global polish (additive, theme-consistent) ───────────────
+   纯增量：选区配色、键盘焦点环、原生控件配色、减动效偏好。
+   不覆盖既有组件样式，仅补齐缺失的全局一致性细节。 */
+
+/* 暖棕选区，替代浏览器默认刺眼蓝 */
+::selection {
+  background-color: rgba(138, 100, 56, 0.22);
+  color: var(--c-text);
+}
+html.dark ::selection {
+  background-color: rgba(216, 180, 120, 0.26);
+}
+
+/* 原生控件（checkbox/radio/range/progress）统一主题色 */
+:root, html.light, html.dark {
+  accent-color: var(--c-accent);
+}
+
+/* 统一键盘可访问焦点环：仅键盘聚焦时出现，鼠标点击不显，避免与
+   组件自定义 :focus box-shadow 冲突（用 outline 实现，正交） */
+a:focus-visible,
+button:focus-visible,
+[role="button"]:focus-visible,
+[role="tab"]:focus-visible,
+[tabindex]:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(138, 100, 56, 0.55);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* 深色侧栏内的焦点环改用暖米色以保证对比 */
+.ga-sidebar a:focus-visible,
+.ga-sidebar button:focus-visible,
+.ga-sidebar [tabindex]:focus-visible {
+  outline-color: rgba(232, 223, 201, 0.7);
+}
+
+/* 尊重系统“减少动态效果”偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -154,10 +154,12 @@ export function LiveChat() {
     if (!t && atts.length === 0) return
     if (streaming) return
     if (t === '/new') {
-      api.agentNew().then((r) => {
-        clearLocal()
-        pushSystem(r.message)
-      })
+      api.agentNew()
+        .then((r) => {
+          clearLocal()
+          pushSystem(r.message)
+        })
+        .catch((e: any) => pushSystem(`_新建对话失败：${e?.message || String(e)}_`))
       clearDraft()
       return
     }

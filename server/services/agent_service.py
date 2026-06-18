@@ -305,6 +305,21 @@ class AgentService:
             })
         return out
 
+    def _select_llm_for_task(self, n: int) -> None:
+        """Transiently select an LLM for one submission without persisting preference."""
+        clients = getattr(self.agent, "llmclients", None)
+        if clients is None:
+            try:
+                self.agent.load_llm_sessions()
+                clients = getattr(self.agent, "llmclients", []) or []
+            except Exception:
+                clients = []
+        idx = int(n)
+        if idx < 0 or (clients and idx >= len(clients)):
+            raise RuntimeError(f"llm index out of range: {idx}")
+        if int(getattr(self.agent, "llm_no", -1)) != idx:
+            self.agent.next_llm(idx)
+
     def switch_llm(self, n: int) -> dict:
         if bool(getattr(self.agent, "is_running", False)):
             raise RuntimeError("agent is running; wait for the current reply or stop it before switching LLM")
@@ -411,15 +426,18 @@ class AgentService:
         retry_of: str = "",
         retry_reason: str = "",
         retry_max: int = 0,
+        llm_index: int | None = None,
     ) -> StreamHandle:
         """Enqueue a task; spawn a single fan-out drainer that publishes
         chat:* events to the bus AND keeps the StreamHandle's display_queue
         full for legacy sync consumers (wechat_service)."""
-        # User-initiated submissions reassert the persisted preference so that
-        # autonomous tasks (or other call sites) can't strand the user on a
-        # different LLM than they picked. Other sources (autonomous, wechat,
-        # reflect) keep whatever llm_no is currently active.
-        if source in ("user", "webui"):
+        # User-initiated submissions use an explicit page-scoped override when
+        # provided; otherwise they reassert the persisted/global preference.
+        # Other sources (autonomous, wechat, reflect) keep whatever llm_no is
+        # currently active unless an explicit override is supplied.
+        if llm_index is not None:
+            self._select_llm_for_task(llm_index)
+        elif source in ("user", "webui"):
             self._restore_preferred_llm()
         with self._lock:
             self._next_id += 1

@@ -9,6 +9,7 @@ import { api } from '@/api/client'
 import type { ChatRetryConfig } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { useNotifyStore } from '@/utils/notify'
+import { toast } from '@/stores/toastStore'
 
 export function Settings({ initialMode = 'settings' }: { initialMode?: 'settings' | 'setup' }) {
   const qc = useQueryClient()
@@ -33,8 +34,9 @@ export function Settings({ initialMode = 'settings' }: { initialMode?: 'settings
     try {
       const r = await api.setupValidate(path)
       setValidResult(r)
-    } catch {
+    } catch (e: any) {
       setValidResult({ valid: false, resolved: path })
+      toast.error('路径校验请求失败：' + (e?.message || String(e)))
     } finally {
       setValidating(false)
     }

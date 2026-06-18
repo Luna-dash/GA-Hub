@@ -11,6 +11,8 @@ class ChatSubmit(BaseModel):
     text: str = ""
     images: list[str] = Field(default_factory=list)        # absolute paths returned by /api/upload
     source: str = "user"
+    # Page-scoped override. None means fallback to persisted/global preference.
+    llm_index: int | None = None
 
 
 class BtwReq(BaseModel):
@@ -133,10 +135,19 @@ class EmailTestReq(BaseModel):
 class ConductorChatIn(BaseModel):
     msg: str
     role: Literal["conductor", "system", "user"] = "conductor"
+    # Page-scoped override. None means fallback to persisted/global preference.
+    llm_index: int | None = None
 
 
 class ConductorStartSubagent(BaseModel):
     prompt: str
+    # Page-scoped override. None means fallback to persisted/global preference.
+    llm_index: int | None = None
+
+
+class ConductorStartReq(BaseModel):
+    # Page-scoped override. None means fallback to persisted/global preference.
+    llm_index: int | None = None
 
 
 class ConductorSubagentAction(BaseModel):

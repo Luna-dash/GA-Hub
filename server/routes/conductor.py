@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from ..schemas import (
     ConductorApproval,
     ConductorChatIn,
+    ConductorStartReq,
     ConductorStartSubagent,
     ConductorSubagentAction,
 )
@@ -58,7 +59,7 @@ async def get_chat(last: int = 20):
 
 @router.post("/api/conductor/chat")
 async def post_chat(body: ConductorChatIn):
-    return svc().add_chat_message(body.msg, role=body.role)
+    return svc().add_chat_message(body.msg, role=body.role, llm_index=body.llm_index)
 
 
 # ── subagents ────────────────────────────────────────────────────────────────
@@ -85,7 +86,7 @@ async def get_subagent(sid: str, max_len: int = 5000):
 
 @router.post("/api/conductor/subagent")
 async def start_subagent(body: ConductorStartSubagent):
-    result = svc().pool.start_subagent(body.prompt)
+    result = svc().pool.start_subagent(body.prompt, llm_index=body.llm_index)
     result["instruction"] = INSTR_DISPATCHED
     return result
 
@@ -137,9 +138,9 @@ async def get_status():
 
 
 @router.post("/api/conductor/start")
-async def start_conductor():
+async def start_conductor(body: ConductorStartReq | None = None):
     """Start the conductor supervisor."""
-    svc().start()
+    svc().start(llm_index=body.llm_index if body else None)
     return {"ok": True, "started": svc()._started}
 
 
