@@ -194,7 +194,7 @@ export function GoalHive() {
             value={effectiveLlmIndex ?? -1}
             onChange={(e) => setSelectedLlmIndex(Number(e.target.value))}
             disabled={!llms.length}
-            className="rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
+            className="max-w-[400px] min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
             title="选择本页 LLM 链路（不影响侧边栏全局选择；未手动选择时使用全局保底）"
           >
             {llms.map((llm, i) => (
@@ -214,7 +214,7 @@ export function GoalHive() {
                 mode === item ? 'bg-accent text-white shadow-sm' : 'text-[#665741] hover:text-[#2C2418]',
               )}
             >
-              {modeConfigs[item].title}
+              {item.toUpperCase()}
             </button>
           ))}
           </div>
