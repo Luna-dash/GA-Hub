@@ -36,6 +36,25 @@ from .services.event_bus import bus
 
 log = logging.getLogger(__name__)
 
+FEISHU_AUTO_START_DELAY_SECONDS = 180
+
+
+async def _delayed_feishu_autostart(delay_seconds: int = FEISHU_AUTO_START_DELAY_SECONDS) -> None:
+    """Start the persistent Feishu gateway shortly after GA-Hub boots.
+
+    The Feishu process can take over stdio and initialize GA resources, so keep it
+    off the critical startup path and reuse FeishuService.start() for de-duplication
+    against an already-running/manual fsapp.py process.
+    """
+    await asyncio.sleep(max(0, delay_seconds))
+    try:
+        from .services.feishu_service import FeishuService
+
+        result = FeishuService.instance().start()
+        log.info("feishu auto-start completed after %ss: %s", delay_seconds, result)
+    except Exception as e:
+        log.warning("feishu auto-start skipped after %ss: %s", delay_seconds, e)
+
 
 # ── Host-header allow-list (anti DNS-rebinding) ──────────────────────────────
 # The backend binds to 127.0.0.1 by default, but a malicious web page can still
@@ -264,8 +283,10 @@ def create_app() -> FastAPI:
             fs = FeishuService.instance()
             fs.start_log_watcher()
             log.info("feishu log watcher started")
+            asyncio.create_task(_delayed_feishu_autostart(), name="feishu-auto-start")
+            log.info("feishu auto-start scheduled in %s seconds", FEISHU_AUTO_START_DELAY_SECONDS)
         except Exception as e:
-            log.warning("feishu log watcher init skipped: %s", e)
+            log.warning("feishu log watcher/auto-start init skipped: %s", e)
 
         try:
             sched = AutonomousScheduler.instance(agent_svc)
