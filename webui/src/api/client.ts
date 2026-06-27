@@ -259,6 +259,7 @@ export class ChatSocket {
   ws?: WebSocket
   private readonly url: string
   private reconnectTimer?: number
+  private reconnectAttempts = 0
   private explicitlyClosed = false
   onMessage: (m: ChatWSOut) => void = () => {}
   onState: (s: 'connecting' | 'open' | 'closed') => void = () => {}
@@ -272,14 +273,19 @@ export class ChatSocket {
     this.onState('connecting')
     const ws = new WebSocket(this.url)
     this.ws = ws
-    ws.onopen = () => this.onState('open')
+    ws.onopen = () => {
+      this.reconnectAttempts = 0
+      this.onState('open')
+    }
     ws.onmessage = (ev) => {
       try { this.onMessage(JSON.parse(ev.data) as ChatWSOut) } catch {}
     }
     ws.onclose = () => {
       this.onState('closed')
       if (!this.explicitlyClosed) {
-        this.reconnectTimer = window.setTimeout(() => this.open(), 2000)
+        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000)
+        this.reconnectAttempts++
+        this.reconnectTimer = window.setTimeout(() => this.open(), delay)
       }
     }
     ws.onerror = () => { try { ws.close() } catch {} }
@@ -300,6 +306,7 @@ export class EventSocket {
   private ws?: WebSocket
   private readonly url: string
   private reconnectTimer?: number
+  private reconnectAttempts = 0
   private explicitlyClosed = false
   onEvent: (e: BusEvent) => void = () => {}
 
@@ -311,12 +318,17 @@ export class EventSocket {
     this.explicitlyClosed = false
     const ws = new WebSocket(this.url)
     this.ws = ws
+    ws.onopen = () => {
+      this.reconnectAttempts = 0
+    }
     ws.onmessage = (ev) => {
       try { this.onEvent(JSON.parse(ev.data) as BusEvent) } catch {}
     }
     ws.onclose = () => {
       if (!this.explicitlyClosed) {
-        this.reconnectTimer = window.setTimeout(() => this.open(), 2000)
+        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000)
+        this.reconnectAttempts++
+        this.reconnectTimer = window.setTimeout(() => this.open(), delay)
       }
     }
     ws.onerror = () => { try { ws.close() } catch {} }

@@ -19,5 +19,20 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          const normalized = id.replace(/\\/g, '/')
+          if (normalized.includes('/react-markdown/') || normalized.includes('/remark-gfm/') || normalized.includes('/micromark') || normalized.includes('/mdast') || normalized.includes('/unist')) {
+            return 'vendor-markdown'
+          }
+          if (normalized.includes('/cron-parser/') || normalized.includes('/cronstrue/')) {
+            return 'vendor-scheduler'
+          }
+          return undefined
+        },
+      },
+    },
   },
 })

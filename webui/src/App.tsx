@@ -11,26 +11,23 @@ import { useChatStore } from '@/stores/chatStore'
 import { useDocumentTitle } from '@/utils/useDocumentTitle'
 import { useDesktopNotifyEffects } from '@/utils/useDesktopNotifyEffects'
 import { api } from '@/api/client'
-import { LiveChat } from '@/pages/LiveChat'
-import { FeishuBot } from '@/pages/FeishuBot'
-import { Conversations } from '@/pages/Conversations'
-import { Memory } from '@/pages/Memory'
-import { GoalHive } from '@/pages/GoalHive'
 
-import { MyKey } from '@/pages/MyKey'
-import { Settings } from '@/pages/Settings'
+const routeFallback = (
+  <div className="h-full flex items-center justify-center text-slate-500 text-sm">载入中…</div>
+)
 
-// Autonomous/Tasks pages pull in cron-parser + cronstrue (~60KB gzipped).
-// Lazy-load them so visitors who never open scheduler pages don't pay for it.
-const Autonomous = lazy(() =>
-  import('@/pages/Autonomous').then((m) => ({ default: m.Autonomous })),
-)
-const Tasks = lazy(() =>
-  import('@/pages/Tasks').then((m) => ({ default: m.Tasks })),
-)
-const Conductor = lazy(() =>
-  import('@/pages/Conductor').then((m) => ({ default: m.default })),
-)
+// Keep route pages out of the startup bundle. The shell (stores, sockets,
+// sidebar, command palette) loads first; individual feature pages load on demand.
+const LiveChat = lazy(() => import('@/pages/LiveChat').then((m) => ({ default: m.LiveChat })))
+const FeishuBot = lazy(() => import('@/pages/FeishuBot').then((m) => ({ default: m.FeishuBot })))
+const Conversations = lazy(() => import('@/pages/Conversations').then((m) => ({ default: m.Conversations })))
+const Memory = lazy(() => import('@/pages/Memory').then((m) => ({ default: m.Memory })))
+const GoalHive = lazy(() => import('@/pages/GoalHive').then((m) => ({ default: m.GoalHive })))
+const Conductor = lazy(() => import('@/pages/Conductor'))
+const MyKey = lazy(() => import('@/pages/MyKey').then((m) => ({ default: m.MyKey })))
+const Settings = lazy(() => import('@/pages/Settings').then((m) => ({ default: m.Settings })))
+const Tasks = lazy(() => import('@/pages/Tasks').then((m) => ({ default: m.Tasks })))
+const Autonomous = lazy(() => import('@/pages/Autonomous').then((m) => ({ default: m.Autonomous })))
 
 export default function App() {
   const start = useAgentStore((s) => s.start)
@@ -108,7 +105,9 @@ export default function App() {
     return (
       <div className="app-aurora flex h-screen w-screen overflow-hidden">
         <main className="flex-1 min-w-0 bg-transparent">
-          <Settings initialMode="setup" />
+          <Suspense fallback={routeFallback}>
+            <Settings initialMode="setup" />
+          </Suspense>
         </main>
         <DialogHost />
       </div>
