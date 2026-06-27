@@ -109,6 +109,30 @@ cd webui
 npm run dev   # → http://localhost:5173
 ```
 
+## 本地检查
+
+改动提交前建议跑完整检查：安装 Python 开发依赖、运行后端 pytest、前端类型检查、前端生产构建。
+
+```bash
+# macOS / Linux
+./check.sh
+```
+
+```cmd
+:: Windows
+check.bat
+```
+
+也可以手动分步执行：
+
+```bash
+python -m pip install -e ".[dev]"
+python -m pytest -q
+cd webui
+npm run lint
+npm run build
+```
+
 ## 目录结构
 
 ```

@@ -44,7 +44,7 @@ class PythonDiscoveryTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             root = Path(td)
             ga_root = root / "GenericAgent"
-            ga_python = _touch_python(ga_root / ".venv/bin/python3")
+            ga_python = _touch_python(_paths._ga_venv_python_candidates(ga_root)[0])
 
             with mock.patch.dict(_paths.os.environ, {}, clear=True), \
                  mock.patch.object(_paths, "load_config", return_value={}), \
