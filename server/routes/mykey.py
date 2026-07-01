@@ -18,6 +18,8 @@ import ast
 import json
 import logging
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -533,6 +535,101 @@ async def restore_backup(name: str):
         "llms": llms,
         "warnings": warnings,
         "structured": _structurize(text),
+    }
+
+
+# ── encrypted sync via GA assets/mykey_sync.py ─────────────────────────
+def _mykey_sync_script() -> Path:
+    if _paths.GA_ROOT is None:
+        raise HTTPException(503, "GA_ROOT 未配置")
+    script = _paths.GA_ROOT / "assets" / "mykey_sync.py"
+    if not script.is_file():
+        raise HTTPException(500, f"同步脚本不存在: {script}")
+    return script
+
+
+def _sync_base_url() -> str:
+    return os.environ.get("GA_MYKEY_SYNC_URL", "https://sector.lunadash.me").rstrip("/")
+
+
+def _run_mykey_sync(args: list[str]) -> dict[str, Any]:
+    """Run mykey_sync.py without passing secrets on argv.
+
+    Secrets are read by the script from environment variables:
+    GA_MYKEY_SYNC_PASSPHRASE / GA_MYKEY_UPLOAD_TOKEN.
+    """
+    script = _mykey_sync_script()
+    if _paths.GA_ROOT is None:
+        raise HTTPException(503, "GA_ROOT 未配置")
+    cmd = [sys.executable, str(script), *args]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(_paths.GA_ROOT),
+            text=True,
+            capture_output=True,
+            timeout=90,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise HTTPException(504, {
+            "error": "mykey_sync_timeout",
+            "message": "mykey 同步超时",
+            "stdout": e.stdout or "",
+            "stderr": e.stderr or "",
+        })
+    except Exception as e:
+        raise HTTPException(500, f"启动 mykey 同步失败: {type(e).__name__}: {e}")
+
+    result = {
+        "returncode": proc.returncode,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+    }
+    if proc.returncode != 0:
+        raise HTTPException(500, {
+            "error": "mykey_sync_failed",
+            "message": f"mykey_sync.py 退出码 {proc.returncode}",
+            **result,
+        })
+    return result
+
+
+@router.post("/sync/upload")
+async def sync_upload_mykey():
+    """Encrypt and upload current GA_ROOT/mykey.py to the configured sync server."""
+    p = _mykey_path()
+    if not p.is_file():
+        raise HTTPException(404, "mykey.py 不存在")
+    upload_url = os.environ.get("GA_MYKEY_SYNC_UPLOAD_URL") or f"{_sync_base_url()}/api/mykey/upload"
+    result = _run_mykey_sync([
+        "upload",
+        "--upload-url", upload_url,
+        "--source", str(p),
+    ])
+    return {"ok": True, "action": "upload", "path": str(p), **result}
+
+
+@router.post("/sync/fetch")
+async def sync_fetch_mykey():
+    """Fetch, decrypt and replace GA_ROOT/mykey.py from the configured sync server."""
+    p = _mykey_path()
+    result = _run_mykey_sync([
+        "fetch",
+        "--base-url", _sync_base_url(),
+        "--target", str(p),
+        "--force",
+    ])
+    raw = p.read_text(encoding="utf-8") if p.is_file() else ""
+    llms, warnings = _trigger_reload()
+    return {
+        "ok": True,
+        "action": "fetch",
+        "path": str(p),
+        "llms": llms,
+        "warnings": warnings,
+        "structured": _structurize(raw),
+        **result,
     }
 
 

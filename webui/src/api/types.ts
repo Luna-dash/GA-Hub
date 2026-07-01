@@ -285,6 +285,18 @@ export interface MyKeyBackup {
   size: number
 }
 
+export interface MyKeySyncResult {
+  ok: boolean
+  action: 'upload' | 'fetch'
+  path: string
+  returncode: number
+  stdout: string
+  stderr: string
+  llms?: LLMInfo[]
+  warnings?: string[]
+  structured?: MyKeyData['structured']
+}
+
 // ── Chat WS protocol ─────────────────────────────────────
 export type ChatWSIn =
   | { type: 'submit'; text: string; images?: string[]; source?: string; llm_index?: number | null }

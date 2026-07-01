@@ -23,6 +23,7 @@ import type {
   MyKeyBackup,
   MyKeyData,
   MyKeySession,
+  MyKeySyncResult,
   MyKeyWriteResult,
   ReportItem,
   Schedule,
@@ -121,6 +122,8 @@ export const api = {
   testMyKeySession: (varName: string) =>
     http<LLMTestResult>('POST', `/api/mykey/sessions/${encodeURIComponent(varName)}/test`),
   openMyKeyFile: () => http<{ ok: boolean; path: string }>('POST', '/api/mykey/open'),
+  uploadMyKeySync: () => http<MyKeySyncResult>('POST', '/api/mykey/sync/upload'),
+  fetchMyKeySync: () => http<MyKeySyncResult>('POST', '/api/mykey/sync/fetch'),
 
   // ── feishu ───────────────────────────────────────────
   fsStatus: () => http<FsStatus>('GET', '/api/feishu/status'),

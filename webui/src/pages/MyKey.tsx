@@ -28,6 +28,7 @@ type Tab = 'structured' | 'raw'
 export function MyKey() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('structured')
+  const [syncBusy, setSyncBusy] = useState<'upload' | 'fetch' | null>(null)
   const { data, isLoading, refetch } = useQuery({ queryKey: ['mykey'], queryFn: api.mykey })
 
   const onWriteResult = (r: MyKeyWriteResult) => {
@@ -50,6 +51,50 @@ export function MyKey() {
     }
   }
 
+
+  const handleUploadSync = async () => {
+    const ok = await dialog.confirm(
+      '上传 mykey 到同步服务器？',
+      '将加密当前本机 mykey.py 并上传到同步服务器，其他设备之后可下载此版本。请确认当前内容是你要发布的版本。',
+      { confirmText: '上传' },
+    )
+    if (!ok) return
+    setSyncBusy('upload')
+    try {
+      const r = await api.uploadMyKeySync()
+      toast.success((r.stdout || 'mykey 上传完成').trim().split('\n').slice(-1)[0])
+    } catch (e: any) {
+      dialog.alert('上传 mykey 失败', e?.body?.detail?.stderr || e?.body?.detail?.message || e?.message || String(e))
+    } finally {
+      setSyncBusy(null)
+    }
+  }
+
+  const handleFetchSync = async () => {
+    const ok = await dialog.confirm(
+      '下载并覆盖本机 mykey？',
+      '将从同步服务器下载最新加密 mykey.py，解密后覆盖本机文件。同步脚本会先备份旧文件，但请确认你确实要覆盖当前配置。',
+      { tone: 'danger', confirmText: '下载并覆盖' },
+    )
+    if (!ok) return
+    setSyncBusy('fetch')
+    try {
+      const r = await api.fetchMyKeySync()
+      if (r.warnings && r.warnings.length) {
+        dialog.alert('下载完成，但有警告', r.warnings.join('\n'))
+      } else {
+        toast.success((r.stdout || 'mykey 下载完成').trim().split('\n').slice(-1)[0])
+      }
+      qc.invalidateQueries({ queryKey: ['mykey'] })
+      qc.invalidateQueries({ queryKey: ['llms'] })
+      qc.invalidateQueries({ queryKey: ['status'] })
+    } catch (e: any) {
+      dialog.alert('下载 mykey 失败', e?.body?.detail?.stderr || e?.body?.detail?.message || e?.message || String(e))
+    } finally {
+      setSyncBusy(null)
+    }
+  }
+
   return (
     <PageShell
       title="LLM管理"
@@ -68,6 +113,8 @@ export function MyKey() {
             ))}
           </div>
           <button onClick={() => refetch()} className="ga-btn">↻ 刷新</button>
+          <button onClick={handleUploadSync} disabled={syncBusy !== null} className="ga-btn">{syncBusy === 'upload' ? '上传中…' : '⬆ 上传mykey'}</button>
+          <button onClick={handleFetchSync} disabled={syncBusy !== null} className="ga-btn">{syncBusy === 'fetch' ? '下载中…' : '⬇ 下载mykey'}</button>
           <button onClick={handleOpenFile} className="ga-btn">📂 打开文件</button>
         </div>
       }
