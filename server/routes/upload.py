@@ -9,16 +9,68 @@ from __future__ import annotations
 import logging
 import mimetypes
 import os
+import platform
+import subprocess
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from .. import _paths
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class RevealRequest(BaseModel):
+    path: str
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_reveal_path(raw_path: str) -> Path:
+    value = raw_path.strip().strip('"')
+    if not value:
+        raise HTTPException(400, "path is required")
+
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        if _paths.GA_ROOT is None:
+            raise HTTPException(503, "GA root is not configured")
+        path = Path(_paths.GA_ROOT) / path
+    path = path.resolve()
+
+    roots = [Path(_paths.admin_uploads_dir()).resolve()]
+    if _paths.GA_ROOT is not None:
+        roots.append(Path(_paths.GA_ROOT).resolve())
+    if not any(_is_within(path, root) for root in roots):
+        raise HTTPException(403, "outside allowed roots")
+    if not path.exists():
+        raise HTTPException(404, "not found")
+    return path
+
+
+def _reveal_in_file_manager(path: Path) -> None:
+    system = platform.system()
+    if system == "Windows":
+        args = ["explorer.exe", str(path)] if path.is_dir() else ["explorer.exe", "/select,", str(path)]
+    elif system == "Darwin":
+        args = ["open", str(path)] if path.is_dir() else ["open", "-R", str(path)]
+    else:
+        args = ["xdg-open", str(path if path.is_dir() else path.parent)]
+    try:
+        subprocess.Popen(args)
+    except OSError as exc:
+        log.warning("Cannot reveal %s: %s", path, exc)
+        raise HTTPException(500, "file manager is unavailable") from exc
 
 
 def _upload_dir() -> str:
@@ -94,6 +146,14 @@ async def get_file(fname: str):
     if not os.path.isfile(p):
         raise HTTPException(404, "not found")
     return FileResponse(p)
+
+
+@router.post("/api/files/reveal")
+def reveal_file(req: RevealRequest):
+    """Reveal a GA-owned file in the host file manager without executing it."""
+    path = _resolve_reveal_path(req.path)
+    _reveal_in_file_manager(path)
+    return {"ok": True, "path": str(path)}
 
 
 @router.get("/api/files-by-path")

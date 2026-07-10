@@ -123,6 +123,7 @@ export function CommandPalette() {
       { p: '/mykey', label: 'MyKey / 密钥同步', icon: '🔐' },
       { p: '/tasks', label: '任务队列 / Tasks', icon: '☑' },
       { p: '/autonomous', label: '自主进化 / Autonomous', icon: '🌀' },
+      { p: '/tokens', label: 'Token 统计 / Token Usage', icon: '◫' },
       { p: '/settings', label: '设置 / Settings', icon: '⚙️' },
     ]
     for (const x of pages) {

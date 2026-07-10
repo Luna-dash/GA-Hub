@@ -179,6 +179,31 @@ class ChatSnapshot:
     retry_reason: str = ""
 
 
+def _llm_membership_metadata(backends: list[object | None]) -> list[dict]:
+    """Return read-only Mixin membership/runtime metadata for LLM clients."""
+    all_mixin_members: set[str] = set()
+    rows: list[dict] = []
+    for backend in backends:
+        is_mixin = type(backend).__name__ == "MixinSession"
+        members: list[str] = []
+        if is_mixin:
+            for session in (getattr(backend, "_sessions", None) or []):
+                member_name = str(getattr(session, "name", "") or "")
+                if member_name and member_name not in members:
+                    members.append(member_name)
+                    all_mixin_members.add(member_name)
+        rows.append({
+            "kind": "mixin" if is_mixin else "single",
+            "members": members,
+            "active_member": str(getattr(backend, "current_name", "") or "") if is_mixin else "",
+            "backend_name": str(getattr(backend, "name", "") or "") if not is_mixin else "",
+        })
+    for row in rows:
+        row["in_mixin"] = bool(row["backend_name"] in all_mixin_members) if row["kind"] == "single" else False
+        row.pop("backend_name", None)
+    return rows
+
+
 class AgentService:
     _instance: "AgentService | None" = None
     _SNAPSHOT_CAP = 20  # keep last N submissions for /ws/chat replay
@@ -275,9 +300,14 @@ class AgentService:
         
         out = []
         clients = getattr(self.agent, "llmclients", []) or []
+        backends = [getattr(client, "backend", None) for client in clients]
+        membership = _llm_membership_metadata(backends)
         for i, name, current in self.agent.list_llms():
             client = clients[i] if i < len(clients) else None
             backend = getattr(client, "backend", None)
+            meta = membership[i] if i < len(membership) else {
+                "kind": "single", "members": [], "active_member": "", "in_mixin": False,
+            }
             model = ""
             api_base = ""
             api_key_masked = ""
@@ -298,7 +328,10 @@ class AgentService:
                 "name": name,
                 "current": bool(current),
                 "preferred": (preferred_no is not None and i == preferred_no),
-                "kind": "mixin" if type(backend).__name__ == "MixinSession" else "single",
+                "kind": meta["kind"],
+                "members": meta["members"],
+                "active_member": meta["active_member"],
+                "in_mixin": meta["in_mixin"],
                 "model": model,
                 "api_base": api_base,
                 "api_key_masked": api_key_masked,

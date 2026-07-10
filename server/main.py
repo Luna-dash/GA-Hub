@@ -367,6 +367,7 @@ def create_app() -> FastAPI:
     if not setup_mode:
         from .routes import (
             agent as agent_routes,
+            tokens as token_routes,
             autonomous as autonomous_routes,
             conductor as conductor_routes,
             conversations as conv_routes,
@@ -389,6 +390,7 @@ def create_app() -> FastAPI:
         app.include_router(mykey_routes.router)
         app.include_router(notify_routes.router)
         app.include_router(task_routes.router)
+        app.include_router(token_routes.router)
 
         # GoalHive independent route
         from .routes import goalhive as goalhive_routes

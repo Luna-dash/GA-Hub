@@ -12,6 +12,8 @@ import type {
   ConductorChatMessage,
   ConductorLogItem,
   ConductorStatus,
+  TokenStatsResponse,
+  TokenHistoryResponse,
   ConductorSubagent,
   Conversation,
   ConversationSummary,
@@ -221,6 +223,8 @@ export const api = {
     return res.json()
   },
   fileUrlByPath: (absPath: string) => `/api/files-by-path?path=${encodeURIComponent(absPath)}`,
+  revealFile: (path: string) =>
+    http<{ ok: boolean; path: string }>('POST', '/api/files/reveal', { path }),
 
   // ── logs ─────────────────────────────────────────────
   wechatLog: (tail = 200) => http<{ lines: string[] }>('GET', `/api/logs/wechat?tail=${tail}`),
@@ -246,6 +250,8 @@ export const api = {
     http<{ ok: boolean }>('POST', `/api/conductor/subagent/${sid}`, { action, msg }),
   conductorApproval: (prompt: string, source: string) =>
     http<{ ok: boolean }>('POST', '/api/conductor/approval', { prompt, source }),
+  tokenStats: () => http<TokenStatsResponse>('GET', '/api/tokens/stats'),
+  tokenHistory: (hours = 24) => http<TokenHistoryResponse>('GET', `/api/tokens/history?hours=${hours}`),
   conductorLog: () => http<{ log: ConductorLogItem[] }>('GET', '/api/conductor/log'),
   conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),
   conductorStart: (llm_index?: number | null) => http<{ ok: boolean }>('POST', '/api/conductor/start', { llm_index }),

@@ -28,6 +28,7 @@ const MyKey = lazy(() => import('@/pages/MyKey').then((m) => ({ default: m.MyKey
 const Settings = lazy(() => import('@/pages/Settings').then((m) => ({ default: m.Settings })))
 const Tasks = lazy(() => import('@/pages/Tasks').then((m) => ({ default: m.Tasks })))
 const Autonomous = lazy(() => import('@/pages/Autonomous').then((m) => ({ default: m.Autonomous })))
+const TokenStats = lazy(() => import('@/pages/TokenStats').then((m) => ({ default: m.TokenStats })))
 
 export default function App() {
   const start = useAgentStore((s) => s.start)
@@ -132,6 +133,7 @@ export default function App() {
               <Route path="/mykey" element={<MyKey />} />
               <Route path="/tasks" element={<Tasks />} />
               <Route path="/autonomous" element={<Autonomous />} />
+              <Route path="/tokens" element={<TokenStats />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/chat" replace />} />
             </Routes>

@@ -33,6 +33,9 @@ export interface LLMInfo {
   current: boolean
   preferred?: boolean
   kind?: 'mixin' | 'single'
+  members?: string[]
+  active_member?: string
+  in_mixin?: boolean
   model?: string
   api_base?: string
   api_key_masked?: string
@@ -382,6 +385,23 @@ export interface ConductorStatus {
   subagents: { running: number; stopped: number }
   chat_count: number
 }
+
+export interface TokenThreadStats {
+  thread: string
+  requests: number
+  input: number
+  output: number
+  cache_create: number
+  cache_read: number
+  total: number
+  cache_hit_rate: number
+  elapsed_seconds: number
+}
+
+export interface TokenTotals extends Omit<TokenThreadStats, 'thread' | 'elapsed_seconds'> {}
+export interface TokenStatsResponse { available: boolean; threads: TokenThreadStats[]; totals: TokenTotals; timestamp: number }
+export interface TokenHistoryPoint extends TokenTotals { timestamp: number }
+export interface TokenHistoryResponse { hours: number; history: TokenHistoryPoint[] }
 
 export interface ConductorApprovalItem {
   id: string

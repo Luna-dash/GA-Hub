@@ -6,7 +6,8 @@
 //      • absolute paths ending in a file extension (`/Users/.../foo.py`)
 //      • repo-relative paths (`temp/...`, `memory/...`)
 //      • `[FILE:path]` markers the agent emits for files it wants the user to open
-//      Code (fenced or inline) is left untouched so we don't mangle scripts.
+//      Plain text and path-only inline code are linkified; fenced code blocks
+//      remain untouched so scripts are never mangled.
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { memo, ReactNode, useMemo } from 'react'
@@ -26,7 +27,17 @@ const MD_COMPONENTS = {
   th: ({ children }: any) => <th>{linkifyChildren(children)}</th>,
   em: ({ children }: any) => <em>{linkifyChildren(children)}</em>,
   strong: ({ children }: any) => <strong>{linkifyChildren(children)}</strong>,
-  // Don't touch <code>; leave inline + block code alone.
+  // react-markdown v9 has no `inline` prop. Source positions reliably
+  // distinguish one-line inline code from fenced blocks; only turn an inline
+  // code span into a button when its complete content is a supported path.
+  code: ({ children, node, ...props }: any) => {
+    const text = extractText(children).trim()
+    const oneLine = node?.position?.start?.line === node?.position?.end?.line
+    const path = oneLine ? matchWholePath(text) : null
+    return path
+      ? <PathLink path={path} display={text} />
+      : <code {...props}>{children}</code>
+  },
 } as const
 
 const MD_REMARK_PLUGINS = [remarkGfm]
@@ -93,13 +104,23 @@ function extractText(node: any): string {
 
 // ── path auto-linking ──────────────────────────────────────────────
 // Three families of matches we care about (alternation order matters —
-// `[FILE:...]` is most specific, then absolute paths, then prefixed
-// relative ones):
+// `[FILE:...]` is most specific, then absolute paths, then relative paths):
 //   1. [FILE:/abs/path] or [FILE:rel/path]  → strip wrapper, link the inner
-//   2. absolute paths /a/b/c.ext (4-letter ext max, common chars only)
-//   3. temp/... or memory/... relative paths
+//   2. absolute paths such as /a/b/c.ext or C:\a\b\c.ext
+//   3. relative paths with a directory and extension, such as temp/a.png
 const PATH_RE =
-  /\[FILE:([^\]\s]+)\]|((?:\/[\w.\-+@]+){2,}\.[A-Za-z0-9]{1,8})|((?:temp|memory)\/[\w./\-+@]+)/g
+  /\[FILE:([^\]\s]+)\]|((?:(?:[A-Za-z]:[\\/])|\/)[\w.\\/\-+@]+\.[A-Za-z0-9]{1,8})|((?:[\w.\-+@]+[\\/])+[\w.\-+@]+\.[A-Za-z0-9]{1,8})/g
+
+/** Return the underlying path only when the complete string is a path marker/path. */
+function matchWholePath(text: string): string | null {
+  PATH_RE.lastIndex = 0
+  const match = PATH_RE.exec(text)
+  const path = match && match.index === 0 && match[0].length === text.length
+    ? (match[1] || match[2] || match[3] || match[0])
+    : null
+  PATH_RE.lastIndex = 0
+  return path
+}
 
 function linkifyChildren(children: ReactNode): ReactNode {
   return mapChildren(children, linkifyString)
@@ -137,21 +158,22 @@ function linkifyString(s: string): ReactNode {
 }
 
 function PathLink({ path, display }: { path: string; display: string }) {
-  // Best-effort: backend serves anything under temp/ or admin uploads/, so
-  // for absolute paths this works; for relative ones we let the backend
-  // try (it may 403 if the path resolves outside allowed roots — that's
-  // visible feedback enough to be useful).
-  const href = api.fileUrlByPath(path)
+  const reveal = async () => {
+    try {
+      await api.revealFile(path)
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : `无法定位 ${path}`)
+    }
+  }
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="inline-flex items-baseline gap-0.5 text-accent hover:underline break-all"
-      title={`打开 ${path}`}
+    <button
+      type="button"
+      onClick={reveal}
+      className="inline-flex items-baseline gap-0.5 text-accent hover:underline break-all text-left"
+      title={`在文件管理器中定位 ${path}`}
     >
       <span aria-hidden className="text-[0.75em] opacity-70">📄</span>
       <span className="font-mono text-[0.9em]">{display}</span>
-    </a>
+    </button>
   )
 }

@@ -16,6 +16,7 @@ type NavIconName =
   | 'mykey'
   | 'tasks'
   | 'autonomous'
+  | 'tokens'
   | 'settings'
 
 interface NavItem {
@@ -34,6 +35,7 @@ const items: NavItem[] = [
   { to: '/mykey', label: 'LLM管理', icon: 'mykey' },
   { to: '/tasks', label: '定时任务', icon: 'tasks' },
   { to: '/autonomous', label: '自主进化', icon: 'autonomous' },
+  { to: '/tokens', label: 'Token统计', icon: 'tokens' },
 ]
 
 function NavIcon({ name }: { name: NavIconName }) {
@@ -108,6 +110,12 @@ function NavIcon({ name }: { name: NavIconName }) {
           <circle {...filledDot} cx="12" cy="12" r="0.8" />
         </>
       )}
+      {name === 'tokens' && (
+        <>
+          <path {...common} d="M5 18.5V12M10 18.5V8M15 18.5V5M20 18.5V10" />
+          <path {...common} d="M3.5 18.5h18" />
+        </>
+      )}
       {name === 'settings' && (
         <>
           <path {...common} d="M12 5.2v2M12 16.8v2M5.2 12h2M16.8 12h2M7.2 7.2l1.4 1.4M15.4 15.4l1.4 1.4M16.8 7.2l-1.4 1.4M8.6 15.4l-1.4 1.4" />
@@ -140,13 +148,23 @@ export function SidebarNav() {
     return normalized.length > maxChars ? `${normalized.slice(0, maxChars - 1)}…` : normalized
   }
   const formatMixinLabel = (l: (typeof llms)[number], displayNo: number) => {
+    const members = l.members?.filter(Boolean) ?? []
     const raw = l.name || l.model || ''
     const cleaned = raw
       .replace(/^\s*(?:mixin\s*session|mixinsession|session)(?:\s*#?\s*\d+)?\s*[:：·\-—|/]?\s*/i, '')
       .trim()
-    const parts = cleaned.split('|').map((p) => p.trim()).filter(Boolean)
-    const summary = parts.length > 1 ? `${truncateLlmLabel(parts[0], 24)} +${parts.length - 1}` : truncateLlmLabel(cleaned || l.model || '未命名')
-    return `${displayNo}. ${summary}`
+    const legacyParts = cleaned.split('|').map((p) => p.trim()).filter(Boolean)
+    const parts = members.length ? members : legacyParts
+    const summary = parts.length > 1
+      ? `${truncateLlmLabel(parts[0], 24)} +${parts.length - 1}`
+      : truncateLlmLabel(parts[0] || cleaned || l.model || '未命名')
+    const active = l.active_member ? ` → ${truncateLlmLabel(l.active_member, 18)}` : ''
+    return `${displayNo}. ${summary}${active}`
+  }
+  const mixinTitle = (l: (typeof llms)[number]) => {
+    const members = l.members?.filter(Boolean) ?? []
+    const memberText = members.length ? `成员：${members.join(' → ')}` : (l.name || l.model || '未命名')
+    return l.active_member ? `${memberText}\n当前通道：${l.active_member}` : memberText
   }
   const formatSingleLabel = (l: (typeof llms)[number], displayNo: number) => {
     const alias = (l.name || '').includes('/') ? l.name.split('/').slice(1).join('/') : l.name
@@ -275,7 +293,7 @@ export function SidebarNav() {
                         aria-selected={l.index === currentLlm?.index}
                         className={clsx('ga-sidebar-llm-option', l.index === currentLlm?.index && 'active')}
                         onClick={() => pickMixinLlm(l.index)}
-                        title={l.name || l.model || '未命名'}
+                        title={mixinTitle(l)}
                       >
                         <span>{formatMixinLabel(l, i + 1)}</span>
                       </button>
