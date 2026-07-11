@@ -101,7 +101,7 @@ export function LiveChat() {
         }))
       }
       pushSystem(
-        `_↩ 已从「${restoreState.restoredTitle || ''}」恢复 ${restoreState.restoredLines ?? restoreState.messages.length} 条历史摘要到 Agent 记忆。继续对话即可。_`,
+        `_↩ 已从「${restoreState.restoredTitle || ''}」恢复完整原生上下文（${restoreState.restoredLines ?? restoreState.messages.length} 条可视消息）。继续对话即可。_`,
       )
       // Drop the state so reload / back-nav doesn't re-inject.
       nav('/chat', { replace: true, state: null })

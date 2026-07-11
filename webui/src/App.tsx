@@ -18,6 +18,7 @@ const routeFallback = (
 
 // Keep route pages out of the startup bundle. The shell (stores, sockets,
 // sidebar, command palette) loads first; individual feature pages load on demand.
+const Dashboard = lazy(() => import('@/pages/Dashboard').then((m) => ({ default: m.Dashboard })))
 const LiveChat = lazy(() => import('@/pages/LiveChat').then((m) => ({ default: m.LiveChat })))
 const FeishuBot = lazy(() => import('@/pages/FeishuBot').then((m) => ({ default: m.FeishuBot })))
 const Conversations = lazy(() => import('@/pages/Conversations').then((m) => ({ default: m.Conversations })))
@@ -122,7 +123,8 @@ export default function App() {
         <ErrorBoundary>
           <Suspense fallback={<div className="h-full flex items-center justify-center text-slate-500 text-sm">载入中…</div>}>
             <Routes>
-              <Route path="/" element={<Navigate to="/chat" replace />} />
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/chat" element={<LiveChat />} />
               <Route path="/feishu" element={<FeishuBot />} />
               <Route path="/conversations" element={<Conversations />} />

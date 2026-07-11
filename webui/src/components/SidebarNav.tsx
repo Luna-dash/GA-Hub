@@ -7,6 +7,7 @@ import { useAgentStore } from '@/stores/agentStore'
 import { useChatStore } from '@/stores/chatStore'
 
 type NavIconName =
+  | 'dashboard'
   | 'chat'
   | 'feishu'
   | 'conversations'
@@ -26,6 +27,7 @@ interface NavItem {
 }
 
 const items: NavItem[] = [
+  { to: '/dashboard', label: '状态面板', icon: 'dashboard' },
   { to: '/chat', label: '实时聊天', icon: 'chat' },
   { to: '/conductor', label: 'Conductor', icon: 'conductor' },
   { to: '/goal-hive', label: 'Goal Hive', icon: 'goalHive' },
@@ -50,6 +52,14 @@ function NavIcon({ name }: { name: NavIconName }) {
 
   return (
     <svg className="ga-nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {name === 'dashboard' && (
+        <>
+          <rect {...common} x="4.5" y="4.5" width="6" height="6" rx="1" />
+          <rect {...common} x="13.5" y="4.5" width="6" height="6" rx="1" />
+          <rect {...common} x="4.5" y="13.5" width="6" height="6" rx="1" />
+          <rect {...common} x="13.5" y="13.5" width="6" height="6" rx="1" />
+        </>
+      )}
       {name === 'chat' && (
         <>
           <path {...common} d="M5 6.2h14v8.7H12l-4.3 3.3v-3.3H5z" />

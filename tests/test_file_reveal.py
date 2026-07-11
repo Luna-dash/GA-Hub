@@ -30,13 +30,13 @@ def test_resolve_reveal_path_allows_ga_files_and_rejects_outside(tmp_path, monke
     assert exc.value.status_code == 403
 
 
-def test_reveal_windows_selects_file_without_executing(tmp_path, monkeypatch):
+def test_open_windows_file_uses_default_application(tmp_path, monkeypatch):
     target = tmp_path / "report.md"
     target.write_text("ok", encoding="utf-8")
-    popen = Mock()
+    startfile = Mock()
     monkeypatch.setattr(upload.platform, "system", lambda: "Windows")
-    monkeypatch.setattr(upload.subprocess, "Popen", popen)
+    monkeypatch.setattr(upload.os, "startfile", startfile, raising=False)
 
-    upload._reveal_in_file_manager(target)
+    upload._open_in_default_app(target)
 
-    popen.assert_called_once_with(["explorer.exe", "/select,", str(target)])
+    startfile.assert_called_once_with(str(target))

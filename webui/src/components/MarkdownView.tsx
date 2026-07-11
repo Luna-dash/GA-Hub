@@ -170,7 +170,7 @@ function PathLink({ path, display }: { path: string; display: string }) {
       type="button"
       onClick={reveal}
       className="inline-flex items-baseline gap-0.5 text-accent hover:underline break-all text-left"
-      title={`在文件管理器中定位 ${path}`}
+      title={`打开文件 ${path}`}
     >
       <span aria-hidden className="text-[0.75em] opacity-70">📄</span>
       <span className="font-mono text-[0.9em]">{display}</span>

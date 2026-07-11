@@ -399,9 +399,29 @@ export interface TokenThreadStats {
 }
 
 export interface TokenTotals extends Omit<TokenThreadStats, 'thread' | 'elapsed_seconds'> {}
-export interface TokenStatsResponse { available: boolean; threads: TokenThreadStats[]; totals: TokenTotals; timestamp: number }
+export interface TokenWeekStats extends TokenTotals { week_start: string; week_end: string }
+export interface TokenStatsResponse {
+  available: boolean
+  threads: TokenThreadStats[]
+  totals: TokenTotals
+  timestamp: number
+  current_week: TokenWeekStats
+  weeks: TokenWeekStats[]
+}
 export interface TokenHistoryPoint extends TokenTotals { timestamp: number }
 export interface TokenHistoryResponse { hours: number; history: TokenHistoryPoint[] }
+
+export type ServicePanelState = 'running' | 'ready' | 'stopped' | 'error'
+export interface ServicePanelItem {
+  id: string
+  name: string
+  state: ServicePanelState
+  summary: string
+  href: string
+  metrics: Record<string, string | number | boolean | null>
+  error: string | null
+}
+export interface ServicePanelResponse { services: ServicePanelItem[]; timestamp: number }
 
 export interface ConductorApprovalItem {
   id: string

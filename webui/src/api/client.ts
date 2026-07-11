@@ -14,6 +14,7 @@ import type {
   ConductorStatus,
   TokenStatsResponse,
   TokenHistoryResponse,
+  ServicePanelResponse,
   ConductorSubagent,
   Conversation,
   ConversationSummary,
@@ -168,14 +169,12 @@ export const api = {
     return http<{ total: number; offset: number; limit: number; items: ConversationSummary[] }>(
       'GET', `/api/conversations?${sp}`)
   },
-  conversation: (id: string) => http<Conversation>('GET', `/api/conversations/${id}`),
-  renameConversation: (id: string, title: string) =>
-    http<{ ok: boolean }>('PATCH', `/api/conversations/${id}`, { title }),
-  deleteConversation: (id: string) => http<{ ok: boolean }>('DELETE', `/api/conversations/${id}`),
+  conversation: (id: string) => http<Conversation>('GET', `/api/conversations/${encodeURIComponent(id)}`),
   exportConversation: (id: string, format: 'md' | 'json') =>
-    `/api/conversations/${id}/export?format=${format}`,
+    `/api/conversations/${encodeURIComponent(id)}/export?format=${format}`,
   restoreConversation: (id: string) =>
-    http<{ ok: boolean; restored_lines: number; title: string; id: string }>('POST', `/api/conversations/${id}/restore`),
+    http<{ ok: boolean; restored_lines: number; title: string; id: string; full: boolean }>(
+      'POST', `/api/conversations/${encodeURIComponent(id)}/restore`),
 
   // ── memory ───────────────────────────────────────────
   globalMem: () => http<{ content: string }>('GET', '/api/memory/global'),
@@ -252,6 +251,7 @@ export const api = {
     http<{ ok: boolean }>('POST', '/api/conductor/approval', { prompt, source }),
   tokenStats: () => http<TokenStatsResponse>('GET', '/api/tokens/stats'),
   tokenHistory: (hours = 24) => http<TokenHistoryResponse>('GET', `/api/tokens/history?hours=${hours}`),
+  servicePanel: () => http<ServicePanelResponse>('GET', '/api/services/panel'),
   conductorLog: () => http<{ log: ConductorLogItem[] }>('GET', '/api/conductor/log'),
   conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),
   conductorStart: (llm_index?: number | null) => http<{ ok: boolean }>('POST', '/api/conductor/start', { llm_index }),

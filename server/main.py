@@ -280,6 +280,13 @@ def create_app() -> FastAPI:
         agent_svc.start_run_thread()
 
         try:
+            from .routes import tokens as token_routes
+            token_routes.start_persistence()
+            log.info("token usage persistence started")
+        except Exception as e:
+            log.warning("token usage persistence init skipped: %s", e)
+
+        try:
             fs = FeishuService.instance()
             fs.start_log_watcher()
             log.info("feishu log watcher started")
@@ -304,6 +311,11 @@ def create_app() -> FastAPI:
 
     async def _shutdown():
         if not setup_mode:
+            try:
+                from .routes import tokens as token_routes
+                token_routes.stop_persistence()
+            except Exception:
+                log.exception("token usage final persistence failed")
             # Archive current WebUI conversation so it persists across restarts
             try:
                 from .services.agent_service import AgentService
@@ -374,6 +386,7 @@ def create_app() -> FastAPI:
             logs as log_routes,
             memory as memory_routes,
             mykey as mykey_routes,
+            services as service_routes,
             notify as notify_routes,
             tasks as task_routes,
             upload as upload_routes,
@@ -388,6 +401,7 @@ def create_app() -> FastAPI:
         app.include_router(upload_routes.router)
         app.include_router(log_routes.router)
         app.include_router(mykey_routes.router)
+        app.include_router(service_routes.router)
         app.include_router(notify_routes.router)
         app.include_router(task_routes.router)
         app.include_router(token_routes.router)

@@ -58,19 +58,32 @@ def _resolve_reveal_path(raw_path: str) -> Path:
     return path
 
 
-def _reveal_in_file_manager(path: Path) -> None:
+def _open_in_default_app(path: Path) -> None:
     system = platform.system()
-    if system == "Windows":
-        args = ["explorer.exe", str(path)] if path.is_dir() else ["explorer.exe", "/select,", str(path)]
-    elif system == "Darwin":
-        args = ["open", str(path)] if path.is_dir() else ["open", "-R", str(path)]
-    else:
-        args = ["xdg-open", str(path if path.is_dir() else path.parent)]
+    if path.is_dir():
+        if system == "Windows":
+            args = ["explorer.exe", str(path)]
+        elif system == "Darwin":
+            args = ["open", str(path)]
+        else:
+            args = ["xdg-open", str(path)]
+        try:
+            subprocess.Popen(args)
+        except OSError as exc:
+            log.warning("Cannot open %s: %s", path, exc)
+            raise HTTPException(500, "default application is unavailable") from exc
+        return
+
     try:
-        subprocess.Popen(args)
+        if system == "Windows":
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        elif system == "Darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
     except OSError as exc:
-        log.warning("Cannot reveal %s: %s", path, exc)
-        raise HTTPException(500, "file manager is unavailable") from exc
+        log.warning("Cannot open %s: %s", path, exc)
+        raise HTTPException(500, "default application is unavailable") from exc
 
 
 def _upload_dir() -> str:
@@ -150,9 +163,9 @@ async def get_file(fname: str):
 
 @router.post("/api/files/reveal")
 def reveal_file(req: RevealRequest):
-    """Reveal a GA-owned file in the host file manager without executing it."""
+    """Open a GA-owned file with the host's default application."""
     path = _resolve_reveal_path(req.path)
-    _reveal_in_file_manager(path)
+    _open_in_default_app(path)
     return {"ok": True, "path": str(path)}
 
 

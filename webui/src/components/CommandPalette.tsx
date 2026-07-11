@@ -114,6 +114,7 @@ export function CommandPalette() {
     const acts: Action[] = []
     // Page jumps
     const pages = [
+      { p: '/dashboard', label: '状态面板 / Dashboard', icon: '▦' },
       { p: '/chat', label: '实时聊天 / Live Chat', icon: '💬' },
       { p: '/feishu', label: '飞书 Bot / Feishu Bot', icon: '🪽' },
       { p: '/conversations', label: '对话管理 / Conversations', icon: '🗂️' },

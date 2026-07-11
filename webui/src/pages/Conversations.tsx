@@ -67,16 +67,6 @@ export function Conversations() {
   }, [total, page, limit])
   const rounds = useMemo(() => buildRounds((detail?.messages || []) as Msg[]), [detail])
 
-  const handleRename = async (id: string, current: string) => {
-    const v = await dialog.prompt('重命名会话', {
-      defaultValue: current,
-      placeholder: '新标题',
-    })
-    if (v == null) return
-    await api.renameConversation(id, v)
-    qc.invalidateQueries({ queryKey: ['conversations'] })
-  }
-
   const handleExport = async (id: string, fmt: 'md' | 'json') => {
     try {
       const url = api.exportConversation(id, fmt)
@@ -111,28 +101,11 @@ export function Conversations() {
     }
   }
 
-  const handleDelete = async (id: string) => {
-    const ok = await dialog.confirm(
-      '删除该会话？',
-      '此操作不可逆。',
-      { confirmText: '删除', tone: 'danger' },
-    )
-    if (!ok) return
-    try {
-      await api.deleteConversation(id)
-      qc.invalidateQueries({ queryKey: ['conversations'] })
-      if (active === id) setActive(null)
-      toast.success('会话已删除')
-    } catch (e: any) {
-      dialog.alert('删除失败', e?.body?.detail || e?.message || String(e))
-    }
-  }
-
   const handleRestore = async (id: string) => {
     if (!detail) return
     const ok = await dialog.confirm(
       `恢复会话「${detail.title || id}」？`,
-      `· 当前 Agent 上下文会被清空\n· 该会话的消息会作为历史摘要注入 Agent 记忆\n· 之后你可以在聊天界面继续对话`,
+      `· 当前 Agent 上下文会被清空\n· 将完整恢复该会话的原生模型上下文（含工具调用与结果）\n· 之后你可以在聊天界面无缝继续对话`,
       { confirmText: '恢复并继续' },
     )
     if (!ok) return
@@ -159,7 +132,7 @@ export function Conversations() {
   return (
     <PageShell
       title="历史对话"
-      description={`memory/chat_history.json — 共 ${total} 条会话`}
+      description={`用户与助手的对话记录 — 共 ${total} 条会话`}
       actions={
         <div className="flex items-center gap-2">
           <div className="flex bg-bg-card border border-line rounded-lg overflow-hidden text-xs">
@@ -169,7 +142,7 @@ export function Conversations() {
                 onClick={() => setViewMode(m)}
                 className={`px-3 py-1.5 ${viewMode === m ? 'bg-accent text-white' : 'text-slate-300 hover:bg-white/5'}`}
               >
-                {m === 'round' ? 'Round 视图' : '原始消息'}
+                {m === 'round' ? '轮次摘要' : '对话视图'}
               </button>
             ))}
           </div>
@@ -190,8 +163,6 @@ export function Conversations() {
               c={c}
               active={active === c.id}
               onClick={() => setActive(c.id)}
-              onRename={() => handleRename(c.id, c.title)}
-              onDelete={() => handleDelete(c.id)}
             />
           ))}
           <div className="p-3 flex items-center justify-between text-xs text-slate-400">
@@ -278,7 +249,7 @@ function RoundView({
     <div className="space-y-5">
       {rounds.map((r, i) => {
         const roundKey = `${convId}:${r.index}`
-        const isConclusionOpen = !!openConclusion[roundKey]
+        const isProcessOpen = !!openConclusion[roundKey]
         const summaryText = r.conclusion || r.turnSummaries[r.turnSummaries.length - 1]?.summary || '（无结论）'
         const detailText = r.detail && r.detail !== '（暂无最终正文）' ? r.detail : summaryText
         const hasTurnSummaries = r.turnSummaries.length > 0
@@ -297,35 +268,34 @@ function RoundView({
               <div className="flex justify-start">
                 <div className="w-[86%] rounded-[18px] border border-line bg-bg-card px-4 py-3 shadow-sm">
                   <div className="flex items-center gap-3 mb-2">
-                    {(hasTurnSummaries || detailText) && (
+                    {hasTurnSummaries && (
                       <button
                         type="button"
-                        onClick={() => setOpenConclusion((s) => ({ ...s, [roundKey]: !isConclusionOpen }))}
+                        onClick={() => setOpenConclusion((s) => ({ ...s, [roundKey]: !isProcessOpen }))}
                         className="text-xs text-accent hover:underline shrink-0"
                       >
-                        {isConclusionOpen ? '收起结论' : '展开结论'}
+                        {isProcessOpen ? '收起过程' : '展开过程'}
                       </button>
                     )}
-                    <div className="text-[11px] uppercase tracking-wider text-slate-500">
-                      {isConclusionOpen ? 'assistant conclusion' : 'turn summaries'}
-                    </div>
                   </div>
 
-                  {!isConclusionOpen ? (
-                    hasTurnSummaries ? (
-                      <div className="space-y-1.5">
-                        {r.turnSummaries.map((ts, idx) => (
-                          <div key={`${roundKey}-ts-${idx}`} className="rounded-lg border border-line/70 bg-bg-soft/50 px-3 py-2 text-sm text-slate-200 leading-5">
-                            <span className="text-[11px] uppercase tracking-wider text-slate-500 mr-2">Turn {ts.turn}</span>
-                            <span className="whitespace-pre-wrap">{ts.summary}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-slate-200 whitespace-pre-wrap leading-6">{summaryText}</div>
-                    )
-                  ) : (
-                    <MarkdownView>{detailText}</MarkdownView>
+                  {isProcessOpen && hasTurnSummaries && (
+                    <div className="space-y-1.5 mb-4">
+                      <div className="text-[11px] uppercase tracking-wider text-slate-500">turn summaries</div>
+                      {r.turnSummaries.map((ts, idx) => (
+                        <div key={`${roundKey}-ts-${idx}`} className="rounded-lg border border-line/70 bg-bg-soft/50 px-3 py-2 text-sm text-slate-200 leading-5">
+                          <span className="text-[11px] uppercase tracking-wider text-slate-500 mr-2">Turn {ts.turn}</span>
+                          <span className="whitespace-pre-wrap">{ts.summary}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {detailText && (
+                    <div className={isProcessOpen && hasTurnSummaries ? 'border-t border-line/70 pt-3' : ''}>
+                      <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">assistant conclusion</div>
+                      <MarkdownView>{detailText}</MarkdownView>
+                    </div>
                   )}
                 </div>
               </div>
@@ -347,15 +317,23 @@ function RoundView({
 
 function FlatView({ messages }: { messages: Msg[] }) {
   return (
-    <div className="space-y-3">
-      {messages.map((m, i) => (
-        <MessageBlock
-          key={i}
-          m={m}
-          label={m.role || `message ${i + 1}`}
-          tone={m.role === 'user' ? 'user' : m.role === 'assistant' ? 'assistant' : 'other'}
-        />
-      ))}
+    <div className="space-y-4">
+      {messages.map((m, i) => {
+        const isUser = m.role === 'user'
+        const isAssistant = m.role === 'assistant'
+        const label = isUser ? '你' : isAssistant ? '助手' : (m.role || `消息 ${i + 1}`)
+        return (
+          <div key={i} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+            <div className={`w-fit max-w-[85%] ${isUser ? 'ml-12' : 'mr-12'}`}>
+              <MessageBlock
+                m={m}
+                label={label}
+                tone={isUser ? 'user' : isAssistant ? 'assistant' : 'other'}
+              />
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -595,12 +573,10 @@ function cleanSummary(s: string): string {
     .slice(0, 500)
 }
 
-function ConvRow({ c, active, onClick, onRename, onDelete }: {
+function ConvRow({ c, active, onClick }: {
   c: ConversationSummary
   active: boolean
   onClick: () => void
-  onRename: () => void
-  onDelete: () => void
 }) {
   return (
     <div
@@ -610,10 +586,6 @@ function ConvRow({ c, active, onClick, onRename, onDelete }: {
       <div className="flex items-baseline justify-between gap-2">
         <div className="text-sm text-slate-200 truncate font-medium" title={c.title}>
           {c.title || c.id}
-        </div>
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-          <button onClick={(e) => { e.stopPropagation(); onRename() }} className="text-xs text-slate-400 hover:text-slate-200 px-1">✎</button>
-          <button onClick={(e) => { e.stopPropagation(); onDelete() }} className="text-xs text-rose-400 hover:text-rose-300 px-1">✕</button>
         </div>
       </div>
       <div className="text-xs text-slate-500 truncate mt-0.5">{previewText(c.last_user_preview || '')}</div>
