@@ -1,28 +1,65 @@
 // MarkdownView — small wrapper over react-markdown that:
 //   1. Tightens spacing for chat bubbles (.prose-chat in styles/index.css)
-//   2. Adds a hover "复制" button to every fenced code block (handy for
-//      the agent's frequent shell / python output)
-//   3. Auto-linkifies file paths that show up in agent prose:
+//   2. Fenced code: language label + hover copy + syntax highlight (rehype-highlight)
+//   3. Tables: horizontal scroll wrapper + header styling (CSS)
+//   4. Task lists / list layout (CSS + GFM)
+//   5. Auto-linkifies file paths that show up in agent prose:
 //      • absolute paths ending in a file extension (`/Users/.../foo.py`)
 //      • repo-relative paths (`temp/...`, `memory/...`)
 //      • `[FILE:path]` markers the agent emits for files it wants the user to open
 //      Plain text and path-only inline code are linkified; fenced code blocks
 //      remain untouched so scripts are never mangled.
+//   6. Math (remark-math + KaTeX) only in mode=chat; single-$ disabled so
+//      shell/$var tool dumps are not italicized as formulas. mode=plain|auto
+//      keeps tool traces monochrome (GFM only, no highlight/math).
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { memo, ReactNode, useMemo } from 'react'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import rehypeHighlight from 'rehype-highlight'
+import { memo, ReactNode, useMemo, type MouseEvent } from 'react'
 import { useCopy } from '@/utils/clipboard'
 import { api } from '@/api/client'
+import { openExternalIfNeeded } from '@/utils/openExternal'
+import { looksLikeToolTrace } from '@/utils/toolTrace'
+// Light paper-ish theme; token colors further tuned under .prose-chat in CSS
+import 'highlight.js/styles/github.css'
+
+/** chat = full prose; plain = tool-safe; auto = plain when looksLikeToolTrace. */
+export type MarkdownMode = 'chat' | 'plain' | 'auto'
 
 // Stable component map. Defined at module scope so React.memo's shallow
 // children-equality on <MarkdownView> isn't undermined by ReactMarkdown
 // internally seeing a fresh `components` prop on every render.
 const MD_COMPONENTS = {
-  // Attach copy chip to fenced code blocks
+  // Attach lang chip + copy to fenced code blocks
   pre: ({ children }: any) => <CodeBlock>{children}</CodeBlock>,
+  // Wide GFM tables: scroll container (styles in .md-table-wrap)
+  table: ({ children, ...props }: any) => (
+    <div className="md-table-wrap">
+      <table {...props}>{children}</table>
+    </div>
+  ),
+  // External http(s) → OS browser; same-origin stays in WebView.
+  a: ({ href, children, ...props }: any) => (
+    <a
+      href={href}
+      {...props}
+      onClick={(e: MouseEvent<HTMLAnchorElement>) => {
+        if (openExternalIfNeeded(href)) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      }}
+    >
+      {children}
+    </a>
+  ),
   // Linkify paths in flowing prose
   p: ({ children }: any) => <p>{linkifyChildren(children)}</p>,
-  li: ({ children }: any) => <li>{linkifyChildren(children)}</li>,
+  li: ({ children, className, ...props }: any) => (
+    <li className={className} {...props}>{linkifyChildren(children)}</li>
+  ),
   td: ({ children }: any) => <td>{linkifyChildren(children)}</td>,
   th: ({ children }: any) => <th>{linkifyChildren(children)}</th>,
   em: ({ children }: any) => <em>{linkifyChildren(children)}</em>,
@@ -30,17 +67,54 @@ const MD_COMPONENTS = {
   // react-markdown v9 has no `inline` prop. Source positions reliably
   // distinguish one-line inline code from fenced blocks; only turn an inline
   // code span into a button when its complete content is a supported path.
-  code: ({ children, node, ...props }: any) => {
+  // Preserve className from rehype-highlight (hljs language-*).
+  code: ({ children, node, className, ...props }: any) => {
     const text = extractText(children).trim()
     const oneLine = node?.position?.start?.line === node?.position?.end?.line
     const path = oneLine ? matchWholePath(text) : null
     return path
       ? <PathLink path={path} display={text} />
-      : <code {...props}>{children}</code>
+      : <code className={className} {...props}>{children}</code>
   },
 } as const
 
-const MD_REMARK_PLUGINS = [remarkGfm]
+// remark-math before gfm: math delimiters should win over GFM punctuation.
+// singleDollarTextMath:false — bare $var / PowerShell must not become KaTeX.
+const MD_REMARK_CHAT: any[] = [remarkMath({ singleDollarTextMath: false }), remarkGfm]
+const MD_REMARK_PLAIN: any[] = [remarkGfm]
+// detect:false (rehype-highlight default): only fenced ```lang blocks colorize.
+const MD_REHYPE_CHAT: any[] = [[rehypeHighlight, { detect: false }], rehypeKatex]
+const MD_REHYPE_PLAIN: any[] = []
+
+/**
+ * Models often emit TeX delimiters `\\(...\\)` / `\\[...\\]` (and
+ * `\\\\(...\\\\)` after JSON escaping) instead of `$$...$$`.
+ * remark-math only understands dollar delimiters, so normalize first.
+ * With single-$ disabled we always map to `$$` (display), never `$...$`,
+ * so shell variables cannot be reintroduced as false inline math.
+ * Skip fenced code blocks so shell/python snippets stay intact.
+ */
+function normalizeMathDelimiters(src: string): string {
+  if (!src || !/[\\$]/.test(src)) return src
+  const parts = src.split(/(```[\s\S]*?```)/g)
+  return parts
+    .map((part) => {
+      if (part.startsWith('```')) return part
+      // Display: \[ ... \]  (allow optional whitespace)
+      let s = part.replace(/\\\[((?:.|\n)*?)\\\]/g, (_m, body: string) => {
+        const t = body.trim()
+        return t ? `\n$$\n${t}\n$$\n` : _m
+      })
+      // Inline-ish: \( ... \) → $$ (safe under singleDollarTextMath:false)
+      s = s.replace(/\\\(((?:.|\n)*?)\\\)/g, (_m, body: string) => {
+        const t = body.trim()
+        if (!t) return _m
+        return `\n$$\n${t}\n$$\n`
+      })
+      return s
+    })
+    .join('')
+}
 
 // Memoized so historical (non-streaming) bubbles don't re-parse markdown
 // when an unrelated bubble streams. Combined with chatStore's chat:next
@@ -48,23 +122,46 @@ const MD_REMARK_PLUGINS = [remarkGfm]
 // watchdog even on long markdown answers — see the comment in chatStore.ts
 // for the failure mode this guards against.
 //
-// The single `children: string` prop makes the default shallow comparison
-// optimal — if the string reference equals (or, with React's auto-string
-// dedup, is value-equal at the call site), we skip ReactMarkdown's whole
-// re-parse. The actively-streaming bubble still re-renders because its
-// content string changes; everyone else short-circuits.
+// children + mode are primitives, so default shallow comparison is enough:
+// equal content/mode skips ReactMarkdown re-parse; streaming bubbles still
+// re-render as their content string changes.
 export const MarkdownView = memo(function MarkdownView({
   children,
+  mode = 'chat',
 }: {
   children: string
+  /** Default chat. Use plain/auto for tool folds and code_run dumps. */
+  mode?: MarkdownMode
 }) {
-  // useMemo on the empty-string fallback is overkill but cheap; it keeps the
-  // string identity stable across renders so children-equality holds.
-  const text = useMemo(() => children || '', [children])
+  const resolved: 'chat' | 'plain' =
+    mode === 'plain'
+      ? 'plain'
+      : mode === 'auto'
+        ? looksLikeToolTrace(children || '')
+          ? 'plain'
+          : 'chat'
+        : 'chat'
+
+  // Normalize TeX only in chat mode; plain keeps $ and backslashes literal.
+  const text = useMemo(() => {
+    const raw = children || ''
+    return resolved === 'chat' ? normalizeMathDelimiters(raw) : raw
+  }, [children, resolved])
+
+  const remarkPlugins = resolved === 'chat' ? MD_REMARK_CHAT : MD_REMARK_PLAIN
+  const rehypePlugins = resolved === 'chat' ? MD_REHYPE_CHAT : MD_REHYPE_PLAIN
+
   return (
-    <div className="prose-chat max-w-none break-words">
+    <div
+      className={
+        resolved === 'plain'
+          ? 'prose-chat prose-chat--plain max-w-none break-words'
+          : 'prose-chat max-w-none break-words'
+      }
+    >
       <ReactMarkdown
-        remarkPlugins={MD_REMARK_PLUGINS}
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
         components={MD_COMPONENTS}
       >
         {text}
@@ -76,20 +173,25 @@ export const MarkdownView = memo(function MarkdownView({
 function CodeBlock({ children }: { children: any }) {
   const { copied, copy } = useCopy()
   const text = extractText(children)
+  const lang = extractCodeLang(children)
   return (
-    <div className="relative group">
-      <pre>{children}</pre>
-      {text && (
-        <button
-          onClick={() => copy(text)}
-          className="absolute top-1.5 right-1.5 px-2 py-0.5 text-[11px] rounded
-                     bg-bg-soft/80 backdrop-blur border border-line text-slate-400
-                     opacity-0 group-hover:opacity-100 transition hover:text-slate-200"
-          title="复制代码"
-        >
-          {copied ? '✓ 已复制' : '复制'}
-        </button>
+    <div className="relative group md-codeblock">
+      {(lang || text) && (
+        <div className="md-codeblock-bar">
+          {lang ? <span className="md-code-lang">{lang}</span> : <span />}
+          {text && (
+            <button
+              type="button"
+              onClick={() => copy(text)}
+              className="md-code-copy"
+              title="复制代码"
+            >
+              {copied ? '✓ 已复制' : '复制'}
+            </button>
+          )}
+        </div>
       )}
+      <pre>{children}</pre>
     </div>
   )
 }
@@ -99,6 +201,24 @@ function extractText(node: any): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node)
   if (Array.isArray(node)) return node.map(extractText).join('')
   if (node?.props?.children) return extractText(node.props.children)
+  return ''
+}
+
+/** language-foo / lang-foo from fenced code className (rehype-highlight). */
+function extractCodeLang(node: any): string {
+  if (node == null) return ''
+  if (Array.isArray(node)) {
+    for (const c of node) {
+      const l = extractCodeLang(c)
+      if (l) return l
+    }
+    return ''
+  }
+  const cls = node?.props?.className
+  const s = Array.isArray(cls) ? cls.join(' ') : String(cls || '')
+  const m = s.match(/(?:language|lang)-([a-zA-Z0-9_+-]+)/)
+  if (m) return m[1].toLowerCase()
+  if (node?.props?.children) return extractCodeLang(node.props.children)
   return ''
 }
 

@@ -36,6 +36,59 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
+# Open-with-default-app allowlist: documents / images / media / common text
+# & source (viewed, not executed by the server). Rejects installers/scripts
+# that would be dangerous if a random page could POST /api/files/reveal.
+# Path roots are intentionally NOT restricted — agent transcripts often
+# cite GA-Hub, sibling repos, or absolute cwd paths outside GA_ROOT.
+_REVEAL_SAFE_EXT = {
+    # images
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".tiff", ".heic", ".svg",
+    # documents / text / data
+    ".pdf", ".txt", ".md", ".rst", ".csv", ".tsv", ".json", ".jsonl",
+    ".log", ".yaml", ".yml", ".toml", ".ini", ".xml", ".html", ".htm",
+    # office
+    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp",
+    # ebooks
+    ".epub", ".mobi",
+    # code (opened by editor/notepad; server never executes them)
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".c", ".cpp", ".h", ".hpp",
+    ".go", ".rs", ".rb", ".php", ".sql", ".css", ".vue",
+    # archives (open in explorer/archive tool)
+    ".zip", ".tar", ".gz", ".tgz", ".7z", ".rar",
+    # media
+    ".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi",
+    ".mp3", ".wav", ".silk", ".m4a", ".flac", ".ogg", ".aac",
+}
+
+# Never launch these even if the OS would "open" them.
+_REVEAL_BLOCKED_EXT = {
+    ".exe", ".msi", ".msp", ".com", ".scr", ".pif",
+    ".dll", ".sys", ".drv",
+    ".vbs", ".vbe", ".jse", ".wsf", ".wsh", ".msc",
+    ".reg", ".inf", ".lnk", ".url", ".scf",
+    ".app", ".dmg", ".pkg", ".deb", ".rpm",
+}
+
+
+def _reveal_ext_allowed(path: Path) -> bool:
+    """True if *path* may be handed to the OS default application."""
+    if path.is_dir():
+        # Folders → Explorer/Finder only (no code execution).
+        return True
+    ext = path.suffix.lower()
+    if not ext:
+        # Extensionless: allow only if it looks like plain text (small heuristic).
+        # Reject by default — safer than launching unknown binaries.
+        return False
+    if ext in _REVEAL_BLOCKED_EXT:
+        return False
+    # Shell scripts often execute on "open" under Windows associations.
+    if ext in {".bat", ".cmd", ".ps1", ".psm1", ".sh"}:
+        return False
+    return ext in _REVEAL_SAFE_EXT
+
+
 def _resolve_reveal_path(raw_path: str) -> Path:
     value = raw_path.strip().strip('"')
     if not value:
@@ -48,13 +101,13 @@ def _resolve_reveal_path(raw_path: str) -> Path:
         path = Path(_paths.GA_ROOT) / path
     path = path.resolve()
 
-    roots = [Path(_paths.admin_uploads_dir()).resolve()]
-    if _paths.GA_ROOT is not None:
-        roots.append(Path(_paths.GA_ROOT).resolve())
-    if not any(_is_within(path, root) for root in roots):
-        raise HTTPException(403, "outside allowed roots")
     if not path.exists():
         raise HTTPException(404, "not found")
+    if not _reveal_ext_allowed(path):
+        raise HTTPException(
+            403,
+            "file type not allowed for open (documents/images/media/text only)",
+        )
     return path
 
 
@@ -163,7 +216,13 @@ async def get_file(fname: str):
 
 @router.post("/api/files/reveal")
 def reveal_file(req: RevealRequest):
-    """Open a GA-owned file with the host's default application."""
+    """Open a local path with the host's default application.
+
+    Any existing absolute path is allowed if its type is on the
+    document/image/media/text allowlist (or is a directory). Relative
+    paths still resolve under ``GA_ROOT``. Content download via
+    ``files-by-path`` remains root-restricted separately.
+    """
     path = _resolve_reveal_path(req.path)
     _open_in_default_app(path)
     return {"ok": True, "path": str(path)}

@@ -809,6 +809,28 @@ def main() -> int:
             except Exception as e:
                 return {"ok": False, "error": str(e)}
 
+        def open_url(self, url: str) -> dict:
+            """Open http(s) in the OS default browser; keep WebView on the SPA.
+
+            Called from the frontend for external markdown/attachment links so
+            in-window navigation cannot replace /chat with a third-party site.
+            """
+            try:
+                import webbrowser
+                from urllib.parse import urlparse
+
+                if not isinstance(url, str) or not url.strip():
+                    return {"ok": False, "error": "empty url"}
+                url = url.strip()
+                parsed = urlparse(url)
+                if parsed.scheme not in ("http", "https"):
+                    return {"ok": False, "error": f"scheme not allowed: {parsed.scheme!r}"}
+                # webbrowser.open uses the system default handler (Edge/Chrome/…)
+                ok = webbrowser.open(url, new=2)
+                return {"ok": bool(ok), "url": url}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
     _win_w, _win_h, _win_x, _win_y = _compute_window_geometry()
     win = webview.create_window(
         title="GA-Hub · 管理控制台",

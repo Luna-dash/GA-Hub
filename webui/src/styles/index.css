@@ -118,23 +118,261 @@ html.dark .text-slate-600 { color: #6E5A38; }
 /* ─── Markdown ─────────────────────────────────────────────── */
 .prose-chat pre {
   @apply bg-bg-soft border border-line rounded-lg p-3 overflow-x-auto text-sm;
+  margin: 0;
+}
+.prose-chat .md-codeblock {
+  margin: 0.5rem 0;
+  border: 1px solid var(--c-line);
+  border-radius: 0.5rem;
+  background: var(--c-bg-soft);
+  overflow: hidden;
+}
+.prose-chat .md-codeblock pre {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  background: transparent;
+}
+.prose-chat .md-codeblock-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.2rem 0.45rem 0.2rem 0.65rem;
+  border-bottom: 1px solid var(--c-line);
+  background: color-mix(in srgb, var(--c-bg-soft) 70%, var(--c-line));
+  min-height: 1.6rem;
+}
+.prose-chat .md-code-lang {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--c-text-muted);
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+}
+.prose-chat .md-code-copy {
+  padding: 0.15rem 0.45rem;
+  font-size: 11px;
+  border-radius: 0.25rem;
+  border: 1px solid var(--c-line);
+  background: var(--c-bg);
+  color: var(--c-text-muted);
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.prose-chat .md-codeblock:hover .md-code-copy,
+.prose-chat .md-codeblock:focus-within .md-code-copy {
+  opacity: 1;
+}
+.prose-chat .md-code-copy:hover {
+  color: var(--c-text);
 }
 .prose-chat code {
   font-family: '"JetBrains Mono", "Fira Code", monospace';
   font-size: 0.92em;
   color: #8A5A1F;
 }
-.prose-chat pre code { color: var(--c-text); }
+.prose-chat pre code {
+  color: var(--c-text);
+  background: transparent;
+  padding: 0;
+  font-size: 0.88em;
+  line-height: 1.5;
+}
+/* Tool / code_run dumps: monochrome body, no KaTeX, no hljs token colors.
+   Fence chrome (copy bar) still works; pre code stays body text color. */
+.prose-chat--plain,
+.prose-chat--plain p,
+.prose-chat--plain li {
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  font-size: 0.88em;
+  line-height: 1.55;
+}
+.prose-chat--plain em,
+.prose-chat--plain i {
+  font-style: normal;
+}
+.prose-chat--plain code {
+  color: var(--c-text);
+  background: transparent;
+  padding: 0;
+}
+.prose-chat--plain .hljs,
+.prose-chat--plain .hljs-comment,
+.prose-chat--plain .hljs-keyword,
+.prose-chat--plain .hljs-string,
+.prose-chat--plain .hljs-number,
+.prose-chat--plain .hljs-title,
+.prose-chat--plain .hljs-built_in,
+.prose-chat--plain .hljs-meta {
+  color: var(--c-text) !important;
+  font-style: normal !important;
+  font-weight: normal !important;
+  background: transparent !important;
+}
+/* highlight.js tokens on paper theme (override github.css where needed) */
+.prose-chat .hljs {
+  background: transparent;
+  color: var(--c-text);
+  padding: 0;
+}
+.prose-chat .hljs-comment,
+.prose-chat .hljs-quote { color: #8a7b68; font-style: italic; }
+.prose-chat .hljs-keyword,
+.prose-chat .hljs-selector-tag,
+.prose-chat .hljs-subst { color: #8a3d1f; font-weight: 600; }
+.prose-chat .hljs-string,
+.prose-chat .hljs-doctag,
+.prose-chat .hljs-template-variable { color: #2f6b3a; }
+.prose-chat .hljs-number,
+.prose-chat .hljs-literal { color: #a65c12; }
+.prose-chat .hljs-title,
+.prose-chat .hljs-section,
+.prose-chat .hljs-selector-id { color: #1f4f7a; font-weight: 600; }
+.prose-chat .hljs-type,
+.prose-chat .hljs-class .hljs-title { color: #5a4a8a; }
+.prose-chat .hljs-built_in,
+.prose-chat .hljs-builtin-name { color: #6b4f1f; }
+.prose-chat .hljs-meta,
+.prose-chat .hljs-attr { color: #6a5a48; }
+.prose-chat .hljs-addition { color: #2f6b3a; background: rgba(47, 107, 58, 0.08); }
+.prose-chat .hljs-deletion { color: #8a3d1f; background: rgba(138, 61, 31, 0.08); }
+
 .prose-chat h1 { @apply text-xl font-semibold mt-3 mb-2; }
 .prose-chat h2 { @apply text-lg font-semibold mt-3 mb-2; }
 .prose-chat h3 { @apply text-base font-semibold mt-2 mb-1; }
 .prose-chat p  { @apply leading-7 my-1; }
-.prose-chat ul { @apply list-disc list-inside ml-2; }
-.prose-chat ol { @apply list-decimal list-inside ml-2; }
+/* list-outside: multi-line items align under text, not under bullet */
+.prose-chat ul {
+  list-style-type: disc;
+  list-style-position: outside;
+  margin: 0.35rem 0;
+  padding-left: 1.35rem;
+}
+.prose-chat ol {
+  list-style-type: decimal;
+  list-style-position: outside;
+  margin: 0.35rem 0;
+  padding-left: 1.35rem;
+}
+.prose-chat li {
+  margin: 0.2rem 0;
+  padding-left: 0.15rem;
+  line-height: 1.6;
+}
+.prose-chat li > ul,
+.prose-chat li > ol {
+  margin-top: 0.15rem;
+  margin-bottom: 0.15rem;
+}
+/* GFM task lists */
+.prose-chat ul.contains-task-list {
+  list-style: none;
+  padding-left: 0.25rem;
+}
+.prose-chat li.task-list-item {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.35rem 0.45rem;
+  padding-left: 0;
+}
+.prose-chat li.task-list-item input[type="checkbox"] {
+  margin: 0.35rem 0 0 0;
+  accent-color: #8A6438;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.prose-chat li.task-list-item:has(input:checked) {
+  color: var(--c-text-muted);
+}
+.prose-chat li.task-list-item:has(input:checked) > :not(input):not(ul):not(ol) {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--c-text-muted) 70%, transparent);
+}
+
 .prose-chat blockquote { border-left: 2px solid var(--c-line); padding-left: 0.75rem; color: var(--c-text-muted); }
-.prose-chat table { @apply text-sm border border-line; }
-.prose-chat th, .prose-chat td { @apply border border-line px-2 py-1; }
+
+/* Tables: horizontal scroll + header weight */
+.prose-chat .md-table-wrap {
+  overflow-x: auto;
+  margin: 0.5rem 0;
+  border: 1px solid var(--c-line);
+  border-radius: 0.4rem;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+.prose-chat .md-table-wrap table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  margin: 0;
+  border: none;
+}
+.prose-chat table {
+  @apply text-sm border border-line;
+}
+.prose-chat th,
+.prose-chat td {
+  border: 1px solid var(--c-line);
+  padding: 0.35rem 0.6rem;
+  vertical-align: top;
+  max-width: 22rem;
+  word-break: break-word;
+}
+.prose-chat th {
+  background: color-mix(in srgb, var(--c-bg-soft) 55%, var(--c-line));
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+.prose-chat tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--c-bg-soft) 40%, transparent);
+}
 .prose-chat a { color: var(--c-accent); text-decoration: underline; }
+/* KaTeX math (remark-math + rehype-katex) */
+.prose-chat .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.35rem 0;
+  margin: 0.5rem 0;
+}
+/* Base ≈ body; do not inflate — inflated base makes scriptstyle look “full size”. */
+.prose-chat .katex {
+  font-size: 1em;
+  color: var(--c-text);
+  font-weight: normal;
+  line-height: 1.2;
+}
+/*
+ * KaTeX 0.18 emits `katex-sizing reset-sizeN sizeM` (not bare `.sizing`).
+ * Built CSS already has font-size:.7em for script, but WebView2 / cascade
+ * with chat bubble styles can make super/subscripts look same as base.
+ * Reinforce script / scriptscript sizes explicitly.
+ */
+.prose-chat .katex .mtight {
+  font-size: 0.72em;
+  letter-spacing: 0;
+}
+.prose-chat .katex .katex-sizing.size3,
+.prose-chat .katex .fontsize-ensurer.size3 {
+  font-size: 0.7em !important;
+}
+.prose-chat .katex .katex-sizing.size1,
+.prose-chat .katex .fontsize-ensurer.size1 {
+  font-size: 0.5em !important;
+}
+.prose-chat .katex .katex-sizing.size2,
+.prose-chat .katex .fontsize-ensurer.size2 {
+  font-size: 0.6em !important;
+}
+.prose-chat .katex .katex-sizing.size4,
+.prose-chat .katex .fontsize-ensurer.size4 {
+  font-size: 0.85em !important;
+}
 
 .turn-fold {
   border-radius: 0.6rem;

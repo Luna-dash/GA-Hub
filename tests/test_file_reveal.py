@@ -8,7 +8,7 @@ from server import _paths
 from server.routes import upload
 
 
-def test_resolve_reveal_path_allows_ga_files_and_rejects_outside(tmp_path, monkeypatch):
+def test_resolve_reveal_path_allows_any_safe_file_type(tmp_path, monkeypatch):
     ga_root = tmp_path / "ga"
     ga_root.mkdir()
     target = ga_root / "temp" / "report.md"
@@ -23,11 +23,40 @@ def test_resolve_reveal_path_allows_ga_files_and_rejects_outside(tmp_path, monke
     assert upload._resolve_reveal_path("temp/report.md") == target.resolve()
     assert upload._resolve_reveal_path(str(target)) == target.resolve()
 
-    outside = tmp_path / "secret.txt"
-    outside.write_text("no", encoding="utf-8")
+    # Outside GA_ROOT is OK for safe document types (agent often cites Hub paths).
+    outside = tmp_path / "notes.md"
+    outside.write_text("ok", encoding="utf-8")
+    assert upload._resolve_reveal_path(str(outside)) == outside.resolve()
+
+    # Directories open in Explorer/Finder.
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    assert upload._resolve_reveal_path(str(folder)) == folder.resolve()
+
+
+def test_resolve_reveal_path_rejects_executables_and_missing(tmp_path, monkeypatch):
+    ga_root = tmp_path / "ga"
+    ga_root.mkdir()
+    monkeypatch.setattr(_paths, "GA_ROOT", ga_root)
+    monkeypatch.setattr(_paths, "admin_uploads_dir", lambda: tmp_path / "uploads")
+
+    exe = tmp_path / "evil.exe"
+    exe.write_bytes(b"MZ")
     with pytest.raises(HTTPException) as exc:
-        upload._resolve_reveal_path(str(outside))
+        upload._resolve_reveal_path(str(exe))
     assert exc.value.status_code == 403
+    assert "not allowed" in str(exc.value.detail).lower()
+
+    bat = tmp_path / "run.bat"
+    bat.write_text("@echo off\n", encoding="utf-8")
+    with pytest.raises(HTTPException) as exc2:
+        upload._resolve_reveal_path(str(bat))
+    assert exc2.value.status_code == 403
+
+    missing = tmp_path / "nope.md"
+    with pytest.raises(HTTPException) as exc3:
+        upload._resolve_reveal_path(str(missing))
+    assert exc3.value.status_code == 404
 
 
 def test_open_windows_file_uses_default_application(tmp_path, monkeypatch):

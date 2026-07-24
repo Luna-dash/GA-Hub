@@ -6,6 +6,7 @@ import type { ConversationSummary } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { MarkdownView } from '@/components/MarkdownView'
 import { previewText } from '@/utils/foldTurns'
+import { looksLikeToolTrace, stripWrapperFences } from '@/utils/toolTrace'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 
@@ -294,7 +295,7 @@ function RoundView({
                   {detailText && (
                     <div className={isProcessOpen && hasTurnSummaries ? 'border-t border-line/70 pt-3' : ''}>
                       <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">assistant conclusion</div>
-                      <MarkdownView>{detailText}</MarkdownView>
+                      <MarkdownView mode="auto">{detailText}</MarkdownView>
                     </div>
                   )}
                 </div>
@@ -347,7 +348,7 @@ function MessageBlock({ m, label, tone }: { m: Msg; label: string; tone: 'user' 
   return (
     <div className={`rounded-xl border ${cls} p-3`}>
       <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">{label}</div>
-      <MarkdownView>{m.content || ''}</MarkdownView>
+      <MarkdownView mode="auto">{m.content || ''}</MarkdownView>
     </div>
   )
 }
@@ -473,34 +474,6 @@ function stripTraceMeta(s: string): string {
     .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
     .replace(/<summary>[\s\S]*?<\/summary>\s*/gi, '')
     .trim()
-}
-
-function stripWrapperFences(s: string): string {
-  let text = (s || '').trim()
-  let prev = ''
-  while (text && text !== prev) {
-    prev = text
-    text = text
-      .replace(/^\s*`{3,}[a-zA-Z0-9_-]*\s*$/gm, '')
-      .replace(/^\s*`{3,}[a-zA-Z0-9_-]*\s*\r?\n/, '')
-      .replace(/\r?\n\s*`{3,}\s*$/g, '')
-      .trim()
-  }
-  return text
-}
-
-function looksLikeToolTrace(s: string): boolean {
-  const text = stripWrapperFences(s).trim()
-  if (!text) return true
-  const firstLine = text.split(/\r?\n/, 1)[0]?.trim() || ''
-  return (
-    /^`{3,}\s*$/.test(firstLine) ||
-    /^🛠️\s*Tool:/i.test(firstLine) ||
-    /^🛠️\s*[a-zA-Z_][\w.]*\(/.test(firstLine) ||
-    /^\[Action\]/i.test(firstLine) ||
-    /^\[(Info|Warn|Error|Status|Stdout|Stderr|系统)\]/i.test(firstLine) ||
-    /^\{[\s\S]*\}\s*$/.test(text)
-  )
 }
 
 function extractTurnCandidate(seg: string): string {

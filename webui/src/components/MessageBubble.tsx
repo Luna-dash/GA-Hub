@@ -8,6 +8,7 @@
 //     prompt-engineering for the LLM, not for the human reader.
 //   • Fold long assistant streams via foldTurns(). The last segment shows
 //     a blinking caret while streaming.
+//   • Fold / tool-trace segments render MarkdownView mode=plain (no math/hljs).
 //   • Hover-revealed "复制" button on assistant messages.
 
 import clsx from 'clsx'
@@ -103,11 +104,13 @@ export function MessageBubble({ role, content, streaming, attachments, streamId,
           seg.type === 'fold' ? (
             <details key={i} className="turn-fold">
               <summary>{seg.title || '中间步骤'}</summary>
-              <div><MarkdownView>{seg.content}</MarkdownView></div>
+              {/* Intermediate turns are mostly tool dumps — no math / hljs. */}
+              <div><MarkdownView mode="plain">{seg.content}</MarkdownView></div>
             </details>
           ) : (
             <div key={i} className={clsx(streaming && i === segs.length - 1 && 'cursor-blink')}>
-              <MarkdownView>{seg.content}</MarkdownView>
+              {/* Final segment: auto-detect tool-only tails vs real prose. */}
+              <MarkdownView mode="auto">{seg.content}</MarkdownView>
             </div>
           ),
         )}
