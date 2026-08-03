@@ -25,7 +25,7 @@ import { toast } from '@/stores/toastStore'
 
 type Tab = 'structured' | 'raw'
 
-export function MyKey() {
+export default function MyKey() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('structured')
   const [syncBusy, setSyncBusy] = useState<'upload' | 'fetch' | null>(null)
@@ -518,7 +518,7 @@ function SessionDialog({ mode, session, allSessions, onClose, onSaved }: {
             <Field label="reasoning_effort">
               <select value={s.fields.reasoning_effort ?? ''} onChange={(e) => setField('reasoning_effort', e.target.value || undefined)} className={inp}>
                 <option value="">（不设置）</option>
-                {['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].map((v) => <option key={v} value={v}>{v}</option>)}
+                {['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((v) => <option key={v} value={v}>{v}</option>)}
               </select>
             </Field>
           </>

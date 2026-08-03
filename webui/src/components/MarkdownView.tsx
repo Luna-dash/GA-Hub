@@ -80,7 +80,7 @@ const MD_COMPONENTS = {
 
 // remark-math before gfm: math delimiters should win over GFM punctuation.
 // singleDollarTextMath:false — bare $var / PowerShell must not become KaTeX.
-const MD_REMARK_CHAT: any[] = [remarkMath({ singleDollarTextMath: false }), remarkGfm]
+const MD_REMARK_CHAT: any[] = [[remarkMath, { singleDollarTextMath: false }], remarkGfm]
 const MD_REMARK_PLAIN: any[] = [remarkGfm]
 // detect:false (rehype-highlight default): only fenced ```lang blocks colorize.
 const MD_REHYPE_CHAT: any[] = [[rehypeHighlight, { detect: false }], rehypeKatex]
