@@ -1,5 +1,10 @@
-"""Conversation history routes — read/edit/export memory/chat_history.json
-plus browse memory/L4_raw_sessions/ archives."""
+"""Conversation history routes — read GA's raw session archives
+(temp/model_responses/*.txt) and browse memory/L4_raw_sessions/ archives.
+
+Read-only with respect to GA: we never write back to GA's files. The only
+mutating action is `restore`, which loads a chosen archive into the agent's
+in-memory working history via GA's own `restore()` helper.
+"""
 from __future__ import annotations
 
 import io
@@ -7,234 +12,170 @@ import json
 import logging
 import os
 import zipfile
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse, Response
 
-from ..schemas import ConvRename
 from .. import _paths
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _history_file() -> str:
-    return str(_paths.memory_dir() / "chat_history.json")
+# ── GA archive helpers ────────────────────────────────────────────
+def _ga_sessions():
+    """Return GA's session list, mirroring server/routes/agent.py.
+
+    list_sessions() -> [(path, mtime, preview, n_rounds)] sorted by mtime desc.
+    Importing inside the function keeps the (optional) GA path injection local
+    and matches the established pattern in agent.py.
+    """
+    from frontends.continue_cmd import list_sessions
+
+    return list_sessions()
 
 
-def _archive_dir() -> str:
-    return str(_paths.memory_dir() / "L4_raw_sessions")
+def _ga_extract(path: str):
+    """Extract UI messages [{role, content}] from a GA session log."""
+    from frontends.continue_cmd import extract_ui_messages
+
+    return extract_ui_messages(path)
 
 
-def _load_all() -> list[dict]:
-    hf = _history_file()
-    if not os.path.isfile(hf):
-        return []
-    try:
-        with open(hf, encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            return data
-        return []
-    except Exception as e:
-        log.warning("failed to load chat_history.json: %s", e)
-        return []
+def _session_by_id(cid: str):
+    """Find a GA session tuple by its basename id. Returns (path, mtime, preview, n_rounds) or None."""
+    for path, mtime, preview, rounds in _ga_sessions():
+        if os.path.basename(path) == cid:
+            return (path, mtime, preview, rounds)
+    return None
 
 
-def _save_all(data: list[dict]) -> None:
-    hf = _history_file()
-    tmp = hf + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, hf)
-
-
-def _summary(c: dict) -> dict:
-    msgs = c.get("messages") or []
-    last_user = ""
-    for m in reversed(msgs):
-        if m.get("role") == "user":
-            last_user = (m.get("content") or "")[:120]
-            break
-    return {
-        "id": c.get("id"),
-        "title": c.get("title"),
-        "message_count": len(msgs),
-        "last_user_preview": last_user,
-    }
-
-
+# ── conversation list / detail / export / restore ─────────────────
 @router.get("/api/conversations")
 async def list_conversations(
     q: str | None = None,
     offset: int = 0,
     limit: int = 50,
 ):
-    all_ = _load_all()
+    sessions = _ga_sessions()
+    items = []
+    for path, mtime, preview, rounds in sessions:
+        cid = os.path.basename(path)
+        items.append({
+            "id": cid,
+            "title": "",  # GA archives carry no title; UI falls back to id
+            "message_count": rounds,
+            "last_user_preview": preview,
+        })
     if q:
         ql = q.lower()
-        filtered = []
-        for c in all_:
-            t = (c.get("title") or "").lower()
-            if ql in t:
-                filtered.append(c); continue
-            for m in c.get("messages") or []:
-                if ql in (m.get("content") or "").lower():
-                    filtered.append(c); break
-        all_ = filtered
-    total = len(all_)
-    page = list(reversed(all_))[offset: offset + limit]   # newest first
+        # Search id + last-user preview first (cheap). For sessions that miss on
+        # those, fall back to scanning the raw archive text so the "search title
+        # or content" promise in the UI actually holds (GA archives carry no
+        # title and the preview is only the last user message).
+        keep = []
+        for it, (path, _mt, _pv, _rd) in zip(items, sessions):
+            if ql in it["id"].lower() or ql in (it["last_user_preview"] or "").lower():
+                keep.append(it)
+                continue
+            try:
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    if ql in fh.read().lower():
+                        keep.append(it)
+            except OSError:
+                continue
+        items = keep
+    total = len(items)
+    page = items[offset: offset + limit]
     return {
         "total": total,
         "offset": offset,
         "limit": limit,
-        "items": [_summary(c) for c in page],
+        "items": page,
     }
 
 
 @router.get("/api/conversations/{cid}")
 async def get_conversation(cid: str):
-    for c in _load_all():
-        if c.get("id") == cid:
-            return c
-    raise HTTPException(404, "conversation not found")
+    s = _session_by_id(cid)
+    if s is None:
+        raise HTTPException(404, "conversation not found")
+    path = s[0]
+    messages = _ga_extract(path)
+    return {
+        "id": cid,
+        "title": "",
+        "messages": messages,
+    }
 
 
 @router.post("/api/conversations/{cid}/restore")
 async def restore_conversation(cid: str):
-    """Restore a chat_history.json conversation as the agent's working history.
+    """Restore a GA archive as the agent's working history.
 
-    chat_history.json messages only carry plain ``{role, content}`` text — we
-    can't reconstruct native API blocks. So we do **summary-level** restore:
-    each message becomes a ``[USER]: ...`` or ``[Agent] ...`` line in
-    ``agent.history`` (which gets injected into the next system prompt as
-    ``<history>...</history>``). The agent reads this and continues with full
-    awareness of what was discussed before.
-
-    For native, full-context restore use ``POST /api/agent/sessions/{idx}/restore``
-    (which reads ``temp/model_responses/`` snapshots).
+    Delegates to GA's native ``restore(agent, path)`` which rebuilds the
+    backend's history from the raw log, then resets the WebUI live snapshots
+    (mirrors server/routes/agent.py restore-session behaviour) so reconnecting
+    clients don't replay stale bubbles.
     """
-    target = None
-    for c in _load_all():
-        if c.get("id") == cid:
-            target = c
-            break
-    if target is None:
-        raise HTTPException(404, "conversation not found")
-
-    # Build summary lines (cap each message to 500 chars to keep context lean)
-    history_lines: list[str] = []
-    for m in target.get("messages") or []:
-        role = m.get("role", "")
-        content = (m.get("content") or "").strip()
-        if not content:
-            continue
-        # Strip the noisy "LLM Running (Turn N) ..." markers and tool tags
-        # so the summary stays readable in the system prompt.
-        content = _summarize(content)
-        if not content:
-            continue
-        if role == "user":
-            history_lines.append(f"[USER]: {content[:500]}")
-        elif role == "assistant":
-            history_lines.append(f"[Agent] {content[:500]}")
-
-    # Apply via the running agent service (lazy import — only available in normal mode)
+    from frontends.continue_cmd import restore
     from ..services.agent_service import AgentService
-    svc = AgentService.instance()
-    svc.agent.abort()
-    svc.agent.history = history_lines
-    # Clear the LLM backend history so we don't mix stale native blocks with
-    # the new summary; the agent will rebuild context from agent.history next turn.
-    for client in getattr(svc.agent, "llmclients", []) or []:
-        backend = getattr(client, "backend", None)
-        if backend is not None and hasattr(backend, "history"):
-            backend.history = []
-        if hasattr(client, "last_tools"):
-            client.last_tools = ""
+    from ..services.event_bus import bus
 
+    s = _session_by_id(cid)
+    if s is None:
+        raise HTTPException(404, "conversation not found")
+    path = s[0]
+
+    svc = AgentService.instance()
+    msg, full = restore(svc.agent, path)
+    with svc._lock:
+        svc._snapshots.clear()
+    bus.publish("chat:reset", {"reason": "restore_conversation"})
+
+    messages = _ga_extract(path)
     return {
         "ok": True,
-        "restored_lines": len(history_lines),
-        "title": target.get("title") or cid,
         "id": cid,
+        "title": "",
+        "restored_lines": len(messages),
     }
-
-
-# ── helpers ─────────────────────────────────────────────────────
-import re as _re
-
-_NOISE_PATTERNS = [
-    _re.compile(r"\*{0,2}LLM Running \(Turn \d+\) \.{3}\*{0,2}\n*", _re.M),
-    _re.compile(r"<thinking>[\s\S]*?</thinking>", _re.M),
-    _re.compile(r"<tool_use>[\s\S]*?</tool_use>", _re.M),
-    _re.compile(r"<file_content>[\s\S]*?</file_content>", _re.M),
-    _re.compile(r"<summary>([\s\S]*?)</summary>", _re.M),       # keep summary text
-    _re.compile(r"^🛠️\s*[A-Za-z_][A-Za-z0-9_]*\(.*$", _re.M),
-    _re.compile(r"`{3,}[\s\S]*?`{3,}", _re.M),
-]
-
-
-def _summarize(text: str) -> str:
-    """Squeeze a verbose agent message down to its <summary> + visible prose."""
-    # Pull out <summary> blocks first (these are the agent's own short version)
-    summaries = _NOISE_PATTERNS[4].findall(text)
-    if summaries:
-        return " · ".join(s.strip() for s in summaries if s.strip())[:500]
-    out = text
-    for p in _NOISE_PATTERNS[:4] + _NOISE_PATTERNS[5:]:
-        out = p.sub("", out)
-    out = _re.sub(r"\n{3,}", "\n\n", out).strip()
-    return out
-
-
-@router.patch("/api/conversations/{cid}")
-async def rename_conversation(cid: str, req: ConvRename):
-    all_ = _load_all()
-    for c in all_:
-        if c.get("id") == cid:
-            c["title"] = req.title
-            _save_all(all_)
-            return {"ok": True}
-    raise HTTPException(404, "conversation not found")
-
-
-@router.delete("/api/conversations/{cid}")
-async def delete_conversation(cid: str):
-    all_ = _load_all()
-    new = [c for c in all_ if c.get("id") != cid]
-    if len(new) == len(all_):
-        raise HTTPException(404, "conversation not found")
-    _save_all(new)
-    return {"ok": True}
 
 
 @router.get("/api/conversations/{cid}/export")
 async def export_conversation(cid: str, format: str = Query("md", pattern="^(md|json)$")):
-    for c in _load_all():
-        if c.get("id") == cid:
-            if format == "json":
-                return Response(
-                    content=json.dumps(c, ensure_ascii=False, indent=2),
-                    media_type="application/json",
-                    headers={"Content-Disposition": f'attachment; filename="{cid}.json"'},
-                )
-            buf = io.StringIO()
-            buf.write(f"# {c.get('title') or cid}\n\n")
-            buf.write(f"_id: {cid}_\n\n---\n\n")
-            for m in c.get("messages") or []:
-                role = m.get("role", "")
-                buf.write(f"## {role}\n\n{m.get('content', '')}\n\n")
-            return PlainTextResponse(
-                content=buf.getvalue(),
-                media_type="text/markdown",
-                headers={"Content-Disposition": f'attachment; filename="{cid}.md"'},
-            )
-    raise HTTPException(404, "conversation not found")
+    s = _session_by_id(cid)
+    if s is None:
+        raise HTTPException(404, "conversation not found")
+    path = s[0]
+    messages = _ga_extract(path)
+    title = cid
+
+    if format == "json":
+        payload = {"id": cid, "title": title, "messages": messages}
+        return Response(
+            content=json.dumps(payload, ensure_ascii=False, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{cid}.json"'},
+        )
+    buf = io.StringIO()
+    buf.write(f"# {title}\n\n")
+    buf.write(f"_id: {cid}_\n\n---\n\n")
+    for m in messages:
+        role = m.get("role", "")
+        buf.write(f"## {role}\n\n{m.get('content', '')}\n\n")
+    return PlainTextResponse(
+        content=buf.getvalue(),
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{cid}.md"'},
+    )
 
 
-# ── L4 archive browsing ──────────────────────────────────────────
+# ── L4 archive browsing (read-only) ───────────────────────────────
+def _archive_dir() -> str:
+    return str(_paths.memory_dir() / "L4_raw_sessions")
+
+
 @router.get("/api/archive/zips")
 async def list_archive_zips():
     adir = _archive_dir()
