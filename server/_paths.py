@@ -373,6 +373,18 @@ def admin_uploads_dir() -> Path:
     return p
 
 
+def conversations_v2_dir() -> Path:
+    """GA-Hub's own v2 conversation store (admin data, never written into GA).
+
+    Layout: ``ADMIN_DATA/conversations_v2/index.json`` + ``{session_id}.json``.
+    Deliberately under ADMIN_DATA so we never write into the GA repo's
+    memory/ directory (which is shared with the GA desktop app).
+    """
+    p = ADMIN_DATA / "conversations_v2"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 def schedules_file() -> Path:
     return ADMIN_DATA / "autonomous_schedules.json"
 
