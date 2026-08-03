@@ -278,6 +278,19 @@ async def ws_chat(ws: WebSocket):
                 continue
             mt = msg.get("type")
             if mt == "submit":
+                # P0: if the GA core contract probe failed at startup, refuse
+                # new chats with an explicit 503-style frame instead of letting
+                # AgentService hit an opaque ImportError/AttributeError deep
+                # in the run loop.
+                report = getattr(ws.app.state, "core_contract", None)
+                if report is not None and not report.ok:
+                    await ws.send_json({
+                        "type": "error",
+                        "error": "core_contract_failed",
+                        "code": 503,
+                        "missing": list(report.errors),
+                    })
+                    continue
                 payload = ChatSubmit(**{k: v for k, v in msg.items() if k != "type"})
                 # Just kick it off — events come back via bus subscription above.
                 s.submit(payload.text, source=payload.source, images=payload.images, llm_index=payload.llm_index)

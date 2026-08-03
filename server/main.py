@@ -276,6 +276,29 @@ def create_app() -> FastAPI:
         from .services.task_scheduler import TaskScheduler
         from .services.feishu_service import FeishuService
 
+        # P0: probe the GA core contract *before* AgentService wires itself to
+        # it. Failure does NOT abort startup (per P0 spec: the service still
+        # boots to the diagnostic page); the report is stored so
+        # /api/health/core-contract and the chat WS can surface a precise
+        # 503 core_contract_failed instead of an opaque ImportError.
+        try:
+            from .services import core_contract
+            app.state.core_contract = core_contract.probe_core_contract()
+            if not app.state.core_contract.ok:
+                log.error(
+                    "GA core contract probe FAILED — chat will return "
+                    "503 core_contract_failed. Missing: %s",
+                    ", ".join(app.state.core_contract.errors) or "unknown",
+                )
+            else:
+                log.info(
+                    "GA core contract probe passed (commit %s)",
+                    app.state.core_contract.core_commit,
+                )
+        except Exception:
+            log.exception("core contract probe crashed")
+            app.state.core_contract = None
+
         agent_svc = AgentService.instance()
         agent_svc.start_run_thread()
 
@@ -375,6 +398,19 @@ def create_app() -> FastAPI:
         except Exception:
             pass
         return out
+
+    @app.get("/api/health/core-contract")
+    async def core_contract_health():
+        """P0: surface the GA core contract probe result.
+
+        Returns ``ga_root``, ``core_commit``, per-item capability bits and
+        error list — no secrets. In setup mode (no GA_ROOT) or if the probe
+        has not run (e.g. crashed), reports that explicitly rather than 500.
+        """
+        report = getattr(app.state, "core_contract", None)
+        if report is None:
+            return {"ok": False, "status": "not_probed", "ga_root": None}
+        return report.to_dict()
 
     if not setup_mode:
         from .routes import (
