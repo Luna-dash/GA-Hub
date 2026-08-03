@@ -18,18 +18,18 @@ const routeFallback = (
 
 // Keep route pages out of the startup bundle. The shell (stores, sockets,
 // sidebar, command palette) loads first; individual feature pages load on demand.
-const Dashboard = lazy(() => import('@/pages/Dashboard').then((m) => ({ default: m.Dashboard })))
-const LiveChat = lazy(() => import('@/pages/LiveChat').then((m) => ({ default: m.LiveChat })))
-const FeishuBot = lazy(() => import('@/pages/FeishuBot').then((m) => ({ default: m.FeishuBot })))
-const Conversations = lazy(() => import('@/pages/Conversations').then((m) => ({ default: m.Conversations })))
-const Memory = lazy(() => import('@/pages/Memory').then((m) => ({ default: m.Memory })))
-const GoalHive = lazy(() => import('@/pages/GoalHive').then((m) => ({ default: m.GoalHive })))
+const Dashboard = lazy(() => import('@/pages/Dashboard'))
+const LiveChat = lazy(() => import('@/pages/LiveChat'))
+const FeishuBot = lazy(() => import('@/pages/FeishuBot'))
+const Conversations = lazy(() => import('@/pages/Conversations'))
+const Memory = lazy(() => import('@/pages/Memory'))
+const GoalHive = lazy(() => import('@/pages/GoalHive'))
 const Conductor = lazy(() => import('@/pages/Conductor'))
-const MyKey = lazy(() => import('@/pages/MyKey').then((m) => ({ default: m.MyKey })))
-const Settings = lazy(() => import('@/pages/Settings').then((m) => ({ default: m.Settings })))
-const Tasks = lazy(() => import('@/pages/Tasks').then((m) => ({ default: m.Tasks })))
-const Autonomous = lazy(() => import('@/pages/Autonomous').then((m) => ({ default: m.Autonomous })))
-const TokenStats = lazy(() => import('@/pages/TokenStats').then((m) => ({ default: m.TokenStats })))
+const MyKey = lazy(() => import('@/pages/MyKey'))
+const Settings = lazy(() => import('@/pages/Settings'))
+const Tasks = lazy(() => import('@/pages/Tasks'))
+const Autonomous = lazy(() => import('@/pages/Autonomous'))
+const TokenStats = lazy(() => import('@/pages/TokenStats'))
 
 export default function App() {
   const start = useAgentStore((s) => s.start)

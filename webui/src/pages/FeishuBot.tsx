@@ -15,7 +15,7 @@ function fmtTime(ts?: number) {
 
 
 
-export function FeishuBot() {
+export default function FeishuBot() {
   const qc = useQueryClient()
   const chatConn = useChatStore((s) => s.conn)
   const remoteMsgs = useFeishuStore((s) => s.msgs)

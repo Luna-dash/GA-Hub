@@ -14,7 +14,7 @@ const stateMeta = {
   error: { label: '异常', dot: 'bg-rose-400', text: 'text-rose-300', border: 'border-rose-500/30' },
 } as const
 
-export function Dashboard() {
+export default function Dashboard() {
   const panel = useQuery({ queryKey: ['service-panel'], queryFn: api.servicePanel, refetchInterval: 8000 })
   const tokens = useQuery({ queryKey: ['token-stats'], queryFn: api.tokenStats, refetchInterval: 15000 })
   const services = panel.data?.services ?? []

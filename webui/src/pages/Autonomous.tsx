@@ -11,7 +11,7 @@ import { PageShell } from '@/components/PageShell'
 import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
 
-export function Autonomous() {
+export default function Autonomous() {
   const qc = useQueryClient()
   const { data: schData } = useQuery({ queryKey: ['schedules'], queryFn: api.schedules, refetchInterval: 8000 })
   const { data: runData } = useQuery({ queryKey: ['auto.runs'], queryFn: () => api.runs(50), refetchInterval: 8000 })

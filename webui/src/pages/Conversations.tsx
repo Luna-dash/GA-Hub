@@ -27,7 +27,7 @@ type Round = {
   preview: string
 }
 
-export function Conversations() {
+export default function Conversations() {
   const qc = useQueryClient()
   const nav = useNavigate()
   const [restoring, setRestoring] = useState<string | null>(null)

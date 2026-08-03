@@ -26,7 +26,7 @@ interface RestoreState {
   messages?: Message[]
 }
 
-export function LiveChat() {
+export default function LiveChat() {
   const location = useLocation()
   const nav = useNavigate()
   const restoreState = (location.state as RestoreState | null) || null

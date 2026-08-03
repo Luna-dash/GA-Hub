@@ -8,7 +8,7 @@ import { PageShell } from '@/components/PageShell'
 
 type Tab = 'sop' | 'skill' | 'insight' | 'global'
 
-export function Memory() {
+export default function Memory() {
   const [tab, setTab] = useState<Tab>('sop')
   return (
     <PageShell

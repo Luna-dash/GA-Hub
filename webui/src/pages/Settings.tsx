@@ -11,7 +11,7 @@ import { PageShell } from '@/components/PageShell'
 import { useNotifyStore } from '@/utils/notify'
 import { toast } from '@/stores/toastStore'
 
-export function Settings({ initialMode = 'settings' }: { initialMode?: 'settings' | 'setup' }) {
+export default function Settings({ initialMode = 'settings' }: { initialMode?: 'settings' | 'setup' }) {
   const qc = useQueryClient()
   const { data: setup, refetch } = useQuery({ queryKey: ['setup'], queryFn: api.setupStatus })
   const [input, setInput] = useState('')

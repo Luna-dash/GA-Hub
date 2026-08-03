@@ -8,7 +8,7 @@ const exact = (n: number) => exactNf.format(n || 0)
 const fmt = (n: number) => Math.abs(n || 0) < 1_000 ? exact(n) : compactNf.format(n || 0).toLowerCase()
 const age = (seconds: number) => seconds < 60 ? `${Math.round(seconds)} 秒` : seconds < 3600 ? `${Math.round(seconds / 60)} 分钟` : `${(seconds / 3600).toFixed(1)} 小时`
 
-export function TokenStats() {
+export default function TokenStats() {
   const stats = useQuery({ queryKey: ['tokens.stats'], queryFn: api.tokenStats, refetchInterval: 5000 })
   const history = useQuery({ queryKey: ['tokens.history', 24], queryFn: () => api.tokenHistory(24), refetchInterval: 60000 })
   const data = stats.data

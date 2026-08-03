@@ -37,7 +37,7 @@ const modeConfigs: Record<GoalMode, ModeConfig> = {
   },
 }
 
-export function GoalHive() {
+export default function GoalHive() {
   const [mode, setMode] = useState<GoalMode>('goal')
   const targetDraftKey = `goalHive:${mode}:target`
   const conditionDraftKey = `goalHive:${mode}:condition`

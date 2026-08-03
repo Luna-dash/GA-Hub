@@ -8,7 +8,7 @@ import { PageShell } from '@/components/PageShell'
 import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
 
-export function Tasks() {
+export default function Tasks() {
   const qc = useQueryClient()
   const { data: schData } = useQuery({ queryKey: ['tasks.schedules'], queryFn: api.taskSchedules, refetchInterval: 60000 })
   const { data: runData } = useQuery({ queryKey: ['tasks.runs'], queryFn: () => api.taskRuns(80), refetchInterval: 60000 })
