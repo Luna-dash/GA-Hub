@@ -263,6 +263,8 @@ export const api = {
     http<HubSession>('POST', '/api/sessions', req),
   updateSession: (id: string, changes: { title?: string; llm_index?: number | null }) =>
     http<HubSession>('PATCH', `/api/sessions/${encodeURIComponent(id)}`, changes),
+  deleteSession: (id: string) =>
+    http<void>('DELETE', `/api/sessions/${encodeURIComponent(id)}`),
   sessionRun: (id: string, text: string, images: string[] = []) =>
     http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/runs`, { text, images }),
   sessionRuntime: (id: string) =>

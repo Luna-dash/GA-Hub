@@ -14,6 +14,8 @@ const apiMock = vi.hoisted(() => ({
   sessionRuntime: vi.fn(),
   abortSession: vi.fn(),
   createSession: vi.fn(),
+  updateSession: vi.fn(),
+  deleteSession: vi.fn(),
 }))
 
 vi.mock('@/api/client', () => ({ api: apiMock }))
@@ -92,6 +94,8 @@ beforeEach(() => {
   apiMock.sessionRuntime.mockImplementation(async (id: string) => runtime(id, id === 'session-active' ? 'running' : 'idle'))
   apiMock.abortSession.mockReset()
   apiMock.createSession.mockReset()
+  apiMock.updateSession.mockReset().mockImplementation(async (id: string, changes: Partial<HubSession>) => ({ ...sessions.find((item) => item.id === id)!, ...changes }))
+  apiMock.deleteSession.mockReset().mockResolvedValue(undefined)
   localStorage.clear()
   locationText = ''
   useSessionManagerStore.setState({ open: false, conflict: null })
@@ -152,6 +156,55 @@ describe('SessionManagerHost interactions', () => {
     act(() => button('停止')?.click())
     await settle(() => container?.textContent?.includes('停止失败，请重试') === true)
     expect(button('停止')?.disabled).toBe(false)
+  })
+
+  it('filters, renames, confirms idle deletion, and protects the active session', async () => {
+    renderHost()
+    act(() => useSessionManagerStore.getState().show())
+    await settle(() => container?.textContent?.includes('空闲会话') === true)
+
+    const search = container?.querySelector('#session-search') as HTMLInputElement
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(search, '空闲')
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await settle(() => container?.querySelectorAll('article').length === 1)
+    expect(container?.textContent).not.toContain('运行会话')
+
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(search, '')
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await settle(() => container?.querySelectorAll('article').length === 2)
+    const cards = () => Array.from(container?.querySelectorAll('article') ?? [])
+    const activeCard = cards().find((item) => item.textContent?.includes('session-active'))!
+    const idleCard = cards().find((item) => item.textContent?.includes('session-idle'))!
+    const activeDelete = Array.from(activeCard.querySelectorAll('button')).find((item) => item.textContent === '删除') as HTMLButtonElement
+    expect(activeDelete.disabled).toBe(true)
+    expect(activeDelete.title).toContain('先停止')
+
+    const rename = Array.from(idleCard.querySelectorAll('button')).find((item) => item.textContent === '重命名') as HTMLButtonElement
+    act(() => rename.click())
+    const title = idleCard.querySelector('input[aria-label="会话标题"]') as HTMLInputElement
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(title, '已重命名会话')
+      title.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    act(() => (Array.from(idleCard.querySelectorAll('button')).find((item) => item.textContent === '保存') as HTMLButtonElement).click())
+    await settle(() => apiMock.updateSession.mock.calls.length === 1)
+    expect(apiMock.updateSession).toHaveBeenCalledWith('session-idle', { title: '已重命名会话' })
+
+    const refreshedIdle = cards().find((item) => item.textContent?.includes('session-idle'))!
+    act(() => (Array.from(refreshedIdle.querySelectorAll('button')).find((item) => item.textContent === '删除') as HTMLButtonElement).click())
+    expect(refreshedIdle.querySelector('[role="alertdialog"]')).not.toBeNull()
+    expect(apiMock.deleteSession).not.toHaveBeenCalled()
+    act(() => (Array.from(refreshedIdle.querySelectorAll('button')).find((item) => item.textContent === '确认删除') as HTMLButtonElement).click())
+    await settle(() => apiMock.deleteSession.mock.calls.length === 1)
+    expect(apiMock.deleteSession).toHaveBeenCalledWith('session-idle')
+    expect(refreshedIdle.querySelector('[role="alertdialog"]')).toBeNull()
   })
 
   it('opens a selected session by persisting it, navigating, and closing the modal', async () => {
