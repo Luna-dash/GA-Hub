@@ -41,4 +41,18 @@ describe('draftStore conditional clearing', () => {
     expect(useDraftStore.getState().texts.liveChat).toBe('new thought')
     expect(useDraftStore.getState().attachments.liveChat).toEqual(newer)
   })
+
+  it('isolates text and attachments by session draft key', () => {
+    const first = [attachment('first.png')]
+    const second = [attachment('second.png')]
+    useDraftStore.getState().setText('liveChat:session-a', 'draft a')
+    useDraftStore.getState().setAttachments('liveChat:session-a', first)
+    useDraftStore.getState().setText('liveChat:session-b', 'draft b')
+    useDraftStore.getState().setAttachments('liveChat:session-b', second)
+
+    useDraftStore.getState().clearDraft('liveChat:session-a')
+
+    expect(useDraftStore.getState().texts).toEqual({ 'liveChat:session-b': 'draft b' })
+    expect(useDraftStore.getState().attachments).toEqual({ 'liveChat:session-b': second })
+  })
 })

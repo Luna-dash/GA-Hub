@@ -44,22 +44,23 @@ export default function LiveChat() {
   const clearLocal = useChatStore((s) => s.clearLocal)
   const pushSystem = useChatStore((s) => s.pushSystem)
 
-  const draftKey = 'liveChat'
+  const [session, setSession] = useState<HubSession | null>(null)
+  const draftKey = session ? `liveChat:${session.id}` : 'liveChat:pending'
   const text = useDraftStore((state) => state.texts[draftKey] ?? '')
   const atts = useDraftStore((state) => state.attachments[draftKey] ?? [])
   const setText = (value: string) => useDraftStore.getState().setText(draftKey, value)
   const setAtts = (value: PasteAttachment[]) => useDraftStore.getState().setAttachments(draftKey, value)
-  const clearDraft = () => useDraftStore.getState().clearDraft(draftKey)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [titleSaving, setTitleSaving] = useState(false)
-  const [session, setSession] = useState<HubSession | null>(null)
   const [sessionError, setSessionError] = useState('')
   const [llms, setLlms] = useState<LLMInfo[]>([])
   const [llmLoading, setLlmLoading] = useState(false)
   const [llmSaving, setLlmSaving] = useState(false)
   const sessionIdRef = useRef<string | null>(null)
   const sessionSwitchSeqRef = useRef(0)
+  const creatingSessionRef = useRef(false)
+  const [creatingSession, setCreatingSession] = useState(false)
   const llmChangeSeqRef = useRef(0)
   const queryClient = useQueryClient()
 
@@ -238,8 +239,14 @@ export default function LiveChat() {
     const sid = session?.id
     if (!sid || sessionIdRef.current !== sid || streaming || sessionRunning) return
     if (t === '/new') {
-      clearDraft()
-      void newConv().catch((e: any) => pushSystem(`_新建会话失败：${e?.body?.detail || e?.message || String(e)}_`))
+      const commandKey = draftKey
+      const commandText = text
+      const commandAtts = atts
+      void newConv()
+        .then((created) => {
+          if (created) useDraftStore.getState().clearDraftIfMatch(commandKey, commandText, commandAtts)
+        })
+        .catch((e: any) => pushSystem(`_新建会话失败：${e?.body?.detail || e?.message || String(e)}。命令已保留，可直接重试。_`))
       return
     }
     const fileMarkers = atts.map((a) => `[用户发送文件: ${a.path}]`).join('\n')
@@ -261,20 +268,32 @@ export default function LiveChat() {
       })
   }
 
-  const newConv = async () => {
-    if (sessionRunning) return
+  const newConv = async (): Promise<boolean> => {
+    if (sessionRunning || creatingSessionRef.current) return false
+    creatingSessionRef.current = true
+    setCreatingSession(true)
     const switchSeq = ++sessionSwitchSeqRef.current
     const previousSid = sessionIdRef.current
-    const next = await api.createSession({ title: '', llm_index: session?.llm_index ?? null })
-    if (sessionSwitchSeqRef.current !== switchSeq || sessionIdRef.current !== previousSid) return
-    sessionIdRef.current = next.id
-    localStorage.setItem('gahub.currentSessionId', next.id)
-    clearLocal()
-    setSession(next)
-    setTitleDraft(next.title)
-    setTitleSaving(false)
-    startChat(next.id)
-    await refreshRuntime(next.id)
+    try {
+      const next = await api.createSession({ title: '', llm_index: session?.llm_index ?? null })
+      if (sessionSwitchSeqRef.current !== switchSeq || sessionIdRef.current !== previousSid) return false
+      sessionIdRef.current = next.id
+      localStorage.setItem('gahub.currentSessionId', next.id)
+      clearLocal()
+      setSession(next)
+      setTitleDraft(next.title)
+      setTitleSaving(false)
+      startChat(next.id)
+      try {
+        await refreshRuntime(next.id)
+      } catch (error: any) {
+        pushSystem(`_新会话已创建，但运行状态刷新失败：${error?.body?.detail || error?.message || String(error)}_`)
+      }
+      return true
+    } finally {
+      creatingSessionRef.current = false
+      setCreatingSession(false)
+    }
   }
 
   const handleRewind = async (sid: string) => {
@@ -298,12 +317,20 @@ export default function LiveChat() {
 
   const handleSlashCommand = (command: Exclude<SlashCommand['name'], '/btw'>) => {
     if (command === '/new') {
-      void newConv().catch((error: any) => {
-        pushSystem(`_新建会话失败：${error?.body?.detail || error?.message || String(error)}_`)
-      })
+      const commandKey = draftKey
+      const commandText = text
+      const commandAtts = atts
+      void newConv()
+        .then((created) => {
+          if (created) useDraftStore.getState().clearDraftIfMatch(commandKey, commandText, commandAtts)
+        })
+        .catch((error: any) => {
+          pushSystem(`_新建会话失败：${error?.body?.detail || error?.message || String(error)}。命令已保留，可直接重试。_`)
+        })
       return
     }
 
+    setText('')
     const streamId = findLatestRewindStreamId(msgs)
     if (!streamId) {
       pushSystem('_当前没有可回退的已完成回复。_')
@@ -351,7 +378,17 @@ export default function LiveChat() {
             ))}
           </select>
           <button onClick={() => setRestoreOpen(true)} className="ga-btn" title="从历史快照恢复对话">↩ 恢复历史</button>
-          <button onClick={newConv} className="ga-btn">新对话</button>
+          <button
+            onClick={() => {
+              void newConv().catch((error: any) => {
+                pushSystem(`_新建会话失败：${error?.body?.detail || error?.message || String(error)}_`)
+              })
+            }}
+            className="ga-btn"
+            disabled={sessionRunning || creatingSession}
+          >
+            {creatingSession ? '新建中…' : '新对话'}
+          </button>
           <button
             onClick={() => {
               const sid = session?.id
@@ -429,7 +466,7 @@ export default function LiveChat() {
             onAttachments={setAtts}
             onSubmit={submit}
             onSlashCommand={handleSlashCommand}
-            disabled={!session || streaming || sessionRunning}
+            disabled={!session || streaming || sessionRunning || creatingSession}
           />
         </div>
       </div>

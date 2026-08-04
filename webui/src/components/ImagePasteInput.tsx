@@ -67,10 +67,10 @@ export function ImagePasteInput({
   }, [text])
 
   const selectSlashCommand = (command: SlashCommand) => {
-    onText('')
     setDismissedSlashText(null)
     setSlashActiveIndex(0)
     if (command.name === '/btw') {
+      onText('')
       setBtwOpen(true)
     } else {
       onSlashCommand?.(command.name)
