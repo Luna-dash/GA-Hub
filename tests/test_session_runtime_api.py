@@ -34,9 +34,12 @@ class FakeCoordinator:
         self.submissions.append({"text": text, **kwargs})
         return state
 
-    def abort(self, *, session_id: str, run_id: str) -> RuntimeState:
-        self.aborts.append((session_id, run_id))
-        state = RuntimeState(session_id, "aborting", run_id, self.states[session_id].stream_id)
+    def abort_if_current(self, *, session_id: str) -> RuntimeState:
+        current = self.runtime_state(session_id)
+        if current.status not in {"starting", "running"} or not current.run_id:
+            return current
+        self.aborts.append((session_id, current.run_id))
+        state = RuntimeState(session_id, "aborting", current.run_id, current.stream_id)
         self.states[session_id] = state
         self.active = state
         return state
@@ -108,6 +111,8 @@ def test_global_busy_and_unknown_session_are_explicit(tmp_path: Path, monkeypatc
             "detail": "另一个会话正在运行，请等待当前任务结束后重试。",
             "active_session_id": sid_a,
             "active_run_id": "run-a",
+            "capacity": 1,
+            "active_count": 1,
         }
         assert client.post("/api/sessions/missing/runs", json={"text": "x"}).status_code == 404
         assert client.get("/api/sessions/missing/runtime").status_code == 404
@@ -155,3 +160,17 @@ def test_active_session_cannot_be_deleted(tmp_path: Path, monkeypatch) -> None:
             "status": "running",
         }
         assert store.get(sid)["id"] == sid
+
+
+def test_session_run_capacity_defaults_to_one_and_only_allows_two(monkeypatch) -> None:
+    from server.routes import sessions
+
+    monkeypatch.delenv("GAHUB_SESSION_RUN_CAPACITY", raising=False)
+    assert sessions._session_run_capacity() == 1
+
+    monkeypatch.setenv("GAHUB_SESSION_RUN_CAPACITY", "2")
+    assert sessions._session_run_capacity() == 2
+
+    for invalid in ("0", "3", "many", ""):
+        monkeypatch.setenv("GAHUB_SESSION_RUN_CAPACITY", invalid)
+        assert sessions._session_run_capacity() == 1

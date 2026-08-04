@@ -160,3 +160,104 @@ def test_abort_timeout_is_error_and_keeps_slot_until_core_really_finishes() -> N
     runtimes["A"].handle.finished = True
     _wait_until(lambda: coordinator.active_run() is None)
     assert coordinator.runtime_state("A").status == "idle"
+
+
+def test_capacity_two_tracks_each_session_identity_and_rejects_third() -> None:
+    from server.services.session_coordinator import AgentBusyError, SessionCoordinator
+
+    runtimes: dict[str, FakeRuntime] = {}
+
+    def factory(session_id: str) -> FakeRuntime:
+        runtime = FakeRuntime(session_id)
+        runtimes[session_id] = runtime
+        return runtime
+
+    coordinator = SessionCoordinator(factory, capacity=2, poll_interval=0.001)
+    run_a = coordinator.submit("a", session_id="A")
+    run_b = coordinator.submit("b", session_id="B")
+
+    assert coordinator.runtime_state("A").run_id == run_a.run_id
+    assert coordinator.runtime_state("B").run_id == run_b.run_id
+    assert {state.session_id for state in coordinator.active_runs()} == {"A", "B"}
+    with pytest.raises(AgentBusyError) as error:
+        coordinator.submit("c", session_id="C")
+    assert error.value.capacity == 2
+    assert error.value.active_count == 2
+
+    runtimes["A"].handle.finished = True
+    _wait_until(lambda: coordinator.runtime_state("A").status == "idle")
+    run_c = coordinator.submit("c", session_id="C")
+    assert run_c.session_id == "C"
+    assert coordinator.runtime_state("B").run_id == run_b.run_id
+
+
+def test_capacity_one_admission_is_atomic_under_concurrent_submit() -> None:
+    import threading
+
+    from server.services.session_coordinator import AgentBusyError, SessionCoordinator
+
+    barrier = threading.Barrier(3)
+    coordinator = SessionCoordinator(
+        lambda session_id: FakeRuntime(session_id),
+        capacity=1,
+        poll_interval=0.001,
+    )
+    outcomes: list[tuple[str, str]] = []
+
+    def submit(session_id: str) -> None:
+        barrier.wait()
+        try:
+            coordinator.submit(session_id, session_id=session_id)
+            outcomes.append((session_id, "admitted"))
+        except AgentBusyError:
+            outcomes.append((session_id, "busy"))
+
+    threads = [threading.Thread(target=submit, args=(sid,)) for sid in ("A", "B")]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=1)
+
+    assert sorted(result for _, result in outcomes) == ["admitted", "busy"]
+    assert len(coordinator.active_runs()) == 1
+
+
+def test_abort_if_current_is_idempotent_and_never_targets_another_session() -> None:
+    from server.services.session_coordinator import SessionCoordinator
+
+    runtimes: dict[str, FakeRuntime] = {}
+
+    def factory(session_id: str) -> FakeRuntime:
+        runtime = FakeRuntime(session_id)
+        runtimes[session_id] = runtime
+        return runtime
+
+    coordinator = SessionCoordinator(factory, capacity=2, poll_interval=0.001)
+    run_a = coordinator.submit("a", session_id="A")
+    run_b = coordinator.submit("b", session_id="B")
+
+    first = coordinator.abort_if_current(session_id="A")
+    second = coordinator.abort_if_current(session_id="A")
+    assert first.run_id == run_a.run_id
+    assert second.run_id == run_a.run_id
+    assert runtimes["A"].abort_calls == 1
+    assert runtimes["B"].abort_calls == 0
+    assert coordinator.runtime_state("B").run_id == run_b.run_id
+
+
+def test_stale_watcher_cannot_clear_newer_run_for_same_session() -> None:
+    from server.services.session_coordinator import SessionCoordinator
+
+    runtime = FakeRuntime("A")
+    coordinator = SessionCoordinator(lambda _session_id: runtime, poll_interval=0.001)
+    first = coordinator.submit("one", session_id="A")
+    first_handle = runtime.handle
+    first_handle.finished = True
+    _wait_until(lambda: coordinator.runtime_state("A").status == "idle")
+
+    second = coordinator.submit("two", session_id="A")
+    assert second.run_id != first.run_id
+    # Explicitly emulate a delayed stale completion callback.
+    coordinator._watch_completion(runtime, first_handle, "A", first.run_id)
+    assert coordinator.runtime_state("A").run_id == second.run_id

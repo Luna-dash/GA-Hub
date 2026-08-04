@@ -1,8 +1,8 @@
-"""Per-session runtime ownership with one process-wide run slot.
+"""Per-session runtime ownership with bounded process-wide run capacity.
 
-This module deliberately knows nothing about conversation persistence.  Each
-runtime owns its GA agent/history; the coordinator only tracks runtime and run
-identity so callers cannot abort or merge the wrong session.
+This module deliberately knows nothing about conversation persistence. Each
+runtime owns its GA agent/history; the coordinator atomically admits runs and
+tracks their identity so callers cannot abort or clear the wrong session.
 """
 from __future__ import annotations
 
@@ -27,10 +27,24 @@ class SessionRuntime(Protocol):
 
 
 class AgentBusyError(RuntimeError):
-    def __init__(self, active_session_id: str, active_run_id: str) -> None:
+    """Admission failed because this session or the global capacity is busy."""
+
+    def __init__(
+        self,
+        active_session_id: str,
+        active_run_id: str,
+        *,
+        capacity: int = 1,
+        active_count: int = 1,
+    ) -> None:
         self.active_session_id = active_session_id
         self.active_run_id = active_run_id
-        super().__init__(f"session {active_session_id!r} is already running")
+        self.capacity = capacity
+        self.active_count = active_count
+        super().__init__(
+            f"run capacity {active_count}/{capacity} is occupied; "
+            f"session {active_session_id!r} is active"
+        )
 
 
 class SessionNotActiveError(RuntimeError):
@@ -51,53 +65,66 @@ class RuntimeState:
 
 
 class SessionCoordinator:
-    """Own lazily-created runtimes and serialize their execution globally."""
+    """Own lazily-created runtimes and atomically enforce bounded capacity."""
 
     def __init__(
         self,
         runtime_factory: Callable[[str], SessionRuntime],
         *,
+        capacity: int = 1,
         poll_interval: float = 0.05,
         abort_timeout: float = 10.0,
         on_state_change: Callable[[RuntimeState], None] | None = None,
     ) -> None:
+        if capacity not in {1, 2}:
+            raise ValueError("session run capacity must be 1 or 2")
         self._runtime_factory = runtime_factory
+        self._capacity = capacity
         self._poll_interval = poll_interval
         self._abort_timeout = abort_timeout
         self._on_state_change = on_state_change
         self._lock = threading.RLock()
         self._runtimes: dict[str, SessionRuntime] = {}
         self._states: dict[str, RuntimeState] = {}
-        self._active: RuntimeState | None = None
+        # One entry per admitted session. Entries remain until the underlying
+        # handle really finishes, including while aborting or timed out.
+        self._active_by_session: dict[str, RuntimeState] = {}
         self._abort_started: dict[str, float] = {}
+
+    @property
+    def capacity(self) -> int:
+        return self._capacity
 
     def runtime_state(self, session_id: str) -> RuntimeState:
         with self._lock:
             return replace(self._states.get(session_id, RuntimeState(session_id)))
 
-    def active_run(self) -> RuntimeState | None:
+    def active_runs(self) -> tuple[RuntimeState, ...]:
         with self._lock:
-            return replace(self._active) if self._active is not None else None
+            return tuple(replace(state) for state in self._active_by_session.values())
+
+    def active_run(self) -> RuntimeState | None:
+        """Backward-compatible first active run (capacity defaults to one)."""
+        runs = self.active_runs()
+        return runs[0] if runs else None
 
     def session_snapshot(self, session_id: str) -> tuple[RuntimeState, dict[str, Any] | None]:
-        """Return runtime identity and its matching active content together.
-
-        The coordinator lock prevents the active run from being replaced while
-        its session runtime is queried.  The runtime is responsible for taking
-        its own content lock and rejecting mismatched identity.
-        """
+        """Return runtime identity and its matching active content together."""
         with self._lock:
             state = replace(self._states.get(session_id, RuntimeState(session_id)))
-            active_message = None
-            if state.run_id and state.stream_id:
-                runtime = self._runtimes.get(session_id)
-                reader = getattr(runtime, "active_message_snapshot", None)
-                if reader is not None:
-                    active_message = reader(
-                        state.stream_id,
-                        session_id=session_id,
-                        run_id=state.run_id,
-                    )
+            if state.status == "idle" or not state.run_id or not state.stream_id:
+                return state, None
+            runtime = self._runtimes.get(session_id)
+            if runtime is None:
+                return state, None
+            snapshotter = getattr(runtime, "active_message_snapshot", None)
+            if snapshotter is None:
+                return state, None
+            active_message = snapshotter(
+                state.stream_id,
+                session_id=session_id,
+                run_id=state.run_id,
+            )
             return state, active_message
 
     def submit(
@@ -109,16 +136,20 @@ class SessionCoordinator:
         images: list[str] | None = None,
         llm_index: int | None = None,
     ) -> RuntimeState:
-        run_id = uuid.uuid4().hex
+        # Admission, per-session identity reservation, runtime creation and
+        # submit are one critical section. No concurrent caller can overbook a
+        # slot or start a second run for this session.
         with self._lock:
-            if self._active is not None:
-                raise AgentBusyError(self._active.session_id, self._active.run_id or "")
+            same_session = self._active_by_session.get(session_id)
+            if same_session is not None:
+                raise self._busy(same_session)
+            if len(self._active_by_session) >= self._capacity:
+                raise self._busy(next(iter(self._active_by_session.values())))
 
-            # Reserve before runtime construction: concurrent submits cannot
-            # both pass the busy check, and a rejected session is not created.
-            reserved = RuntimeState(session_id, "starting", run_id)
-            self._active = reserved
-            self._states[session_id] = reserved
+            run_id = uuid.uuid4().hex
+            starting = RuntimeState(session_id, "starting", run_id)
+            self._active_by_session[session_id] = starting
+            self._states[session_id] = starting
             try:
                 runtime = self._runtimes.get(session_id)
                 if runtime is None:
@@ -132,13 +163,14 @@ class SessionCoordinator:
                     session_id=session_id,
                     run_id=run_id,
                 )
-            except Exception:
-                self._active = None
-                self._states[session_id] = RuntimeState(session_id)
+            except BaseException:
+                if self._active_by_session.get(session_id) == starting:
+                    self._active_by_session.pop(session_id, None)
+                    self._states[session_id] = RuntimeState(session_id)
                 raise
 
             running = RuntimeState(session_id, "running", run_id, handle.stream_id)
-            self._active = running
+            self._active_by_session[session_id] = running
             self._states[session_id] = running
 
         threading.Thread(
@@ -149,23 +181,47 @@ class SessionCoordinator:
         ).start()
         return replace(running)
 
+    def _busy(self, representative: RuntimeState) -> AgentBusyError:
+        return AgentBusyError(
+            representative.session_id,
+            representative.run_id or "",
+            capacity=self._capacity,
+            active_count=len(self._active_by_session),
+        )
+
+    def abort_if_current(self, *, session_id: str) -> RuntimeState:
+        """Atomically identify and abort this session's current run.
+
+        Returning idle/error/aborting is idempotent. In particular, a watcher
+        cannot finish an old run and let this call accidentally abort a newer
+        identity between separate state and abort operations.
+        """
+        with self._lock:
+            active = self._active_by_session.get(session_id)
+            if active is None:
+                return replace(self._states.get(session_id, RuntimeState(session_id)))
+            return self._abort_locked(active)
+
     def abort(self, *, session_id: str, run_id: str) -> RuntimeState:
         with self._lock:
-            active = self._active
-            if active is None or active.session_id != session_id:
+            active = self._active_by_session.get(session_id)
+            if active is None:
                 raise SessionNotActiveError(session_id)
             if active.run_id != run_id:
                 raise RunMismatchError(run_id)
-            if active.status in {"aborting", "error"}:
-                return replace(active)
+            return self._abort_locked(active)
 
-            runtime = self._runtimes[session_id]
-            runtime.abort()
-            aborting = replace(active, status="aborting")
-            self._abort_started[run_id] = time.monotonic()
-            self._active = aborting
-            self._states[session_id] = aborting
-            return replace(aborting)
+    def _abort_locked(self, active: RuntimeState) -> RuntimeState:
+        if active.status in {"aborting", "error"}:
+            return replace(active)
+        runtime = self._runtimes[active.session_id]
+        runtime.abort()
+        aborting = replace(active, status="aborting")
+        assert active.run_id is not None
+        self._abort_started[active.run_id] = time.monotonic()
+        self._active_by_session[active.session_id] = aborting
+        self._states[active.session_id] = aborting
+        return replace(aborting)
 
     def _watch_completion(
         self,
@@ -175,9 +231,9 @@ class SessionCoordinator:
         run_id: str,
     ) -> None:
         while not handle.finished:
-            notification = None
+            notification: RuntimeState | None = None
             with self._lock:
-                active = self._active
+                active = self._active_by_session.get(session_id)
                 abort_started = self._abort_started.get(run_id)
                 if (
                     active is not None
@@ -187,16 +243,17 @@ class SessionCoordinator:
                     and time.monotonic() - abort_started >= self._abort_timeout
                 ):
                     failed = replace(active, status="error", error="abort_timeout")
-                    self._active = failed
+                    self._active_by_session[session_id] = failed
                     self._states[session_id] = failed
                     notification = replace(failed)
             if notification is not None and self._on_state_change is not None:
                 self._on_state_change(notification)
             time.sleep(self._poll_interval)
         with self._lock:
-            # A stale watcher must never clear a newer run.
-            if self._active is None or self._active.run_id != run_id:
+            # A stale watcher must never clear a newer run in the same session.
+            active = self._active_by_session.get(session_id)
+            if active is None or active.run_id != run_id:
                 return
             self._abort_started.pop(run_id, None)
-            self._active = None
+            self._active_by_session.pop(session_id, None)
             self._states[session_id] = RuntimeState(session_id)

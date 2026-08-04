@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 
 from fastapi import APIRouter, HTTPException, Response, WebSocket, WebSocketDisconnect, status
@@ -14,7 +15,6 @@ from ..services.session_coordinator import (
     AgentBusyError,
     RuntimeState,
     SessionCoordinator,
-    SessionNotActiveError,
 )
 from ..services.session_metadata import SessionMetadataStore, SessionNotFoundError
 from ..services.session_runtime_factory import RuntimeRestoreError, SessionRuntimeFactory
@@ -49,12 +49,30 @@ def _publish_runtime_state(state: RuntimeState) -> None:
     )
 
 
+def _session_run_capacity() -> int:
+    """Return the opt-in bounded capacity; production remains K=1 by default."""
+    raw = os.environ.get("GAHUB_SESSION_RUN_CAPACITY", "1").strip()
+    try:
+        capacity = int(raw)
+    except ValueError:
+        log.warning("invalid GAHUB_SESSION_RUN_CAPACITY=%r; using 1", raw)
+        return 1
+    if capacity not in {1, 2}:
+        log.warning("unsupported GAHUB_SESSION_RUN_CAPACITY=%r; using 1", raw)
+        return 1
+    return capacity
+
+
 def _get_coordinator() -> SessionCoordinator:
     global _coordinator
     if _coordinator is None:
+        capacity = _session_run_capacity()
+        kwargs = {"on_state_change": _publish_runtime_state}
+        if capacity != 1:
+            kwargs["capacity"] = capacity
         _coordinator = SessionCoordinator(
             SessionRuntimeFactory(_store),
-            on_state_change=_publish_runtime_state,
+            **kwargs,
         )
     return _coordinator
 
@@ -187,6 +205,8 @@ async def submit_run(session_id: str, req: RunSubmit):
             "另一个会话正在运行，请等待当前任务结束后重试。",
             active_session_id=exc.active_session_id,
             active_run_id=exc.active_run_id,
+            capacity=exc.capacity,
+            active_count=exc.active_count,
         )
     except RuntimeRestoreError:
         raise _api_error(
@@ -207,14 +227,7 @@ async def get_runtime(session_id: str):
 async def abort_run(session_id: str):
     _session(session_id)
     coordinator = _get_coordinator()
-    current = coordinator.runtime_state(session_id)
-    if current.status not in {"starting", "running"} or not current.run_id:
-        return _state_payload(current, ok=True)
-    try:
-        current = coordinator.abort(session_id=session_id, run_id=current.run_id)
-    except SessionNotActiveError:
-        # The watcher may finish between the state read and abort acquisition.
-        current = coordinator.runtime_state(session_id)
+    current = coordinator.abort_if_current(session_id=session_id)
     return _state_payload(current, ok=True)
 
 
