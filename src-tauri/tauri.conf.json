@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "GA-Hub",
+  "version": "0.1.0",
+  "identifier": "io.genericagent.hub",
+  "build": {
+    "beforeDevCommand": "npm --prefix webui run dev -- --host 127.0.0.1",
+    "beforeBuildCommand": "npm --prefix webui run build",
+    "devUrl": "http://127.0.0.1:5173",
+    "frontendDist": "../webui/dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": ["binaries/ga-hub-sidecar"],
+    "resources": ["../webui/dist/**/*"],
+    "windows": {
+      "wix": { "language": "en-US" }
+    }
+  }
+}

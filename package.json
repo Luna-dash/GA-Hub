@@ -1,0 +1,12 @@
+{
+  "name": "ga-hub-desktop-shell",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0"
+  }
+}

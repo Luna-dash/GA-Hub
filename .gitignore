@@ -12,6 +12,10 @@ ENV/
 
 # ── Node / webui ──────────────────────────────────────────────
 node_modules/
+webui/node_modules/
+src-tauri/target/
+src-tauri/gen/
+target/
 webui/dist/
 webui/.vite/
 webui/tsconfig.tsbuildinfo

@@ -1,0 +1,1 @@
+Production sidecar staging directory. Run `python desktop/build_sidecar.py --target <rust-target-triple>` before `npm run desktop:build`. Generated executables are ignored; Tauri validates and bundles the target-specific executable through `externalBin`.

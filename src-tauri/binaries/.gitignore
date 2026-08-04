@@ -1,0 +1,6 @@
+# Generated production sidecars live here as ga-hub-sidecar-<target-triple>[.exe].
+# Build them with desktop/build_sidecar.py; binaries are intentionally not committed.
+*
+!.gitignore
+!.gitkeep
+!README.md
