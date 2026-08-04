@@ -18,6 +18,8 @@ import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useDraftStore } from '@/stores/draftStore'
+import { sessionManager } from '@/stores/sessionManagerStore'
+import { capacityConflictFromError } from '@/utils/sessionUi'
 
 interface RestoreState {
   restoredFrom?: string
@@ -69,9 +71,11 @@ export default function LiveChat() {
     const initSeq = ++sessionSwitchSeqRef.current
     void (async () => {
       try {
+        const requestedId = new URLSearchParams(location.search).get('session')
         const storedId = localStorage.getItem('gahub.currentSessionId')
         const listed = await api.sessions()
-        let current = storedId ? listed.items.find((item) => item.id === storedId) : undefined
+        let current = requestedId ? listed.items.find((item) => item.id === requestedId) : undefined
+        if (!current) current = storedId ? listed.items.find((item) => item.id === storedId) : undefined
         if (!current) current = await api.createSession({ title: '', llm_index: null })
         if (cancelled || sessionSwitchSeqRef.current !== initSeq) return
         sessionIdRef.current = current.id
@@ -88,7 +92,7 @@ export default function LiveChat() {
       }
     })()
     return () => { cancelled = true }
-  }, [startChat])
+  }, [startChat, location.search])
 
   useEffect(() => {
     let cancelled = false
@@ -264,6 +268,8 @@ export default function LiveChat() {
       .catch((e: any) => {
         if (sessionIdRef.current !== sid) return
         rollbackWebui(stageId)
+        const conflict = capacityConflictFromError(e)
+        if (conflict) sessionManager.open(conflict)
         pushSystem(`_发送失败：${e?.body?.detail?.code || e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`)
       })
   }
