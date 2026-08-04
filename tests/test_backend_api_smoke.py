@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import unittest
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -72,6 +73,24 @@ class BackendApiSmokeTests(unittest.TestCase):
             events = client.get("/api/events/recent?limit=5")
             self.assertEqual(events.status_code, 200)
             self.assertIn("events", events.json())
+
+    def test_built_spa_deep_link_and_hashed_entry_asset(self) -> None:
+        app = self.main.create_app()
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            root = client.get("/")
+            deep_link = client.get("/chat")
+
+            self.assertEqual(root.status_code, 200)
+            self.assertEqual(deep_link.status_code, 200)
+            self.assertIn("text/html", deep_link.headers["content-type"])
+            self.assertEqual(deep_link.headers.get("cache-control"), "no-store, must-revalidate")
+
+            match = re.search(r'<script[^>]+src="(/assets/[^"]+\.js)"', deep_link.text)
+            self.assertIsNotNone(match, "built index must reference a hashed JavaScript entry")
+            entry = client.get(match.group(1))
+            self.assertEqual(entry.status_code, 200)
+            self.assertIn("javascript", entry.headers["content-type"])
+            self.assertGreater(len(entry.content), 100)
 
     def test_host_guard_rejects_non_localhost_domains(self) -> None:
         app = self.main.create_app()

@@ -461,14 +461,14 @@ def _kill_pid(pid: int) -> bool:
         return False
     try:
         if os.name == "nt":
-            subprocess.run(
+            result = subprocess.run(
                 ["taskkill", "/PID", str(pid), "/T", "/F"],
                 timeout=5,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 **_NO_WINDOW,
             )
-            return True
+            return result.returncode == 0
         os.kill(pid, signal.SIGTERM)
         for _ in range(15):  # 1.5 s
             time.sleep(0.1)

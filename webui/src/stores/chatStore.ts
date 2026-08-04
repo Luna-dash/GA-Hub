@@ -537,7 +537,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     historyGeneration++
     historyAbort?.abort()
     get().sock?.close()
-    set({ sock: null, sessionId: null, conn: 'closed', historyStatus: 'idle', historyError: null })
+    set({ sock: null, sessionId: null, conn: 'closed', hydrating: false, historyStatus: 'idle', historyError: null })
   },
 
   stageWebui: (text, atts) => {
