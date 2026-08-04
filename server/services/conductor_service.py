@@ -452,7 +452,9 @@ API: {base}；先requests，GET /api/conductor/readme查用法，GET /api/conduc
             except Exception as e:
                 log.exception(f"Conductor error: {e}")
 
-    def start(self):
+    def start(self, llm_index: Optional[int] = None):
+        if llm_index is not None:
+            self.llm_index = llm_index
         threading.Thread(target=self._run, name="conductor-loop", daemon=True).start()
 
 
