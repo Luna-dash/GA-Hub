@@ -58,6 +58,36 @@ describe('chatStore lifecycle', () => {
     })
   })
 
+  it('rolls back only the matching pending WebUI message after submit failure', () => {
+    const first = useChatStore.getState().stageWebui('keep me', [])
+    const second = useChatStore.getState().stageWebui('remove me', [])
+
+    useChatStore.getState().rollbackWebui(second)
+
+    expect(useChatStore.getState().msgs).toEqual([
+      expect.objectContaining({ content: 'keep me', pendingWebui: true }),
+    ])
+    expect(useChatStore.getState().streaming).toBe(true)
+
+    useChatStore.getState().rollbackWebui(first)
+    expect(useChatStore.getState().msgs).toEqual([])
+    expect(useChatStore.getState().streaming).toBe(false)
+  })
+
+  it('does not remove a staged message after the server has adopted it', () => {
+    const stageId = useChatStore.getState().stageWebui('accepted', [])
+    const staged = useChatStore.getState().msgs[0]
+    useChatStore.setState({
+      msgs: [{ ...staged, streamId: 'server-stream', pendingWebui: false }],
+    })
+
+    useChatStore.getState().rollbackWebui(stageId)
+
+    expect(useChatStore.getState().msgs).toEqual([
+      expect.objectContaining({ content: 'accepted', streamId: 'server-stream' }),
+    ])
+  })
+
   it('ignores stale history after switching sessions', async () => {
     const first = deferred<SessionMessagesResponse>()
     const second = deferred<SessionMessagesResponse>()

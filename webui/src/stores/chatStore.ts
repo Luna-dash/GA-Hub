@@ -29,6 +29,7 @@ export interface ChatMsg {
   streaming?: boolean              // assistant bubble currently receiving
   attachments?: PasteAttachment[]  // local-only previews for the user bubble
   pendingWebui?: boolean           // set on local pre-add until `started` arrives
+  pendingWebuiId?: string          // identifies the exact optimistic bubble for rollback
 }
 
 interface ChatState {
@@ -46,7 +47,9 @@ interface ChatState {
   stop: () => void
 
   /** Stage a local user bubble before LiveChat submits through session HTTP. */
-  stageWebui: (text: string, atts: PasteAttachment[]) => void
+  stageWebui: (text: string, atts: PasteAttachment[]) => string
+  /** Remove that exact bubble if HTTP submission fails before server adoption. */
+  rollbackWebui: (stageId: string) => void
 
   /** Wipe local view (used by /new). Doesn't talk to the server. */
   clearLocal: () => void
@@ -144,6 +147,7 @@ function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
 
 let historyGeneration = 0
 let historyAbort: AbortController | null = null
+let webuiStageSequence = 0
 const sessionCursors = new Map<string, ChatEventCursor>()
 
 function commitCursor(sessionId: string, event: ChatWSOut): void {
@@ -198,7 +202,12 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
       if (idx !== -1) {
         const realIdx = prev.length - 1 - idx
         const adopted = prev.slice()
-        adopted[realIdx] = { ...adopted[realIdx], streamId: sid, pendingWebui: false }
+        adopted[realIdx] = {
+          ...adopted[realIdx],
+          streamId: sid,
+          pendingWebui: false,
+          pendingWebuiId: undefined,
+        }
         // Append empty assistant bubble for the streaming reply.
         return [...adopted, { role: 'assistant', content: '', streamId: sid, source, streaming: true }]
       }
@@ -541,12 +550,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   stageWebui: (text, atts) => {
+    const stageId = `webui-stage-${++webuiStageSequence}`
     const userBubble: ChatMsg = {
       role: 'user', content: text, source: 'webui',
-      attachments: atts.length ? atts : undefined, pendingWebui: true,
+      attachments: atts.length ? atts : undefined,
+      pendingWebui: true,
+      pendingWebuiId: stageId,
     }
     set((st) => ({ msgs: [...st.msgs, userBubble], streaming: true }))
+    return stageId
   },
+
+  rollbackWebui: (stageId) => set((st) => {
+    const msgs = st.msgs.filter((msg) => !(msg.pendingWebui && msg.pendingWebuiId === stageId))
+    if (msgs.length === st.msgs.length) return st
+    return {
+      msgs,
+      streaming: msgs.some((msg) => msg.streaming || msg.pendingWebui),
+    }
+  }),
 
   clearLocal: () => set({ msgs: [], streaming: false }),
   pushSystem: (content) =>

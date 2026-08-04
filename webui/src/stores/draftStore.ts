@@ -7,6 +7,7 @@ interface DraftState {
   setText: (key: string, text: string) => void
   setAttachments: (key: string, attachments: PasteAttachment[]) => void
   clearDraft: (key: string) => void
+  clearDraftIfMatch: (key: string, text: string, attachments: PasteAttachment[]) => boolean
 }
 
 export const useDraftStore = create<DraftState>((set) => ({
@@ -21,4 +22,21 @@ export const useDraftStore = create<DraftState>((set) => ({
     delete attachments[key]
     return { texts, attachments }
   }),
+  clearDraftIfMatch: (key, text, attachments) => {
+    let cleared = false
+    set((state) => {
+      const currentText = state.texts[key] ?? ''
+      const currentAttachments = state.attachments[key] ?? []
+      const attachmentsMatch = currentAttachments.length === attachments.length
+        && currentAttachments.every((item, index) => item.path === attachments[index]?.path)
+      if (currentText !== text || !attachmentsMatch) return state
+      const texts = { ...state.texts }
+      const nextAttachments = { ...state.attachments }
+      delete texts[key]
+      delete nextAttachments[key]
+      cleared = true
+      return { texts, attachments: nextAttachments }
+    })
+    return cleared
+  },
 }))

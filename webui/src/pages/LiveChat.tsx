@@ -39,9 +39,9 @@ export default function LiveChat() {
   const retryHistory = useChatStore((s) => s.retryHistory)
   const startChat = useChatStore((s) => s.start)
   const stageWebui = useChatStore((s) => s.stageWebui)
+  const rollbackWebui = useChatStore((s) => s.rollbackWebui)
   const clearLocal = useChatStore((s) => s.clearLocal)
   const pushSystem = useChatStore((s) => s.pushSystem)
-  const markIdle = useChatStore((s) => s.markIdle)
 
   const draftKey = 'liveChat'
   const text = useDraftStore((state) => state.texts[draftKey] ?? '')
@@ -244,16 +244,19 @@ export default function LiveChat() {
     const fileMarkers = atts.map((a) => `[用户发送文件: ${a.path}]`).join('\n')
     const fileHint = atts.length ? 'If you need to show files to user, use [FILE:filepath] in your response.\n\n' : ''
     const promptText = fileHint + t + (fileMarkers ? (t ? '\n' : '') + fileMarkers : '')
-    stageWebui(t, atts)
-    clearDraft()
+    const stageId = stageWebui(t, atts)
     setStuckBottom(true)
     setUnread(0)
     api.sessionRun(sid, promptText, atts.map((a) => a.path))
-      .then(() => refreshRuntime(sid))
+      .then(() => {
+        if (sessionIdRef.current !== sid) return
+        useDraftStore.getState().clearDraftIfMatch(draftKey, text, atts)
+        refreshRuntime(sid)
+      })
       .catch((e: any) => {
         if (sessionIdRef.current !== sid) return
-        markIdle()
-        pushSystem(`_发送失败：${e?.body?.detail?.code || e?.body?.detail || e?.message || String(e)}_`)
+        rollbackWebui(stageId)
+        pushSystem(`_发送失败：${e?.body?.detail?.code || e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`)
       })
   }
 
