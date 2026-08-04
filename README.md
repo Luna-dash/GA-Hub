@@ -15,7 +15,7 @@
 
 一个为 GenericAgent 提供的**现代化桌面管理界面**：
 
-- 💬 **实时聊天**：直接和 Agent 对话，支持图片粘贴/拖放，Turn 自动折叠
+- 💬 **实时聊天**：直接和 Agent 对话，支持图片粘贴/拖放、会话恢复与 Turn 自动折叠
 - 🤖 **微信机器人**：扫码登录、联系人列表、消息记录、手动发文/图/文件、白名单
 - 🗂️ **对话管理**：浏览/搜索/重命名/删除/导出 GA 的全部历史会话
 - 🧠 **记忆 & SOP**：可视化编辑 GA 的 `global_mem.txt` / `*_sop.md`
@@ -132,6 +132,27 @@ cd webui
 npm run lint
 npm run build
 ```
+
+## 实时聊天的恢复协议
+
+实时聊天以 **GA 原始 archive 为唯一持久消息正文真源**。GA-Hub 的 session
+sidecar 只保存标题、模型、状态和 archive 定位信息，不复制或持久化聊天正文。
+
+LiveChat 使用以下 session-scoped 链路：
+
+1. 进入或切换会话时，通过 `GET /api/sessions/{id}/messages` 从 archive 的只读投影水合历史；
+2. 发送、查询运行状态和停止分别使用 session HTTP API；
+3. `WS /ws/sessions/{id}?after_event_id=<event_id>&epoch=<epoch>` 仅接收该会话的实时事件；
+4. 首次连接返回当前 runtime/active-message snapshot；重连游标仍在保留窗口内时补发 replay；
+5. 服务重启、游标超前或保留窗口已过时返回 `resync_required`，客户端清除旧游标并重新执行 HTTP 水合，然后建立新水位。
+
+事件游标仅保证**当前服务进程、单实例 EventBus、有限内存保留窗口**内的增量恢复；
+它不是跨进程持久化日志。当前部署边界仍是本机回环、单 worker、单全局 Agent run。
+abort 超时会保守地继续占用活动槽并提示重启服务，避免旧 worker 与新 run 并发污染。
+
+兼容边界：LiveChat 新功能只使用 session HTTP + session WebSocket，session WS
+是 receive-only。旧 `/ws/chat` 仍供尚未迁移的兼容调用方使用，本阶段不删除；新代码不得
+通过它 submit/abort。强认证、多 worker、跨重启续跑和完整消息分页不属于当前协议保证。
 
 ## 目录结构
 

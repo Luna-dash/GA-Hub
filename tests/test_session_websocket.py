@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 from fastapi import FastAPI
@@ -10,6 +11,44 @@ from fastapi.testclient import TestClient
 from server.services.event_bus import Event, EventBus
 from server.services.session_coordinator import RuntimeState
 from server.services.session_metadata import SessionMetadataStore
+
+
+def test_coordinator_abort_timeout_publishes_identified_error_event(
+    monkeypatch, caplog
+):
+    caplog.set_level(logging.INFO, logger="server.routes.sessions")
+    from server.routes import sessions
+
+    event_bus = EventBus()
+    captured = {}
+
+    class CapturingCoordinator:
+        def __init__(self, runtime_factory, *, on_state_change):
+            captured["callback"] = on_state_change
+
+    monkeypatch.setattr(sessions, "bus", event_bus)
+    monkeypatch.setattr(sessions, "_coordinator", None)
+    monkeypatch.setattr(sessions, "SessionCoordinator", CapturingCoordinator)
+    monkeypatch.setattr(sessions, "SessionRuntimeFactory", lambda store: object())
+
+    sessions._get_coordinator()
+    captured["callback"](RuntimeState(
+        "session-a", "error", "run-a", "stream-a", "abort_timeout"
+    ))
+
+    event = event_bus.history("chat:")[-1]
+    assert event.topic == "chat:error"
+    assert event.payload == {
+        "session_id": "session-a",
+        "run_id": "run-a",
+        "stream_id": "stream-a",
+        "code": "abort_timeout",
+        "detail": "停止请求超时；底层任务尚未终止，如持续占用请重启服务。",
+    }
+    assert "session_runtime_error session_id=session-a" in caplog.text
+    assert "run_id=run-a" in caplog.text
+    assert "stream_id=stream-a" in caplog.text
+    assert "runtime_before=aborting runtime_after=error" in caplog.text
 
 
 class FakeCoordinator:
@@ -41,18 +80,19 @@ def _app(tmp_path, monkeypatch) -> tuple[FastAPI, str]:
 
 
 def test_session_event_frame_is_strictly_isolated():
-    from server.routes.sessions import _session_event_frame
+    from server.routes import sessions
 
     matching = Event("chat:next", {
         "session_id": "A", "run_id": "r1", "stream_id": "s1", "content": "hello",
-    })
-    assert _session_event_frame("A", matching) == {
+    }, event_id=7)
+    assert sessions._session_event_frame("A", matching) == {
         "type": "next", "session_id": "A", "run_id": "r1",
         "stream_id": "s1", "content": "hello",
+        "event_id": 7, "epoch": sessions.bus.epoch,
     }
-    assert _session_event_frame("B", matching) is None
-    assert _session_event_frame("A", Event("chat:heartbeat", {"stream_id": "s1"})) is None
-    assert _session_event_frame("A", Event("agent:done", {"session_id": "A"})) is None
+    assert sessions._session_event_frame("B", matching) is None
+    assert sessions._session_event_frame("A", Event("chat:heartbeat", {"stream_id": "s1"})) is None
+    assert sessions._session_event_frame("A", Event("agent:done", {"session_id": "A"})) is None
 
 
 def test_session_websocket_starts_with_runtime_snapshot_and_supports_ping(tmp_path, monkeypatch):
@@ -60,7 +100,8 @@ def test_session_websocket_starts_with_runtime_snapshot_and_supports_ping(tmp_pa
     event_bus = app.state.test_bus
     with TestClient(app) as client:
         with client.websocket_connect(f"/ws/sessions/{sid}") as ws:
-            assert ws.receive_json() == {
+            snapshot = ws.receive_json()
+            assert snapshot == {
                 "type": "snapshot", "session_id": sid, "status": "running",
                 "run_id": "run-a", "stream_id": "stream-a",
                 "runtime": {
@@ -68,6 +109,11 @@ def test_session_websocket_starts_with_runtime_snapshot_and_supports_ping(tmp_pa
                     "stream_id": "stream-a", "error": None,
                 },
                 "active_message": None,
+                "epoch": event_bus.epoch,
+            }
+            assert ws.receive_json() == {
+                "type": "replay_done", "session_id": sid,
+                "event_id": 0, "epoch": event_bus.epoch,
             }
             # The subscription must already exist when the snapshot is visible;
             # otherwise an event published in the snapshot/subscribe gap is lost.
@@ -87,15 +133,49 @@ def test_unknown_session_websocket_is_rejected(tmp_path, monkeypatch):
             assert getattr(exc, "code", None) == 4404
 
 
-def test_session_websocket_forwards_only_owned_events_and_cleans_subscription(
-    tmp_path, monkeypatch
+def test_invalid_resume_cursor_emits_correlated_resync_log(
+    tmp_path, monkeypatch, caplog
 ):
+    caplog.set_level(logging.INFO, logger="server.routes.sessions")
+    app, sid = _app(tmp_path, monkeypatch)
+
+    with TestClient(app) as client:
+        with client.websocket_connect(
+            f"/ws/sessions/{sid}?after_event_id=not-an-integer"
+        ) as ws:
+            resync = ws.receive_json()
+            assert resync["type"] == "resync_required"
+            assert resync["reason"] == "invalid_cursor"
+            assert ws.receive_json()["type"] == "snapshot"
+            assert ws.receive_json()["type"] == "replay_done"
+
+    resync_record = next(
+        record for record in caplog.records
+        if record.getMessage().startswith("session_ws_resync ")
+    )
+    connected_record = next(
+        record for record in caplog.records
+        if record.getMessage().startswith("session_ws_connected ")
+    )
+    assert resync_record.args[0] == sid
+    assert resync_record.args[1] == connected_record.args[1]
+    assert resync_record.args[3] == "invalid_cursor"
+
+
+def test_session_websocket_forwards_only_owned_events_and_cleans_subscription(
+    tmp_path, monkeypatch, caplog
+):
+    caplog.set_level(logging.INFO, logger="server.routes.sessions")
     app, sid = _app(tmp_path, monkeypatch)
     event_bus = app.state.test_bus
 
     with TestClient(app) as client:
         with client.websocket_connect(f"/ws/sessions/{sid}") as ws:
             assert ws.receive_json()["type"] == "snapshot"
+            assert ws.receive_json() == {
+                "type": "replay_done", "session_id": sid,
+                "event_id": 0, "epoch": event_bus.epoch,
+            }
             deadline = time.monotonic() + 1
             while not event_bus._subs and time.monotonic() < deadline:
                 time.sleep(0.005)
@@ -112,9 +192,30 @@ def test_session_websocket_forwards_only_owned_events_and_cleans_subscription(
             assert ws.receive_json() == {
                 "type": "next", "session_id": sid, "run_id": "run-a",
                 "stream_id": "stream-a", "content": "owned",
+                "event_id": 2, "epoch": event_bus.epoch,
             }
 
         deadline = time.monotonic() + 1
         while event_bus._subs and time.monotonic() < deadline:
             time.sleep(0.005)
         assert event_bus._subs == []
+
+    connected = next(
+        record for record in caplog.records
+        if record.getMessage().startswith("session_ws_connected ")
+    )
+    replay = next(
+        record for record in caplog.records
+        if record.getMessage().startswith("session_ws_replay ")
+    )
+    disconnected = next(
+        record for record in caplog.records
+        if record.getMessage().startswith("session_ws_disconnected ")
+    )
+    assert connected.args[0] == sid
+    assert connected.args[1] == replay.args[1] == disconnected.args[1]
+    assert connected.args[3] == replay.args[3] == 0
+    assert replay.args[5] == "snapshot"
+    log_text = caplog.text
+    assert "owned" not in log_text
+    assert "wrong" not in log_text

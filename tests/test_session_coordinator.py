@@ -136,8 +136,12 @@ def test_abort_timeout_is_error_and_keeps_slot_until_core_really_finishes() -> N
         runtimes[session_id] = FakeRuntime(session_id)
         return runtimes[session_id]
 
+    notifications: list[RuntimeState] = []
     coordinator = SessionCoordinator(
-        factory, poll_interval=0.002, abort_timeout=0.02
+        factory,
+        poll_interval=0.002,
+        abort_timeout=0.02,
+        on_state_change=notifications.append,
     )
     run = coordinator.submit("alpha", session_id="A")
     coordinator.abort(session_id="A", run_id=run.run_id)
@@ -146,6 +150,7 @@ def test_abort_timeout_is_error_and_keeps_slot_until_core_really_finishes() -> N
     timed_out = coordinator.runtime_state("A")
     assert timed_out.error == "abort_timeout"
     assert coordinator.active_run() == timed_out
+    assert notifications == [timed_out]
 
     with pytest.raises(AgentBusyError):
         coordinator.submit("beta", session_id="B")

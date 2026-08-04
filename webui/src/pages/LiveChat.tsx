@@ -1,9 +1,9 @@
-// LiveChat — a view over the global chatStore.
+// LiveChat — the UI for one durable GA-Hub session.
 //
-// The store owns the WebSocket and msg list, so navigating away no longer
-// drops in-flight streams or scrollback. Autonomous-evolution / wechat /
-// reflect submissions also surface here because the backend broadcasts
-// every chat:* event on the same bus channel that the store subscribes to.
+// chatStore owns only the selected session's receive-only WebSocket and
+// archive-hydrated message projection. Submissions and aborts use the session
+// HTTP API; switching sessions tears down the old socket and ignores stale
+// async completions so events cannot leak across sessions.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'

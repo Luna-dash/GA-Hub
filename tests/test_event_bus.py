@@ -75,7 +75,12 @@ class EventBusBehaviorTests(unittest.TestCase):
     """End-to-end: drive a real EventBus inside a fresh asyncio loop."""
 
     def _run(self, coro):
-        return asyncio.new_event_loop().run_until_complete(coro)
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
 
     def test_publish_routes_by_prefix(self):
         async def scenario():
@@ -188,6 +193,29 @@ class EventBusBehaviorTests(unittest.TestCase):
         self.assertLessEqual(len(results), 2)
         for topic in results:
             self.assertTrue(topic.startswith("chat:"))
+
+    def test_resumable_subscriber_overflow_requires_resync(self):
+        async def scenario():
+            bus = EventBus(queue_size=2)
+            bus.attach_loop(asyncio.get_running_loop())
+            subscription = await bus.subscribe_after("chat:")
+
+            for i in range(3):
+                bus.publish("chat:next", {"i": i})
+            # Let the thread-safe dispatch callbacks fill the bounded queue.
+            await asyncio.sleep(0)
+
+            live = subscription.live().__aiter__()
+            with self.assertRaises(StopAsyncIteration):
+                await asyncio.wait_for(live.__anext__(), timeout=1.0)
+            self.assertEqual(subscription.live_resync_reason, "subscriber_overflow")
+            self.assertIn(subscription.queue, bus._resumable_subs)
+
+            await subscription.close()
+            self.assertNotIn(subscription.queue, bus._resumable_subs)
+            self.assertFalse(any(q is subscription.queue for _, q in bus._subs))
+
+        self._run(scenario())
 
 
 if __name__ == "__main__":

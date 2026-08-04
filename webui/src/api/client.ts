@@ -285,21 +285,22 @@ function wsUrl(path: string): string {
 
 export class ChatSocket {
   ws?: WebSocket
-  private readonly url: string
+  private readonly path: string | (() => string)
   private reconnectTimer?: number
   private reconnectAttempts = 0
   private explicitlyClosed = false
   onMessage: (m: ChatWSOut) => void = () => {}
   onState: (s: 'connecting' | 'open' | 'closed') => void = () => {}
 
-  constructor(path = '/ws/chat') {
-    this.url = wsUrl(path)
+  constructor(path: string | (() => string) = '/ws/chat') {
+    this.path = path
   }
 
   open() {
     this.explicitlyClosed = false
     this.onState('connecting')
-    const ws = new WebSocket(this.url)
+    const path = typeof this.path === 'function' ? this.path() : this.path
+    const ws = new WebSocket(wsUrl(path))
     this.ws = ws
     ws.onopen = () => {
       this.reconnectAttempts = 0

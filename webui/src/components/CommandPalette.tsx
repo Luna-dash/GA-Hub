@@ -50,7 +50,7 @@ export function CommandPalette() {
   const listRef = useRef<HTMLDivElement>(null)
   const nav = useNavigate()
   const qc = useQueryClient()
-  const abortAgent = useChatStore((s) => s.abort)
+  const sessionId = useChatStore((s) => s.sessionId)
   const clearLocal = useChatStore((s) => s.clearLocal)
   const pushSystem = useChatStore((s) => s.pushSystem)
 
@@ -153,7 +153,13 @@ export function CommandPalette() {
     acts.push({
       id: 'agent:abort', group: '快捷操作', icon: '⏹',
       label: '停止 Agent',
-      run: () => abortAgent(),
+      run: async () => {
+        if (!sessionId) {
+          pushSystem('_当前没有可停止的会话_')
+          return
+        }
+        await api.abortSession(sessionId)
+      },
     })
 
     // LLM switching
@@ -209,7 +215,7 @@ export function CommandPalette() {
     }
 
     return acts
-  }, [llms, schedules, sops, convs, nav, qc, abortAgent, clearLocal, pushSystem])
+  }, [llms, schedules, sops, convs, nav, qc, sessionId, clearLocal, pushSystem])
 
   const filtered = useMemo(() => {
     if (!q.trim()) return actions

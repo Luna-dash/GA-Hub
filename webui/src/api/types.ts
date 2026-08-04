@@ -365,7 +365,10 @@ export interface BtwResp {
   error?: string
 }
 
-export type ChatWSOut =
+export type ChatEventCursor = { event_id: number; epoch: string }
+export type ChatWSMeta = { event_id?: number; epoch?: string }
+
+export type ChatWSOut = (
   | {
       type: 'snapshot'
       streams?: ChatStreamSnapshot[]
@@ -385,8 +388,11 @@ export type ChatWSOut =
   | { type: 'retry_exhausted'; stream_id: string; source?: string; logical_id?: string; attempt: number; max_attempts: number; reason?: ChatRetryReason; retry_reason?: string }
   | { type: 'aborted' }
   | { type: 'pong' }
-  | { type: 'error'; error: string }
+  | { type: 'error'; session_id: string; run_id: string; stream_id: string; code: string; detail: string }
   | { type: 'rewound'; removed_sids: string[]; kept: number; history_lines: number }
+  | { type: 'resync_required'; session_id: string; reason: string }
+  | { type: 'replay_done'; session_id: string; event_id: number }
+) & ChatWSMeta
 
 export interface EventBusEnvelope {
   topic: string

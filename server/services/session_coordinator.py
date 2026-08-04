@@ -59,10 +59,12 @@ class SessionCoordinator:
         *,
         poll_interval: float = 0.05,
         abort_timeout: float = 10.0,
+        on_state_change: Callable[[RuntimeState], None] | None = None,
     ) -> None:
         self._runtime_factory = runtime_factory
         self._poll_interval = poll_interval
         self._abort_timeout = abort_timeout
+        self._on_state_change = on_state_change
         self._lock = threading.RLock()
         self._runtimes: dict[str, SessionRuntime] = {}
         self._states: dict[str, RuntimeState] = {}
@@ -173,6 +175,7 @@ class SessionCoordinator:
         run_id: str,
     ) -> None:
         while not handle.finished:
+            notification = None
             with self._lock:
                 active = self._active
                 abort_started = self._abort_started.get(run_id)
@@ -186,6 +189,9 @@ class SessionCoordinator:
                     failed = replace(active, status="error", error="abort_timeout")
                     self._active = failed
                     self._states[session_id] = failed
+                    notification = replace(failed)
+            if notification is not None and self._on_state_change is not None:
+                self._on_state_change(notification)
             time.sleep(self._poll_interval)
         with self._lock:
             # A stale watcher must never clear a newer run.

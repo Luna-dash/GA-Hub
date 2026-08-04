@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.services.session_coordinator import AgentBusyError, RuntimeState
+from server.services.session_runtime_factory import RuntimeRestoreError
 from server.services.session_metadata import SessionMetadataStore
 
 
@@ -17,11 +18,14 @@ class FakeCoordinator:
         self.active: RuntimeState | None = None
         self.submissions: list[dict] = []
         self.aborts: list[tuple[str, str]] = []
+        self.restore_error = False
 
     def runtime_state(self, session_id: str) -> RuntimeState:
         return self.states.get(session_id, RuntimeState(session_id))
 
     def submit(self, text: str, **kwargs):
+        if self.restore_error:
+            raise RuntimeRestoreError("internal restore path")
         if self.active is not None:
             raise AgentBusyError(self.active.session_id, self.active.run_id or "")
         state = RuntimeState(kwargs["session_id"], "running", "run-1", "stream-1")
@@ -50,7 +54,21 @@ def _client(tmp_path: Path, monkeypatch):
     return TestClient(app), store, coordinator
 
 
-def test_submit_and_runtime_are_session_scoped(tmp_path: Path, monkeypatch) -> None:
+def test_restore_failure_is_stable_error(tmp_path: Path, monkeypatch) -> None:
+    client, store, coordinator = _client(tmp_path, monkeypatch)
+    sid = store.create(title="Restore", llm_index=0)["id"]
+    coordinator.restore_error = True
+
+    with client:
+        response = client.post(f"/api/sessions/{sid}/runs", json={"text": "x"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "restore_failed",
+        "detail": "会话运行环境恢复失败，请稍后重试。",
+    }
+
+
     client, store, coordinator = _client(tmp_path, monkeypatch)
     sid = store.create(title="A", llm_index=4)["id"]
 
@@ -87,6 +105,7 @@ def test_global_busy_and_unknown_session_are_explicit(tmp_path: Path, monkeypatc
         assert busy.status_code == 409
         assert busy.json()["detail"] == {
             "code": "agent_busy",
+            "detail": "另一个会话正在运行，请等待当前任务结束后重试。",
             "active_session_id": sid_a,
             "active_run_id": "run-a",
         }

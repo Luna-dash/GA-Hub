@@ -1,12 +1,10 @@
-// chatStore — process-wide chat state.
+// chatStore — session-scoped live-chat state shared across page remounts.
 //
-// Why a global store rather than LiveChat-local state?
-//   1. Switching tabs (LiveChat ⇆ Wechat ⇆ Conversations …) used to unmount
-//      LiveChat, killing both the WebSocket and msg state. Now the socket
-//      lives at the App level and msgs survive navigation.
-//   2. Autonomous-evolution / wechat / reflect submissions are routed
-//      through the SAME bus channel in the backend. The single subscription
-//      here surfaces them in the live chat view as new conversation threads.
+// LiveChat starts the store for the selected Hub session. A session change
+// closes the previous socket and clears its local projection; ordinary SPA
+// navigation leaves the selected session connected so its in-memory stream can
+// survive a page remount. The socket is receive-only: submit and abort use the
+// session HTTP API, while history hydration comes from GA's archive projection.
 //
 // State model:
 //   - msgs is an ordered list of UI bubbles. Each assistant bubble carries
@@ -17,7 +15,7 @@
 //     when the matching `started` event arrives.
 
 import { create } from 'zustand'
-import type { ChatStreamSnapshot, ChatWSOut, SessionMessageProjection } from '@/api/types'
+import type { ChatEventCursor, ChatStreamSnapshot, ChatWSOut, SessionMessageProjection } from '@/api/types'
 import { api, ChatSocket } from '@/api/client'
 import type { PasteAttachment } from '@/components/ImagePasteInput'
 
@@ -47,12 +45,8 @@ interface ChatState {
   retryHistory: () => void
   stop: () => void
 
-  /** Submit a user message via webui. Pre-adds a local user bubble so the
-   *  attachment thumbnails show immediately. The bubble's streamId is
-   *  filled in when the `started` event echoes back. */
+  /** Stage a local user bubble before LiveChat submits through session HTTP. */
   stageWebui: (text: string, atts: PasteAttachment[]) => void
-  submitWebui: (text: string, atts: PasteAttachment[]) => void
-  abort: () => void
 
   /** Wipe local view (used by /new). Doesn't talk to the server. */
   clearLocal: () => void
@@ -150,6 +144,26 @@ function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
 
 let historyGeneration = 0
 let historyAbort: AbortController | null = null
+const sessionCursors = new Map<string, ChatEventCursor>()
+
+function commitCursor(sessionId: string, event: ChatWSOut): void {
+  if (typeof event.event_id !== 'number' || !event.epoch) return
+  const current = sessionCursors.get(sessionId)
+  if (!current || current.epoch !== event.epoch || event.event_id > current.event_id) {
+    sessionCursors.set(sessionId, { event_id: event.event_id, epoch: event.epoch })
+  }
+}
+
+function sessionSocketPath(sessionId: string): string {
+  const base = `/ws/sessions/${encodeURIComponent(sessionId)}`
+  const cursor = sessionCursors.get(sessionId)
+  if (!cursor) return base
+  const query = new URLSearchParams({
+    after_event_id: String(cursor.event_id),
+    epoch: cursor.epoch,
+  })
+  return `${base}?${query.toString()}`
+}
 
 /** Apply a single server event to the message list. */
 function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
@@ -255,6 +269,22 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
       },
     ]
   }
+  if (evt.type === 'error') {
+    const noticeId = `${evt.stream_id}:error:${evt.code}`
+    const stopped = prev.map((m) =>
+      m.streamId === evt.stream_id && m.streaming ? { ...m, streaming: false } : m,
+    )
+    if (stopped.some((m) => m.streamId === noticeId)) return stopped
+    return [
+      ...stopped,
+      {
+        role: 'assistant',
+        content: `_运行错误（${evt.code}）：${evt.detail || '会话运行失败，请稍后重试。'}_`,
+        streamId: noticeId,
+        source: 'runtime_error_notice',
+      },
+    ]
+  }
   if (evt.type === 'aborted') {
     // Mark every still-streaming bubble as finished — server confirmed abort.
     return prev.map((m) => (m.streaming ? { ...m, streaming: false } : m))
@@ -315,7 +345,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     let historyReady = false
     const bufferedEvents: ChatWSOut[] = []
 
+    const devTrace = (source: 'hydrate' | 'snapshot' | 'replay' | 'live', eventType: string) => {
+      if (import.meta.env.DEV) {
+        console.debug(`[chat:${source}]`, { sessionId, eventType })
+      }
+    }
+
     const replayEvents = (base: ChatMsg[], events: ChatWSOut[]): ChatMsg[] => {
+      devTrace('hydrate', 'history_replay')
       let msgs = base
       for (const event of events) {
         // A session snapshot describes live streams, not archived scrollback.
@@ -364,38 +401,45 @@ export const useChatStore = create<ChatState>((set, get) => ({
         for (const e of evts) msgs = applyEvent(msgs, e)
         return { msgs, streaming: anyStreaming(msgs) }
       })
+      for (const e of evts) commitCursor(sessionId, e)
     }
 
-    const sock = new ChatSocket(`/ws/sessions/${encodeURIComponent(sessionId)}`)
+    const sock = new ChatSocket(() => sessionSocketPath(sessionId))
     sock.onState = (s) => {
       set({ conn: s })
     }
-    const handleReadyMessage = (m: ChatWSOut) => {
+    const handleReadyMessage = (m: ChatWSOut, deferSnapshot = true) => {
       // Snapshot is large; defer past the next paint so the WebView
       // becomes interactive first (preserved from prior behaviour).
       if (m.type === 'snapshot') {
+        devTrace('snapshot', m.type)
         // Drop any in-flight next throttle — the snapshot is the
         // authoritative state.
         pendingNext.clear()
         if (nextTimer != null) { window.clearTimeout(nextTimer); nextTimer = null }
-        const apply = () => set((st) => {
-          let msgs = m.streams ? mergeLive(st.msgs, applySnapshot(m.streams)) : st.msgs
-          if (m.active_message) {
-            const activeEvent: ChatWSOut = m.active_message.done
-              ? { type: 'done', stream_id: m.active_message.stream_id, content: m.active_message.content }
-              : { type: 'next', stream_id: m.active_message.stream_id, content: m.active_message.content }
-            msgs = applyEvent(msgs, activeEvent)
-          }
-          return {
-            msgs,
-            streaming: anyStreaming(msgs),
-            hydrating: false,
-          }
-        })
-        if (typeof requestAnimationFrame === 'function') {
+        const apply = () => {
+          set((st) => {
+            let msgs = m.streams ? mergeLive(st.msgs, applySnapshot(m.streams)) : st.msgs
+            if (m.active_message) {
+              const activeEvent: ChatWSOut = m.active_message.done
+                ? { type: 'done', stream_id: m.active_message.stream_id, content: m.active_message.content }
+                : { type: 'next', stream_id: m.active_message.stream_id, content: m.active_message.content }
+              msgs = applyEvent(msgs, activeEvent)
+            }
+            return {
+              msgs,
+              streaming: anyStreaming(msgs),
+              hydrating: false,
+            }
+          })
+          commitCursor(sessionId, m)
+        }
+        if (deferSnapshot && typeof requestAnimationFrame === 'function') {
           requestAnimationFrame(() => requestAnimationFrame(apply))
-        } else {
+        } else if (deferSnapshot) {
           setTimeout(apply, 0)
+        } else {
+          apply()
         }
         return
       }
@@ -411,7 +455,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return
       }
 
+      if (m.type === 'resync_required') {
+        sessionCursors.delete(sessionId)
+        pendingNext.clear()
+        if (nextTimer != null) { window.clearTimeout(nextTimer); nextTimer = null }
+        historyReady = false
+        sock.close()
+        set({ sock: null, hydrating: true, historyStatus: 'loading_history' })
+        queueMicrotask(() => {
+          if (generation === historyGeneration && get().sessionId === sessionId) get().start(sessionId)
+        })
+        return
+      }
+
+      // replay_done is the ordering barrier: all replayed events have been
+      // applied before this frame is accepted as the reconnect boundary.
+      if (m.type === 'replay_done') {
+        devTrace('replay', m.type)
+        if (pendingNext.size > 0) flushNext()
+        commitCursor(sessionId, m)
+        return
+      }
+
       // Any other event (started / done / aborted / reset / error / pong):
+      devTrace('live', m.type)
       // flush queued next first so done's final content lands AFTER the
       // most recent streaming chunk, not before.
       if (pendingNext.size > 0) flushNext()
@@ -419,6 +486,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const msgs = applyEvent(st.msgs, m)
         return { msgs, streaming: anyStreaming(msgs) }
       })
+      commitCursor(sessionId, m)
     }
     sock.onMessage = (message) => {
       if (!historyReady) {
@@ -435,7 +503,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       historyReady = true
       const queued = bufferedEvents.splice(0)
       set(() => {
-        const msgs = replayEvents(historyToMessages(history.items), queued)
+        const msgs = historyToMessages(history.items)
         return {
           msgs,
           streaming: anyStreaming(msgs),
@@ -444,20 +512,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
           historyError: null,
         }
       })
+      for (const event of queued) handleReadyMessage(event, false)
     }).catch((error: unknown) => {
       if (abort.signal.aborted || generation !== historyGeneration || get().sessionId !== sessionId) return
       historyReady = true
       const queued = bufferedEvents.splice(0)
-      set((st) => {
-        const msgs = replayEvents(st.msgs, queued)
-        return {
-          msgs,
-          streaming: anyStreaming(msgs),
-          hydrating: false,
-          historyStatus: 'history_error',
-          historyError: error instanceof Error ? error.message : '历史消息加载失败',
-        }
-      })
+      set((st) => ({
+        msgs: st.msgs,
+        streaming: st.streaming,
+        hydrating: false,
+        historyStatus: 'history_error',
+        historyError: error instanceof Error ? error.message : '历史消息加载失败',
+      }))
+      for (const event of queued) handleReadyMessage(event, false)
     })
   },
 
@@ -479,40 +546,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       attachments: atts.length ? atts : undefined, pendingWebui: true,
     }
     set((st) => ({ msgs: [...st.msgs, userBubble], streaming: true }))
-  },
-
-  submitWebui: (text, atts) => {
-    const sock = get().sock
-    if (!sock) return
-    // Local pre-add: user bubble carries the attachments so MessageBubble
-    // can render thumbnails. We deliberately keep the *visible* text clean
-    // — the prompt-engineering tokens (FILE_HINT / [用户发送文件:...]) only
-    // go to the LLM, not the bubble.
-    const userBubble: ChatMsg = {
-      role: 'user',
-      content: text,
-      source: 'webui',
-      attachments: atts.length ? atts : undefined,
-      pendingWebui: true,
-    }
-    set((st) => ({ msgs: [...st.msgs, userBubble], streaming: true }))
-
-    // Build the actual prompt: text + file markers (matches wechatapp.py convention)
-    const fileMarkers = atts.map((a) => `[用户发送文件: ${a.path}]`).join('\n')
-    const fileHint = atts.length
-      ? 'If you need to show files to user, use [FILE:filepath] in your response.\n\n'
-      : ''
-    const promptText = fileHint + text + (fileMarkers ? (text ? '\n' : '') + fileMarkers : '')
-    sock.send({
-      type: 'submit',
-      text: promptText,
-      images: atts.map((a) => a.path),
-      source: 'webui',
-    })
-  },
-
-  abort: () => {
-    get().sock?.send({ type: 'abort' })
   },
 
   clearLocal: () => set({ msgs: [], streaming: false }),

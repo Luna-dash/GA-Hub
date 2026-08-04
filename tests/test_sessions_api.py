@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -76,8 +77,9 @@ def test_session_metadata_crud_is_message_free(tmp_path: Path, monkeypatch) -> N
 
 
 def test_bound_missing_archive_is_structured_error_without_path_leak(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, caplog
 ) -> None:
+    caplog.set_level(logging.WARNING, logger="server.routes.sessions")
     from server.routes import sessions
 
     missing = tmp_path / "private" / "missing-model-responses.txt"
@@ -90,6 +92,10 @@ def test_bound_missing_archive_is_structured_error_without_path_leak(
         body = response.json()
         assert body["detail"]["code"] == "history_unavailable"
         assert str(missing) not in response.text
+
+    assert f"session_id={created['id']}" in caplog.text
+    assert "code=history_unavailable" in caplog.text
+    assert str(missing) not in caplog.text
 
 
 def test_bound_archive_parser_failure_is_stable_error(
@@ -112,7 +118,10 @@ def test_bound_archive_parser_failure_is_stable_error(
 
         response = client.get(f"/api/sessions/{created['id']}/messages")
         assert response.status_code == 409
-        assert response.json() == {"detail": {"code": "history_unavailable"}}
+        assert response.json() == {"detail": {
+            "code": "history_unavailable",
+            "detail": "历史消息暂时不可用，请稍后重试。",
+        }}
         assert "sensitive parser detail" not in response.text
 
 
