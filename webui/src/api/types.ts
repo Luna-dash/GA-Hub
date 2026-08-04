@@ -68,6 +68,38 @@ export interface SessionSnapshot {
   rounds: number
 }
 
+export interface HubSession {
+  id: string
+  title: string
+  llm_index: number | null
+  archive_path: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SessionRuntime {
+  session_id: string
+  status: string
+  run_id: string | null
+  stream_id: string | null
+  error?: string | null
+  ok?: boolean
+}
+
+export interface SessionMessageProjection {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  ordinal: number
+}
+
+export interface SessionMessagesResponse {
+  session_id: string
+  archive_bound: boolean
+  revision: string | null
+  items: SessionMessageProjection[]
+}
+
 export interface ChatRetryConfig {
   enabled: boolean
   max_attempts: number
@@ -334,7 +366,16 @@ export interface BtwResp {
 }
 
 export type ChatWSOut =
-  | { type: 'snapshot'; streams: ChatStreamSnapshot[] }
+  | {
+      type: 'snapshot'
+      streams?: ChatStreamSnapshot[]
+      session_id?: string
+      status?: string
+      run_id?: string | null
+      stream_id?: string | null
+      runtime?: { status: string; run_id: string | null; stream_id: string | null; error: string | null }
+      active_message?: { stream_id: string; content: string; done: boolean } | null
+    }
   | { type: 'reset'; reason?: string }
   | { type: 'started'; stream_id: string; source?: string; query?: string; ts?: number; logical_id?: string; retry_attempt?: number; retry_max?: number; retry_of?: string; retry_reason?: string }
   | { type: 'heartbeat'; stream_id: string }

@@ -5,17 +5,16 @@
 // reflect submissions also surface here because the backend broadcasts
 // every chat:* event on the same bus channel that the store subscribes to.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
-import type { Message } from '@/api/types'
+import type { HubSession, LLMInfo, Message } from '@/api/types'
 import { ImagePasteInput, type PasteAttachment } from '@/components/ImagePasteInput'
 import { MessageBubble } from '@/components/MessageBubble'
 import { PageShell } from '@/components/PageShell'
 import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
-import { useAgentStore } from '@/stores/agentStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useDraftStore } from '@/stores/draftStore'
 
@@ -35,11 +34,11 @@ export default function LiveChat() {
   const streaming = useChatStore((s) => s.streaming)
   const conn = useChatStore((s) => s.conn)
   const hydrating = useChatStore((s) => s.hydrating)
-  const agentStatus = useAgentStore((s) => s.status)
-  const refreshAgentStatus = useAgentStore((s) => s.refreshStatus)
-  const agentRunning = agentStatus?.is_running ?? false
-  const submitWebui = useChatStore((s) => s.submitWebui)
-  const abortFn = useChatStore((s) => s.abort)
+  const historyStatus = useChatStore((s) => s.historyStatus)
+  const historyError = useChatStore((s) => s.historyError)
+  const retryHistory = useChatStore((s) => s.retryHistory)
+  const startChat = useChatStore((s) => s.start)
+  const stageWebui = useChatStore((s) => s.stageWebui)
   const clearLocal = useChatStore((s) => s.clearLocal)
   const pushSystem = useChatStore((s) => s.pushSystem)
   const markIdle = useChatStore((s) => s.markIdle)
@@ -53,6 +52,95 @@ export default function LiveChat() {
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [titleSaving, setTitleSaving] = useState(false)
+  const [session, setSession] = useState<HubSession | null>(null)
+  const [sessionError, setSessionError] = useState('')
+  const [llms, setLlms] = useState<LLMInfo[]>([])
+  const [llmLoading, setLlmLoading] = useState(false)
+  const [llmSaving, setLlmSaving] = useState(false)
+  const sessionIdRef = useRef<string | null>(null)
+  const sessionSwitchSeqRef = useRef(0)
+  const llmChangeSeqRef = useRef(0)
+  const queryClient = useQueryClient()
+
+  useEffect(() => {
+    let cancelled = false
+    const initSeq = ++sessionSwitchSeqRef.current
+    void (async () => {
+      try {
+        const storedId = localStorage.getItem('gahub.currentSessionId')
+        const listed = await api.sessions()
+        let current = storedId ? listed.items.find((item) => item.id === storedId) : undefined
+        if (!current) current = await api.createSession({ title: '', llm_index: null })
+        if (cancelled || sessionSwitchSeqRef.current !== initSeq) return
+        sessionIdRef.current = current.id
+        localStorage.setItem('gahub.currentSessionId', current.id)
+        setSessionError('')
+        setSession(current)
+        setTitleDraft(current.title)
+        setTitleSaving(false)
+        startChat(current.id)
+      } catch (e: any) {
+        if (!cancelled && sessionSwitchSeqRef.current === initSeq) {
+          setSessionError(e?.body?.detail || e?.message || String(e))
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [startChat])
+
+  useEffect(() => {
+    let cancelled = false
+    setLlmLoading(true)
+    void api.llms()
+      .then((result) => {
+        if (!cancelled) setLlms(result.llms)
+      })
+      .catch((e: any) => {
+        if (!cancelled) pushSystem(`_加载模型列表失败:${e?.body?.detail || e?.message || String(e)}_`)
+      })
+      .finally(() => {
+        if (!cancelled) setLlmLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [pushSystem])
+
+  const { data: runtime } = useQuery({
+    queryKey: ['session.runtime', session?.id],
+    queryFn: ({ queryKey }) => api.sessionRuntime(queryKey[1] as string),
+    enabled: Boolean(session),
+    refetchInterval: 1000,
+  })
+  const refreshRuntime = useCallback(async (sessionId?: string) => {
+    const sid = sessionId ?? sessionIdRef.current
+    if (!sid || sessionIdRef.current !== sid) return
+    const state = await api.sessionRuntime(sid)
+    if (sessionIdRef.current !== sid) return
+    queryClient.setQueryData(['session.runtime', sid], state)
+    return state
+  }, [queryClient])
+  const sessionRunning = runtime?.status === 'starting' || runtime?.status === 'running'
+
+  const changeModel = async (value: string) => {
+    const sid = session?.id
+    const nextIndex = Number(value)
+    if (!sid || sessionIdRef.current !== sid || !Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex === session.llm_index) return
+    const changeSeq = ++llmChangeSeqRef.current
+    const previousIndex = session.llm_index
+    setLlmSaving(true)
+    try {
+      const updated = await api.updateSessionModel(sid, nextIndex)
+      if (sessionIdRef.current !== sid || llmChangeSeqRef.current !== changeSeq) return
+      setSession(updated)
+      pushSystem(`_已切换模型:${updated.llm_index == null ? '默认' : (llms.find((item) => item.index === updated.llm_index)?.name || String(updated.llm_index))}_`)
+    } catch (e: any) {
+      if (sessionIdRef.current === sid && llmChangeSeqRef.current === changeSeq) {
+        setSession((current) => current ? { ...current, llm_index: previousIndex } : current)
+        pushSystem(`_切换模型失败:${e?.body?.detail || e?.message || String(e)}_`)
+      }
+    } finally {
+      if (llmChangeSeqRef.current === changeSeq) setLlmSaving(false)
+    }
+  }
 
   // Smart auto-scroll state. We pin to bottom only when the user is *already*
   // near the bottom; otherwise we surface a "↓ N 条新消息" floating button so
@@ -61,30 +149,24 @@ export default function LiveChat() {
   const [stuckBottom, setStuckBottom] = useState(true)
   const [unread, setUnread] = useState(0)
 
-  useEffect(() => {
-    if (streaming && !agentRunning) markIdle()
-  }, [streaming, agentRunning, markIdle])
-
-  useEffect(() => {
-    setTitleDraft(agentStatus?.current_title ?? '')
-  }, [agentStatus?.current_title])
 
   const saveTitle = async () => {
+    const sid = session?.id
     const title = titleDraft.trim()
-    if (title === (agentStatus?.current_title ?? '')) return
+    if (!sid || !session || sessionIdRef.current !== sid || title === session.title) return
     setTitleSaving(true)
     try {
-      const r = await api.agentSetTitle(title)
-      useAgentStore.setState((st) => ({
-        status: st.status ? { ...st.status, current_title: r.title } : st.status,
-      }))
+      const r = await api.updateSession(sid, { title })
+      if (sessionIdRef.current !== sid) return
+      setSession(r)
       setTitleDraft(r.title)
-      pushSystem(r.title ? `_对话标题已设为「${r.title}」_` : '_已清空对话标题，将按首条消息自动命名_')
-      await refreshAgentStatus()
+      pushSystem(r.title ? `_会话标题已设为「${r.title}」_` : '_已清空会话标题_')
     } catch (e: any) {
-      pushSystem(`_保存对话标题失败：${e?.body?.detail || e?.message || String(e)}_`)
+      if (sessionIdRef.current === sid) {
+        pushSystem(`_保存对话标题失败：${e?.body?.detail || e?.message || String(e)}_`)
+      }
     } finally {
-      setTitleSaving(false)
+      if (sessionIdRef.current === sid) setTitleSaving(false)
     }
   }
 
@@ -152,38 +234,47 @@ export default function LiveChat() {
   const submit = () => {
     const t = text.trim()
     if (!t && atts.length === 0) return
-    if (streaming) return
+    const sid = session?.id
+    if (!sid || sessionIdRef.current !== sid || streaming || sessionRunning) return
     if (t === '/new') {
-      api.agentNew()
-        .then((r) => {
-          clearLocal()
-          pushSystem(r.message)
-        })
-        .catch((e: any) => pushSystem(`_新建对话失败：${e?.message || String(e)}_`))
       clearDraft()
+      void newConv().catch((e: any) => pushSystem(`_新建会话失败：${e?.body?.detail || e?.message || String(e)}_`))
       return
     }
-    submitWebui(t, atts)
+    const fileMarkers = atts.map((a) => `[用户发送文件: ${a.path}]`).join('\n')
+    const fileHint = atts.length ? 'If you need to show files to user, use [FILE:filepath] in your response.\n\n' : ''
+    const promptText = fileHint + t + (fileMarkers ? (t ? '\n' : '') + fileMarkers : '')
+    stageWebui(t, atts)
     clearDraft()
-    // Sending always implies "I want to see the response" — re-stick to bottom.
     setStuckBottom(true)
     setUnread(0)
+    api.sessionRun(sid, promptText, atts.map((a) => a.path))
+      .then(() => refreshRuntime(sid))
+      .catch((e: any) => {
+        if (sessionIdRef.current !== sid) return
+        markIdle()
+        pushSystem(`_发送失败：${e?.body?.detail?.code || e?.body?.detail || e?.message || String(e)}_`)
+      })
   }
 
   const newConv = async () => {
-    const ok = await dialog.confirm(
-      '开始新对话？',
-      '当前 Agent 上下文会被清空。已有的会话仍可在「对话管理」页找回。',
-      { confirmText: '新建', tone: 'danger' },
-    )
-    if (!ok) return
-    const r = await api.agentNew()
+    if (sessionRunning) return
+    const switchSeq = ++sessionSwitchSeqRef.current
+    const previousSid = sessionIdRef.current
+    const next = await api.createSession({ title: '', llm_index: session?.llm_index ?? null })
+    if (sessionSwitchSeqRef.current !== switchSeq || sessionIdRef.current !== previousSid) return
+    sessionIdRef.current = next.id
+    localStorage.setItem('gahub.currentSessionId', next.id)
     clearLocal()
-    pushSystem(r.message)
+    setSession(next)
+    setTitleDraft(next.title)
+    setTitleSaving(false)
+    startChat(next.id)
+    await refreshRuntime(next.id)
   }
 
   const handleRewind = async (sid: string) => {
-    if (streaming || agentRunning) {
+    if (streaming || sessionRunning) {
       pushSystem('_当前回复还在进行中。请先停止后再回退。_')
       return
     }
@@ -219,7 +310,7 @@ export default function LiveChat() {
               onBlur={saveTitle}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') e.currentTarget.blur()
-                if (e.key === 'Escape') setTitleDraft(agentStatus?.current_title ?? '')
+                if (e.key === 'Escape') setTitleDraft(session?.title ?? '')
               }}
               disabled={titleSaving}
               placeholder="对话标题"
@@ -227,13 +318,29 @@ export default function LiveChat() {
             />
             {titleSaving && <span className="text-[10px] text-[#665741]">保存中…</span>}
           </div>
+          <select
+            value={session?.llm_index == null ? '' : String(session.llm_index)}
+            onChange={(e) => { void changeModel(e.target.value) }}
+            disabled={!session || llmLoading || llmSaving || sessionRunning}
+            className="ga-btn max-w-52 text-xs"
+            title="选择当前会话使用的模型"
+          >
+            {session?.llm_index == null && <option value="" disabled>默认模型（未选择）</option>}
+            {llms.map((item) => (
+              <option key={item.index} value={item.index}>{item.name}</option>
+            ))}
+          </select>
           <button onClick={() => setRestoreOpen(true)} className="ga-btn" title="从历史快照恢复对话">↩ 恢复历史</button>
           <button onClick={newConv} className="ga-btn">新对话</button>
           <button
-            onClick={abortFn}
-            disabled={!agentRunning}
+            onClick={() => {
+              const sid = session?.id
+              if (!sid || sessionIdRef.current !== sid) return
+              void api.abortSession(sid).then(() => refreshRuntime(sid))
+            }}
+            disabled={!sessionRunning}
             className="ga-btn-danger"
-            title={agentRunning ? '停止当前任务' : '当前无进行中的任务'}
+            title={sessionRunning ? '停止当前会话任务' : '当前会话无进行中的任务'}
           >
             停止
           </button>
@@ -242,7 +349,16 @@ export default function LiveChat() {
     >
       <div className="flex flex-col h-full relative">
         <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-4 py-4 space-y-2">
-          {hydrating && msgs.length === 0 && (
+          {historyStatus === 'history_error' && (
+            <div className="sticky top-0 z-10 mx-auto flex w-fit max-w-full items-center gap-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 shadow-sm">
+              <span>历史消息加载失败：{historyError || '未知错误'}。实时消息仍可继续接收。</span>
+              <button type="button" className="ga-btn shrink-0" onClick={retryHistory}>重试</button>
+            </div>
+          )}
+          {sessionError && msgs.length === 0 && (
+            <div className="h-full flex items-center justify-center text-red-400 text-sm">会话初始化失败：{sessionError}</div>
+          )}
+          {!sessionError && hydrating && msgs.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center gap-3 text-[#86775F] text-sm">
               <div className="w-6 h-6 rounded-full border-2 border-slate-600 border-t-accent animate-spin" />
               <div>正在恢复历史对话…</div>
@@ -292,7 +408,7 @@ export default function LiveChat() {
             attachments={atts}
             onAttachments={setAtts}
             onSubmit={submit}
-            disabled={streaming}
+            disabled={!session || streaming || sessionRunning}
           />
         </div>
       </div>

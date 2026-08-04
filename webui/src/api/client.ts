@@ -32,6 +32,9 @@ import type {
   Schedule,
   ScheduleType,
   SessionSnapshot,
+  HubSession,
+  SessionMessagesResponse,
+  SessionRuntime,
   TaskRun,
   TaskSchedule,
   TaskScheduleType,
@@ -255,6 +258,22 @@ export const api = {
   conductorLog: () => http<{ log: ConductorLogItem[] }>('GET', '/api/conductor/log'),
   conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),
   conductorStart: (llm_index?: number | null) => http<{ ok: boolean }>('POST', '/api/conductor/start', { llm_index }),
+  sessions: () => http<{ total: number; items: HubSession[] }>('GET', '/api/sessions'),
+  createSession: (req: { title?: string; llm_index?: number | null } = {}) =>
+    http<HubSession>('POST', '/api/sessions', req),
+  updateSession: (id: string, changes: { title?: string; llm_index?: number | null }) =>
+    http<HubSession>('PATCH', `/api/sessions/${encodeURIComponent(id)}`, changes),
+  sessionRun: (id: string, text: string, images: string[] = []) =>
+    http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/runs`, { text, images }),
+  sessionRuntime: (id: string) =>
+    http<SessionRuntime>('GET', `/api/sessions/${encodeURIComponent(id)}/runtime`),
+  getSessionMessages: (id: string, signal?: AbortSignal) =>
+    http<SessionMessagesResponse>('GET', `/api/sessions/${encodeURIComponent(id)}/messages`, undefined, { signal }),
+  updateSessionModel: (id: string, llm_index: number) =>
+    http<HubSession>('PUT', `/api/sessions/${encodeURIComponent(id)}/model`, { llm_index }),
+  abortSession: (id: string) =>
+    http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/abort`),
+
   conductorStop: () => http<{ ok: boolean }>('POST', '/api/conductor/stop'),
 }
 

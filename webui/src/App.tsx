@@ -7,7 +7,6 @@ import { ToastHost } from '@/components/ToastHost'
 import { CommandPalette } from '@/components/CommandPalette'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useAgentStore } from '@/stores/agentStore'
-import { useChatStore } from '@/stores/chatStore'
 import { useDocumentTitle } from '@/utils/useDocumentTitle'
 import { useDesktopNotifyEffects } from '@/utils/useDesktopNotifyEffects'
 import { api } from '@/api/client'
@@ -34,8 +33,6 @@ const TokenStats = lazy(() => import('@/pages/TokenStats'))
 export default function App() {
   const start = useAgentStore((s) => s.start)
   const stop = useAgentStore((s) => s.stop)
-  const chatStart = useChatStore((s) => s.start)
-  const chatStop = useChatStore((s) => s.stop)
 
   // Reflect agent / chat state in the browser tab title.
   useDocumentTitle()
@@ -56,13 +53,11 @@ export default function App() {
   useEffect(() => {
     if (setup?.configured) {
       start()
-      chatStart()
       return () => {
         stop()
-        chatStop()
       }
     }
-  }, [setup?.configured, start, stop, chatStart, chatStop])
+  }, [setup?.configured, start, stop])
 
   // Persistent backend error: show actionable fallback instead of an
   // infinite "正在连接后端…" spinner. retry: 1 in main.tsx means after

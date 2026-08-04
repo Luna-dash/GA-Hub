@@ -158,6 +158,8 @@ class StreamHandle:
     logical_id: str = ""
     auto_continue_count: int = 0
     error_retry_count: int = 0
+    session_id: str = ""
+    run_id: str = ""
 
 
 # ── chat replay snapshot (so a /ws/chat client that reconnects after a tab
@@ -177,8 +179,8 @@ class ChatSnapshot:
     retry_max: int = 0
     retry_of: str = ""
     retry_reason: str = ""
-
-
+    session_id: str = ""
+    run_id: str = ""
 def _llm_membership_metadata(backends: list[object | None]) -> list[dict]:
     """Return read-only Mixin membership/runtime metadata for LLM clients."""
     all_mixin_members: set[str] = set()
@@ -208,10 +210,18 @@ class AgentService:
     _instance: "AgentService | None" = None
     _SNAPSHOT_CAP = 20  # keep last N submissions for /ws/chat replay
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        agent: object | None = None,
+        session_id: str = "",
+        manage_global_preference: bool = True,
+    ) -> None:
         # Patch /continue and /new before instantiating
         install_continue(GeneraticAgent)
-        self.agent = GeneraticAgent()
+        self.agent = agent if agent is not None else GeneraticAgent()
+        self.session_id = session_id
+        self._manage_global_preference = manage_global_preference
         # Default to incremental output for WS streaming
         self.agent.inc_out = False
         self.agent.verbose = False
@@ -236,8 +246,9 @@ class AgentService:
         # User-preferred LLM. Persisted to admin config so it survives restarts;
         # also used to detect (and log) drift caused by other call sites
         # (autonomous tasks, /llm wechat command, code_run inline_eval, etc.)
-        self._wrap_next_llm_with_persistence()
-        self._restore_preferred_llm()
+        if self._manage_global_preference:
+            self._wrap_next_llm_with_persistence()
+            self._restore_preferred_llm()
 
     # ── lifecycle ────────────────────────────────────────────────
     @classmethod
@@ -460,6 +471,8 @@ class AgentService:
         retry_reason: str = "",
         retry_max: int = 0,
         llm_index: int | None = None,
+        session_id: str | None = None,
+        run_id: str = "",
     ) -> StreamHandle:
         """Enqueue a task; spawn a single fan-out drainer that publishes
         chat:* events to the bus AND keeps the StreamHandle's display_queue
@@ -470,8 +483,9 @@ class AgentService:
         # currently active unless an explicit override is supplied.
         if llm_index is not None:
             self._select_llm_for_task(llm_index)
-        elif source in ("user", "webui"):
+        elif self._manage_global_preference and source in ("user", "webui"):
             self._restore_preferred_llm()
+        effective_session_id = self.session_id if session_id is None else session_id
         with self._lock:
             self._next_id += 1
             sid = f"s{self._next_id:08d}"
@@ -487,6 +501,8 @@ class AgentService:
             logical_id=logical_id,
             auto_continue_count=auto_continue_count,
             error_retry_count=error_retry_count,
+            session_id=effective_session_id,
+            run_id=run_id,
         )
         snap = ChatSnapshot(
             stream_id=sid,
@@ -498,6 +514,8 @@ class AgentService:
             retry_max=retry_max,
             retry_of=retry_of,
             retry_reason=retry_reason,
+            session_id=effective_session_id,
+            run_id=run_id,
         )
         with self._lock:
             self._streams[sid] = h
@@ -510,6 +528,8 @@ class AgentService:
             "source": source,
             "query_preview": (query or "")[:120],
             "logical_id": logical_id,
+            "session_id": effective_session_id,
+            "run_id": run_id,
         }
         if error_retry_count:
             submit_payload.update({
@@ -525,6 +545,8 @@ class AgentService:
             "query": query or "",
             "ts": snap.started_at,
             "logical_id": logical_id,
+            "session_id": effective_session_id,
+            "run_id": run_id,
         }
         if error_retry_count:
             started_payload.update({
@@ -559,7 +581,8 @@ class AgentService:
                 if "next" in item:
                     content = item["next"]
                     h.last_chunk = content
-                    snap.content = content
+                    with self._lock:
+                        snap.content = content
                     bus.publish("chat:next", {
                         "stream_id": h.stream_id,
                         "source": snap.source,
@@ -569,14 +592,17 @@ class AgentService:
                         "retry_max": snap.retry_max,
                         "retry_of": snap.retry_of,
                         "retry_reason": snap.retry_reason,
+                        "session_id": h.session_id,
+                        "run_id": h.run_id,
                     })
                 if "done" in item:
                     content = item["done"]
                     h.final_text = content
                     h.finished = True
-                    snap.content = content
-                    snap.done = True
-                    snap.finished_at = time.time()
+                    with self._lock:
+                        snap.content = content
+                        snap.done = True
+                        snap.finished_at = time.time()
                     self.agent.last_reply_time = int(time.time())
                     bus.publish("chat:done", {
                         "stream_id": h.stream_id,
@@ -587,6 +613,8 @@ class AgentService:
                         "retry_max": snap.retry_max,
                         "retry_of": snap.retry_of,
                         "retry_reason": snap.retry_reason,
+                        "session_id": h.session_id,
+                        "run_id": h.run_id,
                     })
                     bus.publish("agent:done", {"stream_id": h.stream_id, "len": len(content)})
                     handled_recoverable_error = self._maybe_retry_recoverable_error(h, snap, content)
@@ -595,18 +623,31 @@ class AgentService:
                     return
         except Exception as e:
             log.exception("fanout crashed for %s: %s", h.stream_id, e)
-            snap.done = True
-            snap.aborted = True
-            snap.finished_at = time.time()
+            # Keep the cleanup path usable for lightweight/test instances created
+            # without __init__; normal service instances always have _lock.
+            lock = getattr(self, "_lock", None)
+            if lock is None:
+                lock = threading.Lock()
+                self._lock = lock
+            with lock:
+                error_content = snap.content + f"\n[stream error: {e}]"
+                snap.content = error_content
+                snap.done = True
+                snap.aborted = True
+                snap.finished_at = time.time()
+            h.finished = True
+            h.final_text = error_content
             bus.publish("chat:done", {
                 "stream_id": h.stream_id,
                 "source": snap.source,
-                "content": snap.content + f"\n[stream error: {e}]",
+                "content": error_content,
                 "logical_id": h.logical_id,
                 "retry_attempt": snap.retry_attempt,
                 "retry_max": snap.retry_max,
                 "retry_of": snap.retry_of,
                 "retry_reason": snap.retry_reason,
+                "session_id": h.session_id,
+                "run_id": h.run_id,
             })
 
     def _maybe_retry_recoverable_error(self, h: StreamHandle, snap: ChatSnapshot, content: str) -> bool:
@@ -661,6 +702,8 @@ class AgentService:
             retry_of=h.stream_id,
             retry_reason=match.label,
             retry_max=cfg.max_attempts,
+            session_id=h.session_id,
+            run_id=h.run_id,
         )
         return True
 
@@ -690,6 +733,8 @@ class AgentService:
             retry_of=snap.retry_of,
             retry_reason=snap.retry_reason,
             retry_max=snap.retry_max,
+            session_id=h.session_id,
+            run_id=h.run_id,
         )
 
     # ── replay (used by /ws/chat on connect) ────────────────────
@@ -702,25 +747,44 @@ class AgentService:
         """
         out: list[dict] = []
         with self._lock:
-            snaps = list(self._snapshots.values())
-        for snap in snaps:
-            content = snap.content
-            item = {
-                "stream_id": snap.stream_id,
-                "source": snap.source,
-                "query": snap.query,
-                "content": content,
-                "done": snap.done,
-                "started_at": snap.started_at,
-                "finished_at": snap.finished_at,
-                "logical_id": snap.logical_id,
-                "retry_attempt": snap.retry_attempt,
-                "retry_max": snap.retry_max,
-                "retry_of": snap.retry_of,
-                "retry_reason": snap.retry_reason,
-            }
-            out.append(item)
+            for snap in self._snapshots.values():
+                item = {
+                    "stream_id": snap.stream_id,
+                    "source": snap.source,
+                    "query": snap.query,
+                    "content": snap.content,
+                    "done": snap.done,
+                    "started_at": snap.started_at,
+                    "finished_at": snap.finished_at,
+                    "logical_id": snap.logical_id,
+                    "retry_attempt": snap.retry_attempt,
+                    "retry_max": snap.retry_max,
+                    "retry_of": snap.retry_of,
+                    "retry_reason": snap.retry_reason,
+                    "session_id": snap.session_id,
+                    "run_id": snap.run_id,
+                }
+                out.append(item)
         return out
+
+    def active_message_snapshot(
+        self, stream_id: str, *, session_id: str, run_id: str
+    ) -> dict | None:
+        """Copy one stream only when all ownership identities match."""
+        with self._lock:
+            snap = self._snapshots.get(stream_id)
+            if (
+                snap is None
+                or snap.session_id != session_id
+                or snap.run_id != run_id
+                or snap.stream_id != stream_id
+            ):
+                return None
+            return {
+                "stream_id": snap.stream_id,
+                "content": snap.content,
+                "done": snap.done,
+            }
 
     async def stream(self, h: StreamHandle, *, poll_interval: float = 0.4) -> AsyncIterator[dict]:
         """Async generator that yields {next:...} chunks then a final {done:...}."""

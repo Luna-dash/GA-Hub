@@ -423,6 +423,7 @@ def create_app() -> FastAPI:
             memory as memory_routes,
             mykey as mykey_routes,
             services as service_routes,
+            sessions as session_routes,
             notify as notify_routes,
             tasks as task_routes,
             upload as upload_routes,
@@ -438,6 +439,7 @@ def create_app() -> FastAPI:
         app.include_router(log_routes.router)
         app.include_router(mykey_routes.router)
         app.include_router(service_routes.router)
+        app.include_router(session_routes.router)
         app.include_router(notify_routes.router)
         app.include_router(task_routes.router)
         app.include_router(token_routes.router)

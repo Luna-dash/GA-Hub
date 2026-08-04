@@ -17,8 +17,8 @@
 //     when the matching `started` event arrives.
 
 import { create } from 'zustand'
-import type { ChatStreamSnapshot, ChatWSOut } from '@/api/types'
-import { ChatSocket } from '@/api/client'
+import type { ChatStreamSnapshot, ChatWSOut, SessionMessageProjection } from '@/api/types'
+import { api, ChatSocket } from '@/api/client'
 import type { PasteAttachment } from '@/components/ImagePasteInput'
 
 export type ChatMsgRole = 'user' | 'assistant' | 'system'
@@ -37,15 +37,20 @@ interface ChatState {
   msgs: ChatMsg[]
   conn: 'connecting' | 'open' | 'closed'
   streaming: boolean              // true if any stream still receiving
-  hydrating: boolean              // true between connect and first snapshot apply
+  hydrating: boolean              // legacy alias for historyStatus === 'loading_history'
+  historyStatus: 'idle' | 'loading_history' | 'ready' | 'history_error'
+  historyError: string | null
   sock: ChatSocket | null
+  sessionId: string | null
 
-  start: () => void
+  start: (sessionId: string) => void
+  retryHistory: () => void
   stop: () => void
 
   /** Submit a user message via webui. Pre-adds a local user bubble so the
    *  attachment thumbnails show immediately. The bubble's streamId is
    *  filled in when the `started` event echoes back. */
+  stageWebui: (text: string, atts: PasteAttachment[]) => void
   submitWebui: (text: string, atts: PasteAttachment[]) => void
   abort: () => void
 
@@ -114,10 +119,42 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
   return out
 }
 
+function historyToMessages(items: SessionMessageProjection[]): ChatMsg[] {
+  return items
+    .filter((item) => item.role === 'user' || item.role === 'assistant')
+    .sort((a, b) => a.ordinal - b.ordinal)
+    .map((item) => ({
+      role: item.role,
+      content: item.content,
+      // The archive id is the stable identity for deduplication on rehydrate.
+      streamId: `history:${item.id}`,
+      source: 'history',
+    }))
+}
+
+function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
+  const out = [...base]
+  const positions = new Map(out.map((m, i) => [m.streamId, i]))
+  for (const msg of live) {
+    if (msg.streamId && positions.has(msg.streamId)) {
+      const index = positions.get(msg.streamId)!
+      // Never let an old partial replace a completed archive message.
+      if (msg.streaming || out[index].streamId?.startsWith('history:') === false) out[index] = msg
+      continue
+    }
+    out.push(msg)
+    if (msg.streamId) positions.set(msg.streamId, out.length - 1)
+  }
+  return out
+}
+
+let historyGeneration = 0
+let historyAbort: AbortController | null = null
+
 /** Apply a single server event to the message list. */
 function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   if (evt.type === 'snapshot') {
-    return applySnapshot(evt.streams)
+    return evt.streams ? applySnapshot(evt.streams) : prev
   }
   if (evt.type === 'reset') {
     // Server-driven wipe (new conversation / session restore).
@@ -260,10 +297,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
   conn: 'connecting',
   streaming: false,
   hydrating: true,
+  historyStatus: 'idle',
+  historyError: null,
   sock: null,
+  sessionId: null,
 
-  start: () => {
-    if (get().sock) return
+  start: (sessionId) => {
+    if (get().sock && get().sessionId === sessionId && get().historyStatus !== 'history_error') return
+    get().sock?.close()
+    if (get().sessionId !== sessionId) set({ msgs: [], streaming: false })
+    set({ historyStatus: 'loading_history', historyError: null, hydrating: true })
+
+    const generation = ++historyGeneration
+    historyAbort?.abort()
+    const abort = new AbortController()
+    historyAbort = abort
+    let historyReady = false
+    const bufferedEvents: ChatWSOut[] = []
+
+    const replayEvents = (base: ChatMsg[], events: ChatWSOut[]): ChatMsg[] => {
+      let msgs = base
+      for (const event of events) {
+        // A session snapshot describes live streams, not archived scrollback.
+        msgs = event.type === 'snapshot' && event.streams
+          ? mergeLive(msgs, applySnapshot(event.streams))
+          : applyEvent(msgs, event)
+      }
+      return msgs
+    }
 
     // Coalesce chat:next bursts. Background:
     //   When the agent streams a long markdown answer, the backend emits a
@@ -305,12 +366,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
     }
 
-    const sock = new ChatSocket()
+    const sock = new ChatSocket(`/ws/sessions/${encodeURIComponent(sessionId)}`)
     sock.onState = (s) => {
       set({ conn: s })
-      if (s === 'connecting') set({ hydrating: true })
     }
-    sock.onMessage = (m) => {
+    const handleReadyMessage = (m: ChatWSOut) => {
       // Snapshot is large; defer past the next paint so the WebView
       // becomes interactive first (preserved from prior behaviour).
       if (m.type === 'snapshot') {
@@ -319,8 +379,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         pendingNext.clear()
         if (nextTimer != null) { window.clearTimeout(nextTimer); nextTimer = null }
         const apply = () => set((st) => {
-          const msgs = applyEvent(st.msgs, m)
-          return { msgs, streaming: anyStreaming(msgs), hydrating: false }
+          let msgs = m.streams ? mergeLive(st.msgs, applySnapshot(m.streams)) : st.msgs
+          if (m.active_message) {
+            const activeEvent: ChatWSOut = m.active_message.done
+              ? { type: 'done', stream_id: m.active_message.stream_id, content: m.active_message.content }
+              : { type: 'next', stream_id: m.active_message.stream_id, content: m.active_message.content }
+            msgs = applyEvent(msgs, activeEvent)
+          }
+          return {
+            msgs,
+            streaming: anyStreaming(msgs),
+            hydrating: false,
+          }
         })
         if (typeof requestAnimationFrame === 'function') {
           requestAnimationFrame(() => requestAnimationFrame(apply))
@@ -350,13 +420,65 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return { msgs, streaming: anyStreaming(msgs) }
       })
     }
+    sock.onMessage = (message) => {
+      if (!historyReady) {
+        bufferedEvents.push(message)
+        return
+      }
+      handleReadyMessage(message)
+    }
     sock.open()
-    set({ sock })
+    set({ sock, sessionId, conn: 'connecting', hydrating: true })
+
+    void api.getSessionMessages(sessionId, abort.signal).then((history) => {
+      if (generation !== historyGeneration || get().sessionId !== sessionId) return
+      historyReady = true
+      const queued = bufferedEvents.splice(0)
+      set(() => {
+        const msgs = replayEvents(historyToMessages(history.items), queued)
+        return {
+          msgs,
+          streaming: anyStreaming(msgs),
+          hydrating: false,
+          historyStatus: 'ready',
+          historyError: null,
+        }
+      })
+    }).catch((error: unknown) => {
+      if (abort.signal.aborted || generation !== historyGeneration || get().sessionId !== sessionId) return
+      historyReady = true
+      const queued = bufferedEvents.splice(0)
+      set((st) => {
+        const msgs = replayEvents(st.msgs, queued)
+        return {
+          msgs,
+          streaming: anyStreaming(msgs),
+          hydrating: false,
+          historyStatus: 'history_error',
+          historyError: error instanceof Error ? error.message : '历史消息加载失败',
+        }
+      })
+    })
+  },
+
+  retryHistory: () => {
+    const sessionId = get().sessionId
+    if (sessionId) get().start(sessionId)
   },
 
   stop: () => {
+    historyGeneration++
+    historyAbort?.abort()
     get().sock?.close()
-    set({ sock: null, conn: 'closed' })
+    set({ sock: null, sessionId: null, conn: 'closed', historyStatus: 'idle', historyError: null })
+  },
+
+  stageWebui: (text, atts) => {
+    const userBubble: ChatMsg = {
+      role: 'user', content: text, source: 'webui',
+      attachments: atts.length ? atts : undefined, pendingWebui: true,
+    }
+    set((st) => ({ msgs: [...st.msgs, userBubble], streaming: true }))
   },
 
   submitWebui: (text, atts) => {

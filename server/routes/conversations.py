@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse, Response
 
 from .. import _paths
+from ..services.archive_messages import read_ui_messages
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -36,10 +37,8 @@ def _ga_sessions():
 
 
 def _ga_extract(path: str):
-    """Extract UI messages [{role, content}] from a GA session log."""
-    from frontends.continue_cmd import extract_ui_messages
-
-    return extract_ui_messages(path)
+    """Extract UI messages through the shared GA archive adapter."""
+    return read_ui_messages(path)
 
 
 def _session_by_id(cid: str):
