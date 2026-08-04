@@ -92,6 +92,44 @@ class BackendApiSmokeTests(unittest.TestCase):
             self.assertIn("javascript", entry.headers["content-type"])
             self.assertGreater(len(entry.content), 100)
 
+    def test_event_websocket_allows_local_origins(self) -> None:
+        app = self.main.create_app()
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            for origin in ("http://127.0.0.1:8765", "http://localhost:5173"):
+                with self.subTest(origin=origin):
+                    with client.websocket_connect(
+                        "/ws/events", headers={"origin": origin}
+                    ) as websocket:
+                        self.assertTrue(websocket.accepted_subprotocol is None)
+
+    def test_event_websocket_rejects_external_origin(self) -> None:
+        from server.routes.events import _is_allowed_origin
+        from starlette.websockets import WebSocketDisconnect
+
+        for origin in (
+            "https://evil.example",
+            "http://localhost.evil.example",
+            "file://localhost",
+            "null",
+            "http://evil@localhost",
+            "http://localhost/path",
+            "http://localhost/?query",
+            "http://localhost/#fragment",
+        ):
+            with self.subTest(origin=origin):
+                self.assertFalse(_is_allowed_origin(origin))
+
+        app = self.main.create_app()
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            with self.assertRaises(WebSocketDisconnect) as rejected:
+                with client.websocket_connect(
+                    "/ws/events?replay=5",
+                    headers={"origin": "https://evil.example"},
+                ):
+                    self.fail("external origin must not reach the EventBus")
+
+        self.assertEqual(rejected.exception.code, 1008)
+
     def test_host_guard_rejects_non_localhost_domains(self) -> None:
         app = self.main.create_app()
         with TestClient(app) as client:
