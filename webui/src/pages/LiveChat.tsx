@@ -12,6 +12,7 @@ import { api } from '@/api/client'
 import type { HubSession, LLMInfo, Message } from '@/api/types'
 import { ImagePasteInput, type PasteAttachment } from '@/components/ImagePasteInput'
 import { MessageBubble } from '@/components/MessageBubble'
+import { findLatestRewindStreamId, type SlashCommand } from '@/components/slashCommands'
 import { PageShell } from '@/components/PageShell'
 import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
@@ -295,6 +296,22 @@ export default function LiveChat() {
     }
   }
 
+  const handleSlashCommand = (command: Exclude<SlashCommand['name'], '/btw'>) => {
+    if (command === '/new') {
+      void newConv().catch((error: any) => {
+        pushSystem(`_新建会话失败：${error?.body?.detail || error?.message || String(error)}_`)
+      })
+      return
+    }
+
+    const streamId = findLatestRewindStreamId(msgs)
+    if (!streamId) {
+      pushSystem('_当前没有可回退的已完成回复。_')
+      return
+    }
+    void handleRewind(streamId)
+  }
+
   return (
     <PageShell
       title="实时聊天"
@@ -411,6 +428,7 @@ export default function LiveChat() {
             attachments={atts}
             onAttachments={setAtts}
             onSubmit={submit}
+            onSlashCommand={handleSlashCommand}
             disabled={!session || streaming || sessionRunning}
           />
         </div>

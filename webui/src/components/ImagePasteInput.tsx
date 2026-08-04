@@ -9,6 +9,11 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { api } from '@/api/client'
 import type { UploadResult } from '@/api/types'
+import {
+  filterSlashCommands,
+  handleSlashMenuKey,
+  type SlashCommand,
+} from '@/components/slashCommands'
 
 export interface PasteAttachment extends UploadResult {
   preview?: string
@@ -20,6 +25,7 @@ interface Props {
   attachments: PasteAttachment[]
   onAttachments: (a: PasteAttachment[]) => void
   onSubmit: () => void
+  onSlashCommand?: (command: Exclude<SlashCommand['name'], '/btw'>) => void
   placeholder?: string
   disabled?: boolean
   acceptFiles?: boolean
@@ -29,7 +35,7 @@ interface Props {
 }
 
 export function ImagePasteInput({
-  text, onText, attachments, onAttachments, onSubmit,
+  text, onText, attachments, onAttachments, onSubmit, onSlashCommand,
   placeholder = '输入消息，可粘贴/拖放图片或文件…',
   disabled, acceptFiles = true, autoFocus = true,
 }: Props) {
@@ -50,6 +56,26 @@ export function ImagePasteInput({
   const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(0)
   const [btwOpen, setBtwOpen] = useState(false)
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0)
+  const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null)
+  const slashCommands = onSlashCommand && dismissedSlashText !== text
+    ? filterSlashCommands(text)
+    : []
+
+  useEffect(() => {
+    setSlashActiveIndex(0)
+  }, [text])
+
+  const selectSlashCommand = (command: SlashCommand) => {
+    onText('')
+    setDismissedSlashText(null)
+    setSlashActiveIndex(0)
+    if (command.name === '/btw') {
+      setBtwOpen(true)
+    } else {
+      onSlashCommand?.(command.name)
+    }
+  }
 
   // Auto-resize the main chat textarea before paint so long input adds
   // visual rows (growing the composer upward) instead of briefly scrolling
@@ -164,6 +190,37 @@ export function ImagePasteInput({
         </div>
       )}
 
+      {slashCommands.length > 0 && (
+        <div
+          id="slash-command-menu"
+          role="listbox"
+          aria-label="快捷命令"
+          className="absolute bottom-[calc(100%+0.5rem)] left-3 right-3 z-30 overflow-hidden rounded-2xl border border-line/90 bg-bg-card/95 p-1.5 shadow-2xl backdrop-blur-xl"
+        >
+          {slashCommands.map((command, index) => (
+            <button
+              key={command.name}
+              id={`slash-command-${index}`}
+              type="button"
+              role="option"
+              aria-selected={index === slashActiveIndex}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => selectSlashCommand(command)}
+              onMouseEnter={() => setSlashActiveIndex(index)}
+              className={clsx(
+                'flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition',
+                index === slashActiveIndex
+                  ? 'bg-accent/15 text-slate-100'
+                  : 'text-slate-300 hover:bg-white/5',
+              )}
+            >
+              <span className="w-20 shrink-0 font-mono text-sm font-semibold text-accent">{command.name}</span>
+              <span className="text-xs text-slate-400">{command.description}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-end gap-2 p-2">
         <textarea
           ref={taRef}
@@ -196,24 +253,33 @@ export function ImagePasteInput({
             }
           }}
           onKeyDown={(e) => {
+            const isComposing = composing || composingRef.current || e.nativeEvent.isComposing || e.keyCode === 229
+            const isRecentImeEnter = e.key === 'Enter' && Date.now() - lastCompEndRef.current < 80
+            if (isComposing || isRecentImeEnter) return
+
+            const menuResult = handleSlashMenuKey(e.key, slashActiveIndex, slashCommands.length)
+            if (menuResult.handled) {
+              e.preventDefault()
+              if (menuResult.close) {
+                setDismissedSlashText(text)
+              } else if (menuResult.selectIndex != null) {
+                const command = slashCommands[menuResult.selectIndex]
+                if (command) selectSlashCommand(command)
+              } else {
+                setSlashActiveIndex(menuResult.activeIndex)
+              }
+              return
+            }
+
             if (e.key !== 'Enter' || e.shiftKey) return
-            // Belt-and-braces IME guard. Any of these means "this Enter is
-            // for IME selection, not for submitting":
-            //   • React state says we're composing
-            //   • ref mirror says we're composing (state hasn't flushed)
-            //   • DOM-level isComposing flag (most reliable on Chromium)
-            //   • Safari/WKWebView quirk: keyCode 229 indicates IME
-            //   • we just exited composition — racing keydown sneaks through
-            const isImeEnter =
-              composing
-              || composingRef.current
-              || e.nativeEvent.isComposing
-              || e.keyCode === 229
-              || (Date.now() - lastCompEndRef.current < 80)
-            if (isImeEnter) return  // let textarea consume Enter normally
             e.preventDefault()
             if (!disabled) onSubmit()
           }}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={slashCommands.length > 0}
+          aria-controls={slashCommands.length > 0 ? 'slash-command-menu' : undefined}
+          aria-activedescendant={slashCommands.length > 0 ? `slash-command-${slashActiveIndex}` : undefined}
           wrap="soft"
           className="flex-1 min-w-0 w-0 bg-transparent resize-none outline-none text-slate-200 placeholder:text-slate-500 px-3 py-2 max-h-60 leading-7 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
         />
