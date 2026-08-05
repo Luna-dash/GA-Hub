@@ -5,13 +5,14 @@
 // HTTP API; switching sessions tears down the old socket and ignores stale
 // async completions so events cannot leak across sessions.
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
-import type { HubSession, LLMInfo, Message } from '@/api/types'
+import type { HubSession, LLMInfo, Message, SessionRuntime } from '@/api/types'
 import { ImagePasteInput, type PasteAttachment } from '@/components/ImagePasteInput'
 import { MessageBubble } from '@/components/MessageBubble'
+import { SessionRail } from '@/components/SessionRail'
 import { findLatestRewindStreamId, type SlashCommand } from '@/components/slashCommands'
 import { PageShell } from '@/components/PageShell'
 import { relTime } from '@/utils/foldTurns'
@@ -19,7 +20,7 @@ import { dialog } from '@/stores/dialogStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useDraftStore } from '@/stores/draftStore'
 import { sessionManager } from '@/stores/sessionManagerStore'
-import { capacityConflictFromError } from '@/utils/sessionUi'
+import { capacityConflictFromError, sessionChatHref } from '@/utils/sessionUi'
 
 interface RestoreState {
   restoredFrom?: string
@@ -65,6 +66,26 @@ export default function LiveChat() {
   const [creatingSession, setCreatingSession] = useState(false)
   const llmChangeSeqRef = useRef(0)
   const queryClient = useQueryClient()
+  const sessionsQuery = useQuery({
+    queryKey: ['sessions'],
+    queryFn: api.sessions,
+  })
+  const sessions = useMemo(() => sessionsQuery.data?.items ?? [], [sessionsQuery.data])
+  const runtimesQuery = useQuery({
+    queryKey: ['session.runtimes', sessions.map((item) => item.id)],
+    queryFn: async () => {
+      const entries = await Promise.all(sessions.map(async (item) => {
+        try { return [item.id, await api.sessionRuntime(item.id)] as const }
+        catch { return null }
+      }))
+      return Object.fromEntries(
+        entries.filter((entry): entry is readonly [string, SessionRuntime] => entry !== null),
+      )
+    },
+    enabled: sessions.length > 0,
+    refetchInterval: 5000,
+  })
+  const runtimes = runtimesQuery.data ?? {}
 
   useEffect(() => {
     let cancelled = false
@@ -73,13 +94,20 @@ export default function LiveChat() {
       try {
         const requestedId = new URLSearchParams(location.search).get('session')
         const storedId = localStorage.getItem('gahub.currentSessionId')
-        const listed = await api.sessions()
+        const listed = await queryClient.fetchQuery({ queryKey: ['sessions'], queryFn: api.sessions })
         let current = requestedId ? listed.items.find((item) => item.id === requestedId) : undefined
         if (!current) current = storedId ? listed.items.find((item) => item.id === storedId) : undefined
-        if (!current) current = await api.createSession({ title: '', llm_index: null })
+        if (!current) {
+          current = await api.createSession({ title: '', llm_index: null })
+          queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
+            total: (cached?.total ?? 0) + 1,
+            items: [current!, ...(cached?.items ?? [])],
+          }))
+        }
         if (cancelled || sessionSwitchSeqRef.current !== initSeq) return
         sessionIdRef.current = current.id
         localStorage.setItem('gahub.currentSessionId', current.id)
+        clearLocal()
         setSessionError('')
         setSession(current)
         setTitleDraft(current.title)
@@ -92,7 +120,7 @@ export default function LiveChat() {
       }
     })()
     return () => { cancelled = true }
-  }, [startChat, location.search])
+  }, [startChat, location.search, queryClient])
 
   useEffect(() => {
     let cancelled = false
@@ -283,18 +311,12 @@ export default function LiveChat() {
     try {
       const next = await api.createSession({ title: '', llm_index: session?.llm_index ?? null })
       if (sessionSwitchSeqRef.current !== switchSeq || sessionIdRef.current !== previousSid) return false
-      sessionIdRef.current = next.id
+      queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
+        total: (cached?.total ?? 0) + 1,
+        items: [next, ...(cached?.items ?? [])],
+      }))
       localStorage.setItem('gahub.currentSessionId', next.id)
-      clearLocal()
-      setSession(next)
-      setTitleDraft(next.title)
-      setTitleSaving(false)
-      startChat(next.id)
-      try {
-        await refreshRuntime(next.id)
-      } catch (error: any) {
-        pushSystem(`_新会话已创建，但运行状态刷新失败：${error?.body?.detail || error?.message || String(error)}_`)
-      }
+      nav(sessionChatHref(next.id))
       return true
     } finally {
       creatingSessionRef.current = false
@@ -410,7 +432,18 @@ export default function LiveChat() {
         </div>
       }
     >
-      <div className="flex flex-col h-full relative">
+      <div className="flex h-full min-h-0 flex-col md:flex-row">
+        <SessionRail
+          sessions={sessions}
+          runtimes={runtimes}
+          currentId={session?.id ?? null}
+          onSelect={(id) => {
+            if (id === session?.id) return
+            localStorage.setItem('gahub.currentSessionId', id)
+            nav(sessionChatHref(id))
+          }}
+        />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col relative">
         <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-4 py-4 space-y-2">
           {historyStatus === 'history_error' && (
             <div className="sticky top-0 z-10 mx-auto flex w-fit max-w-full items-center gap-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 shadow-sm">
@@ -475,6 +508,7 @@ export default function LiveChat() {
             disabled={!session || streaming || sessionRunning || creatingSession}
           />
         </div>
+      </div>
       </div>
 
       {restoreOpen && (
