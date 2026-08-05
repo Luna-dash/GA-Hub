@@ -60,6 +60,37 @@ describe('SessionRail', () => {
     expect(host.textContent).not.toContain('已隐藏 1 个空会话')
   })
 
+  it('creates and renames sessions from the workspace rail', async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    const onRename = vi.fn().mockResolvedValue(undefined)
+    act(() => root.render(
+      <SessionRail
+        sessions={sessions}
+        runtimes={runtimes}
+        currentId={sessions[0].id}
+        onSelect={vi.fn()}
+        onCreate={onCreate}
+        onRename={onRename}
+      />,
+    ))
+
+    const create = host.querySelector('[aria-label="新建会话"]') as HTMLButtonElement
+    await act(async () => { create.click() })
+    expect(onCreate).toHaveBeenCalledOnce()
+
+    const rename = host.querySelector('[aria-label="重命名 研究任务"]') as HTMLButtonElement
+    act(() => rename.click())
+    const input = host.querySelector('input[aria-label="重命名 研究任务"]') as HTMLInputElement
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(input, '新的标题')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.blur()
+    })
+    await act(async () => {})
+    expect(onRename).toHaveBeenCalledWith(sessions[0].id, '新的标题')
+  })
+
   it('collapses, persists the preference, and restores it on a new mount', () => {
     act(() => root.render(
       <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,

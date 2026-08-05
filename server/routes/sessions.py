@@ -50,16 +50,16 @@ def _publish_runtime_state(state: RuntimeState) -> None:
 
 
 def _session_run_capacity() -> int:
-    """Return the opt-in bounded capacity; production remains K=1 by default."""
-    raw = os.environ.get("GAHUB_SESSION_RUN_CAPACITY", "1").strip()
+    """Return the bounded session-run capacity; two sessions may run concurrently by default."""
+    raw = os.environ.get("GAHUB_SESSION_RUN_CAPACITY", "2").strip()
     try:
         capacity = int(raw)
     except ValueError:
-        log.warning("invalid GAHUB_SESSION_RUN_CAPACITY=%r; using 1", raw)
-        return 1
+        log.warning("invalid GAHUB_SESSION_RUN_CAPACITY=%r; using 2", raw)
+        return 2
     if capacity not in {1, 2}:
-        log.warning("unsupported GAHUB_SESSION_RUN_CAPACITY=%r; using 1", raw)
-        return 1
+        log.warning("unsupported GAHUB_SESSION_RUN_CAPACITY=%r; using 2", raw)
+        return 2
     return capacity
 
 

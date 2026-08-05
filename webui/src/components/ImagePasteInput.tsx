@@ -28,6 +28,7 @@ interface Props {
   onSlashCommand?: (command: Exclude<SlashCommand['name'], '/btw'>) => void
   placeholder?: string
   disabled?: boolean
+  submitDisabled?: boolean
   acceptFiles?: boolean
   /** Auto-focus the textarea when mounted. Default true so chat-style
    *  surfaces (LiveChat, WechatBot reply box) start ready-to-type. */
@@ -37,7 +38,7 @@ interface Props {
 export function ImagePasteInput({
   text, onText, attachments, onAttachments, onSubmit, onSlashCommand,
   placeholder = '输入消息，可粘贴/拖放图片或文件…',
-  disabled, acceptFiles = true, autoFocus = true,
+  disabled, submitDisabled, acceptFiles = true, autoFocus = true,
 }: Props) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   // IME guard: a state mirror keeps render in sync, but the source of truth
@@ -273,7 +274,7 @@ export function ImagePasteInput({
 
             if (e.key !== 'Enter' || e.shiftKey) return
             e.preventDefault()
-            if (!disabled) onSubmit()
+            if (!disabled && !submitDisabled) onSubmit()
           }}
           role="combobox"
           aria-autocomplete="list"
@@ -300,7 +301,7 @@ export function ImagePasteInput({
         >BTW</button>
         <button
           onClick={onSubmit}
-          disabled={disabled || (!text.trim() && attachments.length === 0)}
+          disabled={disabled || submitDisabled || (!text.trim() && attachments.length === 0)}
           className="px-4 py-2 rounded-xl bg-accent text-white text-sm font-medium shadow-lg shadow-accent/20 hover:brightness-110 disabled:opacity-40 disabled:shadow-none transition"
         >发送</button>
       </div>

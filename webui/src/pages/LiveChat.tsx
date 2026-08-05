@@ -15,7 +15,6 @@ import { MessageBubble } from '@/components/MessageBubble'
 import { SessionRail } from '@/components/SessionRail'
 import { findLatestRewindStreamId, type SlashCommand } from '@/components/slashCommands'
 import { PageShell } from '@/components/PageShell'
-import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useDraftStore } from '@/stores/draftStore'
@@ -53,9 +52,6 @@ export default function LiveChat() {
   const atts = useDraftStore((state) => state.attachments[draftKey] ?? [])
   const setText = (value: string) => useDraftStore.getState().setText(draftKey, value)
   const setAtts = (value: PasteAttachment[]) => useDraftStore.getState().setAttachments(draftKey, value)
-  const [restoreOpen, setRestoreOpen] = useState(false)
-  const [titleDraft, setTitleDraft] = useState('')
-  const [titleSaving, setTitleSaving] = useState(false)
   const [sessionError, setSessionError] = useState('')
   const [llms, setLlms] = useState<LLMInfo[]>([])
   const [llmLoading, setLlmLoading] = useState(false)
@@ -109,8 +105,6 @@ export default function LiveChat() {
         localStorage.setItem('gahub.currentSessionId', current.id)
         setSessionError('')
         setSession(current)
-        setTitleDraft(current.title)
-        setTitleSaving(false)
         startChat(current.id)
       } catch (e: any) {
         if (!cancelled && sessionSwitchSeqRef.current === initSeq) {
@@ -182,26 +176,6 @@ export default function LiveChat() {
   const [stuckBottom, setStuckBottom] = useState(true)
   const [unread, setUnread] = useState(0)
 
-
-  const saveTitle = async () => {
-    const sid = session?.id
-    const title = titleDraft.trim()
-    if (!sid || !session || sessionIdRef.current !== sid || title === session.title) return
-    setTitleSaving(true)
-    try {
-      const r = await api.updateSession(sid, { title })
-      if (sessionIdRef.current !== sid) return
-      setSession(r)
-      setTitleDraft(r.title)
-      pushSystem(r.title ? `_会话标题已设为「${r.title}」_` : '_已清空会话标题_')
-    } catch (e: any) {
-      if (sessionIdRef.current === sid) {
-        pushSystem(`_保存对话标题失败：${e?.body?.detail || e?.message || String(e)}_`)
-      }
-    } finally {
-      if (sessionIdRef.current === sid) setTitleSaving(false)
-    }
-  }
 
   // Apply navigation-state restore once (e.g. coming from Conversations page).
   useEffect(() => {
@@ -302,7 +276,7 @@ export default function LiveChat() {
   }
 
   const newConv = async (): Promise<boolean> => {
-    if (sessionRunning || creatingSessionRef.current) return false
+    if (creatingSessionRef.current) return false
     creatingSessionRef.current = true
     setCreatingSession(true)
     const switchSeq = ++sessionSwitchSeqRef.current
@@ -374,24 +348,9 @@ export default function LiveChat() {
           {conn === 'open' ? '已连接' : conn === 'connecting' ? '连接中…' : '断开'}
         </span>
       }
-      description="与 GenericAgent 进行多模态实时对话，支持图片粘贴与历史快照恢复"
+      description="与 GenericAgent 进行多模态实时对话，支持图片粘贴与多会话并行工作"
       actions={
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          <div className="hidden md:flex items-center gap-1.5 mr-1" title="对话标题：回车或失焦保存，清空后按首条消息自动命名">
-            <input
-              value={titleDraft}
-              onChange={(e) => setTitleDraft(e.target.value)}
-              onBlur={saveTitle}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') e.currentTarget.blur()
-                if (e.key === 'Escape') setTitleDraft(session?.title ?? '')
-              }}
-              disabled={titleSaving}
-              placeholder="对话标题"
-              className="w-48 bg-bg-card border border-line rounded-md px-3 py-2 text-xs outline-none focus:border-accent/80 focus:ring-2 focus:ring-accent/15 placeholder:text-[#86775F] disabled:opacity-60 shadow-inner"
-            />
-            {titleSaving && <span className="text-[10px] text-[#665741]">保存中…</span>}
-          </div>
           <select
             value={session?.llm_index == null ? '' : String(session.llm_index)}
             onChange={(e) => { void changeModel(e.target.value) }}
@@ -404,18 +363,6 @@ export default function LiveChat() {
               <option key={item.index} value={item.index}>{item.name}</option>
             ))}
           </select>
-          <button onClick={() => setRestoreOpen(true)} className="ga-btn" title="从历史快照恢复对话">↩ 恢复历史</button>
-          <button
-            onClick={() => {
-              void newConv().catch((error: any) => {
-                pushSystem(`_新建会话失败：${error?.body?.detail || error?.message || String(error)}_`)
-              })
-            }}
-            className="ga-btn"
-            disabled={sessionRunning || creatingSession}
-          >
-            {creatingSession ? '新建中…' : '新对话'}
-          </button>
           <button
             onClick={() => {
               const sid = session?.id
@@ -429,8 +376,7 @@ export default function LiveChat() {
             停止
           </button>
         </div>
-      }
-    >
+      }    >
       <div className="flex h-full min-h-0 flex-col md:flex-row">
         <SessionRail
           sessions={sessions}
@@ -440,6 +386,27 @@ export default function LiveChat() {
             if (id === session?.id) return
             localStorage.setItem('gahub.currentSessionId', id)
             nav(sessionChatHref(id))
+          }}
+          onCreate={async () => {
+            try {
+              await newConv()
+            } catch (error: any) {
+              pushSystem(`_新建会话失败：${error?.body?.detail || error?.message || String(error)}_`)
+            }
+          }}
+          creating={creatingSession}
+          onRename={async (id, title) => {
+            try {
+              const updated = await api.updateSession(id, { title })
+              queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
+                total: cached?.total ?? 0,
+                items: (cached?.items ?? []).map((item) => item.id === id ? updated : item),
+              }))
+              if (sessionIdRef.current === id) setSession(updated)
+            } catch (error: any) {
+              pushSystem(`_重命名失败：${error?.body?.detail || error?.message || String(error)}_`)
+              throw error
+            }
           }}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col relative">
@@ -504,22 +471,13 @@ export default function LiveChat() {
             onAttachments={setAtts}
             onSubmit={submit}
             onSlashCommand={handleSlashCommand}
-            disabled={!session || streaming || sessionRunning || creatingSession}
+            disabled={!session || creatingSession}
+            submitDisabled={streaming || sessionRunning}
           />
         </div>
       </div>
       </div>
 
-      {restoreOpen && (
-        <RestoreDrawer
-          onClose={() => setRestoreOpen(false)}
-          onRestored={(msg) => {
-            clearLocal()
-            pushSystem(msg)
-            setRestoreOpen(false)
-          }}
-        />
-      )}
     </PageShell>
   )
 }
@@ -545,80 +503,4 @@ function sourceLabel(source: string): string {
     default:
       return `[${source}]`
   }
-}
-
-// ── RestoreDrawer ────────────────────────────────────────────────
-// Lists temp/model_responses/ snapshots produced by the agent at runtime.
-// One click → POST /api/agent/sessions/{idx}/restore → backend.history is
-// replaced (native blocks intact, full LLM context). Continue chatting as
-// if nothing happened.
-
-function RestoreDrawer({ onClose, onRestored }: {
-  onClose: () => void
-  onRestored: (msg: string) => void
-}) {
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ['agent.sessions'],
-    queryFn: api.agentSessions,
-  })
-  const [busyIdx, setBusyIdx] = useState<number | null>(null)
-  const sessions = data?.sessions ?? []
-
-  const restore = async (idx: number) => {
-    setBusyIdx(idx)
-    try {
-      const r = await api.agentRestoreSession(idx)
-      onRestored(r.message)
-    } catch (e: any) {
-      await dialog.alert('恢复失败', e?.message || String(e))
-    } finally {
-      setBusyIdx(null)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-30 bg-black/35 flex items-end justify-end" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="w-[34rem] h-full bg-bg-soft border-l border-line flex flex-col"
-           onClick={(e) => e.stopPropagation()}>
-        <header className="px-5 py-3 border-b border-line flex items-baseline justify-between">
-          <div>
-            <h3 className="text-base font-semibold">恢复历史对话</h3>
-            <p className="text-xs text-[#86775F] mt-0.5">来自 temp/model_responses/ 的运行时快照（完整恢复 native context）</p>
-          </div>
-          <button onClick={onClose} className="text-[#665741] hover:text-[#2C2418] text-xl leading-none">×</button>
-        </header>
-
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {isLoading && <div className="text-[#86775F] text-sm p-4">载入中…</div>}
-          {!isLoading && sessions.length === 0 && (
-            <div className="text-[#86775F] text-sm p-6 text-center">
-              尚无可恢复快照<br/>
-              <span className="text-[#9A8B70] text-xs">（agent 运行后会在 temp/model_responses 留下快照）</span>
-            </div>
-          )}
-          {sessions.map((s, idx) => (
-            <div key={s.path} className="rounded-lg border border-line bg-bg-card p-3">
-              <div className="flex items-baseline justify-between gap-2 mb-1">
-                <div className="text-xs text-[#665741]">{relTime(s.mtime)} · <span className="text-accent">{s.rounds} 轮</span></div>
-                <button
-                  onClick={() => restore(idx)}
-                  disabled={busyIdx !== null}
-                  className="text-xs px-2.5 py-1 rounded bg-accent text-white disabled:opacity-40"
-                >
-                  {busyIdx === idx ? '恢复中…' : '↩ 恢复'}
-                </button>
-              </div>
-              <div className="text-sm text-[#2C2418] line-clamp-2 leading-snug">{s.preview || '(无预览)'}</div>
-              <div className="text-[10px] text-[#9A8B70] mt-1 truncate font-mono" title={s.path}>{s.path}</div>
-            </div>
-          ))}
-        </div>
-
-        <footer className="border-t border-line px-4 py-2 text-xs text-[#86775F] flex items-center justify-between">
-          <span>恢复后会覆盖当前 Agent 上下文</span>
-          <button onClick={() => refetch()} className="text-accent hover:underline">↻ 刷新</button>
-        </footer>
-      </div>
-    </div>
-  )
 }
