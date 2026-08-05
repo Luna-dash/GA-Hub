@@ -191,6 +191,32 @@ def test_capacity_two_tracks_each_session_identity_and_rejects_third() -> None:
     assert coordinator.runtime_state("B").run_id == run_b.run_id
 
 
+def test_capacity_three_admits_three_sessions_and_rejects_fourth() -> None:
+    from server.services.session_coordinator import AgentBusyError, SessionCoordinator
+
+    coordinator = SessionCoordinator(
+        lambda session_id: FakeRuntime(session_id),
+        capacity=3,
+        poll_interval=0.001,
+    )
+    for session_id in ("A", "B", "C"):
+        coordinator.submit(session_id.lower(), session_id=session_id)
+
+    assert {state.session_id for state in coordinator.active_runs()} == {"A", "B", "C"}
+    with pytest.raises(AgentBusyError) as error:
+        coordinator.submit("d", session_id="D")
+    assert error.value.capacity == 3
+    assert error.value.active_count == 3
+
+
+@pytest.mark.parametrize("capacity", [0, 4])
+def test_capacity_outside_supported_range_is_rejected(capacity: int) -> None:
+    from server.services.session_coordinator import SessionCoordinator
+
+    with pytest.raises(ValueError, match="between 1 and 3"):
+        SessionCoordinator(lambda session_id: FakeRuntime(session_id), capacity=capacity)
+
+
 def test_capacity_one_admission_is_atomic_under_concurrent_submit() -> None:
     import threading
 

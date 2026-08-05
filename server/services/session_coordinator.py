@@ -76,8 +76,8 @@ class SessionCoordinator:
         abort_timeout: float = 10.0,
         on_state_change: Callable[[RuntimeState], None] | None = None,
     ) -> None:
-        if capacity not in {1, 2}:
-            raise ValueError("session run capacity must be 1 or 2")
+        if capacity not in {1, 2, 3}:
+            raise ValueError("session run capacity must be between 1 and 3")
         self._runtime_factory = runtime_factory
         self._capacity = capacity
         self._poll_interval = poll_interval
