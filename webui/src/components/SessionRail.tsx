@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import clsx from 'clsx'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import { sessionActivity, sessionStatusLabel } from '@/utils/sessionUi'
@@ -10,6 +10,7 @@ interface SessionRailProps {
   onSelect: (sessionId: string) => void
   onCreate?: () => Promise<void> | void
   onRename?: (sessionId: string, title: string) => Promise<void> | void
+  onDelete?: (sessionId: string) => Promise<void> | void
   creating?: boolean
 }
 
@@ -33,23 +34,13 @@ function sessionTitle(session: HubSession) {
   return session.title.trim() || `未命名会话 · ${session.id.slice(0, 8)}`
 }
 
-function isVisibleSession(session: HubSession, currentId: string | null, runtime?: SessionRuntime) {
-  return session.id === currentId
-    || Boolean(session.title.trim())
-    || Boolean(session.archive_path)
-    || (runtime != null && sessionActivity(runtime) !== 'idle')
-}
-
-export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate, onRename, creating }: SessionRailProps) {
+export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate, onRename, onDelete, creating }: SessionRailProps) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(STORAGE_KEY) === 'true')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [titleDraft, setTitleDraft] = useState('')
   const [savingId, setSavingId] = useState<string | null>(null)
-  const visibleSessions = useMemo(
-    () => sessions.filter((session) => isVisibleSession(session, currentId, runtimes[session.id])),
-    [currentId, runtimes, sessions],
-  )
-  const hiddenCount = sessions.length - visibleSessions.length
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const toggle = () => {
     setCollapsed((current) => {
@@ -73,6 +64,17 @@ export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate,
       await onRename(session.id, title)
     } finally {
       setSavingId(null)
+    }
+  }
+
+  const removeSession = async (session: HubSession) => {
+    if (!onDelete || deletingId || sessionActivity(runtimes[session.id]) === 'active') return
+    setDeletingId(session.id)
+    try {
+      await onDelete(session.id)
+      setConfirmDeleteId(null)
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -111,7 +113,7 @@ export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate,
           )}
         </div>
         <div className="flex gap-2 md:flex-col">
-          {visibleSessions.map((session) => {
+          {sessions.map((session) => {
             const runtime = runtimes[session.id]
             const activity = sessionActivity(runtime)
             const current = session.id === currentId
@@ -148,31 +150,55 @@ export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate,
                     aria-current={current ? 'page' : undefined}
                     className="block w-full px-3 pb-1 pt-2.5 text-left"
                   >
-                    <span className="flex items-center gap-2 pr-6">
+                    <span className="flex items-center gap-2 pr-14">
                       <span className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
                       <span className="min-w-0 flex-1 truncate text-sm font-medium" title={sessionTitle(session)}>{sessionTitle(session)}</span>
                     </span>
                     <span className="block pt-1 pl-4 text-[10px] opacity-70">{sessionStatusLabel(runtime)}</span>
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => beginRename(session)}
-                  disabled={savingId === session.id}
-                  aria-label={`重命名 ${sessionTitle(session)}`}
-                  title="重命名会话"
-                  className="absolute right-2 top-2 rounded p-1 text-xs opacity-50 transition hover:bg-white/70 hover:opacity-100 focus:opacity-100 disabled:opacity-30"
-                >
-                  ✎
-                </button>
+                {!editing && (
+                  <div className="absolute right-2 top-2 flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => { setConfirmDeleteId(null); beginRename(session) }}
+                      disabled={savingId === session.id || deletingId === session.id}
+                      aria-label={`重命名 ${sessionTitle(session)}`}
+                      title="重命名会话"
+                      className="rounded p-1 text-xs opacity-50 transition hover:bg-white/70 hover:opacity-100 focus:opacity-100 disabled:opacity-30"
+                    >
+                      ✎
+                    </button>
+                    {onDelete && (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(session.id)}
+                        disabled={activity === 'active' || deletingId === session.id}
+                        aria-label={`删除 ${sessionTitle(session)}`}
+                        title={activity === 'active' ? '请先停止任务再删除' : '删除会话'}
+                        className="rounded p-1 text-xs text-rose-600 opacity-50 transition hover:bg-rose-100 hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-25"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                )}
                 {editing && (
                   <span className="block px-3 pb-2 pl-7 text-[10px] opacity-70">{savingId === session.id ? '保存中…' : sessionStatusLabel(runtime)}</span>
+                )}
+                {confirmDeleteId === session.id && (
+                  <div role="alertdialog" aria-label={`确认删除 ${sessionTitle(session)}`} className="mx-2 mb-2 flex items-center justify-between gap-2 rounded-lg border border-rose-400/35 bg-rose-50/90 px-2 py-1.5 text-[11px] text-rose-700">
+                    <span>永久删除？</span>
+                    <span className="flex gap-1">
+                      <button type="button" disabled={deletingId === session.id} onClick={() => { void removeSession(session) }} className="rounded bg-rose-600 px-2 py-1 text-white disabled:opacity-50">{deletingId === session.id ? '删除中…' : '确认'}</button>
+                      <button type="button" disabled={deletingId === session.id} onClick={() => setConfirmDeleteId(null)} className="rounded border border-rose-300 px-2 py-1 disabled:opacity-50">取消</button>
+                    </span>
+                  </div>
                 )}
               </div>
             )
           })}
         </div>
-        {hiddenCount > 0 && <div className="px-2 pt-2 text-[10px] text-[#86775F]">已隐藏 {hiddenCount} 个空会话</div>}
       </aside>
       <button
         type="button"

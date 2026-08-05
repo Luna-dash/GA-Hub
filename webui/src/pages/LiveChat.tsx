@@ -18,7 +18,6 @@ import { PageShell } from '@/components/PageShell'
 import { dialog } from '@/stores/dialogStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useDraftStore } from '@/stores/draftStore'
-import { sessionManager } from '@/stores/sessionManagerStore'
 import { capacityConflictFromError, sessionChatHref } from '@/utils/sessionUi'
 
 interface RestoreState {
@@ -270,8 +269,14 @@ export default function LiveChat() {
         if (sessionIdRef.current !== sid) return
         rollbackWebui(stageId)
         const conflict = capacityConflictFromError(e)
-        if (conflict) sessionManager.open(conflict)
-        pushSystem(`_发送失败：${e?.body?.detail?.code || e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`)
+        if (conflict) {
+          const usage = conflict.activeCount != null && conflict.capacity != null
+            ? `（${conflict.activeCount}/${conflict.capacity}）`
+            : ''
+          pushSystem(`_会话运行容量已满${usage}，请先在左侧会话栏选择一个运行中的会话并停止任务。草稿已保留，可直接重试。_`)
+        } else {
+          pushSystem(`_发送失败：${e?.body?.detail?.code || e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`)
+        }
       })
   }
 
@@ -405,6 +410,38 @@ export default function LiveChat() {
               if (sessionIdRef.current === id) setSession(updated)
             } catch (error: any) {
               pushSystem(`_重命名失败：${error?.body?.detail || error?.message || String(error)}_`)
+              throw error
+            }
+          }}
+          onDelete={async (id) => {
+            try {
+              await api.deleteSession(id)
+              const remaining = sessions.filter((item) => item.id !== id)
+              queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], {
+                total: remaining.length,
+                items: remaining,
+              })
+              if (sessionIdRef.current !== id) return
+
+              ++sessionSwitchSeqRef.current
+              if (remaining.length > 0) {
+                localStorage.setItem('gahub.currentSessionId', remaining[0].id)
+                nav(sessionChatHref(remaining[0].id))
+                return
+              }
+
+              const replacement = await api.createSession({ title: '', llm_index: session?.llm_index ?? null })
+              queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], {
+                total: 1,
+                items: [replacement],
+              })
+              localStorage.setItem('gahub.currentSessionId', replacement.id)
+              nav(sessionChatHref(replacement.id))
+            } catch (error: any) {
+              const detail = error?.status === 409
+                ? '会话仍在运行，请先停止任务。'
+                : (error?.body?.detail || error?.message || String(error))
+              pushSystem(`_删除会话失败：${detail}_`)
               throw error
             }
           }}

@@ -5,7 +5,6 @@ import clsx from 'clsx'
 import { api } from '@/api/client'
 import { useAgentStore } from '@/stores/agentStore'
 import { useChatStore } from '@/stores/chatStore'
-import { sessionManager } from '@/stores/sessionManagerStore'
 
 type NavIconName =
   | 'dashboard'
@@ -257,16 +256,6 @@ export function SidebarNav() {
       </div>
 
       <nav className="flex-1 min-h-0 overflow-y-auto py-2 ga-sidebar-nav">
-        <button
-          type="button"
-          onClick={() => sessionManager.open()}
-          className="ga-sidebar-item w-full text-left"
-          aria-label="会话管理"
-        >
-          <span className="ga-nav-icon" aria-hidden="true"><NavIcon name="chat" /></span>
-          <span className="ga-nav-label">会话管理</span>
-          <span className="ga-nav-chev" aria-hidden="true">⌘</span>
-        </button>
         {items.map((it) => (
           <NavLink
             key={it.to}

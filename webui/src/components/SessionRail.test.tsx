@@ -35,29 +35,35 @@ describe('SessionRail', () => {
     host.remove()
   })
 
-  it('hides empty shells but keeps named, archived, and current sessions selectable', () => {
+  it('shows every session, keeps them selectable, and deletes an idle session after confirmation', async () => {
     const onSelect = vi.fn()
+    const onDelete = vi.fn().mockResolvedValue(undefined)
     act(() => root.render(
-      <SessionRail sessions={sessions} runtimes={runtimes} currentId="aaaaaaaa-1111-4111-8111-111111111111" onSelect={onSelect} />,
+      <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={onSelect} onDelete={onDelete} />,
     ))
 
     const current = host.querySelector('[aria-current="page"]') as HTMLButtonElement
     expect(current.textContent).toContain('研究任务')
     expect(current.textContent).toContain('运行中')
-    expect(host.textContent).not.toContain('bbbbbbbb')
+    expect(host.textContent).toContain('未命名会话 · bbbbbbbb')
     expect(host.textContent).toContain('未命名会话 · cccccccc')
-    expect(host.textContent).toContain('已隐藏 1 个空会话')
+    expect(host.textContent).not.toContain('已隐藏')
 
-    const archived = Array.from(host.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('cccccccc'))
-    act(() => archived?.click())
-    expect(onSelect).toHaveBeenCalledWith('cccccccc-3333-4333-8333-333333333333')
+    const empty = Array.from(host.querySelectorAll('button'))
+      .find((button) => button.textContent?.includes('bbbbbbbb'))
+    act(() => empty?.click())
+    expect(onSelect).toHaveBeenCalledWith(sessions[1].id)
 
-    act(() => root.render(
-      <SessionRail sessions={sessions} runtimes={runtimes} currentId="bbbbbbbb-2222-4222-8222-222222222222" onSelect={onSelect} />,
-    ))
-    expect(host.querySelector('[aria-current="page"]')?.textContent).toContain('bbbbbbbb')
-    expect(host.textContent).not.toContain('已隐藏 1 个空会话')
+    const runningDelete = host.querySelector('[aria-label="删除 研究任务"]') as HTMLButtonElement
+    expect(runningDelete.disabled).toBe(true)
+
+    const idleDelete = host.querySelector('[aria-label="删除 未命名会话 · bbbbbbbb"]') as HTMLButtonElement
+    act(() => idleDelete.click())
+    expect(host.querySelector('[role="alertdialog"]')?.getAttribute('aria-label')).toBe('确认删除 未命名会话 · bbbbbbbb')
+    const confirm = Array.from(host.querySelectorAll('[role="alertdialog"] button'))
+      .find((button) => button.textContent === '确认') as HTMLButtonElement
+    await act(async () => { confirm.click() })
+    expect(onDelete).toHaveBeenCalledWith(sessions[1].id)
   })
 
   it('creates and renames sessions from the workspace rail', async () => {

@@ -23,8 +23,9 @@ def test_coordinator_abort_timeout_publishes_identified_error_event(
     captured = {}
 
     class CapturingCoordinator:
-        def __init__(self, runtime_factory, *, on_state_change):
+        def __init__(self, runtime_factory, *, on_state_change, capacity):
             captured["callback"] = on_state_change
+            captured["capacity"] = capacity
 
     monkeypatch.setattr(sessions, "bus", event_bus)
     monkeypatch.setattr(sessions, "_coordinator", None)
@@ -32,6 +33,7 @@ def test_coordinator_abort_timeout_publishes_identified_error_event(
     monkeypatch.setattr(sessions, "SessionRuntimeFactory", lambda store: object())
 
     sessions._get_coordinator()
+    assert captured["capacity"] == 3
     captured["callback"](RuntimeState(
         "session-a", "error", "run-a", "stream-a", "abort_timeout"
     ))

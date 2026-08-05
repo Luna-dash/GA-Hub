@@ -162,18 +162,16 @@ def test_active_session_cannot_be_deleted(tmp_path: Path, monkeypatch) -> None:
         assert store.get(sid)["id"] == sid
 
 
-def test_session_run_capacity_defaults_to_two_and_only_allows_one_or_two(monkeypatch) -> None:
+def test_session_run_capacity_defaults_to_three_and_allows_one_to_three(monkeypatch) -> None:
     from server.routes import sessions
 
     monkeypatch.delenv("GAHUB_SESSION_RUN_CAPACITY", raising=False)
-    assert sessions._session_run_capacity() == 2
+    assert sessions._session_run_capacity() == 3
 
-    monkeypatch.setenv("GAHUB_SESSION_RUN_CAPACITY", "1")
-    assert sessions._session_run_capacity() == 1
+    for capacity in ("1", "2", "3"):
+        monkeypatch.setenv("GAHUB_SESSION_RUN_CAPACITY", capacity)
+        assert sessions._session_run_capacity() == int(capacity)
 
-    monkeypatch.setenv("GAHUB_SESSION_RUN_CAPACITY", "2")
-    assert sessions._session_run_capacity() == 2
-
-    for invalid in ("0", "3", "many", ""):
+    for invalid in ("0", "4", "many", ""):
         monkeypatch.setenv("GAHUB_SESSION_RUN_CAPACITY", invalid)
-        assert sessions._session_run_capacity() == 2
+        assert sessions._session_run_capacity() == 3
