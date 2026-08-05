@@ -33,6 +33,7 @@ describe('chatStore lifecycle', () => {
       historyError: null,
       sock: null,
       sessionId: null,
+      sessionViews: {},
     })
   })
 
@@ -120,6 +121,56 @@ describe('chatStore lifecycle', () => {
       sessionId: 'session-b',
       historyStatus: 'ready',
       msgs: [expect.objectContaining({ content: 'new session' })],
+    })
+  })
+
+  it('restores a cached session immediately while history refresh is pending', async () => {
+    const refreshA = deferred<SessionMessagesResponse>()
+    vi.spyOn(api, 'getSessionMessages')
+      .mockResolvedValueOnce({
+        session_id: 'session-a', archive_bound: true, revision: 'a1',
+        items: [{ id: 'a-message', role: 'assistant', content: 'cached session A', ordinal: 0 }],
+      })
+      .mockResolvedValueOnce({ session_id: 'session-b', archive_bound: false, revision: '', items: [] })
+      .mockImplementationOnce(() => refreshA.promise)
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    useChatStore.getState().start('session-b')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+
+    useChatStore.getState().start('session-a')
+    expect(useChatStore.getState()).toMatchObject({
+      sessionId: 'session-a',
+      hydrating: false,
+      historyStatus: 'loading_history',
+      msgs: [expect.objectContaining({ content: 'cached session A' })],
+    })
+
+    refreshA.resolve({ session_id: 'session-a', archive_bound: true, revision: 'a2', items: [] })
+    await refreshA.promise
+  })
+
+  it('keeps the cached projection when archive history is unavailable', async () => {
+    vi.spyOn(api, 'getSessionMessages')
+      .mockResolvedValueOnce({
+        session_id: 'session-a', archive_bound: true, revision: 'a1',
+        items: [{ id: 'a-message', role: 'assistant', content: 'keep cached history', ordinal: 0 }],
+      })
+      .mockResolvedValueOnce({ session_id: 'session-b', archive_bound: false, revision: '', items: [] })
+      .mockRejectedValueOnce(new Error('history_unavailable'))
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    useChatStore.getState().start('session-b')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    useChatStore.getState().start('session-a')
+
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('history_error'))
+    expect(useChatStore.getState()).toMatchObject({
+      sessionId: 'session-a',
+      hydrating: false,
+      msgs: [expect.objectContaining({ content: 'keep cached history' })],
     })
   })
 })

@@ -32,6 +32,13 @@ export interface ChatMsg {
   pendingWebuiId?: string          // identifies the exact optimistic bubble for rollback
 }
 
+interface SessionView {
+  msgs: ChatMsg[]
+  streaming: boolean
+  historyStatus: ChatState['historyStatus']
+  historyError: string | null
+}
+
 interface ChatState {
   msgs: ChatMsg[]
   conn: 'connecting' | 'open' | 'closed'
@@ -41,6 +48,8 @@ interface ChatState {
   historyError: string | null
   sock: ChatSocket | null
   sessionId: string | null
+  /** Per-session in-memory projections make switching instant; WS replay catches them up. */
+  sessionViews: Record<string, SessionView>
 
   start: (sessionId: string) => void
   retryHistory: () => void
@@ -340,12 +349,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
   historyError: null,
   sock: null,
   sessionId: null,
+  sessionViews: {},
 
   start: (sessionId) => {
-    if (get().sock && get().sessionId === sessionId && get().historyStatus !== 'history_error') return
-    get().sock?.close()
-    if (get().sessionId !== sessionId) set({ msgs: [], streaming: false })
-    set({ historyStatus: 'loading_history', historyError: null, hydrating: true })
+    const current = get()
+    if (current.sock && current.sessionId === sessionId && current.historyStatus !== 'history_error') return
+    current.sock?.close()
+
+    const switching = current.sessionId !== sessionId
+    if (current.sessionId && switching) {
+      const previousView: SessionView = {
+        msgs: current.msgs,
+        streaming: current.streaming,
+        historyStatus: current.historyStatus,
+        historyError: current.historyError,
+      }
+      set((st) => ({ sessionViews: { ...st.sessionViews, [current.sessionId!]: previousView } }))
+    }
+    const cached = switching ? get().sessionViews[sessionId] : undefined
+    set({
+      msgs: switching ? (cached?.msgs ?? []) : current.msgs,
+      streaming: switching ? (cached?.streaming ?? false) : current.streaming,
+      historyStatus: 'loading_history',
+      historyError: null,
+      // A cached/current projection is paint-ready; refresh it unobtrusively.
+      hydrating: switching ? !cached : current.msgs.length === 0,
+    })
 
     const generation = ++historyGeneration
     historyAbort?.abort()
@@ -505,7 +534,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       handleReadyMessage(message)
     }
     sock.open()
-    set({ sock, sessionId, conn: 'connecting', hydrating: true })
+    set({ sock, sessionId, conn: 'connecting' })
 
     void api.getSessionMessages(sessionId, abort.signal).then((history) => {
       if (generation !== historyGeneration || get().sessionId !== sessionId) return

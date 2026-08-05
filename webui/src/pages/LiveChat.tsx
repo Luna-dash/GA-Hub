@@ -107,7 +107,6 @@ export default function LiveChat() {
         if (cancelled || sessionSwitchSeqRef.current !== initSeq) return
         sessionIdRef.current = current.id
         localStorage.setItem('gahub.currentSessionId', current.id)
-        clearLocal()
         setSessionError('')
         setSession(current)
         setTitleDraft(current.title)
