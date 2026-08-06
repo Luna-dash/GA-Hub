@@ -102,6 +102,42 @@ export default function Conversations() {
     }
   }
 
+  const handleRename = async (id: string, currentTitle: string) => {
+    const title = await dialog.prompt('重命名历史会话', {
+      message: '该名称会同步到绑定的 Chat 会话；留空可恢复默认名称。',
+      defaultValue: currentTitle,
+      placeholder: '输入会话名称',
+      confirmText: '保存',
+    })
+    if (title === null) return
+    try {
+      await api.updateConversation(id, title.trim())
+      await qc.invalidateQueries({ queryKey: ['conversations'] })
+      await qc.invalidateQueries({ queryKey: ['conv', id] })
+      toast.success('会话名称已更新')
+    } catch (e: any) {
+      await dialog.alert('重命名失败', e?.message || String(e))
+    }
+  }
+
+  const handleDelete = async (id: string, title: string) => {
+    const ok = await dialog.confirm(
+      `删除历史会话「${title || id}」？`,
+      '这将永久删除对应的原始会话文件，且无法撤销。',
+      { confirmText: '永久删除文件', tone: 'danger' },
+    )
+    if (!ok) return
+    try {
+      await api.deleteConversation(id)
+      setActive(null)
+      qc.removeQueries({ queryKey: ['conv', id] })
+      await qc.invalidateQueries({ queryKey: ['conversations'] })
+      toast.success('会话文件已删除')
+    } catch (e: any) {
+      await dialog.alert('删除失败', e?.message || String(e))
+    }
+  }
+
   const handleRestore = async (id: string) => {
     if (!detail) return
     const ok = await dialog.confirm(
@@ -187,6 +223,20 @@ export default function Conversations() {
                   )}
                 </div>
                 <div className="flex gap-2 flex-wrap justify-end">
+                  <button
+                    type="button"
+                    onClick={() => handleRename(detail.id, detail.title || '')}
+                    className="px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm"
+                  >
+                    重命名
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(detail.id, detail.title || '')}
+                    className="px-3 py-1.5 rounded-lg border border-red-500/50 text-red-300 hover:bg-red-500/10 text-sm"
+                  >
+                    删除文件
+                  </button>
                   <button
                     onClick={() => handleRestore(detail.id)}
                     disabled={restoring === detail.id}

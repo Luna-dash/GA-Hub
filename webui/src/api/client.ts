@@ -183,6 +183,10 @@ export const api = {
       'GET', `/api/conversations?${sp}`)
   },
   conversation: (id: string) => http<Conversation>('GET', `/api/conversations/${encodeURIComponent(id)}`),
+  updateConversation: (id: string, title: string) =>
+    http<{ ok: boolean; id: string; title: string }>('PATCH', `/api/conversations/${encodeURIComponent(id)}`, { title }),
+  deleteConversation: (id: string) =>
+    http<{ ok: boolean; id: string }>('DELETE', `/api/conversations/${encodeURIComponent(id)}`),
   exportConversation: (id: string, format: 'md' | 'json') =>
     `/api/conversations/${encodeURIComponent(id)}/export?format=${format}`,
   restoreConversation: (id: string) =>

@@ -12,15 +12,25 @@ import json
 import logging
 import os
 import zipfile
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse, Response
+from pydantic import BaseModel, Field
 
 from .. import _paths
 from ..services.archive_messages import read_ui_messages
+from ..services.conversation_titles import ConversationTitleStore
+from ..services.session_metadata import SessionMetadataStore
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+_title_store = ConversationTitleStore()
+_session_store = SessionMetadataStore()
+
+
+class ConversationUpdate(BaseModel):
+    title: str = Field(default="", max_length=200)
 
 
 # ── GA archive helpers ────────────────────────────────────────────
@@ -49,6 +59,23 @@ def _session_by_id(cid: str):
     return None
 
 
+def _conversation_title(cid: str, path: str) -> str:
+    resolved = str(Path(path).resolve())
+    for row in _session_store.list():
+        if row.get("archive_path") and str(Path(row["archive_path"]).resolve()) == resolved:
+            title = str(row.get("title") or "").strip()
+            if title:
+                return title
+    return _title_store.get(cid)
+
+
+def _update_bound_titles(path: str, title: str) -> None:
+    resolved = str(Path(path).resolve())
+    for row in _session_store.list():
+        if row.get("archive_path") and str(Path(row["archive_path"]).resolve()) == resolved:
+            _session_store.update(row["id"], {"title": title})
+
+
 # ── conversation list / detail / export / restore ─────────────────
 @router.get("/api/conversations")
 async def list_conversations(
@@ -62,7 +89,7 @@ async def list_conversations(
         cid = os.path.basename(path)
         items.append({
             "id": cid,
-            "title": "",  # GA archives carry no title; UI falls back to id
+            "title": _conversation_title(cid, path),
             "message_count": rounds,
             "last_user_preview": preview,
         })
@@ -74,7 +101,9 @@ async def list_conversations(
         # title and the preview is only the last user message).
         keep = []
         for it, (path, _mt, _pv, _rd) in zip(items, sessions):
-            if ql in it["id"].lower() or ql in (it["last_user_preview"] or "").lower():
+            if (ql in it["id"].lower()
+                    or ql in (it["title"] or "").lower()
+                    or ql in (it["last_user_preview"] or "").lower()):
                 keep.append(it)
                 continue
             try:
@@ -103,9 +132,38 @@ async def get_conversation(cid: str):
     messages = _ga_extract(path)
     return {
         "id": cid,
-        "title": "",
+        "title": _conversation_title(cid, path),
         "messages": messages,
     }
+
+
+@router.patch("/api/conversations/{cid}")
+async def update_conversation(cid: str, req: ConversationUpdate):
+    s = _session_by_id(cid)
+    if s is None:
+        raise HTTPException(404, "conversation not found")
+    title = req.title.strip()
+    _title_store.set(cid, title)
+    _update_bound_titles(s[0], title)
+    return {"ok": True, "id": cid, "title": title}
+
+
+@router.delete("/api/conversations/{cid}")
+async def delete_conversation(cid: str):
+    s = _session_by_id(cid)
+    if s is None:
+        raise HTTPException(404, "conversation not found")
+    path = Path(s[0]).resolve()
+    # The path is obtained from the current GA archive enumeration; never trust cid as a path.
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        raise HTTPException(404, "conversation not found")
+    except OSError as exc:
+        log.exception("failed to delete conversation %s", cid)
+        raise HTTPException(500, f"failed to delete conversation: {exc}")
+    _title_store.delete(cid)
+    return {"ok": True, "id": cid}
 
 
 @router.post("/api/conversations/{cid}/restore")
@@ -136,7 +194,7 @@ async def restore_conversation(cid: str):
     return {
         "ok": True,
         "id": cid,
-        "title": "",
+        "title": _conversation_title(cid, path),
         "restored_lines": len(messages),
     }
 
@@ -148,7 +206,7 @@ async def export_conversation(cid: str, format: str = Query("md", pattern="^(md|
         raise HTTPException(404, "conversation not found")
     path = s[0]
     messages = _ga_extract(path)
-    title = cid
+    title = _conversation_title(cid, path)
 
     if format == "json":
         payload = {"id": cid, "title": title, "messages": messages}
