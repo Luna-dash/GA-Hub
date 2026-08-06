@@ -51,13 +51,36 @@ class TokenPersistenceTests(unittest.TestCase):
 
         self.assertEqual(first["current_week"]["total"], 100)
         self.assertEqual(second["current_week"]["total"], 140)
+        self.assertEqual(second["all_time"]["total"], 140)
 
         with mock.patch.object(tokens, "_SESSION_ID", "session-b"):
             restarted = tokens._persist_snapshot(snap(25, monday + 120))
         self.assertEqual(restarted["current_week"]["total"], 165)
+        self.assertEqual(restarted["all_time"]["total"], 165)
 
         persisted = json.loads(self.usage.read_text("utf-8"))
+        self.assertEqual(persisted["version"], 2)
         self.assertEqual(persisted["weeks"]["2026-07-06"]["total"], 165)
+        self.assertEqual(persisted["all_time"]["total"], 165)
+
+    def test_legacy_week_data_is_migrated_to_independent_all_time_total(self) -> None:
+        monday = int(datetime(2026, 7, 13, 9, 0).timestamp())
+        legacy = {
+            "version": 1,
+            "weeks": {
+                "2026-07-06": {**ZERO, "input": 80, "total": 80},
+                "2026-07-13": {**ZERO, "input": 20, "total": 20},
+            },
+            "session": {},
+        }
+        self.usage.write_text(json.dumps(legacy), "utf-8")
+
+        result = tokens._persist_snapshot(snap(5, monday))
+
+        self.assertEqual(result["all_time"]["total"], 105)
+        persisted = json.loads(self.usage.read_text("utf-8"))
+        self.assertEqual(persisted["all_time"]["total"], 105)
+        self.assertEqual(persisted["weeks"]["2026-07-13"]["total"], 25)
 
     def test_usage_is_grouped_into_monday_to_sunday_natural_weeks(self) -> None:
         sunday = int(datetime(2026, 7, 12, 23, 59).timestamp())

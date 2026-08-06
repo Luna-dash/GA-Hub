@@ -57,11 +57,11 @@ def _spawn(cmd: list[str], *, wait_sec: float = 4.0) -> bool:
             return True
         try:
             proc.wait(timeout=wait_sec)
+            return proc.returncode == 0
         except subprocess.TimeoutExpired:
             # Notifier still running but command was already dispatched —
             # treat as success and let it finish in the background.
             return True
-        return True
     except Exception as e:
         log.debug("notifier command failed (%s): %s", cmd[0], e)
         return False
@@ -81,20 +81,59 @@ def _send_linux(title: str, body: str) -> bool:
     return _spawn(["notify-send", "--app-name=GenericAgent", title, body], wait_sec=4)
 
 
-_PS_TEMPLATE_BURNTTOAST = (
-    'Import-Module BurntToast -ErrorAction Stop; '
-    'New-BurntToastNotification -Text {title}, {body} -AppLogo $null'
-)
-_PS_TEMPLATE_BALLOON = (
+_PS_TEMPLATE_POPUP = (
     'Add-Type -AssemblyName System.Windows.Forms; '
-    '$n = New-Object System.Windows.Forms.NotifyIcon; '
-    '$n.Icon = [System.Drawing.SystemIcons]::Information; '
-    '$n.BalloonTipTitle = {title}; '
-    '$n.BalloonTipText = {body}; '
-    '$n.Visible = $true; '
-    '$n.ShowBalloonTip(6000); '
-    'Start-Sleep -Seconds 7; '
-    '$n.Dispose()'
+    'Add-Type -AssemblyName System.Drawing; '
+    "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class GAWindow {{ [DllImport(\"user32.dll\", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string lpClassName, string lpWindowName); [DllImport(\"user32.dll\")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow); [DllImport(\"user32.dll\")] public static extern bool BringWindowToTop(IntPtr hWnd); [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd); }}'; "
+    '$form = New-Object System.Windows.Forms.Form; '
+    '$form.Text = {title}; '
+    '$form.Size = New-Object System.Drawing.Size(360, 150); '
+    '$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedToolWindow; '
+    '$form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual; '
+    '$form.ShowInTaskbar = $false; '
+    '$form.TopMost = $true; '
+    '$form.BackColor = [System.Drawing.Color]::White; '
+    '$form.Cursor = [System.Windows.Forms.Cursors]::Hand; '
+    '$titleLabel = New-Object System.Windows.Forms.Label; '
+    '$titleLabel.Text = {title}; '
+    '$titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold); '
+    '$titleLabel.AutoSize = $false; '
+    '$titleLabel.Location = New-Object System.Drawing.Point(18, 16); '
+    '$titleLabel.Size = New-Object System.Drawing.Size(318, 28); '
+    '$titleLabel.Cursor = [System.Windows.Forms.Cursors]::Hand; '
+    '$bodyLabel = New-Object System.Windows.Forms.Label; '
+    '$bodyLabel.Text = {body}; '
+    '$bodyLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9); '
+    '$bodyLabel.AutoEllipsis = $true; '
+    '$bodyLabel.Location = New-Object System.Drawing.Point(18, 52); '
+    '$bodyLabel.Size = New-Object System.Drawing.Size(318, 54); '
+    '$bodyLabel.Cursor = [System.Windows.Forms.Cursors]::Hand; '
+    '$form.Controls.AddRange(@($titleLabel, $bodyLabel)); '
+    '$area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea; '
+    '$form.Location = New-Object System.Drawing.Point(($area.Right - $form.Width - 20), ($area.Bottom - $form.Height - 20)); '
+    '$timer = New-Object System.Windows.Forms.Timer; '
+    '$timer.Interval = 8000; '
+    '$timer.Add_Tick({{ $timer.Stop(); $form.Close() }}); '
+    '$activate = {{ '
+    '  $timer.Stop(); '
+    '  $targetHandle = [GAWindow]::FindWindow("Tauri Window", "GenericAgent"); '
+    '  if ($targetHandle -eq [IntPtr]::Zero) {{ '
+    '    $fallback = Get-Process | Where-Object {{ $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like "GA-Hub*" }} | Select-Object -First 1; '
+    '    if ($fallback) {{ $targetHandle = $fallback.MainWindowHandle }} '
+    '  }}; '
+    '  if ($targetHandle -ne [IntPtr]::Zero) {{ '
+    '    $form.Hide(); '
+    '    [GAWindow]::ShowWindowAsync($targetHandle, 9) | Out-Null; '
+    '    [GAWindow]::BringWindowToTop($targetHandle) | Out-Null; '
+    '    [GAWindow]::SetForegroundWindow($targetHandle) | Out-Null; '
+    '  }}; '
+    '  $form.Close() '
+    '}}; '
+    '$form.Add_Click($activate); '
+    '$titleLabel.Add_Click($activate); '
+    '$bodyLabel.Add_Click($activate); '
+    '$form.Add_Shown({{ $timer.Start() }}); '
+    '[System.Windows.Forms.Application]::Run($form)'
 )
 
 
@@ -104,21 +143,19 @@ def _ps_quote(s: str) -> str:
 
 
 def _send_windows(title: str, body: str) -> bool:
-    if not shutil.which("powershell") and not shutil.which("powershell.exe"):
+    powershell = shutil.which("powershell") or shutil.which("powershell.exe")
+    if not powershell:
         return False
-    t, b = _ps_quote(title), _ps_quote(body)
-    # Try BurntToast (modern toast). If that errors out — module not
-    # installed, etc. — fall back to the legacy balloon tip. Both are
-    # fired in the background; the balloon path self-sleeps so we don't
-    # wait on it from the request thread.
-    for template in (_PS_TEMPLATE_BURNTTOAST, _PS_TEMPLATE_BALLOON):
-        script = template.format(title=t, body=b)
-        if _spawn(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-            wait_sec=0,
-        ):
-            return True
-    return False
+    script = _PS_TEMPLATE_POPUP.format(
+        title=_ps_quote(title),
+        body=_ps_quote(body),
+    )
+    # A healthy popup enters its WinForms message loop and remains alive.
+    # A missing assembly or malformed script exits within this startup check.
+    return _spawn(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+        wait_sec=1,
+    )
 
 
 def send(title: str, body: str = "") -> dict:

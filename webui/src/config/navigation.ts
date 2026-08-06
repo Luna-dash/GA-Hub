@@ -1,3 +1,5 @@
+import { api } from '@/api/client'
+
 export type NavIconName =
   | 'dashboard' | 'chat' | 'feishu' | 'conversations' | 'memory'
   | 'conductor' | 'goalHive' | 'mykey' | 'tasks' | 'autonomous' | 'tokens' | 'settings'
@@ -44,11 +46,43 @@ export function getNavPreferences(): NavPreference[] {
   catch { return defaultNavPreferences() }
 }
 
-export function setNavPreferences(value: NavPreference[]): NavPreference[] {
+let localRevision = 0
+let saveQueue = Promise.resolve()
+
+function applyNavPreferences(value: NavPreference[]): NavPreference[] {
   const normalized = normalizeNavPreferences(value)
   localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized))
   window.dispatchEvent(new CustomEvent(NAV_PREFERENCES_EVENT, { detail: normalized }))
   return normalized
+}
+
+function queueServerSave(preferences: NavPreference[]): void {
+  saveQueue = saveQueue
+    .catch(() => undefined)
+    .then(() => api.saveNavigationPreferences(preferences))
+    .then(() => undefined)
+    .catch(() => undefined)
+}
+
+export function setNavPreferences(value: NavPreference[]): NavPreference[] {
+  localRevision += 1
+  const normalized = applyNavPreferences(value)
+  queueServerSave(normalized)
+  return normalized
+}
+
+export async function hydrateNavPreferences(): Promise<NavPreference[]> {
+  const revisionAtStart = localRevision
+  try {
+    const remote = await api.navigationPreferences()
+    if (localRevision !== revisionAtStart) return getNavPreferences()
+    if (remote.configured) return applyNavPreferences(remote.preferences)
+    const local = getNavPreferences()
+    queueServerSave(local)
+    return local
+  } catch {
+    return getNavPreferences()
+  }
 }
 
 export function getVisibleNavItems(preferences = getNavPreferences()): NavItem[] {

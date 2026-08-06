@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import { sessionActivity, sessionStatusLabel } from '@/utils/sessionUi'
@@ -16,6 +16,7 @@ interface SessionRailProps {
 
 const activityDot = {
   active: 'bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]',
+  completed: 'bg-sky-500 shadow-[0_0_0_3px_rgba(14,165,233,0.16)]',
   idle: 'bg-[#9A8B70]',
   error: 'bg-rose-500 shadow-[0_0_0_3px_rgba(244,63,94,0.16)]',
   unknown: 'bg-amber-500',
@@ -23,12 +24,42 @@ const activityDot = {
 
 const activityCard = {
   active: 'border-emerald-400/60 bg-emerald-50/80 text-emerald-950 shadow-[inset_3px_0_0_rgba(16,185,129,0.65)] hover:bg-emerald-50',
+  completed: 'border-sky-400/60 bg-sky-50/80 text-sky-950 shadow-[inset_3px_0_0_rgba(14,165,233,0.65)] hover:bg-sky-50',
   idle: 'border-transparent text-[#665741] hover:border-line hover:bg-bg-card',
   error: 'border-rose-400/60 bg-rose-50/80 text-rose-950 shadow-[inset_3px_0_0_rgba(244,63,94,0.65)] hover:bg-rose-50',
   unknown: 'border-amber-400/55 bg-amber-50/70 text-amber-950 hover:bg-amber-50',
 }
 
+const activityLabel = {
+  active: '运行中',
+  completed: '已完成',
+  idle: '空闲',
+  error: '异常',
+  unknown: '空闲',
+}
+
+const activityRail = {
+  active: 'bg-emerald-600/75 shadow-[0_0_0_3px_rgba(5,150,105,0.13)] group-hover:bg-emerald-600/90',
+  completed: 'bg-sky-600/65 shadow-[0_0_0_3px_rgba(2,132,199,0.11)] group-hover:bg-sky-600/80',
+  idle: 'bg-[#8D7B5D]/55 shadow-[0_0_0_3px_rgba(141,123,93,0.10)] group-hover:bg-[#8D7B5D]/70',
+  error: 'bg-rose-600/75 shadow-[0_0_0_3px_rgba(225,29,72,0.11)] group-hover:bg-rose-600/90',
+  unknown: 'bg-amber-600/65 shadow-[0_0_0_3px_rgba(217,119,6,0.11)] group-hover:bg-amber-600/80',
+}
+
 const STORAGE_KEY = 'gahub.sessionRailCollapsed'
+const RECENT_KEY = 'gahub.sessionRailRecentActivity'
+const TERMINAL_KEY = 'gahub.sessionRailTerminalState'
+type TerminalState = 'completed' | 'error'
+type TerminalMap = Record<string, TerminalState>
+
+function readJson<T>(key: string, fallback: T): T {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '')
+    return value && typeof value === 'object' ? value as T : fallback
+  } catch {
+    return fallback
+  }
+}
 
 function sessionTitle(session: HubSession) {
   return session.title.trim() || `未命名会话 · ${session.id.slice(0, 8)}`
@@ -41,6 +72,86 @@ export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate,
   const [savingId, setSavingId] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [terminalState, setTerminalState] = useState<TerminalMap>(() => readJson<TerminalMap>(TERMINAL_KEY, {}))
+  const [recentActivity, setRecentActivity] = useState<string[]>(() => readJson<string[]>(RECENT_KEY, []))
+  const previousActivity = useRef<Record<string, ReturnType<typeof sessionActivity>>>({})
+
+  useEffect(() => {
+    const nextTerminal = { ...terminalState }
+    const nextRecent = [...recentActivity]
+    const nextPrevious = { ...previousActivity.current }
+    let terminalChanged = false
+    let recentChanged = false
+
+    sessions.forEach((session) => {
+      const activity = sessionActivity(runtimes[session.id])
+      const previous = nextPrevious[session.id]
+      if (activity === 'active') {
+        if (nextRecent[0] !== session.id) {
+          nextRecent.splice(nextRecent.indexOf(session.id), 1)
+          nextRecent.unshift(session.id)
+          recentChanged = true
+        }
+        if (nextTerminal[session.id]) {
+          delete nextTerminal[session.id]
+          terminalChanged = true
+        }
+      } else if (activity === 'error' && previous === 'active' && nextTerminal[session.id] !== 'error') {
+        nextTerminal[session.id] = 'error'
+        terminalChanged = true
+      } else if (activity === 'idle' && previous === 'active' && nextTerminal[session.id] !== 'completed') {
+        nextTerminal[session.id] = 'completed'
+        terminalChanged = true
+      }
+      nextPrevious[session.id] = activity
+    })
+
+    previousActivity.current = nextPrevious
+    if (terminalChanged) {
+      setTerminalState(nextTerminal)
+      localStorage.setItem(TERMINAL_KEY, JSON.stringify(nextTerminal))
+    }
+    if (recentChanged) {
+      setRecentActivity(nextRecent)
+      localStorage.setItem(RECENT_KEY, JSON.stringify(nextRecent.slice(0, 50)))
+    }
+  }, [runtimes, sessions, recentActivity, terminalState])
+
+  const orderedSessions = useMemo(() => {
+    const rank = new Map(recentActivity.map((id, index) => [id, index]))
+    return [...sessions].sort((a, b) => {
+      const ar = rank.get(a.id) ?? Number.MAX_SAFE_INTEGER
+      const br = rank.get(b.id) ?? Number.MAX_SAFE_INTEGER
+      if (ar !== br) return ar - br
+      return b.updated_at.localeCompare(a.updated_at)
+    })
+  }, [recentActivity, sessions])
+
+  const displayState = (session: HubSession): 'active' | 'completed' | 'idle' | 'error' => {
+    const activity = sessionActivity(runtimes[session.id])
+    if (activity === 'active') return 'active'
+    return terminalState[session.id] || activity
+  }
+
+  const attentionSessions = useMemo(() => (
+    orderedSessions
+      .filter((session) => {
+        const activity = displayState(session)
+        return activity === 'active' || activity === 'completed' || activity === 'error'
+      })
+      .slice(0, 3)
+      .reverse()
+  ), [orderedSessions, runtimes, terminalState])
+
+  const selectSession = (sessionId: string) => {
+    if (terminalState[sessionId]) {
+      const next = { ...terminalState }
+      delete next[sessionId]
+      setTerminalState(next)
+      localStorage.setItem(TERMINAL_KEY, JSON.stringify(next))
+    }
+    onSelect(sessionId)
+  }
 
   const toggle = () => {
     setCollapsed((current) => {
@@ -113,9 +224,9 @@ export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate,
           )}
         </div>
         <div className="flex gap-2 md:flex-col">
-          {sessions.map((session) => {
+          {orderedSessions.map((session) => {
             const runtime = runtimes[session.id]
-            const activity = sessionActivity(runtime)
+            const activity = displayState(session)
             const current = session.id === currentId
             const editing = editingId === session.id
             return (
@@ -200,6 +311,36 @@ export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate,
           })}
         </div>
       </aside>
+      <div
+        aria-label="最近活动会话"
+        className={clsx(
+          'absolute z-25 flex gap-1.5 transition-[opacity,transform] duration-300 md:flex-col',
+          'left-2 right-2 top-1 md:bottom-[calc(50%+2.125rem)] md:left-auto md:right-[-1.5rem] md:top-auto md:w-6',
+          collapsed ? 'pointer-events-auto translate-y-0 opacity-100 md:translate-x-0' : 'pointer-events-none -translate-y-2 opacity-0 md:translate-x-2 md:translate-y-0',
+        )}
+      >
+        {attentionSessions.map((session) => {
+          const activity = displayState(session)
+          return (
+            <button
+              key={session.id}
+              type="button"
+              onClick={() => selectSession(session.id)}
+              title={`${sessionTitle(session)} · ${activityLabel[activity]}`}
+              aria-label={`${sessionTitle(session)}，${activityLabel[activity]}`}
+              className={clsx(
+                'group flex h-6 w-6 min-w-6 flex-none items-center justify-center rounded-full border border-line bg-bg-card/95 p-0 shadow-sm backdrop-blur-sm transition-[background-color,box-shadow,transform] hover:-translate-y-px hover:bg-white hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 md:hover:-translate-x-px md:hover:translate-y-0',
+                currentId === session.id && 'border-[#A69676] bg-white shadow-md',
+              )}
+            >
+              <span
+                aria-hidden="true"
+                className={clsx('h-3 w-3 rounded-full transition-colors', activityRail[activity])}
+              />
+            </button>
+          )
+        })}
+      </div>
       <button
         type="button"
         aria-label={collapsed ? '展开会话管理' : '折叠会话管理'}

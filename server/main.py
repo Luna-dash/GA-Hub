@@ -422,6 +422,7 @@ def create_app() -> FastAPI:
             logs as log_routes,
             memory as memory_routes,
             mykey as mykey_routes,
+            preferences as preference_routes,
             services as service_routes,
             sessions as session_routes,
             notify as notify_routes,
@@ -440,6 +441,7 @@ def create_app() -> FastAPI:
         app.include_router(mykey_routes.router)
         app.include_router(service_routes.router)
         app.include_router(session_routes.router)
+        app.include_router(preference_routes.router)
         app.include_router(notify_routes.router)
         app.include_router(task_routes.router)
         app.include_router(token_routes.router)

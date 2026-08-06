@@ -453,6 +453,7 @@ export interface TokenStatsResponse {
   threads: TokenThreadStats[]
   totals: TokenTotals
   timestamp: number
+  all_time: TokenTotals
   current_week: TokenWeekStats
   weeks: TokenWeekStats[]
 }

@@ -130,7 +130,7 @@ export function MessageBubble({ role, content, streaming, timestamp, startedAt, 
   const segs = foldTurns(content)
   return (
     <div className="flex justify-start group/msg">
-      <div className="max-w-[92%] min-w-0 flex flex-col items-start gap-1.5">
+      <div className="max-w-full min-w-0 flex flex-col items-start gap-1.5">
         <div className={clsx(
           "min-w-0 relative rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.13)]",
           compact ? "px-3 py-2 text-xs" : "px-3.5 py-3",

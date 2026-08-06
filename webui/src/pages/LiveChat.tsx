@@ -182,6 +182,9 @@ export default function LiveChat() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [stuckBottom, setStuckBottom] = useState(true)
   const [unread, setUnread] = useState(0)
+  const [activeTurn, setActiveTurn] = useState(-1)
+  const navigationTargetRef = useRef<number | null>(null)
+  const turnCount = useMemo(() => msgs.reduce((count, message) => count + (message.role === 'user' ? 1 : 0), 0), [msgs])
 
 
   // Apply navigation-state restore once (e.g. coming from Conversations page).
@@ -213,14 +216,43 @@ export default function LiveChat() {
     const at = dist < 80   // ~one bubble of slack
     setStuckBottom(at)
     if (at) setUnread(0)
+
+    const turns = Array.from(el.querySelectorAll<HTMLElement>('[data-chat-turn]'))
+    if (turns.length === 0) {
+      setActiveTurn(-1)
+      return
+    }
+    const navigationTarget = navigationTargetRef.current
+    if (navigationTarget !== null && navigationTarget < turns.length) {
+      setActiveTurn((previous) => previous === navigationTarget ? previous : navigationTarget)
+      return
+    }
+
+    let current = at ? turns.length - 1 : 0
+    if (!at) {
+      for (let i = 0; i < turns.length; i += 1) {
+        if (turns[i].offsetTop <= el.scrollTop + 48) current = i
+        else break
+      }
+    }
+    setActiveTurn((previous) => previous === current ? previous : current)
   }
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
     recomputeStuck()
+    const releaseNavigationTarget = () => { navigationTargetRef.current = null }
     el.addEventListener('scroll', recomputeStuck, { passive: true })
-    return () => el.removeEventListener('scroll', recomputeStuck)
-  }, [])
+    el.addEventListener('wheel', releaseNavigationTarget, { passive: true })
+    el.addEventListener('touchstart', releaseNavigationTarget, { passive: true })
+    el.addEventListener('pointerdown', releaseNavigationTarget, { passive: true })
+    return () => {
+      el.removeEventListener('scroll', recomputeStuck)
+      el.removeEventListener('wheel', releaseNavigationTarget)
+      el.removeEventListener('touchstart', releaseNavigationTarget)
+      el.removeEventListener('pointerdown', releaseNavigationTarget)
+    }
+  }, [msgs.length])
 
   // On every msgs change: if we're at the bottom, glue ourselves to it; else
   // bump the unread counter so the floating jump-button shows new-msg count.
@@ -241,8 +273,31 @@ export default function LiveChat() {
   const jumpToBottom = () => {
     const el = scrollRef.current
     if (!el) return
+    const lastTurn = turnCount - 1
+    navigationTargetRef.current = lastTurn >= 0 ? lastTurn : null
+    if (lastTurn >= 0) setActiveTurn(lastTurn)
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
     setUnread(0)
+  }
+
+  const jumpToTurn = (direction: -1 | 1) => {
+    const el = scrollRef.current
+    if (!el || turnCount === 0) return
+    const current = activeTurn < 0 ? (stuckBottom ? turnCount - 1 : 0) : activeTurn
+    const next = Math.max(0, Math.min(turnCount - 1, current + direction))
+    if (next === current) return
+    const target = el.querySelectorAll<HTMLElement>('[data-chat-turn]')[next]
+    if (!target) return
+
+    const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+    const anchorTop = Math.max(0, Math.min(maxScrollTop, target.offsetTop - 16))
+    const targetTop = direction < 0 && anchorTop >= el.scrollTop - 1
+      ? Math.max(0, el.scrollTop - Math.max(96, el.clientHeight * 0.4))
+      : anchorTop
+
+    navigationTargetRef.current = next
+    setActiveTurn(next)
+    el.scrollTo({ top: targetTop, behavior: 'smooth' })
   }
 
   const submit = () => {
@@ -480,7 +535,7 @@ export default function LiveChat() {
           }}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col relative">
-        <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-4 py-4 space-y-2">
+        <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-4 py-4 space-y-2 md:pl-10 md:pr-[31px]">
           {historyStatus === 'history_error' && (
             <div className="sticky top-0 z-10 mx-auto flex w-fit max-w-full items-center gap-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 shadow-sm">
               <span>历史消息加载失败：{historyError || '未知错误'}。实时消息仍可继续接收。</span>
@@ -507,33 +562,55 @@ export default function LiveChat() {
               ? sourceLabel(m.source)
               : undefined
             return (
-              <MessageBubble
+              <div
                 key={`${m.streamId ?? 'local'}-${i}`}
-                role={role}
-                content={tag ? `${tag}\n\n${m.content}` : m.content}
-                streaming={m.streaming}
-                timestamp={m.timestamp}
-                startedAt={m.startedAt}
-                finishedAt={m.finishedAt}
-                attachments={m.attachments}
-                streamId={role === 'assistant' ? m.streamId : undefined}
-                onRewind={role === 'assistant' ? handleRewind : undefined}
-              />
+                {...(m.role === 'user' ? { 'data-chat-turn': true } : {})}
+              >
+                <MessageBubble
+                  role={role}
+                  content={tag ? `${tag}\n\n${m.content}` : m.content}
+                  streaming={m.streaming}
+                  timestamp={m.timestamp}
+                  startedAt={m.startedAt}
+                  finishedAt={m.finishedAt}
+                  attachments={m.attachments}
+                  streamId={role === 'assistant' ? m.streamId : undefined}
+                  onRewind={role === 'assistant' ? handleRewind : undefined}
+                />
+              </div>
             )
           })}
         </div>
 
-        {/* Floating jump-to-bottom button */}
-        {!stuckBottom && (
-          <button
-            onClick={jumpToBottom}
-            className="absolute right-8 bottom-28 z-10 px-3 py-1.5 rounded-full
-                       bg-bg-soft/95 backdrop-blur border border-line shadow-lg
-                       text-xs text-[#2C2418] hover:bg-bg-card flex items-center gap-1.5"
-            title="跳到最新消息"
-          >
-            ↓ {unread > 0 ? `${unread} 条新消息` : '回到底部'}
-          </button>
+        {/* Floating turn navigation */}
+        {turnCount > 0 && (
+          <div className="absolute right-8 bottom-28 z-10 flex flex-col items-stretch gap-2 text-xs text-[#2C2418]">
+            <button
+              onClick={() => jumpToTurn(-1)}
+              disabled={activeTurn <= 0}
+              className="rounded-full border border-line bg-bg-soft/95 px-3 py-1.5 shadow-lg backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
+              title="定位到上一轮问答"
+            >
+              ↑ 上一节
+            </button>
+            <button
+              onClick={() => jumpToTurn(1)}
+              disabled={activeTurn < 0 || activeTurn >= turnCount - 1}
+              className="rounded-full border border-line bg-bg-soft/95 px-3 py-1.5 shadow-lg backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
+              title="定位到下一轮问答"
+            >
+              ↓ 下一节
+            </button>
+            {!stuckBottom && (
+              <button
+                onClick={jumpToBottom}
+                className="rounded-full border border-line bg-bg-soft/95 px-3 py-1.5 shadow-lg backdrop-blur hover:bg-bg-card"
+                title="跳到最新消息"
+              >
+                ↓ {unread > 0 ? `${unread} 条新消息` : '回到底部'}
+              </button>
+            )}
+          </div>
         )}
 
         </div>

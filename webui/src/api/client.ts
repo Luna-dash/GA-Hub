@@ -91,6 +91,16 @@ export const api = {
       { ga_root, python_path },
     ),
 
+  // ── persistent UI preferences ────────────────────────
+  navigationPreferences: () =>
+    http<{ configured: boolean; preferences: Array<{ id: string; visible: boolean }> }>('GET', '/api/preferences/navigation'),
+  saveNavigationPreferences: (preferences: Array<{ id: string; visible: boolean }>) =>
+    http<{ configured: boolean; preferences: Array<{ id: string; visible: boolean }> }>(
+      'PUT',
+      '/api/preferences/navigation',
+      { preferences },
+    ),
+
   // ── agent ────────────────────────────────────────────
   agentStatus: () => http<AgentStatus>('GET', '/api/agent/status'),
   agentAbort: () => http<{ ok: boolean }>('POST', '/api/agent/abort'),

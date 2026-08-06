@@ -9,6 +9,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useAgentStore } from '@/stores/agentStore'
 import { useDocumentTitle } from '@/utils/useDocumentTitle'
 import { useDesktopNotifyEffects } from '@/utils/useDesktopNotifyEffects'
+import { hydrateNavPreferences } from '@/config/navigation'
 import { api } from '@/api/client'
 
 const routeFallback = (
@@ -52,6 +53,7 @@ export default function App() {
 
   useEffect(() => {
     if (setup?.configured) {
+      void hydrateNavPreferences()
       start()
       return () => {
         stop()

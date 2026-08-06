@@ -84,7 +84,7 @@ def _read_usage() -> dict[str, Any]:
             return data
     except (OSError, ValueError):
         pass
-    return {"version": 1, "weeks": {}, "session": {}}
+    return {"version": 2, "weeks": {}, "all_time": {}, "session": {}}
 
 
 def _write_usage(data: dict[str, Any]) -> None:
@@ -108,11 +108,18 @@ def _weekly_response(data: dict[str, Any], timestamp: int) -> dict[str, Any]:
     current = next((row for row in rows if row["week_start"] == current_start), None)
     if current is None:
         current = {"week_start": current_start, "week_end": current_end, **_with_rate(_normalise_totals({}))}
-    return {"current_week": current, "weeks": rows}
+    all_time_source = data.get("all_time")
+    if not isinstance(all_time_source, dict):
+        migrated = _normalise_totals({})
+        for week in weeks.values():
+            totals = _normalise_totals(week)
+            migrated = {key: migrated[key] + totals[key] for key in _TOTAL_KEYS}
+        all_time_source = migrated
+    return {"all_time": _with_rate(_normalise_totals(all_time_source)), "current_week": current, "weeks": rows}
 
 
 def _persist_snapshot(snap: dict[str, Any]) -> dict[str, Any]:
-    """Merge this process's cumulative snapshot into durable weekly totals."""
+    """Merge this process's cumulative snapshot into durable weekly and all-time totals."""
     timestamp = int(snap.get("timestamp") or time.time())
     current = _normalise_totals(snap.get("totals"))
     with _HISTORY_LOCK:
@@ -124,8 +131,18 @@ def _persist_snapshot(snap: dict[str, Any]) -> dict[str, Any]:
         week_start, _ = _week_dates(timestamp)
         week = _normalise_totals(weeks.get(week_start))
         weeks[week_start] = {key: week[key] + delta[key] for key in _TOTAL_KEYS}
+        all_time_source = data.get("all_time")
+        if not isinstance(all_time_source, dict):
+            all_time = _normalise_totals({})
+            for totals in weeks.values():
+                values = _normalise_totals(totals)
+                all_time = {key: all_time[key] + values[key] for key in _TOTAL_KEYS}
+            all_time = {key: all_time[key] - delta[key] for key in _TOTAL_KEYS}
+        else:
+            all_time = _normalise_totals(all_time_source)
+        data["all_time"] = {key: all_time[key] + delta[key] for key in _TOTAL_KEYS}
         data["session"] = {"id": _SESSION_ID, "totals": current, "updated_at": timestamp}
-        data["version"] = 1
+        data["version"] = 2
         try:
             _write_usage(data)
         except OSError:
