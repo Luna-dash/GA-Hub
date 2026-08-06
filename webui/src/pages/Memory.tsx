@@ -13,7 +13,6 @@ export default function Memory() {
   return (
     <PageShell
       title="记忆体系"
-      description="编辑 GenericAgent 的长期记忆与流程文档（*_sop.md · *.py · insight · global_mem）"
       actions={
         <div className="flex gap-1 text-sm">
           {(['sop', 'skill', 'insight', 'global'] as Tab[]).map((t) => (

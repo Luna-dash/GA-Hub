@@ -119,12 +119,12 @@ export function CommandPalette() {
       { p: '/feishu', label: '飞书 Bot / Feishu Bot', icon: '🪽' },
       { p: '/conversations', label: '对话管理 / Conversations', icon: '🗂️' },
       { p: '/memory', label: '记忆 & SOP / Memory', icon: '🧠' },
-      { p: '/conductor', label: 'Conductor / 多 Agent 编排', icon: '🎼' },
-      { p: '/goal-hive', label: 'Goal Hive', icon: '🐝' },
+      { p: '/conductor', label: '指挥模式 / 多 Agent 编排', icon: '🎼' },
+      { p: '/goal-hive', label: 'Goal模式', icon: '🐝' },
       { p: '/mykey', label: 'MyKey / 密钥同步', icon: '🔐' },
       { p: '/tasks', label: '任务队列 / Tasks', icon: '☑' },
       { p: '/autonomous', label: '自主进化 / Autonomous', icon: '🌀' },
-      { p: '/tokens', label: 'Token 统计 / Token Usage', icon: '◫' },
+      { p: '/tokens', label: '用量统计 / Token Usage', icon: '◫' },
       { p: '/settings', label: '设置 / Settings', icon: '⚙️' },
     ]
     for (const x of pages) {

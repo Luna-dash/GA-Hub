@@ -91,6 +91,7 @@ export interface SessionMessageProjection {
   role: 'user' | 'assistant'
   content: string
   ordinal: number
+  timestamp?: string | null
 }
 
 export interface SessionMessagesResponse {

@@ -143,7 +143,6 @@ export function WechatBot() {
   return (
     <PageShell
       title="微信机器人"
-      description="管理个人微信 Bot：扫码登录、查看并回复消息（支持图片粘贴）。"
       actions={
         <div className="flex items-center gap-2 text-sm">
           <span className={`px-2 py-0.5 rounded ${status?.logged_in ? 'bg-emerald-900/40 text-emerald-300' : 'bg-rose-900/40 text-rose-300'}`}>

@@ -1,45 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { api } from '@/api/client'
-import { useAgentStore } from '@/stores/agentStore'
-import { useChatStore } from '@/stores/chatStore'
-
-type NavIconName =
-  | 'dashboard'
-  | 'chat'
-  | 'feishu'
-  | 'conversations'
-  | 'memory'
-  | 'conductor'
-  | 'goalHive'
-  | 'mykey'
-  | 'tasks'
-  | 'autonomous'
-  | 'tokens'
-  | 'settings'
-
-interface NavItem {
-  to: string
-  label: string
-  icon: NavIconName
-}
-
-const items: NavItem[] = [
-  { to: '/dashboard', label: '状态面板', icon: 'dashboard' },
-  { to: '/chat', label: '实时聊天', icon: 'chat' },
-  { to: '/conductor', label: 'Conductor', icon: 'conductor' },
-  { to: '/goal-hive', label: 'Goal Hive', icon: 'goalHive' },
-  { to: '/feishu', label: '飞书BOT', icon: 'feishu' },
-  { to: '/conversations', label: '历史对话', icon: 'conversations' },
-  { to: '/memory', label: '记忆体系', icon: 'memory' },
-  { to: '/mykey', label: 'LLM管理', icon: 'mykey' },
-  { to: '/tasks', label: '定时任务', icon: 'tasks' },
-  { to: '/autonomous', label: '自主进化', icon: 'autonomous' },
-  { to: '/tokens', label: 'Token统计', icon: 'tokens' },
-]
-
+import {
+  getNavPreferences,
+  getVisibleNavItems,
+  NAV_PREFERENCES_EVENT,
+  type NavIconName,
+  type NavItem,
+} from '@/config/navigation'
 function NavIcon({ name }: { name: NavIconName }) {
   const common = {
     fill: 'none',
@@ -137,103 +105,21 @@ function NavIcon({ name }: { name: NavIconName }) {
   )
 }
 export function SidebarNav() {
-  const qc = useQueryClient()
-  const status = useAgentStore((s) => s.status)
-  const streaming = useChatStore((s) => s.streaming)
-  const [switching, setSwitching] = useState(false)
-  const [switchError, setSwitchError] = useState('')
-  const [mixinMenuOpen, setMixinMenuOpen] = useState(false)
-  const [singleMenuOpen, setSingleMenuOpen] = useState(false)
-  const { data: llmsData } = useQuery({
-    queryKey: ['llms'],
-    queryFn: api.llms,
-    refetchInterval: 8000,
-  })
-  const llms = llmsData?.llms ?? []
-  const currentLlm = llms.find((l) => l.current)
-  const mixinLlms = llms.filter((l) => l.kind === 'mixin')
-  const singleLlms = llms.filter((l) => l.kind !== 'mixin')
-  const truncateLlmLabel = (text: string, maxChars = 28) => {
-    const normalized = text.replace(/\s+/g, ' ').trim()
-    return normalized.length > maxChars ? `${normalized.slice(0, maxChars - 1)}…` : normalized
-  }
-  const formatMixinLabel = (l: (typeof llms)[number], displayNo: number) => {
-    const members = l.members?.filter(Boolean) ?? []
-    const raw = l.name || l.model || ''
-    const cleaned = raw
-      .replace(/^\s*(?:mixin\s*session|mixinsession|session)(?:\s*#?\s*\d+)?\s*[:：·\-—|/]?\s*/i, '')
-      .trim()
-    const legacyParts = cleaned.split('|').map((p) => p.trim()).filter(Boolean)
-    const parts = members.length ? members : legacyParts
-    const summary = parts.length > 1
-      ? `${truncateLlmLabel(parts[0], 24)} +${parts.length - 1}`
-      : truncateLlmLabel(parts[0] || cleaned || l.model || '未命名')
-    const active = l.active_member ? ` → ${truncateLlmLabel(l.active_member, 18)}` : ''
-    return `${displayNo}. ${summary}${active}`
-  }
-  const mixinTitle = (l: (typeof llms)[number]) => {
-    const members = l.members?.filter(Boolean) ?? []
-    const memberText = members.length ? `成员：${members.join(' → ')}` : (l.name || l.model || '未命名')
-    return l.active_member ? `${memberText}\n当前通道：${l.active_member}` : memberText
-  }
-  const formatSingleLabel = (l: (typeof llms)[number], displayNo: number) => {
-    const alias = (l.name || '').includes('/') ? l.name.split('/').slice(1).join('/') : l.name
-    const label = truncateLlmLabel(alias || l.model || l.name || '未命名')
-    return `${displayNo}. ${label}`
-  }
-  const mixinPlaceholder = mixinLlms.length ? '选择 Mixin 会话…' : '暂无 Mixin 会话'
-  const singlePlaceholder = singleLlms.length ? '选择单模型…' : '暂无单模型'
-  const currentMixinDisplayNo = currentLlm?.kind === 'mixin'
-    ? mixinLlms.findIndex((l) => l.index === currentLlm?.index) + 1
-    : 0
-  const selectedMixinLabel = currentLlm && currentLlm.kind === 'mixin' && currentMixinDisplayNo > 0
-    ? formatMixinLabel(currentLlm, currentMixinDisplayNo)
-    : mixinPlaceholder
-  const currentSingleDisplayNo = currentLlm?.kind !== 'mixin'
-    ? singleLlms.findIndex((l) => l.index === currentLlm?.index) + 1
-    : 0
-  const selectedSingleLabel = currentLlm && currentLlm.kind !== 'mixin' && currentSingleDisplayNo > 0
-    ? formatSingleLabel(currentLlm, currentSingleDisplayNo)
-    : singlePlaceholder
-  const agentRunning = status?.is_running ?? false
-  const llmDisabled = switching || llms.length === 0
-  const singleMenuDisabled = llmDisabled || singleLlms.length === 0
-  const llmDisabledTitle = switching
-    ? '正在切换 LLM…'
-    : llms.length === 0
-      ? '尚未加载到 LLM 列表'
-      : agentRunning
-        ? 'Agent 任务运行中，仍可切换全局 LLM'
-        : streaming
-          ? '当前回复进行中，仍可切换全局 LLM'
-          : '全局切换 LLM'
+  const [items, setItems] = useState<NavItem[]>(() => getVisibleNavItems())
   const openCommandPalette = () => window.dispatchEvent(new Event('gahub:command-palette'))
-  const switchLlm = async (idx: number) => {
-    if (idx === currentLlm?.index || llmDisabled) return
-    setSwitchError('')
-    setSwitching(true)
-    try {
-      await api.switchLLM(idx)
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ['llms'] }),
-        qc.invalidateQueries({ queryKey: ['status'] }),
-      ])
-    } catch (e: any) {
-      setSwitchError(e?.body?.detail || e?.message || String(e))
-    } finally {
-      setSwitching(false)
+
+  useEffect(() => {
+    const refresh = () => setItems(getVisibleNavItems(getNavPreferences()))
+    window.addEventListener(NAV_PREFERENCES_EVENT, refresh)
+    window.addEventListener('storage', refresh)
+    return () => {
+      window.removeEventListener(NAV_PREFERENCES_EVENT, refresh)
+      window.removeEventListener('storage', refresh)
     }
-  }
-  const pickSingleLlm = (idx: number) => {
-    setSingleMenuOpen(false)
-    void switchLlm(idx)
-  }
-  const pickMixinLlm = (idx: number) => {
-    setMixinMenuOpen(false)
-    void switchLlm(idx)
-  }
+  }, [])
+
   return (
-    <aside className="ga-sidebar w-56 shrink-0 flex flex-col shadow-[6px_0_14px_rgba(21,27,18,0.18)]">
+    <aside className="ga-sidebar w-[9.5rem] shrink-0 flex flex-col shadow-[6px_0_14px_rgba(21,27,18,0.18)]">
       <div className="ga-sidebar-brand-row border-b border-white/10 flex items-center">
         <div className="ga-brand-mark min-w-0" aria-label="GA Hub">
           <div className="ga-brand-core">
@@ -255,7 +141,7 @@ export function SidebarNav() {
         </div>
       </div>
 
-      <nav className="flex-1 min-h-0 overflow-y-auto py-2 ga-sidebar-nav">
+      <nav className="flex-1 min-h-0 overflow-y-auto py-1.5 ga-sidebar-nav">
         {items.map((it) => (
           <NavLink
             key={it.to}
@@ -271,94 +157,11 @@ export function SidebarNav() {
         ))}
       </nav>
 
-      <div className="px-3 pb-3 pt-2 space-y-2">
-        <div className="ga-sidebar-llm-card" title={llmDisabledTitle}>
-          <div className="ga-sidebar-llm-field">
-            <div className="ga-sidebar-llm-field-head">
-              <span>Mixin 会话</span>
-              <span>{mixinLlms.length} 个</span>
-            </div>
-            <div className="ga-sidebar-llm-combobox">
-              <button
-                type="button"
-                className="ga-sidebar-llm-select ga-sidebar-llm-trigger"
-                disabled={llmDisabled || mixinLlms.length === 0}
-                aria-label="Mixin Session 选择"
-                aria-haspopup="listbox"
-                aria-expanded={mixinMenuOpen}
-                onClick={() => !(llmDisabled || mixinLlms.length === 0) && setMixinMenuOpen((open) => !open)}
-              >
-                <span>{selectedMixinLabel}</span>
-              </button>
-              <span className="ga-sidebar-llm-arrow" aria-hidden="true">▴</span>
-              {mixinMenuOpen && !(llmDisabled || mixinLlms.length === 0) && (
-                <>
-                  <div className="ga-sidebar-llm-backdrop" onClick={() => setMixinMenuOpen(false)} />
-                  <div className="ga-sidebar-llm-menu" role="listbox" aria-label="Mixin Session 选择列表">
-                    {mixinLlms.map((l, i) => (
-                      <button
-                        key={l.index}
-                        type="button"
-                        role="option"
-                        aria-selected={l.index === currentLlm?.index}
-                        className={clsx('ga-sidebar-llm-option', l.index === currentLlm?.index && 'active')}
-                        onClick={() => pickMixinLlm(l.index)}
-                        title={mixinTitle(l)}
-                      >
-                        <span>{formatMixinLabel(l, i + 1)}</span>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-          <div className="ga-sidebar-llm-field">
-            <div className="ga-sidebar-llm-field-head">
-              <span>单模型</span>
-              <span>{singleLlms.length} 个</span>
-            </div>
-            <div className="ga-sidebar-llm-combobox">
-              <button
-                type="button"
-                className="ga-sidebar-llm-select ga-sidebar-llm-trigger"
-                disabled={singleMenuDisabled}
-                aria-label="单个 API 选择"
-                aria-haspopup="listbox"
-                aria-expanded={singleMenuOpen}
-                onClick={() => !singleMenuDisabled && setSingleMenuOpen((open) => !open)}
-              >
-                <span>{selectedSingleLabel}</span>
-              </button>
-              <span className="ga-sidebar-llm-arrow" aria-hidden="true">▴</span>
-              {singleMenuOpen && !singleMenuDisabled && (
-                <>
-                  <div className="ga-sidebar-llm-backdrop" onClick={() => setSingleMenuOpen(false)} />
-                  <div className="ga-sidebar-llm-menu" role="listbox" aria-label="单个 API 选择列表">
-                    {singleLlms.map((l, i) => (
-                      <button
-                        key={l.index}
-                        type="button"
-                        role="option"
-                        aria-selected={l.index === currentLlm?.index}
-                        className={clsx('ga-sidebar-llm-option', l.index === currentLlm?.index && 'active')}
-                        onClick={() => pickSingleLlm(l.index)}
-                        title={l.name || l.model || '未命名'}
-                      >
-                        <span>{formatSingleLabel(l, i + 1)}</span>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-          {switchError && <div className="mt-1 text-[11px] text-[#FFB59D] line-clamp-2" title={switchError}>{switchError}</div>}
-        </div>
+      <div className="px-2.5 pb-2.5 pt-1.5">
         <button
           type="button"
           onClick={openCommandPalette}
-          className="w-full rounded-xl border border-white/10 bg-white/6 px-3 py-2 text-left text-xs text-[#EFE5CA] hover:bg-white/10 hover:border-white/20 transition flex items-center justify-between gap-2"
+          className="w-full rounded-xl border border-white/10 bg-white/6 px-2.5 py-1.5 text-left text-xs text-[#EFE5CA] hover:bg-white/10 hover:border-white/20 transition flex items-center justify-between gap-2"
         >
           <span>命令面板</span>
           <kbd className="px-1.5 py-0.5 rounded-md border border-white/12 bg-black/16 font-mono text-[11px] text-[#EFE5CA]/80">Ctrl K</kbd>

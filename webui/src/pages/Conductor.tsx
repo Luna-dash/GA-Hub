@@ -309,7 +309,6 @@ export default function Conductor() {
           {status?.started ? '运行中' : '未运行'}
         </span>
       }
-      description="多代理编排与任务并行"
       actions={
         <div className="flex items-center gap-2">
           <select

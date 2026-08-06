@@ -187,7 +187,6 @@ export default function GoalHive() {
           {streaming ? '运行中' : conn === 'connecting' ? '连接中' : '未运行'}
         </span>
       }
-      description="Long-horizon agent mode"
       actions={
         <div className="flex items-center gap-2">
           <select

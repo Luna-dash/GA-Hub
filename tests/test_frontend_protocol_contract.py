@@ -18,13 +18,29 @@ def test_live_chat_uses_session_http_for_submit_and_abort():
     assert "sock.send({ type: 'abort'" not in source
 
 
-def test_chat_store_does_not_expose_legacy_submit_or_abort_actions():
-    source = _read("stores/chatStore.ts")
+def test_live_chat_lazily_creates_sessions_only_on_submit_or_explicit_new():
+    source = _read("pages/LiveChat.tsx")
 
-    assert "submitWebui" not in source
-    assert "abort: ()" not in source
-    assert "send({ type: 'submit'" not in source
-    assert "send({ type: 'abort'" not in source
+    # Opening /chat must not create a durable session as a side effect.
+    init_block = source[source.index("  useEffect(() => {"):source.index("  const submit =")]
+    assert "api.createSession" not in init_block
+    assert "if (!current) {" in init_block
+    assert "setSession(null)" in init_block
+
+    # The empty state remains sendable; submit owns the lazy create path.
+    assert "disabled={creatingSession}" in source
+    submit_block = source[source.index("  const submit ="):source.index("  const newConv =")]
+    assert "api.createSession({ title: '', llm_index: null })" in submit_block
+    assert "liveChat:pending" in source
+
+
+def test_live_chat_does_not_recreate_session_after_last_delete():
+    source = _read("pages/LiveChat.tsx")
+    delete_start = source.index("          onDelete=")
+    delete_block = source[delete_start:source.index("        />", delete_start)]
+    # The last-session branch clears selection and returns to /chat.
+    assert "nav('/chat', { replace: true })" in delete_block
+    assert "api.createSession" not in delete_block
 
 
 def test_chat_store_session_socket_is_receive_only():

@@ -18,7 +18,7 @@ export default function TokenStats() {
   const maxTotal = Math.max(1, ...points.map((p) => p.total))
 
   return (
-    <PageShell title="Token 统计" description="Token 用量持久化累计，并按自然周（周一至周日）展示；线程明细为本次运行。"
+    <PageShell title="Token 统计"
       actions={<button className="btn-secondary" onClick={() => { stats.refetch(); history.refetch() }}>刷新</button>}>
       <div className="max-w-6xl mx-auto p-6 space-y-6">
         {stats.isError && <div className="card p-4 text-red-300">读取统计失败：{String(stats.error)}</div>}

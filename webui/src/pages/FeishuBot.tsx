@@ -126,7 +126,6 @@ export default function FeishuBot() {
         {state.label}
       </span>
     }
-    description="远程飞书对话流"
     actions={
       <div className="flex items-center gap-2 text-sm flex-wrap justify-end">
         <button onClick={handleRefresh} disabled={refreshing} className="ga-btn disabled:opacity-50 disabled:cursor-not-allowed">

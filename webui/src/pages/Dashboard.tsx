@@ -22,7 +22,7 @@ export default function Dashboard() {
   const totals = tokens.data?.totals
 
   return (
-    <PageShell title="状态面板" description="统一查看 GA-Hub 服务与 Token 使用情况">
+    <PageShell title="状态面板">
       <div className="p-5 space-y-6">
         <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Summary label="服务正常" value={`${healthy} / ${services.length || '—'}`} tone="text-emerald-300" />

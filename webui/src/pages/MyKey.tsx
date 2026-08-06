@@ -98,7 +98,6 @@ export default function MyKey() {
   return (
     <PageShell
       title="LLM管理"
-      description="编辑 GenericAgent 的 mykey.py — 新增 / 修改 LLM 链路、apikey 与第三方平台 token。保存后自动热更新，无需重启。"
       actions={
         <div className="flex items-center gap-2 text-sm">
           <div className="flex bg-bg-card border border-line rounded-lg overflow-hidden text-xs">

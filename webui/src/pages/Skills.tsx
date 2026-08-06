@@ -51,7 +51,6 @@ export function Skills() {
   return (
     <PageShell
       title="技能库"
-      description={`memory/skill_search/ 下共 ${listData?.count ?? 0} 个文件`}
       actions={
         <div className="flex items-center gap-2">
           <div className="flex bg-bg-card border border-line rounded-lg overflow-hidden text-xs">

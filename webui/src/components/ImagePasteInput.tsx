@@ -25,6 +25,8 @@ interface Props {
   attachments: PasteAttachment[]
   onAttachments: (a: PasteAttachment[]) => void
   onSubmit: () => void
+  onStop?: () => void
+  stopActive?: boolean
   onSlashCommand?: (command: Exclude<SlashCommand['name'], '/btw'>) => void
   placeholder?: string
   disabled?: boolean
@@ -36,7 +38,7 @@ interface Props {
 }
 
 export function ImagePasteInput({
-  text, onText, attachments, onAttachments, onSubmit, onSlashCommand,
+  text, onText, attachments, onAttachments, onSubmit, onStop, stopActive = false, onSlashCommand,
   placeholder = '输入消息，可粘贴/拖放图片或文件…',
   disabled, submitDisabled, acceptFiles = true, autoFocus = true,
 }: Props) {
@@ -56,6 +58,7 @@ export function ImagePasteInput({
   const lastCompEndRef = useRef(0)
   const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(0)
+  const [uploadErrors, setUploadErrors] = useState<string[]>([])
   const [btwOpen, setBtwOpen] = useState(false)
   const [slashActiveIndex, setSlashActiveIndex] = useState(0)
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null)
@@ -122,9 +125,11 @@ export function ImagePasteInput({
 
   const upload = async (files: File[]) => {
     if (!files.length) return
+    setUploadErrors([])
     setUploading((n) => n + files.length)
     try {
       const results: PasteAttachment[] = []
+      const errors: string[] = []
       for (const f of files) {
         try {
           const r = await api.upload(f)
@@ -133,8 +138,10 @@ export function ImagePasteInput({
           results.push(att)
         } catch (e) {
           console.error('upload failed', e)
+          errors.push(`${f.name}：${e instanceof Error ? e.message : String(e)}`)
         }
       }
+      setUploadErrors(errors)
       if (results.length) {
         const next = [...attachmentsRef.current, ...results]
         attachmentsRef.current = next
@@ -148,8 +155,8 @@ export function ImagePasteInput({
   return (
     <div
       className={clsx(
-        'relative rounded-3xl border bg-bg-card/85 transition shadow-[0_18px_55px_rgba(2,6,23,0.22)] backdrop-blur-xl',
-        dragOver ? 'border-accent ring-4 ring-accent/10' : 'border-line/80 hover:border-accent/25',
+        'relative rounded-xl bg-transparent transition-colors',
+        dragOver ? 'bg-accent/10 ring-2 ring-accent/30' : '',
         disabled && 'opacity-60',
       )}
       onDragOver={(e) => {
@@ -167,27 +174,49 @@ export function ImagePasteInput({
       }}
     >
       {attachments.length > 0 && (
-        <div className="flex flex-wrap gap-2 p-2 pb-0">
-          {attachments.map((a) => (
-            <div key={a.file_id} className="relative group">
-              {a.preview ? (
-                <img
-                  src={a.preview}
-                  alt={a.name}
-                  className="h-20 w-20 object-cover rounded-lg border border-line"
-                />
-              ) : (
-                <div className="h-20 w-20 rounded-lg border border-line bg-bg-soft flex items-center justify-center text-xs text-slate-400 px-2 text-center break-words">
-                  📎 {a.name.slice(0, 18)}
-                </div>
-              )}
+        <div className="flex flex-wrap items-start gap-1.5 p-2 pb-0">
+          {attachments.map((a) => a.preview ? (
+            <div
+              key={a.file_id}
+              className="group relative h-14 w-14 shrink-0"
+              title={a.name}
+              data-attachment-kind="image"
+            >
+              <img
+                src={a.preview}
+                alt={a.name}
+                className="h-full w-full rounded-lg border border-line object-cover"
+              />
               <button
+                type="button"
                 onClick={() => onAttachments(attachments.filter((x) => x.file_id !== a.file_id))}
-                className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-bg border border-line text-slate-300 hover:text-rose-400 hover:border-rose-400 text-xs leading-none"
-                aria-label="remove"
+                className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border border-line bg-bg/90 text-xs leading-none text-slate-300 hover:border-rose-400 hover:text-rose-400"
+                aria-label={`移除 ${a.name}`}
+              >×</button>
+            </div>
+          ) : (
+            <div
+              key={a.file_id}
+              className="group relative inline-flex w-fit max-w-full items-center rounded-lg border border-line bg-bg-soft py-1.5 pl-2.5 pr-8"
+              title={a.name}
+              data-attachment-kind="file"
+            >
+              <span className="min-w-0 break-all text-xs leading-4 text-slate-200">{a.name}</span>
+              <button
+                type="button"
+                onClick={() => onAttachments(attachments.filter((x) => x.file_id !== a.file_id))}
+                className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-xs leading-none text-slate-400 hover:text-rose-400"
+                aria-label={`移除 ${a.name}`}
               >×</button>
             </div>
           ))}
+        </div>
+      )}
+
+      {uploadErrors.length > 0 && (
+        <div role="alert" className="mx-2 mt-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+          <div className="font-medium">部分文件添加失败</div>
+          {uploadErrors.map((error) => <div key={error} className="mt-1 break-all">{error}</div>)}
         </div>
       )}
 
@@ -196,7 +225,7 @@ export function ImagePasteInput({
           id="slash-command-menu"
           role="listbox"
           aria-label="快捷命令"
-          className="absolute bottom-[calc(100%+0.5rem)] left-3 right-3 z-30 overflow-hidden rounded-2xl border border-line/90 bg-bg-card/95 p-1.5 shadow-2xl backdrop-blur-xl"
+          className="absolute bottom-[calc(100%+0.5rem)] left-3 right-3 z-30 overflow-hidden rounded-2xl border border-line bg-bg-card p-1.5 shadow-[0_-8px_28px_rgba(54,42,28,0.22)]"
         >
           {slashCommands.map((command, index) => (
             <button
@@ -222,7 +251,18 @@ export function ImagePasteInput({
         </div>
       )}
 
-      <div className="flex items-end gap-2 p-2">
+      <div className="flex items-end gap-1 p-1">
+        {acceptFiles && (
+          <label className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl text-2xl font-light leading-none text-accent hover:bg-accent/10 hover:text-accent transition" title="添加文件">
+            +
+            <input
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => upload(Array.from(e.target.files || []))}
+            />
+          </label>
+        )}
         <textarea
           ref={taRef}
           value={text}
@@ -284,26 +324,15 @@ export function ImagePasteInput({
           wrap="soft"
           className="flex-1 min-w-0 w-0 bg-transparent resize-none outline-none text-slate-200 placeholder:text-slate-500 px-3 py-2 max-h-60 leading-7 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
         />
-        <label className="cursor-pointer text-slate-400 hover:text-slate-200 px-3 py-2 rounded-xl hover:bg-white/5 text-sm transition">
-          📎
-          <input
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => upload(Array.from(e.target.files || []))}
-          />
-        </label>
         <button
           type="button"
-          onClick={() => setBtwOpen(true)}
-          className="px-3 py-2 rounded-xl border border-amber-500/30 bg-amber-500/15 text-amber-200 text-[13px] font-medium hover:bg-amber-500/25 transition"
-          title="BTW 旁路提问，不打断主任务"
-        >BTW</button>
-        <button
-          onClick={onSubmit}
-          disabled={disabled || submitDisabled || (!text.trim() && attachments.length === 0)}
-          className="px-4 py-2 rounded-xl bg-accent text-white text-sm font-medium shadow-lg shadow-accent/20 hover:brightness-110 disabled:opacity-40 disabled:shadow-none transition"
-        >发送</button>
+          onClick={stopActive ? onStop : onSubmit}
+          disabled={disabled || (!stopActive && (submitDisabled || (!text.trim() && attachments.length === 0)))}
+          className={stopActive
+            ? 'h-10 px-4 rounded-xl bg-rose-600 text-white text-sm font-medium hover:bg-rose-500 disabled:opacity-40 disabled:shadow-none transition flex items-center justify-center'
+            : 'h-10 px-4 rounded-xl bg-accent text-white text-sm font-medium hover:brightness-110 disabled:opacity-40 disabled:shadow-none transition flex items-center justify-center'}
+          title={stopActive ? '停止当前会话任务' : '发送消息'}
+        >{stopActive ? '停止' : '发送'}</button>
       </div>
 
       {btwOpen && <BtwDialog onClose={() => setBtwOpen(false)} />}

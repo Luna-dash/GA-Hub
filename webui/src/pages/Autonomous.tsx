@@ -43,7 +43,6 @@ export default function Autonomous() {
   return (
     <PageShell
       title="自主进化"
-      description="自定义空闲触发 / cron / 周期，让 GenericAgent 在无人值守时自我学习成长。"
       actions={
         <button
           onClick={() => setEditor({ type: 'idle', enabled: true, name: '' })}

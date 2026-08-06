@@ -40,6 +40,7 @@ export default function LiveChat() {
   const historyError = useChatStore((s) => s.historyError)
   const retryHistory = useChatStore((s) => s.retryHistory)
   const startChat = useChatStore((s) => s.start)
+  const stopChat = useChatStore((s) => s.stop)
   const stageWebui = useChatStore((s) => s.stageWebui)
   const rollbackWebui = useChatStore((s) => s.rollbackWebui)
   const clearLocal = useChatStore((s) => s.clearLocal)
@@ -92,14 +93,17 @@ export default function LiveChat() {
         const listed = await queryClient.fetchQuery({ queryKey: ['sessions'], queryFn: api.sessions })
         let current = requestedId ? listed.items.find((item) => item.id === requestedId) : undefined
         if (!current) current = storedId ? listed.items.find((item) => item.id === storedId) : undefined
-        if (!current) {
-          current = await api.createSession({ title: '', llm_index: null })
-          queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
-            total: (cached?.total ?? 0) + 1,
-            items: [current!, ...(cached?.items ?? [])],
-          }))
-        }
+        if (!current) current = listed.items[0]
         if (cancelled || sessionSwitchSeqRef.current !== initSeq) return
+        if (!current) {
+          sessionIdRef.current = null
+          localStorage.removeItem('gahub.currentSessionId')
+          setSessionError('')
+          setSession(null)
+          stopChat()
+          clearLocal()
+          return
+        }
         sessionIdRef.current = current.id
         localStorage.setItem('gahub.currentSessionId', current.id)
         setSessionError('')
@@ -145,6 +149,10 @@ export default function LiveChat() {
     return state
   }, [queryClient])
   const sessionRunning = runtime?.status === 'starting' || runtime?.status === 'running'
+  const selectedLlmIndex = session?.llm_index
+    ?? llms.find((item) => item.preferred)?.index
+    ?? llms.find((item) => item.current)?.index
+    ?? llms[0]?.index
 
   const changeModel = async (value: string) => {
     const sid = session?.id
@@ -240,8 +248,6 @@ export default function LiveChat() {
   const submit = () => {
     const t = text.trim()
     if (!t && atts.length === 0) return
-    const sid = session?.id
-    if (!sid || sessionIdRef.current !== sid || streaming || sessionRunning) return
     if (t === '/new') {
       const commandKey = draftKey
       const commandText = text
@@ -253,19 +259,58 @@ export default function LiveChat() {
         .catch((e: any) => pushSystem(`_新建会话失败：${e?.body?.detail || e?.message || String(e)}。命令已保留，可直接重试。_`))
       return
     }
-    const fileMarkers = atts.map((a) => `[用户发送文件: ${a.path}]`).join('\n')
-    const fileHint = atts.length ? 'If you need to show files to user, use [FILE:filepath] in your response.\n\n' : ''
-    const promptText = fileHint + t + (fileMarkers ? (t ? '\n' : '') + fileMarkers : '')
-    const stageId = stageWebui(t, atts)
-    setStuckBottom(true)
-    setUnread(0)
-    api.sessionRun(sid, promptText, atts.map((a) => a.path))
-      .then(() => {
+    if (streaming || sessionRunning || creatingSessionRef.current) return
+
+    const sourceKey = draftKey
+    const sourceText = text
+    const sourceAtts = atts
+    void (async () => {
+      let sid = session?.id
+      let submitKey = sourceKey
+      if (!sid) {
+        creatingSessionRef.current = true
+        setCreatingSession(true)
+        const switchSeq = ++sessionSwitchSeqRef.current
+        try {
+          const created = await api.createSession({ title: '', llm_index: null })
+          if (sessionSwitchSeqRef.current !== switchSeq || sessionIdRef.current) return
+          sid = created.id
+          submitKey = `liveChat:${created.id}`
+          const drafts = useDraftStore.getState()
+          drafts.setText(submitKey, sourceText)
+          drafts.setAttachments(submitKey, sourceAtts)
+          queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
+            total: (cached?.total ?? 0) + 1,
+            items: [created, ...(cached?.items ?? [])],
+          }))
+          sessionIdRef.current = created.id
+          setSession(created)
+          setSessionError('')
+          localStorage.setItem('gahub.currentSessionId', created.id)
+          window.history.replaceState(window.history.state, '', sessionChatHref(created.id))
+          startChat(created.id)
+        } finally {
+          creatingSessionRef.current = false
+          setCreatingSession(false)
+        }
+      } else if (sessionIdRef.current !== sid) {
+        return
+      }
+
+      const fileMarkers = sourceAtts.map((a) => `[用户发送文件: ${a.path}]`).join('\n')
+      const fileHint = sourceAtts.length ? 'If you need to show files to user, use [FILE:filepath] in your response.\n\n' : ''
+      const promptText = fileHint + t + (fileMarkers ? (t ? '\n' : '') + fileMarkers : '')
+      const stageId = stageWebui(t, sourceAtts)
+      setStuckBottom(true)
+      setUnread(0)
+      try {
+        await api.sessionRun(sid, promptText, sourceAtts.map((a) => a.path))
         if (sessionIdRef.current !== sid) return
-        useDraftStore.getState().clearDraftIfMatch(draftKey, text, atts)
+        const drafts = useDraftStore.getState()
+        drafts.clearDraftIfMatch(sourceKey, sourceText, sourceAtts)
+        if (submitKey !== sourceKey) drafts.clearDraftIfMatch(submitKey, sourceText, sourceAtts)
         refreshRuntime(sid)
-      })
-      .catch((e: any) => {
+      } catch (e: any) {
         if (sessionIdRef.current !== sid) return
         rollbackWebui(stageId)
         const conflict = capacityConflictFromError(e)
@@ -277,7 +322,10 @@ export default function LiveChat() {
         } else {
           pushSystem(`_发送失败：${e?.body?.detail?.code || e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`)
         }
-      })
+      }
+    })().catch((e: any) => {
+      pushSystem(`_创建会话失败：${e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`)
+    })
   }
 
   const newConv = async (): Promise<boolean> => {
@@ -353,36 +401,23 @@ export default function LiveChat() {
           {conn === 'open' ? '已连接' : conn === 'connecting' ? '连接中…' : '断开'}
         </span>
       }
-      description="与 GenericAgent 进行多模态实时对话，支持图片粘贴与多会话并行工作"
       actions={
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          <select
-            value={session?.llm_index == null ? '' : String(session.llm_index)}
-            onChange={(e) => { void changeModel(e.target.value) }}
-            disabled={!session || llmLoading || llmSaving || sessionRunning}
-            className="ga-btn max-w-52 text-xs"
-            title="选择当前会话使用的模型"
-          >
-            {session?.llm_index == null && <option value="" disabled>默认模型（未选择）</option>}
-            {llms.map((item) => (
-              <option key={item.index} value={item.index}>{item.name}</option>
-            ))}
-          </select>
-          <button
-            onClick={() => {
-              const sid = session?.id
-              if (!sid || sessionIdRef.current !== sid) return
-              void api.abortSession(sid).then(() => refreshRuntime(sid))
-            }}
-            disabled={!sessionRunning}
-            className="ga-btn-danger"
-            title={sessionRunning ? '停止当前会话任务' : '当前会话无进行中的任务'}
-          >
-            停止
-          </button>
-        </div>
-      }    >
-      <div className="flex h-full min-h-0 flex-col md:flex-row">
+        <select
+          value={selectedLlmIndex == null ? '' : String(selectedLlmIndex)}
+          onChange={(e) => { void changeModel(e.target.value) }}
+          disabled={!session || llmLoading || llmSaving || sessionRunning || llms.length === 0}
+          className="max-w-[400px] min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
+          title="选择当前会话使用的模型"
+          aria-label="当前会话模型"
+        >
+          {llms.map((item) => (
+            <option key={item.index} value={item.index}>{item.name}</option>
+          ))}
+        </select>
+      }
+    >
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <SessionRail
           sessions={sessions}
           runtimes={runtimes}
@@ -430,13 +465,11 @@ export default function LiveChat() {
                 return
               }
 
-              const replacement = await api.createSession({ title: '', llm_index: session?.llm_index ?? null })
-              queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], {
-                total: 1,
-                items: [replacement],
-              })
-              localStorage.setItem('gahub.currentSessionId', replacement.id)
-              nav(sessionChatHref(replacement.id))
+              setSession(null)
+              localStorage.removeItem('gahub.currentSessionId')
+              stopChat()
+              clearLocal()
+              nav('/chat', { replace: true })
             } catch (error: any) {
               const detail = error?.status === 409
                 ? '会话仍在运行，请先停止任务。'
@@ -470,7 +503,7 @@ export default function LiveChat() {
           )}
           {msgs.map((m, i) => {
             const role = (m.role === 'system' ? 'assistant' : m.role) as 'user' | 'assistant'
-            const tag = m.source && m.source !== 'webui' && m.source !== 'user'
+            const tag = m.source && m.source !== 'webui' && m.source !== 'user' && m.source !== 'history'
               ? sourceLabel(m.source)
               : undefined
             return (
@@ -479,6 +512,9 @@ export default function LiveChat() {
                 role={role}
                 content={tag ? `${tag}\n\n${m.content}` : m.content}
                 streaming={m.streaming}
+                timestamp={m.timestamp}
+                startedAt={m.startedAt}
+                finishedAt={m.finishedAt}
                 attachments={m.attachments}
                 streamId={role === 'assistant' ? m.streamId : undefined}
                 onRewind={role === 'assistant' ? handleRewind : undefined}
@@ -500,15 +536,26 @@ export default function LiveChat() {
           </button>
         )}
 
-        <div className="border-t border-line bg-bg-soft/75 backdrop-blur-xl p-4 shadow-[0_-12px_36px_rgba(15,23,42,0.20)]">
+        </div>
+      </div>
+
+      <div className="shrink-0 border-t border-line/40 bg-transparent px-3 py-2.5">
+        <div className="w-full rounded-xl border border-line/60 bg-bg-card shadow-sm">
           <ImagePasteInput
             text={text}
             onText={setText}
             attachments={atts}
             onAttachments={setAtts}
             onSubmit={submit}
+            onStop={() => {
+              const sid = session?.id
+              if (!sid || sessionIdRef.current !== sid || !sessionRunning) return
+              void api.abortSession(sid).then(() => refreshRuntime(sid))
+            }}
+            stopActive={sessionRunning}
             onSlashCommand={handleSlashCommand}
-            disabled={!session || creatingSession}
+            placeholder="输入消息,或输入 / 查看命令"
+            disabled={creatingSession}
             submitDisabled={streaming || sessionRunning}
           />
         </div>

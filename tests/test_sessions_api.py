@@ -132,9 +132,9 @@ def test_bound_archive_projects_ga_messages_without_copying_body(
 
     archive = tmp_path / "model_responses_fixture.txt"
     archive_body = (
-        '=== Prompt ===\n'
+        '=== Prompt === 2026-08-05 09:10:11\n'
         '{"content":[{"type":"text","text":"hello archive"}]}\n'
-        '=== Response ===\n'
+        '=== Response === 2026-08-05 09:10:12\n'
         "[{'type': 'text', 'text': 'hello from GA'}]\n"
     )
     archive.write_text(archive_body, encoding="utf-8")
@@ -155,11 +155,32 @@ def test_bound_archive_projects_ga_messages_without_copying_body(
         ]
         assert body["items"][0]["content"] == "hello archive"
         assert "hello from GA" in body["items"][1]["content"]
+        assert [item["timestamp"] for item in body["items"]] == [
+            "2026-08-05T09:10:11",
+            "2026-08-05T09:10:12",
+        ]
         assert len({item["id"] for item in body["items"]}) == 2
 
     sidecar = (tmp_path / "sessions.json").read_text("utf-8")
     assert "hello archive" not in sidecar
     assert "hello from GA" not in sidecar
+
+
+def test_legacy_archive_without_header_times_projects_null_timestamps(tmp_path: Path) -> None:
+    from server.services.archive_messages import read_archive_messages
+
+    archive = tmp_path / "legacy_archive.txt"
+    archive.write_text(
+        '=== Prompt ===\n'
+        '{"content":[{"type":"text","text":"legacy question"}]}\n'
+        '=== Response ===\n'
+        "[{'type': 'text', 'text': 'legacy answer'}]\n",
+        encoding="utf-8",
+    )
+
+    items = read_archive_messages(archive)["items"]
+    assert [item["role"] for item in items] == ["user", "assistant"]
+    assert [item["timestamp"] for item in items] == [None, None]
 
 
 def test_unknown_session_update_and_delete_return_404(tmp_path: Path, monkeypatch) -> None:

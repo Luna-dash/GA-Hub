@@ -143,29 +143,11 @@ def _upload_dir() -> str:
     return str(_paths.admin_uploads_dir())
 
 
-# Generous content allowlist: covers everything a user realistically pastes
-# or drag-drops (images, docs, office, code, media, archives) while keeping
-# out executables / scripts / active markup that could be abused if the file
-# is later opened or served back. Kept broad on purpose so normal use never
-# hits a wall — only genuinely dangerous extensions are rejected.
-_SAFE_EXT = {
-    # images
-    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".tiff", ".heic",
-    # documents / text / data
-    ".pdf", ".txt", ".md", ".rst", ".csv", ".tsv", ".json", ".jsonl",
-    ".log", ".yaml", ".yml", ".toml", ".ini", ".xml",
-    # office
-    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp",
-    # ebooks
-    ".epub", ".mobi",
-    # code (served as text, never executed by the server)
-    ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".c", ".cpp", ".h", ".hpp",
-    ".go", ".rs", ".rb", ".php", ".sql", ".sh", ".css", ".vue",
-    # archives
-    ".zip", ".tar", ".gz", ".tgz", ".7z", ".rar",
-    # media
-    ".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi",
-    ".mp3", ".wav", ".silk", ".m4a", ".flac", ".ogg", ".aac",
+# Only these passive raster formats are served inline for thumbnails. Every
+# other upload is accepted, but served as an attachment so active content
+# cannot execute in the GA-Hub origin.
+_INLINE_IMAGE_EXT = {
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".tiff",
 }
 
 
@@ -179,19 +161,15 @@ async def upload(file: UploadFile = File(...)):
     """
     name = file.filename or "untitled"
     ext = (Path(name).suffix or "").lower()
-    if ext and ext not in _SAFE_EXT:
-        log.warning("rejected upload with non-allowlisted ext: %s", ext)
-        raise HTTPException(
-            415,
-            f"file type '{ext}' is not allowed",
-        )
     file_id = uuid.uuid4().hex
     safe_name = f"{file_id}{ext}"
     path = os.path.join(_upload_dir(), safe_name)
     data = await file.read()
+    if len(data) > 50 * 1024 * 1024:
+        raise HTTPException(413, "file is larger than 50 MB")
     with open(path, "wb") as f:
         f.write(data)
-    mime = file.content_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
+    mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
     return {
         "file_id": file_id,
         "name": name,
@@ -211,7 +189,20 @@ async def get_file(fname: str):
     p = os.path.join(_upload_dir(), fname)
     if not os.path.isfile(p):
         raise HTTPException(404, "not found")
-    return FileResponse(p)
+    ext = Path(fname).suffix.lower()
+    if ext in _INLINE_IMAGE_EXT:
+        return FileResponse(
+            p,
+            media_type=mimetypes.guess_type(fname)[0] or "application/octet-stream",
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
+    return FileResponse(
+        p,
+        media_type="application/octet-stream",
+        filename=fname,
+        content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.post("/api/files/reveal")

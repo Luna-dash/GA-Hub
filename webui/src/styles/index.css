@@ -471,24 +471,26 @@ html.dark .ga-panel {
 /* ─── Sidebar nav items: drawer style ──────────────────────── */
 .ga-sidebar .ga-sidebar-item {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: 30px max-content 30px;
   align-items: center;
-  gap: 0.78rem;
-  margin: 0.38rem 0.62rem;
-  padding: 0.72rem 0.82rem 0.72rem 1rem;
+  justify-content: center;
+  column-gap: 0.4rem;
+  margin: 0.18rem 0.25rem;
+  padding: 0.5rem 0.35rem;
   border-radius: 10px;
   font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', Georgia, serif;
   font-size: 1.02rem;
   line-height: 1.15;
   font-weight: 600;
-  letter-spacing: 0.035em;
+  letter-spacing: 0.02em;
   color: rgba(232, 223, 201, 0.84);
   background: linear-gradient(180deg, rgba(255, 244, 215, 0.018), rgba(255, 244, 215, 0.006));
   border: 1px solid transparent;
   box-shadow: none;
   transition: transform 180ms ease, background 180ms ease, color 180ms ease,
               border-color 180ms ease, box-shadow 180ms ease;
-  overflow: hidden;
+  overflow: visible;
 }
 /* 左侧色条（抽屉推手） */
 .ga-sidebar .ga-sidebar-item::before {
@@ -539,8 +541,8 @@ html.dark .ga-panel {
 /* icon chip（左圆盒） */
 .ga-sidebar .ga-nav-icon {
   flex-shrink: 0;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
   border-radius: 10px;
@@ -553,6 +555,7 @@ html.dark .ga-panel {
     inset 0 1px 0 rgba(255, 255, 255, 0.10),
     0 2px 7px rgba(0, 0, 0, 0.16);
   transition: background 180ms ease, border-color 180ms ease, transform 180ms ease, color 180ms ease, box-shadow 180ms ease;
+  translate: 0.5rem 0;
 }
 .ga-sidebar .ga-nav-svg {
   width: 22px;
@@ -579,32 +582,37 @@ html.dark .ga-panel {
     0 3px 10px rgba(0, 0, 0, 0.24),
     0 0 0 1px rgba(216, 154, 91, 0.18);
 }
-/* label */
+/* label — 侧栏空间有限但不截断导航名称 */
 .ga-sidebar .ga-nav-label {
-  flex: 1;
-  min-width: 0;
+  flex: 0 0 auto;
+  min-width: max-content;
+  max-width: none;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
+  translate: 0.5rem 0;
 }
-/* 右端 chevron — 抽屉提示符，hover/active 才出现 */
+/* 右端 chevron — 绝对定位，避免不可见时仍挤占标签宽度 */
 .ga-sidebar .ga-nav-chev {
+  position: absolute;
+  right: 0.38rem;
+  top: 50%;
   flex-shrink: 0;
   font-family: 'Cormorant Garamond', Georgia, serif;
   font-size: 1.05rem;
   line-height: 1;
   color: rgba(255, 244, 215, 0.55);
   opacity: 0;
-  transform: translateX(-4px);
+  transform: translate(-4px, -50%);
   transition: opacity 180ms ease, transform 180ms ease, color 180ms ease;
 }
 .ga-sidebar .ga-sidebar-item:hover .ga-nav-chev {
   opacity: 0.8;
-  transform: translateX(0);
+  transform: translate(0, -50%);
 }
 .ga-sidebar .ga-sidebar-item.active .ga-nav-chev {
   opacity: 1;
-  transform: translateX(0);
+  transform: translate(0, -50%);
   color: #FFE6B8;
 }
 
@@ -758,7 +766,7 @@ html.dark .ga-panel {
 
 /* Sidebar brand row and mark */
 .ga-sidebar-brand-row {
-  padding: 0.92rem 0.42rem 0.92rem 1.62rem;
+  padding: 0.72rem 0.5rem 0.72rem 0.78rem;
 }
 .ga-brand-mark {
   position: relative;
@@ -767,7 +775,7 @@ html.dark .ga-panel {
   justify-content: flex-start;
   width: 100%;
   min-width: 0;
-  padding-right: 2.55rem;
+  padding-right: 0;
 }
 .ga-brand-core {
   display: flex;
@@ -850,7 +858,7 @@ html.dark .ga-panel {
 }
 .ga-brand-settings {
   position: absolute;
-  right: 2.5rem;
+  right: 0;
   top: 50%;
   transform: translateY(-50%);
   width: 34px;

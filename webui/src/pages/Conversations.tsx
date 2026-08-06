@@ -133,7 +133,6 @@ export default function Conversations() {
   return (
     <PageShell
       title="历史对话"
-      description={`用户与助手的对话记录 — 共 ${total} 条会话`}
       actions={
         <div className="flex items-center gap-2">
           <div className="flex bg-bg-card border border-line rounded-lg overflow-hidden text-xs">

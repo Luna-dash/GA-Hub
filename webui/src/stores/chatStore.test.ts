@@ -11,18 +11,29 @@ function deferred<T>() {
 
 class FakeWebSocket {
   static readonly OPEN = 1
+  static instances: FakeWebSocket[] = []
+  readonly url: string
   readyState = FakeWebSocket.OPEN
   onopen: (() => void) | null = null
   onmessage: ((event: MessageEvent) => void) | null = null
   onclose: (() => void) | null = null
   onerror: (() => void) | null = null
 
+  constructor(url = '') {
+    this.url = url
+    FakeWebSocket.instances.push(this)
+  }
+
   close() { this.onclose?.() }
   send() {}
+  emit(message: object) {
+    this.onmessage?.({ data: JSON.stringify(message) } as MessageEvent)
+  }
 }
 
 describe('chatStore lifecycle', () => {
   beforeEach(() => {
+    FakeWebSocket.instances = []
     vi.stubGlobal('WebSocket', FakeWebSocket)
     useChatStore.setState({
       msgs: [],
@@ -124,15 +135,16 @@ describe('chatStore lifecycle', () => {
     })
   })
 
-  it('restores a cached session immediately while history refresh is pending', async () => {
-    const refreshA = deferred<SessionMessagesResponse>()
-    vi.spyOn(api, 'getSessionMessages')
+  it('rebinds a cached session without replaying archive history', async () => {
+    const getHistory = vi.spyOn(api, 'getSessionMessages')
       .mockResolvedValueOnce({
         session_id: 'session-a', archive_bound: true, revision: 'a1',
         items: [{ id: 'a-message', role: 'assistant', content: 'cached session A', ordinal: 0 }],
       })
-      .mockResolvedValueOnce({ session_id: 'session-b', archive_bound: false, revision: '', items: [] })
-      .mockImplementationOnce(() => refreshA.promise)
+      .mockResolvedValueOnce({
+        session_id: 'session-b', archive_bound: true, revision: 'b1',
+        items: [{ id: 'b-message', role: 'assistant', content: 'cached session B', ordinal: 0 }],
+      })
 
     useChatStore.getState().start('session-a')
     await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
@@ -140,25 +152,26 @@ describe('chatStore lifecycle', () => {
     await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
 
     useChatStore.getState().start('session-a')
+
+    expect(getHistory).toHaveBeenCalledTimes(2)
     expect(useChatStore.getState()).toMatchObject({
       sessionId: 'session-a',
       hydrating: false,
-      historyStatus: 'loading_history',
+      historyStatus: 'ready',
       msgs: [expect.objectContaining({ content: 'cached session A' })],
     })
-
-    refreshA.resolve({ session_id: 'session-a', archive_bound: true, revision: 'a2', items: [] })
-    await refreshA.promise
   })
 
-  it('keeps the cached projection when archive history is unavailable', async () => {
-    vi.spyOn(api, 'getSessionMessages')
+  it('keeps cursor updates scoped to the cached session across A/B switches', async () => {
+    const getHistory = vi.spyOn(api, 'getSessionMessages')
       .mockResolvedValueOnce({
         session_id: 'session-a', archive_bound: true, revision: 'a1',
-        items: [{ id: 'a-message', role: 'assistant', content: 'keep cached history', ordinal: 0 }],
+        items: [{ id: 'a-message', role: 'assistant', content: 'A history', ordinal: 0 }],
       })
-      .mockResolvedValueOnce({ session_id: 'session-b', archive_bound: false, revision: '', items: [] })
-      .mockRejectedValueOnce(new Error('history_unavailable'))
+      .mockResolvedValueOnce({
+        session_id: 'session-b', archive_bound: true, revision: 'b1',
+        items: [{ id: 'b-message', role: 'assistant', content: 'B history', ordinal: 0 }],
+      })
 
     useChatStore.getState().start('session-a')
     await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
@@ -166,11 +179,15 @@ describe('chatStore lifecycle', () => {
     await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
     useChatStore.getState().start('session-a')
 
-    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('history_error'))
-    expect(useChatStore.getState()).toMatchObject({
-      sessionId: 'session-a',
-      hydrating: false,
-      msgs: [expect.objectContaining({ content: 'keep cached history' })],
-    })
+    const resumedA = FakeWebSocket.instances.at(-1)!
+    expect(resumedA.url).toContain('/session-a')
+    resumedA.emit({ type: 'next', stream_id: 'a-live', content: 'A continued' })
+    await vi.waitFor(() => expect(useChatStore.getState().msgs.some((m) => m.content === 'A continued')).toBe(true))
+
+    useChatStore.getState().start('session-b')
+
+    expect(getHistory).toHaveBeenCalledTimes(2)
+    expect(useChatStore.getState().msgs.map((m) => m.content)).toEqual(['B history'])
+    expect(useChatStore.getState().sessionViews['session-a'].msgs.some((m) => m.content === 'A continued')).toBe(true)
   })
 })

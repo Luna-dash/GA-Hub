@@ -31,7 +31,6 @@ export default function Tasks() {
   return (
     <PageShell
       title="定时任务"
-      description="按 cron / 周期执行 Agent Prompt，例如每天 08:00 抓取信息并邮件通知。"
       actions={
         <button
           onClick={() => setEditor({ type: 'cron', enabled: true, cron: '0 8 * * *', name: '', notify_email: false })}

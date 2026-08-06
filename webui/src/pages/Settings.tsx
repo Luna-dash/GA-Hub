@@ -10,7 +10,17 @@ import type { ChatRetryConfig } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { useNotifyStore } from '@/utils/notify'
 import { toast } from '@/stores/toastStore'
-
+import {
+  CHAT_FONT_SCALE_DEFAULT, CHAT_FONT_SCALE_MAX, CHAT_FONT_SCALE_MIN, CHAT_FONT_SCALE_STEP,
+  getChatFontScale, setChatFontScale,
+} from '@/utils/chatAppearance'
+import {
+  defaultNavPreferences,
+  getNavPreferences,
+  NAV_ITEMS,
+  setNavPreferences,
+  type NavPreference,
+} from '@/config/navigation'
 export default function Settings({ initialMode = 'settings' }: { initialMode?: 'settings' | 'setup' }) {
   const qc = useQueryClient()
   const { data: setup, refetch } = useQuery({ queryKey: ['setup'], queryFn: api.setupStatus })
@@ -63,9 +73,6 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
   return (
     <PageShell
       title={inSetup ? '初始设置' : '设置 · GenericAgent 路径'}
-      description={inSetup
-        ? '请选择本机上的 GenericAgent 项目目录。这是一次性配置；后续每次启动会自动读取。'
-        : '修改后需要重启后端以生效。配置保存在 ~/.genericagent-admin/config.json，独立于 GenericAgent 主项目，git pull 不会覆盖。'}
     >
       <div className="p-6 max-w-3xl mx-auto space-y-6">
         {/* current */}
@@ -177,11 +184,105 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
           </div>
         )}
 
+        {!inSetup && <NavManagementPanel />}
+
+        {!inSetup && <ChatAppearancePanel />}
+
         {!inSetup && <ChatRetryPanel />}
 
         {!inSetup && <NotifyPanel />}
       </div>
     </PageShell>
+  )
+}
+
+
+function NavManagementPanel() {
+  const [preferences, setPreferences] = useState<NavPreference[]>(getNavPreferences)
+
+  const update = (next: NavPreference[]) => {
+    const saved = setNavPreferences(next)
+    setPreferences(saved)
+  }
+
+  const move = (index: number, direction: -1 | 1) => {
+    const target = index + direction
+    if (target < 0 || target >= preferences.length) return
+    const next = [...preferences]
+    ;[next[index], next[target]] = [next[target], next[index]]
+    update(next)
+  }
+
+  return (
+    <div className="bg-bg-card border border-line rounded-xl p-4">
+      <div className="flex items-center justify-between gap-3 mb-1">
+        <div className="font-medium">导航栏</div>
+        <button
+          type="button"
+          onClick={() => update(defaultNavPreferences())}
+          className="text-xs px-2 py-1 rounded border border-line text-slate-300 hover:bg-white/5"
+        >恢复默认</button>
+      </div>
+      <div className="text-xs text-slate-500 mb-3">勾选要显示的条目，并用上下按钮调整顺序；设置入口始终保留。</div>
+      <div className="space-y-1">
+        {preferences.map((preference, index) => {
+          const item = NAV_ITEMS.find((candidate) => candidate.id === preference.id)
+          if (!item) return null
+          return (
+            <div key={item.id} className="flex items-center gap-2 rounded-lg border border-line/60 px-2.5 py-2">
+              <input
+                type="checkbox"
+                checked={preference.visible}
+                onChange={(event) => update(preferences.map((entry, i) => i === index ? { ...entry, visible: event.target.checked } : entry))}
+                aria-label={`显示${item.label}`}
+              />
+              <span className="flex-1 text-sm text-slate-200">{item.label}</span>
+              <button type="button" disabled={index === 0} onClick={() => move(index, -1)} className="px-1.5 text-slate-400 disabled:opacity-30" aria-label={`上移${item.label}`}>↑</button>
+              <button type="button" disabled={index === preferences.length - 1} onClick={() => move(index, 1)} className="px-1.5 text-slate-400 disabled:opacity-30" aria-label={`下移${item.label}`}>↓</button>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+
+function ChatAppearancePanel() {
+  const [scale, setScale] = useState(getChatFontScale)
+
+  const updateScale = (value: number) => setScale(setChatFontScale(value))
+
+  return (
+    <div className="bg-bg-card border border-line rounded-xl p-4">
+      <div className="font-medium mb-1">会话显示</div>
+      <div className="text-xs text-slate-500 mb-3">调整会话框中用户消息与 GA 输出的字体大小，仅影响当前设备。</div>
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-sm text-slate-500">字体缩放</span>
+        <input
+          type="range"
+          min={CHAT_FONT_SCALE_MIN}
+          max={CHAT_FONT_SCALE_MAX}
+          step={CHAT_FONT_SCALE_STEP}
+          value={scale}
+          onChange={(e) => updateScale(Number(e.target.value))}
+          aria-label="会话字体缩放"
+          className="w-52 accent-accent"
+        />
+        <output className="w-12 text-sm font-medium tabular-nums text-center">{scale}%</output>
+        <button
+          type="button"
+          onClick={() => updateScale(CHAT_FONT_SCALE_DEFAULT)}
+          disabled={scale === CHAT_FONT_SCALE_DEFAULT}
+          className="px-3 py-1.5 rounded-lg border border-line bg-bg-soft text-sm hover:border-accent disabled:opacity-40"
+        >
+          恢复默认
+        </button>
+      </div>
+      <div className="mt-3 rounded-lg border border-line bg-bg-soft px-3 py-2 text-[#2C2418]" style={{ fontSize: `${scale}%` }}>
+        字体大小预览：GA 会话输出示例
+      </div>
+    </div>
   )
 }
 

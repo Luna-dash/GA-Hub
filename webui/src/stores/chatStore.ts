@@ -1,10 +1,11 @@
 // chatStore — session-scoped live-chat state shared across page remounts.
 //
 // LiveChat starts the store for the selected Hub session. A session change
-// closes the previous socket and clears its local projection; ordinary SPA
-// navigation leaves the selected session connected so its in-memory stream can
-// survive a page remount. The socket is receive-only: submit and abort use the
-// session HTTP API, while history hydration comes from GA's archive projection.
+// snapshots the old projection and rebinds the cached target projection; its
+// cursor socket resumes only missed events. Ordinary SPA navigation leaves the
+// selected session connected so its in-memory stream can survive a page
+// remount. The socket is receive-only: submit and abort use the session HTTP
+// API, while first-load history hydration comes from GA's archive projection.
 //
 // State model:
 //   - msgs is an ordered list of UI bubbles. Each assistant bubble carries
@@ -24,6 +25,9 @@ export type ChatMsgRole = 'user' | 'assistant' | 'system'
 export interface ChatMsg {
   role: ChatMsgRole
   content: string
+  timestamp?: number | null          // epoch milliseconds; null means archive has no real header time
+  startedAt?: number | null
+  finishedAt?: number | null
   streamId?: string                // matched stream (omitted for system notes)
   source?: string                  // 'user' | 'webui' | 'autonomous' | 'wechat' | 'reflect' | …
   streaming?: boolean              // assistant bubble currently receiving
@@ -75,6 +79,17 @@ interface ChatState {
 const HIDDEN_SOURCES = new Set(['wechat'])
 const isHiddenSource = (s?: string) => !!s && HIDDEN_SOURCES.has(s)
 
+function parseArchiveTime(value: string | null | undefined): number | null {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function epochMilliseconds(value?: number): number | null {
+  if (!value || !Number.isFinite(value)) return null
+  return value < 1e12 ? value * 1000 : value
+}
+
 /** Build the UI msg list from a server snapshot — used on (re)connect. */
 function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
   const out: ChatMsg[] = []
@@ -91,6 +106,9 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
           content: `_自动重试请求${s.done ? '已完成' : '进行中'}（${attempt || '?'}${s.retry_max ? `/${s.retry_max}` : ''}${s.retry_reason ? ` · ${s.retry_reason}` : ''}）。_`,
           streamId: `${s.stream_id}:retry-snapshot`,
           source: 'chat_error_retry_notice',
+          timestamp: epochMilliseconds(s.done ? s.finished_at : s.started_at),
+          startedAt: epochMilliseconds(s.started_at),
+          finishedAt: s.done ? epochMilliseconds(s.finished_at) : null,
         })
       }
       if (s.content || !s.done) {
@@ -100,6 +118,9 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
           streamId: s.stream_id,
           source: s.source,
           streaming: !s.done,
+          timestamp: epochMilliseconds(s.done ? s.finished_at : s.started_at),
+          startedAt: epochMilliseconds(s.started_at),
+          finishedAt: s.done ? epochMilliseconds(s.finished_at) : null,
         })
       }
       continue
@@ -110,6 +131,7 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
         content: s.query,
         streamId: s.stream_id,
         source: s.source,
+        timestamp: epochMilliseconds(s.started_at),
       })
     }
     if (s.content || !s.done) {
@@ -119,6 +141,7 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
         streamId: s.stream_id,
         source: s.source,
         streaming: !s.done,
+        timestamp: epochMilliseconds(s.done ? s.finished_at : s.started_at),
       })
     }
   }
@@ -135,6 +158,7 @@ function historyToMessages(items: SessionMessageProjection[]): ChatMsg[] {
       // The archive id is the stable identity for deduplication on rehydrate.
       streamId: `history:${item.id}`,
       source: 'history',
+      timestamp: parseArchiveTime(item.timestamp),
     }))
 }
 
@@ -180,6 +204,7 @@ function sessionSocketPath(sessionId: string): string {
 
 /** Apply a single server event to the message list. */
 function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
+  const now = Date.now()
   if (evt.type === 'snapshot') {
     return evt.streams ? applySnapshot(evt.streams) : prev
   }
@@ -200,8 +225,8 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
       const next = prev.filter((m) => m.streamId !== noticeId)
       return [
         ...next,
-        { role: 'assistant', content: note, streamId: noticeId, source: 'chat_error_retry_notice' },
-        { role: 'assistant', content: '', streamId: sid, source, streaming: true },
+        { role: 'assistant', content: note, streamId: noticeId, source: 'chat_error_retry_notice', timestamp: now },
+        { role: 'assistant', content: '', streamId: sid, source, streaming: true, timestamp: now, startedAt: epochMilliseconds(evt.ts) ?? now, finishedAt: null },
       ]
     }
     // 1. If our local pre-add bubble is still pending and source is webui,
@@ -218,17 +243,17 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
           pendingWebuiId: undefined,
         }
         // Append empty assistant bubble for the streaming reply.
-        return [...adopted, { role: 'assistant', content: '', streamId: sid, source, streaming: true }]
+        return [...adopted, { role: 'assistant', content: '', streamId: sid, source, streaming: true, timestamp: now, startedAt: epochMilliseconds(evt.ts) ?? now, finishedAt: null }]
       }
     }
     // 2. Fresh stream from another source (or a webui submission whose pre-add
     //    is missing — happens after a tab reload). Add a user + assistant pair.
     const next = prev.slice()
     if (!next.some((m) => m.role === 'user' && m.streamId === sid)) {
-      next.push({ role: 'user', content: query, streamId: sid, source })
+      next.push({ role: 'user', content: query, streamId: sid, source, timestamp: now })
     }
     if (!next.some((m) => m.role === 'assistant' && m.streamId === sid)) {
-      next.push({ role: 'assistant', content: '', streamId: sid, source, streaming: true })
+      next.push({ role: 'assistant', content: '', streamId: sid, source, streaming: true, timestamp: now, startedAt: epochMilliseconds(evt.ts) ?? now, finishedAt: null })
     }
     return next
   }
@@ -239,7 +264,7 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
     const idx = next.findIndex((m) => m.role === 'assistant' && m.streamId === sid)
     if (idx === -1) {
       // started not yet seen — create on the fly
-      return [...next, { role: 'assistant', content: evt.content, streamId: sid, source: evt.source, streaming: true }]
+      return [...next, { role: 'assistant', content: evt.content, streamId: sid, source: evt.source, streaming: true, timestamp: now, startedAt: now, finishedAt: null }]
     }
     const updated = next.slice()
     updated[idx] = { ...updated[idx], content: evt.content, streaming: true }
@@ -253,10 +278,10 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
     const role = evt.source === 'system' ? 'system' : 'assistant'
     const idx = next.findIndex((m) => (m.role === 'assistant' || m.role === 'system') && m.streamId === sid)
     if (idx === -1) {
-      return [...next, { role, content: evt.content, streamId: sid, source: evt.source, streaming: false }]
+      return [...next, { role, content: evt.content, streamId: sid, source: evt.source, streaming: false, timestamp: now, startedAt: now, finishedAt: now }]
     }
     const updated = next.slice()
-    updated[idx] = { ...updated[idx], content: evt.content, streaming: false }
+    updated[idx] = { ...updated[idx], content: evt.content, streaming: false, timestamp: now, finishedAt: now }
     return updated
   }
   if (evt.type === 'retry') {
@@ -271,6 +296,7 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
         content: `_检测到 ${reason}，正在自动重试（${evt.attempt}/${evt.max_attempts}）。_`,
         streamId: noticeId,
         source: 'chat_error_retry_notice',
+        timestamp: now,
       },
     ]
   }
@@ -284,13 +310,14 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
         content: `_检测到 ${reason}，但自动重试已达到上限（${evt.max_attempts}/${evt.max_attempts}）。_`,
         streamId: `${evt.stream_id}:retry-exhausted`,
         source: 'chat_error_retry_notice',
+        timestamp: now,
       },
     ]
   }
   if (evt.type === 'error') {
     const noticeId = `${evt.stream_id}:error:${evt.code}`
     const stopped = prev.map((m) =>
-      m.streamId === evt.stream_id && m.streaming ? { ...m, streaming: false } : m,
+      m.streamId === evt.stream_id && m.streaming ? { ...m, streaming: false, finishedAt: now } : m,
     )
     if (stopped.some((m) => m.streamId === noticeId)) return stopped
     return [
@@ -300,12 +327,13 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
         content: `_运行错误（${evt.code}）：${evt.detail || '会话运行失败，请稍后重试。'}_`,
         streamId: noticeId,
         source: 'runtime_error_notice',
+        timestamp: now,
       },
     ]
   }
   if (evt.type === 'aborted') {
     // Mark every still-streaming bubble as finished — server confirmed abort.
-    return prev.map((m) => (m.streaming ? { ...m, streaming: false } : m))
+    return prev.map((m) => (m.streaming ? { ...m, streaming: false, finishedAt: now } : m))
   }
   if (evt.type === 'rewound') {
     // Server-driven rewind: drop bubbles whose streamId belongs to any removed
@@ -367,20 +395,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((st) => ({ sessionViews: { ...st.sessionViews, [current.sessionId!]: previousView } }))
     }
     const cached = switching ? get().sessionViews[sessionId] : undefined
+    const resumeCachedView = switching && cached?.historyStatus === 'ready'
     set({
       msgs: switching ? (cached?.msgs ?? []) : current.msgs,
       streaming: switching ? (cached?.streaming ?? false) : current.streaming,
-      historyStatus: 'loading_history',
-      historyError: null,
-      // A cached/current projection is paint-ready; refresh it unobtrusively.
-      hydrating: switching ? !cached : current.msgs.length === 0,
+      historyStatus: resumeCachedView ? cached.historyStatus : 'loading_history',
+      historyError: resumeCachedView ? cached.historyError : null,
+      // Like the Tauri desktop, switching only rebinds the already-live
+      // per-session projection.  The cursor WebSocket catches up events that
+      // arrived while this session was hidden; archive hydration is only for
+      // a session whose projection has never been loaded.
+      hydrating: resumeCachedView ? false : current.msgs.length === 0,
     })
 
     const generation = ++historyGeneration
     historyAbort?.abort()
     const abort = new AbortController()
     historyAbort = abort
-    let historyReady = false
+    let historyReady = resumeCachedView
     const bufferedEvents: ChatWSOut[] = []
 
     const devTrace = (source: 'hydrate' | 'snapshot' | 'replay' | 'live', eventType: string) => {
@@ -536,7 +568,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     sock.open()
     set({ sock, sessionId, conn: 'connecting' })
 
-    void api.getSessionMessages(sessionId, abort.signal).then((history) => {
+    if (!resumeCachedView) void api.getSessionMessages(sessionId, abort.signal).then((history) => {
       if (generation !== historyGeneration || get().sessionId !== sessionId) return
       historyReady = true
       const queued = bufferedEvents.splice(0)
@@ -583,6 +615,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const userBubble: ChatMsg = {
       role: 'user', content: text, source: 'webui',
       attachments: atts.length ? atts : undefined,
+      timestamp: Date.now(),
       pendingWebui: true,
       pendingWebuiId: stageId,
     }
@@ -601,7 +634,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearLocal: () => set({ msgs: [], streaming: false }),
   pushSystem: (content) =>
-    set((st) => ({ msgs: [...st.msgs, { role: 'assistant', content, source: 'system' }] })),
+    set((st) => ({ msgs: [...st.msgs, { role: 'assistant', content, source: 'system', timestamp: Date.now() }] })),
   markIdle: () =>
     set((st) => ({
       msgs: st.msgs.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
