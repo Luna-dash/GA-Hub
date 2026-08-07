@@ -92,11 +92,13 @@ def _get_coordinator() -> SessionCoordinator:
 
 
 def _dispatch_scheduled_chat(task: ScheduledChat) -> None:
+    row = _store.get(task.session_id)
     _get_coordinator().submit(
-        task.session_id,
-        text=task.text,
+        task.text,
+        session_id=task.session_id,
         images=task.images,
         source="scheduled",
+        llm_index=row.get("llm_index"),
     )
 
 

@@ -183,6 +183,47 @@ def test_legacy_archive_without_header_times_projects_null_timestamps(tmp_path: 
     assert [item["timestamp"] for item in items] == [None, None]
 
 
+def test_scheduled_dispatch_matches_coordinator_submit_contract(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from server.routes import sessions
+    from server.services.scheduled_chat_service import ScheduledChat
+    from server.services.session_metadata import SessionMetadataStore
+
+    store = SessionMetadataStore(tmp_path)
+    row = store.create(title="Scheduled", llm_index=7)
+    calls = []
+
+    class StrictCoordinator:
+        def submit(self, text, *, session_id, source, images, llm_index):
+            calls.append({
+                "text": text,
+                "session_id": session_id,
+                "source": source,
+                "images": images,
+                "llm_index": llm_index,
+            })
+
+    monkeypatch.setattr(sessions, "_store", store)
+    monkeypatch.setattr(sessions, "_coordinator", StrictCoordinator())
+    sessions._dispatch_scheduled_chat(ScheduledChat(
+        id="task-1",
+        session_id=row["id"],
+        text="run later",
+        images=["image.png"],
+        scheduled_for=2.0,
+        created_at=1.0,
+    ))
+
+    assert calls == [{
+        "text": "run later",
+        "session_id": row["id"],
+        "source": "scheduled",
+        "images": ["image.png"],
+        "llm_index": 7,
+    }]
+
+
 def test_unknown_session_update_and_delete_return_404(tmp_path: Path, monkeypatch) -> None:
     with _client(tmp_path, monkeypatch) as client:
         assert client.patch("/api/sessions/missing", json={"title": "x"}).status_code == 404
