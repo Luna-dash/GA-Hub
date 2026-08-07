@@ -35,6 +35,33 @@ describe('SessionRail', () => {
     host.remove()
   })
 
+  it('skips rendering when the parent updates with unchanged props', () => {
+    let reads = 0
+    const trackedSession = new Proxy(sessions[0], {
+      get(target, property, receiver) {
+        reads += 1
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const stableSessions = [trackedSession]
+    const stableRuntimes = { [trackedSession.id]: runtimes[trackedSession.id] }
+    const onSelect = vi.fn()
+    const rail = (
+      <SessionRail
+        sessions={stableSessions}
+        runtimes={stableRuntimes}
+        currentId={trackedSession.id}
+        onSelect={onSelect}
+      />
+    )
+
+    act(() => root.render(rail))
+    const readsAfterMount = reads
+    act(() => root.render(rail))
+
+    expect(reads).toBe(readsAfterMount)
+  })
+
   it('shows every session, keeps them selectable, and deletes an idle session after confirmation', async () => {
     const onSelect = vi.fn()
     const onDelete = vi.fn().mockResolvedValue(undefined)
@@ -95,6 +122,44 @@ describe('SessionRail', () => {
     })
     await act(async () => {})
     expect(onRename).toHaveBeenCalledWith(sessions[0].id, '新的标题')
+  })
+
+  it('keeps the previous recent sessions when a newly active session is promoted', () => {
+    localStorage.setItem('gahub.sessionRailRecentActivity', JSON.stringify([sessions[1].id, sessions[2].id]))
+
+    act(() => root.render(
+      <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,
+    ))
+
+    expect(JSON.parse(localStorage.getItem('gahub.sessionRailRecentActivity') || '[]')).toEqual([
+      sessions[0].id,
+      sessions[1].id,
+      sessions[2].id,
+    ])
+  })
+
+  it('shows an unseen completed run immediately and persists acknowledgement on selection', () => {
+    const onSelect = vi.fn()
+    const completedRuntimes = {
+      ...runtimes,
+      [sessions[1].id]: {
+        ...runtimes[sessions[1].id],
+        completed_run_id: 'short-run-b',
+      },
+    }
+
+    act(() => root.render(
+      <SessionRail sessions={sessions} runtimes={completedRuntimes} currentId={sessions[0].id} onSelect={onSelect} />,
+    ))
+
+    const completedCard = host.querySelector(`[data-activity="completed"]`)
+    expect(completedCard).not.toBeNull()
+    const select = completedCard?.querySelector('button') as HTMLButtonElement
+    act(() => select.click())
+    expect(onSelect).toHaveBeenCalledWith(sessions[1].id)
+    expect(JSON.parse(localStorage.getItem('gahub.sessionRailSeenCompletedRuns') || '{}')).toEqual({
+      [sessions[1].id]: 'short-run-b',
+    })
   })
 
   it('collapses, persists the preference, and restores it on a new mount', () => {

@@ -283,6 +283,8 @@ export const api = {
     http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/runs`, { text, images }),
   sessionRuntime: (id: string) =>
     http<SessionRuntime>('GET', `/api/sessions/${encodeURIComponent(id)}/runtime`),
+  sessionRuntimes: () =>
+    http<Record<string, SessionRuntime>>('GET', '/api/session-runtimes'),
   getSessionMessages: (id: string, signal?: AbortSignal) =>
     http<SessionMessagesResponse>('GET', `/api/sessions/${encodeURIComponent(id)}/messages`, undefined, { signal }),
   updateSessionModel: (id: string, llm_index: number) =>

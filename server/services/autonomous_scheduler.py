@@ -103,7 +103,7 @@ class AutonomousScheduler:
         self._tz = _local_tz()
         self._sched = BackgroundScheduler(timezone=self._tz) if self._tz else BackgroundScheduler()
         self._idle_thread: threading.Thread | None = None
-        self._stop = False
+        self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._load()
 
@@ -167,16 +167,23 @@ class AutonomousScheduler:
             self._install_job(s)
         # idle ticker
         if not self._idle_thread or not self._idle_thread.is_alive():
-            self._stop = False
+            self._stop_event.clear()
             self._idle_thread = threading.Thread(target=self._idle_loop, daemon=True, name="auto-idle")
             self._idle_thread.start()
 
-    def shutdown(self) -> None:
-        self._stop = True
+    def shutdown(self, timeout: float = 5.0) -> None:
+        self._stop_event.set()
+        thread = self._idle_thread
+        if thread is not None:
+            thread.join(timeout=max(0.0, timeout))
+            if not thread.is_alive():
+                self._idle_thread = None
         try:
             self._sched.shutdown(wait=False)
         except Exception:
             pass
+        if (thread is None or not thread.is_alive()) and type(self)._instance is self:
+            type(self)._instance = None
 
     # ── job management ───────────────────────────────────────────
     def _job_id(self, sch_id: str) -> str:
@@ -207,8 +214,7 @@ class AutonomousScheduler:
 
     # ── triggers ─────────────────────────────────────────────────
     def _idle_loop(self) -> None:
-        while not self._stop:
-            time.sleep(30)
+        while not self._stop_event.wait(30):
             now = int(time.time())
             for s in list(self.schedules.values()):
                 if s.type != "idle" or not s.enabled:

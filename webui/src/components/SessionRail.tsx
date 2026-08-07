@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import { sessionActivity, sessionStatusLabel } from '@/utils/sessionUi'
@@ -49,6 +49,7 @@ const activityRail = {
 const STORAGE_KEY = 'gahub.sessionRailCollapsed'
 const RECENT_KEY = 'gahub.sessionRailRecentActivity'
 const TERMINAL_KEY = 'gahub.sessionRailTerminalState'
+const SEEN_COMPLETED_KEY = 'gahub.sessionRailSeenCompletedRuns'
 type TerminalState = 'completed' | 'error'
 type TerminalMap = Record<string, TerminalState>
 
@@ -65,7 +66,7 @@ function sessionTitle(session: HubSession) {
   return session.title.trim() || `未命名会话 · ${session.id.slice(0, 8)}`
 }
 
-export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate, onRename, onDelete, creating }: SessionRailProps) {
+function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreate, onRename, onDelete, creating }: SessionRailProps) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(STORAGE_KEY) === 'true')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [titleDraft, setTitleDraft] = useState('')
@@ -73,6 +74,9 @@ export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate,
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [terminalState, setTerminalState] = useState<TerminalMap>(() => readJson<TerminalMap>(TERMINAL_KEY, {}))
+  const [seenCompletedRuns, setSeenCompletedRuns] = useState<Record<string, string>>(
+    () => readJson<Record<string, string>>(SEEN_COMPLETED_KEY, {}),
+  )
   const [recentActivity, setRecentActivity] = useState<string[]>(() => readJson<string[]>(RECENT_KEY, []))
   const previousActivity = useRef<Record<string, ReturnType<typeof sessionActivity>>>({})
 
@@ -88,7 +92,8 @@ export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate,
       const previous = nextPrevious[session.id]
       if (activity === 'active') {
         if (nextRecent[0] !== session.id) {
-          nextRecent.splice(nextRecent.indexOf(session.id), 1)
+          const existingIndex = nextRecent.indexOf(session.id)
+          if (existingIndex >= 0) nextRecent.splice(existingIndex, 1)
           nextRecent.unshift(session.id)
           recentChanged = true
         }
@@ -98,6 +103,14 @@ export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate,
         }
       } else if (activity === 'error' && previous === 'active' && nextTerminal[session.id] !== 'error') {
         nextTerminal[session.id] = 'error'
+        terminalChanged = true
+      } else if (
+        activity === 'idle'
+        && runtimes[session.id]?.completed_run_id
+        && seenCompletedRuns[session.id] !== runtimes[session.id].completed_run_id
+        && nextTerminal[session.id] !== 'completed'
+      ) {
+        nextTerminal[session.id] = 'completed'
         terminalChanged = true
       } else if (activity === 'idle' && previous === 'active' && nextTerminal[session.id] !== 'completed') {
         nextTerminal[session.id] = 'completed'
@@ -115,7 +128,7 @@ export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate,
       setRecentActivity(nextRecent)
       localStorage.setItem(RECENT_KEY, JSON.stringify(nextRecent.slice(0, 50)))
     }
-  }, [runtimes, sessions, recentActivity, terminalState])
+  }, [runtimes, sessions, recentActivity, seenCompletedRuns, terminalState])
 
   const orderedSessions = useMemo(() => {
     const rank = new Map(recentActivity.map((id, index) => [id, index]))
@@ -144,6 +157,12 @@ export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate,
   ), [orderedSessions, runtimes, terminalState])
 
   const selectSession = (sessionId: string) => {
+    const completedRunId = runtimes[sessionId]?.completed_run_id
+    if (completedRunId && seenCompletedRuns[sessionId] !== completedRunId) {
+      const nextSeen = { ...seenCompletedRuns, [sessionId]: completedRunId }
+      setSeenCompletedRuns(nextSeen)
+      localStorage.setItem(SEEN_COMPLETED_KEY, JSON.stringify(nextSeen))
+    }
     if (terminalState[sessionId]) {
       const next = { ...terminalState }
       delete next[sessionId]
@@ -256,7 +275,7 @@ export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate,
                 ) : (
                   <button
                     type="button"
-                    onClick={() => onSelect(session.id)}
+                    onClick={() => selectSession(session.id)}
                     onDoubleClick={() => beginRename(session)}
                     aria-current={current ? 'page' : undefined}
                     className="block w-full px-3 pb-1 pt-2.5 text-left"
@@ -360,3 +379,5 @@ export function SessionRail({ sessions, runtimes, currentId, onSelect, onCreate,
     </div>
   )
 }
+
+export const SessionRail = memo(SessionRailComponent)

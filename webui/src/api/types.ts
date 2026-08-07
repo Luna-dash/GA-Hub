@@ -82,6 +82,7 @@ export interface SessionRuntime {
   status: string
   run_id: string | null
   stream_id: string | null
+  completed_run_id?: string | null
   error?: string | null
   ok?: boolean
 }

@@ -57,6 +57,38 @@ def _client(tmp_path: Path, monkeypatch):
     return TestClient(app), store, coordinator
 
 
+def test_list_session_runtimes_returns_all_sessions_in_one_response(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client, store, coordinator = _client(tmp_path, monkeypatch)
+    idle_id = store.create(title="Idle")["id"]
+    running_id = store.create(title="Running")["id"]
+    coordinator.states[running_id] = RuntimeState(
+        running_id, "running", "run-a", "stream-a"
+    )
+
+    with client:
+        response = client.get("/api/session-runtimes")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        idle_id: {
+            "session_id": idle_id,
+            "status": "idle",
+            "run_id": None,
+            "stream_id": None,
+            "completed_run_id": None,
+        },
+        running_id: {
+            "session_id": running_id,
+            "status": "running",
+            "run_id": "run-a",
+            "stream_id": "stream-a",
+            "completed_run_id": None,
+        },
+    }
+
+
 def test_restore_failure_is_stable_error(tmp_path: Path, monkeypatch) -> None:
     client, store, coordinator = _client(tmp_path, monkeypatch)
     sid = store.create(title="Restore", llm_index=0)["id"]
@@ -86,6 +118,7 @@ def test_restore_failure_is_stable_error(tmp_path: Path, monkeypatch) -> None:
             "status": "running",
             "run_id": "run-1",
             "stream_id": "stream-1",
+            "completed_run_id": None,
         }
         assert coordinator.submissions == [{
             "text": "hello",
@@ -132,6 +165,7 @@ def test_abort_is_idempotent_and_targets_only_current_session_run(tmp_path: Path
             "status": "idle",
             "run_id": None,
             "stream_id": None,
+            "completed_run_id": None,
         }
 
         coordinator.states[sid] = RuntimeState(sid, "running", "run-a", "stream-a")

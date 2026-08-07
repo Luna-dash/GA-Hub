@@ -11,7 +11,7 @@
 //   • Fold / tool-trace segments render MarkdownView mode=plain (no math/hljs).
 //   • Hover-revealed "复制" button on assistant messages.
 
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import clsx from 'clsx'
 import { foldTurns } from '@/utils/foldTurns'
 import { useCopy } from '@/utils/clipboard'
@@ -74,7 +74,7 @@ function formatDuration(milliseconds: number): string {
     : `${minutes}:${String(rest).padStart(2, '0')}`
 }
 
-export function MessageBubble({ role, content, streaming, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact }: Props) {
+export const MessageBubble = memo(function MessageBubble({ role, content, streaming, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact }: Props) {
   const [fontScale, setFontScale] = useState(getChatFontScale)
   const [clock, setClock] = useState(Date.now)
 
@@ -182,7 +182,7 @@ export function MessageBubble({ role, content, streaming, timestamp, startedAt, 
       </div>
     </div>
   )
-}
+})
 
 function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
   return (

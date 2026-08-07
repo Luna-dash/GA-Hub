@@ -26,6 +26,17 @@ _coordinator: SessionCoordinator | None = None
 
 
 def _publish_runtime_state(state: RuntimeState) -> None:
+    bus.publish(
+        "session:runtime",
+        {
+            "session_id": state.session_id,
+            "status": state.status,
+            "run_id": state.run_id,
+            "stream_id": state.stream_id,
+            "completed_run_id": state.completed_run_id,
+            "error": state.error,
+        },
+    )
     if state.status != "error" or not state.run_id or not state.stream_id:
         return
     details = {
@@ -103,6 +114,7 @@ def _state_payload(state: RuntimeState, *, ok: bool | None = None) -> dict:
         "status": state.status,
         "run_id": state.run_id,
         "stream_id": state.stream_id,
+        "completed_run_id": state.completed_run_id,
     }
     if state.error is not None:
         payload["error"] = state.error
@@ -215,6 +227,15 @@ async def submit_run(session_id: str, req: RunSubmit):
             "会话运行环境恢复失败，请稍后重试。",
         )
     return _state_payload(state)
+
+
+@router.get("/api/session-runtimes")
+async def list_session_runtimes():
+    coordinator = _get_coordinator()
+    return {
+        row["id"]: _state_payload(coordinator.runtime_state(row["id"]))
+        for row in _store.list()
+    }
 
 
 @router.get("/api/sessions/{session_id}/runtime")

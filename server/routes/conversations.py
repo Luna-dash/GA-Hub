@@ -7,10 +7,12 @@ in-memory working history via GA's own `restore()` helper.
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
 import os
+import threading
 import zipfile
 from pathlib import Path
 
@@ -20,13 +22,35 @@ from pydantic import BaseModel, Field
 
 from .. import _paths
 from ..services.archive_messages import read_ui_messages
+from ..services.conversation_metadata import ConversationMetadataAdapter
 from ..services.conversation_titles import ConversationTitleStore
 from ..services.session_metadata import SessionMetadataStore
 
 log = logging.getLogger(__name__)
 router = APIRouter()
-_title_store = ConversationTitleStore()
-_session_store = SessionMetadataStore()
+_metadata = ConversationMetadataAdapter(
+    SessionMetadataStore(), ConversationTitleStore()
+)
+_ZIP_ENTRY_MAX_SIZE = 10 * 1024 * 1024
+_ZIP_READ_CHUNK_SIZE = 64 * 1024
+_session_index_lock = threading.Lock()
+_session_index_state = None
+_session_index: dict[str, tuple] = {}
+
+
+class ZipEntryTooLarge(Exception):
+    pass
+
+
+def _read_zip_entry_limited(entry) -> bytes:
+    data = bytearray()
+    while True:
+        chunk = entry.read(_ZIP_READ_CHUNK_SIZE)
+        if not chunk:
+            return bytes(data)
+        if len(data) + len(chunk) > _ZIP_ENTRY_MAX_SIZE:
+            raise ZipEntryTooLarge
+        data.extend(chunk)
 
 
 class ConversationUpdate(BaseModel):
@@ -46,42 +70,73 @@ def _ga_sessions():
     return list_sessions()
 
 
+def _session_index_signature():
+    root = _paths.GA_ROOT
+    if root is None:
+        return ()
+    archive_dir = Path(root) / "temp" / "model_responses"
+    entries = []
+    try:
+        paths = archive_dir.glob("model_responses_*.txt")
+        for path in paths:
+            try:
+                stat = path.stat()
+                entries.append((path.name, stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                continue
+    except OSError:
+        return ()
+    return tuple(sorted(entries))
+
+
+def _invalidate_session_index() -> None:
+    global _session_index_state, _session_index
+    with _session_index_lock:
+        _session_index_state = None
+        _session_index = {}
+
+
+def _refresh_session_index() -> dict[str, tuple]:
+    global _session_index_state, _session_index
+    signature = _session_index_signature()
+    with _session_index_lock:
+        if signature != _session_index_state:
+            rows = _ga_sessions()
+            index = {}
+            for row in rows:
+                index.setdefault(os.path.basename(row[0]), row)
+            _session_index = index
+            _session_index_state = signature
+        return _session_index
+
+
 def _ga_extract(path: str):
     """Extract UI messages through the shared GA archive adapter."""
     return read_ui_messages(path)
 
 
+def _restore_archive(agent, path: str):
+    """Run GA's blocking restore and archive projection off the event loop."""
+    from frontends.continue_cmd import restore
+
+    restore(agent, path)
+    return _ga_extract(path)
+
+
 def _session_by_id(cid: str):
-    """Find a GA session tuple by its basename id. Returns (path, mtime, preview, n_rounds) or None."""
-    for path, mtime, preview, rounds in _ga_sessions():
-        if os.path.basename(path) == cid:
-            return (path, mtime, preview, rounds)
-    return None
+    """Find a GA session tuple by its basename id."""
+    return _refresh_session_index().get(cid)
 
 
 def _conversation_title(cid: str, path: str) -> str:
-    resolved = str(Path(path).resolve())
-    for row in _session_store.list():
-        if row.get("archive_path") and str(Path(row["archive_path"]).resolve()) == resolved:
-            title = str(row.get("title") or "").strip()
-            if title:
-                return title
-    return _title_store.get(cid)
-
-
-def _update_bound_titles(path: str, title: str) -> None:
-    resolved = str(Path(path).resolve())
-    for row in _session_store.list():
-        if row.get("archive_path") and str(Path(row["archive_path"]).resolve()) == resolved:
-            _session_store.update(row["id"], {"title": title})
+    return _metadata.title(cid, path)
 
 
 # ── conversation list / detail / export / restore ─────────────────
-@router.get("/api/conversations")
-async def list_conversations(
-    q: str | None = None,
-    offset: int = 0,
-    limit: int = 50,
+def _list_conversations_sync(
+    q: str | None,
+    offset: int,
+    limit: int,
 ):
     sessions = _ga_sessions()
     items = []
@@ -123,13 +178,22 @@ async def list_conversations(
     }
 
 
+@router.get("/api/conversations")
+async def list_conversations(
+    q: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+):
+    return await asyncio.to_thread(_list_conversations_sync, q, offset, limit)
+
+
 @router.get("/api/conversations/{cid}")
 async def get_conversation(cid: str):
     s = _session_by_id(cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = s[0]
-    messages = _ga_extract(path)
+    messages = await asyncio.to_thread(_ga_extract, path)
     return {
         "id": cid,
         "title": _conversation_title(cid, path),
@@ -143,8 +207,7 @@ async def update_conversation(cid: str, req: ConversationUpdate):
     if s is None:
         raise HTTPException(404, "conversation not found")
     title = req.title.strip()
-    _title_store.set(cid, title)
-    _update_bound_titles(s[0], title)
+    _metadata.set_title(cid, s[0], title)
     return {"ok": True, "id": cid, "title": title}
 
 
@@ -162,7 +225,8 @@ async def delete_conversation(cid: str):
     except OSError as exc:
         log.exception("failed to delete conversation %s", cid)
         raise HTTPException(500, f"failed to delete conversation: {exc}")
-    _title_store.delete(cid)
+    _metadata.delete(cid, path)
+    _invalidate_session_index()
     return {"ok": True, "id": cid}
 
 
@@ -175,7 +239,6 @@ async def restore_conversation(cid: str):
     (mirrors server/routes/agent.py restore-session behaviour) so reconnecting
     clients don't replay stale bubbles.
     """
-    from frontends.continue_cmd import restore
     from ..services.agent_service import AgentService
     from ..services.event_bus import bus
 
@@ -185,12 +248,11 @@ async def restore_conversation(cid: str):
     path = s[0]
 
     svc = AgentService.instance()
-    msg, full = restore(svc.agent, path)
+    messages = await asyncio.to_thread(_restore_archive, svc.agent, path)
     with svc._lock:
         svc._snapshots.clear()
     bus.publish("chat:reset", {"reason": "restore_conversation"})
 
-    messages = _ga_extract(path)
     return {
         "ok": True,
         "id": cid,
@@ -205,7 +267,7 @@ async def export_conversation(cid: str, format: str = Query("md", pattern="^(md|
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = s[0]
-    messages = _ga_extract(path)
+    messages = await asyncio.to_thread(_ga_extract, path)
     title = _conversation_title(cid, path)
 
     if format == "json":
@@ -279,8 +341,11 @@ async def read_zip_entry(name: str, entry: str):
         raise HTTPException(404, "zip not found")
     try:
         with zipfile.ZipFile(p) as z:
+            info = z.getinfo(entry)
+            if info.file_size > _ZIP_ENTRY_MAX_SIZE:
+                raise ZipEntryTooLarge
             with z.open(entry) as f:
-                data = f.read()
+                data = _read_zip_entry_limited(f)
         try:
             text = data.decode("utf-8")
             return PlainTextResponse(content=text, media_type="text/plain; charset=utf-8")
@@ -288,5 +353,7 @@ async def read_zip_entry(name: str, entry: str):
             return Response(content=data, media_type="application/octet-stream")
     except KeyError:
         raise HTTPException(404, "entry not found")
+    except ZipEntryTooLarge:
+        raise HTTPException(413, "zip entry too large")
     except Exception as e:
         raise HTTPException(500, str(e))

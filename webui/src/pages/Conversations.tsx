@@ -9,6 +9,11 @@ import { previewText } from '@/utils/foldTurns'
 import { looksLikeToolTrace, stripWrapperFences } from '@/utils/toolTrace'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
+import {
+  applyConversationTitle,
+  conversationKeys,
+  removeConversationFromCache,
+} from '@/queries/conversations'
 
 type ViewMode = 'round' | 'flat'
 type Msg = { role?: string; content?: string; [key: string]: any }
@@ -44,13 +49,13 @@ export default function Conversations() {
   }, [q])
 
   const { data } = useQuery({
-    queryKey: ['conversations', debouncedQ, page],
+    queryKey: conversationKeys.list(debouncedQ, page * limit, limit),
     queryFn: () => api.conversations(debouncedQ || undefined, page * limit, limit),
   })
 
   const [active, setActive] = useState<string | null>(null)
   const { data: detail } = useQuery({
-    queryKey: ['conv', active],
+    queryKey: conversationKeys.detail(active || ''),
     queryFn: () => api.conversation(active!),
     enabled: !!active,
   })
@@ -111,9 +116,8 @@ export default function Conversations() {
     })
     if (title === null) return
     try {
-      await api.updateConversation(id, title.trim())
-      await qc.invalidateQueries({ queryKey: ['conversations'] })
-      await qc.invalidateQueries({ queryKey: ['conv', id] })
+      const updated = await api.updateConversation(id, title.trim())
+      await applyConversationTitle(qc, id, updated.title)
       toast.success('会话名称已更新')
     } catch (e: any) {
       await dialog.alert('重命名失败', e?.message || String(e))
@@ -129,9 +133,8 @@ export default function Conversations() {
     if (!ok) return
     try {
       await api.deleteConversation(id)
-      setActive(null)
-      qc.removeQueries({ queryKey: ['conv', id] })
-      await qc.invalidateQueries({ queryKey: ['conversations'] })
+      if (active === id) setActive(null)
+      await removeConversationFromCache(qc, id)
       toast.success('会话文件已删除')
     } catch (e: any) {
       await dialog.alert('删除失败', e?.message || String(e))

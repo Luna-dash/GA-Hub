@@ -39,6 +39,17 @@ log = logging.getLogger(__name__)
 FEISHU_AUTO_START_DELAY_SECONDS = 180
 
 
+async def _cancel_background_task(task: asyncio.Task[Any] | None) -> None:
+    """Cancel and reap an owned asyncio task during application shutdown."""
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
 async def _delayed_feishu_autostart(delay_seconds: int = FEISHU_AUTO_START_DELAY_SECONDS) -> None:
     """Start the persistent Feishu gateway shortly after GA-Hub boots.
 
@@ -225,6 +236,7 @@ def _mount_static(app: FastAPI) -> None:
 
 def create_app() -> FastAPI:
     setup_mode = _paths.GA_ROOT is None
+    feishu_autostart_task: asyncio.Task[Any] | None = None
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
         await _startup()
@@ -261,6 +273,7 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     async def _startup():
+        nonlocal feishu_autostart_task
         bus.attach_loop(asyncio.get_running_loop())
         if setup_mode:
             log.warning(
@@ -313,7 +326,9 @@ def create_app() -> FastAPI:
             fs = FeishuService.instance()
             fs.start_log_watcher()
             log.info("feishu log watcher started")
-            asyncio.create_task(_delayed_feishu_autostart(), name="feishu-auto-start")
+            feishu_autostart_task = asyncio.create_task(
+                _delayed_feishu_autostart(), name="feishu-auto-start"
+            )
             log.info("feishu auto-start scheduled in %s seconds", FEISHU_AUTO_START_DELAY_SECONDS)
         except Exception as e:
             log.warning("feishu log watcher/auto-start init skipped: %s", e)
@@ -334,32 +349,37 @@ def create_app() -> FastAPI:
 
     async def _shutdown():
         if not setup_mode:
+            # Stop task producers before the services they can invoke.
+            await _cancel_background_task(feishu_autostart_task)
+            try:
+                from .services.task_scheduler import TaskScheduler
+                if TaskScheduler._instance is not None:
+                    TaskScheduler._instance.shutdown()
+            except Exception:
+                log.exception("task scheduler shutdown failed")
+            try:
+                from .services.autonomous_scheduler import AutonomousScheduler
+                if AutonomousScheduler._instance is not None:
+                    AutonomousScheduler._instance.shutdown()
+            except Exception:
+                log.exception("autonomous scheduler shutdown failed")
+            try:
+                from .services.feishu_service import FeishuService
+                FeishuService.instance().shutdown()
+            except Exception:
+                log.exception("feishu shutdown failed")
+            try:
+                from .services.agent_service import AgentService
+                agent_svc = AgentService.instance()
+                agent_svc._archive_snapshots_to_chat_history()
+                agent_svc.shutdown()
+            except Exception:
+                log.exception("agent shutdown failed")
             try:
                 from .routes import tokens as token_routes
                 token_routes.stop_persistence()
             except Exception:
                 log.exception("token usage final persistence failed")
-            # Archive current WebUI conversation so it persists across restarts
-            try:
-                from .services.agent_service import AgentService
-                AgentService.instance()._archive_snapshots_to_chat_history()
-            except Exception:
-                pass
-            try:
-                from .services.feishu_service import FeishuService
-                FeishuService.instance().shutdown()
-            except Exception:
-                pass
-            try:
-                from .services.autonomous_scheduler import AutonomousScheduler
-                AutonomousScheduler.instance().shutdown()
-            except Exception:
-                pass
-            try:
-                from .services.task_scheduler import TaskScheduler
-                TaskScheduler.instance().shutdown()
-            except Exception:
-                pass
 
     # ── always-available endpoints ──
     app.include_router(_setup_router())

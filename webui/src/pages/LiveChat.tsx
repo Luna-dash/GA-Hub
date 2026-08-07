@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/api/client'
+import { api, EventSocket } from '@/api/client'
 import type { HubSession, LLMInfo, Message, SessionRuntime } from '@/api/types'
 import { ImagePasteInput, type PasteAttachment } from '@/components/ImagePasteInput'
 import { MessageBubble } from '@/components/MessageBubble'
@@ -19,6 +19,7 @@ import { dialog } from '@/stores/dialogStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useDraftStore } from '@/stores/draftStore'
 import { capacityConflictFromError, sessionChatHref } from '@/utils/sessionUi'
+import { createRafScheduler } from '@/utils/rafScheduler'
 
 interface RestoreState {
   restoredFrom?: string
@@ -68,20 +69,32 @@ export default function LiveChat() {
   })
   const sessions = useMemo(() => sessionsQuery.data?.items ?? [], [sessionsQuery.data])
   const runtimesQuery = useQuery({
-    queryKey: ['session.runtimes', sessions.map((item) => item.id)],
-    queryFn: async () => {
-      const entries = await Promise.all(sessions.map(async (item) => {
-        try { return [item.id, await api.sessionRuntime(item.id)] as const }
-        catch { return null }
-      }))
-      return Object.fromEntries(
-        entries.filter((entry): entry is readonly [string, SessionRuntime] => entry !== null),
-      )
-    },
+    queryKey: ['session.runtimes'],
+    queryFn: api.sessionRuntimes,
     enabled: sessions.length > 0,
     refetchInterval: 5000,
   })
   const runtimes = runtimesQuery.data ?? {}
+
+  useEffect(() => {
+    const socket = new EventSocket('session:', 0)
+    socket.onEvent = (event) => {
+      if (event.topic !== 'session:runtime') return
+      const runtime = event.payload as Partial<SessionRuntime>
+      if (typeof runtime.session_id !== 'string') return
+      queryClient.setQueryData<Record<string, SessionRuntime>>(
+        ['session.runtimes'],
+        (current) => ({
+          ...(current ?? {}),
+          [runtime.session_id as string]: {
+            ...(current?.[runtime.session_id as string] ?? {}),
+            ...runtime,
+          } as SessionRuntime,
+        }),
+      )
+    }
+    return () => socket.close()
+  }, [queryClient])
 
   useEffect(() => {
     let cancelled = false
@@ -134,18 +147,16 @@ export default function LiveChat() {
     return () => { cancelled = true }
   }, [pushSystem])
 
-  const { data: runtime } = useQuery({
-    queryKey: ['session.runtime', session?.id],
-    queryFn: ({ queryKey }) => api.sessionRuntime(queryKey[1] as string),
-    enabled: Boolean(session),
-    refetchInterval: 1000,
-  })
+  const runtime = session ? runtimes[session.id] : undefined
   const refreshRuntime = useCallback(async (sessionId?: string) => {
     const sid = sessionId ?? sessionIdRef.current
     if (!sid || sessionIdRef.current !== sid) return
     const state = await api.sessionRuntime(sid)
     if (sessionIdRef.current !== sid) return
-    queryClient.setQueryData(['session.runtime', sid], state)
+    queryClient.setQueryData<Record<string, SessionRuntime>>(['session.runtimes'], (cached) => ({
+      ...(cached ?? {}),
+      [sid]: state,
+    }))
     return state
   }, [queryClient])
   const sessionRunning = runtime?.status === 'starting' || runtime?.status === 'running'
@@ -209,6 +220,9 @@ export default function LiveChat() {
   }, [])
 
   // Track whether the user is still pinned to the bottom of the scroll area.
+  // Turn nodes only change when the message structure changes; scroll events
+  // reuse this cache and are coalesced to at most one computation per frame.
+  const turnNodesRef = useRef<HTMLElement[]>([])
   const recomputeStuck = () => {
     const el = scrollRef.current
     if (!el) return
@@ -217,7 +231,7 @@ export default function LiveChat() {
     setStuckBottom(at)
     if (at) setUnread(0)
 
-    const turns = Array.from(el.querySelectorAll<HTMLElement>('[data-chat-turn]'))
+    const turns = turnNodesRef.current
     if (turns.length === 0) {
       setActiveTurn(-1)
       return
@@ -240,19 +254,22 @@ export default function LiveChat() {
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
+    turnNodesRef.current = Array.from(el.querySelectorAll<HTMLElement>('[data-chat-turn]'))
     recomputeStuck()
+    const scrollScheduler = createRafScheduler(recomputeStuck)
     const releaseNavigationTarget = () => { navigationTargetRef.current = null }
-    el.addEventListener('scroll', recomputeStuck, { passive: true })
+    el.addEventListener('scroll', scrollScheduler.schedule, { passive: true })
     el.addEventListener('wheel', releaseNavigationTarget, { passive: true })
     el.addEventListener('touchstart', releaseNavigationTarget, { passive: true })
     el.addEventListener('pointerdown', releaseNavigationTarget, { passive: true })
     return () => {
-      el.removeEventListener('scroll', recomputeStuck)
+      scrollScheduler.cancel()
+      el.removeEventListener('scroll', scrollScheduler.schedule)
       el.removeEventListener('wheel', releaseNavigationTarget)
       el.removeEventListener('touchstart', releaseNavigationTarget)
       el.removeEventListener('pointerdown', releaseNavigationTarget)
     }
-  }, [msgs.length])
+  }, [msgs.length, session?.id])
 
   // On every msgs change: if we're at the bottom, glue ourselves to it; else
   // bump the unread counter so the floating jump-button shows new-msg count.
@@ -286,7 +303,7 @@ export default function LiveChat() {
     const current = activeTurn < 0 ? (stuckBottom ? turnCount - 1 : 0) : activeTurn
     const next = Math.max(0, Math.min(turnCount - 1, current + direction))
     if (next === current) return
-    const target = el.querySelectorAll<HTMLElement>('[data-chat-turn]')[next]
+    const target = turnNodesRef.current[next]
     if (!target) return
 
     const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
@@ -383,7 +400,7 @@ export default function LiveChat() {
     })
   }
 
-  const newConv = async (): Promise<boolean> => {
+  const newConv = useCallback(async (): Promise<boolean> => {
     if (creatingSessionRef.current) return false
     creatingSessionRef.current = true
     setCreatingSession(true)
@@ -403,9 +420,70 @@ export default function LiveChat() {
       creatingSessionRef.current = false
       setCreatingSession(false)
     }
-  }
+  }, [nav, queryClient, session?.llm_index])
 
-  const handleRewind = async (sid: string) => {
+  const selectSession = useCallback((id: string) => {
+    if (id === sessionIdRef.current) return
+    localStorage.setItem('gahub.currentSessionId', id)
+    nav(sessionChatHref(id))
+  }, [nav])
+
+  const createSession = useCallback(async () => {
+    try {
+      await newConv()
+    } catch (error: any) {
+      pushSystem(`_新建会话失败：${error?.body?.detail || error?.message || String(error)}_`)
+    }
+  }, [newConv, pushSystem])
+
+  const renameSession = useCallback(async (id: string, title: string) => {
+    try {
+      const updated = await api.updateSession(id, { title })
+      queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
+        total: cached?.total ?? 0,
+        items: (cached?.items ?? []).map((item) => item.id === id ? updated : item),
+      }))
+      if (sessionIdRef.current === id) setSession(updated)
+    } catch (error: any) {
+      pushSystem(`_重命名失败：${error?.body?.detail || error?.message || String(error)}_`)
+      throw error
+    }
+  }, [pushSystem, queryClient])
+
+  const deleteSession = useCallback(async (id: string) => {
+    try {
+      await api.deleteSession(id)
+      const remaining = sessions.filter((item) => item.id !== id)
+      queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], {
+        total: remaining.length,
+        items: remaining,
+      })
+      if (sessionIdRef.current !== id) return
+
+      ++sessionSwitchSeqRef.current
+      if (remaining.length > 0) {
+        localStorage.setItem('gahub.currentSessionId', remaining[0].id)
+        nav(sessionChatHref(remaining[0].id))
+        return
+      }
+
+      setSession(null)
+      localStorage.removeItem('gahub.currentSessionId')
+      stopChat()
+      clearLocal()
+      nav('/chat', { replace: true })
+    } catch (error: any) {
+      const detail = error?.status === 409
+        ? '会话仍在运行，请先停止任务。'
+        : (error?.body?.detail || error?.message || String(error))
+      pushSystem(`_删除会话失败：${detail}_`)
+      throw error
+    }
+  }, [clearLocal, nav, pushSystem, queryClient, sessions, stopChat])
+
+  // Keep the callback stable while streaming chunks update `msgs`; otherwise
+  // every completed assistant bubble receives a new prop and rebuilds Markdown.
+  const handleRewind = useCallback(async (sid: string) => {
     if (streaming || sessionRunning) {
       pushSystem('_当前回复还在进行中。请先停止后再回退。_')
       return
@@ -422,7 +500,7 @@ export default function LiveChat() {
     } catch (e: any) {
       await dialog.alert('回退失败', e?.message || String(e))
     }
-  }
+  }, [pushSystem, sessionRunning, streaming])
 
   const handleSlashCommand = (command: Exclude<SlashCommand['name'], '/btw'>) => {
     if (command === '/new') {
@@ -477,62 +555,11 @@ export default function LiveChat() {
           sessions={sessions}
           runtimes={runtimes}
           currentId={session?.id ?? null}
-          onSelect={(id) => {
-            if (id === session?.id) return
-            localStorage.setItem('gahub.currentSessionId', id)
-            nav(sessionChatHref(id))
-          }}
-          onCreate={async () => {
-            try {
-              await newConv()
-            } catch (error: any) {
-              pushSystem(`_新建会话失败：${error?.body?.detail || error?.message || String(error)}_`)
-            }
-          }}
+          onSelect={selectSession}
+          onCreate={createSession}
           creating={creatingSession}
-          onRename={async (id, title) => {
-            try {
-              const updated = await api.updateSession(id, { title })
-              queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
-                total: cached?.total ?? 0,
-                items: (cached?.items ?? []).map((item) => item.id === id ? updated : item),
-              }))
-              if (sessionIdRef.current === id) setSession(updated)
-            } catch (error: any) {
-              pushSystem(`_重命名失败：${error?.body?.detail || error?.message || String(error)}_`)
-              throw error
-            }
-          }}
-          onDelete={async (id) => {
-            try {
-              await api.deleteSession(id)
-              const remaining = sessions.filter((item) => item.id !== id)
-              queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], {
-                total: remaining.length,
-                items: remaining,
-              })
-              if (sessionIdRef.current !== id) return
-
-              ++sessionSwitchSeqRef.current
-              if (remaining.length > 0) {
-                localStorage.setItem('gahub.currentSessionId', remaining[0].id)
-                nav(sessionChatHref(remaining[0].id))
-                return
-              }
-
-              setSession(null)
-              localStorage.removeItem('gahub.currentSessionId')
-              stopChat()
-              clearLocal()
-              nav('/chat', { replace: true })
-            } catch (error: any) {
-              const detail = error?.status === 409
-                ? '会话仍在运行，请先停止任务。'
-                : (error?.body?.detail || error?.message || String(error))
-              pushSystem(`_删除会话失败：${detail}_`)
-              throw error
-            }
-          }}
+          onRename={renameSession}
+          onDelete={deleteSession}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col relative">
         <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-4 py-4 space-y-2 md:pl-10 md:pr-[31px]">

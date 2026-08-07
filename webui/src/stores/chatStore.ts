@@ -180,6 +180,7 @@ function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
 
 let historyGeneration = 0
 let historyAbort: AbortController | null = null
+let liveCleanup: (() => void) | null = null
 let webuiStageSequence = 0
 const sessionCursors = new Map<string, ChatEventCursor>()
 
@@ -380,8 +381,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sessionViews: {},
 
   start: (sessionId) => {
-    const current = get()
+    let current = get()
     if (current.sock && current.sessionId === sessionId && current.historyStatus !== 'history_error') return
+
+    // Commit the previous connection's throttled tail while its session is
+    // still current, then invalidate every delayed callback it owns.
+    liveCleanup?.()
+    liveCleanup = null
+    current = get()
     current.sock?.close()
 
     const switching = current.sessionId !== sessionId
@@ -455,18 +462,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const pendingNext: Map<string, ChatWSOut & { type: 'next' }> = new Map()
     let nextTimer: number | null = null
     let lastFlush = 0
+    let active = true
     const FLUSH_MS = 100
 
-    const flushNext = () => {
+    const flushNext = (force = false) => {
       if (nextTimer != null) {
         window.clearTimeout(nextTimer)
         nextTimer = null
       }
-      if (pendingNext.size === 0) return
+      if ((!active && !force) || pendingNext.size === 0) return
       const evts = Array.from(pendingNext.values())
       pendingNext.clear()
       lastFlush = Date.now()
       set((st) => {
+        if (st.sessionId !== sessionId) return st
         let msgs = st.msgs
         for (const e of evts) msgs = applyEvent(msgs, e)
         return { msgs, streaming: anyStreaming(msgs) }
@@ -474,11 +483,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       for (const e of evts) commitCursor(sessionId, e)
     }
 
+    liveCleanup = () => {
+      flushNext(true)
+      active = false
+      if (nextTimer != null) { window.clearTimeout(nextTimer); nextTimer = null }
+      pendingNext.clear()
+    }
+
     const sock = new ChatSocket(() => sessionSocketPath(sessionId))
     sock.onState = (s) => {
-      set({ conn: s })
+      if (active && get().sessionId === sessionId) set({ conn: s })
     }
     const handleReadyMessage = (m: ChatWSOut, deferSnapshot = true) => {
+      if (!active || get().sessionId !== sessionId) return
       // Snapshot is large; defer past the next paint so the WebView
       // becomes interactive first (preserved from prior behaviour).
       if (m.type === 'snapshot') {
@@ -488,7 +505,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         pendingNext.clear()
         if (nextTimer != null) { window.clearTimeout(nextTimer); nextTimer = null }
         const apply = () => {
+          if (!active || get().sessionId !== sessionId) return
           set((st) => {
+            if (st.sessionId !== sessionId) return st
             let msgs = m.streams ? mergeLive(st.msgs, applySnapshot(m.streams)) : st.msgs
             if (m.active_message) {
               const activeEvent: ChatWSOut = m.active_message.done
@@ -559,6 +578,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       commitCursor(sessionId, m)
     }
     sock.onMessage = (message) => {
+      if (!active || get().sessionId !== sessionId) return
       if (!historyReady) {
         bufferedEvents.push(message)
         return
@@ -606,6 +626,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   stop: () => {
     historyGeneration++
     historyAbort?.abort()
+    liveCleanup?.()
+    liveCleanup = null
     get().sock?.close()
     set({ sock: null, sessionId: null, conn: 'closed', hydrating: false, historyStatus: 'idle', historyError: null })
   },

@@ -132,6 +132,8 @@ class TaskScheduler:
             self._sched.shutdown(wait=False)
         except Exception:
             pass
+        if type(self)._instance is self:
+            type(self)._instance = None
 
     def _job_id(self, sch_id: str) -> str:
         return f"task_{sch_id}"

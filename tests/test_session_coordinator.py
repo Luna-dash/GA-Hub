@@ -72,6 +72,34 @@ def test_lazy_runtime_is_reused_and_run_identity_is_propagated() -> None:
     assert second.stream_id == "stream-A-2"
 
 
+def test_completion_snapshot_survives_short_run_and_notifies_observer() -> None:
+    from server.services.session_coordinator import RuntimeState, SessionCoordinator
+
+    made: list[FakeRuntime] = []
+    notifications: list[RuntimeState] = []
+
+    def factory(session_id: str) -> FakeRuntime:
+        runtime = FakeRuntime(session_id)
+        made.append(runtime)
+        return runtime
+
+    coordinator = SessionCoordinator(
+        factory,
+        poll_interval=0.005,
+        on_state_change=notifications.append,
+    )
+    run = coordinator.submit("quick", session_id="A")
+    assert made[0].handle is not None
+    made[0].handle.finished = True
+
+    _wait_until(lambda: coordinator.runtime_state("A").status == "idle")
+    completed = coordinator.runtime_state("A")
+    assert completed.run_id is None
+    assert completed.stream_id is None
+    assert completed.completed_run_id == run.run_id
+    assert notifications[-1] == completed
+
+
 def test_global_run_slot_rejects_other_session_until_real_completion() -> None:
     from server.services.session_coordinator import AgentBusyError, SessionCoordinator
 

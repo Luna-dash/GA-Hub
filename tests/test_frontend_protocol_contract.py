@@ -36,8 +36,9 @@ def test_live_chat_lazily_creates_sessions_only_on_submit_or_explicit_new():
 
 def test_live_chat_does_not_recreate_session_after_last_delete():
     source = _read("pages/LiveChat.tsx")
-    delete_start = source.index("          onDelete=")
-    delete_block = source[delete_start:source.index("        />", delete_start)]
+    assert "onDelete={deleteSession}" in source
+    delete_start = source.index("  const deleteSession = useCallback")
+    delete_block = source[delete_start:source.index("  const handleRewind =", delete_start)]
     # The last-session branch clears selection and returns to /chat.
     assert "nav('/chat', { replace: true })" in delete_block
     assert "api.createSession" not in delete_block

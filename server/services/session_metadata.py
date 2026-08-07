@@ -20,6 +20,16 @@ class SessionNotFoundError(KeyError):
     """Raised when a metadata record does not exist."""
 
 
+_store_locks_guard = threading.Lock()
+_store_locks: dict[str, threading.RLock] = {}
+
+
+def _shared_store_lock(path: Path) -> threading.RLock:
+    key = os.path.normcase(str(path.resolve()))
+    with _store_locks_guard:
+        return _store_locks.setdefault(key, threading.RLock())
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -31,7 +41,7 @@ class SessionMetadataStore:
         self.base_dir = base_dir or (_paths.ADMIN_DATA / "session_metadata")
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.path = self.base_dir / "sessions.json"
-        self._lock = threading.RLock()
+        self._lock = _shared_store_lock(self.path)
 
     def _read(self) -> dict[str, Any]:
         if not self.path.exists():
@@ -113,6 +123,74 @@ class SessionMetadataStore:
                     self._write(data)
                     return dict(row)
         raise SessionNotFoundError(session_id)
+
+    def find_by_archive(self, archive_path: str | Path) -> dict[str, Any] | None:
+        path = str(Path(archive_path).resolve())
+        with self._lock:
+            for row in self._read()["sessions"]:
+                current = row.get("archive_path")
+                if current and str(Path(current).resolve()) == path:
+                    return dict(row)
+        return None
+
+    def upsert_archive(
+        self,
+        stable_id: str,
+        archive_path: str | Path,
+        *,
+        title: str,
+    ) -> dict[str, Any]:
+        """Atomically create/update metadata identified by its resolved archive path."""
+        path = str(Path(archive_path).resolve())
+        with self._lock:
+            data = self._read()
+            timestamp = _now()
+            for row in data["sessions"]:
+                current = row.get("archive_path")
+                if current and str(Path(current).resolve()) == path:
+                    row["title"] = title.strip()
+                    row["updated_at"] = timestamp
+                    self._write(data)
+                    return dict(row)
+            for row in data["sessions"]:
+                if row["id"] == stable_id:
+                    current = row.get("archive_path")
+                    if current and str(Path(current).resolve()) != path:
+                        raise ValueError(
+                            f"session {stable_id!r} is already bound to another archive"
+                        )
+                    row["archive_path"] = path
+                    row["title"] = title.strip()
+                    row["updated_at"] = timestamp
+                    self._write(data)
+                    return dict(row)
+            row = {
+                "id": stable_id,
+                "title": title.strip(),
+                "llm_index": None,
+                "status": "idle",
+                "archive_path": path,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            }
+            data["sessions"].append(row)
+            self._write(data)
+            return dict(row)
+
+    def delete_by_archive(self, archive_path: str | Path) -> bool:
+        path = str(Path(archive_path).resolve())
+        with self._lock:
+            data = self._read()
+            kept = []
+            for row in data["sessions"]:
+                current = row.get("archive_path")
+                if not current or str(Path(current).resolve()) != path:
+                    kept.append(row)
+            if len(kept) == len(data["sessions"]):
+                return False
+            data["sessions"] = kept
+            self._write(data)
+            return True
 
     def delete(self, session_id: str) -> None:
         with self._lock:

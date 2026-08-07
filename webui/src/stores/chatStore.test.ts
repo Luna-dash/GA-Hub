@@ -190,4 +190,49 @@ describe('chatStore lifecycle', () => {
     expect(useChatStore.getState().msgs.map((m) => m.content)).toEqual(['B history'])
     expect(useChatStore.getState().sessionViews['session-a'].msgs.some((m) => m.content === 'A continued')).toBe(true)
   })
+
+  it('flushes a throttled tail into the old session before switching', async () => {
+    vi.spyOn(api, 'getSessionMessages')
+      .mockResolvedValueOnce({ session_id: 'session-a', archive_bound: true, revision: 'a1', items: [] })
+      .mockResolvedValueOnce({ session_id: 'session-b', archive_bound: true, revision: 'b1', items: [] })
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    const socketA = FakeWebSocket.instances.at(-1)!
+    socketA.emit({ type: 'next', stream_id: 'a-live', content: 'first' })
+    socketA.emit({ type: 'next', stream_id: 'a-live', content: 'final tail' })
+
+    useChatStore.getState().start('session-b')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    await new Promise((resolve) => setTimeout(resolve, 120))
+
+    expect(useChatStore.getState().msgs).toEqual([])
+    expect(useChatStore.getState().sessionViews['session-a'].msgs).toEqual([
+      expect.objectContaining({ streamId: 'a-live', content: 'final tail' }),
+    ])
+  })
+
+  it('does not apply a deferred snapshot after switching sessions', async () => {
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    vi.spyOn(api, 'getSessionMessages')
+      .mockResolvedValueOnce({ session_id: 'session-a', archive_bound: true, revision: 'a1', items: [] })
+      .mockResolvedValueOnce({ session_id: 'session-b', archive_bound: true, revision: 'b1', items: [] })
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    FakeWebSocket.instances.at(-1)!.emit({
+      type: 'snapshot',
+      streams: [{ stream_id: 'a-live', source: 'user', query: '', content: 'late A snapshot', done: false, started_at: 1, finished_at: 0 }],
+    })
+
+    useChatStore.getState().start('session-b')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    while (frames.length) frames.shift()!(0)
+
+    expect(useChatStore.getState().msgs).toEqual([])
+  })
 })

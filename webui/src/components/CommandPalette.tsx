@@ -18,6 +18,7 @@ import clsx from 'clsx'
 import { api } from '@/api/client'
 import { useChatStore } from '@/stores/chatStore'
 import { dialog } from '@/stores/dialogStore'
+import { conversationKeys } from '@/queries/conversations'
 
 interface Action {
   id: string
@@ -104,7 +105,7 @@ export function CommandPalette() {
     staleTime: 60_000,
   })
   const { data: convs } = useQuery({
-    queryKey: ['conversations', '', 0],
+    queryKey: conversationKeys.list('', 0, 30),
     queryFn: () => api.conversations(undefined, 0, 30),
     enabled: open,
     staleTime: 30_000,

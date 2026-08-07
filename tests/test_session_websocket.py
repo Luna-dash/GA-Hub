@@ -53,6 +53,28 @@ def test_coordinator_abort_timeout_publishes_identified_error_event(
     assert "runtime_before=aborting runtime_after=error" in caplog.text
 
 
+def test_coordinator_completion_publishes_runtime_event(monkeypatch):
+    from server.routes import sessions
+
+    event_bus = EventBus()
+    monkeypatch.setattr(sessions, "bus", event_bus)
+
+    sessions._publish_runtime_state(RuntimeState(
+        "session-a", completed_run_id="run-a"
+    ))
+
+    event = event_bus.history("session:")[-1]
+    assert event.topic == "session:runtime"
+    assert event.payload == {
+        "session_id": "session-a",
+        "status": "idle",
+        "run_id": None,
+        "stream_id": None,
+        "completed_run_id": "run-a",
+        "error": None,
+    }
+
+
 class FakeCoordinator:
     def runtime_state(self, session_id: str) -> RuntimeState:
         return RuntimeState(session_id, "running", "run-a", "stream-a")
@@ -106,6 +128,7 @@ def test_session_websocket_starts_with_runtime_snapshot_and_supports_ping(tmp_pa
             assert snapshot == {
                 "type": "snapshot", "session_id": sid, "status": "running",
                 "run_id": "run-a", "stream_id": "stream-a",
+                "completed_run_id": None,
                 "runtime": {
                     "status": "running", "run_id": "run-a",
                     "stream_id": "stream-a", "error": None,

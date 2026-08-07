@@ -151,6 +151,35 @@ _INLINE_IMAGE_EXT = {
 }
 
 
+class UploadTooLarge(ValueError):
+    """Raised when an upload exceeds the server-side size limit."""
+
+
+_UPLOAD_MAX_SIZE = 50 * 1024 * 1024
+_UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+async def _save_upload_stream(file: UploadFile, path: Path, *, max_size: int) -> int:
+    """Save an upload without materialising its whole body in memory."""
+    size = 0
+    try:
+        with path.open("wb") as output:
+            while True:
+                chunk = await file.read(_UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_size:
+                    raise UploadTooLarge
+                output.write(chunk)
+    except BaseException:
+        # Cancellation is a BaseException on supported Python versions; never
+        # leave a partial file behind when the request task is cancelled.
+        path.unlink(missing_ok=True)
+        raise
+    return size
+
+
 @router.post("/api/upload")
 async def upload(file: UploadFile = File(...)):
     """Accept image / file uploads (paste, drag-drop, or button picker).
@@ -164,11 +193,10 @@ async def upload(file: UploadFile = File(...)):
     file_id = uuid.uuid4().hex
     safe_name = f"{file_id}{ext}"
     path = os.path.join(_upload_dir(), safe_name)
-    data = await file.read()
-    if len(data) > 50 * 1024 * 1024:
-        raise HTTPException(413, "file is larger than 50 MB")
-    with open(path, "wb") as f:
-        f.write(data)
+    try:
+        size = await _save_upload_stream(file, Path(path), max_size=_UPLOAD_MAX_SIZE)
+    except UploadTooLarge as exc:
+        raise HTTPException(413, "file is larger than 50 MB") from exc
     mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
     return {
         "file_id": file_id,
@@ -176,7 +204,7 @@ async def upload(file: UploadFile = File(...)):
         "path": path,
         "url": f"/api/files/{safe_name}",
         "mime": mime,
-        "size": len(data),
+        "size": size,
     }
 
 
@@ -219,16 +247,29 @@ def reveal_file(req: RevealRequest):
     return {"ok": True, "path": str(path)}
 
 
+def _resolve_file_by_path(raw_path: str) -> str:
+    """Resolve a downloadable file and keep symlinks inside allowed roots."""
+    resolved = os.path.realpath(os.path.abspath(raw_path))
+    allowed_roots = [
+        os.path.realpath(os.path.abspath(str(_paths.temp_dir()))),
+        os.path.realpath(os.path.abspath(_upload_dir())),
+    ]
+    try:
+        inside_root = any(
+            os.path.commonpath([resolved, root]) == root
+            for root in allowed_roots
+        )
+    except ValueError:
+        inside_root = False
+    if not inside_root:
+        raise HTTPException(403, "outside allowed roots")
+    if not os.path.isfile(resolved):
+        raise HTTPException(404, "not found")
+    return resolved
+
+
 @router.get("/api/files-by-path")
 async def get_file_by_path(path: str):
     """Serve any file under GA's temp/ or admin's uploads/ for previewing."""
-    abspath = os.path.abspath(path)
-    allowed_roots = [
-        os.path.abspath(str(_paths.temp_dir())),
-        os.path.abspath(_upload_dir()),
-    ]
-    if not any(abspath.startswith(r + os.sep) for r in allowed_roots):
-        raise HTTPException(403, "outside allowed roots")
-    if not os.path.isfile(abspath):
-        raise HTTPException(404, "not found")
-    return FileResponse(abspath)
+    resolved = _resolve_file_by_path(path)
+    return FileResponse(resolved)

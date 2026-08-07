@@ -264,7 +264,19 @@ class AgentService:
         self._run_thread.start()
         log.info("agent run thread started")
 
-    # ── status ───────────────────────────────────────────────────
+    def shutdown(self, timeout: float = 5.0) -> None:
+        """Stop the GA run loop and release a fully stopped singleton."""
+        thread = self._run_thread
+        if thread is not None and thread.is_alive():
+            if getattr(self.agent, "is_running", False):
+                self.agent.abort()
+            self.agent.task_queue.put("__shutdown__")
+            thread.join(timeout=max(0.0, timeout))
+        if thread is None or not thread.is_alive():
+            self._run_thread = None
+            if type(self)._instance is self:
+                type(self)._instance = None
+
     def status(self) -> AgentStatus:
         a = self.agent
         try:

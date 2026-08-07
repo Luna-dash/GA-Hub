@@ -62,6 +62,7 @@ class RuntimeState:
     run_id: str | None = None
     stream_id: str | None = None
     error: str | None = None
+    completed_run_id: str | None = None
 
 
 class SessionCoordinator:
@@ -256,4 +257,8 @@ class SessionCoordinator:
                 return
             self._abort_started.pop(run_id, None)
             self._active_by_session.pop(session_id, None)
-            self._states[session_id] = RuntimeState(session_id)
+            completed = RuntimeState(session_id, completed_run_id=run_id)
+            self._states[session_id] = completed
+            notification = replace(completed)
+        if self._on_state_change is not None:
+            self._on_state_change(notification)
