@@ -25,6 +25,7 @@ interface Props {
   attachments: PasteAttachment[]
   onAttachments: (a: PasteAttachment[]) => void
   onSubmit: () => void
+  onSchedule?: () => void
   onStop?: () => void
   stopActive?: boolean
   onSlashCommand?: (command: Exclude<SlashCommand['name'], '/btw'>) => void
@@ -38,7 +39,7 @@ interface Props {
 }
 
 export function ImagePasteInput({
-  text, onText, attachments, onAttachments, onSubmit, onStop, stopActive = false, onSlashCommand,
+  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, onSlashCommand,
   placeholder = '输入消息，可粘贴/拖放图片或文件…',
   disabled, submitDisabled, acceptFiles = true, autoFocus = true,
 }: Props) {
@@ -324,6 +325,15 @@ export function ImagePasteInput({
           wrap="soft"
           className="flex-1 min-w-0 w-0 bg-transparent resize-none outline-none text-slate-200 placeholder:text-slate-500 px-3 py-2 max-h-60 leading-7 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
         />
+        {onSchedule && !stopActive && (
+          <button
+            type="button"
+            onClick={onSchedule}
+            disabled={disabled || (!text.trim() && attachments.length === 0)}
+            className="h-10 px-3 rounded-xl border border-line text-slate-300 text-sm font-medium hover:bg-white/5 disabled:opacity-40 transition"
+            title="设置定时发送"
+          >定时</button>
+        )}
         <button
           type="button"
           onClick={stopActive ? onStop : onSubmit}

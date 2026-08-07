@@ -9,7 +9,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, EventSocket } from '@/api/client'
-import type { HubSession, LLMInfo, Message, SessionRuntime } from '@/api/types'
+import type { HubSession, LLMInfo, Message, ScheduledChat, SessionRuntime } from '@/api/types'
 import { ImagePasteInput, type PasteAttachment } from '@/components/ImagePasteInput'
 import { MessageBubble } from '@/components/MessageBubble'
 import { SessionRail } from '@/components/SessionRail'
@@ -61,6 +61,11 @@ export default function LiveChat() {
   const sessionSwitchSeqRef = useRef(0)
   const creatingSessionRef = useRef(false)
   const [creatingSession, setCreatingSession] = useState(false)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [scheduleAt, setScheduleAt] = useState('')
+  const [scheduleSaving, setScheduleSaving] = useState(false)
+  const [scheduleError, setScheduleError] = useState('')
+  const [scheduleNow, setScheduleNow] = useState(() => Date.now())
   const llmChangeSeqRef = useRef(0)
   const queryClient = useQueryClient()
   const sessionsQuery = useQuery({
@@ -75,6 +80,18 @@ export default function LiveChat() {
     refetchInterval: 5000,
   })
   const runtimes = runtimesQuery.data ?? {}
+  const scheduledChatsQuery = useQuery({
+    queryKey: ['session.scheduledChats', session?.id],
+    queryFn: () => api.scheduledChats(session!.id),
+    enabled: Boolean(session?.id),
+    refetchInterval: 60_000,
+  })
+  const scheduledChats = scheduledChatsQuery.data?.items ?? []
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setScheduleNow(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     const socket = new EventSocket('session:', 0)
@@ -400,6 +417,79 @@ export default function LiveChat() {
     })
   }
 
+  const openSchedule = () => {
+    const next = new Date(Date.now() + 5 * 60_000)
+    next.setSeconds(0, 0)
+    setScheduleAt(toLocalDateTimeValue(next))
+    setScheduleError('')
+    setScheduleOpen(true)
+  }
+
+  const saveSchedule = async () => {
+    if (scheduleSaving) return
+    const sourceText = text
+    const sourceAtts = atts
+    const t = sourceText.trim()
+    if (!t && sourceAtts.length === 0) return
+    const scheduledFor = new Date(scheduleAt).getTime()
+    const now = Date.now()
+    if (!Number.isFinite(scheduledFor) || scheduledFor <= now) {
+      setScheduleError('请选择未来的发送时间。')
+      return
+    }
+    if (scheduledFor > now + 48 * 60 * 60_000) {
+      setScheduleError('发送时间不能超过未来 48 小时。')
+      return
+    }
+
+    setScheduleSaving(true)
+    setScheduleError('')
+    try {
+      let sid = session?.id
+      if (!sid) {
+        const created = await api.createSession({ title: '', llm_index: null })
+        sid = created.id
+        queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
+          total: (cached?.total ?? 0) + 1,
+          items: [created, ...(cached?.items ?? [])],
+        }))
+        sessionIdRef.current = sid
+        setSession(created)
+        localStorage.setItem('gahub.currentSessionId', sid)
+        window.history.replaceState(window.history.state, '', sessionChatHref(sid))
+        startChat(sid)
+      }
+      const fileMarkers = sourceAtts.map((a) => `[用户发送文件: ${a.path}]`).join('\n')
+      const fileHint = sourceAtts.length ? 'If you need to show files to user, use [FILE:filepath] in your response.\n\n' : ''
+      const promptText = fileHint + t + (fileMarkers ? (t ? '\n' : '') + fileMarkers : '')
+      await api.createScheduledChat(sid, promptText, sourceAtts.map((a) => a.path), scheduledFor / 1000)
+      useDraftStore.getState().clearDraftIfMatch(draftKey, sourceText, sourceAtts)
+      await queryClient.invalidateQueries({ queryKey: ['session.scheduledChats', sid] })
+      setScheduleNow(Date.now())
+      setScheduleOpen(false)
+    } catch (e: any) {
+      setScheduleError(e?.body?.detail?.message || e?.body?.detail || e?.message || String(e))
+    } finally {
+      setScheduleSaving(false)
+    }
+  }
+
+  const cancelSchedule = async (task: ScheduledChat) => {
+    if (!session?.id) return
+    const ok = await dialog.confirm(
+      '取消定时发送？',
+      `确定取消 ${new Date(task.scheduled_for * 1000).toLocaleString('zh-CN', { hour12: false })} 的定时消息吗？`,
+      { confirmText: '取消任务', tone: 'danger' },
+    )
+    if (!ok) return
+    try {
+      await api.cancelScheduledChat(session.id, task.id)
+      await queryClient.invalidateQueries({ queryKey: ['session.scheduledChats', session.id] })
+    } catch (e: any) {
+      pushSystem(`_取消定时消息失败：${e?.body?.detail?.message || e?.body?.detail || e?.message || String(e)}。_`)
+    }
+  }
+
   const newConv = useCallback(async (): Promise<boolean> => {
     if (creatingSessionRef.current) return false
     creatingSessionRef.current = true
@@ -644,6 +734,26 @@ export default function LiveChat() {
       </div>
 
       <div className="shrink-0 border-t border-line/40 bg-transparent px-3 py-2.5">
+        {scheduledChats.length > 0 && (
+          <div className="mb-2 rounded-xl border border-line/60 bg-bg-card px-3 py-2 shadow-sm">
+            <div className="mb-1.5 text-xs font-medium text-[#86775F]">待发送定时消息（{scheduledChats.length}）</div>
+            <div className="max-h-28 space-y-1.5 overflow-y-auto">
+              {scheduledChats.map((task) => (
+                <div key={task.id} className="flex items-center gap-2 text-xs">
+                  <span className="shrink-0 rounded bg-bg-soft px-2 py-1 text-accent" title={new Date(task.scheduled_for * 1000).toLocaleString()}>
+                    {formatScheduleCountdown(task.scheduled_for, scheduleNow)}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[#2C2418]" title={task.text}>{task.text || '（仅附件）'}</span>
+                  <button
+                    type="button"
+                    onClick={() => { void cancelSchedule(task) }}
+                    className="shrink-0 rounded px-2 py-1 text-red-500 hover:bg-red-50"
+                  >取消</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="w-full rounded-xl border border-line/60 bg-bg-card shadow-sm">
           <ImagePasteInput
             text={text}
@@ -651,6 +761,7 @@ export default function LiveChat() {
             attachments={atts}
             onAttachments={setAtts}
             onSubmit={submit}
+            onSchedule={openSchedule}
             onStop={() => {
               const sid = session?.id
               if (!sid || sessionIdRef.current !== sid || !sessionRunning) return
@@ -666,8 +777,63 @@ export default function LiveChat() {
       </div>
       </div>
 
+      {scheduleOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-labelledby="schedule-title">
+          <div className="w-full max-w-md rounded-2xl border border-line bg-bg-card p-5 shadow-2xl">
+            <h2 id="schedule-title" className="text-lg font-semibold text-[#2C2418]">定时发送</h2>
+            <p className="mt-1 text-sm text-[#86775F]">选择未来 48 小时内的发送时间，支持跨到第二天。</p>
+            <label className="mt-4 block text-sm font-medium text-[#2C2418]">
+              发送时间（24 小时制）
+              <input
+                type="datetime-local"
+                value={scheduleAt}
+                min={toLocalDateTimeValue(new Date(Date.now() + 60_000))}
+                max={toLocalDateTimeValue(new Date(Date.now() + 48 * 60 * 60_000))}
+                step="60"
+                onChange={(event) => {
+                  setScheduleAt(event.target.value)
+                  setScheduleError('')
+                }}
+                className="mt-2 w-full rounded-lg border border-line bg-bg px-3 py-2 text-[#2C2418] outline-none focus:border-accent"
+                autoFocus
+              />
+            </label>
+            {scheduleError && <div className="mt-2 text-sm text-red-500">{scheduleError}</div>}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                className="ga-btn"
+                disabled={scheduleSaving}
+                onClick={() => setScheduleOpen(false)}
+              >取消</button>
+              <button
+                type="button"
+                className="ga-btn ga-btn-primary"
+                disabled={scheduleSaving || !scheduleAt}
+                onClick={() => { void saveSchedule() }}
+              >{scheduleSaving ? '保存中…' : '确认定时'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </PageShell>
   )
+}
+
+function toLocalDateTimeValue(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function formatScheduleCountdown(scheduledFor: number, now: number): string {
+  const minutes = Math.max(0, Math.ceil((scheduledFor * 1000 - now) / 60_000))
+  if (minutes < 60) return `${minutes} 分钟后`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  if (hours < 24) return rest > 0 ? `${hours} 小时 ${rest} 分后` : `${hours} 小时后`
+  const days = Math.floor(hours / 24)
+  const restHours = hours % 24
+  return restHours > 0 ? `${days} 天 ${restHours} 小时后` : `${days} 天后`
 }
 
 function sourceLabel(source: string): string {

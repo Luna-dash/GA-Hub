@@ -316,6 +316,13 @@ def create_app() -> FastAPI:
         agent_svc.start_run_thread()
 
         try:
+            from .routes import sessions as session_routes
+            session_routes.start_scheduled_chats()
+            log.info("scheduled chat service started")
+        except Exception as e:
+            log.warning("scheduled chat service init skipped: %s", e)
+
+        try:
             from .routes import tokens as token_routes
             token_routes.start_persistence()
             log.info("token usage persistence started")
@@ -350,6 +357,11 @@ def create_app() -> FastAPI:
     async def _shutdown():
         if not setup_mode:
             # Stop task producers before the services they can invoke.
+            try:
+                from .routes import sessions as session_routes
+                session_routes.stop_scheduled_chats()
+            except Exception:
+                log.exception("scheduled chat shutdown failed")
             await _cancel_background_task(feishu_autostart_task)
             try:
                 from .services.task_scheduler import TaskScheduler

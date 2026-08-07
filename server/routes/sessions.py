@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 import uuid
 
 from fastapi import APIRouter, HTTPException, Response, WebSocket, WebSocketDisconnect, status
@@ -18,11 +19,13 @@ from ..services.session_coordinator import (
 )
 from ..services.session_metadata import SessionMetadataStore, SessionNotFoundError
 from ..services.session_runtime_factory import RuntimeRestoreError, SessionRuntimeFactory
+from ..services.scheduled_chat_service import ScheduledChat, ScheduledChatService
 
 router = APIRouter()
 log = logging.getLogger(__name__)
 _store = SessionMetadataStore()
 _coordinator: SessionCoordinator | None = None
+_scheduled_chats: ScheduledChatService | None = None
 
 
 def _publish_runtime_state(state: RuntimeState) -> None:
@@ -88,6 +91,31 @@ def _get_coordinator() -> SessionCoordinator:
     return _coordinator
 
 
+def _dispatch_scheduled_chat(task: ScheduledChat) -> None:
+    _get_coordinator().submit(
+        task.session_id,
+        text=task.text,
+        images=task.images,
+        source="scheduled",
+    )
+
+
+def _get_scheduled_chats() -> ScheduledChatService:
+    global _scheduled_chats
+    if _scheduled_chats is None:
+        _scheduled_chats = ScheduledChatService(_dispatch_scheduled_chat)
+    return _scheduled_chats
+
+
+def start_scheduled_chats() -> None:
+    _get_scheduled_chats().start()
+
+
+def stop_scheduled_chats() -> None:
+    if _scheduled_chats is not None:
+        _scheduled_chats.shutdown()
+
+
 class SessionCreate(BaseModel):
     title: str = Field(default="", max_length=200)
     llm_index: int | None = Field(default=None, ge=0)
@@ -106,6 +134,12 @@ class RunSubmit(BaseModel):
     text: str = Field(min_length=1)
     images: list[str] = Field(default_factory=list)
     source: str = Field(default="webui", min_length=1, max_length=50)
+
+
+class ScheduledChatCreate(BaseModel):
+    text: str = Field(min_length=1)
+    images: list[str] = Field(default_factory=list)
+    scheduled_for: float
 
 
 def _state_payload(state: RuntimeState, *, ok: bool | None = None) -> dict:
@@ -227,6 +261,43 @@ async def submit_run(session_id: str, req: RunSubmit):
             "会话运行环境恢复失败，请稍后重试。",
         )
     return _state_payload(state)
+
+
+@router.get("/api/sessions/{session_id}/scheduled-chats")
+async def list_scheduled_chats(session_id: str):
+    _session(session_id)
+    items = _get_scheduled_chats().list(session_id)
+    return {"total": len(items), "items": items}
+
+
+@router.post(
+    "/api/sessions/{session_id}/scheduled-chats",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_scheduled_chat(session_id: str, req: ScheduledChatCreate):
+    _session(session_id)
+    now = time.time()
+    if req.scheduled_for <= now:
+        raise _api_error(422, "invalid_schedule", "定时时间必须晚于当前时间。")
+    if req.scheduled_for > now + 48 * 60 * 60:
+        raise _api_error(422, "invalid_schedule", "定时时间不能超过未来48小时。")
+    return _get_scheduled_chats().create(
+        session_id=session_id,
+        text=req.text,
+        images=req.images,
+        scheduled_for=req.scheduled_for,
+    )
+
+
+@router.delete(
+    "/api/sessions/{session_id}/scheduled-chats/{task_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def cancel_scheduled_chat(session_id: str, task_id: str):
+    _session(session_id)
+    if not _get_scheduled_chats().cancel(session_id, task_id):
+        raise _api_error(409, "not_cancellable", "定时消息不存在或已无法取消。")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/api/session-runtimes")

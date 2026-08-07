@@ -31,6 +31,7 @@ import type {
   ReportItem,
   Schedule,
   ScheduleType,
+  ScheduledChat,
   SessionSnapshot,
   HubSession,
   SessionMessagesResponse,
@@ -291,6 +292,16 @@ export const api = {
     http<HubSession>('PUT', `/api/sessions/${encodeURIComponent(id)}/model`, { llm_index }),
   abortSession: (id: string) =>
     http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/abort`),
+  scheduledChats: (id: string) =>
+    http<{ total: number; items: ScheduledChat[] }>('GET', `/api/sessions/${encodeURIComponent(id)}/scheduled-chats`),
+  createScheduledChat: (id: string, text: string, images: string[], scheduled_for: number) =>
+    http<ScheduledChat>('POST', `/api/sessions/${encodeURIComponent(id)}/scheduled-chats`, {
+      text,
+      images,
+      scheduled_for,
+    }),
+  cancelScheduledChat: (id: string, taskId: string) =>
+    http<void>('DELETE', `/api/sessions/${encodeURIComponent(id)}/scheduled-chats/${encodeURIComponent(taskId)}`),
 
   conductorStop: () => http<{ ok: boolean }>('POST', '/api/conductor/stop'),
 }
