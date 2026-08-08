@@ -41,6 +41,10 @@ from .event_bus import bus  # noqa: E402
 
 log = logging.getLogger(__name__)
 
+# Sentinel distinguishing "cache not yet loaded" from "no preference" (None)
+# so the submit hot-path can skip re-reading config.json on every turn.
+_PREFERRED_UNSET = object()
+
 _AUTO_CONTINUE_MAX = 2
 _AUTO_CONTINUE_MARKERS = ("[!!! 流异常中断", "[!!! Response truncated: max_tokens")
 _AUTO_CONTINUE_PROMPT = "继续上一条回复，从中断处继续，不要重复已经完成的内容。"
@@ -247,6 +251,7 @@ class AgentService:
         # also used to detect (and log) drift caused by other call sites
         # (autonomous tasks, /llm wechat command, code_run inline_eval, etc.)
         if self._manage_global_preference:
+            self._preferred_llm_cache = _PREFERRED_UNSET
             self._wrap_next_llm_with_persistence()
             self._restore_preferred_llm()
 
@@ -388,18 +393,39 @@ class AgentService:
     # ── llm preference persistence ───────────────────────────────
     def _save_preferred_llm(self, n: int) -> None:
         try:
+            # Fast path: cached value already equals the new value → skip disk IO.
+            if getattr(self, "_preferred_llm_cache", _PREFERRED_UNSET) == n:
+                return
             cfg = _paths.load_config()
             if cfg.get("preferred_llm_no") == n:
+                self._preferred_llm_cache = int(n)
                 return
             cfg["preferred_llm_no"] = int(n)
             _paths.save_config(cfg)
+            self._preferred_llm_cache = int(n)
             log.info("preferred_llm_no persisted: %s", n)
         except Exception as e:
             log.warning("failed to persist preferred_llm_no=%s: %s", n, e)
 
+    def _get_preferred_llm_no(self):
+        """Return the persisted preferred LLM index (int or None).
+
+        Backed by an in-memory cache so the submit hot-path does not re-read
+        ``config.json`` on every turn. ``None`` is cached (means "no
+        preference"); the sentinel ``_PREFERRED_UNSET`` means "not loaded yet".
+        """
+        if getattr(self, "_preferred_llm_cache", _PREFERRED_UNSET) is _PREFERRED_UNSET:
+            try:
+                saved = _paths.load_config().get("preferred_llm_no")
+            except Exception as e:
+                log.warning("failed to read preferred llm: %s", e)
+                saved = None
+            self._preferred_llm_cache = saved
+        return self._preferred_llm_cache
+
     def _restore_preferred_llm(self) -> None:
         try:
-            saved = _paths.load_config().get("preferred_llm_no")
+            saved = self._get_preferred_llm_no()
             if saved is None:
                 return
             n = int(saved)
