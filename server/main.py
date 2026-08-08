@@ -20,6 +20,7 @@ import ipaddress
 import logging
 import mimetypes
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -247,7 +248,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="GenericAgent Admin API" + (" (setup mode)" if setup_mode else ""),
-        version="0.2.0",
+        version="0.3.4",
         lifespan=_lifespan,
     )
 
@@ -430,6 +431,33 @@ def create_app() -> FastAPI:
         except Exception:
             pass
         return out
+
+    @app.get("/api/health")
+    async def health_summary():
+        """Stable process/service health vocabulary for diagnostics."""
+        report = getattr(app.state, "core_contract", None)
+        if setup_mode:
+            return {
+                "status": "unavailable",
+                "services": [{
+                    "id": "core_contract",
+                    "status": "unavailable",
+                    "summary": "GA core 尚未配置",
+                }],
+                "timestamp": int(time.time()),
+            }
+        if report is None or not report.ok:
+            return {
+                "status": "unavailable",
+                "services": [{
+                    "id": "core_contract",
+                    "status": "unknown" if report is None else "unavailable",
+                    "summary": "GA core 尚未探测" if report is None else "GA core 契约不兼容",
+                }],
+                "timestamp": int(time.time()),
+            }
+        from .services.service_registry import registry
+        return registry.health_summary()
 
     @app.get("/api/health/core-contract")
     async def core_contract_health():

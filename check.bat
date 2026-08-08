@@ -3,7 +3,7 @@
 ::
 ::   1) Install Python runtime + dev dependencies
 ::   2) Run pytest
-::   3) Run frontend type-check
+::   3) Run frontend tests and type-check
 ::   4) Run frontend production build
 
 setlocal EnableDelayedExpansion
@@ -42,10 +42,14 @@ echo Using %PKG%
 pushd webui
 echo == Install frontend deps ==
 if "%PKG%"=="npm" (
-  call %PKG% install --legacy-peer-deps --no-audit --no-fund
+  call %PKG% ci --legacy-peer-deps --no-audit --no-fund
 ) else (
-  call %PKG% install
+  call %PKG% install --frozen-lockfile
 )
+if errorlevel 1 ( popd & exit /b 1 )
+
+echo == Frontend tests ==
+call %PKG% test -- --run
 if errorlevel 1 ( popd & exit /b 1 )
 
 echo == Frontend type-check ==

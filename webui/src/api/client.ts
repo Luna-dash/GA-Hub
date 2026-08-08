@@ -52,29 +52,88 @@ import type {
 class HttpError extends Error {
   status: number
   body: any
+  code: 'http_error'
   constructor(status: number, body: any) {
     super(typeof body === 'string' ? body : JSON.stringify(body))
+    this.name = 'HttpError'
+    this.code = 'http_error'
     this.status = status
     this.body = body
   }
 }
 
-async function http<T>(method: string, path: string, body?: unknown, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-    ...init,
-  })
-  if (!res.ok) {
-    let msg: any = await res.text()
-    try { msg = JSON.parse(msg) } catch {}
-    throw new HttpError(res.status, msg)
+export class HttpTimeoutError extends Error {
+  code = 'timeout' as const
+  constructor(path: string, timeoutMs: number) {
+    super(`Request timed out after ${timeoutMs}ms: ${path}`)
+    this.name = 'HttpTimeoutError'
   }
-  if (res.status === 204) return undefined as unknown as T
-  const ct = res.headers.get('content-type') || ''
-  if (ct.includes('application/json')) return res.json() as Promise<T>
-  return res.text() as unknown as T
+}
+
+export const DEFAULT_HTTP_TIMEOUT_MS = 30_000
+
+type HttpOptions = RequestInit & { timeoutMs?: number }
+type AbortSource = 'timeout' | 'external' | null
+
+function requestAbortContext(externalSignal: AbortSignal | null | undefined, timeoutMs: number) {
+  const controller = new AbortController()
+  let source: AbortSource = null
+  const abort = (nextSource: Exclude<AbortSource, null>) => {
+    if (controller.signal.aborted) return
+    source = nextSource
+    controller.abort()
+  }
+  const timeout = window.setTimeout(() => abort('timeout'), timeoutMs)
+  const abortFromExternal = () => abort('external')
+  if (externalSignal?.aborted) abortFromExternal()
+  else externalSignal?.addEventListener('abort', abortFromExternal, { once: true })
+
+  return {
+    signal: controller.signal,
+    source: () => source,
+    cleanup: () => {
+      window.clearTimeout(timeout)
+      externalSignal?.removeEventListener('abort', abortFromExternal)
+    },
+  }
+}
+
+async function http<T>(method: string, path: string, body?: unknown, init?: HttpOptions): Promise<T> {
+  const { timeoutMs = DEFAULT_HTTP_TIMEOUT_MS, signal: externalSignal, ...requestInit } = init ?? {}
+  const abortContext = requestAbortContext(externalSignal, timeoutMs)
+
+  try {
+    const res = await fetch(path, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+      ...requestInit,
+      signal: abortContext.signal,
+    })
+    if (!res.ok) {
+      let msg: any = await res.text()
+      try { msg = JSON.parse(msg) } catch {}
+      throw new HttpError(res.status, msg)
+    }
+    if (res.status === 204) return undefined as unknown as T
+    const ct = res.headers.get('content-type') || ''
+    if (ct.includes('application/json')) return res.json() as Promise<T>
+    return res.text() as unknown as T
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      if (abortContext.source() === 'external') throw error
+      if (abortContext.source() === 'timeout') throw new HttpTimeoutError(path, timeoutMs)
+    }
+    if (error instanceof TypeError) {
+      const networkError = new Error(`Network request failed: ${path}`)
+      networkError.name = 'NetworkError'
+      ;(networkError as Error & { code: string }).code = 'network_error'
+      throw networkError
+    }
+    throw error
+  } finally {
+    abortContext.cleanup()
+  }
 }
 
 export const api = {
@@ -232,12 +291,30 @@ export const api = {
     http<{ ok: boolean; to: string; error?: string }>('POST', '/api/tasks/email-test', { to, subject, body }),
 
   // ── upload ───────────────────────────────────────────
-  upload: async (file: File): Promise<UploadResult> => {
+  upload: async (file: File, init?: Pick<HttpOptions, 'signal' | 'timeoutMs'>): Promise<UploadResult> => {
     const fd = new FormData()
     fd.append('file', file)
-    const res = await fetch('/api/upload', { method: 'POST', body: fd })
-    if (!res.ok) throw new HttpError(res.status, await res.text())
-    return res.json()
+    const { timeoutMs = DEFAULT_HTTP_TIMEOUT_MS, signal: externalSignal } = init ?? {}
+    const abortContext = requestAbortContext(externalSignal, timeoutMs)
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: fd, signal: abortContext.signal })
+      if (!res.ok) throw new HttpError(res.status, await res.text())
+      return res.json()
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        if (abortContext.source() === 'external') throw error
+        if (abortContext.source() === 'timeout') throw new HttpTimeoutError('/api/upload', timeoutMs)
+      }
+      if (error instanceof TypeError) {
+        const networkError = new Error('Network request failed: /api/upload')
+        networkError.name = 'NetworkError'
+        ;(networkError as Error & { code: string }).code = 'network_error'
+        throw networkError
+      }
+      throw error
+    } finally {
+      abortContext.cleanup()
+    }
   },
   fileUrlByPath: (absPath: string) => `/api/files-by-path?path=${encodeURIComponent(absPath)}`,
   revealFile: (path: string) =>
@@ -246,6 +323,7 @@ export const api = {
   // ── logs ─────────────────────────────────────────────
   wechatLog: (tail = 200) => http<{ lines: string[] }>('GET', `/api/logs/wechat?tail=${tail}`),
   agentLog: (tail = 200) => http<{ lines: string[]; file: string | null }>('GET', `/api/logs/agent?tail=${tail}`),
+  backendLog: (tail = 200) => http<{ lines: string[]; file: string }>('GET', `/api/logs/backend?tail=${tail}`),
 
   // ── rewind ───────────────────────────────────────────
   rewindTurns: (req: { sid?: string; n?: number }) =>

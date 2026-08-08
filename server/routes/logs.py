@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections import deque
 
 from fastapi import APIRouter
@@ -10,16 +11,40 @@ from .. import _paths
 
 router = APIRouter()
 
+_REDACTION_RULES = (
+    (re.compile(r"(?i)\b(Bearer)\s+[^\s,;]+"), r"\1 [REDACTED]"),
+    (
+        re.compile(
+            r"(?i)(\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|password|passwd|secret)\b\s*[=:]\s*)"
+            r"([^\s,;&]+)"
+        ),
+        r"\1[REDACTED]",
+    ),
+)
 
-def _tail(path: str, n: int) -> list[str]:
+
+def _redact(line: str) -> str:
+    for pattern, replacement in _REDACTION_RULES:
+        line = pattern.sub(replacement, line)
+    return line
+
+
+def _tail(path: str, n: int, *, redact: bool = False) -> list[str]:
     if not os.path.isfile(path):
         return []
     n = max(1, min(n, 5000))
     out: deque[str] = deque(maxlen=n)
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
-            out.append(line.rstrip("\n"))
+            out.append(_redact(line.rstrip("\n")) if redact else line.rstrip("\n"))
     return list(out)
+
+
+@router.get("/api/logs/backend")
+async def log_backend(tail: int = 200):
+    """Return a bounded, redacted tail of the admin backend log."""
+    path = _paths.ADMIN_DATA / "logs" / "backend.log"
+    return {"lines": _tail(str(path), tail, redact=True), "file": path.name}
 
 
 @router.get("/api/logs/wechat")

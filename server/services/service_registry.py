@@ -23,6 +23,13 @@ class ServicePanelItem:
 
 
 class ServiceRegistry:
+    _HEALTH_BY_STATE = {
+        "running": "healthy",
+        "ready": "healthy",
+        "stopped": "unavailable",
+        "error": "unknown",
+    }
+
     def __init__(self) -> None:
         self._readers: list[Callable[[], ServicePanelItem]] = [
             self._agent, self._feishu, self._wechat, self._conductor,
@@ -38,6 +45,28 @@ class ServiceRegistry:
                 name = reader.__name__.lstrip("_").replace("goalhive", "Goal / Hive")
                 items.append(ServicePanelItem(name, name, "error", "状态读取失败", "/dashboard", error=str(exc)))
         return {"services": [asdict(item) for item in items], "timestamp": int(time.time())}
+
+    def health_summary(self) -> dict[str, Any]:
+        """Return a stable health vocabulary derived from one panel snapshot."""
+        snapshot = self.panel()
+        services = [
+            {
+                "id": item["id"],
+                "status": self._HEALTH_BY_STATE.get(item["state"], "unknown"),
+                "summary": item["summary"],
+            }
+            for item in snapshot["services"]
+        ]
+        statuses = {item["status"] for item in services}
+        if not statuses or statuses == {"unknown"}:
+            overall = "unknown"
+        elif statuses == {"healthy"}:
+            overall = "healthy"
+        elif statuses == {"unavailable"}:
+            overall = "unavailable"
+        else:
+            overall = "degraded"
+        return {"status": overall, "services": services, "timestamp": snapshot["timestamp"]}
 
     @staticmethod
     def _agent() -> ServicePanelItem:

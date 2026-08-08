@@ -57,10 +57,11 @@ def _ensure_single_instance(port: int) -> None:
 
 
 def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-5s %(name)s :: %(message)s",
-    )
+    from server import _paths
+    from server.logging_config import configure_application_logging
+
+    log_path = configure_application_logging(_paths.ADMIN_DATA / "logs")
+    logging.getLogger(__name__).info("backend log file: %s", log_path)
     host, port = _read_config()
     _ensure_single_instance(port)
 

@@ -3,7 +3,7 @@
 #
 #   1) Install Python runtime + dev dependencies
 #   2) Run pytest
-#   3) Run frontend type-check
+#   3) Run frontend tests and type-check
 #   4) Run frontend production build
 
 set -euo pipefail
@@ -36,10 +36,13 @@ say "使用 $PKG · $($PKG -v)"
 cd webui
 say "安装前端依赖..."
 if [ "$PKG" = "npm" ]; then
-  "$PKG" install --legacy-peer-deps --no-audit --no-fund
+  "$PKG" ci --legacy-peer-deps --no-audit --no-fund
 else
-  "$PKG" install
+  "$PKG" install --frozen-lockfile
 fi
+
+say "运行前端测试..."
+"$PKG" test -- --run
 
 say "前端类型检查..."
 "$PKG" run lint

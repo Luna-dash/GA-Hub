@@ -62,6 +62,11 @@ class BackendApiSmokeTests(unittest.TestCase):
             self.assertEqual(status.json()["mode"], "setup")
             self.assertFalse(status.json()["configured"])
 
+            health = client.get("/api/health")
+            self.assertEqual(health.status_code, 200)
+            self.assertEqual(health.json()["status"], "unavailable")
+            self.assertEqual(health.json()["services"][0]["id"], "core_contract")
+
             setup = client.get("/api/setup/status")
             self.assertEqual(setup.status_code, 200)
             data = setup.json()
