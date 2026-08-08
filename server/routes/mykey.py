@@ -14,8 +14,6 @@ GA 已经支持 mykey.py 热更新：``llmcore.reload_mykeys()`` 基于 mtime，
 """
 from __future__ import annotations
 
-import ast
-import json
 import logging
 import os
 import subprocess
@@ -28,6 +26,18 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import _paths
+from ..services.mykey_codec import (
+    AssignmentNotFoundError,
+    InvalidSourceError,
+    classify_config as _classify,
+    delete_assignment,
+    render_assign as _render_assign,
+    render_dict as _render_dict,
+    render_value as _render_value,
+    structurize as _structurize,
+    upsert_assignment,
+    validate_text as _validate_text,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/mykey", tags=["mykey"])
@@ -46,83 +56,6 @@ def _backup_dir() -> Path:
     return p
 
 
-# ── apikey masking ─────────────────────────────────────────────────────
-def _mask(key: Any) -> str:
-    if not isinstance(key, str) or not key: return ""
-    # Anything short enough that a 4+4 reveal would expose most of the secret
-    # gets fully masked with a fixed-width placeholder (also hides the real
-    # length). Only genuinely long keys (real API tokens) keep the
-    # head/tail hint that helps a human tell two keys apart.
-    if len(key) <= 12: return "*" * 8
-    return f"{key[:4]}***{key[-4:]}"
-
-
-# ── parse mykey.py → structured ─────────────────────────────────────────
-_SESSION_KEYS = ("api", "config", "cookie")  # matches load_llm_sessions
-
-def _classify(var: str) -> str:
-    """Mirror agentmain.load_llm_sessions:113-120 detection rules."""
-    if not any(k in var for k in _SESSION_KEYS): return "global"
-    if "native" in var and "claude" in var: return "native_claude"
-    if "native" in var and "oai"    in var: return "native_oai"
-    if "claude" in var: return "claude"
-    if "oai"    in var: return "oai"
-    if "mixin"  in var: return "mixin"
-    return "global"
-
-
-def _structurize(raw: str) -> dict:
-    """Walk top-level Assigns; bucket into sessions / mixin / globals.
-
-    apikey is always masked here. Rendering uses ast.literal_eval so any
-    weird construct (call, comprehension, f-string) is silently skipped —
-    user can still edit those via the raw editor.
-    """
-    sessions: list[dict] = []
-    mixins: list[dict] = []
-    globals_: dict[str, Any] = {}
-    try:
-        tree = ast.parse(raw)
-    except SyntaxError:
-        return {"sessions": [], "mixins": [], "mixin": None, "globals": {}}
-    for node in tree.body:
-        if not isinstance(node, ast.Assign): continue
-        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name): continue
-        var = node.targets[0].id
-        try: value = ast.literal_eval(node.value)
-        except Exception: continue
-        kind = _classify(var)
-        if kind == "global":
-            globals_[var] = value
-            continue
-        if not isinstance(value, dict): continue
-        # no longer mask apikey - show full key in webui
-        entry = {
-            "var": var,
-            "type": kind,
-            "fields": dict(value),
-            "lineno": node.lineno,
-            "end_lineno": getattr(node, "end_lineno", node.lineno),
-        }
-        if kind == "mixin":
-            mixins.append(entry)
-        else:
-            sessions.append(entry)
-    return {"sessions": sessions, "mixins": mixins, "mixin": (mixins[0] if mixins else None), "globals": globals_}
-
-
-# ── write helpers ──────────────────────────────────────────────────────
-def _validate_text(text: str) -> tuple[bool, str | None, int | None, int | None]:
-    """Return (ok, msg, line, col). compile() catches a few things ast.parse misses."""
-    try:
-        ast.parse(text)
-    except SyntaxError as e:
-        return False, str(e.msg), e.lineno, e.offset
-    try:
-        compile(text, "mykey.py", "exec")
-    except SyntaxError as e:
-        return False, str(e.msg), e.lineno, e.offset
-    return True, None, None, None
 
 
 def _backup_current(path: Path) -> str | None:
@@ -180,72 +113,6 @@ def _trigger_reload() -> tuple[list[dict], list[str]]:
     except Exception as e:
         return [], [f"list_llms 抛出: {type(e).__name__}: {e}"]
     return llms, []
-
-
-# ── render dict back to Python source ──────────────────────────────────
-def _render_value(value: Any, level: int = 0, width: int = 88) -> str:
-    """Render a literal as Python source matching the hand-written mykey.py style.
-
-    Style rules (so the file diff stays human-friendly and the edited block
-    looks identical to the surrounding hand-written config):
-      * 4-space indentation per nesting level
-      * double-quoted strings, insertion order preserved
-      * trailing comma on multi-line dicts / sequences
-      * short dicts/lists stay inline when they fit within ``width``
-
-    Unlike ``pprint.pformat`` the continuation indentation is computed from the
-    nesting level (column 0), not from the column where the opening brace lands
-    after a ``var = `` prefix — that mismatch is what produced the ugly hanging
-    indentation when a mixin's ``llm_nos`` was reordered via the webui.
-    """
-    ind = "    " * level
-    ind1 = "    " * (level + 1)
-    if isinstance(value, bool):
-        return "True" if value else "False"
-    if value is None:
-        return "None"
-    if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False)
-    if isinstance(value, (int, float)):
-        return repr(value)
-    if isinstance(value, dict):
-        if not value:
-            return "{}"
-        items = [
-            f"{ind1}{_render_value(k)}: {_render_value(v, level + 1, width)}"
-            for k, v in value.items()
-        ]
-        return "{\n" + ",\n".join(items) + ",\n" + ind + "}"
-    if isinstance(value, (list, tuple)):
-        open_b, close_b = ("[", "]") if isinstance(value, list) else ("(", ")")
-        if not value:
-            return open_b + close_b
-        rendered = [_render_value(v, level + 1, width) for v in value]
-        inline = open_b + ", ".join(rendered) + close_b
-        if len(ind) + len(inline) <= width and "\n" not in inline:
-            return inline
-        return (
-            open_b + "\n"
-            + ",\n".join(f"{ind1}{r}" for r in rendered)
-            + ",\n" + ind + close_b
-        )
-    return repr(value)
-
-
-def _render_dict(d: dict) -> str:
-    """Render a dict literal that round-trips through ast.literal_eval.
-
-    Keeps insertion order so the file diff is human-friendly.
-    """
-    return _render_value(d, 0)
-
-
-def _render_assign(var: str, value: dict, header_comment: str | None = None) -> str:
-    out = ""
-    if header_comment:
-        out += f"# {header_comment}\n"
-    out += f"{var} = {_render_dict(value)}\n"
-    return out
 
 
 # ── pydantic models ────────────────────────────────────────────────────
@@ -316,56 +183,15 @@ async def upsert_session(req: SessionUpsertReq):
     if not var.replace("_", "").isalnum():
         raise HTTPException(400, "变量名只允许字母 / 数字 / 下划线")
 
-    # If user supplied apikey == "" or "***", treat as "keep existing".
-    fields = dict(req.fields)
-    incoming_key = fields.get("apikey")
-    if incoming_key in (None, "", "***"):
-        # try to read the prior literal value
-        try:
-            tree = ast.parse(raw)
-            for node in tree.body:
-                if (isinstance(node, ast.Assign)
-                        and len(node.targets) == 1
-                        and isinstance(node.targets[0], ast.Name)
-                        and node.targets[0].id == var):
-                    prior = ast.literal_eval(node.value)
-                    if isinstance(prior, dict) and prior.get("apikey"):
-                        fields["apikey"] = prior["apikey"]
-                    break
-        except Exception:
-            pass
-        # if still missing → leave it absent; user can fill via raw tab
-        if fields.get("apikey") in (None, "", "***"):
-            fields.pop("apikey", None)
-
-    # locate existing assignment (line span) so we can splice precisely
-    span: tuple[int, int] | None = None
     try:
-        tree = ast.parse(raw)
-        for node in tree.body:
-            if (isinstance(node, ast.Assign)
-                    and len(node.targets) == 1
-                    and isinstance(node.targets[0], ast.Name)
-                    and node.targets[0].id == var):
-                span = (node.lineno, getattr(node, "end_lineno", node.lineno))
-                break
-    except SyntaxError:
-        # raw is broken; we can still append at end after backing up the broken raw
-        pass
-
-    new_block = _render_assign(var, fields, header_comment=None)
-
-    if span is not None:
-        lines = raw.splitlines(keepends=True)
-        # ast lines are 1-based, end_lineno is inclusive
-        before = "".join(lines[: span[0] - 1])
-        after  = "".join(lines[span[1]:])
-        new_text = before + new_block + after
-    else:
-        sep = "" if raw.endswith("\n\n") else ("\n" if raw.endswith("\n") else "\n\n")
-        new_text = raw + sep + "\n# ── 通过 webui 新增 ──\n" + new_block
-
-    if not new_text.endswith("\n"): new_text += "\n"
+        new_text = upsert_assignment(raw, var, req.fields)
+    except InvalidSourceError as e:
+        raise HTTPException(400, {
+            "error": "syntax_error_after_render",
+            "message": e.message,
+            "line": e.line,
+            "col": e.col,
+        })
     ok, msg, line, col = _validate_text(new_text)
     if not ok:
         raise HTTPException(400, {
@@ -394,21 +220,11 @@ async def delete_session(var: str):
         raise HTTPException(404, "mykey.py 不存在")
     raw = p.read_text(encoding="utf-8")
     try:
-        tree = ast.parse(raw)
-    except SyntaxError as e:
-        raise HTTPException(400, f"当前 mykey.py 语法错误，无法定位：{e.msg}")
-    span: tuple[int, int] | None = None
-    for node in tree.body:
-        if (isinstance(node, ast.Assign)
-                and len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name)
-                and node.targets[0].id == var):
-            span = (node.lineno, getattr(node, "end_lineno", node.lineno))
-            break
-    if span is None:
+        new_text = delete_assignment(raw, var)
+    except InvalidSourceError as e:
+        raise HTTPException(400, f"当前 mykey.py 语法错误，无法定位：{e.message}")
+    except AssignmentNotFoundError:
         raise HTTPException(404, f"找不到变量 {var}")
-    lines = raw.splitlines(keepends=True)
-    new_text = "".join(lines[: span[0] - 1]) + "".join(lines[span[1]:])
 
     ok, msg, line, col = _validate_text(new_text)
     if not ok:
