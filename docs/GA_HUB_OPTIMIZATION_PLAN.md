@@ -12,11 +12,11 @@
 
 ## 目标与顺序
 
-### P1-A：发布质量门禁（本轮先做）
+### P1-A：本地质量门禁（本轮先做）
 
-- 新增 PR/push CI：pytest、前端测试、类型检查、生产构建。
-- release 构建依赖质量门禁成功。
+- 项目仅供个人本地使用，不启用 PR/push GitHub CI。
 - `check.bat` / `check.sh` 补跑前端测试，npm 优先使用 lockfile 安装。
+- release workflow 保持独立，仅在手动触发或推送版本标签时运行。
 
 ### P1-B：前端请求韧性
 
@@ -52,7 +52,7 @@
 ## 当前状态
 
 - [x] 审查报告和实施计划落盘
-- [x] CI 与本地门禁
+- [x] 本地质量门禁（按个人使用需求移除 GitHub CI）
 - [x] HTTP timeout/abort
 - [x] 生产 source map 关闭；版本统一为 `pyproject.toml` 的 `0.3.4`，并新增一致性测试
 - [x] 日志轮转、脱敏诊断出口与健康状态
