@@ -1012,8 +1012,8 @@ class AgentService:
             # 4. Mark in GA working-memory log (TUI parity).
             try:
                 self.agent.history.append(f"[USER]: /rewind {n_eff}")
-            except Exception:
-                pass
+            except Exception as exc:  # best-effort diagnostic marker; never fatal
+                log.debug("rewind: could not append /rewind marker to GA history: %s", exc)
 
             result = {
                 "removed_sids": removed_sids,
