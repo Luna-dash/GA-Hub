@@ -83,13 +83,17 @@
 - 验收：新增单测断言连续两次 `submit`（无 switch）期间 `load_config` 调用 ≤1 次；switch_llm 后下一次
   submit 不再触发 load；restore 仍能纠正 `_select_llm_for_task` 的临时切换。全量回归零行为变更。
 
-### B. 启动速度：后台并行启动非首屏必需服务
+### B. 启动速度：后台并行启动非首屏必需服务 —— 已评估，否决（无需实施）
 
 - 现状：`main._startup`（L276-356）串行执行：probe → AgentService.instance → start_run_thread →
   scheduled_chats → token_persistence → feishu_watcher/autostart → AutonomousScheduler → TaskScheduler。
-- 首屏必需仅前 3 项（probe + agent 初始化 + run 线程）。后 4 项（scheduled_chats / token_persistence /
-  feishu_watcher / autonomous + task scheduler）非首屏必需，且各自已被独立 `try/except` 容错。
-- 方案：将后 4 项封装为 `asyncio.create_task` 后台协程并行启动（fire-and-forget），不阻塞 lifespan 完成，
-  首屏仅等前 3 项。各服务原有 try/except 保留，启动失败仍只告警不影响主功能。
-- 验收：保留现有 `_cancel_background_task`（test_service_lifecycle L16）取消语义；
-  新增单测断言 lifespan 不为后 4 项阻塞；全量回归通过。
+- 评估结论：对后 4 项逐个读实现体，**全部为纯内存注册 / 起在守护线程**，无同步阻塞 I/O：
+  - `start_scheduled_chats` → `ScheduledChats.start`：apscheduler `.start()` + install job（内存操作）。
+  - `start_persistence`（tokens.py L165）：仅一次 `_flush_usage()` 写盘（毫秒级）+ 起 daemon 线程。
+  - `AutonomousScheduler.start`（L162）：apscheduler `.start()` + install job + 起 `_idle_loop` daemon 线程。
+  - `TaskScheduler.start`（L124）：apscheduler `.start()` + install job（纯内存）。
+  - `feishu_autostart` 本就 `asyncio.create_task` 延迟（`FEISHU_AUTO_START_DELAY_SECONDS=180`），不在此路径。
+- 因此把后 4 项改为 `create_task` fire-and-forget **收益 ≈ 0**（串行累积毫秒级），却引入 startup race：
+  例如 chat WS 在 `TaskScheduler.install_job` 尚未完成时被访问，可能漏调度 / 状态不一致。
+- 真正启动开销在 `AgentService.instance()`（绑定 GA agent）与 lazy imports，且属首屏必需、不可后台化。
+- 决策：**不实施 B**。保留现状串行启动，首屏语义明确、零竞态。
