@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import { sessionActivity, sessionStatusLabel } from '@/utils/sessionUi'
@@ -156,19 +156,48 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
       .reverse()
   ), [orderedSessions, runtimes, terminalState])
 
-  const selectSession = (sessionId: string) => {
+  const acknowledgeSession = useCallback((sessionId: string) => {
     const completedRunId = runtimes[sessionId]?.completed_run_id
-    if (completedRunId && seenCompletedRuns[sessionId] !== completedRunId) {
-      const nextSeen = { ...seenCompletedRuns, [sessionId]: completedRunId }
-      setSeenCompletedRuns(nextSeen)
-      localStorage.setItem(SEEN_COMPLETED_KEY, JSON.stringify(nextSeen))
+    if (completedRunId) {
+      const storedSeen = readJson<Record<string, string>>(SEEN_COMPLETED_KEY, {})
+      if (storedSeen[sessionId] !== completedRunId) {
+        const nextSeen = { ...storedSeen, [sessionId]: completedRunId }
+        localStorage.setItem(SEEN_COMPLETED_KEY, JSON.stringify(nextSeen))
+        setSeenCompletedRuns(nextSeen)
+      }
     }
-    if (terminalState[sessionId]) {
-      const next = { ...terminalState }
+
+    const storedTerminal = readJson<TerminalMap>(TERMINAL_KEY, {})
+    if (storedTerminal[sessionId]) {
+      const nextStored = { ...storedTerminal }
+      delete nextStored[sessionId]
+      localStorage.setItem(TERMINAL_KEY, JSON.stringify(nextStored))
+    }
+    setTerminalState((current) => {
+      if (!current[sessionId]) return current
+      const next = { ...current }
       delete next[sessionId]
-      setTerminalState(next)
-      localStorage.setItem(TERMINAL_KEY, JSON.stringify(next))
+      return next
+    })
+  }, [runtimes])
+
+  useEffect(() => {
+    if (!currentId) return
+    const acknowledgeCurrent = () => acknowledgeSession(currentId)
+    window.addEventListener('pointerdown', acknowledgeCurrent, true)
+    window.addEventListener('keydown', acknowledgeCurrent, true)
+    window.addEventListener('wheel', acknowledgeCurrent, true)
+    window.addEventListener('focus', acknowledgeCurrent)
+    return () => {
+      window.removeEventListener('pointerdown', acknowledgeCurrent, true)
+      window.removeEventListener('keydown', acknowledgeCurrent, true)
+      window.removeEventListener('wheel', acknowledgeCurrent, true)
+      window.removeEventListener('focus', acknowledgeCurrent)
     }
+  }, [acknowledgeSession, currentId])
+
+  const selectSession = (sessionId: string) => {
+    acknowledgeSession(sessionId)
     onSelect(sessionId)
   }
 

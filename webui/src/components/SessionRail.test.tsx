@@ -124,6 +124,46 @@ describe('SessionRail', () => {
     expect(onRename).toHaveBeenCalledWith(sessions[0].id, '新的标题')
   })
 
+  it('acknowledges only the current completed session when the user interacts with the window', () => {
+    localStorage.setItem('gahub.sessionRailCollapsed', 'true')
+    const completedRuntimes: Record<string, SessionRuntime> = {
+      [sessions[0].id]: {
+        session_id: sessions[0].id,
+        status: 'idle',
+        run_id: null,
+        stream_id: null,
+        completed_run_id: 'completed-current',
+      },
+      [sessions[1].id]: {
+        session_id: sessions[1].id,
+        status: 'idle',
+        run_id: null,
+        stream_id: null,
+        completed_run_id: 'completed-background',
+      },
+    }
+
+    act(() => root.render(
+      <SessionRail
+        sessions={sessions.slice(0, 2)}
+        runtimes={completedRuntimes}
+        currentId={sessions[0].id}
+        onSelect={vi.fn()}
+      />,
+    ))
+
+    expect(host.querySelector(`[aria-label="${sessions[0].title}，已完成"]`)).not.toBeNull()
+    expect(host.querySelector('[aria-label="未命名会话 · bbbbbbbb，已完成"]')).not.toBeNull()
+
+    act(() => window.dispatchEvent(new Event('pointerdown')))
+
+    expect(host.querySelector(`[aria-label="${sessions[0].title}，已完成"]`)).toBeNull()
+    expect(host.querySelector('[aria-label="未命名会话 · bbbbbbbb，已完成"]')).not.toBeNull()
+    expect(JSON.parse(localStorage.getItem('gahub.sessionRailSeenCompletedRuns') || '{}')).toEqual({
+      [sessions[0].id]: 'completed-current',
+    })
+  })
+
   it('keeps the previous recent sessions when a newly active session is promoted', () => {
     localStorage.setItem('gahub.sessionRailRecentActivity', JSON.stringify([sessions[1].id, sessions[2].id]))
 
