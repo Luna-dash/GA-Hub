@@ -155,8 +155,8 @@ export const MarkdownView = memo(function MarkdownView({
     <div
       className={
         resolved === 'plain'
-          ? 'prose-chat prose-chat--plain max-w-none break-words'
-          : 'prose-chat max-w-none break-words'
+          ? 'prose-chat prose-chat--plain min-w-0 max-w-full break-words [overflow-wrap:anywhere]'
+          : 'prose-chat min-w-0 max-w-full break-words [overflow-wrap:anywhere]'
       }
     >
       <ReactMarkdown

@@ -132,7 +132,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
     <div className="flex justify-start group/msg">
       <div className="max-w-full min-w-0 flex flex-col items-start gap-1.5">
         <div className={clsx(
-          "min-w-0 relative rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.13)]",
+          "min-w-0 max-w-full relative rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.13)]",
           compact ? "px-3 py-2 text-xs" : "px-3.5 py-3",
           isSystem
             ? "bg-[#E8D8B8] border border-[#B69761] text-[#3C2C19]"
@@ -155,7 +155,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
             )}
             <CopyChip text={content} />
           </div>
-          <div style={messageFontStyle}>
+          <div className="min-w-0 max-w-full" style={messageFontStyle}>
             {segs.map((seg, i) =>
               seg.type === 'fold' ? (
                 <details key={i} className="turn-fold">

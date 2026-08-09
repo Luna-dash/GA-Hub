@@ -74,4 +74,17 @@ describe('MessageBubble render isolation', () => {
     expect(markdownRender).toHaveBeenCalledTimes(3)
     expect(markdownRender.mock.calls.filter(([props]) => props.children === 'completed history')).toHaveLength(1)
   })
+
+  it('keeps a failed assistant notice shrinkable inside a narrow chat column', () => {
+    const detail = `_运行错误（stream_error）：${'AttributeError'.repeat(30)}_`
+    act(() => root.render(<MessageBubble role="assistant" content={detail} streaming={false} />))
+
+    const card = host.querySelector('div.relative')
+    const content = card?.lastElementChild
+
+    expect(content?.classList.contains('min-w-0')).toBe(true)
+    expect(content?.classList.contains('max-w-full')).toBe(true)
+    expect(card?.classList.contains('min-w-0')).toBe(true)
+    expect(card?.classList.contains('max-w-full')).toBe(true)
+  })
 })
