@@ -58,6 +58,7 @@ def test_list_sort_order_is_unchanged_by_index(monkeypatch):
     rows = [_row("/sessions/new.txt", 9), _row("/sessions/old.txt", 1)]
     monkeypatch.setattr(conversations, "_ga_sessions", lambda: list(rows))
     monkeypatch.setattr(conversations, "_conversation_title", lambda cid, path: "")
+    monkeypatch.setattr(conversations, "_first_user_preview", lambda path: "")
 
     result = conversations._list_conversations_sync(None, 0, 50)
 

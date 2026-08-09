@@ -116,3 +116,21 @@ def test_restore_failure_does_not_start_runtime(tmp_path: Path) -> None:
     with pytest.raises(RuntimeRestoreError, match="cannot restore"):
         factory(row["id"])
     assert calls == ["restore"]
+
+
+def test_bound_project_is_restored_when_runtime_is_created(tmp_path: Path) -> None:
+    store = SessionMetadataStore(tmp_path / "metadata")
+    row = store.create(title="project session")
+    store.update(row["id"], {
+        "project_name": "GA-Hub-a1b2c3d4",
+        "project_path": str(tmp_path / "repo"),
+    })
+    calls: list[object] = []
+
+    def make_service(*, session_id: str, manage_global_preference: bool) -> FakeService:
+        return FakeService(tmp_path / "model_responses_project.txt", calls)
+
+    runtime = SessionRuntimeFactory(store, service_factory=make_service)(row["id"])
+
+    assert runtime.agent._ga_project_mode_name == "GA-Hub-a1b2c3d4"
+    assert runtime.started is True

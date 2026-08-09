@@ -29,6 +29,32 @@ class FakeRuntime:
         self.abort_calls += 1
 
 
+def test_session_configuration_is_atomic_and_rejected_while_running() -> None:
+    from server.services.session_coordinator import AgentBusyError, SessionCoordinator
+
+    runtimes: dict[str, FakeRuntime] = {}
+
+    def factory(session_id: str) -> FakeRuntime:
+        runtime = FakeRuntime(session_id)
+        runtimes[session_id] = runtime
+        return runtime
+
+    coordinator = SessionCoordinator(factory, poll_interval=0.005)
+    seen: list[FakeRuntime | None] = []
+    assert coordinator.configure_if_idle("A", lambda runtime: seen.append(runtime) or "saved") == "saved"
+    assert seen == [None]
+
+    coordinator.submit("alpha", session_id="A")
+    with pytest.raises(AgentBusyError):
+        coordinator.configure_if_idle("A", lambda runtime: None)
+
+    assert runtimes["A"].handle is not None
+    runtimes["A"].handle.finished = True
+    _wait_until(lambda: coordinator.active_run() is None)
+    coordinator.configure_if_idle("A", lambda runtime: seen.append(runtime))
+    assert seen[-1] is runtimes["A"]
+
+
 def _wait_until(predicate, timeout: float = 1.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

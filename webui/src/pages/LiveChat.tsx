@@ -18,7 +18,7 @@ import { PageShell } from '@/components/PageShell'
 import { dialog } from '@/stores/dialogStore'
 import { useChatStore } from '@/stores/chatStore'
 import { useDraftStore } from '@/stores/draftStore'
-import { capacityConflictFromError, sessionChatHref } from '@/utils/sessionUi'
+import { capacityConflictFromError, errorMessageFromError, sessionChatHref } from '@/utils/sessionUi'
 import { createRafScheduler } from '@/utils/rafScheduler'
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 
@@ -58,6 +58,8 @@ export default function LiveChat() {
   const [llms, setLlms] = useState<LLMInfo[]>([])
   const [llmLoading, setLlmLoading] = useState(false)
   const [llmSaving, setLlmSaving] = useState(false)
+  const [projectSaving, setProjectSaving] = useState(false)
+  const projectChangeSeqRef = useRef(0)
   const sessionIdRef = useRef<string | null>(null)
   const sessionSwitchSeqRef = useRef(0)
   const creatingSessionRef = useRef(false)
@@ -79,6 +81,11 @@ export default function LiveChat() {
     queryFn: api.sessions,
   })
   const sessions = useMemo(() => sessionsQuery.data?.items ?? [], [sessionsQuery.data])
+  const projectsQuery = useQuery({
+    queryKey: ['projects'],
+    queryFn: api.projects,
+  })
+  const projects = projectsQuery.data?.items ?? []
   const runtimesQuery = useQuery({
     queryKey: ['session.runtimes'],
     queryFn: api.sessionRuntimes,
@@ -195,6 +202,9 @@ export default function LiveChat() {
     return state
   }, [queryClient])
   const sessionRunning = runtime?.status === 'starting' || runtime?.status === 'running'
+  const activeProjectPath = session?.project_path
+    ?? (session?.project_name ? projects.find((project) => project.name === session.project_name)?.path : undefined)
+    ?? ''
   const selectedLlmIndex = session?.llm_index
     ?? llms.find((item) => item.preferred)?.index
     ?? llms.find((item) => item.current)?.index
@@ -558,6 +568,83 @@ export default function LiveChat() {
     }
   }, [pushSystem, queryClient])
 
+  const changeProject = useCallback(async (value: string) => {
+    const sid = sessionIdRef.current
+    if (!sid || projectSaving) return
+    const changeSeq = ++projectChangeSeqRef.current
+    setProjectSaving(true)
+    try {
+      let updated: HubSession
+      if (value === '__new__') {
+        const proceed = await dialog.confirm(
+          '选择项目根目录',
+          '请选择需要 GA 协助处理的项目文件夹。GA-Hub 会为它建立项目索引，并在目录中维护 project_memory.md；不会移动或复制其他文件。',
+          { confirmText: '选择目录' },
+        )
+        if (!proceed) return
+        const nativePicker = window.pywebview?.api?.select_directory
+        if (typeof nativePicker !== 'function') {
+          await dialog.alert('无法选择目录', '目录选择需要使用 GA-Hub 桌面窗口，请在桌面版中重试。')
+          return
+        }
+        const selection = await nativePicker()
+        if (selection?.cancelled) return
+        if (!selection?.ok || !selection.path) {
+          throw new Error(selection?.error || '未能打开目录选择器')
+        }
+        const created = await api.createProject(selection.path)
+        await queryClient.invalidateQueries({ queryKey: ['projects'] })
+        updated = await api.bindProject(sid, created.name, created.path)
+      } else if (!value) {
+        updated = await api.unbindProject(sid)
+      } else {
+        const selected = projects.find((item) => item.path === value)
+        if (!selected) throw new Error('所选项目已不存在，请刷新后重试')
+        updated = await api.bindProject(sid, selected.name, selected.path)
+      }
+      queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
+        total: cached?.total ?? 0,
+        items: (cached?.items ?? []).map((item) => item.id === sid ? updated : item),
+      }))
+      if (sessionIdRef.current === sid) setSession(updated)
+    } catch (error: unknown) {
+      pushSystem(`_切换项目失败：${errorMessageFromError(error)}_`)
+    } finally {
+      if (projectChangeSeqRef.current === changeSeq) setProjectSaving(false)
+    }
+  }, [projectSaving, projects, pushSystem, queryClient])
+
+  const deleteCurrentProject = useCallback(async () => {
+    const sid = sessionIdRef.current
+    const selected = projects.find((item) => item.path === session?.project_path)
+    if (!sid || !selected || projectSaving) return
+    const displayName = projectDisplayName(selected.path, selected.name)
+    const confirmed = await dialog.confirm(
+      `删除“${displayName}”的项目索引？`,
+      '只会从 GA-Hub 项目列表移除索引，不会删除项目目录、代码或其他文件。当前会话将先取消绑定。',
+      { confirmText: '删除索引', tone: 'danger' },
+    )
+    if (!confirmed) return
+
+    const changeSeq = ++projectChangeSeqRef.current
+    setProjectSaving(true)
+    try {
+      const updated = await api.unbindProject(sid)
+      queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
+        total: cached?.total ?? 0,
+        items: (cached?.items ?? []).map((item) => item.id === sid ? updated : item),
+      }))
+      if (sessionIdRef.current === sid) setSession(updated)
+
+      await api.deleteProject(selected.name)
+      await queryClient.invalidateQueries({ queryKey: ['projects'] })
+    } catch (error: unknown) {
+      pushSystem(`_删除项目索引失败：${errorMessageFromError(error)}_`)
+    } finally {
+      if (projectChangeSeqRef.current === changeSeq) setProjectSaving(false)
+    }
+  }, [projectSaving, projects, pushSystem, queryClient, session?.project_path])
+
   const deleteSession = useCallback(async (id: string) => {
     try {
       await api.deleteSession(id)
@@ -624,7 +711,6 @@ export default function LiveChat() {
         })
       return
     }
-
     setText('')
     const streamId = findLatestRewindStreamId(msgs)
     if (!streamId) {
@@ -641,6 +727,54 @@ export default function LiveChat() {
         <span className={`ga-badge ${conn === 'open' ? 'ga-badge-connected' : conn === 'connecting' ? 'ga-badge-connecting' : 'ga-badge-offline'}`}>
           {conn === 'open' ? '已连接' : conn === 'connecting' ? '连接中…' : '断开'}
         </span>
+      }
+      middleArea={
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <label
+            htmlFor="current-project-select"
+            className="shrink-0 text-xs font-medium text-slate-500"
+          >
+            绑定项目：
+          </label>
+          <div className="flex min-w-0 shrink-0 items-center">
+            <select
+              id="current-project-select"
+              value={session?.project_path || ''}
+              onChange={(e) => { void changeProject(e.target.value) }}
+              disabled={!session || projectSaving || projectsQuery.isLoading}
+              className="max-w-[220px] min-w-0 truncate rounded-l border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:z-10 focus:border-accent focus:outline-none disabled:opacity-50"
+              title={activeProjectPath || '选择当前会话的项目'}
+              aria-label="当前项目"
+            >
+              <option value="">未绑定项目</option>
+              {projects.map((project) => (
+                <option key={`${project.name}:${project.path}`} value={project.path} disabled={project.dangling}>
+                  {projectDisplayName(project.path, project.name)}{project.dangling ? '（路径不可用）' : ''}
+                </option>
+              ))}
+              <option value="__new__">＋ 新建项目…</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => { void deleteCurrentProject() }}
+              disabled={!session?.project_path || projectSaving || !projects.some((item) => item.path === session.project_path)}
+              className="-ml-px inline-flex h-[34px] w-9 shrink-0 items-center justify-center rounded-r border border-line bg-bg-card text-slate-500 hover:z-10 hover:border-red-300 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-35"
+              title="删除当前项目索引（不会删除目录文件）"
+              aria-label="删除当前项目索引"
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v6m4-6v6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
+          <span
+            className="min-w-0 flex-1 truncate text-xs text-slate-500"
+            title={activeProjectPath || '当前会话未绑定项目'}
+            aria-label="当前项目路径"
+          >
+            {activeProjectPath || '未绑定项目'}
+          </span>
+        </div>
       }
       actions={
         <select
@@ -895,6 +1029,12 @@ function formatCompactScheduleCountdown(scheduledFor: number, now: number): stri
   if (hours < 24) return `${Number(hours.toFixed(1))}时`
   const days = hours / 24
   return `${Number(days.toFixed(1))}天`
+}
+
+function projectDisplayName(path: string, fallback: string): string {
+  const normalized = path.replace(/[\\/]+$/, '')
+  const leaf = normalized.split(/[\\/]/).pop()?.trim()
+  return leaf || fallback
 }
 
 function sourceLabel(source: string): string {

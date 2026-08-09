@@ -134,3 +134,21 @@ def test_atomic_write_failure_preserves_previous_file_and_cleans_temp(tmp_path, 
     assert store.path.read_bytes() == original
     assert store.get(row["id"])["title"] == "Before"
     assert list(store.base_dir.glob("*.tmp")) == []
+
+
+def test_session_metadata_persists_optional_project_binding(tmp_path):
+    store, _legacy, _adapter = _stores(tmp_path)
+    row = store.create()
+
+    bound = store.update(row["id"], {
+        "project_name": "GA-Hub-a1b2c3d4",
+        "project_path": str(tmp_path / "repo"),
+    })
+
+    assert bound["project_name"] == "GA-Hub-a1b2c3d4"
+    assert bound["project_path"] == str(tmp_path / "repo")
+    assert store.get(row["id"])["project_name"] == "GA-Hub-a1b2c3d4"
+
+    unbound = store.update(row["id"], {"project_name": None, "project_path": None})
+    assert unbound["project_name"] is None
+    assert unbound["project_path"] is None

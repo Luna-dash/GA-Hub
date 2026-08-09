@@ -56,4 +56,37 @@ describe('api request failure handling', () => {
       code: 'network_error',
     })
   })
+
+  it('preserves the paginated project-list contract', async () => {
+    const payload = {
+      total: 1,
+      items: [{ name: 'alpha', path: 'D:/projects/alpha', dangling: false }],
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(api.projects()).resolves.toEqual(payload)
+  })
+
+  it('sends project creation and index deletion with the backend-only name encoded', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        name: 'alpha-1234', path: 'D:/projects/alpha', dangling: false,
+      }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.createProject('D:/projects/alpha')
+    await api.deleteProject('alpha name-1234')
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/projects', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ path: 'D:/projects/alpha' }),
+    }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/projects/alpha%20name-1234', expect.objectContaining({
+      method: 'DELETE',
+    }))
+  })
 })

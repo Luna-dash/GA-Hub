@@ -10,6 +10,8 @@ import uuid
 from fastapi import APIRouter, HTTPException, Response, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
 
+from frontends import workspace_cmd
+
 from ..services.archive_messages import HistoryUnavailableError, read_archive_messages
 from ..services.event_bus import Event, bus
 from ..services.session_coordinator import (
@@ -18,6 +20,7 @@ from ..services.session_coordinator import (
     SessionCoordinator,
 )
 from ..services.session_metadata import SessionMetadataStore, SessionNotFoundError
+from ..services.project_runtime import activate_project, deactivate_project
 from ..services.session_runtime_factory import RuntimeRestoreError, SessionRuntimeFactory
 from ..services.scheduled_chat_service import ScheduledChat, ScheduledChatService
 
@@ -132,6 +135,15 @@ class SessionModelUpdate(BaseModel):
     llm_index: int = Field(ge=0)
 
 
+class ProjectCreate(BaseModel):
+    path: str = Field(min_length=1, max_length=1000)
+
+
+class SessionProjectUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    path: str = Field(min_length=1, max_length=1000)
+
+
 class RunSubmit(BaseModel):
     text: str = Field(min_length=1)
     images: list[str] = Field(default_factory=list)
@@ -177,6 +189,101 @@ def _api_error(status_code: int, code: str, detail: str, **context) -> HTTPExcep
 
 def _not_found() -> HTTPException:
     return HTTPException(404, "session not found")
+
+
+def _busy_error(exc: AgentBusyError) -> HTTPException:
+    return _api_error(
+        409,
+        "agent_busy",
+        "会话正在运行，请等待当前任务结束后重试。",
+        active_session_id=exc.active_session_id,
+        active_run_id=exc.active_run_id,
+        capacity=exc.capacity,
+        active_count=exc.active_count,
+    )
+
+
+@router.get("/api/projects")
+async def list_projects():
+    items = workspace_cmd.registry_list()
+    return {"total": len(items), "items": items}
+
+
+@router.post("/api/projects", status_code=status.HTTP_201_CREATED)
+async def create_project(req: ProjectCreate):
+    result = workspace_cmd.prepare(req.path.strip())
+    if not result.get("ok"):
+        raise _api_error(400, "project_prepare_failed", result.get("error") or "项目创建失败。")
+    return {
+        "name": result["name"],
+        "path": result.get("path") or result.get("target") or req.path.strip(),
+        "memory_path": result.get("memory_path") or "",
+        "dangling": False,
+    }
+
+
+@router.delete("/api/projects/{project_name}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project(project_name: str):
+    projects = workspace_cmd.registry_list()
+    if not any(item.get("name") == project_name for item in projects):
+        raise _api_error(404, "project_not_found", "项目索引不存在")
+    bound_sessions = [
+        row for row in _store.list()
+        if row.get("project_name") == project_name
+    ]
+    if bound_sessions:
+        raise _api_error(
+            409,
+            "project_still_bound",
+            "仍有其他会话绑定此项目，请先在这些会话中取消绑定。",
+            session_ids=[row["id"] for row in bound_sessions],
+        )
+    workspace_cmd.registry_remove(project_name)
+
+
+@router.put("/api/sessions/{session_id}/project")
+async def bind_session_project(session_id: str, req: SessionProjectUpdate):
+    _session(session_id)
+    project = next(
+        (
+            item for item in workspace_cmd.registry_list()
+            if item.get("name") == req.name and item.get("path") == req.path
+        ),
+        None,
+    )
+    if project is None or project.get("dangling"):
+        raise HTTPException(404, "project not found")
+
+    def configure(runtime):
+        if runtime is not None:
+            activate_project(runtime.agent, req.name)
+        return _store.update(session_id, {
+            "project_name": req.name,
+            "project_path": req.path,
+        })
+
+    try:
+        return _get_coordinator().configure_if_idle(session_id, configure)
+    except AgentBusyError as exc:
+        raise _busy_error(exc)
+
+
+@router.delete("/api/sessions/{session_id}/project")
+async def unbind_session_project(session_id: str):
+    _session(session_id)
+
+    def configure(runtime):
+        if runtime is not None:
+            deactivate_project(runtime.agent)
+        return _store.update(session_id, {
+            "project_name": None,
+            "project_path": None,
+        })
+
+    try:
+        return _get_coordinator().configure_if_idle(session_id, configure)
+    except AgentBusyError as exc:
+        raise _busy_error(exc)
 
 
 @router.get("/api/sessions")

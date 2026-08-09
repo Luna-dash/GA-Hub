@@ -73,8 +73,17 @@ export interface HubSession {
   title: string
   llm_index: number | null
   archive_path: string | null
+  project_name?: string | null
+  project_path?: string | null
   created_at: string
   updated_at: string
+}
+
+export interface ProjectItem {
+  name: string
+  path: string
+  source: 'workspace' | 'session'
+  dangling: boolean
 }
 
 export interface SessionRuntime {
@@ -477,10 +486,15 @@ export interface TokenHistoryPoint extends TokenTotals { timestamp: number }
 export interface TokenHistoryResponse { hours: number; history: TokenHistoryPoint[] }
 
 export type ServicePanelState = 'running' | 'ready' | 'stopped' | 'error'
+export type ServiceActivity = 'active' | 'standby' | 'inactive'
+export type ServiceHealth = 'healthy' | 'attention' | 'unknown'
 export interface ServicePanelItem {
   id: string
   name: string
   state: ServicePanelState
+  activity: ServiceActivity
+  health: ServiceHealth
+  expected_running: boolean
   summary: string
   href: string
   metrics: Record<string, string | number | boolean | null>

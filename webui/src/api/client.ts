@@ -28,6 +28,7 @@ import type {
   MyKeySession,
   MyKeySyncResult,
   MyKeyWriteResult,
+  ProjectItem,
   ReportItem,
   Schedule,
   ScheduleType,
@@ -358,6 +359,15 @@ export const api = {
     http<HubSession>('PATCH', `/api/sessions/${encodeURIComponent(id)}`, changes),
   deleteSession: (id: string) =>
     http<void>('DELETE', `/api/sessions/${encodeURIComponent(id)}`),
+  projects: () => http<{ total: number; items: ProjectItem[] }>('GET', '/api/projects'),
+  createProject: (path: string) =>
+    http<ProjectItem>('POST', '/api/projects', { path }),
+  deleteProject: (name: string) =>
+    http<void>('DELETE', `/api/projects/${encodeURIComponent(name)}`),
+  bindProject: (id: string, name: string, path: string) =>
+    http<HubSession>('PUT', `/api/sessions/${encodeURIComponent(id)}/project`, { name, path }),
+  unbindProject: (id: string) =>
+    http<HubSession>('DELETE', `/api/sessions/${encodeURIComponent(id)}/project`),
   sessionRun: (id: string, text: string, images: string[] = []) =>
     http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/runs`, { text, images }),
   sessionRuntime: (id: string) =>

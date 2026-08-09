@@ -780,7 +780,28 @@ def main() -> int:
     # ── js_api: expose native file-save for pywebview (WebView2/WKWebView
     #    swallow blob/data downloads triggered by <a download>; route the
     #    export endpoint's payload through a SAVE_DIALOG instead). ──
-    class _ExportApi:
+    class _NativeApi:
+        def select_directory(self) -> dict:
+            """Open the native folder picker and return an absolute path."""
+            try:
+                import webview as _wv  # type: ignore
+                _w = _wv.windows[0] if _wv.windows else None
+                if _w is None:
+                    return {"ok": False, "error": "no window"}
+                selected = _w.create_file_dialog(
+                    _wv.FOLDER_DIALOG,
+                    allow_multiple=False,
+                    directory=str(Path.home()),
+                )
+                if not selected:
+                    return {"ok": False, "cancelled": True}
+                path = selected if isinstance(selected, str) else selected[0]
+                if not path:
+                    return {"ok": False, "cancelled": True}
+                return {"ok": True, "path": str(Path(path).resolve())}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
         def save_export(self, filename: str, content: str) -> dict:
             try:
                 import webview as _wv  # type: ignore
@@ -842,7 +863,7 @@ def main() -> int:
         min_size=(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT),
         resizable=True,
         text_select=True,
-        js_api=_ExportApi(),
+        js_api=_NativeApi(),
     )
     _arm_macos_activation(win)
     _arm_windows_window_icon(win)

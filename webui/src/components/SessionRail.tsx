@@ -309,7 +309,18 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                       <span className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
                       <span className="min-w-0 flex-1 truncate text-sm font-medium" title={sessionTitle(session)}>{sessionTitle(session)}</span>
                     </span>
-                    <span className="block pt-1 pl-4 text-[10px] opacity-70">{sessionStatusLabel(runtime)}</span>
+                    <span className="flex items-center gap-1.5 pt-1 pl-4 text-[10px] opacity-70">
+                      <span>{sessionStatusLabel(runtime)}</span>
+                      {session.project_name && (
+                        <span
+                          className="max-w-24 truncate rounded bg-accent/10 px-1.5 py-0.5 text-accent"
+                          title={session.project_path || session.project_name}
+                          aria-label={`项目：${session.project_name}`}
+                        >
+                          {session.project_name}
+                        </span>
+                      )}
+                    </span>
                   </button>
                 )}
                 {!editing && (

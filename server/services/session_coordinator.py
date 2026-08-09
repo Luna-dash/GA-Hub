@@ -109,6 +109,18 @@ class SessionCoordinator:
         runs = self.active_runs()
         return runs[0] if runs else None
 
+    def configure_if_idle(
+        self,
+        session_id: str,
+        configure: Callable[[SessionRuntime | None], Any],
+    ) -> Any:
+        """Atomically configure a session without creating an idle runtime."""
+        with self._lock:
+            active = self._active_by_session.get(session_id)
+            if active is not None:
+                raise self._busy(active)
+            return configure(self._runtimes.get(session_id))
+
     def session_snapshot(self, session_id: str) -> tuple[RuntimeState, dict[str, Any] | None]:
         """Return runtime identity and its matching active content together."""
         with self._lock:

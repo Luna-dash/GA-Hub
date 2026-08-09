@@ -3,17 +3,6 @@
  * Prefer pywebview js_api (default OS browser); fall back to window.open / <a>.
  */
 
-declare global {
-  interface Window {
-    pywebview?: {
-      api?: {
-        open_url?: (url: string) => Promise<unknown> | unknown
-        save_export?: (filename: string, content: string) => Promise<unknown>
-      }
-    }
-  }
-}
-
 export function isHttpUrl(href: string | null | undefined): boolean {
   if (!href) return false
   try {

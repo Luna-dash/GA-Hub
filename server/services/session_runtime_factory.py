@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from .project_runtime import activate_project
 from .session_metadata import SessionMetadataStore
 
 
@@ -71,5 +72,8 @@ class SessionRuntimeFactory:
             except Exception:
                 self._release_current(runtime.agent)
                 raise
+        project_name = row.get("project_name")
+        if project_name:
+            activate_project(runtime.agent, project_name)
         runtime.start_run_thread()
         return runtime

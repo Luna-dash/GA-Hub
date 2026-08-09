@@ -1,88 +1,128 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '@/api/client'
+import type { ServicePanelItem } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
+import {
+  activeServices,
+  attentionServices,
+  dashboardVerdict,
+  serviceActivityLabel,
+  usefulMetrics,
+} from '@/utils/dashboardUi'
 
 const exactNf = new Intl.NumberFormat('zh-CN')
 const compactNf = new Intl.NumberFormat('en', { notation: 'compact', compactDisplay: 'short', maximumSignificantDigits: 3 })
-const exact = (value: number) => exactNf.format(value || 0)
-const fmt = (value: number) => Math.abs(value || 0) < 1_000 ? exact(value) : compactNf.format(value || 0).toLowerCase()
-const stateMeta = {
-  running: { label: '运行中', dot: 'bg-emerald-400', text: 'text-emerald-300', border: 'border-emerald-500/25' },
-  ready: { label: '就绪', dot: 'bg-sky-400', text: 'text-sky-300', border: 'border-sky-500/25' },
-  stopped: { label: '未运行', dot: 'bg-slate-500', text: 'text-slate-400', border: 'border-line' },
-  error: { label: '异常', dot: 'bg-rose-400', text: 'text-rose-300', border: 'border-rose-500/30' },
-} as const
+const clock = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+
+function exact(value: number) { return exactNf.format(value) }
+function fmt(value: number) { return value >= 1000 ? compactNf.format(value) : exact(value) }
+
+const verdictTone = {
+  good: 'border-emerald-500/25 bg-emerald-500/5 text-emerald-300',
+  busy: 'border-sky-500/25 bg-sky-500/5 text-sky-300',
+  attention: 'border-amber-500/30 bg-amber-500/5 text-amber-300',
+  unknown: 'border-slate-500/30 bg-slate-500/5 text-slate-300',
+}
 
 export default function Dashboard() {
   const panel = useQuery({ queryKey: ['service-panel'], queryFn: api.servicePanel, refetchInterval: 8000 })
   const tokens = useQuery({ queryKey: ['token-stats'], queryFn: api.tokenStats, refetchInterval: 15000 })
   const services = panel.data?.services ?? []
-  const healthy = services.filter((item) => item.state === 'running' || item.state === 'ready').length
+  const attention = attentionServices(services)
+  const active = activeServices(services)
+  const verdict = dashboardVerdict(services)
   const totals = tokens.data?.totals
+  const updatedAt = Math.max(panel.dataUpdatedAt, tokens.dataUpdatedAt)
+  const refreshing = panel.isFetching || tokens.isFetching
 
   return (
-    <PageShell title="状态面板">
+    <PageShell
+      title="状态面板"
+      actions={updatedAt ? (
+        <div className="flex items-center gap-2 text-[11px] text-slate-500 tabular-nums">
+          <span className={`h-1.5 w-1.5 rounded-full ${refreshing ? 'bg-sky-400 animate-pulse' : 'bg-emerald-400'}`} />
+          {refreshing ? '正在更新' : `${clock.format(updatedAt)} 更新`}
+        </div>
+      ) : undefined}
+    >
       <div className="p-5 space-y-6">
-        <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Summary label="服务正常" value={`${healthy} / ${services.length || '—'}`} tone="text-emerald-300" />
-          <Summary label="运行中" value={String(services.filter((item) => item.state === 'running').length)} />
-          <Summary label="Token 总量" value={totals ? fmt(totals.total) : '—'} title={totals ? exact(totals.total) : undefined} tone="text-accent" />
-          <Summary label="活跃线程" value={tokens.data?.available ? String(tokens.data.threads.length) : '—'} />
+        {panel.isError ? <ErrorBox text="服务状态读取失败，暂时无法判断系统是否可用。" /> : (
+          <section className={`rounded-xl border px-5 py-4 ${verdictTone[verdict.tone]}`}>
+            <div className="flex items-start gap-3">
+              <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${verdict.tone === 'attention' ? 'bg-amber-400 animate-pulse' : verdict.tone === 'busy' ? 'bg-sky-400 animate-pulse' : verdict.tone === 'good' ? 'bg-emerald-400' : 'bg-slate-400'}`} />
+              <div><h2 className="font-medium text-base">{panel.isLoading ? '正在判断系统状态…' : verdict.title}</h2><p className="mt-1 text-xs opacity-75">{panel.isLoading ? '等待各模块返回运行状态' : verdict.detail}</p></div>
+            </div>
+          </section>
+        )}
+
+        {attention.length > 0 && (
+          <section>
+            <SectionTitle title="需要处理" hint="只在预期运行的模块停止，或状态无法读取时出现" />
+            <div className="space-y-2">{attention.map((service) => <ActionRow key={service.id} service={service} />)}</div>
+          </section>
+        )}
+
+        <section>
+          <SectionTitle title="当前活动" hint="此刻正在执行、监听或调度的模块" />
+          {active.length > 0 ? (
+            <div className="flex flex-wrap gap-2">{active.map((service) => (
+              <Link key={service.id} to={service.href} className="rounded-lg border border-sky-500/20 bg-sky-500/5 px-3 py-2 hover:bg-sky-500/10 transition-colors">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse mr-2 align-middle" /><span className="text-sm text-slate-200">{service.name}</span><span className="ml-2 text-xs text-slate-500">{service.summary}</span>
+              </Link>
+            ))}</div>
+          ) : <p className="rounded-lg border border-border/70 bg-bg-panel/40 px-3 py-3 text-xs text-slate-500">当前没有后台活动；这不影响待命模块接收任务。</p>}
         </section>
 
         <section>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-slate-200">服务状态</h2>
-            <span className="text-xs text-slate-500">每 8 秒刷新</span>
+          <SectionTitle title="全部模块" hint="完整入口；未运行表示当前无活动，不等于故障" />
+          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-2">
+            {services.map((service) => <ServiceRow key={service.id} service={service} />)}
           </div>
-          {panel.isError && <ErrorBox text="服务状态读取失败" />}
-          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {services.map((service) => <ServiceCard key={service.id} service={service} />)}
-          </div>
+          {!panel.isLoading && services.length === 0 && !panel.isError && <p className="text-xs text-slate-500">尚未返回模块信息。</p>}
         </section>
 
-        <section className="rounded-xl border border-line bg-bg-card overflow-hidden">
-          <div className="px-5 py-4 border-b border-line flex items-center justify-between">
-            <div><h2 className="text-sm font-semibold text-slate-200">Token 统计</h2><p className="text-xs text-slate-500 mt-1">当前进程累计用量</p></div>
-            <Link to="/tokens" className="text-xs text-accent hover:underline">查看完整统计 →</Link>
-          </div>
-          {tokens.isError ? <div className="p-5"><ErrorBox text="Token 统计读取失败" /></div> : !tokens.data?.available ? (
-            <div className="p-5 text-sm text-slate-500">当前 Agent 尚未提供 Token 统计。</div>
-          ) : (
-            <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-line">
-              <TokenMetric label="输入" value={totals?.input ?? 0} />
-              <TokenMetric label="输出" value={totals?.output ?? 0} />
-              <TokenMetric label="缓存写入" value={totals?.cache_create ?? 0} />
-              <TokenMetric label="缓存读取" value={totals?.cache_read ?? 0} />
+        {tokens.data?.available && totals && (
+          <section>
+            <SectionTitle title="Token 用量" hint="统计范围内的累计值，不代表当前并发请求" link="/tokens" />
+            <div className="rounded-xl border border-border bg-bg-panel px-4 py-3 flex flex-wrap gap-x-7 gap-y-3">
+              <TokenFact label="请求累计" value={totals.requests} />
+              <TokenFact label="输入" value={totals.input} />
+              <TokenFact label="输出" value={totals.output} />
+              <TokenFact label="缓存读取" value={totals.cache_read} />
+              {totals.cache_hit_rate > 0 && <TokenFact label="缓存命中" value={totals.cache_hit_rate} suffix="%" />}
             </div>
-          )}
-        </section>
+          </section>
+        )}
+        {tokens.isError && <ErrorBox text="Token 统计读取失败，不影响服务状态判断。" />}
       </div>
     </PageShell>
   )
 }
 
-function ServiceCard({ service }: { service: import('@/api/types').ServicePanelItem }) {
-  const meta = stateMeta[service.state]
+function SectionTitle({ title, hint, link }: { title: string; hint: string; link?: string }) {
+  return <div className="flex items-end justify-between gap-3 mb-3"><div><h2 className="text-sm font-medium text-slate-200">{title}</h2><p className="text-[11px] text-slate-500 mt-0.5">{hint}</p></div>{link && <Link to={link} className="text-xs text-accent hover:text-accent-hover shrink-0">查看详情 →</Link>}</div>
+}
+
+function ActionRow({ service }: { service: ServicePanelItem }) {
+  return <Link to={service.href} className="flex items-center justify-between gap-4 rounded-lg border border-amber-500/25 bg-amber-500/5 px-4 py-3 hover:bg-amber-500/10 transition-colors"><div className="min-w-0"><div className="text-sm text-amber-200">{service.name}</div><p className="text-xs text-amber-300/70 truncate">{service.error || service.summary}</p></div><span className="text-xs text-amber-300 shrink-0">前往查看 →</span></Link>
+}
+
+function ServiceRow({ service }: { service: ServicePanelItem }) {
+  const metrics = usefulMetrics(service)
+  const needsAttention = service.health !== 'healthy'
+  const dot = needsAttention ? 'bg-amber-400' : service.activity === 'active' ? 'bg-sky-400' : service.activity === 'standby' ? 'bg-emerald-400' : 'bg-slate-600'
   return (
-    <Link to={service.href} className={`rounded-xl border ${meta.border} bg-bg-card p-4 hover:bg-white/[0.035] transition block`}>
-      <div className="flex items-start justify-between gap-3">
-        <div><div className="text-sm font-semibold text-slate-200">{service.name}</div><div className="text-xs text-slate-500 mt-1">{service.summary}</div></div>
-        <span className={`flex items-center gap-1.5 text-xs shrink-0 ${meta.text}`}><span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />{meta.label}</span>
-      </div>
-      <div className="mt-4 pt-3 border-t border-line/60 flex flex-wrap gap-x-4 gap-y-1">
-        {Object.entries(service.metrics).map(([label, value]) => <span key={label} className="text-xs text-slate-500">{label} <b className="font-normal text-slate-300">{String(value)}</b></span>)}
-        {service.error && <span className="text-xs text-rose-400 truncate" title={service.error}>{service.error}</span>}
-      </div>
+    <Link to={service.href} className={`rounded-lg border bg-bg-panel px-3 py-3 hover:bg-bg-hover transition-colors min-w-0 ${needsAttention ? 'border-amber-500/25' : 'border-border'}`}>
+      <div className="flex items-center justify-between gap-3"><span className="flex items-center min-w-0"><span className={`h-2 w-2 rounded-full shrink-0 mr-2 ${dot}`} /><b className="text-sm font-medium text-slate-200 truncate">{service.name}</b></span><span className={`text-[11px] shrink-0 ${needsAttention ? 'text-amber-300' : 'text-slate-500'}`}>{serviceActivityLabel(service)}</span></div>
+      <p className="mt-1 text-xs text-slate-500 truncate" title={service.error || service.summary}>{service.error || service.summary}</p>
+      {metrics.length > 0 && <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">{metrics.map(([key, value]) => <span key={key} className="text-[10px] text-slate-600">{key} <b className="font-mono font-normal text-slate-400">{value === true ? '是' : String(value)}</b></span>)}</div>}
     </Link>
   )
 }
 
-function Summary({ label, value, title, tone = 'text-slate-100' }: { label: string; value: string; title?: string; tone?: string }) {
-  return <div className="rounded-xl border border-line bg-bg-card px-4 py-3"><div className="text-xs text-slate-500">{label}</div><div title={title} className={`text-xl font-semibold tabular-nums mt-1 ${tone}`}>{value}</div></div>
+function TokenFact({ label, value, suffix = '' }: { label: string; value: number; suffix?: string }) {
+  return <div className="min-w-20"><div className="text-[11px] text-slate-500">{label}</div><div title={`${exact(value)}${suffix}`} className="font-mono text-sm text-slate-200 mt-0.5">{fmt(value)}{suffix}</div></div>
 }
-function TokenMetric({ label, value }: { label: string; value: number }) {
-  return <div className="px-5 py-4"><div className="text-xs text-slate-500">{label}</div><div title={exact(value)} className="font-mono text-base text-slate-200 mt-1">{fmt(value)}</div></div>
-}
+
 function ErrorBox({ text }: { text: string }) { return <div className="rounded-lg border border-rose-500/25 bg-rose-500/5 px-3 py-2 text-xs text-rose-300">{text}</div> }

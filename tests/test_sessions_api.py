@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -222,6 +223,182 @@ def test_scheduled_dispatch_matches_coordinator_submit_contract(
         "images": ["image.png"],
         "llm_index": 7,
     }]
+
+
+def test_project_registry_create_and_session_binding_api(tmp_path: Path, monkeypatch) -> None:
+    from frontends import workspace_cmd
+    from server.routes import sessions
+    from server.services.session_coordinator import SessionCoordinator
+    from server.services.session_metadata import SessionMetadataStore
+
+    projects = [{
+        "name": "alpha-1234",
+        "path": "D:/work/alpha",
+        "last_used": 42,
+        "mem_lines": 3,
+        "dangling": False,
+    }]
+    monkeypatch.setattr(workspace_cmd, "registry_list", lambda: projects)
+    monkeypatch.setattr(workspace_cmd, "prepare", lambda path: {
+        "ok": True,
+        "name": "beta-5678",
+        "target": path,
+        "link": "D:/study/GA/temp/beta-5678",
+        "mem_text": "",
+        "warning": "",
+        "error": "",
+    })
+
+    class Agent:
+        pass
+
+    class Handle:
+        stream_id = "stream-project"
+
+        def __init__(self) -> None:
+            self.completed = threading.Event()
+
+        @property
+        def finished(self) -> bool:
+            return self.completed.is_set()
+
+    class Runtime:
+        def __init__(self) -> None:
+            self.agent = Agent()
+            self.handle = Handle()
+            self.submissions = []
+
+        def submit(self, text, **kwargs):
+            self.submissions.append({
+                "text": text,
+                "project_name": getattr(self.agent, "_ga_project_mode_name", None),
+                **kwargs,
+            })
+            return self.handle
+
+    runtime = Runtime()
+    completion_observed = threading.Event()
+    store = SessionMetadataStore(tmp_path)
+    row = store.create(title="Project session")
+    coordinator = SessionCoordinator(
+        lambda _session_id: runtime,
+        poll_interval=0.001,
+        on_state_change=lambda state: (
+            completion_observed.set() if state.completed_run_id else None
+        ),
+    )
+    coordinator.configure_if_idle(row["id"], lambda _runtime: None)
+    coordinator._runtimes[row["id"]] = runtime
+    monkeypatch.setattr(sessions, "_store", store)
+    monkeypatch.setattr(sessions, "_coordinator", coordinator)
+
+    app = FastAPI()
+    app.include_router(sessions.router)
+    with TestClient(app) as client:
+        listed = client.get("/api/projects")
+        assert listed.status_code == 200
+        assert listed.json() == {"total": 1, "items": projects}
+
+        removed = []
+        monkeypatch.setattr(workspace_cmd, "registry_remove", removed.append)
+        store.update(row["id"], {
+            "project_name": "alpha-1234",
+            "project_path": "D:/work/alpha",
+        })
+        still_bound = client.delete("/api/projects/alpha-1234")
+        assert still_bound.status_code == 409
+        assert still_bound.json()["detail"]["code"] == "project_still_bound"
+        assert still_bound.json()["detail"]["session_ids"] == [row["id"]]
+        assert removed == []
+
+        store.update(row["id"], {"project_name": None, "project_path": None})
+        deleted = client.delete("/api/projects/alpha-1234")
+        assert deleted.status_code == 204
+        assert removed == ["alpha-1234"]
+        missing = client.delete("/api/projects/missing")
+        assert missing.status_code == 404
+        assert removed == ["alpha-1234"]
+
+        created = client.post("/api/projects", json={"path": "D:/work/beta"})
+        assert created.status_code == 201
+        assert created.json() == {
+            "name": "beta-5678",
+            "path": "D:/work/beta",
+            "memory_path": "",
+            "dangling": False,
+        }
+
+        bound = client.put(
+            f"/api/sessions/{row['id']}/project",
+            json={"name": "alpha-1234", "path": "D:/work/alpha"},
+        )
+        assert bound.status_code == 200
+        assert bound.json()["project_name"] == "alpha-1234"
+        assert bound.json()["project_path"] == "D:/work/alpha"
+        assert runtime.agent._ga_project_mode_name == "alpha-1234"
+
+        submitted = client.post(
+            f"/api/sessions/{row['id']}/runs",
+            json={"text": "hello project", "source": "webui", "images": []},
+        )
+        assert submitted.status_code == 202
+        submitted_payload = submitted.json()
+        assert submitted_payload["status"] == "running"
+        assert len(runtime.submissions) == 1
+        submission = runtime.submissions[0]
+        assert submission == {
+            "text": "hello project",
+            "project_name": "alpha-1234",
+            "source": "webui",
+            "images": [],
+            "llm_index": None,
+            "session_id": row["id"],
+            "run_id": submitted_payload["run_id"],
+        }
+        runtime.handle.completed.set()
+        assert completion_observed.wait(1.0)
+
+        unbound = client.delete(f"/api/sessions/{row['id']}/project")
+        assert unbound.status_code == 200
+        assert unbound.json()["project_name"] is None
+        assert unbound.json()["project_path"] is None
+        assert not hasattr(runtime.agent, "_ga_project_mode_name")
+
+
+def test_project_binding_rejects_unknown_or_running_session(tmp_path: Path, monkeypatch) -> None:
+    from frontends import workspace_cmd
+    from server.routes import sessions
+    from server.services.session_coordinator import SessionCoordinator
+    from server.services.session_metadata import SessionMetadataStore
+
+    monkeypatch.setattr(workspace_cmd, "registry_list", lambda: [{
+        "name": "alpha-1234", "path": "D:/work/alpha", "last_used": 1,
+        "mem_lines": 0, "dangling": False,
+    }])
+    store = SessionMetadataStore(tmp_path)
+    row = store.create(title="Busy")
+    coordinator = SessionCoordinator(lambda _session_id: None)
+    coordinator._active_by_session[row["id"]] = type("Active", (), {
+        "session_id": row["id"], "run_id": "run-1", "stream_id": "stream-1",
+    })()
+    monkeypatch.setattr(sessions, "_store", store)
+    monkeypatch.setattr(sessions, "_coordinator", coordinator)
+
+    app = FastAPI()
+    app.include_router(sessions.router)
+    with TestClient(app) as client:
+        unknown_project = client.put(
+            f"/api/sessions/{row['id']}/project",
+            json={"name": "missing", "path": "D:/missing"},
+        )
+        assert unknown_project.status_code == 404
+
+        busy = client.put(
+            f"/api/sessions/{row['id']}/project",
+            json={"name": "alpha-1234", "path": "D:/work/alpha"},
+        )
+        assert busy.status_code == 409
+        assert busy.json()["detail"]["code"] == "agent_busy"
 
 
 def test_unknown_session_update_and_delete_return_404(tmp_path: Path, monkeypatch) -> None:

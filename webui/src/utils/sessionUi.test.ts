@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import {
   capacityConflictFromError,
+  errorMessageFromError,
   sessionActivity,
   sessionChatHref,
   sessionStatusLabel,
@@ -59,6 +60,14 @@ describe('session UI contracts', () => {
       activeCount: 2,
     })
     expect(capacityConflictFromError({ status: 500, body: { detail: 'boom' } })).toBeNull()
+  })
+
+  it('renders structured HTTP details without object coercion', () => {
+    expect(errorMessageFromError({ body: { detail: { message: '项目绑定失败' } } })).toBe('项目绑定失败')
+    expect(errorMessageFromError({ body: { detail: { code: 'project_error', path: 'D:/repo' } } })).toBe('project_error')
+    expect(errorMessageFromError({ body: { detail: { path: 'D:/repo' } } })).toBe('{"path":"D:/repo"}')
+    expect(errorMessageFromError(new Error('network down'))).toBe('network down')
+    expect(errorMessageFromError(null, '未知错误')).toBe('未知错误')
   })
 
   it('provides a useful fallback title for untitled sessions', () => {

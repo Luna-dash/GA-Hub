@@ -30,6 +30,27 @@ export function sessionChatHref(sessionId: string): string {
   return `/chat?${params.toString()}`
 }
 
+export function errorMessageFromError(error: unknown, fallback = '请求失败'): string {
+  if (typeof error === 'string' && error.trim()) return error
+  const value = error as { body?: { detail?: unknown }; message?: unknown } | null
+  const detail = value?.body?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (detail && typeof detail === 'object') {
+    const payload = detail as Record<string, unknown>
+    for (const key of ['message', 'detail', 'error', 'code']) {
+      const candidate = payload[key]
+      if (typeof candidate === 'string' && candidate.trim()) return candidate
+    }
+    try {
+      return JSON.stringify(detail)
+    } catch {
+      // Fall through to the ordinary Error message or the stable fallback.
+    }
+  }
+  if (typeof value?.message === 'string' && value.message.trim()) return value.message
+  return fallback
+}
+
 export function capacityConflictFromError(error: unknown): CapacityConflict | null {
   const value = error as { status?: unknown; body?: { detail?: unknown } } | null
   const detail = value?.body?.detail

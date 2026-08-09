@@ -87,6 +87,8 @@ class SessionMetadataStore:
                 "llm_index": llm_index,
                 "status": "idle",
                 "archive_path": None,
+                "project_name": None,
+                "project_path": None,
                 "created_at": timestamp,
                 "updated_at": timestamp,
             }
@@ -103,6 +105,12 @@ class SessionMetadataStore:
                         row["title"] = changes["title"].strip()
                     if "llm_index" in changes:
                         row["llm_index"] = changes["llm_index"]
+                    if "project_name" in changes:
+                        value = changes["project_name"]
+                        row["project_name"] = value.strip() if isinstance(value, str) and value.strip() else None
+                    if "project_path" in changes:
+                        value = changes["project_path"]
+                        row["project_path"] = value.strip() if isinstance(value, str) and value.strip() else None
                     row["updated_at"] = _now()
                     self._write(data)
                     return dict(row)
