@@ -7,6 +7,21 @@ import time
 from server.routes import conversations
 
 
+def test_conversation_title_uses_metadata_adapter(tmp_path, monkeypatch):
+    archive = tmp_path / "session.txt"
+    calls: list[tuple[str, str]] = []
+
+    class Metadata:
+        def get_title(self, conversation_id, archive_path):
+            calls.append((conversation_id, archive_path))
+            return "Canonical title"
+
+    monkeypatch.setattr(conversations, "_metadata", Metadata())
+
+    assert conversations._conversation_title("session.txt", str(archive)) == "Canonical title"
+    assert calls == [("session.txt", str(archive))]
+
+
 def test_list_conversations_does_not_block_event_loop(tmp_path, monkeypatch):
     archive = tmp_path / "session.txt"
     archive.write_text("needle", encoding="utf-8")

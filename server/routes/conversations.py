@@ -129,7 +129,7 @@ def _session_by_id(cid: str):
 
 
 def _conversation_title(cid: str, path: str) -> str:
-    return _metadata.title(cid, path)
+    return _metadata.get_title(cid, path)
 
 
 # ── conversation list / detail / export / restore ─────────────────
