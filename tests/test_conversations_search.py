@@ -79,8 +79,50 @@ def test_list_conversations_keeps_search_and_pagination_semantics(tmp_path, monk
             "title": "",
             "message_count": 2,
             "last_user_preview": "preview a",
+            "original_user_preview": "",
         }],
     }
+
+
+def test_list_uses_first_user_question_only_for_untitled_page_items(tmp_path, monkeypatch):
+    untitled = tmp_path / "untitled.txt"
+    titled = tmp_path / "titled.txt"
+    untitled.write_text("archive", encoding="utf-8")
+    titled.write_text("archive", encoding="utf-8")
+    monkeypatch.setattr(
+        conversations,
+        "_ga_sessions",
+        lambda: [
+            (str(untitled), 2.0, "last question", 2),
+            (str(titled), 1.0, "last question", 2),
+        ],
+    )
+    monkeypatch.setattr(
+        conversations,
+        "_conversation_title",
+        lambda cid, path: "Renamed" if cid == "titled.txt" else "",
+    )
+    parsed: list[str] = []
+
+    def extract(path):
+        parsed.append(path)
+        return [
+            {"role": "system", "content": "instructions"},
+            {"role": "user", "content": "  Original\n  question  "},
+            {"role": "assistant", "content": "answer"},
+            {"role": "user", "content": "last question"},
+        ]
+
+    monkeypatch.setattr(conversations, "_ga_extract", extract)
+
+    result = asyncio.run(conversations.list_conversations(offset=0, limit=2))
+
+    assert [item["original_user_preview"] for item in result["items"]] == [
+        "Original question",
+        "",
+    ]
+    assert parsed == [str(untitled)]
+    assert all("_archive_path" not in item for item in result["items"])
 
 
 def test_detail_and_export_parsing_do_not_block_event_loop(tmp_path, monkeypatch):

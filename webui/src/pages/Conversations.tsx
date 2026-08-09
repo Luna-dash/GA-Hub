@@ -209,30 +209,32 @@ export default function Conversations() {
                   onClick={() => setActive(c.id)}
                 />
               ))}
-              <div className={collapsed
-                ? 'flex flex-col items-center gap-1 border-t border-line/60 py-2 text-xs text-slate-400'
-                : 'p-3 flex items-center justify-between text-xs text-slate-400'}
-              >
-                <button
-                  aria-label="上一页"
-                  title="上一页"
-                  disabled={page === 0}
-                  onClick={() => setPage(page - 1)}
-                  className="px-2 py-1 disabled:opacity-30"
+              {total > limit && (
+                <div className={collapsed
+                  ? 'flex flex-col items-center gap-1 border-t border-line/60 py-2 text-xs text-slate-400'
+                  : 'p-3 flex items-center justify-between text-xs text-slate-400'}
                 >
-                  {collapsed ? '↑' : '← 上页'}
-                </button>
-                <span title={`第 ${page + 1} 页`}>{collapsed ? page + 1 : `第 ${page + 1} 页`}</span>
-                <button
-                  aria-label="下一页"
-                  title="下一页"
-                  disabled={(page + 1) * limit >= total}
-                  onClick={() => setPage(page + 1)}
-                  className="px-2 py-1 disabled:opacity-30"
-                >
-                  {collapsed ? '↓' : '下页 →'}
-                </button>
-              </div>
+                  <button
+                    aria-label="上一页"
+                    title="上一页"
+                    disabled={page === 0}
+                    onClick={() => setPage(page - 1)}
+                    className="px-2 py-1 disabled:opacity-30"
+                  >
+                    {collapsed ? '↑' : '← 上页'}
+                  </button>
+                  <span title={`第 ${page + 1} 页`}>{collapsed ? page + 1 : `第 ${page + 1} 页`}</span>
+                  <button
+                    aria-label="下一页"
+                    title="下一页"
+                    disabled={(page + 1) * limit >= total}
+                    onClick={() => setPage(page + 1)}
+                    className="px-2 py-1 disabled:opacity-30"
+                  >
+                    {collapsed ? '↓' : '下页 →'}
+                  </button>
+                </div>
+              )}
             </>
           )}
         </ConversationIndexRail>
@@ -242,9 +244,13 @@ export default function Conversations() {
           {active && detail && (
             <div className="p-6 max-w-5xl mx-auto">
               <div className="mb-5">
-                <h2 className="text-lg font-semibold break-words">{detail.title || detail.id}</h2>
-                <div className="text-xs text-slate-500 mt-0.5">
-                  id: {detail.id} · {detail.messages?.length || 0} 条消息 · {rounds.length} 轮
+                <div className="flex min-w-0 items-baseline gap-2">
+                  <h2 className="min-w-0 truncate text-lg font-semibold" title={conversationDisplayTitle(detail)}>
+                    {conversationDisplayTitle(detail)}
+                  </h2>
+                  <span className="shrink-0 text-xs text-slate-500">
+                    {detail.messages?.length || 0} 条消息 · {rounds.length} 轮
+                  </span>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line/60 pt-3">
                   <button
@@ -625,6 +631,19 @@ function cleanSummary(s: string): string {
     .slice(0, 500)
 }
 
+function conversationDisplayTitle(detail: { title?: string; messages?: Msg[] }): string {
+  const customTitle = detail.title?.trim()
+  if (customTitle) return customTitle
+  const originalQuestion = detail.messages?.find((message) => message.role === 'user')?.content
+  return previewText(originalQuestion || '') || '未命名会话'
+}
+
+function summaryDisplayTitle(conversation: ConversationSummary): string {
+  return conversation.title.trim()
+    || previewText(conversation.original_user_preview || '')
+    || '未命名会话'
+}
+
 function ConvRow({ c, index, collapsed, active, onClick }: {
   c: ConversationSummary
   index: number
@@ -632,7 +651,7 @@ function ConvRow({ c, index, collapsed, active, onClick }: {
   active: boolean
   onClick: () => void
 }) {
-  const title = c.title || c.id
+  const title = summaryDisplayTitle(c)
   if (collapsed) {
     return (
       <button
@@ -654,12 +673,12 @@ function ConvRow({ c, index, collapsed, active, onClick }: {
       className={`block w-full px-3 py-2.5 text-left border-b border-line/60 group ${active ? 'bg-accent-soft' : 'hover:bg-white/5'}`}
     >
       <div className="flex items-baseline justify-between gap-2">
-        <div className="text-sm text-slate-200 truncate font-medium" title={c.title}>
+        <div className="text-sm text-slate-200 truncate font-medium" title={title}>
           {title}
         </div>
       </div>
       <div className="text-xs text-slate-500 truncate mt-0.5">{previewText(c.last_user_preview || '')}</div>
-      <div className="text-[10px] text-slate-600 mt-0.5">{c.message_count} 条 · {c.id.slice(0, 19)}</div>
+      <div className="text-[10px] text-slate-600 mt-0.5">{c.message_count} 条消息</div>
     </button>
   )
 }

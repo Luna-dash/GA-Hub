@@ -669,7 +669,7 @@ export default function LiveChat() {
           onDelete={deleteSession}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col relative">
-        <div ref={scrollRef} className="relative flex-1 overflow-y-auto py-4 pl-4 pr-[76px] space-y-2 md:pl-10">
+        <div ref={scrollRef} className="relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto py-4 pl-4 pr-[76px] space-y-2 md:pl-10">
           {historyStatus === 'history_error' && (
             <div className="sticky top-0 z-10 mx-auto flex w-fit max-w-full items-center gap-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 shadow-sm">
               <span>历史消息加载失败：{historyError || '未知错误'}。实时消息仍可继续接收。</span>

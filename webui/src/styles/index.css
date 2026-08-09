@@ -117,8 +117,10 @@ html.dark .text-slate-600 { color: #6E5A38; }
 
 /* ─── Markdown ─────────────────────────────────────────────── */
 .prose-chat pre {
-  @apply bg-bg-soft border border-line rounded-lg p-3 overflow-x-auto text-sm;
+  @apply bg-bg-soft border border-line rounded-lg p-3 overflow-x-hidden text-sm;
   margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .prose-chat .md-codeblock {
   margin: 0.5rem 0;

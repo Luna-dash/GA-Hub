@@ -181,6 +181,7 @@ export interface ConversationSummary {
   title: string
   message_count: number
   last_user_preview: string
+  original_user_preview: string
 }
 
 export interface Message {

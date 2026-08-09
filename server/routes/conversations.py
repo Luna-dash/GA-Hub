@@ -132,6 +132,20 @@ def _conversation_title(cid: str, path: str) -> str:
     return _metadata.get_title(cid, path)
 
 
+def _first_user_preview(path: str) -> str:
+    """Return the original user question used as the default display title."""
+    try:
+        messages = _ga_extract(path)
+    except (OSError, ValueError, TypeError, UnicodeError):
+        return ""
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        content = str(message.get("content") or "")
+        return " ".join(content.split())[:200]
+    return ""
+
+
 # ── conversation list / detail / export / restore ─────────────────
 def _list_conversations_sync(
     q: str | None,
@@ -147,6 +161,7 @@ def _list_conversations_sync(
             "title": _conversation_title(cid, path),
             "message_count": rounds,
             "last_user_preview": preview,
+            "_archive_path": path,
         })
     if q:
         ql = q.lower()
@@ -170,6 +185,11 @@ def _list_conversations_sync(
         items = keep
     total = len(items)
     page = items[offset: offset + limit]
+    for item in page:
+        path = item.pop("_archive_path")
+        item["original_user_preview"] = (
+            "" if item["title"] else _first_user_preview(path)
+        )
     return {
         "total": total,
         "offset": offset,

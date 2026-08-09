@@ -125,7 +125,6 @@ describe('SessionRail', () => {
   })
 
   it('acknowledges only the current completed session when the user interacts with the window', () => {
-    localStorage.setItem('gahub.sessionRailCollapsed', 'true')
     const completedRuntimes: Record<string, SessionRuntime> = {
       [sessions[0].id]: {
         session_id: sessions[0].id,
@@ -202,17 +201,18 @@ describe('SessionRail', () => {
     })
   })
 
-  it('collapses, persists the preference, and restores it on a new mount', () => {
+  it('starts collapsed on every mount and expansion only lasts for the current window', () => {
+    localStorage.setItem('gahub.sessionRailCollapsed', 'false')
     act(() => root.render(
       <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,
     ))
 
-    const toggle = host.querySelector('[aria-label="折叠会话管理"]') as HTMLButtonElement
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    act(() => toggle.click())
-    expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('true')
-    expect(localStorage.getItem('gahub.sessionRailCollapsed')).toBe('true')
+    const toggle = host.querySelector('[aria-label="展开会话管理"]') as HTMLButtonElement
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
     expect(host.querySelector('[aria-label="会话工作区"]')?.getAttribute('aria-hidden')).toBe('true')
+    act(() => toggle.click())
+    expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('false')
+    expect(localStorage.getItem('gahub.sessionRailCollapsed')).toBe('false')
 
     act(() => root.unmount())
     host.remove()

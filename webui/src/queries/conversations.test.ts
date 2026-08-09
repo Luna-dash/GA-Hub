@@ -49,7 +49,7 @@ describe('conversation query cache', () => {
       total: 1,
       offset: 0,
       limit: 50,
-      items: [{ id: 'a', title: 'Old', message_count: 1, last_user_preview: 'hi' }],
+      items: [{ id: 'a', title: 'Old', message_count: 1, last_user_preview: 'hi', original_user_preview: '' }],
     })
     qc.setQueryData<Conversation>(detailKey, { id: 'a', title: 'Old', messages: [] })
 

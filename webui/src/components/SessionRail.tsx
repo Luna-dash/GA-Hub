@@ -46,7 +46,6 @@ const activityRail = {
   unknown: 'bg-amber-600/65 shadow-[0_0_0_3px_rgba(217,119,6,0.11)] group-hover:bg-amber-600/80',
 }
 
-const STORAGE_KEY = 'gahub.sessionRailCollapsed'
 const RECENT_KEY = 'gahub.sessionRailRecentActivity'
 const TERMINAL_KEY = 'gahub.sessionRailTerminalState'
 const SEEN_COMPLETED_KEY = 'gahub.sessionRailSeenCompletedRuns'
@@ -67,7 +66,7 @@ function sessionTitle(session: HubSession) {
 }
 
 function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreate, onRename, onDelete, creating }: SessionRailProps) {
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(STORAGE_KEY) === 'true')
+  const [collapsed, setCollapsed] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [titleDraft, setTitleDraft] = useState('')
   const [savingId, setSavingId] = useState<string | null>(null)
@@ -202,10 +201,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
   }
 
   const toggle = () => {
-    setCollapsed((current) => {
-      localStorage.setItem(STORAGE_KEY, String(!current))
-      return !current
-    })
+    setCollapsed((current) => !current)
   }
 
   const beginRename = (session: HubSession) => {
