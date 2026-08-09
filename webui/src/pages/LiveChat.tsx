@@ -20,6 +20,7 @@ import { useChatStore } from '@/stores/chatStore'
 import { useDraftStore } from '@/stores/draftStore'
 import { capacityConflictFromError, sessionChatHref } from '@/utils/sessionUi'
 import { createRafScheduler } from '@/utils/rafScheduler'
+import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 
 interface RestoreState {
   restoredFrom?: string
@@ -669,7 +670,7 @@ export default function LiveChat() {
           onDelete={deleteSession}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col relative">
-        <div ref={scrollRef} className="relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto py-4 pl-4 pr-[76px] space-y-2 md:pl-10">
+        <div ref={scrollRef} tabIndex={-1} className="relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto py-4 pl-4 pr-[76px] space-y-2 outline-none md:pl-10">
           {historyStatus === 'history_error' && (
             <div className="sticky top-0 z-10 mx-auto flex w-fit max-w-full items-center gap-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 shadow-sm">
               <span>历史消息加载失败：{historyError || '未知错误'}。实时消息仍可继续接收。</span>
@@ -721,6 +722,7 @@ export default function LiveChat() {
           <aside
             className="absolute inset-y-3 right-2 z-10 flex w-14 flex-col gap-2"
             aria-label="对话功能区"
+            onPointerDown={(event) => focusChatScrollFromUtilityRail(event, scrollRef.current)}
           >
             {scheduledChats.length > 0 && (
               <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5" aria-label="待发送定时消息">
