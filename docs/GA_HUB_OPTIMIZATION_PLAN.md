@@ -16,7 +16,7 @@
 
 - 项目仅供个人本地使用，不启用 PR/push GitHub CI。
 - `check.bat` / `check.sh` 补跑前端测试，npm 优先使用 lockfile 安装。
-- release workflow 保持独立，仅在手动触发或推送版本标签时运行。
+- 项目不做分发，删除 release workflow；质量验证仅由本地 `check.bat` / `check.sh` 承担。
 
 ### P1-B：前端请求韧性
 

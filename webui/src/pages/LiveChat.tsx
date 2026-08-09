@@ -66,6 +66,11 @@ export default function LiveChat() {
   const [scheduleSaving, setScheduleSaving] = useState(false)
   const [scheduleError, setScheduleError] = useState('')
   const [scheduleNow, setScheduleNow] = useState(() => Date.now())
+  const [hoveredSchedule, setHoveredSchedule] = useState<{
+    task: ScheduledChat
+    top: number
+    right: number
+  } | null>(null)
   const llmChangeSeqRef = useRef(0)
   const queryClient = useQueryClient()
   const sessionsQuery = useQuery({
@@ -84,9 +89,21 @@ export default function LiveChat() {
     queryKey: ['session.scheduledChats', session?.id],
     queryFn: () => api.scheduledChats(session!.id),
     enabled: Boolean(session?.id),
-    refetchInterval: 60_000,
+    refetchInterval: (query) => {
+      const items = query.state.data?.items ?? []
+      if (items.length === 0) return 60_000
+      const nextDueIn = Math.min(...items.map((task) => task.scheduled_for * 1000 - Date.now()))
+      // Retain the low-cost minute cadence normally, then observe dispatch closely
+      // so a completed task leaves the utility rail promptly.
+      return nextDueIn <= 60_000 ? 1_000 : 60_000
+    },
   })
-  const scheduledChats = scheduledChatsQuery.data?.items ?? []
+  const scheduledChats = useMemo(
+    () => [...(scheduledChatsQuery.data?.items ?? [])]
+      .filter((task) => task.status === 'pending')
+      .sort((a, b) => a.scheduled_for - b.scheduled_for),
+    [scheduledChatsQuery.data],
+  )
 
   useEffect(() => {
     const timer = window.setInterval(() => setScheduleNow(Date.now()), 60_000)
@@ -652,7 +669,7 @@ export default function LiveChat() {
           onDelete={deleteSession}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col relative">
-        <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-4 py-4 space-y-2 md:pl-10 md:pr-[31px]">
+        <div ref={scrollRef} className="relative flex-1 overflow-y-auto py-4 pl-4 pr-[76px] space-y-2 md:pl-10">
           {historyStatus === 'history_error' && (
             <div className="sticky top-0 z-10 mx-auto flex w-fit max-w-full items-center gap-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 shadow-sm">
               <span>历史消息加载失败：{historyError || '未知错误'}。实时消息仍可继续接收。</span>
@@ -699,33 +716,97 @@ export default function LiveChat() {
           })}
         </div>
 
-        {/* Floating turn navigation */}
-        {turnCount > 0 && (
-          <div className="absolute right-8 bottom-28 z-10 flex flex-col items-stretch gap-2 text-xs text-[#2C2418]">
-            <button
-              onClick={() => jumpToTurn(-1)}
-              disabled={activeTurn <= 0}
-              className="rounded-full border border-line bg-bg-soft/95 px-3 py-1.5 shadow-lg backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
-              title="定位到上一轮问答"
-            >
-              ↑ 上一节
-            </button>
-            <button
-              onClick={() => jumpToTurn(1)}
-              disabled={activeTurn < 0 || activeTurn >= turnCount - 1}
-              className="rounded-full border border-line bg-bg-soft/95 px-3 py-1.5 shadow-lg backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
-              title="定位到下一轮问答"
-            >
-              ↓ 下一节
-            </button>
-            {!stuckBottom && (
-              <button
-                onClick={jumpToBottom}
-                className="rounded-full border border-line bg-bg-soft/95 px-3 py-1.5 shadow-lg backdrop-blur hover:bg-bg-card"
-                title="跳到最新消息"
-              >
-                ↓ {unread > 0 ? `${unread} 条新消息` : '回到底部'}
-              </button>
+        {/* Narrow utility rail: scheduled notices above, turn navigation below. */}
+        {(scheduledChats.length > 0 || turnCount > 0) && (
+          <aside
+            className="absolute inset-y-3 right-2 z-10 flex w-14 flex-col gap-2"
+            aria-label="对话功能区"
+          >
+            {scheduledChats.length > 0 && (
+              <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5" aria-label="待发送定时消息">
+                {scheduledChats.map((task) => {
+                  return (
+                    <button
+                      key={task.id}
+                      type="button"
+                      onClick={() => { void cancelSchedule(task) }}
+                      onMouseEnter={(event) => {
+                        const rect = event.currentTarget.getBoundingClientRect()
+                        setHoveredSchedule({ task, top: rect.top, right: window.innerWidth - rect.left + 10 })
+                      }}
+                      onMouseLeave={() => setHoveredSchedule(null)}
+                      onFocus={(event) => {
+                        const rect = event.currentTarget.getBoundingClientRect()
+                        setHoveredSchedule({ task, top: rect.top, right: window.innerWidth - rect.left + 10 })
+                      }}
+                      onBlur={() => setHoveredSchedule(null)}
+                      className="group relative flex aspect-square w-full shrink-0 items-center justify-center overflow-hidden rounded-lg p-[2px] text-center text-xs font-semibold leading-tight text-accent shadow-sm transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                      title="点击取消定时发送"
+                      aria-label={`${formatCompactScheduleCountdown(task.scheduled_for, scheduleNow)}后发送；悬停查看消息；点击取消`}
+                    >
+                      <span
+                        data-schedule-flow-border
+                        aria-hidden="true"
+                        className="absolute -inset-5 animate-spin bg-[conic-gradient(from_0deg,transparent_0deg,transparent_205deg,#60a5fa_245deg,#a78bfa_285deg,#f472b6_325deg,transparent_360deg)] motion-reduce:animate-none"
+                        style={{ animationDuration: '3s' }}
+                      />
+                      <span className="relative flex h-full w-full items-center justify-center rounded-[6px] bg-bg-card/95 px-1 backdrop-blur transition-colors group-hover:bg-bg-soft">
+                        {formatCompactScheduleCountdown(task.scheduled_for, scheduleNow)}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {turnCount > 0 && (
+              <div className="mt-auto flex shrink-0 flex-col gap-1.5 text-xs text-[#2C2418]">
+                <button
+                  onClick={() => jumpToTurn(-1)}
+                  disabled={activeTurn <= 0}
+                  className="h-9 rounded-lg border border-line bg-bg-soft/95 px-1 shadow-md backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
+                  title="定位到上一轮问答"
+                >
+                  ↑ 上节
+                </button>
+                <button
+                  onClick={() => jumpToTurn(1)}
+                  disabled={activeTurn < 0 || activeTurn >= turnCount - 1}
+                  className="h-9 rounded-lg border border-line bg-bg-soft/95 px-1 shadow-md backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
+                  title="定位到下一轮问答"
+                >
+                  ↓ 下节
+                </button>
+                {!stuckBottom && (
+                  <button
+                    onClick={jumpToBottom}
+                    className="min-h-9 rounded-lg border border-line bg-bg-soft/95 px-1 py-1 leading-tight shadow-md backdrop-blur hover:bg-bg-card"
+                    title={unread > 0 ? `${unread} 条新消息，跳到最新` : '跳到最新消息'}
+                  >
+                    ↓ {unread > 0 ? unread : '底部'}
+                  </button>
+                )}
+              </div>
+            )}
+          </aside>
+        )}
+
+        {hoveredSchedule && scheduledChats.some((task) => task.id === hoveredSchedule.task.id) && (
+          <div
+            data-schedule-tooltip
+            role="tooltip"
+            className="pointer-events-none fixed z-50 w-72 -translate-y-1 rounded-xl border border-line bg-bg-card/98 p-3 text-left shadow-xl backdrop-blur"
+            style={{ top: Math.max(12, hoveredSchedule.top), right: hoveredSchedule.right }}
+          >
+            <div className="mb-2 flex items-center justify-between gap-3 text-xs text-text-muted">
+              <span>定时发送内容</span>
+              <time>{new Date(hoveredSchedule.task.scheduled_for * 1000).toLocaleString('zh-CN', { hour12: false })}</time>
+            </div>
+            <p className="max-h-48 overflow-hidden whitespace-pre-wrap break-words text-sm leading-5 text-text">
+              {hoveredSchedule.task.text || '（仅附件）'}
+            </p>
+            {hoveredSchedule.task.images.length > 0 && (
+              <div className="mt-2 text-xs text-text-muted">附件 {hoveredSchedule.task.images.length} 个</div>
             )}
           </div>
         )}
@@ -734,26 +815,6 @@ export default function LiveChat() {
       </div>
 
       <div className="shrink-0 border-t border-line/40 bg-transparent px-3 py-2.5">
-        {scheduledChats.length > 0 && (
-          <div className="mb-2 rounded-xl border border-line/60 bg-bg-card px-3 py-2 shadow-sm">
-            <div className="mb-1.5 text-xs font-medium text-[#86775F]">待发送定时消息（{scheduledChats.length}）</div>
-            <div className="max-h-28 space-y-1.5 overflow-y-auto">
-              {scheduledChats.map((task) => (
-                <div key={task.id} className="flex items-center gap-2 text-xs">
-                  <span className="shrink-0 rounded bg-bg-soft px-2 py-1 text-accent" title={new Date(task.scheduled_for * 1000).toLocaleString()}>
-                    {formatScheduleCountdown(task.scheduled_for, scheduleNow)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-[#2C2418]" title={task.text}>{task.text || '（仅附件）'}</span>
-                  <button
-                    type="button"
-                    onClick={() => { void cancelSchedule(task) }}
-                    className="shrink-0 rounded px-2 py-1 text-red-500 hover:bg-red-50"
-                  >取消</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
         <div className="w-full rounded-xl border border-line/60 bg-bg-card shadow-sm">
           <ImagePasteInput
             text={text}
@@ -825,15 +886,13 @@ function toLocalDateTimeValue(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-function formatScheduleCountdown(scheduledFor: number, now: number): string {
+function formatCompactScheduleCountdown(scheduledFor: number, now: number): string {
   const minutes = Math.max(0, Math.ceil((scheduledFor * 1000 - now) / 60_000))
-  if (minutes < 60) return `${minutes} 分钟后`
-  const hours = Math.floor(minutes / 60)
-  const rest = minutes % 60
-  if (hours < 24) return rest > 0 ? `${hours} 小时 ${rest} 分后` : `${hours} 小时后`
-  const days = Math.floor(hours / 24)
-  const restHours = hours % 24
-  return restHours > 0 ? `${days} 天 ${restHours} 小时后` : `${days} 天后`
+  if (minutes < 60) return `${minutes}分`
+  const hours = minutes / 60
+  if (hours < 24) return `${Number(hours.toFixed(1))}时`
+  const days = hours / 24
+  return `${Number(days.toFixed(1))}天`
 }
 
 function sourceLabel(source: string): string {
