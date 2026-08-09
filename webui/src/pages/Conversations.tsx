@@ -197,72 +197,98 @@ export default function Conversations() {
     >
       <div className="flex h-full">
         <ConversationIndexRail>
-          {items.map((c) => (
-            <ConvRow
-              key={c.id}
-              c={c}
-              active={active === c.id}
-              onClick={() => setActive(c.id)}
-            />
-          ))}
-          <div className="p-3 flex items-center justify-between text-xs text-slate-400">
-            <button disabled={page === 0} onClick={() => setPage(page - 1)} className="px-2 py-1 disabled:opacity-30">← 上页</button>
-            <span>第 {page + 1} 页</span>
-            <button disabled={(page + 1) * limit >= total} onClick={() => setPage(page + 1)} className="px-2 py-1 disabled:opacity-30">下页 →</button>
-          </div>
+          {(collapsed) => (
+            <>
+              {items.map((c, index) => (
+                <ConvRow
+                  key={c.id}
+                  c={c}
+                  index={page * limit + index + 1}
+                  collapsed={collapsed}
+                  active={active === c.id}
+                  onClick={() => setActive(c.id)}
+                />
+              ))}
+              <div className={collapsed
+                ? 'flex flex-col items-center gap-1 border-t border-line/60 py-2 text-xs text-slate-400'
+                : 'p-3 flex items-center justify-between text-xs text-slate-400'}
+              >
+                <button
+                  aria-label="上一页"
+                  title="上一页"
+                  disabled={page === 0}
+                  onClick={() => setPage(page - 1)}
+                  className="px-2 py-1 disabled:opacity-30"
+                >
+                  {collapsed ? '↑' : '← 上页'}
+                </button>
+                <span title={`第 ${page + 1} 页`}>{collapsed ? page + 1 : `第 ${page + 1} 页`}</span>
+                <button
+                  aria-label="下一页"
+                  title="下一页"
+                  disabled={(page + 1) * limit >= total}
+                  onClick={() => setPage(page + 1)}
+                  className="px-2 py-1 disabled:opacity-30"
+                >
+                  {collapsed ? '↓' : '下页 →'}
+                </button>
+              </div>
+            </>
+          )}
         </ConversationIndexRail>
 
         <div className="flex-1 overflow-y-auto">
           {!active && <div className="h-full flex items-center justify-center text-slate-500 text-sm">选择左侧会话查看详情</div>}
           {active && detail && (
             <div className="p-6 max-w-5xl mx-auto">
-              <div className="flex items-start justify-between gap-4 mb-4">
-                <div>
-                  <h2 className="text-lg font-semibold">{detail.title || detail.id}</h2>
-                  <div className="text-xs text-slate-500 mt-0.5">
-                    id: {detail.id} · {detail.messages?.length || 0} 条消息 · {rounds.length} 轮
-                  </div>
-                  {viewMode === 'round' && (
-                    <div className="text-xs text-slate-500 mt-1">按 user 消息切分 Round；默认只展示本轮结论，展开后看完整 assistant 内容。</div>
-                  )}
+              <div className="mb-5">
+                <h2 className="text-lg font-semibold break-words">{detail.title || detail.id}</h2>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  id: {detail.id} · {detail.messages?.length || 0} 条消息 · {rounds.length} 轮
                 </div>
-                <div className="flex gap-2 flex-wrap justify-end">
-                  <button
-                    type="button"
-                    onClick={() => handleRename(detail.id, detail.title || '')}
-                    className="px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm"
-                  >
-                    重命名
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(detail.id, detail.title || '')}
-                    className="px-3 py-1.5 rounded-lg border border-red-500/50 text-red-300 hover:bg-red-500/10 text-sm"
-                  >
-                    删除文件
-                  </button>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line/60 pt-3">
                   <button
                     onClick={() => handleRestore(detail.id)}
                     disabled={restoring === detail.id}
-                    className="px-3 py-1.5 rounded-lg bg-accent text-white text-sm disabled:opacity-40"
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-accent text-white text-sm disabled:opacity-40"
                     title="把这个会话作为 Agent 的历史上下文，跳转到聊天页继续"
                   >
                     {restoring === detail.id ? '恢复中…' : '↩ 恢复并继续聊天'}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleExport(detail.id, 'md')}
-                    className="px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm"
-                  >
-                    导出 .md
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleExport(detail.id, 'json')}
-                    className="px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm"
-                  >
-                    导出 .json
-                  </button>
+                  <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                    <div className="flex overflow-hidden rounded-lg border border-line">
+                      <button
+                        type="button"
+                        onClick={() => handleRename(detail.id, detail.title || '')}
+                        className="px-3 py-1.5 text-sm text-slate-300 hover:bg-white/5"
+                      >
+                        重命名
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(detail.id, detail.title || '')}
+                        className="border-l border-line px-3 py-1.5 text-sm text-red-300 hover:bg-red-500/10"
+                      >
+                        删除
+                      </button>
+                    </div>
+                    <div className="flex overflow-hidden rounded-lg border border-line">
+                      <button
+                        type="button"
+                        onClick={() => handleExport(detail.id, 'md')}
+                        className="px-3 py-1.5 text-sm text-slate-300 hover:bg-white/5"
+                      >
+                        导出 MD
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleExport(detail.id, 'json')}
+                        className="border-l border-line px-3 py-1.5 text-sm text-slate-300 hover:bg-white/5"
+                      >
+                        JSON
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -599,23 +625,41 @@ function cleanSummary(s: string): string {
     .slice(0, 500)
 }
 
-function ConvRow({ c, active, onClick }: {
+function ConvRow({ c, index, collapsed, active, onClick }: {
   c: ConversationSummary
+  index: number
+  collapsed: boolean
   active: boolean
   onClick: () => void
 }) {
+  const title = c.title || c.id
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={`第 ${index} 条：${title}`}
+        title={`${index}. ${title}\n${previewText(c.last_user_preview || '')}`}
+        className={`flex h-11 w-full items-center justify-center border-b border-line/60 text-xs font-medium transition-colors ${active ? 'bg-accent-soft text-accent' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
+      >
+        {index}
+      </button>
+    )
+  }
+
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
-      className={`px-3 py-2.5 cursor-pointer border-b border-line/60 group ${active ? 'bg-accent-soft' : 'hover:bg-white/5'}`}
+      className={`block w-full px-3 py-2.5 text-left border-b border-line/60 group ${active ? 'bg-accent-soft' : 'hover:bg-white/5'}`}
     >
       <div className="flex items-baseline justify-between gap-2">
         <div className="text-sm text-slate-200 truncate font-medium" title={c.title}>
-          {c.title || c.id}
+          {title}
         </div>
       </div>
       <div className="text-xs text-slate-500 truncate mt-0.5">{previewText(c.last_user_preview || '')}</div>
       <div className="text-[10px] text-slate-600 mt-0.5">{c.message_count} 条 · {c.id.slice(0, 19)}</div>
-    </div>
+    </button>
   )
 }

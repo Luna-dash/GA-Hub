@@ -23,20 +23,23 @@ describe('ConversationIndexRail', () => {
     host.remove()
   })
 
-  it('collapses the index and persists the preference', () => {
+  it('compacts the index without hiding its navigation and persists the preference', () => {
     act(() => root.render(
-      <ConversationIndexRail><div>历史会话一</div></ConversationIndexRail>,
+      <ConversationIndexRail>
+        {(collapsed) => <div data-mode={collapsed ? 'numbers' : 'details'}>历史会话一</div>}
+      </ConversationIndexRail>,
     ))
 
     const toggle = host.querySelector('[aria-label="折叠历史对话索引"]') as HTMLButtonElement
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    expect(host.querySelector('[aria-label="历史对话索引"]')?.getAttribute('aria-hidden')).toBe('false')
+    expect(host.querySelector('[data-mode]')?.getAttribute('data-mode')).toBe('details')
 
     act(() => toggle.click())
 
     expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('true')
     expect(host.querySelector('[aria-label="展开历史对话索引"]')).not.toBeNull()
-    expect(host.querySelector('[aria-label="历史对话索引"]')?.getAttribute('aria-hidden')).toBe('true')
+    expect(host.querySelector('[aria-label="历史对话索引"]')).not.toBeNull()
+    expect(host.querySelector('[data-mode]')?.getAttribute('data-mode')).toBe('numbers')
     expect(localStorage.getItem('gahub.conversationIndexCollapsed')).toBe('true')
   })
 

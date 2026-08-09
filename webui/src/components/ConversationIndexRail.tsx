@@ -3,7 +3,11 @@ import clsx from 'clsx'
 
 const STORAGE_KEY = 'gahub.conversationIndexCollapsed'
 
-export function ConversationIndexRail({ children }: { children: ReactNode }) {
+type ConversationIndexRailProps = {
+  children: ReactNode | ((collapsed: boolean) => ReactNode)
+}
+
+export function ConversationIndexRail({ children }: ConversationIndexRailProps) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(STORAGE_KEY) === 'true')
 
   const toggle = () => {
@@ -19,19 +23,18 @@ export function ConversationIndexRail({ children }: { children: ReactNode }) {
       data-collapsed={collapsed ? 'true' : 'false'}
       className={clsx(
         'relative z-10 h-full shrink-0 transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-        collapsed ? 'w-0' : 'w-96',
+        collapsed ? 'w-14' : 'w-96',
       )}
     >
       <aside
         aria-label="历史对话索引"
-        aria-hidden={collapsed}
         className={clsx(
-          'absolute inset-y-0 left-0 w-96 overflow-y-auto border-r border-line bg-bg-soft',
-          'transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-          collapsed ? 'pointer-events-none -translate-x-3 opacity-0' : 'translate-x-0 opacity-100',
+          'absolute inset-y-0 left-0 overflow-y-auto border-r border-line bg-bg-soft',
+          'transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+          collapsed ? 'w-14' : 'w-96',
         )}
       >
-        {children}
+        {typeof children === 'function' ? children(collapsed) : children}
       </aside>
       <button
         type="button"
