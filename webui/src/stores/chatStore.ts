@@ -162,10 +162,58 @@ function historyToMessages(items: SessionMessageProjection[]): ChatMsg[] {
     }))
 }
 
+const ARCHIVE_SNAPSHOT_TIME_TOLERANCE_MS = 2 * 60 * 1000
+
+function timestampsOverlap(archived: ChatMsg, snapshot: ChatMsg): boolean {
+  if (archived.timestamp == null || snapshot.timestamp == null) return true
+  return Math.abs(archived.timestamp - snapshot.timestamp) <= ARCHIVE_SNAPSHOT_TIME_TOLERANCE_MS
+}
+
+/**
+ * Completed streams remain in the backend reconnect snapshot for a while after
+ * GA has already persisted the same turn to the native archive.  The two
+ * projections have different ids, so identity-only merging would append the
+ * answer a second time when a session is revisited.
+ *
+ * Only collapse an adjacent completed user/assistant snapshot pair against an
+ * adjacent archive pair with the same text and compatible timestamps.  Active
+ * streams are deliberately excluded, as are genuinely newer identical turns.
+ */
+function removeArchivedSnapshotOverlap(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
+  const archived = base.filter((msg) => msg.source === 'history')
+  const skipped = new Set<number>()
+  for (let index = 0; index + 1 < live.length; index += 1) {
+    const query = live[index]
+    const answer = live[index + 1]
+    if (
+      query.role !== 'user' || answer.role !== 'assistant'
+      || query.streamId == null || query.streamId !== answer.streamId
+      || answer.streaming !== false
+    ) continue
+
+    for (let historyIndex = archived.length - 2; historyIndex >= 0; historyIndex -= 1) {
+      const archivedQuery = archived[historyIndex]
+      const archivedAnswer = archived[historyIndex + 1]
+      if (
+        archivedQuery.role === 'user' && archivedAnswer.role === 'assistant'
+        && archivedQuery.content === query.content
+        && archivedAnswer.content === answer.content
+        && timestampsOverlap(archivedQuery, query)
+        && timestampsOverlap(archivedAnswer, answer)
+      ) {
+        skipped.add(index)
+        skipped.add(index + 1)
+        break
+      }
+    }
+  }
+  return live.filter((_, index) => !skipped.has(index))
+}
+
 function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
   const out = [...base]
   const positions = new Map(out.map((m, i) => [m.streamId, i]))
-  for (const msg of live) {
+  for (const msg of removeArchivedSnapshotOverlap(base, live)) {
     if (msg.streamId && positions.has(msg.streamId)) {
       const index = positions.get(msg.streamId)!
       // Never let an old partial replace a completed archive message.

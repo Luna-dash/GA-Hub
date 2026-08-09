@@ -212,6 +212,83 @@ describe('chatStore lifecycle', () => {
     ])
   })
 
+  it('does not duplicate a completed stream already present in archive history', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
+      session_id: 'session-a', archive_bound: true, revision: 'a1',
+      items: [
+        { id: 'question', role: 'user', content: 'same question', ordinal: 0 },
+        { id: 'answer', role: 'assistant', content: 'same answer', ordinal: 1 },
+      ],
+    })
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    FakeWebSocket.instances.at(-1)!.emit({
+      type: 'snapshot',
+      streams: [{
+        stream_id: 'completed-stream', source: 'user', query: 'same question',
+        content: 'same answer', done: true, started_at: 1, finished_at: 2,
+      }],
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(useChatStore.getState().msgs.map((message) => message.content)).toEqual([
+      'same question',
+      'same answer',
+    ])
+  })
+
+  it('keeps a newer identical completed turn when its timestamps do not overlap history', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
+      session_id: 'session-a', archive_bound: true, revision: 'a1',
+      items: [
+        { id: 'old-question', role: 'user', content: 'repeat', ordinal: 0, timestamp: '2026-08-09 08:00:00' },
+        { id: 'old-answer', role: 'assistant', content: 'repeat answer', ordinal: 1, timestamp: '2026-08-09 08:00:01' },
+      ],
+    })
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    FakeWebSocket.instances.at(-1)!.emit({
+      type: 'snapshot', streams: [{
+        stream_id: 'new-stream', source: 'webui', query: 'repeat',
+        content: 'repeat answer', done: true,
+        started_at: Date.parse('2026-08-09T09:00:00'),
+        finished_at: Date.parse('2026-08-09T09:00:01'),
+      }],
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(useChatStore.getState().msgs.map((message) => message.content)).toEqual([
+      'repeat', 'repeat answer', 'repeat answer',
+    ])
+  })
+
+  it('keeps an active snapshot even when its text matches archived history', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
+      session_id: 'session-a', archive_bound: true, revision: 'a1',
+      items: [
+        { id: 'old-question', role: 'user', content: 'repeat', ordinal: 0 },
+        { id: 'old-answer', role: 'assistant', content: 'partial', ordinal: 1 },
+      ],
+    })
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    FakeWebSocket.instances.at(-1)!.emit({
+      type: 'snapshot', streams: [{
+        stream_id: 'active-stream', source: 'webui', query: 'repeat',
+        content: 'partial', done: false, started_at: 2, finished_at: 0,
+      }],
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(useChatStore.getState().msgs).toHaveLength(3)
+    expect(useChatStore.getState().msgs.at(-1)).toMatchObject({
+      role: 'assistant', content: 'partial', streaming: true,
+    })
+  })
+
   it('does not apply a deferred snapshot after switching sessions', async () => {
     const frames: FrameRequestCallback[] = []
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
