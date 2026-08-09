@@ -5,6 +5,7 @@ import { api } from '@/api/client'
 import type { ConversationSummary } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { MarkdownView } from '@/components/MarkdownView'
+import { ConversationIndexRail } from '@/components/ConversationIndexRail'
 import { previewText } from '@/utils/foldTurns'
 import { looksLikeToolTrace, stripWrapperFences } from '@/utils/toolTrace'
 import { dialog } from '@/stores/dialogStore'
@@ -195,7 +196,7 @@ export default function Conversations() {
       }
     >
       <div className="flex h-full">
-        <div className="w-96 border-r border-line bg-bg-soft overflow-y-auto">
+        <ConversationIndexRail>
           {items.map((c) => (
             <ConvRow
               key={c.id}
@@ -209,7 +210,7 @@ export default function Conversations() {
             <span>第 {page + 1} 页</span>
             <button disabled={(page + 1) * limit >= total} onClick={() => setPage(page + 1)} className="px-2 py-1 disabled:opacity-30">下页 →</button>
           </div>
-        </div>
+        </ConversationIndexRail>
 
         <div className="flex-1 overflow-y-auto">
           {!active && <div className="h-full flex items-center justify-center text-slate-500 text-sm">选择左侧会话查看详情</div>}
