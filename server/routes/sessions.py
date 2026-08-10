@@ -238,7 +238,13 @@ async def delete_project(project_name: str):
             "仍有其他会话绑定此项目，请先在这些会话中取消绑定。",
             session_ids=[row["id"] for row in bound_sessions],
         )
-    workspace_cmd.registry_remove(project_name)
+    result = workspace_cmd.remove(project_name)
+    if not result.get("ok"):
+        raise _api_error(
+            500,
+            "project_remove_failed",
+            result.get("error") or "项目目录映射移除失败，请稍后重试。",
+        )
 
 
 @router.put("/api/sessions/{session_id}/project")

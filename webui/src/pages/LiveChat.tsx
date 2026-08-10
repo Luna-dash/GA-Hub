@@ -620,9 +620,9 @@ export default function LiveChat() {
     if (!sid || !selected || projectSaving) return
     const displayName = projectDisplayName(selected.path, selected.name)
     const confirmed = await dialog.confirm(
-      `删除“${displayName}”的项目索引？`,
-      '只会从 GA-Hub 项目列表移除索引，不会删除项目目录、代码或其他文件。当前会话将先取消绑定。',
-      { confirmText: '删除索引', tone: 'danger' },
+      `移除“${displayName}”的项目映射？`,
+      '会移除 GA 工作区中的目录映射和项目注册，不会删除原始项目目录、代码、其中的 memory 或其他文件。当前会话将先取消绑定。',
+      { confirmText: '移除映射', tone: 'danger' },
     )
     if (!confirmed) return
 
@@ -639,7 +639,7 @@ export default function LiveChat() {
       await api.deleteProject(selected.name)
       await queryClient.invalidateQueries({ queryKey: ['projects'] })
     } catch (error: unknown) {
-      pushSystem(`_删除项目索引失败：${errorMessageFromError(error)}_`)
+      pushSystem(`_移除项目映射失败：${errorMessageFromError(error)}_`)
     } finally {
       if (projectChangeSeqRef.current === changeSeq) setProjectSaving(false)
     }

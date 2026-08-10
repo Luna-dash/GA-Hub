@@ -300,7 +300,19 @@ def test_project_registry_create_and_session_binding_api(tmp_path: Path, monkeyp
         assert listed.json() == {"total": 1, "items": projects}
 
         removed = []
-        monkeypatch.setattr(workspace_cmd, "registry_remove", removed.append)
+        monkeypatch.setattr(
+            workspace_cmd,
+            "remove",
+            lambda name: (
+                removed.append(name)
+                or {
+                    "ok": True,
+                    "name": name,
+                    "link_removed": True,
+                    "source_preserved": True,
+                }
+            ),
+        )
         store.update(row["id"], {
             "project_name": "alpha-1234",
             "project_path": "D:/work/alpha",
@@ -399,6 +411,32 @@ def test_project_binding_rejects_unknown_or_running_session(tmp_path: Path, monk
         )
         assert busy.status_code == 409
         assert busy.json()["detail"]["code"] == "agent_busy"
+
+
+def test_project_delete_reports_mapping_removal_failure(tmp_path: Path, monkeypatch) -> None:
+    from frontends import workspace_cmd
+
+    monkeypatch.setattr(workspace_cmd, "registry_list", lambda: [{
+        "name": "alpha-1234",
+        "path": "D:/work/alpha",
+        "dangling": False,
+    }])
+    monkeypatch.setattr(workspace_cmd, "remove", lambda name: {
+        "ok": False,
+        "name": name,
+        "link_removed": False,
+        "source_preserved": True,
+        "error": "无法移除项目目录映射",
+    })
+
+    with _client(tmp_path, monkeypatch) as client:
+        response = client.delete("/api/projects/alpha-1234")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == {
+        "code": "project_remove_failed",
+        "detail": "无法移除项目目录映射",
+    }
 
 
 def test_unknown_session_update_and_delete_return_404(tmp_path: Path, monkeypatch) -> None:
