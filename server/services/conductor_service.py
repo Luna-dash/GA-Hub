@@ -18,7 +18,6 @@ import re
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 from .. import _paths
@@ -27,7 +26,15 @@ if _paths.GA_ROOT is None:
     raise RuntimeError("ConductorService imported before GA_ROOT is configured")
 
 from agentmain import GenericAgent  # noqa: E402
+from frontends.conductor_core import (
+    Conductor as CoreConductor,
+    ConductorCallbacks,
+    PoolRuntime,
+    SubAgentEvent,
+    SubagentPool as CoreSubagentPool,
+)
 
+from .conductor_ext_contract import ConductorContractExt  # noqa: E402
 from .event_bus import bus  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -176,144 +183,6 @@ def monitor_display_queue(agent_id: str, dq: queue.Queue, pool: SubagentPool, tr
             break
 
 
-@dataclass
-class SubAgentState:
-    id: str
-    agent: GenericAgent
-    prompt: str
-    thread: Optional[threading.Thread] = None
-    reply: str = ""
-    status: str = "running"  # running | stopped
-    created_at: float = field(default_factory=time.time)
-    updated_at: float = field(default_factory=time.time)
-
-
-class SubagentPool:
-    """Manages a pool of independent subagent instances."""
-
-    def __init__(self):
-        self.subagents: Dict[str, SubAgentState] = {}
-        self.lock = threading.RLock()
-        threading.Thread(target=self._auto_cleanup_loop, name="subagent-cleanup", daemon=True).start()
-
-    def snapshot(self) -> list[dict]:
-        with self.lock:
-            return [
-                {
-                    "id": s.id,
-                    "prompt": s.prompt,
-                    "reply": (
-                        extract_last_summary(s.reply) if s.status == "running"
-                        else extract_last_text_reply(s.reply)
-                    ) if s.reply else "",
-                    "status": s.status,
-                    "created_at": s.created_at,
-                    "updated_at": s.updated_at,
-                }
-                for s in self.subagents.values()
-            ]
-
-    def get(self, sid: str) -> Optional[SubAgentState]:
-        with self.lock:
-            return self.subagents.get(sid)
-
-    def counts(self) -> tuple:
-        with self.lock:
-            running = sum(1 for s in self.subagents.values() if s.status == "running")
-            stopped = sum(1 for s in self.subagents.values() if s.status != "running")
-        return running, stopped
-
-    def on_display(self, agent_id: str, acc: str, done: bool):
-        with self.lock:
-            s = self.subagents.get(agent_id)
-            if s:
-                s.reply = acc
-                s.updated_at = time.time()
-                s.status = "stopped" if done else "running"
-
-    def _auto_cleanup_loop(self):
-        IDLE_TIMEOUT = 3600
-        while True:
-            time.sleep(300)
-            now = time.time()
-            to_abort = []
-            with self.lock:
-                for sid, s in self.subagents.items():
-                    if s.status == "stopped" and (now - s.updated_at) > IDLE_TIMEOUT:
-                        to_abort.append((sid, s))
-            for sid, s in to_abort:
-                s.agent.abort()
-                s.agent.task_queue.put("EXIT")
-                with self.lock:
-                    self.subagents.pop(sid, None)
-            if to_abort:
-                push_subagent_cards(self.snapshot())
-
-    def start_subagent(self, prompt: str, llm_index: Optional[int] = None) -> dict:
-        sid = short_id()
-        agent = GenericAgent()
-        agent.inc_out = True
-        agent.verbose = False
-        agent.no_print = True
-        _apply_llm_selection(agent, llm_index, f"Subagent {sid}")
-        th = start_agent_runner(agent, f"subagent-{sid}")
-        state = SubAgentState(id=sid, agent=agent, prompt=prompt, status="running", thread=th)
-        with self.lock:
-            self.subagents[sid] = state
-        return self._send_msg(sid, prompt)
-
-    def _send_msg(self, sid: str, msg: str) -> dict:
-        with self.lock:
-            s = self.subagents.get(sid)
-        if not s:
-            return {"error": "subagent not found", "id": sid}
-        dq = s.agent.put_task(msg, source=f"subagent:{sid}")
-        threading.Thread(
-            target=monitor_display_queue,
-            args=(sid, dq, self, True),
-            name=f"monitor-{sid}",
-            daemon=True
-        ).start()
-        push_subagent_cards(self.snapshot())
-        return {"id": sid, "status": "running"}
-
-    def input_subagent(self, sid: str, msg: str) -> dict:
-        with self.lock:
-            s = self.subagents.get(sid)
-        if not s:
-            return {"error": "subagent not found", "id": sid}
-        if s.status == "running":
-            return {
-                "error": "subagent is still running, cannot input/reply. Start a new subagent instead.",
-                "id": sid
-            }
-        s.prompt = msg
-        s.reply = ""
-        s.status = "running"
-        s.updated_at = time.time()
-        return self._send_msg(sid, msg)
-
-    def keyinfo_subagent(self, sid: str, msg: str) -> dict:
-        with self.lock:
-            s = self.subagents.get(sid)
-        if not s:
-            return {"error": "subagent not found", "id": sid}
-        h = s.agent.handler
-        h.working['key_info'] = h.working.get('key_info', '') + f"\n[MASTER] {msg}"
-        s.updated_at = time.time()
-        return {"id": sid, "status": "keyinfo_injected"}
-
-    def abort_subagent(self, sid: str) -> dict:
-        with self.lock:
-            s = self.subagents.get(sid)
-        if not s:
-            return {"error": "subagent not found", "id": sid}
-        s.agent.abort()
-        s.status = "stopped"
-        s.updated_at = time.time()
-        push_subagent_cards(self.snapshot())
-        return {"id": sid, "status": "stopped"}
-
 
 READMES = {
     "api": """Conductor API (integrated into GA-Hub)
@@ -340,172 +209,121 @@ GET /api/conductor/subagent/{id}?max_len=N  返回单个subagent详情
 }
 
 
-class Conductor:
-    """The supervisor agent that orchestrates subagents."""
+class HubConductorCallbacks(ConductorCallbacks):
+    """Translate shared-core lifecycle events into GA-Hub EventBus events."""
+    def __init__(self, service: "ConductorService"):
+        self.service = service
 
-    LOG_MAX = 50
+    def on_subagent_output(self, agent_id: str, output: str, done: bool) -> None:
+        push_subagent_cards(self.service.pool.snapshot())
+        bus.publish("conductor:subagent_output", {
+            "id": agent_id, "done": done, "output_len": len(output),
+        })
 
-    def __init__(self, pool: SubagentPool, chat_messages: list):
-        self.pool = pool
-        self.chat_messages = chat_messages
-        self.inbox: queue.Queue[dict] = queue.Queue()
-        self.agent: Optional[GenericAgent] = None
-        self.started = False
-        self.log: list = []
+    def on_subagent_completed(self, agent_id: str, output: str) -> None:
+        self.service.notify({"type": "subagent_done", "id": agent_id})
 
-    def notify(self, event: dict):
-        """Thread-safe: enqueue event to wake conductor."""
-        self.inbox.put(event)
+    def on_subagent_event(self, agent_id: str, event: SubAgentEvent, payload: dict) -> None:
+        bus.publish(f"conductor:subagent_{event.value}", {"id": agent_id, **payload})
 
-    def _build_prompt(self, events: list) -> str:
-        running, stopped = self.pool.counts()
-        unread = sum(1 for m in self.chat_messages if m.get("role") == "user" and not m.get("read"))
-        # Mark user messages as read now that the conductor is processing them.
-        # (Front-end polling of GET /chat must NOT mark read; only the conductor does.)
-        if unread:
-            for m in self.chat_messages:
-                if m.get("role") == "user" and not m.get("read"):
-                    m["read"] = True
-            bus.publish("conductor:chat_read", {})
-        done_count = sum(1 for e in events if e.get("type") == "subagent_done")
-        summary = (
-            f"subagents: {running} running, {stopped} stopped | "
-            f"{unread}条用户未读消息, {done_count}个subagent完成报告"
-        )
-        port = _get_webui_port()
-        base = f"http://{HOST}:{port}/api/conductor"
-        return f"""你是agent总管。用户只和你对话，你负责调度、验收、交付，目标是降低用户管理多个agent的负担。
-API: {base}；先requests，GET /api/conductor/readme查用法，GET /api/conductor/chat读未读对话，GET /api/conductor/subagent看状态；POST /api/conductor/chat是唯一对用户说话方式。
-流程文档按需读取: GET /api/conductor/readme/usermsg | GET /api/conductor/readme/subagent
+    def on_conductor_event(self, event_type: str, payload: dict) -> None:
+        bus.publish(f"conductor:{event_type}", payload)
 
-铁律：
-- 绝不亲自执行任务/探测环境；一切执行交给subagent。你只分析、派遣、审查、沟通。
-- 每次唤醒只做最小必要动作（发消息/开subagent/reply/keyinfo/abort），做完立刻停，等待下次事件唤醒。
-- 改写prompt时严禁添加用户未提及的假设、工具、前提条件。只能精炼/结构化用户原意。
 
-原则：
-- 信任subagent足够聪明，不要写具体步骤；能自己判断的自己判断，只在真正需要用户决策时打扰。
-{summary}"""
+def _new_agent(llm_index: Optional[int] = None, label: str = "Conductor agent") -> GenericAgent:
+    agent = GenericAgent()
+    agent.inc_out = True
+    _apply_llm_selection(agent, llm_index, label)
+    return agent
 
-    def _drain(self, dq: queue.Queue, events: list) -> str:
-        event_label = ",".join(e.get("type", "") for e in events) or "wake"
-        cur_turn = None
-        buf = ""
 
-        def flush():
-            nonlocal buf
-            cleaned = clean_log_text(buf)
-            if cleaned:
-                item = {
-                    "id": short_id(),
-                    "ts": now_ms(),
-                    "event": event_label,
-                    "turn": cur_turn,
-                    "text": cleaned
-                }
-                self.log.append(item)
-                if len(self.log) > self.LOG_MAX:
-                    self.log.pop(0)
-                bus.publish("conductor:log", {"item": item})
-            buf = ""
+def _configure_subagent(agent: GenericAgent, llm_index=None) -> bool:
+    agent.verbose = False
+    agent.no_print = True
+    return _apply_llm_selection(agent, llm_index, "Subagent")
 
-        while True:
-            item = dq.get()
-            if "next" in item:
-                t = item.get("turn")
-                if cur_turn is None:
-                    cur_turn = t
-                elif t != cur_turn:
-                    flush()
-                    cur_turn = t
-                buf += item.get("next", "") or ""
-            elif "done" in item:
-                if cur_turn is None:
-                    cur_turn = item.get("turn")
-                flush()
-                log.info("Conductor task done")
-                return
 
-    def _run(self):
-        self.agent = GenericAgent()
-        self.agent.inc_out = True
-        _apply_llm_selection(self.agent, self.llm_index, "Conductor agent")
-        start_agent_runner(self.agent, "conductor-agent")
-        self.started = True
-        while True:
-            # Block until first event
-            first = self.inbox.get()
-            self.inbox.task_done()
-            # Debounce: collect additional events
-            time.sleep(0.3)
-            events = [first]
-            while not self.inbox.empty():
-                try:
-                    events.append(self.inbox.get_nowait())
-                    self.inbox.task_done()
-                except Exception:
-                    break
-            try:
-                prompt = self._build_prompt(events)
-                dq = self.agent.put_task(prompt, source="conductor")
-                self._drain(dq, events)
-            except Exception as e:
-                log.exception(f"Conductor error: {e}")
-
-    def start(self, llm_index: Optional[int] = None):
-        if llm_index is not None:
-            self.llm_index = llm_index
-        threading.Thread(target=self._run, name="conductor-loop", daemon=True).start()
+def _monitor_core_display(agent_id: str, dq: queue.Queue, trigger_when_done: bool, pool):
+    """Runtime bridge: retain Hub display behavior while core owns orchestration."""
+    monitor_display_queue(agent_id, dq, pool, trigger_when_done)
 
 
 class ConductorService:
-    """Singleton service managing conductor + subagent pool."""
-
-    _instance: Optional[ConductorService] = None
+    """Singleton GA-Hub adapter around the shared GA conductor core."""
+    _instance: Optional["ConductorService"] = None
     _lock = threading.Lock()
 
     def __init__(self):
-        self.pool = SubagentPool()
         self.chat_messages: list = []
-        self.conductor = Conductor(self.pool, self.chat_messages)
         self._started = False
+        self._conductor_llm_index = None
+        self.callbacks = HubConductorCallbacks(self)
+        # The pool is constructed first because the monitor bridge needs it.
+        runtime = PoolRuntime(
+            agent_factory=GenericAgent,
+            on_display_fn=lambda sid, dq, done: _monitor_core_display(
+                sid, dq, done, self.pool
+            ),
+            llm_selector=_configure_subagent,
+        )
+        self.pool = CoreSubagentPool(runtime=runtime, callbacks=self.callbacks)
+        self.contract_ext = ConductorContractExt(self.pool, publish=bus.publish)
+        self.conductor = CoreConductor(
+            pool=self.pool,
+            prompt_builder=self._build_prompt,
+            agent_factory=lambda: _new_agent(self._conductor_llm_index),
+            callbacks=self.callbacks,
+        )
 
     @classmethod
-    def instance(cls) -> ConductorService:
+    def instance(cls) -> "ConductorService":
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = cls()
         return cls._instance
 
+    def _build_prompt(self, events: list) -> str:
+        running, stopped = self.pool.counts()
+        unread = sum(1 for m in self.chat_messages if m.get("role") == "user" and not m.get("read"))
+        if unread:
+            for m in self.chat_messages:
+                if m.get("role") == "user" and not m.get("read"):
+                    m["read"] = True
+            bus.publish("conductor:chat_read", {})
+        done_count = sum(1 for e in events if e.get("type") == "subagent_done")
+        summary = f"subagents: {running} running, {stopped} stopped | {unread}???????, {done_count}?subagent????"
+        base = f"http://{HOST}:{_get_webui_port()}/api/conductor"
+        return f"""??agent??????????????????????????????????agent????
+API: {base}??requests?GET /api/conductor/readme????GET /api/conductor/chat??????GET /api/conductor/subagent????POST /api/conductor/chat???????????
+????????: GET /api/conductor/readme/usermsg | GET /api/conductor/readme/subagent
+
+???
+- ????????/???????????subagent???????????????
+- ????????????????/?subagent/reply/keyinfo/abort?????????????????
+- ??prompt??????????????????????????/????????
+
+???
+- ??subagent??????????????????????????????????????
+{summary}"""
+
     def start(self, llm_index: Optional[int] = None):
-        """Bootstrap conductor agent loop."""
         if llm_index is not None:
-            self.conductor.llm_index = llm_index
+            self._conductor_llm_index = llm_index
         if not self._started:
-            self.conductor.start(llm_index=llm_index)
+            self.conductor.start()
             self._started = True
-            log.info("ConductorService started")
 
     def notify(self, event: dict):
-        """Forward event to conductor inbox."""
         self.conductor.notify(event)
 
     def get_chat_messages(self, last: int = 20) -> list:
-        """Get recent chat messages (does NOT mark as read)."""
         return self.chat_messages[-last:]
 
     def add_chat_message(self, msg: str, role: str = "conductor", llm_index: Optional[int] = None) -> dict:
-        """Add message to chat and notify/start conductor if from user."""
         item = add_chat(msg, role, self.chat_messages)
         if role == "user":
-            # A user typing into the Conductor chat is an implicit wake-up.
-            # Previously messages sent while stopped only entered the inbox,
-            # but no conductor loop consumed them, making the input look dead.
-            if llm_index is not None:
-                self.conductor.llm_index = llm_index
-            if not self._started:
-                self.start(llm_index=llm_index)
+            self.start(llm_index)
             self.notify({"type": "user_message", "msg": msg})
         return item
 
