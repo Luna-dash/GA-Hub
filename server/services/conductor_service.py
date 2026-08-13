@@ -35,6 +35,7 @@ from frontends.conductor_core import (
 )
 
 from .conductor_ext_contract import ConductorContractExt  # noqa: E402
+from .conductor_ext_timeout import OutputBudget, TimeoutMonitor  # noqa: E402
 from .event_bus import bus  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -165,16 +166,15 @@ def start_agent_runner(agent: GenericAgent, name: str) -> threading.Thread:
 
 def monitor_display_queue(agent_id: str, dq: queue.Queue, pool: SubagentPool, trigger_when_done: bool):
     """Monitor subagent display queue and update pool state."""
-    acc = ""
+    budget = OutputBudget(agent_id, publish=bus.publish)
     while True:
         item = dq.get()
         if "next" in item:
-            chunk = item.get("next") or ""
-            acc += chunk
-            pool.on_display(agent_id, acc, done=False)
+            output = budget.append(item.get("next") or "")
+            pool.on_display(agent_id, output, done=False)
             push_subagent_cards(pool.snapshot())
         if "done" in item:
-            done = item.get("done") or acc
+            done = budget.finish(item.get("done") or budget.output)
             pool.on_display(agent_id, done, done=True)
             push_subagent_cards(pool.snapshot())
             if trigger_when_done:
@@ -268,6 +268,8 @@ class ConductorService:
         )
         self.pool = CoreSubagentPool(runtime=runtime, callbacks=self.callbacks)
         self.contract_ext = ConductorContractExt(self.pool, publish=bus.publish)
+        self.timeout_monitor = TimeoutMonitor(self.pool, publish=bus.publish)
+        self.timeout_monitor.start()
         self.conductor = CoreConductor(
             pool=self.pool,
             prompt_builder=self._build_prompt,
@@ -282,6 +284,10 @@ class ConductorService:
                 if cls._instance is None:
                     cls._instance = cls()
         return cls._instance
+
+    def shutdown(self) -> None:
+        """Stop Hub-owned background helpers without creating new work."""
+        self.timeout_monitor.stop()
 
     def _build_prompt(self, events: list) -> str:
         running, stopped = self.pool.counts()

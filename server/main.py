@@ -377,6 +377,12 @@ def create_app() -> FastAPI:
             except Exception:
                 log.exception("autonomous scheduler shutdown failed")
             try:
+                from .services.conductor_service import ConductorService
+                if ConductorService._instance is not None:
+                    ConductorService._instance.shutdown()
+            except Exception:
+                log.exception("conductor shutdown failed")
+            try:
                 from .services.feishu_service import FeishuService
                 FeishuService.instance().shutdown()
             except Exception:
