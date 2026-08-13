@@ -37,6 +37,7 @@ from frontends.conductor_core import (
 from .conductor_ext_contract import ConductorContractExt  # noqa: E402
 from .conductor_ext_timeout import OutputBudget, TimeoutMonitor  # noqa: E402
 from .event_bus import bus  # noqa: E402
+from .request_usage import RequestUsageStore  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -214,6 +215,13 @@ class HubConductorCallbacks(ConductorCallbacks):
     def __init__(self, service: "ConductorService"):
         self.service = service
 
+    def on_conductor_request_started(self, request_id: str):
+        return self.service.usage_store.activate(request_id)
+
+    def on_conductor_request_finished(self, request_id: str, token) -> None:
+        self.service.usage_store.complete(request_id)
+        self.service.usage_store.deactivate(token)
+
     def on_subagent_output(self, agent_id: str, output: str, done: bool) -> None:
         push_subagent_cards(self.service.pool.snapshot())
         bus.publish("conductor:subagent_output", {
@@ -255,6 +263,14 @@ class ConductorService:
 
     def __init__(self):
         self.chat_messages: list = []
+        self.usage_store = RequestUsageStore()
+        try:
+            import cost_tracker
+            cost_tracker.set_usage_sink(self.usage_store.record)
+            cost_tracker.install()
+        except Exception:
+            # The shared GA core remains usable without the optional tracker.
+            log.debug("Direct usage attribution sink unavailable", exc_info=True)
         self._started = False
         self._conductor_llm_index = None
         self.callbacks = HubConductorCallbacks(self)
@@ -327,10 +343,12 @@ API: {base}??requests?GET /api/conductor/readme????GET /api/conductor/chat??????
         return self.chat_messages[-last:]
 
     def add_chat_message(self, msg: str, role: str = "conductor", llm_index: Optional[int] = None) -> dict:
+        request_id = self.usage_store.begin() if role == "user" else None
         item = add_chat(msg, role, self.chat_messages)
-        if role == "user":
+        if request_id:
+            item["request_id"] = request_id
+            self.notify({"type": "user_message", "msg": msg, "request_id": request_id})
             self.start(llm_index)
-            self.notify({"type": "user_message", "msg": msg})
         return item
 
     def get_readmes(self) -> dict:
