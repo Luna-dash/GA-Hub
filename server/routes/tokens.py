@@ -84,7 +84,58 @@ def _read_usage() -> dict[str, Any]:
             return data
     except (OSError, ValueError):
         pass
-    return {"version": 2, "weeks": {}, "all_time": {}, "session": {}}
+    return {"version": 4, "days": {}, "weeks": {}, "all_time": {}, "session": {}, "sessions": {}}
+
+
+def _history_daily_totals() -> dict[str, dict[str, int]]:
+    """Rebuild per-day deltas from the legacy cumulative snapshots.
+
+    Tracker counters return to zero after a backend restart.  Treating a
+    decrease as a new counter epoch preserves those earlier epochs instead of
+    turning the chart into a single post-upgrade point.
+    """
+    try:
+        raw = json.loads(_HISTORY_FILE.read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, list):
+        return {}
+    result: dict[str, dict[str, int]] = {}
+    previous = _normalise_totals({})
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            timestamp = int(item.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            continue
+        if timestamp <= 0:
+            continue
+        current = _normalise_totals(item)
+        delta = {
+            key: current[key] - previous[key] if current[key] >= previous[key] else current[key]
+            for key in _TOTAL_KEYS
+        }
+        day_key = datetime.fromtimestamp(timestamp).date().isoformat()
+        day = _normalise_totals(result.get(day_key))
+        result[day_key] = {key: day[key] + delta[key] for key in _TOTAL_KEYS}
+        previous = current
+    return result
+
+
+def _migrate_history_days(data: dict[str, Any]) -> None:
+    if data.get("history_days_migrated"):
+        return
+    days = data.setdefault("days", {})
+    if not isinstance(days, dict):
+        days = {}
+        data["days"] = days
+    for day_key, recovered in _history_daily_totals().items():
+        existing = _normalise_totals(days.get(day_key))
+        # The v3 ledger may already contain a more recent sample for the day
+        # migration runs.  max() avoids both losing it and counting it twice.
+        days[day_key] = {key: max(existing[key], recovered[key]) for key in _TOTAL_KEYS}
+    data["history_days_migrated"] = True
 
 
 def _write_usage(data: dict[str, Any]) -> None:
@@ -94,7 +145,59 @@ def _write_usage(data: dict[str, Any]) -> None:
     tmp.replace(_USAGE_FILE)
 
 
+def _session_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
+    source = data.get("sessions") if isinstance(data.get("sessions"), dict) else {}
+    rows = []
+    for session_id, value in source.items():
+        if not isinstance(value, dict):
+            continue
+        totals = _with_rate(_normalise_totals(value.get("totals")))
+        rows.append({
+            "thread": str(session_id),
+            **totals,
+            "elapsed_seconds": 0.0,
+            "updated_at": int(value.get("updated_at") or 0),
+        })
+    rows.sort(key=lambda row: (row["updated_at"], row["total"]), reverse=True)
+    return rows
+
+
+def record_session_usage(session_id: str | None, current: dict[str, Any] | None = None) -> dict[str, int]:
+    """Assign tracker growth since the last completed stream to one WebUI session.
+
+    GA-Hub executes WebUI tasks serially on ``ga-web-agent``.  Each stream is
+    therefore the exclusive owner of tracker growth observed at its completion.
+    The allocation cursor is process-local while per-session totals are durable.
+    """
+    if not session_id:
+        return _normalise_totals({})
+    snapshot = current or _stats().get("totals", {})
+    now = int(time.time())
+    with _HISTORY_LOCK:
+        data = _read_usage()
+        cursor = data.get("allocation_cursor") if isinstance(data.get("allocation_cursor"), dict) else {}
+        previous = _normalise_totals(cursor.get("totals")) if cursor.get("id") == _SESSION_ID else _normalise_totals({})
+        totals = _normalise_totals(snapshot)
+        delta = {key: totals[key] - previous[key] if totals[key] >= previous[key] else totals[key] for key in _TOTAL_KEYS}
+        sessions = data.setdefault("sessions", {})
+        entry = sessions.get(session_id) if isinstance(sessions.get(session_id), dict) else {}
+        accumulated = _normalise_totals(entry.get("totals"))
+        sessions[session_id] = {
+            "totals": {key: accumulated[key] + delta[key] for key in _TOTAL_KEYS},
+            "updated_at": now,
+        }
+        data["allocation_cursor"] = {"id": _SESSION_ID, "totals": totals, "updated_at": now}
+        data["version"] = 4
+        _write_usage(data)
+        return delta
+
+
 def _weekly_response(data: dict[str, Any], timestamp: int) -> dict[str, Any]:
+    days_source = data.get("days") if isinstance(data.get("days"), dict) else {}
+    days = [
+        {"date": date, **_with_rate(_normalise_totals(days_source[date]))}
+        for date in sorted(days_source)
+    ]
     rows = []
     weeks = data.get("weeks") if isinstance(data.get("weeks"), dict) else {}
     for week_start in sorted(weeks):
@@ -115,7 +218,13 @@ def _weekly_response(data: dict[str, Any], timestamp: int) -> dict[str, Any]:
             totals = _normalise_totals(week)
             migrated = {key: migrated[key] + totals[key] for key in _TOTAL_KEYS}
         all_time_source = migrated
-    return {"all_time": _with_rate(_normalise_totals(all_time_source)), "current_week": current, "weeks": rows}
+    return {
+        "all_time": _with_rate(_normalise_totals(all_time_source)),
+        "current_week": current,
+        "weeks": rows,
+        "days": days,
+        "threads": _session_rows(data),
+    }
 
 
 def _persist_snapshot(snap: dict[str, Any]) -> dict[str, Any]:
@@ -124,10 +233,15 @@ def _persist_snapshot(snap: dict[str, Any]) -> dict[str, Any]:
     current = _normalise_totals(snap.get("totals"))
     with _HISTORY_LOCK:
         data = _read_usage()
+        _migrate_history_days(data)
         weeks = data.setdefault("weeks", {})
+        days = data.setdefault("days", {})
         session = data.get("session") if isinstance(data.get("session"), dict) else {}
         previous = _normalise_totals(session.get("totals")) if session.get("id") == _SESSION_ID else _normalise_totals({})
         delta = {key: current[key] - previous[key] if current[key] >= previous[key] else current[key] for key in _TOTAL_KEYS}
+        day_key = datetime.fromtimestamp(timestamp).date().isoformat()
+        day = _normalise_totals(days.get(day_key))
+        days[day_key] = {key: day[key] + delta[key] for key in _TOTAL_KEYS}
         week_start, _ = _week_dates(timestamp)
         week = _normalise_totals(weeks.get(week_start))
         weeks[week_start] = {key: week[key] + delta[key] for key in _TOTAL_KEYS}
@@ -142,7 +256,7 @@ def _persist_snapshot(snap: dict[str, Any]) -> dict[str, Any]:
             all_time = _normalise_totals(all_time_source)
         data["all_time"] = {key: all_time[key] + delta[key] for key in _TOTAL_KEYS}
         data["session"] = {"id": _SESSION_ID, "totals": current, "updated_at": timestamp}
-        data["version"] = 2
+        data["version"] = 3
         try:
             _write_usage(data)
         except OSError:

@@ -473,6 +473,7 @@ export interface TokenThreadStats {
 
 export interface TokenTotals extends Omit<TokenThreadStats, 'thread' | 'elapsed_seconds'> {}
 export interface TokenWeekStats extends TokenTotals { week_start: string; week_end: string }
+export interface TokenDayStats extends TokenTotals { date: string }
 export interface TokenStatsResponse {
   available: boolean
   threads: TokenThreadStats[]
@@ -481,6 +482,7 @@ export interface TokenStatsResponse {
   all_time: TokenTotals
   current_week: TokenWeekStats
   weeks: TokenWeekStats[]
+  days: TokenDayStats[]
 }
 export interface TokenHistoryPoint extends TokenTotals { timestamp: number }
 export interface TokenHistoryResponse { hours: number; history: TokenHistoryPoint[] }

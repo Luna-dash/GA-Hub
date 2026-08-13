@@ -655,6 +655,7 @@ class AgentService:
                         "run_id": h.run_id,
                     })
                     bus.publish("agent:done", {"stream_id": h.stream_id, "len": len(content)})
+                    self._record_session_usage(h.session_id)
                     handled_recoverable_error = self._maybe_retry_recoverable_error(h, snap, content)
                     if not handled_recoverable_error:
                         self._maybe_auto_continue(h, snap, content)
@@ -687,6 +688,17 @@ class AgentService:
                 "session_id": h.session_id,
                 "run_id": h.run_id,
             })
+            self._record_session_usage(h.session_id)
+
+    @staticmethod
+    def _record_session_usage(session_id: str) -> None:
+        try:
+            # Lazy import avoids coupling lightweight AgentService tests to
+            # FastAPI route initialisation.
+            from ..routes.tokens import record_session_usage
+            record_session_usage(session_id)
+        except Exception:
+            log.exception("could not assign token usage to session %s", session_id)
 
     def _maybe_retry_recoverable_error(self, h: StreamHandle, snap: ChatSnapshot, content: str) -> bool:
         if snap.source not in ("user", "webui", "chat_error_retry", "auto_continue", "scheduled_task", "autonomous", "reflect"):
