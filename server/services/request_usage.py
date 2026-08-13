@@ -45,8 +45,8 @@ class RequestUsageStore:
     def deactivate(self, token) -> None:
         _CURRENT.reset(token)
 
-    def record(self, usage: dict[str, Any] | None, api_mode: str) -> None:
-        rid = _CURRENT.get()
+    def record(self, usage: dict[str, Any] | None, api_mode: str, request_id: str | None = None) -> None:
+        rid = request_id or _CURRENT.get()
         if not rid or not usage:
             return
         with self._lock:
