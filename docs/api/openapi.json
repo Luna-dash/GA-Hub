@@ -123,6 +123,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
               "default": 100,
               "title": "Limit"
             }
@@ -133,7 +135,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/EventRecentResp"
+                }
               }
             }
           },
@@ -2606,6 +2610,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 5000,
+              "minimum": 1,
               "default": 200,
               "title": "Tail"
             }
@@ -2616,7 +2622,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LogLinesResp"
+                }
               }
             }
           },
@@ -2644,6 +2652,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 5000,
+              "minimum": 1,
               "default": 200,
               "title": "Tail"
             }
@@ -2654,7 +2664,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LogLinesResp"
+                }
               }
             }
           },
@@ -2683,6 +2695,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 5000,
+              "minimum": 1,
               "default": 200,
               "title": "Tail"
             }
@@ -2693,7 +2707,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LogLinesResp"
+                }
               }
             }
           },
@@ -3036,7 +3052,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ServicePanelResp"
+                }
               }
             }
           }
@@ -5676,6 +5694,46 @@
         ],
         "title": "EmailTestResp"
       },
+      "EventBusEnvelope": {
+        "properties": {
+          "topic": {
+            "type": "string",
+            "title": "Topic"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          },
+          "ts": {
+            "type": "integer",
+            "title": "Ts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "topic",
+          "payload",
+          "ts"
+        ],
+        "title": "EventBusEnvelope"
+      },
+      "EventRecentResp": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/EventBusEnvelope"
+            },
+            "type": "array",
+            "title": "Events"
+          }
+        },
+        "type": "object",
+        "required": [
+          "events"
+        ],
+        "title": "EventRecentResp"
+      },
       "FeishuProcessStatus": {
         "properties": {
           "running": {
@@ -5966,6 +6024,33 @@
           "index"
         ],
         "title": "LLMSwitch"
+      },
+      "LogLinesResp": {
+        "properties": {
+          "lines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lines"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lines"
+        ],
+        "title": "LogLinesResp"
       },
       "MemoryTextResp": {
         "properties": {
@@ -6997,6 +7082,109 @@
           "running"
         ],
         "title": "SchedulerRuntimeStatus"
+      },
+      "ServicePanelItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "running",
+              "ready",
+              "stopped",
+              "error"
+            ],
+            "title": "State"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "href": {
+            "type": "string",
+            "title": "Href"
+          },
+          "metrics": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metrics"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "activity": {
+            "type": "string",
+            "enum": [
+              "active",
+              "standby",
+              "inactive"
+            ],
+            "title": "Activity"
+          },
+          "health": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "attention",
+              "unknown"
+            ],
+            "title": "Health"
+          },
+          "expected_running": {
+            "type": "boolean",
+            "title": "Expected Running"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "state",
+          "summary",
+          "href",
+          "metrics",
+          "error",
+          "activity",
+          "health",
+          "expected_running"
+        ],
+        "title": "ServicePanelItem"
+      },
+      "ServicePanelResp": {
+        "properties": {
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/ServicePanelItem"
+            },
+            "type": "array",
+            "title": "Services"
+          },
+          "timestamp": {
+            "type": "integer",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "services",
+          "timestamp"
+        ],
+        "title": "ServicePanelResp"
       },
       "SessionCreate": {
         "properties": {

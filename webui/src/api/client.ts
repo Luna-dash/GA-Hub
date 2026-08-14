@@ -35,9 +35,11 @@ import type {
   ConversationUpdateResponse,
   EmailConfig,
   EmailTestResponse,
+  EventRecentResponse,
   FsCheckResult,
   FsStatus,
   LLMInfo,
+  LogLinesResponse,
   LLMTestResult,
   MemoryTextResponse,
   MemoryWriteResponse,
@@ -253,7 +255,7 @@ export const api = {
   fsStart: () => http<{ started: boolean; running: boolean; pid?: number | null; log_file?: string }>('POST', '/api/feishu/start'),
   fsStop: () => http<{ stopped: boolean; running: boolean; pid?: number | null }>('POST', '/api/feishu/stop'),
   fsLogs: (tail = 300) => http<{ lines: string[]; file: string }>('GET', `/api/feishu/logs?tail=${tail}`),
-  fsRecentEvents: (limit = 100) => http<{ events: BusEvent[] }>('GET', `/api/events/recent?prefix=feishu:chat&limit=${limit}`),
+  fsRecentEvents: (limit = 100) => http<EventRecentResponse>('GET', `/api/events/recent?prefix=feishu:chat&limit=${limit}`),
   fsSaveKeys: (app_id: string, app_secret: string, allowed_users = '') =>
     http<{ ok: boolean; app_id_masked?: string; allowed_users_saved?: boolean }>('PUT', '/api/feishu/keys', { app_id, app_secret, allowed_users }),
   fsSend: (receive_id: string, text: string, receive_id_type = 'open_id', use_card = false) =>
@@ -367,9 +369,9 @@ export const api = {
     http<{ ok: boolean; path: string }>('POST', '/api/files/reveal', { path }),
 
   // ── logs ─────────────────────────────────────────────
-  wechatLog: (tail = 200) => http<{ lines: string[] }>('GET', `/api/logs/wechat?tail=${tail}`),
-  agentLog: (tail = 200) => http<{ lines: string[]; file: string | null }>('GET', `/api/logs/agent?tail=${tail}`),
-  backendLog: (tail = 200) => http<{ lines: string[]; file: string }>('GET', `/api/logs/backend?tail=${tail}`),
+  wechatLog: (tail = 200) => http<LogLinesResponse>('GET', `/api/logs/wechat?tail=${tail}`),
+  agentLog: (tail = 200) => http<LogLinesResponse>('GET', `/api/logs/agent?tail=${tail}`),
+  backendLog: (tail = 200) => http<LogLinesResponse>('GET', `/api/logs/backend?tail=${tail}`),
 
   // ── rewind ───────────────────────────────────────────
   rewindTurns: (req: { sid?: string; n?: number }) =>

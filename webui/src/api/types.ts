@@ -273,13 +273,14 @@ export type ChatWSOut = (
   | { type: 'replay_done'; session_id: string; event_id: number }
 ) & ChatWSMeta
 
-export interface EventBusEnvelope {
-  topic: string
+export type EventBusEnvelope = Omit<ApiSchemas['EventBusEnvelope'], 'payload'> & {
   payload: Record<string, any>
-  ts: number
 }
-
 export type BusEvent = EventBusEnvelope
+export type EventRecentResponse = Omit<ApiSchemas['EventRecentResp'], 'events'> & {
+  events: EventBusEnvelope[]
+}
+export type LogLinesResponse = ApiSchemas['LogLinesResp']
 
 // ── Conductor ─────────────────────────────────────────────
 export type ConductorChatMessage = ApiSchemas['ConductorChatMessage']
@@ -323,22 +324,15 @@ export interface TokenStatsResponse {
 export interface TokenHistoryPoint extends TokenTotals { timestamp: number }
 export interface TokenHistoryResponse { hours: number; history: TokenHistoryPoint[] }
 
-export type ServicePanelState = 'running' | 'ready' | 'stopped' | 'error'
-export type ServiceActivity = 'active' | 'standby' | 'inactive'
-export type ServiceHealth = 'healthy' | 'attention' | 'unknown'
-export interface ServicePanelItem {
-  id: string
-  name: string
-  state: ServicePanelState
-  activity: ServiceActivity
-  health: ServiceHealth
-  expected_running: boolean
-  summary: string
-  href: string
+export type ServicePanelState = NonNullable<ApiSchemas['ServicePanelItem']['state']>
+export type ServiceActivity = NonNullable<ApiSchemas['ServicePanelItem']['activity']>
+export type ServiceHealth = NonNullable<ApiSchemas['ServicePanelItem']['health']>
+export type ServicePanelItem = Omit<ApiSchemas['ServicePanelItem'], 'metrics'> & {
   metrics: Record<string, string | number | boolean | null>
-  error: string | null
 }
-export interface ServicePanelResponse { services: ServicePanelItem[]; timestamp: number }
+export type ServicePanelResponse = Omit<ApiSchemas['ServicePanelResp'], 'services'> & {
+  services: ServicePanelItem[]
+}
 
 export interface ConductorApprovalItem {
   id: string

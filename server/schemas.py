@@ -635,3 +635,37 @@ class MyKeySyncResultResp(BaseModel):
 class MyKeyOpenResp(BaseModel):
     ok: bool
     path: str
+
+
+# Observability / services
+class LogLinesResp(BaseModel):
+    lines: list[str]
+    file: str | None = None
+
+
+class EventBusEnvelope(BaseModel):
+    topic: str
+    payload: dict[str, Any]
+    ts: int
+
+
+class EventRecentResp(BaseModel):
+    events: list[EventBusEnvelope]
+
+
+class ServicePanelItem(BaseModel):
+    id: str
+    name: str
+    state: Literal["running", "ready", "stopped", "error"]
+    summary: str
+    href: str
+    metrics: dict[str, Any]
+    error: str | None
+    activity: Literal["active", "standby", "inactive"]
+    health: Literal["healthy", "attention", "unknown"]
+    expected_running: bool
+
+
+class ServicePanelResp(BaseModel):
+    services: list[ServicePanelItem]
+    timestamp: int

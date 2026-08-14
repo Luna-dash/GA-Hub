@@ -5,9 +5,10 @@ import os
 import re
 from collections import deque
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from .. import _paths
+from ..schemas import LogLinesResp
 
 router = APIRouter()
 
@@ -41,19 +42,19 @@ def _tail(path: str, n: int, *, redact: bool = False) -> list[str]:
 
 
 @router.get("/api/logs/backend")
-async def log_backend(tail: int = 200):
+async def log_backend(tail: int = Query(default=200, ge=1, le=5000)) -> LogLinesResp:
     """Return a bounded, redacted tail of the admin backend log."""
     path = _paths.ADMIN_DATA / "logs" / "backend.log"
     return {"lines": _tail(str(path), tail, redact=True), "file": path.name}
 
 
 @router.get("/api/logs/wechat")
-async def log_wechat(tail: int = 200):
-    return {"lines": _tail(str(_paths.temp_dir() / "wechatapp.log"), tail)}
+async def log_wechat(tail: int = Query(default=200, ge=1, le=5000)) -> LogLinesResp:
+    return {"lines": _tail(str(_paths.temp_dir() / "wechatapp.log"), tail), "file": None}
 
 
 @router.get("/api/logs/agent")
-async def log_agent(tail: int = 200):
+async def log_agent(tail: int = Query(default=200, ge=1, le=5000)) -> LogLinesResp:
     """Returns tail of the most recent model_responses log for the current PID."""
     mr = str(_paths.temp_dir() / "model_responses")
     if not os.path.isdir(mr):

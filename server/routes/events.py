@@ -5,8 +5,9 @@ import ipaddress
 import logging
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
+from ..schemas import EventRecentResp
 from ..services.event_bus import bus
 
 log = logging.getLogger(__name__)
@@ -71,7 +72,10 @@ async def ws_events(ws: WebSocket):
 
 
 @router.get("/api/events/recent")
-async def recent_events(prefix: str = "", limit: int = 100):
+async def recent_events(
+    prefix: str = "",
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> EventRecentResp:
     return {
         "events": [
             {"topic": e.topic, "payload": e.payload, "ts": e.ts}

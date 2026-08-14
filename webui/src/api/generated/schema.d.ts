@@ -2583,6 +2583,22 @@ export interface components {
             /** Error */
             error?: string | null;
         };
+        /** EventBusEnvelope */
+        EventBusEnvelope: {
+            /** Topic */
+            topic: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Ts */
+            ts: number;
+        };
+        /** EventRecentResp */
+        EventRecentResp: {
+            /** Events */
+            events: components["schemas"]["EventBusEnvelope"][];
+        };
         /**
          * FeishuProcessStatus
          * @description Feishu gateway status, or an initialization diagnostic.
@@ -2697,6 +2713,13 @@ export interface components {
         LLMSwitch: {
             /** Index */
             index: number;
+        };
+        /** LogLinesResp */
+        LogLinesResp: {
+            /** Lines */
+            lines: string[];
+            /** File */
+            file?: string | null;
         };
         /** MemoryTextResp */
         MemoryTextResp: {
@@ -3076,6 +3099,47 @@ export interface components {
         SchedulerRuntimeStatus: {
             /** Running */
             running: boolean;
+        };
+        /** ServicePanelItem */
+        ServicePanelItem: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "ready" | "stopped" | "error";
+            /** Summary */
+            summary: string;
+            /** Href */
+            href: string;
+            /** Metrics */
+            metrics: {
+                [key: string]: unknown;
+            };
+            /** Error */
+            error: string | null;
+            /**
+             * Activity
+             * @enum {string}
+             */
+            activity: "active" | "standby" | "inactive";
+            /**
+             * Health
+             * @enum {string}
+             */
+            health: "healthy" | "attention" | "unknown";
+            /** Expected Running */
+            expected_running: boolean;
+        };
+        /** ServicePanelResp */
+        ServicePanelResp: {
+            /** Services */
+            services: components["schemas"]["ServicePanelItem"][];
+            /** Timestamp */
+            timestamp: number;
         };
         /** SessionCreate */
         SessionCreate: {
@@ -3602,7 +3666,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EventRecentResp"];
                 };
             };
             /** @description Validation Error */
@@ -5777,7 +5841,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["LogLinesResp"];
                 };
             };
             /** @description Validation Error */
@@ -5808,7 +5872,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["LogLinesResp"];
                 };
             };
             /** @description Validation Error */
@@ -5839,7 +5903,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["LogLinesResp"];
                 };
             };
             /** @description Validation Error */
@@ -6127,7 +6191,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ServicePanelResp"];
                 };
             };
         };
