@@ -34,7 +34,6 @@ import type {
   ScheduleType,
   ScheduledChat,
   SessionSnapshot,
-  HubSession,
   SessionMessagesResponse,
   SessionRuntime,
   TaskRun,
@@ -76,6 +75,9 @@ export const DEFAULT_HTTP_TIMEOUT_MS = 30_000
 
 type HttpOptions = RequestInit & { timeoutMs?: number }
 export type ApiComponents = GeneratedApiComponents
+type GeneratedHubSession = ApiComponents['schemas']['HubSession']
+type NavigationPreferences = ApiComponents['schemas']['NavPreferencesResp']
+type SessionList = ApiComponents['schemas']['SessionListResp']
 type AbortSource = 'timeout' | 'external' | null
 
 function requestAbortContext(externalSignal: AbortSignal | null | undefined, timeoutMs: number) {
@@ -156,9 +158,9 @@ export const api = {
 
   // ── persistent UI preferences ────────────────────────
   navigationPreferences: () =>
-    http<{ configured: boolean; preferences: Array<{ id: string; visible: boolean }> }>('GET', '/api/preferences/navigation'),
+    http<NavigationPreferences>('GET', '/api/preferences/navigation'),
   saveNavigationPreferences: (preferences: Array<{ id: string; visible: boolean }>) =>
-    http<{ configured: boolean; preferences: Array<{ id: string; visible: boolean }> }>(
+    http<NavigationPreferences>(
       'PUT',
       '/api/preferences/navigation',
       { preferences },
@@ -357,11 +359,11 @@ export const api = {
   conductorLog: () => http<{ log: ConductorLogItem[] }>('GET', '/api/conductor/log'),
   conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),
   conductorStart: (llm_index?: number | null) => http<{ ok: boolean }>('POST', '/api/conductor/start', { llm_index }),
-  sessions: () => http<{ total: number; items: HubSession[] }>('GET', '/api/sessions'),
+  sessions: () => http<SessionList>('GET', '/api/sessions'),
   createSession: (req: Partial<ApiComponents['schemas']['SessionCreate']> = {}) =>
-    http<HubSession>('POST', '/api/sessions', req),
+    http<GeneratedHubSession>('POST', '/api/sessions', req),
   updateSession: (id: string, changes: { title?: string; llm_index?: number | null }) =>
-    http<HubSession>('PATCH', `/api/sessions/${encodeURIComponent(id)}`, changes),
+    http<GeneratedHubSession>('PATCH', `/api/sessions/${encodeURIComponent(id)}`, changes),
   deleteSession: (id: string) =>
     http<void>('DELETE', `/api/sessions/${encodeURIComponent(id)}`),
   projects: () => http<{ total: number; items: ProjectItem[] }>('GET', '/api/projects'),
@@ -370,9 +372,9 @@ export const api = {
   deleteProject: (name: string) =>
     http<void>('DELETE', `/api/projects/${encodeURIComponent(name)}`),
   bindProject: (id: string, name: string, path: string) =>
-    http<HubSession>('PUT', `/api/sessions/${encodeURIComponent(id)}/project`, { name, path }),
+    http<GeneratedHubSession>('PUT', `/api/sessions/${encodeURIComponent(id)}/project`, { name, path }),
   unbindProject: (id: string) =>
-    http<HubSession>('DELETE', `/api/sessions/${encodeURIComponent(id)}/project`),
+    http<GeneratedHubSession>('DELETE', `/api/sessions/${encodeURIComponent(id)}/project`),
   sessionRun: (id: string, text: string, images: string[] = []) =>
     http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/runs`, { text, images }),
   sessionRuntime: (id: string) =>
@@ -390,7 +392,7 @@ export const api = {
       req,
     ),
   updateSessionModel: (id: string, llm_index: number) =>
-    http<HubSession>('PUT', `/api/sessions/${encodeURIComponent(id)}/model`, { llm_index }),
+    http<GeneratedHubSession>('PUT', `/api/sessions/${encodeURIComponent(id)}/model`, { llm_index }),
   abortSession: (id: string) =>
     http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/abort`),
   scheduledChats: (id: string) =>

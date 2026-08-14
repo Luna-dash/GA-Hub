@@ -3025,7 +3025,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HubSession"
+                }
               }
             }
           },
@@ -3060,7 +3062,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HubSession"
+                }
               }
             }
           },
@@ -3086,7 +3090,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResp"
+                }
               }
             }
           }
@@ -3110,7 +3116,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HubSession"
+                }
               }
             }
           },
@@ -3147,7 +3155,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HubSession"
+                }
               }
             }
           },
@@ -3192,7 +3202,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HubSession"
+                }
               }
             }
           },
@@ -3306,7 +3318,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HubSession"
+                }
               }
             }
           },
@@ -3695,7 +3709,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/NavPreferencesResp"
+                }
               }
             }
           }
@@ -3722,7 +3738,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/NavPreferencesResp"
+                }
               }
             }
           },
@@ -4480,6 +4498,85 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HubSession": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "llm_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Index"
+          },
+          "archive_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Path"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "idle"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
+          },
+          "project_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Path"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "llm_index",
+          "archive_path",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "HubSession"
+      },
       "LLMSwitch": {
         "properties": {
           "index": {
@@ -4526,6 +4623,27 @@
           "preferences"
         ],
         "title": "NavPreferencesReq"
+      },
+      "NavPreferencesResp": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "preferences": {
+            "items": {
+              "$ref": "#/components/schemas/NavPreference"
+            },
+            "type": "array",
+            "title": "Preferences"
+          }
+        },
+        "type": "object",
+        "required": [
+          "configured",
+          "preferences"
+        ],
+        "title": "NavPreferencesResp"
       },
       "NotifyReq": {
         "properties": {
@@ -4802,6 +4920,27 @@
         },
         "type": "object",
         "title": "SessionCreate"
+      },
+      "SessionListResp": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HubSession"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "items"
+        ],
+        "title": "SessionListResp"
       },
       "SessionModelUpdate": {
         "properties": {

@@ -2237,6 +2237,30 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HubSession */
+        HubSession: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Llm Index */
+            llm_index: number | null;
+            /** Archive Path */
+            archive_path: string | null;
+            /**
+             * Status
+             * @default idle
+             */
+            status: string;
+            /** Project Name */
+            project_name?: string | null;
+            /** Project Path */
+            project_path?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at: string;
+        };
         /** LLMSwitch */
         LLMSwitch: {
             /** Index */
@@ -2251,6 +2275,13 @@ export interface components {
         };
         /** NavPreferencesReq */
         NavPreferencesReq: {
+            /** Preferences */
+            preferences: components["schemas"]["NavPreference"][];
+        };
+        /** NavPreferencesResp */
+        NavPreferencesResp: {
+            /** Configured */
+            configured: boolean;
             /** Preferences */
             preferences: components["schemas"]["NavPreference"][];
         };
@@ -2364,6 +2395,13 @@ export interface components {
             title: string;
             /** Llm Index */
             llm_index?: number | null;
+        };
+        /** SessionListResp */
+        SessionListResp: {
+            /** Total */
+            total: number;
+            /** Items */
+            items: components["schemas"]["HubSession"][];
         };
         /** SessionModelUpdate */
         SessionModelUpdate: {
@@ -5230,7 +5268,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["HubSession"];
                 };
             };
             /** @description Validation Error */
@@ -5261,7 +5299,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["HubSession"];
                 };
             };
             /** @description Validation Error */
@@ -5290,7 +5328,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SessionListResp"];
                 };
             };
         };
@@ -5314,7 +5352,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["HubSession"];
                 };
             };
             /** @description Validation Error */
@@ -5345,7 +5383,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["HubSession"];
                 };
             };
             /** @description Validation Error */
@@ -5409,7 +5447,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["HubSession"];
                 };
             };
             /** @description Validation Error */
@@ -5475,7 +5513,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["HubSession"];
                 };
             };
             /** @description Validation Error */
@@ -5787,7 +5825,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["NavPreferencesResp"];
                 };
             };
         };
@@ -5811,7 +5849,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["NavPreferencesResp"];
                 };
             };
             /** @description Validation Error */

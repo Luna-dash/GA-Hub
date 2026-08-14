@@ -27,6 +27,11 @@ class NavPreferencesReq(BaseModel):
     preferences: list[NavPreference]
 
 
+class NavPreferencesResp(BaseModel):
+    configured: bool
+    preferences: list[NavPreference]
+
+
 def _validate_navigation(preferences: list[NavPreference]) -> list[dict]:
     ids = [entry.id for entry in preferences]
     if len(ids) != len(_ALLOWED_NAV_IDS) or set(ids) != _ALLOWED_NAV_IDS:
@@ -35,21 +40,25 @@ def _validate_navigation(preferences: list[NavPreference]) -> list[dict]:
 
 
 @router.get("/navigation")
-def get_navigation_preferences():
+def get_navigation_preferences() -> NavPreferencesResp:
     with _LOCK:
         try:
             preferences = _STORE.read().get("navigation")
         except PreferencesFormatError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {"configured": isinstance(preferences, list), "preferences": preferences or []}
+    raw_preferences = preferences if isinstance(preferences, list) else []
+    return NavPreferencesResp(
+        configured=isinstance(preferences, list),
+        preferences=[NavPreference.model_validate(entry) for entry in raw_preferences],
+    )
 
 
 @router.put("/navigation")
-def put_navigation_preferences(request: NavPreferencesReq):
+def put_navigation_preferences(request: NavPreferencesReq) -> NavPreferencesResp:
     normalized = _validate_navigation(request.preferences)
     with _LOCK:
         try:
             _STORE.update({"navigation": normalized})
         except PreferencesFormatError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {"configured": True, "preferences": normalized}
+    return NavPreferencesResp(configured=True, preferences=normalized)

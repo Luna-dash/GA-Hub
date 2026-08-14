@@ -152,6 +152,23 @@ class SessionModelUpdate(BaseModel):
     llm_index: int = Field(ge=0)
 
 
+class HubSession(BaseModel):
+    id: str
+    title: str
+    llm_index: int | None
+    archive_path: str | None
+    status: str = "idle"
+    project_name: str | None = None
+    project_path: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class SessionListResp(BaseModel):
+    total: int
+    items: list[HubSession]
+
+
 class ProjectCreate(BaseModel):
     path: str = Field(min_length=1, max_length=1000)
 
@@ -278,7 +295,7 @@ async def delete_project(project_name: str):
 
 
 @router.put("/api/sessions/{session_id}/project")
-async def bind_session_project(session_id: str, req: SessionProjectUpdate):
+async def bind_session_project(session_id: str, req: SessionProjectUpdate) -> HubSession:
     _session(session_id)
     project = next(
         (
@@ -305,7 +322,7 @@ async def bind_session_project(session_id: str, req: SessionProjectUpdate):
 
 
 @router.delete("/api/sessions/{session_id}/project")
-async def unbind_session_project(session_id: str):
+async def unbind_session_project(session_id: str) -> HubSession:
     _session(session_id)
 
     def configure(runtime):
@@ -323,18 +340,18 @@ async def unbind_session_project(session_id: str):
 
 
 @router.get("/api/sessions")
-async def list_sessions():
+async def list_sessions() -> SessionListResp:
     items = _store.list()
-    return {"total": len(items), "items": items}
+    return SessionListResp(total=len(items), items=items)
 
 
 @router.post("/api/sessions", status_code=status.HTTP_201_CREATED)
-async def create_session(req: SessionCreate):
+async def create_session(req: SessionCreate) -> HubSession:
     return _store.create(title=req.title, llm_index=req.llm_index)
 
 
 @router.get("/api/sessions/{session_id}")
-async def get_session(session_id: str):
+async def get_session(session_id: str) -> HubSession:
     try:
         return _store.get(session_id)
     except SessionNotFoundError:
@@ -360,7 +377,7 @@ async def get_session_messages(session_id: str):
 
 
 @router.patch("/api/sessions/{session_id}")
-async def update_session(session_id: str, req: SessionUpdate):
+async def update_session(session_id: str, req: SessionUpdate) -> HubSession:
     changes = req.model_dump(exclude_unset=True)
     if changes.get("title") is None:
         changes.pop("title", None)
@@ -371,7 +388,7 @@ async def update_session(session_id: str, req: SessionUpdate):
 
 
 @router.put("/api/sessions/{session_id}/model")
-async def update_session_model(session_id: str, req: SessionModelUpdate):
+async def update_session_model(session_id: str, req: SessionModelUpdate) -> HubSession:
     try:
         return _store.update(session_id, {"llm_index": req.llm_index})
     except SessionNotFoundError:
