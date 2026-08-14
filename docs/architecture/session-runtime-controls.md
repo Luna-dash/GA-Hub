@@ -188,6 +188,10 @@ token usage 领域新增 `TokenUsageStore` 作为唯一 file owner：
 
 UI preferences 领域新增 `UiPreferencesStore` 作为 `ui_preferences.json` 的唯一 file owner。它负责格式校验、线程锁、原子替换和默认文档；preferences route 只保留导航项校验与 HTTP 语义。迁移策略与 token usage 相同：先收敛文件所有权，保持 API 响应和既有 JSON 内容兼容。
 
+### 12.2 Email config owner
+
+Email notification 配置新增 EmailConfigStore 作为 email_config.json 的唯一 file owner。它负责默认文档、键过滤、端口与 TLS 归一化、空密码保留既有密码、公开视图脱敏、线程锁和原子替换；SMTP service 只读取配置并发信，task route 只负责 HTTP 错误映射。损坏或非法配置不会被静默重写为默认值。
+
 ## 13. AgentService 职责拆分
 
 AgentService 保留 GA runtime facade、生命周期与全局兼容入口，但不再自己实现所有基础设施。第一片已把聊天回放投影抽为 `ChatStreamProjection`：它独立持有容量上限、插入顺序、快照复制与线程锁；AgentService 只提交快照并读取投影。后续按同样边界继续拆出 legacy archive adapter、rewind adapter 与 LLM preference，不用一次性重写 runtime facade。

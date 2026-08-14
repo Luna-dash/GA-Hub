@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..schemas import EmailConfigReq, EmailTestReq, TaskScheduleUpsert
 from ..services import email_service
+from ..services.email_config_store import EmailConfigFormatError
 from ..services.agent_service import AgentService
 from ..services.task_scheduler import TaskScheduler
 
@@ -50,12 +51,18 @@ async def list_runs(limit: int = 100):
 
 @router.get("/email-config")
 async def get_email_config():
-    return email_service.load_config(public=True)
+    try:
+        return email_service.load_config(public=True)
+    except EmailConfigFormatError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.put("/email-config")
 async def put_email_config(req: EmailConfigReq):
-    return email_service.save_config(req.model_dump())
+    try:
+        return email_service.save_config(req.model_dump())
+    except EmailConfigFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/email-test")
