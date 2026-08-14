@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.routes import preferences
+from server.services.ui_preferences_store import UiPreferencesStore
 
 
 NAV = [
@@ -25,7 +26,7 @@ NAV = [
 
 def _client(tmp_path, monkeypatch):
     target = tmp_path / "ui_preferences.json"
-    monkeypatch.setattr(preferences, "_PREFERENCES_FILE", target)
+    monkeypatch.setattr(preferences, "_STORE", UiPreferencesStore(target))
     app = FastAPI()
     app.include_router(preferences.router)
     return TestClient(app), target

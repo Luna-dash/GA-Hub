@@ -183,3 +183,7 @@ token usage 领域新增 `TokenUsageStore` 作为唯一 file owner：
 - `AgentService` 继续通过 route 暴露的 `record_session_usage` 网关写入，避免 runtime adapter 反向依赖 HTTP 层的长期债务在本次行为改动中扩大。
 
 后续按同样模式逐类收敛 UI preferences、email config 与 legacy chat history；目标是每类文件一个 repository/single writer，而不是一次性建立万能存储层。
+
+### 12.1 UI preferences owner
+
+UI preferences 领域新增 `UiPreferencesStore` 作为 `ui_preferences.json` 的唯一 file owner。它负责格式校验、线程锁、原子替换和默认文档；preferences route 只保留导航项校验与 HTTP 语义。迁移策略与 token usage 相同：先收敛文件所有权，保持 API 响应和既有 JSON 内容兼容。
