@@ -1,7 +1,6 @@
 """Live LLM token usage and lightweight history."""
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
@@ -13,11 +12,13 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from .. import _paths
+from ..services.token_usage_store import TokenUsageStore
 
 router = APIRouter(prefix="/api/tokens", tags=["tokens"])
 log = logging.getLogger(__name__)
 _HISTORY_FILE = _paths.ADMIN_DATA / "token_history.json"
 _USAGE_FILE = _paths.ADMIN_DATA / "token_usage.json"
+_STORE = TokenUsageStore(usage_path=_USAGE_FILE, history_path=_HISTORY_FILE)
 _HISTORY_LOCK = threading.Lock()
 _SESSION_ID = uuid.uuid4().hex
 _TOTAL_KEYS = ("requests", "input", "output", "cache_create", "cache_read", "total")
@@ -78,12 +79,9 @@ def _week_dates(timestamp: int) -> tuple[str, str]:
 
 
 def _read_usage() -> dict[str, Any]:
-    try:
-        data = json.loads(_USAGE_FILE.read_text("utf-8"))
-        if isinstance(data, dict):
-            return data
-    except (OSError, ValueError):
-        pass
+    data = _STORE.read_usage()
+    if data is not None:
+        return data
     return {"version": 4, "days": {}, "weeks": {}, "all_time": {}, "session": {}, "sessions": {}}
 
 
@@ -94,12 +92,7 @@ def _history_daily_totals() -> dict[str, dict[str, int]]:
     decrease as a new counter epoch preserves those earlier epochs instead of
     turning the chart into a single post-upgrade point.
     """
-    try:
-        raw = json.loads(_HISTORY_FILE.read_text("utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(raw, list):
-        return {}
+    raw = _read_history()
     result: dict[str, dict[str, int]] = {}
     previous = _normalise_totals({})
     for item in raw:
@@ -139,10 +132,7 @@ def _migrate_history_days(data: dict[str, Any]) -> None:
 
 
 def _write_usage(data: dict[str, Any]) -> None:
-    _USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _USAGE_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False), "utf-8")
-    tmp.replace(_USAGE_FILE)
+    _STORE.write_usage(data)
 
 
 def _session_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -299,11 +289,7 @@ def stop_persistence() -> None:
 
 
 def _read_history() -> list[dict[str, Any]]:
-    try:
-        data = json.loads(_HISTORY_FILE.read_text("utf-8"))
-        return data if isinstance(data, list) else []
-    except (OSError, ValueError):
-        return []
+    return _STORE.read_history()
 
 
 def _sample(snap: dict[str, Any]) -> list[dict[str, Any]]:
@@ -314,10 +300,7 @@ def _sample(snap: dict[str, Any]) -> list[dict[str, Any]]:
         if not history or now - int(history[-1].get("timestamp", 0)) >= _SAMPLE_INTERVAL:
             history.append({"timestamp": now, **snap["totals"]})
             try:
-                _paths.ADMIN_DATA.mkdir(parents=True, exist_ok=True)
-                tmp = _HISTORY_FILE.with_suffix(".json.tmp")
-                tmp.write_text(json.dumps(history, ensure_ascii=False), "utf-8")
-                tmp.replace(_HISTORY_FILE)
+                _STORE.write_history(history)
             except OSError:
                 log.exception("could not persist token history")
         return history

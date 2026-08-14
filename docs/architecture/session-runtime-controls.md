@@ -171,3 +171,15 @@ runtime stream ID 只标识当前进程内某次提交，并受 snapshot 数量�
 - `/api/status` 暴露 `schedulers.runtime` 与三个 domain 的运行状态、计划数量和启动错误。
 
 后续仍可继续收敛持久化 repository 与执行 gateway，但不以“合并三个类”为目标。
+
+## 12. 持久化 owner 收敛
+
+状态：第一阶段已实施（2026-08-14）
+
+token usage 领域新增 `TokenUsageStore` 作为唯一 file owner：
+
+- `token_usage.json` 与 `token_history.json` 的读取、shape 校验和 atomic replace 都由 store 完成。
+- `routes/tokens.py` 只保留领域聚合、周/日归因和 API 语义，不再直接调用 `json`/临时文件写入。
+- `AgentService` 继续通过 route 暴露的 `record_session_usage` 网关写入，避免 runtime adapter 反向依赖 HTTP 层的长期债务在本次行为改动中扩大。
+
+后续按同样模式逐类收敛 UI preferences、email config 与 legacy chat history；目标是每类文件一个 repository/single writer，而不是一次性建立万能存储层。

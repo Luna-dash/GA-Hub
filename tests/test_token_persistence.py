@@ -34,6 +34,9 @@ class TokenPersistenceTests(unittest.TestCase):
         self.patches = [
             mock.patch.object(tokens, "_HISTORY_FILE", self.history),
             mock.patch.object(tokens, "_USAGE_FILE", self.usage),
+            mock.patch.object(tokens, "_STORE", tokens.TokenUsageStore(
+                usage_path=self.usage, history_path=self.history
+            )),
             mock.patch.object(tokens, "_SESSION_ID", "session-a"),
         ]
         for patch in self.patches:
