@@ -1,4 +1,8 @@
-// Types mirror server/schemas.py and service dataclasses.
+import type { components as GeneratedApiComponents } from './generated/schema'
+
+// Shared contracts come from the generated OpenAPI schema. Legacy types below
+// remain until their endpoint-specific response models are migrated.
+type ApiSchemas = GeneratedApiComponents['schemas']
 
 // ── Setup ─────────────────────────────────────────────────
 export interface SetupCandidate {
@@ -82,34 +86,15 @@ export interface HubSession {
 export interface ProjectItem {
   name: string
   path: string
-  source: 'workspace' | 'session'
+  last_used?: number
+  mem_lines?: number
+  memory_path?: string | null
   dangling: boolean
 }
 
-export interface SessionRuntime {
-  session_id: string
-  status: string
-  run_id: string | null
-  stream_id: string | null
-  completed_run_id?: string | null
-  error?: string | null
-  ok?: boolean
-}
-
-export interface SessionMessageProjection {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  ordinal: number
-  timestamp?: string | null
-}
-
-export interface SessionMessagesResponse {
-  session_id: string
-  archive_bound: boolean
-  revision: string | null
-  items: SessionMessageProjection[]
-}
+export type SessionRuntime = ApiSchemas['SessionRuntimeResp']
+export type SessionMessageProjection = ApiSchemas['SessionMessageProjection']
+export type SessionMessagesResponse = ApiSchemas['SessionMessagesResp']
 
 export interface ChatRetryConfig {
   enabled: boolean

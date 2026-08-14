@@ -2303,6 +2303,39 @@ export interface components {
             /** Path */
             path: string;
         };
+        /** ProjectItem */
+        ProjectItem: {
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /**
+             * Last Used
+             * @default 0
+             */
+            last_used: number;
+            /**
+             * Mem Lines
+             * @default 0
+             */
+            mem_lines: number;
+            /** Memory Path */
+            memory_path?: string | null;
+            /** Source */
+            source?: string | null;
+            /**
+             * Dangling
+             * @default false
+             */
+            dangling: boolean;
+        };
+        /** ProjectListResp */
+        ProjectListResp: {
+            /** Total */
+            total: number;
+            /** Items */
+            items: components["schemas"]["ProjectItem"][];
+        };
         /** RawWriteReq */
         RawWriteReq: {
             /** Raw */
@@ -2403,6 +2436,33 @@ export interface components {
             /** Items */
             items: components["schemas"]["HubSession"][];
         };
+        /** SessionMessageProjection */
+        SessionMessageProjection: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Content */
+            content: string;
+            /** Ordinal */
+            ordinal: number;
+            /** Timestamp */
+            timestamp?: string | null;
+        };
+        /** SessionMessagesResp */
+        SessionMessagesResp: {
+            /** Session Id */
+            session_id: string;
+            /** Archive Bound */
+            archive_bound: boolean;
+            /** Revision */
+            revision: string | null;
+            /** Items */
+            items: components["schemas"]["SessionMessageProjection"][];
+        };
         /** SessionModelUpdate */
         SessionModelUpdate: {
             /** Llm Index */
@@ -2414,6 +2474,23 @@ export interface components {
             name: string;
             /** Path */
             path: string;
+        };
+        /** SessionRuntimeResp */
+        SessionRuntimeResp: {
+            /** Session Id */
+            session_id: string;
+            /** Status */
+            status: string;
+            /** Run Id */
+            run_id: string | null;
+            /** Stream Id */
+            stream_id: string | null;
+            /** Completed Run Id */
+            completed_run_id?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Ok */
+            ok?: boolean | null;
         };
         /** SessionUpdate */
         SessionUpdate: {
@@ -5180,7 +5257,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ProjectListResp"];
                 };
             };
         };
@@ -5204,7 +5281,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ProjectItem"];
                 };
             };
             /** @description Validation Error */
@@ -5478,7 +5555,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SessionMessagesResp"];
                 };
             };
             /** @description Validation Error */
@@ -5548,7 +5625,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SessionRuntimeResp"];
                 };
             };
             /** @description Validation Error */
@@ -5743,7 +5820,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        [key: string]: components["schemas"]["SessionRuntimeResp"];
+                    };
                 };
             };
         };
@@ -5765,7 +5844,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SessionRuntimeResp"];
                 };
             };
             /** @description Validation Error */
@@ -5796,7 +5875,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SessionRuntimeResp"];
                 };
             };
             /** @description Validation Error */

@@ -2922,7 +2922,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectListResp"
+                }
               }
             }
           }
@@ -2946,7 +2948,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectItem"
+                }
               }
             }
           },
@@ -3271,7 +3275,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMessagesResp"
+                }
               }
             }
           },
@@ -3367,7 +3373,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRuntimeResp"
+                }
               }
             }
           },
@@ -3616,7 +3624,13 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "additionalProperties": {
+                    "$ref": "#/components/schemas/SessionRuntimeResp"
+                  },
+                  "type": "object",
+                  "title": "Response List Session Runtimes Api Session Runtimes Get"
+                }
               }
             }
           }
@@ -3643,7 +3657,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRuntimeResp"
+                }
               }
             }
           },
@@ -3680,7 +3696,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRuntimeResp"
+                }
               }
             }
           },
@@ -4678,6 +4696,82 @@
         ],
         "title": "ProjectCreate"
       },
+      "ProjectItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "last_used": {
+            "type": "integer",
+            "title": "Last Used",
+            "default": 0
+          },
+          "mem_lines": {
+            "type": "integer",
+            "title": "Mem Lines",
+            "default": 0
+          },
+          "memory_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Path"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "dangling": {
+            "type": "boolean",
+            "title": "Dangling",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path"
+        ],
+        "title": "ProjectItem"
+      },
+      "ProjectListResp": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "items"
+        ],
+        "title": "ProjectListResp"
+      },
       "RawWriteReq": {
         "properties": {
           "raw": {
@@ -4942,6 +5036,87 @@
         ],
         "title": "SessionListResp"
       },
+      "SessionMessageProjection": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "ordinal": {
+            "type": "integer",
+            "title": "Ordinal"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "content",
+          "ordinal"
+        ],
+        "title": "SessionMessageProjection"
+      },
+      "SessionMessagesResp": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "archive_bound": {
+            "type": "boolean",
+            "title": "Archive Bound"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SessionMessageProjection"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "archive_bound",
+          "revision",
+          "items"
+        ],
+        "title": "SessionMessagesResp"
+      },
       "SessionModelUpdate": {
         "properties": {
           "llm_index": {
@@ -4977,6 +5152,81 @@
           "path"
         ],
         "title": "SessionProjectUpdate"
+      },
+      "SessionRuntimeResp": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "stream_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stream Id"
+          },
+          "completed_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed Run Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "status",
+          "run_id",
+          "stream_id"
+        ],
+        "title": "SessionRuntimeResp"
       },
       "SessionUpdate": {
         "properties": {

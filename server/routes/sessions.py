@@ -8,6 +8,7 @@ import time
 import uuid
 
 from fastapi import APIRouter, HTTPException, Response, WebSocket, WebSocketDisconnect, status
+from typing import Literal
 from pydantic import BaseModel, Field
 
 from frontends import workspace_cmd
@@ -169,6 +170,21 @@ class SessionListResp(BaseModel):
     items: list[HubSession]
 
 
+class ProjectItem(BaseModel):
+    name: str
+    path: str
+    last_used: int = 0
+    mem_lines: int = 0
+    memory_path: str | None = None
+    source: str | None = None
+    dangling: bool = False
+
+
+class ProjectListResp(BaseModel):
+    total: int
+    items: list[ProjectItem]
+
+
 class ProjectCreate(BaseModel):
     path: str = Field(min_length=1, max_length=1000)
 
@@ -188,6 +204,50 @@ class ScheduledChatCreate(BaseModel):
     text: str = Field(min_length=1)
     images: list[str] = Field(default_factory=list)
     scheduled_for: float
+
+
+class SessionRuntimeResp(BaseModel):
+    session_id: str
+    status: str
+    run_id: str | None
+    stream_id: str | None
+    completed_run_id: str | None = None
+    error: str | None = None
+    ok: bool | None = None
+
+
+class SessionRuntimePayload(SessionRuntimeResp):
+    @classmethod
+    def from_state(
+        cls, state: RuntimeState, *, ok: bool | None = None
+    ) -> "SessionRuntimePayload":
+        fields = {
+            "session_id": state.session_id,
+            "status": state.status,
+            "run_id": state.run_id,
+            "stream_id": state.stream_id,
+            "completed_run_id": state.completed_run_id,
+        }
+        if state.error is not None:
+            fields["error"] = state.error
+        if ok is not None:
+            fields["ok"] = ok
+        return cls(**fields)
+
+
+class SessionMessageProjection(BaseModel):
+    id: str
+    role: Literal["user", "assistant"]
+    content: str
+    ordinal: int
+    timestamp: str | None = None
+
+
+class SessionMessagesResp(BaseModel):
+    session_id: str
+    archive_bound: bool
+    revision: str | None
+    items: list[SessionMessageProjection]
 
 
 def _state_payload(state: RuntimeState, *, ok: bool | None = None) -> dict:
@@ -250,23 +310,27 @@ def _busy_error(exc: AgentBusyError) -> HTTPException:
     )
 
 
-@router.get("/api/projects")
-async def list_projects():
+@router.get("/api/projects", response_model_exclude_unset=True)
+async def list_projects() -> ProjectListResp:
     items = workspace_cmd.registry_list()
-    return {"total": len(items), "items": items}
+    return ProjectListResp(total=len(items), items=items)
 
 
-@router.post("/api/projects", status_code=status.HTTP_201_CREATED)
-async def create_project(req: ProjectCreate):
+@router.post(
+    "/api/projects",
+    status_code=status.HTTP_201_CREATED,
+    response_model_exclude_unset=True,
+)
+async def create_project(req: ProjectCreate) -> ProjectItem:
     result = workspace_cmd.prepare(req.path.strip())
     if not result.get("ok"):
         raise _api_error(400, "project_prepare_failed", result.get("error") or "项目创建失败。")
-    return {
-        "name": result["name"],
-        "path": result.get("path") or result.get("target") or req.path.strip(),
-        "memory_path": result.get("memory_path") or "",
-        "dangling": False,
-    }
+    return ProjectItem(
+        name=result["name"],
+        path=result.get("path") or result.get("target") or req.path.strip(),
+        memory_path=result.get("memory_path") or "",
+        dangling=False,
+    )
 
 
 @router.delete("/api/projects/{project_name}", status_code=status.HTTP_204_NO_CONTENT)
@@ -359,7 +423,7 @@ async def get_session(session_id: str) -> HubSession:
 
 
 @router.get("/api/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str):
+async def get_session_messages(session_id: str) -> SessionMessagesResp:
     row = _session(session_id)
     try:
         projection = read_archive_messages(row.get("archive_path"))
@@ -373,7 +437,7 @@ async def get_session_messages(session_id: str):
             "history_unavailable",
             "历史消息暂时不可用，请稍后重试。",
         )
-    return {"session_id": session_id, **projection}
+    return SessionMessagesResp(session_id=session_id, **projection)
 
 
 @router.patch("/api/sessions/{session_id}")
@@ -395,8 +459,12 @@ async def update_session_model(session_id: str, req: SessionModelUpdate) -> HubS
         raise _not_found()
 
 
-@router.post("/api/sessions/{session_id}/runs", status_code=status.HTTP_202_ACCEPTED)
-async def submit_run(session_id: str, req: RunSubmit):
+@router.post(
+    "/api/sessions/{session_id}/runs",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model_exclude_unset=True,
+)
+async def submit_run(session_id: str, req: RunSubmit) -> SessionRuntimeResp:
     row = _session(session_id)
     try:
         state = _get_coordinator().submit(
@@ -416,7 +484,7 @@ async def submit_run(session_id: str, req: RunSubmit):
             "restore_failed",
             "会话运行环境恢复失败，请稍后重试。",
         )
-    return _state_payload(state)
+    return SessionRuntimePayload.from_state(state)
 
 
 @router.post("/api/sessions/{session_id}/btw", response_model=BtwResp)
@@ -520,27 +588,37 @@ async def cancel_scheduled_chat(session_id: str, task_id: str):
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/api/session-runtimes")
-async def list_session_runtimes():
+@router.get("/api/session-runtimes", response_model_exclude_unset=True)
+async def list_session_runtimes() -> dict[str, SessionRuntimeResp]:
     coordinator = _get_coordinator()
     return {
-        row["id"]: _state_payload(coordinator.runtime_state(row["id"]))
+        row["id"]: SessionRuntimePayload.from_state(
+            coordinator.runtime_state(row["id"])
+        )
         for row in _store.list()
     }
 
 
-@router.get("/api/sessions/{session_id}/runtime")
-async def get_runtime(session_id: str):
+@router.get(
+    "/api/sessions/{session_id}/runtime",
+    response_model_exclude_unset=True,
+)
+async def get_runtime(session_id: str) -> SessionRuntimeResp:
     _session(session_id)
-    return _state_payload(_get_coordinator().runtime_state(session_id))
+    return SessionRuntimePayload.from_state(
+        _get_coordinator().runtime_state(session_id)
+    )
 
 
-@router.post("/api/sessions/{session_id}/abort")
-async def abort_run(session_id: str):
+@router.post(
+    "/api/sessions/{session_id}/abort",
+    response_model_exclude_unset=True,
+)
+async def abort_run(session_id: str) -> SessionRuntimeResp:
     _session(session_id)
     coordinator = _get_coordinator()
     current = coordinator.abort_if_current(session_id=session_id)
-    return _state_payload(current, ok=True)
+    return SessionRuntimePayload.from_state(current, ok=True)
 
 
 def _session_event_frame(session_id: str, event: Event) -> dict | None:
