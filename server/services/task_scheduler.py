@@ -71,19 +71,34 @@ class TaskRun:
 class TaskScheduler:
     _instance: "TaskScheduler | None" = None
 
-    def __init__(self, agent_service: AgentService):
+    def __init__(
+        self,
+        agent_service: AgentService,
+        *,
+        scheduler_runtime: Any | None = None,
+    ):
         self.agent_service = agent_service
         self.schedules: dict[str, TaskSchedule] = {}
         self._tz = _local_tz()
-        self._sched = BackgroundScheduler(timezone=self._tz) if self._tz else BackgroundScheduler()
+        self._owns_sched = scheduler_runtime is None
+        self._sched = (
+            scheduler_runtime
+            if scheduler_runtime is not None
+            else BackgroundScheduler(timezone=self._tz) if self._tz else BackgroundScheduler()
+        )
         self._lock = threading.Lock()
         self._load()
 
     @classmethod
-    def instance(cls, agent_service: AgentService | None = None) -> "TaskScheduler":
+    def instance(
+        cls,
+        agent_service: AgentService | None = None,
+        *,
+        scheduler_runtime: Any | None = None,
+    ) -> "TaskScheduler":
         if cls._instance is None:
             assert agent_service is not None
-            cls._instance = cls(agent_service)
+            cls._instance = cls(agent_service, scheduler_runtime=scheduler_runtime)
         return cls._instance
 
     def _sched_file(self) -> str:
@@ -128,10 +143,11 @@ class TaskScheduler:
             self._install_job(s)
 
     def shutdown(self) -> None:
-        try:
-            self._sched.shutdown(wait=False)
-        except Exception:
-            pass
+        if getattr(self, "_owns_sched", True):
+            try:
+                self._sched.shutdown(wait=False)
+            except Exception:
+                pass
         if type(self)._instance is self:
             type(self)._instance = None
 

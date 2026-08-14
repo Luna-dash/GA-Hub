@@ -287,7 +287,9 @@ def create_app() -> FastAPI:
         # Lazy imports after _paths is set
         from .services.agent_service import AgentService
         from .services.autonomous_scheduler import AutonomousScheduler
+        from .services.scheduler_host import SchedulerHost
         from .services.task_scheduler import TaskScheduler
+        from .routes import sessions as session_routes
         from .services.feishu_service import FeishuService
 
         # P0: probe the GA core contract *before* AgentService wires itself to
@@ -316,12 +318,24 @@ def create_app() -> FastAPI:
         agent_svc = AgentService.instance()
         agent_svc.start_run_thread()
 
-        try:
-            from .routes import sessions as session_routes
-            session_routes.start_scheduled_chats()
-            log.info("scheduled chat service started")
-        except Exception as e:
-            log.warning("scheduled chat service init skipped: %s", e)
+        scheduler_host = SchedulerHost()
+        scheduler_host.register(
+            "scheduled_chats",
+            lambda: session_routes.scheduled_chat_service(),
+        )
+        scheduler_host.register(
+            "autonomous",
+            lambda: AutonomousScheduler.instance(
+                agent_svc, scheduler_runtime=scheduler_host.runtime
+            ),
+        )
+        scheduler_host.register(
+            "tasks",
+            lambda: TaskScheduler.instance(agent_svc, scheduler_runtime=scheduler_host.runtime),
+        )
+        app.state.scheduler_host = scheduler_host
+        scheduler_host.start_all()
+        log.info("scheduler host started %s", scheduler_host.status())
 
         try:
             from .routes import tokens as token_routes
@@ -341,46 +355,21 @@ def create_app() -> FastAPI:
         except Exception as e:
             log.warning("feishu log watcher/auto-start init skipped: %s", e)
 
-        try:
-            sched = AutonomousScheduler.instance(agent_svc)
-            sched.start()
-            log.info("autonomous scheduler started (%d schedules)", len(sched.schedules))
-        except Exception as e:
-            log.warning("autonomous scheduler init skipped: %s", e)
-
-        try:
-            task_sched = TaskScheduler.instance(agent_svc)
-            task_sched.start()
-            log.info("task scheduler started (%d schedules)", len(task_sched.schedules))
-        except Exception as e:
-            log.warning("task scheduler init skipped: %s", e)
-
     async def _shutdown():
         if not setup_mode:
             # Stop task producers before the services they can invoke.
-            try:
-                from .routes import sessions as session_routes
-                session_routes.stop_scheduled_chats()
-            except Exception:
-                log.exception("scheduled chat shutdown failed")
             try:
                 from .routes import sessions as session_routes
                 session_routes.stop_session_runtimes()
             except Exception:
                 log.exception("session runtime abort failed")
             await _cancel_background_task(feishu_autostart_task)
-            try:
-                from .services.task_scheduler import TaskScheduler
-                if TaskScheduler._instance is not None:
-                    TaskScheduler._instance.shutdown()
-            except Exception:
-                log.exception("task scheduler shutdown failed")
-            try:
-                from .services.autonomous_scheduler import AutonomousScheduler
-                if AutonomousScheduler._instance is not None:
-                    AutonomousScheduler._instance.shutdown()
-            except Exception:
-                log.exception("autonomous scheduler shutdown failed")
+            host = getattr(app.state, "scheduler_host", None)
+            if host is not None:
+                try:
+                    host.shutdown_all()
+                except Exception:
+                    log.exception("scheduler host shutdown failed")
             try:
                 from .services.conductor_service import ConductorService
                 if ConductorService._instance is not None:
@@ -441,6 +430,9 @@ def create_app() -> FastAPI:
             }
         except Exception:
             pass
+        host = getattr(app.state, "scheduler_host", None)
+        if host is not None:
+            out["schedulers"] = host.status()
         return out
 
     @app.get("/api/health")

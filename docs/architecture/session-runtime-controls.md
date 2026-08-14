@@ -157,3 +157,17 @@ runtime stream ID 只标识当前进程内某次提交，并受 snapshot 数量�
 - 应用 shutdown 时先停止 scheduled chats，再逐个 abort 活跃 session run；全局 AgentService 与 token persistence 仍按既有顺序收尾。
 
 这解决了“metadata/archive 已删除但 idle runtime 仍持有 GA birth lock”的竞态。若 runtime 正在运行或持有控制操作，删除请求返回 409，而不是先删除身份再留下不可恢复的锁。
+
+## 11. 调度器宿主统一
+
+状态：第一阶段已实施（2026-08-14）
+
+`SchedulerHost` 是调度类服务的唯一生命周期宿主：
+
+- scheduled chat、autonomous、generic task 仍是三个领域模型，保留各自持久化 schema 与 API 语义。
+- autonomous 与 task 共享一个 APScheduler runtime；domain shutdown 只停止自身控制状态，runtime 由 host 最后统一停止。
+- 启动按 scheduled chat → autonomous → task 注册顺序执行；单个 domain 启动失败只记录到 host status，不阻止其他 domain。
+- 应用 shutdown 先停止 session run producer，再按注册反序停止调度 domain，最后停止共享 runtime。
+- `/api/status` 暴露 `schedulers.runtime` 与三个 domain 的运行状态、计划数量和启动错误。
+
+后续仍可继续收敛持久化 repository 与执行 gateway，但不以“合并三个类”为目标。

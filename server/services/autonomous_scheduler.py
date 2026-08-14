@@ -97,21 +97,36 @@ class Run:
 class AutonomousScheduler:
     _instance: "AutonomousScheduler | None" = None
 
-    def __init__(self, agent_service: AgentService):
+    def __init__(
+        self,
+        agent_service: AgentService,
+        *,
+        scheduler_runtime: Any | None = None,
+    ):
         self.agent_service = agent_service
         self.schedules: dict[str, Schedule] = {}
         self._tz = _local_tz()
-        self._sched = BackgroundScheduler(timezone=self._tz) if self._tz else BackgroundScheduler()
+        self._owns_sched = scheduler_runtime is None
+        self._sched = (
+            scheduler_runtime
+            if scheduler_runtime is not None
+            else BackgroundScheduler(timezone=self._tz) if self._tz else BackgroundScheduler()
+        )
         self._idle_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._load()
 
     @classmethod
-    def instance(cls, agent_service: AgentService | None = None) -> "AutonomousScheduler":
+    def instance(
+        cls,
+        agent_service: AgentService | None = None,
+        *,
+        scheduler_runtime: Any | None = None,
+    ) -> "AutonomousScheduler":
         if cls._instance is None:
             assert agent_service is not None
-            cls._instance = cls(agent_service)
+            cls._instance = cls(agent_service, scheduler_runtime=scheduler_runtime)
         return cls._instance
 
     # ── persistence ──────────────────────────────────────────────
@@ -178,10 +193,11 @@ class AutonomousScheduler:
             thread.join(timeout=max(0.0, timeout))
             if not thread.is_alive():
                 self._idle_thread = None
-        try:
-            self._sched.shutdown(wait=False)
-        except Exception:
-            pass
+        if getattr(self, "_owns_sched", True):
+            try:
+                self._sched.shutdown(wait=False)
+            except Exception:
+                pass
         if (thread is None or not thread.is_alive()) and type(self)._instance is self:
             type(self)._instance = None
 
