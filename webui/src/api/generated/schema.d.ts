@@ -2457,6 +2457,18 @@ export interface components {
             /** Index */
             index: number;
         };
+        /** MemoryTextResp */
+        MemoryTextResp: {
+            /** Content */
+            content: string;
+        };
+        /** MemoryWriteResp */
+        MemoryWriteResp: {
+            /** Ok */
+            ok: boolean;
+            /** Size */
+            size: number;
+        };
         /** NavPreference */
         NavPreference: {
             /** Id */
@@ -2572,6 +2584,27 @@ export interface components {
              * @default webui
              */
             source: string;
+        };
+        /** SOPDetailResp */
+        SOPDetailResp: {
+            /** Name */
+            name: string;
+            /** Content */
+            content: string;
+        };
+        /** SOPItem */
+        SOPItem: {
+            /** Name */
+            name: string;
+            /** Size */
+            size: number;
+            /** Mtime */
+            mtime: number;
+        };
+        /** SOPListResp */
+        SOPListResp: {
+            /** Sops */
+            sops: components["schemas"]["SOPItem"][];
         };
         /** ScheduleUpsert */
         ScheduleUpsert: {
@@ -2764,6 +2797,56 @@ export interface components {
             ga_root: string;
             /** Python Path */
             python_path?: string | null;
+        };
+        /** SkillDetailResp */
+        SkillDetailResp: {
+            /** Path */
+            path: string;
+            /** Content */
+            content: string;
+        };
+        /** SkillItem */
+        SkillItem: {
+            /** Path */
+            path: string;
+            /** Name */
+            name: string;
+            /** Size */
+            size: number;
+            /** Mtime */
+            mtime: number;
+        };
+        /** SkillListResp */
+        SkillListResp: {
+            /** Skills */
+            skills: components["schemas"]["SkillItem"][];
+            /** Count */
+            count: number;
+        };
+        /** SkillSearchHit */
+        SkillSearchHit: {
+            /** Path */
+            path: string;
+            /** Matches */
+            matches: components["schemas"]["SkillSearchMatch"][];
+        };
+        /** SkillSearchMatch */
+        SkillSearchMatch: {
+            /** Line */
+            line: number;
+            /** Text */
+            text: string;
+        };
+        /** SkillSearchResp */
+        SkillSearchResp: {
+            /** Hits */
+            hits: components["schemas"]["SkillSearchHit"][];
+            /** Scanned */
+            scanned: number;
+            /** Truncated */
+            truncated: boolean;
+            /** Query */
+            query: string;
         };
         /** TaskScheduleUpsert */
         TaskScheduleUpsert: {
@@ -3902,7 +3985,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MemoryTextResp"];
                 };
             };
         };
@@ -3926,7 +4009,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MemoryWriteResp"];
                 };
             };
             /** @description Validation Error */
@@ -3955,7 +4038,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MemoryTextResp"];
                 };
             };
         };
@@ -3979,7 +4062,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MemoryWriteResp"];
                 };
             };
             /** @description Validation Error */
@@ -4008,7 +4091,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SOPListResp"];
                 };
             };
         };
@@ -4030,7 +4113,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SOPDetailResp"];
                 };
             };
             /** @description Validation Error */
@@ -4065,7 +4148,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MemoryWriteResp"];
                 };
             };
             /** @description Validation Error */
@@ -4096,7 +4179,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SkillListResp"];
                 };
             };
             /** @description Validation Error */
@@ -4127,7 +4210,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SkillDetailResp"];
                 };
             };
             /** @description Validation Error */
@@ -4159,7 +4242,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SkillSearchResp"];
                 };
             };
             /** @description Validation Error */

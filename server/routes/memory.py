@@ -1,14 +1,25 @@
 """Memory & Skill routes — global_mem, insight, SOP markdown, skill catalog."""
 from __future__ import annotations
 
-import json
 import logging
 import os
-from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
-from ..schemas import TextWrite
+from ..schemas import (
+    MemoryTextResp,
+    MemoryWriteResp,
+    SOPDetailResp,
+    SOPItem,
+    SOPListResp,
+    SkillDetailResp,
+    SkillItem,
+    SkillListResp,
+    SkillSearchHit,
+    SkillSearchMatch,
+    SkillSearchResp,
+    TextWrite,
+)
 from .. import _paths
 
 log = logging.getLogger(__name__)
@@ -35,29 +46,29 @@ def _write(path: str, content: str) -> None:
     os.replace(tmp, path)
 
 
-@router.get("/api/memory/global")
+@router.get("/api/memory/global", response_model=MemoryTextResp)
 async def get_global():
     return {"content": _read(_global_mem())}
 
 
-@router.put("/api/memory/global")
+@router.put("/api/memory/global", response_model=MemoryWriteResp)
 async def put_global(req: TextWrite):
     _write(_global_mem(), req.content)
     return {"ok": True, "size": len(req.content)}
 
 
-@router.get("/api/memory/insight")
+@router.get("/api/memory/insight", response_model=MemoryTextResp)
 async def get_insight():
     return {"content": _read(_insight())}
 
 
-@router.put("/api/memory/insight")
+@router.put("/api/memory/insight", response_model=MemoryWriteResp)
 async def put_insight(req: TextWrite):
     _write(_insight(), req.content)
     return {"ok": True, "size": len(req.content)}
 
 
-@router.get("/api/memory/sops")
+@router.get("/api/memory/sops", response_model=SOPListResp)
 async def list_sops():
     out = []
     md = _mem_dir()
@@ -70,7 +81,7 @@ async def list_sops():
                 continue
             try:
                 st = os.stat(p)
-                out.append({"name": name, "size": st.st_size, "mtime": int(st.st_mtime)})
+                out.append(SOPItem(name=name, size=st.st_size, mtime=int(st.st_mtime)).model_dump())
             except OSError:
                 pass
     return {"sops": out}
@@ -82,7 +93,7 @@ def _safe_sop_path(name: str) -> str:
     return os.path.join(_mem_dir(), name)
 
 
-@router.get("/api/memory/sops/{name}")
+@router.get("/api/memory/sops/{name}", response_model=SOPDetailResp)
 async def read_sop(name: str):
     p = _safe_sop_path(name)
     if not os.path.isfile(p):
@@ -90,7 +101,7 @@ async def read_sop(name: str):
     return {"name": name, "content": _read(p)}
 
 
-@router.put("/api/memory/sops/{name}")
+@router.put("/api/memory/sops/{name}", response_model=MemoryWriteResp)
 async def write_sop(name: str, req: TextWrite):
     p = _safe_sop_path(name)
     _write(p, req.content)
@@ -98,8 +109,8 @@ async def write_sop(name: str, req: TextWrite):
 
 
 # ── skills ──────────────────────────────────────────────────────
-@router.get("/api/memory/skills")
-async def list_skills(limit: int = 200):
+@router.get("/api/memory/skills", response_model=SkillListResp)
+async def list_skills(limit: int = Query(default=200, ge=1, le=1000)):
     """Lightweight skill listing. Walks memory/skill_search/ for *.md / *.json / *.py."""
     sd = _skill_dir()
     if not os.path.isdir(sd):
@@ -114,12 +125,14 @@ async def list_skills(limit: int = 200):
             rel = os.path.relpath(p, sd)
             try:
                 st = os.stat(p)
-                out.append({
-                    "path": rel,
-                    "name": name,
-                    "size": st.st_size,
-                    "mtime": int(st.st_mtime),
-                })
+                out.append(
+                    SkillItem(
+                        path=rel,
+                        name=name,
+                        size=st.st_size,
+                        mtime=int(st.st_mtime),
+                    ).model_dump()
+                )
             except OSError:
                 pass
             if len(out) >= limit:
@@ -129,7 +142,7 @@ async def list_skills(limit: int = 200):
     return {"skills": out, "count": len(out)}
 
 
-@router.get("/api/memory/skills/read")
+@router.get("/api/memory/skills/read", response_model=SkillDetailResp)
 async def read_skill(path: str):
     if ".." in path or path.startswith("/"):
         raise HTTPException(400, "bad path")
@@ -144,8 +157,8 @@ async def read_skill(path: str):
     return {"path": path, "content": _read(p)}
 
 
-@router.get("/api/memory/skills/search")
-async def search_skills(q: str, limit: int = 60):
+@router.get("/api/memory/skills/search", response_model=SkillSearchResp)
+async def search_skills(q: str, limit: int = Query(default=60, ge=1, le=200)):
     """Full-text grep over memory/skill_search/*.
 
     Walks the skill tree, scans every text file (.md/.json/.py/.txt/no-ext)
@@ -169,7 +182,7 @@ async def search_skills(q: str, limit: int = 60):
     READABLE_EXT = {".md", ".json", ".py", ".txt", ".yaml", ".yml", ".sh", ""}
     MAX_FILE_BYTES = 512 * 1024     # skip pathological files
     PER_FILE_HITS = 5               # cap matches per file in the preview
-    hits: list[dict[str, Any]] = []
+    hits: list[SkillSearchHit] = []
     scanned = 0
     truncated = False
 
@@ -184,20 +197,21 @@ async def search_skills(q: str, limit: int = 60):
                     continue
                 scanned += 1
                 with open(p, encoding="utf-8", errors="replace") as f:
-                    matches: list[dict[str, Any]] = []
+                    matches: list[SkillSearchMatch] = []
                     for i, line in enumerate(f, start=1):
                         if needle in line.lower():
-                            matches.append({
-                                "line": i,
-                                "text": line.rstrip("\n")[:240],
-                            })
+                            matches.append(
+                                SkillSearchMatch(line=i, text=line.rstrip("\n")[:240])
+                            )
                             if len(matches) >= PER_FILE_HITS:
                                 break
                     if matches:
-                        hits.append({
-                            "path": os.path.relpath(p, sd),
-                            "matches": matches,
-                        })
+                        hits.append(
+                            SkillSearchHit(
+                                path=os.path.relpath(p, sd),
+                                matches=matches,
+                            )
+                        )
                         if len(hits) >= limit:
                             truncated = True
                             break

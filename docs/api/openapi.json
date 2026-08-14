@@ -1176,7 +1176,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryTextResp"
+                }
               }
             }
           }
@@ -1200,7 +1202,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryWriteResp"
+                }
               }
             }
           },
@@ -1226,7 +1230,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryTextResp"
+                }
               }
             }
           }
@@ -1250,7 +1256,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryWriteResp"
+                }
               }
             }
           },
@@ -1276,7 +1284,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SOPListResp"
+                }
               }
             }
           }
@@ -1303,7 +1313,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SOPDetailResp"
+                }
               }
             }
           },
@@ -1348,7 +1360,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryWriteResp"
+                }
               }
             }
           },
@@ -1377,6 +1391,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
               "default": 200,
               "title": "Limit"
             }
@@ -1387,7 +1403,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SkillListResp"
+                }
               }
             }
           },
@@ -1424,7 +1442,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetailResp"
+                }
               }
             }
           },
@@ -1462,6 +1482,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
               "default": 60,
               "title": "Limit"
             }
@@ -1472,7 +1494,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSearchResp"
+                }
               }
             }
           },
@@ -5182,6 +5206,37 @@
         ],
         "title": "LLMSwitch"
       },
+      "MemoryTextResp": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "MemoryTextResp"
+      },
+      "MemoryWriteResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "size"
+        ],
+        "title": "MemoryWriteResp"
+      },
       "NavPreference": {
         "properties": {
           "id": {
@@ -5455,6 +5510,63 @@
           "text"
         ],
         "title": "RunSubmit"
+      },
+      "SOPDetailResp": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "content"
+        ],
+        "title": "SOPDetailResp"
+      },
+      "SOPItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "mtime": {
+            "type": "integer",
+            "title": "Mtime"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "size",
+          "mtime"
+        ],
+        "title": "SOPItem"
+      },
+      "SOPListResp": {
+        "properties": {
+          "sops": {
+            "items": {
+              "$ref": "#/components/schemas/SOPItem"
+            },
+            "type": "array",
+            "title": "Sops"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sops"
+        ],
+        "title": "SOPListResp"
       },
       "ScheduleUpsert": {
         "properties": {
@@ -6068,6 +6180,143 @@
           "ga_root"
         ],
         "title": "SetupReq"
+      },
+      "SkillDetailResp": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "content"
+        ],
+        "title": "SkillDetailResp"
+      },
+      "SkillItem": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "mtime": {
+            "type": "integer",
+            "title": "Mtime"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "name",
+          "size",
+          "mtime"
+        ],
+        "title": "SkillItem"
+      },
+      "SkillListResp": {
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SkillItem"
+            },
+            "type": "array",
+            "title": "Skills"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "skills",
+          "count"
+        ],
+        "title": "SkillListResp"
+      },
+      "SkillSearchHit": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSearchMatch"
+            },
+            "type": "array",
+            "title": "Matches"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "matches"
+        ],
+        "title": "SkillSearchHit"
+      },
+      "SkillSearchMatch": {
+        "properties": {
+          "line": {
+            "type": "integer",
+            "title": "Line"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "line",
+          "text"
+        ],
+        "title": "SkillSearchMatch"
+      },
+      "SkillSearchResp": {
+        "properties": {
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSearchHit"
+            },
+            "type": "array",
+            "title": "Hits"
+          },
+          "scanned": {
+            "type": "integer",
+            "title": "Scanned"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query"
+          }
+        },
+        "type": "object",
+        "required": [
+          "hits",
+          "scanned",
+          "truncated",
+          "query"
+        ],
+        "title": "SkillSearchResp"
       },
       "TaskScheduleUpsert": {
         "properties": {

@@ -158,6 +158,64 @@ class TextWrite(BaseModel):
     content: str
 
 
+class MemoryTextResp(BaseModel):
+    content: str
+
+
+class MemoryWriteResp(BaseModel):
+    ok: bool
+    size: int
+
+
+class SOPItem(BaseModel):
+    name: str
+    size: int
+    mtime: int
+
+
+class SOPListResp(BaseModel):
+    sops: list[SOPItem]
+
+
+class SOPDetailResp(BaseModel):
+    name: str
+    content: str
+
+
+class SkillItem(BaseModel):
+    path: str
+    name: str
+    size: int
+    mtime: int
+
+
+class SkillListResp(BaseModel):
+    skills: list[SkillItem]
+    count: int
+
+
+class SkillDetailResp(BaseModel):
+    path: str
+    content: str
+
+
+class SkillSearchMatch(BaseModel):
+    line: int
+    text: str
+
+
+class SkillSearchHit(BaseModel):
+    path: str
+    matches: list[SkillSearchMatch]
+
+
+class SkillSearchResp(BaseModel):
+    hits: list[SkillSearchHit]
+    scanned: int
+    truncated: bool
+    query: str
+
+
 # ── autonomous ───────────────────────────────────────────────────
 class ScheduleUpsert(BaseModel):
     id: str | None = None

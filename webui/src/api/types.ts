@@ -55,16 +55,10 @@ export interface LLMTestResult {
   error?: string
 }
 
-export interface SkillSearchHit {
-  path: string
-  matches: Array<{ line: number; text: string }>
-}
-export interface SkillSearchResult {
-  hits: SkillSearchHit[]
-  scanned: number
-  truncated: boolean
-  query: string
-}
+export type MemoryTextResponse = ApiSchemas['MemoryTextResp']
+export type MemoryWriteResponse = ApiSchemas['MemoryWriteResp']
+export type SkillSearchHit = ApiSchemas['SkillSearchHit']
+export type SkillSearchResult = ApiSchemas['SkillSearchResp']
 
 export interface SessionSnapshot {
   path: string
@@ -174,8 +168,12 @@ export type ScheduledChat = ApiSchemas['ScheduledChatResp']
 export type ScheduledChatListResponse = ApiSchemas['ScheduledChatListResp']
 
 // ── Memory / SOPs ─────────────────────────────────────────
-export interface SOPItem { name: string; size: number; mtime: number }
-export interface SkillItem { path: string; name: string; size: number; mtime: number }
+export type SOPItem = ApiSchemas['SOPItem']
+export type SOPListResponse = ApiSchemas['SOPListResp']
+export type SOPDetailResponse = ApiSchemas['SOPDetailResp']
+export type SkillItem = ApiSchemas['SkillItem']
+export type SkillListResponse = ApiSchemas['SkillListResp']
+export type SkillDetailResponse = ApiSchemas['SkillDetailResp']
 
 // ── Autonomous ────────────────────────────────────────────
 export type ScheduleType = 'idle' | 'cron' | 'interval'
