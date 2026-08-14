@@ -8,6 +8,8 @@ export interface CapacityConflict {
   activeRunId: string | null
   capacity: number | null
   activeCount: number | null
+  /** Distinguish same-session busy from genuine capacity overflow. */
+  reason: 'session_active' | 'capacity_full' | null
 }
 
 export function sessionActivity(runtime?: SessionRuntime): SessionActivity {
@@ -56,12 +58,22 @@ export function capacityConflictFromError(error: unknown): CapacityConflict | nu
   const detail = value?.body?.detail
   if (value?.status !== 409 || !detail || typeof detail !== 'object') return null
   const payload = detail as Record<string, unknown>
-  if (payload.code !== 'agent_busy') return null
+  // `agent_busy` => global capacity overflow (other sessions occupy all slots).
+  // `session_active` => *this* session still owns a run (running/aborting),
+  //   a serial guard that must NOT be reported as "capacity full".
+  const reason: CapacityConflict['reason'] =
+    payload.code === 'session_active'
+      ? 'session_active'
+      : payload.code === 'agent_busy'
+        ? 'capacity_full'
+        : null
+  if (reason === null) return null
   return {
     message: typeof payload.detail === 'string' ? payload.detail : '会话运行容量已满。',
     activeSessionId: typeof payload.active_session_id === 'string' ? payload.active_session_id : null,
     activeRunId: typeof payload.active_run_id === 'string' ? payload.active_run_id : null,
     capacity: typeof payload.capacity === 'number' ? payload.capacity : null,
     activeCount: typeof payload.active_count === 'number' ? payload.active_count : null,
+    reason,
   }
 }

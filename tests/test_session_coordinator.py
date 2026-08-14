@@ -1,6 +1,7 @@
 """Concurrency contract for the message-free session runtime coordinator."""
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass
 
@@ -19,6 +20,8 @@ class FakeRuntime:
         self.submissions: list[dict] = []
         self.abort_calls = 0
         self.handle: FakeHandle | None = None
+        self.btw_questions: list[str] = []
+        self.rewinds: list[dict] = []
 
     def submit(self, text: str, **kwargs) -> FakeHandle:
         self.submissions.append({"text": text, **kwargs})
@@ -27,6 +30,15 @@ class FakeRuntime:
 
     def abort(self) -> None:
         self.abort_calls += 1
+
+    def btw(self, question: str) -> str:
+        self.btw_questions.append(question)
+        return f"side:{self.session_id}:{question}"
+
+    def rewind_turns(self, *, sid: str | None = None, n: int | None = None) -> dict:
+        request = {"sid": sid, "n": n}
+        self.rewinds.append(request)
+        return {"removed_sids": [], "kept": 0, "history_lines": 0}
 
 
 def test_session_configuration_is_atomic_and_rejected_while_running() -> None:
@@ -53,6 +65,126 @@ def test_session_configuration_is_atomic_and_rejected_while_running() -> None:
     _wait_until(lambda: coordinator.active_run() is None)
     coordinator.configure_if_idle("A", lambda runtime: seen.append(runtime))
     assert seen[-1] is runtimes["A"]
+
+
+def test_btw_reuses_session_runtime_and_can_overlap_normal_run() -> None:
+    from server.services.session_coordinator import (
+        AgentBusyError,
+        SessionCoordinator,
+    )
+
+    runtimes: dict[str, FakeRuntime] = {}
+    coordinator = SessionCoordinator(
+        lambda session_id: runtimes.setdefault(session_id, FakeRuntime(session_id)),
+        poll_interval=0.005,
+    )
+    coordinator.submit("main", session_id="A")
+
+    assert coordinator.side_question("A", "why") == "side:A:why"
+    assert runtimes["A"].btw_questions == ["why"]
+    with pytest.raises(AgentBusyError) as error:
+        coordinator.rewind("A", n=1)
+    assert error.value.reason == AgentBusyError.REASON_SESSION_ACTIVE
+
+    assert runtimes["A"].handle is not None
+    runtimes["A"].handle.finished = True
+    _wait_until(lambda: coordinator.active_run() is None)
+
+
+def test_rewind_is_exclusive_only_within_its_session() -> None:
+    from server.services.session_coordinator import (
+        SessionControlBusyError,
+        SessionCoordinator,
+    )
+
+    started = threading.Event()
+    release = threading.Event()
+    errors: list[BaseException] = []
+
+    class BlockingRuntime(FakeRuntime):
+        def rewind_turns(self, *, sid: str | None = None, n: int | None = None) -> dict:
+            started.set()
+            if not release.wait(1):
+                raise TimeoutError("rewind test gate timed out")
+            return super().rewind_turns(sid=sid, n=n)
+
+    runtimes: dict[str, FakeRuntime] = {}
+
+    def factory(session_id: str) -> FakeRuntime:
+        runtime = BlockingRuntime(session_id) if session_id == "A" else FakeRuntime(session_id)
+        runtimes[session_id] = runtime
+        return runtime
+
+    coordinator = SessionCoordinator(factory, capacity=1, poll_interval=0.005)
+
+    def rewind() -> None:
+        try:
+            coordinator.rewind("A", n=1)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    thread = threading.Thread(target=rewind)
+    thread.start()
+    assert started.wait(1)
+
+    with pytest.raises(SessionControlBusyError):
+        coordinator.side_question("A", "blocked")
+    with pytest.raises(SessionControlBusyError):
+        coordinator.configure_if_idle("A", lambda runtime: runtime)
+    with pytest.raises(SessionControlBusyError):
+        coordinator.submit("blocked", session_id="A")
+
+    assert coordinator.side_question("B", "allowed") == "side:B:allowed"
+    run_b = coordinator.submit("allowed", session_id="B")
+    assert run_b.session_id == "B"
+
+    release.set()
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+    assert errors == []
+
+    assert runtimes["B"].handle is not None
+    runtimes["B"].handle.finished = True
+    _wait_until(lambda: coordinator.active_run() is None)
+
+
+def test_inflight_btw_blocks_mutating_controls_but_not_submit() -> None:
+    from server.services.session_coordinator import (
+        SessionControlBusyError,
+        SessionCoordinator,
+    )
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingBtwRuntime(FakeRuntime):
+        def btw(self, question: str) -> str:
+            started.set()
+            if not release.wait(1):
+                raise TimeoutError("BTW test gate timed out")
+            return super().btw(question)
+
+    runtime = BlockingBtwRuntime("A")
+    coordinator = SessionCoordinator(lambda _session_id: runtime, poll_interval=0.005)
+    thread = threading.Thread(target=lambda: coordinator.side_question("A", "side"))
+    thread.start()
+    assert started.wait(1)
+
+    with pytest.raises(SessionControlBusyError) as error:
+        coordinator.rewind("A", n=1)
+    assert error.value.operation == "btw"
+    with pytest.raises(SessionControlBusyError):
+        coordinator.configure_if_idle("A", lambda current: current)
+
+    run = coordinator.submit("main", session_id="A")
+    assert run.status == "running"
+
+    release.set()
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+    assert runtime.handle is not None
+    runtime.handle.finished = True
+    _wait_until(lambda: coordinator.active_run() is None)
 
 
 def _wait_until(predicate, timeout: float = 1.0) -> None:

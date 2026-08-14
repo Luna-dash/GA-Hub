@@ -25,6 +25,9 @@ class FakeService:
         self.calls.append("start")
         self.started = True
 
+    def bind_rewind_store(self) -> None:
+        self.calls.append("bind_rewind")
+
 
 def test_new_session_binds_native_log_and_starts_runtime(tmp_path: Path) -> None:
     store = SessionMetadataStore(tmp_path / "metadata")
@@ -50,6 +53,7 @@ def test_new_session_binds_native_log_and_starts_runtime(tmp_path: Path) -> None
     assert calls == [
         ("construct", row["id"], False),
         ("birth_lock", str(native_log), row["id"]),
+        "bind_rewind",
         "start",
     ]
     bound = store.get(row["id"])
@@ -89,6 +93,7 @@ def test_existing_session_restores_native_archive_before_start(tmp_path: Path) -
             str(archive.resolve()),
             {"agent_id": row["id"], "restore_wm": True},
         ),
+        "bind_rewind",
         "start",
     ]
 
@@ -134,3 +139,41 @@ def test_bound_project_is_restored_when_runtime_is_created(tmp_path: Path) -> No
 
     assert runtime.agent._ga_project_mode_name == "GA-Hub-a1b2c3d4"
     assert runtime.started is True
+
+
+def test_rewind_store_failure_releases_archive_lock_and_never_starts(tmp_path: Path) -> None:
+    store = SessionMetadataStore(tmp_path / "metadata")
+    row = store.create(title="rewind failure")
+    calls: list[object] = []
+
+    class FailingService(FakeService):
+        def bind_rewind_store(self) -> None:
+            calls.append("bind_rewind")
+            raise RuntimeError("checkpoint corrupt")
+
+    def make_service(*, session_id: str, manage_global_preference: bool) -> FakeService:
+        calls.append(("construct", session_id, manage_global_preference))
+        return FailingService(tmp_path / "model_responses_failure.txt", calls)
+
+    def acquire(agent: FakeAgent, agent_id: str) -> None:
+        calls.append(("birth_lock", agent.log_path, agent_id))
+
+    def release(agent: FakeAgent) -> None:
+        calls.append(("release", agent.log_path))
+
+    factory = SessionRuntimeFactory(
+        store,
+        service_factory=make_service,
+        acquire_birth_lock=acquire,
+        release_current=release,
+    )
+
+    with pytest.raises(RuntimeRestoreError, match="checkpoint initialization"):
+        factory(row["id"])
+
+    assert calls == [
+        ("construct", row["id"], False),
+        ("birth_lock", str(tmp_path / "model_responses_failure.txt"), row["id"]),
+        "bind_rewind",
+        ("release", str(tmp_path / "model_responses_failure.txt")),
+    ]

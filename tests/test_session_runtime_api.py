@@ -7,7 +7,11 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.services.session_coordinator import AgentBusyError, RuntimeState
+from server.services.session_coordinator import (
+    AgentBusyError,
+    RuntimeState,
+    SessionControlBusyError,
+)
 from server.services.session_runtime_factory import RuntimeRestoreError
 from server.services.session_metadata import SessionMetadataStore
 
@@ -18,7 +22,10 @@ class FakeCoordinator:
         self.active: RuntimeState | None = None
         self.submissions: list[dict] = []
         self.aborts: list[tuple[str, str]] = []
+        self.side_questions: list[tuple[str, str]] = []
+        self.rewinds: list[dict] = []
         self.restore_error = False
+        self.control_error: str | None = None
 
     def runtime_state(self, session_id: str) -> RuntimeState:
         return self.states.get(session_id, RuntimeState(session_id))
@@ -43,6 +50,23 @@ class FakeCoordinator:
         self.states[session_id] = state
         self.active = state
         return state
+
+    def side_question(self, session_id: str, question: str) -> str:
+        if self.restore_error:
+            raise RuntimeRestoreError("internal restore path")
+        if self.control_error:
+            raise SessionControlBusyError(session_id, self.control_error)
+        self.side_questions.append((session_id, question))
+        return f"answer:{question}"
+
+    def rewind(self, session_id: str, *, sid: str | None = None, n: int | None = None):
+        if self.restore_error:
+            raise RuntimeRestoreError("internal restore path")
+        if self.control_error:
+            raise SessionControlBusyError(session_id, self.control_error)
+        request = {"session_id": session_id, "sid": sid, "n": n}
+        self.rewinds.append(request)
+        return {"removed_sids": ["stream-2"], "kept": 1, "history_lines": 2}
 
 
 def _client(tmp_path: Path, monkeypatch):
@@ -104,6 +128,53 @@ def test_restore_failure_is_stable_error(tmp_path: Path, monkeypatch) -> None:
     }
 
 
+def test_session_controls_use_selected_runtime_contract(tmp_path: Path, monkeypatch) -> None:
+    client, store, coordinator = _client(tmp_path, monkeypatch)
+    sid = store.create(title="A")["id"]
+
+    with client:
+        btw = client.post(f"/api/sessions/{sid}/btw", json={"text": "  why  "})
+        rewind = client.post(f"/api/sessions/{sid}/rewind", json={"n": 2})
+
+    assert btw.status_code == 200
+    assert btw.json() == {"ok": True, "content": "answer:why", "error": ""}
+    assert coordinator.side_questions == [(sid, "why")]
+    assert rewind.status_code == 200
+    assert rewind.json() == {
+        "removed_sids": ["stream-2"],
+        "kept": 1,
+        "history_lines": 2,
+    }
+    assert coordinator.rewinds == [{"session_id": sid, "sid": None, "n": 2}]
+
+
+def test_session_control_errors_are_explicit(tmp_path: Path, monkeypatch) -> None:
+    client, store, coordinator = _client(tmp_path, monkeypatch)
+    sid = store.create(title="A")["id"]
+
+    with client:
+        invalid_btw = client.post(f"/api/sessions/{sid}/btw", json={"text": "  "})
+        invalid_rewind = client.post(f"/api/sessions/{sid}/rewind", json={})
+        missing = client.post("/api/sessions/missing/btw", json={"text": "x"})
+        coordinator.control_error = "rewind"
+        busy = client.post(f"/api/sessions/{sid}/btw", json={"text": "x"})
+
+    assert invalid_btw.status_code == 400
+    assert invalid_btw.json()["detail"]["code"] == "invalid_btw"
+    assert invalid_rewind.status_code == 400
+    assert invalid_rewind.json()["detail"]["code"] == "invalid_rewind"
+    assert missing.status_code == 404
+    assert busy.status_code == 409
+    assert busy.json()["detail"] == {
+        "code": "session_control_active",
+        "detail": "当前会话正在执行互斥控制操作，请稍后重试。",
+        "operation": "rewind",
+    }
+
+
+def test_submit_run_uses_session_metadata_and_returns_runtime_state(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, store, coordinator = _client(tmp_path, monkeypatch)
     sid = store.create(title="A", llm_index=4)["id"]
 
@@ -141,7 +212,7 @@ def test_global_busy_and_unknown_session_are_explicit(tmp_path: Path, monkeypatc
         assert busy.status_code == 409
         assert busy.json()["detail"] == {
             "code": "agent_busy",
-            "detail": "另一个会话正在运行，请等待当前任务结束后重试。",
+            "detail": "会话正在运行，请等待当前任务结束后重试。",
             "active_session_id": sid_a,
             "active_run_id": "run-a",
             "capacity": 1,

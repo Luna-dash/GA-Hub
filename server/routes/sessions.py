@@ -12,11 +12,13 @@ from pydantic import BaseModel, Field
 
 from frontends import workspace_cmd
 
+from ..schemas import BtwReq, BtwResp, RewindReq, RewindResp
 from ..services.archive_messages import HistoryUnavailableError, read_archive_messages
 from ..services.event_bus import Event, bus
 from ..services.session_coordinator import (
     AgentBusyError,
     RuntimeState,
+    SessionControlBusyError,
     SessionCoordinator,
 )
 from ..services.session_metadata import SessionMetadataStore, SessionNotFoundError
@@ -192,6 +194,19 @@ def _not_found() -> HTTPException:
 
 
 def _busy_error(exc: AgentBusyError) -> HTTPException:
+    # configure_if_idle path: the *same* session is busy, which is a serial
+    # guard, not a capacity overflow. Surface it with a distinct code so the
+    # UI can explain "stop this session's task" rather than "capacity full".
+    if exc.reason == AgentBusyError.REASON_SESSION_ACTIVE:
+        return _api_error(
+            409,
+            "session_active",
+            "当前会话仍有任务运行中（或正在停止中），请等待结束后重试。",
+            active_session_id=exc.active_session_id,
+            active_run_id=exc.active_run_id,
+            capacity=exc.capacity,
+            active_count=exc.active_count,
+        )
     return _api_error(
         409,
         "agent_busy",
@@ -360,15 +375,9 @@ async def submit_run(session_id: str, req: RunSubmit):
             llm_index=row.get("llm_index"),
         )
     except AgentBusyError as exc:
-        raise _api_error(
-            409,
-            "agent_busy",
-            "另一个会话正在运行，请等待当前任务结束后重试。",
-            active_session_id=exc.active_session_id,
-            active_run_id=exc.active_run_id,
-            capacity=exc.capacity,
-            active_count=exc.active_count,
-        )
+        # Same-session busy (run still aborting) vs. genuine capacity overflow
+        # are now distinct codes so the UI can tell the user the right thing.
+        raise _busy_error(exc)
     except RuntimeRestoreError:
         raise _api_error(
             409,
@@ -376,6 +385,70 @@ async def submit_run(session_id: str, req: RunSubmit):
             "会话运行环境恢复失败，请稍后重试。",
         )
     return _state_payload(state)
+
+
+@router.post("/api/sessions/{session_id}/btw", response_model=BtwResp)
+async def session_btw(session_id: str, req: BtwReq):
+    """Run a side question against the selected session runtime."""
+    _session(session_id)
+    question = (req.text or "").strip()
+    if not question:
+        raise _api_error(400, "invalid_btw", "BTW 问题不能为空。")
+    try:
+        content = await asyncio.to_thread(
+            _get_coordinator().side_question, session_id, question
+        )
+        return BtwResp(ok=True, content=content)
+    except SessionControlBusyError as exc:
+        raise _api_error(
+            409,
+            "session_control_active",
+            "当前会话正在执行互斥控制操作，请稍后重试。",
+            operation=exc.operation,
+        )
+    except RuntimeRestoreError:
+        raise _api_error(
+            409,
+            "restore_failed",
+            "会话运行环境恢复失败，请稍后重试。",
+        )
+    except Exception as exc:
+        log.exception("session BTW failed for %s: %s", session_id, exc)
+        return BtwResp(ok=False, error=str(exc))
+
+
+@router.post("/api/sessions/{session_id}/rewind", response_model=RewindResp)
+async def session_rewind(session_id: str, req: RewindReq):
+    """Exclusively rewind one session and its GA-native archive."""
+    _session(session_id)
+    if not req.sid and req.n is None:
+        raise _api_error(400, "invalid_rewind", "必须提供 sid 或 n。")
+    try:
+        return await asyncio.to_thread(
+            _get_coordinator().rewind,
+            session_id,
+            sid=req.sid,
+            n=req.n,
+        )
+    except AgentBusyError as exc:
+        raise _busy_error(exc)
+    except SessionControlBusyError as exc:
+        raise _api_error(
+            409,
+            "session_control_active",
+            "当前会话正在执行互斥控制操作，请稍后重试。",
+            operation=exc.operation,
+        )
+    except RuntimeRestoreError:
+        raise _api_error(
+            409,
+            "restore_failed",
+            "会话运行环境恢复失败，请稍后重试。",
+        )
+    except ValueError as exc:
+        raise _api_error(400, "invalid_rewind", str(exc))
+    except RuntimeError as exc:
+        raise _api_error(409, "rewind_unavailable", str(exc))
 
 
 @router.get("/api/sessions/{session_id}/scheduled-chats")
@@ -445,11 +518,17 @@ def _session_event_frame(session_id: str, event: Event) -> dict | None:
     payload = event.payload
     if payload.get("session_id") != session_id:
         return None
-    if not payload.get("run_id") or not payload.get("stream_id"):
+    event_type = event.topic.split(":", 1)[1]
+    # Rewind is a session-level archive mutation, not a run/stream event.  It
+    # still carries an explicit session identity so other tabs can rehydrate
+    # the same durable archive without weakening ordinary event isolation.
+    if event_type != "rewound" and (
+        not payload.get("run_id") or not payload.get("stream_id")
+    ):
         return None
     return {
         **payload,
-        "type": event.topic.split(":", 1)[1],
+        "type": event_type,
         "event_id": event.event_id,
         "epoch": bus.epoch,
     }

@@ -376,6 +376,14 @@ export const api = {
     http<Record<string, SessionRuntime>>('GET', '/api/session-runtimes'),
   getSessionMessages: (id: string, signal?: AbortSignal) =>
     http<SessionMessagesResponse>('GET', `/api/sessions/${encodeURIComponent(id)}/messages`, undefined, { signal }),
+  sessionBtw: (id: string, text: string) =>
+    http<BtwResp>('POST', `/api/sessions/${encodeURIComponent(id)}/btw`, { text }),
+  rewindSession: (id: string, req: { sid?: string; n?: number }) =>
+    http<{ removed_sids: string[]; kept: number; history_lines: number }>(
+      'POST',
+      `/api/sessions/${encodeURIComponent(id)}/rewind`,
+      req,
+    ),
   updateSessionModel: (id: string, llm_index: number) =>
     http<HubSession>('PUT', `/api/sessions/${encodeURIComponent(id)}/model`, { llm_index }),
   abortSession: (id: string) =>

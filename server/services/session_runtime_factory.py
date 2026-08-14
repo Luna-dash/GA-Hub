@@ -72,6 +72,15 @@ class SessionRuntimeFactory:
             except Exception:
                 self._release_current(runtime.agent)
                 raise
+        bind_rewind_store = getattr(runtime, "bind_rewind_store", None)
+        if callable(bind_rewind_store):
+            try:
+                bind_rewind_store()
+            except Exception as exc:
+                self._release_current(runtime.agent)
+                raise RuntimeRestoreError(
+                    "GA rewind checkpoint initialization failed"
+                ) from exc
         project_name = row.get("project_name")
         if project_name:
             activate_project(runtime.agent, project_name)

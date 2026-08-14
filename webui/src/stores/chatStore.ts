@@ -55,7 +55,7 @@ interface ChatState {
   /** Per-session in-memory projections make switching instant; WS replay catches them up. */
   sessionViews: Record<string, SessionView>
 
-  start: (sessionId: string) => void
+  start: (sessionId: string, options?: { forceHistory?: boolean }) => void
   retryHistory: () => void
   stop: () => void
 
@@ -428,9 +428,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sessionId: null,
   sessionViews: {},
 
-  start: (sessionId) => {
+  start: (sessionId, options) => {
+    const forceHistory = options?.forceHistory === true
     let current = get()
-    if (current.sock && current.sessionId === sessionId && current.historyStatus !== 'history_error') return
+    if (!forceHistory && current.sock && current.sessionId === sessionId && current.historyStatus !== 'history_error') return
 
     // Commit the previous connection's throttled tail while its session is
     // still current, then invalidate every delayed callback it owns.
@@ -450,7 +451,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((st) => ({ sessionViews: { ...st.sessionViews, [current.sessionId!]: previousView } }))
     }
     const cached = switching ? get().sessionViews[sessionId] : undefined
-    const resumeCachedView = switching && cached?.historyStatus === 'ready'
+    const resumeCachedView = !forceHistory && switching && cached?.historyStatus === 'ready'
     set({
       msgs: switching ? (cached?.msgs ?? []) : current.msgs,
       streaming: switching ? (cached?.streaming ?? false) : current.streaming,
@@ -460,7 +461,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // per-session projection.  The cursor WebSocket catches up events that
       // arrived while this session was hidden; archive hydration is only for
       // a session whose projection has never been loaded.
-      hydrating: resumeCachedView ? false : current.msgs.length === 0,
+      hydrating: forceHistory || (resumeCachedView ? false : current.msgs.length === 0),
     })
 
     const generation = ++historyGeneration
@@ -614,6 +615,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return
       }
 
+      if (m.type === 'rewound') {
+        // The event's stream ids can immediately remove live snapshots, but
+        // archive-hydrated bubbles use independent `history:*` identities.
+        // Commit this cursor first, then force a fresh archive projection so
+        // every tab converges on the rewritten GA native log.
+        if (pendingNext.size > 0) flushNext()
+        set((st) => {
+          const msgs = applyEvent(st.msgs, m)
+          return { msgs, streaming: anyStreaming(msgs) }
+        })
+        commitCursor(sessionId, m)
+        queueMicrotask(() => {
+          if (active && get().sessionId === sessionId) get().retryHistory()
+        })
+        return
+      }
+
       // Any other event (started / done / aborted / reset / error / pong):
       devTrace('live', m.type)
       // flush queued next first so done's final content lands AFTER the
@@ -667,8 +685,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   retryHistory: () => {
-    const sessionId = get().sessionId
-    if (sessionId) get().start(sessionId)
+    const current = get()
+    if (current.sessionId && current.historyStatus !== 'loading_history') {
+      current.start(current.sessionId, { forceHistory: true })
+    }
   },
 
   stop: () => {

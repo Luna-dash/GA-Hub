@@ -415,7 +415,7 @@ export type ChatWSOut = (
   | { type: 'aborted' }
   | { type: 'pong' }
   | { type: 'error'; session_id: string; run_id: string; stream_id: string; code: string; detail: string }
-  | { type: 'rewound'; removed_sids: string[]; kept: number; history_lines: number }
+  | { type: 'rewound'; session_id: string; removed_sids: string[]; kept: number; history_lines: number }
   | { type: 'resync_required'; session_id: string; reason: string }
   | { type: 'replay_done'; session_id: string; event_id: number }
 ) & ChatWSMeta

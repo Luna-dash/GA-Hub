@@ -13,7 +13,11 @@ import type { HubSession, LLMInfo, Message, ScheduledChat, SessionRuntime } from
 import { ImagePasteInput, type PasteAttachment } from '@/components/ImagePasteInput'
 import { MessageBubble } from '@/components/MessageBubble'
 import { SessionRail } from '@/components/SessionRail'
-import { findLatestRewindStreamId, type SlashCommand } from '@/components/slashCommands'
+import {
+  findLatestRewindStreamId,
+  rewindTurnCountFromAssistant,
+  type SlashCommand,
+} from '@/components/slashCommands'
 import { PageShell } from '@/components/PageShell'
 import { dialog } from '@/stores/dialogStore'
 import { useChatStore } from '@/stores/chatStore'
@@ -35,6 +39,8 @@ export default function LiveChat() {
   const restoreState = (location.state as RestoreState | null) || null
 
   const msgs = useChatStore((s) => s.msgs)
+  const msgsRef = useRef(msgs)
+  msgsRef.current = msgs
   const streaming = useChatStore((s) => s.streaming)
   const conn = useChatStore((s) => s.conn)
   const hydrating = useChatStore((s) => s.hydrating)
@@ -432,10 +438,14 @@ export default function LiveChat() {
         rollbackWebui(stageId)
         const conflict = capacityConflictFromError(e)
         if (conflict) {
-          const usage = conflict.activeCount != null && conflict.capacity != null
-            ? `（${conflict.activeCount}/${conflict.capacity}）`
-            : ''
-          pushSystem(`_会话运行容量已满${usage}，请先在左侧会话栏选择一个运行中的会话并停止任务。草稿已保留，可直接重试。_`)
+          if (conflict.reason === 'session_active') {
+            pushSystem(`_当前会话仍有任务运行中（或正在停止中），请等待结束后重试。草稿已保留，可直接重试。_`)
+          } else {
+            const usage = conflict.activeCount != null && conflict.capacity != null
+              ? `（${conflict.activeCount}/${conflict.capacity}）`
+              : ''
+            pushSystem(`_会话运行容量已满${usage}，请先在左侧会话栏选择一个运行中的会话并停止任务。草稿已保留，可直接重试。_`)
+          }
         } else {
           pushSystem(`_发送失败：${e?.body?.detail?.code || e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`)
         }
@@ -683,19 +693,29 @@ export default function LiveChat() {
       pushSystem('_当前回复还在进行中。请先停止后再回退。_')
       return
     }
+    const targetSessionId = sessionIdRef.current
+    const turnCount = rewindTurnCountFromAssistant(msgsRef.current, sid)
+    if (!targetSessionId || turnCount == null) {
+      pushSystem('_无法确定该回复对应的会话轮次，请刷新历史后重试。_')
+      return
+    }
     const ok = await dialog.confirm(
       '回退此轮对话？',
-      '本轮的用户提问与所有 Assistant 回复都会从历史与界面中删除，且不可恢复。',
+      '本轮及之后的用户提问与 Assistant 回复都会从历史与界面中删除，且不可恢复。',
       { confirmText: '回退', tone: 'danger' },
     )
-    if (!ok) return
+    if (!ok || sessionIdRef.current !== targetSessionId) return
     try {
-      const r = await api.rewindTurns({ sid })
-      pushSystem(`_已回退 1 轮（保留 ${r.kept} 条历史）。_`)
+      const r = await api.rewindSession(targetSessionId, { n: turnCount })
+      if (sessionIdRef.current !== targetSessionId) return
+      retryHistory()
+      pushSystem(`_已回退 ${turnCount} 轮（保留 ${r.kept} 轮）。_`)
     } catch (e: any) {
-      await dialog.alert('回退失败', e?.message || String(e))
+      if (sessionIdRef.current === targetSessionId) {
+        await dialog.alert('回退失败', errorMessageFromError(e, '会话回退失败，请稍后重试。'))
+      }
     }
-  }, [pushSystem, sessionRunning, streaming])
+  }, [pushSystem, retryHistory, sessionRunning, streaming])
 
   const handleSlashCommand = (command: Exclude<SlashCommand['name'], '/btw'>) => {
     if (command === '/new') {
@@ -953,6 +973,7 @@ export default function LiveChat() {
       <div className="shrink-0 border-t border-line/40 bg-transparent px-3 py-2.5">
         <div className="w-full rounded-xl border border-line/60 bg-bg-card shadow-sm">
           <ImagePasteInput
+            btwSessionId={session?.id}
             text={text}
             onText={setText}
             attachments={atts}

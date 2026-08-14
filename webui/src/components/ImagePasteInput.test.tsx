@@ -51,6 +51,32 @@ describe('ImagePasteInput slash command ownership', () => {
     expect(onText).not.toHaveBeenCalled()
   })
 
+  it('offers /btw only when a session runtime owns the composer', () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    const render = (btwSessionId?: string) => (
+      <ImagePasteInput
+        text="/"
+        onText={vi.fn()}
+        attachments={[]}
+        onAttachments={vi.fn()}
+        onSubmit={vi.fn()}
+        onSlashCommand={vi.fn()}
+        btwSessionId={btwSessionId}
+      />
+    )
+
+    act(() => root?.render(render()))
+    expect(Array.from(container.querySelectorAll('[role="option"]'))
+      .some((option) => option.textContent?.includes('/btw'))).toBe(false)
+
+    act(() => root?.render(render('session-A')))
+    expect(Array.from(container.querySelectorAll('[role="option"]'))
+      .some((option) => option.textContent?.includes('/btw'))).toBe(true)
+  })
+
   it('uses the same composer button to send when idle and stop when active', () => {
     const onSubmit = vi.fn()
     const onStop = vi.fn()

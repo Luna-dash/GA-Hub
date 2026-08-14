@@ -410,7 +410,7 @@ def test_project_binding_rejects_unknown_or_running_session(tmp_path: Path, monk
             json={"name": "alpha-1234", "path": "D:/work/alpha"},
         )
         assert busy.status_code == 409
-        assert busy.json()["detail"]["code"] == "agent_busy"
+        assert busy.json()["detail"]["code"] == "session_active"
 
 
 def test_project_delete_reports_mapping_removal_failure(tmp_path: Path, monkeypatch) -> None:

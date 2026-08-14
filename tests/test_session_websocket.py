@@ -118,6 +118,17 @@ def test_session_event_frame_is_strictly_isolated():
     assert sessions._session_event_frame("A", Event("chat:heartbeat", {"stream_id": "s1"})) is None
     assert sessions._session_event_frame("A", Event("agent:done", {"session_id": "A"})) is None
 
+    rewound = Event("chat:rewound", {
+        "session_id": "A", "removed_sids": ["s1"],
+        "kept": 1, "history_lines": 2,
+    }, event_id=8)
+    assert sessions._session_event_frame("A", rewound) == {
+        "type": "rewound", "session_id": "A",
+        "removed_sids": ["s1"], "kept": 1, "history_lines": 2,
+        "event_id": 8, "epoch": sessions.bus.epoch,
+    }
+    assert sessions._session_event_frame("B", rewound) is None
+
 
 def test_session_websocket_starts_with_runtime_snapshot_and_supports_ping(tmp_path, monkeypatch):
     app, sid = _app(tmp_path, monkeypatch)

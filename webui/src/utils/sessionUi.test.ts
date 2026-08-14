@@ -53,6 +53,7 @@ describe('session UI contracts', () => {
       },
     })
     expect(conflict).toEqual({
+      reason: 'capacity_full',
       message: '另一个会话正在运行，请等待当前任务结束后重试。',
       activeSessionId: 'active-1',
       activeRunId: 'run-1',

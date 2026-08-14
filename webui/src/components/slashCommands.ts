@@ -59,6 +59,39 @@ export function findLatestRewindStreamId(messages: readonly RewindCandidate[]): 
   return null
 }
 
+/**
+ * Translate a UI assistant bubble into the durable archive's turn-count form.
+ * Archive message ids are intentionally unrelated to runtime stream ids, so
+ * the frontend identifies the owning user turn by position and asks the
+ * backend to remove that turn plus every later user turn.
+ */
+export function rewindTurnCountFromAssistant(
+  messages: readonly RewindCandidate[],
+  streamId: string,
+): number | null {
+  const assistantIndex = messages.findIndex((message) => (
+    message.role === 'assistant'
+    && message.streamId === streamId
+    && !message.streaming
+    && message.source !== 'chat_error_retry_notice'
+  ))
+  if (assistantIndex < 0) return null
+
+  let owningUserIndex = -1
+  for (let index = assistantIndex; index >= 0; index -= 1) {
+    if (messages[index].role === 'user') {
+      owningUserIndex = index
+      break
+    }
+  }
+  if (owningUserIndex < 0) return null
+
+  const turnCount = messages
+    .slice(owningUserIndex)
+    .reduce((count, message) => count + (message.role === 'user' ? 1 : 0), 0)
+  return turnCount > 0 ? turnCount : null
+}
+
 export function filterSlashCommands(text: string): readonly SlashCommand[] {
   if (!text.startsWith('/') || /\s/.test(text)) return []
   const query = text.toLocaleLowerCase()

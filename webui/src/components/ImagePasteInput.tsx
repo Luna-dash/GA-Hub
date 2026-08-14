@@ -28,6 +28,8 @@ interface Props {
   onSchedule?: () => void
   onStop?: () => void
   stopActive?: boolean
+  /** Session runtime used by /btw. Omit on non-session chat surfaces. */
+  btwSessionId?: string
   onSlashCommand?: (command: Exclude<SlashCommand['name'], '/btw'>) => void
   placeholder?: string
   disabled?: boolean
@@ -39,7 +41,7 @@ interface Props {
 }
 
 export function ImagePasteInput({
-  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, onSlashCommand,
+  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, btwSessionId, onSlashCommand,
   placeholder = '输入消息，可粘贴/拖放图片或文件…',
   disabled, submitDisabled, acceptFiles = true, autoFocus = true,
 }: Props) {
@@ -64,17 +66,22 @@ export function ImagePasteInput({
   const [slashActiveIndex, setSlashActiveIndex] = useState(0)
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null)
   const slashCommands = onSlashCommand && dismissedSlashText !== text
-    ? filterSlashCommands(text)
+    ? filterSlashCommands(text).filter((command) => command.name !== '/btw' || !!btwSessionId)
     : []
 
   useEffect(() => {
     setSlashActiveIndex(0)
   }, [text])
 
+  useEffect(() => {
+    if (!btwSessionId) setBtwOpen(false)
+  }, [btwSessionId])
+
   const selectSlashCommand = (command: SlashCommand) => {
     setDismissedSlashText(null)
     setSlashActiveIndex(0)
     if (command.name === '/btw') {
+      if (!btwSessionId) return
       onText('')
       setBtwOpen(true)
     } else {
@@ -345,7 +352,9 @@ export function ImagePasteInput({
         >{stopActive ? '停止' : '发送'}</button>
       </div>
 
-      {btwOpen && <BtwDialog onClose={() => setBtwOpen(false)} />}
+      {btwOpen && btwSessionId && (
+        <BtwDialog key={btwSessionId} sessionId={btwSessionId} onClose={() => setBtwOpen(false)} />
+      )}
 
       {uploading > 0 && (
         <div className="absolute -top-6 right-2 text-xs text-slate-400 bg-bg/80 backdrop-blur px-2 py-0.5 rounded">
@@ -368,7 +377,7 @@ interface BtwTurn {
   error?: string
 }
 
-function BtwDialog({ onClose }: { onClose: () => void }) {
+function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const [text, setText] = useState('')
   const [turns, setTurns] = useState<BtwTurn[]>([])
   const [loading, setLoading] = useState(false)
@@ -418,7 +427,7 @@ function BtwDialog({ onClose }: { onClose: () => void }) {
     setText('')
     setLoading(true)
     try {
-      const r = await api.btw(q)
+      const r = await api.sessionBtw(sessionId, q)
       setTurns((xs) => xs.map((x) => x.id === id ? { ...x, a: r.ok ? r.content : '', error: r.ok ? '' : (r.error || 'BTW 请求失败') } : x))
     } catch (e: any) {
       setTurns((xs) => xs.map((x) => x.id === id ? { ...x, error: e?.message || String(e) } : x))

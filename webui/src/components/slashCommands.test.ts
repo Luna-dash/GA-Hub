@@ -3,6 +3,7 @@ import {
   filterSlashCommands,
   findLatestRewindStreamId,
   handleSlashMenuKey,
+  rewindTurnCountFromAssistant,
   SLASH_COMMANDS,
 } from './slashCommands'
 
@@ -63,5 +64,32 @@ describe('findLatestRewindStreamId', () => {
       { role: 'user', streamId: 'not-an-assistant' },
       { role: 'assistant', streaming: false },
     ])).toBeNull()
+  })
+})
+
+describe('rewindTurnCountFromAssistant', () => {
+  it('counts the selected assistant turn and every later user turn', () => {
+    expect(rewindTurnCountFromAssistant([
+      { role: 'user', streamId: 'u1' },
+      { role: 'assistant', streamId: 'a1', streaming: false },
+      { role: 'assistant', streamId: 'a1-extra', streaming: false },
+      { role: 'user', streamId: 'u2' },
+      { role: 'assistant', streamId: 'a2', streaming: false },
+      { role: 'user', streamId: 'u3' },
+      { role: 'assistant', streamId: 'a3', streaming: false },
+    ], 'a1-extra')).toBe(3)
+  })
+
+  it('rejects unknown, streaming, notice, and assistant-only candidates', () => {
+    const messages = [
+      { role: 'assistant', streamId: 'orphan', streaming: false },
+      { role: 'user', streamId: 'u1' },
+      { role: 'assistant', streamId: 'running', streaming: true },
+      { role: 'assistant', streamId: 'notice', streaming: false, source: 'chat_error_retry_notice' },
+    ]
+    expect(rewindTurnCountFromAssistant(messages, 'missing')).toBeNull()
+    expect(rewindTurnCountFromAssistant(messages, 'orphan')).toBeNull()
+    expect(rewindTurnCountFromAssistant(messages, 'running')).toBeNull()
+    expect(rewindTurnCountFromAssistant(messages, 'notice')).toBeNull()
   })
 })

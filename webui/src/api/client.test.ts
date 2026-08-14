@@ -70,6 +70,35 @@ describe('api request failure handling', () => {
     await expect(api.projects()).resolves.toEqual(payload)
   })
 
+  it('routes BTW and rewind through the encoded session runtime endpoints', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, content: 'side answer' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        removed_sids: [], kept: 2, history_lines: 4,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.sessionBtw('session/with space', 'why?')).resolves.toMatchObject({
+      ok: true,
+      content: 'side answer',
+    })
+    await expect(api.rewindSession('session/with space', { n: 2 })).resolves.toMatchObject({
+      kept: 2,
+    })
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/sessions/session%2Fwith%20space/btw', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ text: 'why?' }),
+    }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/sessions/session%2Fwith%20space/rewind', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ n: 2 }),
+    }))
+  })
+
   it('sends project creation and index deletion with the backend-only name encoded', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({

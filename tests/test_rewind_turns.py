@@ -214,6 +214,159 @@ class RewindTurnsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             svc.rewind_turns()
 
+    def test_session_rewind_rewrites_archive_and_working_memory(self):
+        history = [
+            _make_user_msg("u1"), _make_assistant("a1"),
+            _make_user_msg("u2"), _make_assistant("a2"),
+            _make_user_msg("u3"), _make_assistant("a3"),
+        ]
+        svc = self._make_svc(history, [("live-3", True)])
+        svc.session_id = "session-A"
+        svc._rewind_lock = threading.RLock()
+        svc.agent.log_path = "/tmp/model_responses_session-A.txt"
+        svc.agent.handler = types.SimpleNamespace(
+            history_info=["old-info"],
+            working={"key_info": "old-key"},
+        )
+
+        class FakeStore:
+            def __init__(self):
+                self.reconciled = None
+                self.saved = 0
+
+            def linear_path(self):
+                return ["turn-1", "turn-2", "turn-3"]
+
+            def first_user_message(self, node_id):
+                return {"text": node_id}
+
+            def _msg_user_text(self, message):
+                return message["text"]
+
+            def reconcile(self, history_rows):
+                self.reconciled = history_rows
+
+            def save(self):
+                self.saved += 1
+
+        store = FakeStore()
+        svc._rewind_store = store
+        native_history = [{"native": True}]
+        archive_state = {"history": native_history}
+        restore_calls: list[dict] = []
+
+        fake_continue = types.ModuleType("frontends.continue_cmd")
+        fake_continue.parse_native_log = (
+            lambda path, allow_empty: archive_state["history"]
+        )
+        fake_worldline = types.ModuleType("frontends.worldline")
+
+        def restore_plan(fake_store, node_id, **kwargs):
+            restore_calls.append({
+                "store": fake_store,
+                "node_id": node_id,
+                **kwargs,
+            })
+            archive_state["history"] = history[:2]
+            return {
+                "history": history[:2],
+                "hist_info": ["restored-info"],
+                "key_info": "restored-key",
+            }
+
+        fake_worldline.restore_plan = restore_plan
+        fake_worldline.rewrite_projection = mock.MagicMock(return_value=True)
+        modules = {
+            "frontends": types.ModuleType("frontends"),
+            "frontends.continue_cmd": fake_continue,
+            "frontends.worldline": fake_worldline,
+        }
+        with mock.patch.dict(sys.modules, modules), \
+             mock.patch.object(self.svc_mod, "bus", mock.MagicMock()) as fake_bus:
+            result = svc.rewind_turns(n=2)
+
+        self.assertEqual(store.reconciled, native_history)
+        self.assertEqual(store.saved, 1)
+        self.assertEqual(restore_calls, [{
+            "store": store,
+            "node_id": "turn-2",
+            "mode": "conv",
+            "to": "before",
+            "log_path": "/tmp/model_responses_session-A.txt",
+        }])
+        self.assertEqual(svc.agent.llmclient.backend.history, history[:2])
+        self.assertEqual(svc.agent.history, ["restored-info"])
+        self.assertEqual(svc.agent.handler.history_info, ["restored-info"])
+        self.assertEqual(svc.agent.handler.working["key_info"], "restored-key")
+        self.assertEqual(result["kept"], 1)
+        self.assertEqual(result["removed_sids"], ["live-3"])
+        topic, payload = fake_bus.publish.call_args[0]
+        self.assertEqual(topic, "chat:rewound")
+        self.assertEqual(payload["session_id"], "session-A")
+        fake_worldline.rewrite_projection.assert_not_called()
+
+    def test_session_rewind_fails_if_archive_rewrite_cannot_be_verified(self):
+        history = [_make_user_msg("u1"), _make_assistant("a1")]
+        svc = self._make_svc(history, [("live-1", True)])
+        svc.session_id = "session-A"
+        svc._rewind_lock = threading.RLock()
+        svc.agent.log_path = "/tmp/model_responses_session-A.txt"
+
+        class FakeStore:
+            head = "turn-1"
+
+            def __init__(self):
+                self.restored_heads = []
+
+            def linear_path(self):
+                return ["turn-1"]
+
+            def first_user_message(self, node_id):
+                return {"text": node_id}
+
+            def _msg_user_text(self, message):
+                return message["text"]
+
+            def reconcile(self, _history_rows):
+                return None
+
+            def save(self):
+                return None
+
+            def rewind_head(self, node_id):
+                self.restored_heads.append(node_id)
+
+        store = FakeStore()
+        svc._rewind_store = store
+        fake_continue = types.ModuleType("frontends.continue_cmd")
+        fake_continue.parse_native_log = lambda _path, allow_empty: list(history)
+        fake_worldline = types.ModuleType("frontends.worldline")
+        fake_worldline.restore_plan = lambda *_args, **_kwargs: {
+            "history": [],
+            "hist_info": None,
+            "key_info": None,
+            "target": "origin",
+        }
+        fake_worldline.rewrite_projection = mock.MagicMock(return_value=False)
+        modules = {
+            "frontends": types.ModuleType("frontends"),
+            "frontends.continue_cmd": fake_continue,
+            "frontends.worldline": fake_worldline,
+        }
+
+        with mock.patch.dict(sys.modules, modules), \
+             mock.patch.object(self.svc_mod, "bus", mock.MagicMock()) as fake_bus:
+            with self.assertRaisesRegex(RuntimeError, "could not be verified"):
+                svc.rewind_turns(n=1)
+
+        self.assertEqual(svc.agent.llmclient.backend.history, history)
+        self.assertEqual(list(svc._snapshots), ["live-1"])
+        self.assertEqual(store.restored_heads, ["turn-1"])
+        fake_worldline.rewrite_projection.assert_called_once_with(
+            store, "origin", svc.agent.log_path
+        )
+        fake_bus.publish.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

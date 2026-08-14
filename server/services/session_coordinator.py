@@ -20,6 +20,8 @@ class RuntimeHandle(Protocol):
 
 class SessionRuntime(Protocol):
     def submit(self, text: str, **kwargs: Any) -> RuntimeHandle: ...
+    def btw(self, question: str) -> str: ...
+    def rewind_turns(self, *, sid: str | None = None, n: int | None = None) -> dict: ...
     def abort(self) -> None: ...
     def active_message_snapshot(
         self, stream_id: str, *, session_id: str, run_id: str
@@ -27,7 +29,20 @@ class SessionRuntime(Protocol):
 
 
 class AgentBusyError(RuntimeError):
-    """Admission failed because this session or the global capacity is busy."""
+    """Admission failed because this session or the global capacity is busy.
+
+    ``reason`` disambiguates the two distinct causes so callers can map them to
+    different machine codes / messages instead of pretending every conflict is a
+    capacity overflow:
+
+    * ``session_active`` – the *same* session already owns an admitted run
+      (running or still aborting). This is a serial guard, not a capacity one.
+    * ``capacity_full`` – the process-wide run capacity is exhausted by other
+      sessions. This is the genuine "choose another running session" case.
+    """
+
+    REASON_SESSION_ACTIVE = "session_active"
+    REASON_CAPACITY_FULL = "capacity_full"
 
     def __init__(
         self,
@@ -36,11 +51,13 @@ class AgentBusyError(RuntimeError):
         *,
         capacity: int = 1,
         active_count: int = 1,
+        reason: str = REASON_CAPACITY_FULL,
     ) -> None:
         self.active_session_id = active_session_id
         self.active_run_id = active_run_id
         self.capacity = capacity
         self.active_count = active_count
+        self.reason = reason
         super().__init__(
             f"run capacity {active_count}/{capacity} is occupied; "
             f"session {active_session_id!r} is active"
@@ -53,6 +70,17 @@ class SessionNotActiveError(RuntimeError):
 
 class RunMismatchError(RuntimeError):
     pass
+
+
+class SessionControlBusyError(RuntimeError):
+    """A session-scoped control operation conflicts with another one."""
+
+    def __init__(self, session_id: str, operation: str) -> None:
+        self.session_id = session_id
+        self.operation = operation
+        super().__init__(
+            f"session {session_id!r} is busy with control operation {operation!r}"
+        )
 
 
 @dataclass(frozen=True)
@@ -91,6 +119,12 @@ class SessionCoordinator:
         # handle really finishes, including while aborting or timed out.
         self._active_by_session: dict[str, RuntimeState] = {}
         self._abort_started: dict[str, float] = {}
+        # Rewind mutates the runtime history/archive and must be exclusive for
+        # one session. BTW is read-only against a history snapshot: multiple
+        # BTW calls and a normal run may overlap, but rewind/configuration may
+        # not cross an in-flight BTW snapshot.
+        self._exclusive_controls: dict[str, str] = {}
+        self._side_questions: dict[str, int] = {}
 
     @property
     def capacity(self) -> int:
@@ -118,8 +152,57 @@ class SessionCoordinator:
         with self._lock:
             active = self._active_by_session.get(session_id)
             if active is not None:
-                raise self._busy(active)
+                raise self._busy(active, reason=AgentBusyError.REASON_SESSION_ACTIVE)
+            self._raise_if_control_busy(session_id, include_side_questions=True)
             return configure(self._runtimes.get(session_id))
+
+    def side_question(self, session_id: str, question: str) -> str:
+        """Run BTW against this session runtime without consuming run capacity.
+
+        Runtime lookup/creation and the BTW reservation are atomic, but the
+        potentially slow model call runs outside the coordinator lock. Normal
+        submissions remain allowed, preserving GA's snapshot-based BTW
+        concurrency semantics.
+        """
+        with self._lock:
+            self._raise_if_control_busy(session_id)
+            runtime = self._runtime_for_session_locked(session_id)
+            self._side_questions[session_id] = self._side_questions.get(session_id, 0) + 1
+        try:
+            return runtime.btw(question)
+        finally:
+            with self._lock:
+                remaining = self._side_questions.get(session_id, 0) - 1
+                if remaining > 0:
+                    self._side_questions[session_id] = remaining
+                else:
+                    self._side_questions.pop(session_id, None)
+
+    def rewind(
+        self,
+        session_id: str,
+        *,
+        sid: str | None = None,
+        n: int | None = None,
+    ) -> dict:
+        """Exclusively rewind one session while leaving others independent."""
+        with self._lock:
+            active = self._active_by_session.get(session_id)
+            if active is not None:
+                raise self._busy(active, reason=AgentBusyError.REASON_SESSION_ACTIVE)
+            self._raise_if_control_busy(session_id, include_side_questions=True)
+            self._exclusive_controls[session_id] = "rewind"
+            try:
+                runtime = self._runtime_for_session_locked(session_id)
+            except BaseException:
+                self._exclusive_controls.pop(session_id, None)
+                raise
+        try:
+            return runtime.rewind_turns(sid=sid, n=n)
+        finally:
+            with self._lock:
+                if self._exclusive_controls.get(session_id) == "rewind":
+                    self._exclusive_controls.pop(session_id, None)
 
     def session_snapshot(self, session_id: str) -> tuple[RuntimeState, dict[str, Any] | None]:
         """Return runtime identity and its matching active content together."""
@@ -153,21 +236,24 @@ class SessionCoordinator:
         # submit are one critical section. No concurrent caller can overbook a
         # slot or start a second run for this session.
         with self._lock:
+            self._raise_if_control_busy(session_id)
             same_session = self._active_by_session.get(session_id)
             if same_session is not None:
-                raise self._busy(same_session)
+                raise self._busy(
+                    same_session, reason=AgentBusyError.REASON_SESSION_ACTIVE
+                )
             if len(self._active_by_session) >= self._capacity:
-                raise self._busy(next(iter(self._active_by_session.values())))
+                raise self._busy(
+                    next(iter(self._active_by_session.values())),
+                    reason=AgentBusyError.REASON_CAPACITY_FULL,
+                )
 
             run_id = uuid.uuid4().hex
             starting = RuntimeState(session_id, "starting", run_id)
             self._active_by_session[session_id] = starting
             self._states[session_id] = starting
             try:
-                runtime = self._runtimes.get(session_id)
-                if runtime is None:
-                    runtime = self._runtime_factory(session_id)
-                    self._runtimes[session_id] = runtime
+                runtime = self._runtime_for_session_locked(session_id)
                 handle = runtime.submit(
                     text,
                     source=source,
@@ -194,12 +280,29 @@ class SessionCoordinator:
         ).start()
         return replace(running)
 
-    def _busy(self, representative: RuntimeState) -> AgentBusyError:
+    def _runtime_for_session_locked(self, session_id: str) -> SessionRuntime:
+        runtime = self._runtimes.get(session_id)
+        if runtime is None:
+            runtime = self._runtime_factory(session_id)
+            self._runtimes[session_id] = runtime
+        return runtime
+
+    def _raise_if_control_busy(
+        self, session_id: str, *, include_side_questions: bool = False
+    ) -> None:
+        operation = self._exclusive_controls.get(session_id)
+        if operation is not None:
+            raise SessionControlBusyError(session_id, operation)
+        if include_side_questions and self._side_questions.get(session_id, 0) > 0:
+            raise SessionControlBusyError(session_id, "btw")
+
+    def _busy(self, representative: RuntimeState, *, reason: str = AgentBusyError.REASON_CAPACITY_FULL) -> AgentBusyError:
         return AgentBusyError(
             representative.session_id,
             representative.run_id or "",
             capacity=self._capacity,
             active_count=len(self._active_by_session),
+            reason=reason,
         )
 
     def abort_if_current(self, *, session_id: str) -> RuntimeState:
