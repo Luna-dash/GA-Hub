@@ -1,6 +1,7 @@
 """Request-level usage wiring tests for the Conductor service."""
 from __future__ import annotations
 
+import pytest
 from unittest.mock import Mock, patch
 
 from server.services.conductor_service import ConductorService
@@ -28,3 +29,69 @@ def test_user_chat_message_starts_usage_request_and_returns_request_id():
     service.notify.assert_called_once_with(
         {"type": "user_message", "msg": "hello", "request_id": request_id}
     )
+
+
+def _service_for_admission_test():
+    service = object.__new__(ConductorService)
+    service.chat_messages = []
+    service._started = False
+    service.start = Mock()
+    service.notify = Mock()
+    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
+    return service
+
+
+def test_user_admission_starts_conductor_before_notify():
+    service = _service_for_admission_test()
+    order = []
+    service.start.side_effect = lambda _llm: order.append("start")
+    service.notify.side_effect = lambda _event: order.append("notify")
+
+    with patch("server.services.conductor_service.bus.publish"):
+        service.add_chat_message("hello", role="user")
+
+    assert order == ["start", "notify"]
+
+
+def test_add_chat_failure_completes_request_as_failed_admission():
+    service = _service_for_admission_test()
+
+    with patch(
+        "server.services.conductor_service.add_chat",
+        side_effect=RuntimeError("chat failed"),
+    ), pytest.raises(RuntimeError, match="chat failed"):
+        service.add_chat_message("hello", role="user")
+
+    row = service.usage_store.list()[0]
+    assert row["attribution"] == "FAILED_ADMISSION"
+    assert row["completed_at"] == 10.0
+
+
+def test_start_failure_completes_request_as_failed_start():
+    service = _service_for_admission_test()
+    service.start.side_effect = RuntimeError("start failed")
+
+    with patch("server.services.conductor_service.bus.publish"), pytest.raises(
+        RuntimeError, match="start failed"
+    ):
+        service.add_chat_message("hello", role="user")
+
+    row = service.usage_store.list()[0]
+    assert row["attribution"] == "FAILED_START"
+    assert row["completed_at"] == 10.0
+    service.notify.assert_not_called()
+
+
+def test_notify_failure_completes_request_as_failed_admission():
+    service = _service_for_admission_test()
+    service.notify.side_effect = RuntimeError("notify failed")
+
+    with patch("server.services.conductor_service.bus.publish"), pytest.raises(
+        RuntimeError, match="notify failed"
+    ):
+        service.add_chat_message("hello", role="user")
+
+    row = service.usage_store.list()[0]
+    assert row["attribution"] == "FAILED_ADMISSION"
+    assert row["completed_at"] == 10.0
+    service.start.assert_called_once_with(None)

@@ -1,7 +1,16 @@
 """Request-level usage lifecycle tests for the Conductor service."""
 from __future__ import annotations
 
-from server.services.conductor_service import ConductorService, HubConductorCallbacks
+import queue
+
+import pytest
+
+from server.services.conductor_service import (
+    ConductorService,
+    CoreConductor,
+    HubConductorCallbacks,
+    RequestOutcome,
+)
 from server.services.request_usage import RequestUsageStore
 
 
@@ -22,3 +31,194 @@ def test_conductor_request_lifecycle_activates_records_and_completes():
     assert row["output"] == 3
     assert row["attribution"] == "OK"
     assert row["completed_at"] == 10.0
+
+
+@pytest.mark.parametrize(
+    ("api_mode", "usage", "expected"),
+    [
+        (
+            "messages",
+            {"input_tokens": 9, "output_tokens": 1},
+            {"input": 9, "output": 1, "cache_create": 0, "cache_read": 0},
+        ),
+        (
+            "chat_completions",
+            {
+                "prompt_tokens": 20,
+                "completion_tokens": 17,
+                "prompt_tokens_details": {"cached_tokens": 6},
+            },
+            {"input": 14, "output": 17, "cache_create": 0, "cache_read": 6},
+        ),
+        (
+            "responses",
+            {
+                "input_tokens": 30,
+                "output_tokens": 23,
+                "input_tokens_details": {"cached_tokens": 8},
+            },
+            {"input": 22, "output": 23, "cache_create": 0, "cache_read": 8},
+        ),
+        (
+            "responses",
+            {
+                "input_tokens": 2,
+                "output_tokens": 0,
+                "input_tokens_details": {"cached_tokens": 9},
+            },
+            {"input": 0, "output": 0, "cache_create": 0, "cache_read": 2},
+        ),
+    ],
+)
+def test_usage_modes_are_normalized_and_zero_output_counts_request(
+    api_mode, usage, expected
+):
+    store = RequestUsageStore(clock=lambda: 10.0)
+    request_id = store.begin("rid-mode")
+
+    store.record(usage, api_mode, request_id)
+
+    row = store.list()[0]
+    assert row["requests"] == 1
+    for key, value in expected.items():
+        assert row[key] == value
+
+
+def test_unknown_usage_mode_does_not_increment_request_count():
+    store = RequestUsageStore(clock=lambda: 10.0)
+    request_id = store.begin("rid-unknown")
+
+    store.record({"input_tokens": 10}, "unknown", request_id)
+
+    assert store.list()[0]["requests"] == 0
+
+
+def test_usage_normalization_tolerates_non_mapping_details():
+    store = RequestUsageStore(clock=lambda: 10.0)
+    request_id = store.begin("rid-details")
+
+    store.record(
+        {
+            "prompt_tokens": 4,
+            "completion_tokens": 2,
+            "prompt_tokens_details": "invalid",
+        },
+        "chat_completions",
+        request_id,
+    )
+
+    row = store.list()[0]
+    assert row["requests"] == 1
+    assert row["input"] == 4
+    assert row["output"] == 2
+    assert row["cache_read"] == 0
+
+
+def test_request_finish_deactivates_context_when_complete_fails():
+    class FailingStore:
+        def __init__(self):
+            self.deactivated = []
+
+        def complete(self, _request_id, _attribution="OK"):
+            raise RuntimeError("complete failed")
+
+        def deactivate(self, token):
+            self.deactivated.append(token)
+
+    service = object.__new__(ConductorService)
+    service.usage_store = FailingStore()
+    callbacks = HubConductorCallbacks(service)
+
+    with pytest.raises(RuntimeError, match="complete failed"):
+        callbacks.on_conductor_request_finished("rid-1", "token-1")
+
+    assert service.usage_store.deactivated == ["token-1"]
+
+
+@pytest.mark.parametrize("phase", ["prompt", "dispatch", "drain"])
+def test_failed_request_outcome_is_not_attributed_as_ok(phase):
+    service = object.__new__(ConductorService)
+    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
+    request_id = service.usage_store.begin(f"rid-{phase}")
+    callbacks = HubConductorCallbacks(service)
+    token = callbacks.on_conductor_request_started(request_id)
+
+    callbacks.on_conductor_request_outcome(
+        request_id,
+        token,
+        RequestOutcome(status="failed", phase=phase, error=f"{phase} failed"),
+    )
+
+    row = service.usage_store.list()[0]
+    assert row["attribution"] == f"FAILED_{phase.upper()}"
+    assert row["completed_at"] == 10.0
+
+
+def test_interleaved_request_contexts_do_not_cross_attribute_usage():
+    service = object.__new__(ConductorService)
+    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
+    callbacks = HubConductorCallbacks(service)
+    rid1 = service.usage_store.begin("rid-1")
+    rid2 = service.usage_store.begin("rid-2")
+
+    token1 = callbacks.on_conductor_request_started(rid1)
+    service.usage_store.record({"input_tokens": 3, "output_tokens": 1}, "messages")
+    token2 = callbacks.on_conductor_request_started(rid2)
+    service.usage_store.record({"input_tokens": 5, "output_tokens": 2}, "messages")
+    callbacks.on_conductor_request_outcome(
+        rid2, token2, RequestOutcome(status="ok", phase="finish")
+    )
+    service.usage_store.record({"input_tokens": 7, "output_tokens": 4}, "messages")
+    callbacks.on_conductor_request_outcome(
+        rid1, token1, RequestOutcome(status="ok", phase="finish")
+    )
+
+    rows = {row["request_id"]: row for row in service.usage_store.list()}
+    assert rows[rid1]["requests"] == 2
+    assert rows[rid1]["output"] == 5
+    assert rows[rid2]["requests"] == 1
+    assert rows[rid2]["output"] == 2
+
+
+@pytest.mark.parametrize("phase", ["prompt", "dispatch", "drain"])
+def test_core_failure_phase_flows_into_hub_attribution(phase):
+    class PhaseAgent:
+        def put_task(self, _prompt, source=None, request_id=None):
+            if phase == "dispatch":
+                raise RuntimeError("dispatch failed")
+            result = queue.Queue()
+            result.put({"done": True})
+            return result
+
+    def prompt_builder(_events):
+        if phase == "prompt":
+            raise RuntimeError("prompt failed")
+        return "prompt"
+
+    service = object.__new__(ConductorService)
+    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
+    request_id = service.usage_store.begin(f"rid-core-{phase}")
+    callbacks = HubConductorCallbacks(service)
+    core = CoreConductor(
+        pool=object(),
+        prompt_builder=prompt_builder,
+        agent_factory=PhaseAgent,
+        callbacks=callbacks,
+    )
+    core.agent = PhaseAgent()
+    if phase == "drain":
+        core._drain = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("drain failed")
+        )
+
+    with pytest.raises(RuntimeError, match=f"{phase} failed"):
+        core._process_batch([
+            {
+                "type": "user_message",
+                "request_id": request_id,
+                "msg": "hello",
+            }
+        ])
+
+    row = service.usage_store.list()[0]
+    assert row["attribution"] == f"FAILED_{phase.upper()}"

@@ -30,6 +30,7 @@ from frontends.conductor_core import (
     Conductor as CoreConductor,
     ConductorCallbacks,
     PoolRuntime,
+    RequestOutcome,
     SubAgentEvent,
     SubagentPool as CoreSubagentPool,
 )
@@ -143,7 +144,12 @@ def push_subagent_cards(snapshot: list):
     bus.publish("conductor:subagents", {"items": snapshot})
 
 
-def add_chat(msg: str, role: str, chat_messages: list) -> dict:
+def add_chat(
+    msg: str,
+    role: str,
+    chat_messages: list,
+    request_id: str | None = None,
+) -> dict:
     """Add message to chat history and publish to event bus."""
     item = {
         "id": short_id(),
@@ -152,6 +158,8 @@ def add_chat(msg: str, role: str, chat_messages: list) -> dict:
         "ts": now_ms(),
         "read": role != "user"
     }
+    if request_id:
+        item["request_id"] = request_id
     chat_messages.append(item)
     if len(chat_messages) > 200:
         del chat_messages[:-200]
@@ -165,22 +173,45 @@ def start_agent_runner(agent: GenericAgent, name: str) -> threading.Thread:
     return t
 
 
-def monitor_display_queue(agent_id: str, dq: queue.Queue, pool: SubagentPool, trigger_when_done: bool):
+def monitor_display_queue(
+    agent_id: str,
+    dq: queue.Queue,
+    pool: SubagentPool,
+    trigger_when_done: bool,
+    *,
+    generation: int | None = None,
+):
     """Monitor subagent display queue and update pool state."""
     budget = OutputBudget(agent_id, publish=bus.publish)
+
+    def display(output: str, done: bool) -> bool:
+        if generation is None:
+            result = pool.on_display(agent_id, output, done=done)
+        else:
+            result = pool.on_display(
+                agent_id, output, done=done, generation=generation
+            )
+        # Legacy pools returned None after accepting an update.
+        return result is not False
+
     while True:
         item = dq.get()
         if "next" in item:
             output = budget.append(item.get("next") or "")
-            pool.on_display(agent_id, output, done=False)
+            display(output, done=False)
             push_subagent_cards(pool.snapshot())
         if "done" in item:
             done = budget.finish(item.get("done") or budget.output)
-            pool.on_display(agent_id, done, done=True)
+            accepted = display(done, done=True)
             push_subagent_cards(pool.snapshot())
-            if trigger_when_done:
+            if trigger_when_done and accepted:
                 # Notify conductor that subagent finished
-                ConductorService.instance().notify({"type": "subagent_done", "id": agent_id, "reply": done})
+                ConductorService.instance().notify({
+                    "type": "subagent_done",
+                    "id": agent_id,
+                    "reply": done,
+                    "generation": generation,
+                })
             break
 
 
@@ -219,8 +250,25 @@ class HubConductorCallbacks(ConductorCallbacks):
         return self.service.usage_store.activate(request_id)
 
     def on_conductor_request_finished(self, request_id: str, token) -> None:
-        self.service.usage_store.complete(request_id)
-        self.service.usage_store.deactivate(token)
+        try:
+            self.service.usage_store.complete(request_id)
+        finally:
+            if token is not None:
+                self.service.usage_store.deactivate(token)
+
+    def on_conductor_request_outcome(
+        self, request_id: str, token, outcome: RequestOutcome
+    ) -> None:
+        attribution = (
+            "OK"
+            if outcome.status == "ok"
+            else f"FAILED_{outcome.phase.upper()}"
+        )
+        try:
+            self.service.usage_store.complete(request_id, attribution)
+        finally:
+            if token is not None:
+                self.service.usage_store.deactivate(token)
 
     def on_subagent_output(self, agent_id: str, output: str, done: bool) -> None:
         push_subagent_cards(self.service.pool.snapshot())
@@ -229,7 +277,8 @@ class HubConductorCallbacks(ConductorCallbacks):
         })
 
     def on_subagent_completed(self, agent_id: str, output: str) -> None:
-        self.service.notify({"type": "subagent_done", "id": agent_id})
+        """The generation-aware monitor emits the single conductor wake-up."""
+        pass
 
     def on_subagent_event(self, agent_id: str, event: SubAgentEvent, payload: dict) -> None:
         bus.publish(f"conductor:subagent_{event.value}", {"id": agent_id, **payload})
@@ -251,9 +300,22 @@ def _configure_subagent(agent: GenericAgent, llm_index=None) -> bool:
     return _apply_llm_selection(agent, llm_index, "Subagent")
 
 
-def _monitor_core_display(agent_id: str, dq: queue.Queue, trigger_when_done: bool, pool):
+def _monitor_core_display(
+    agent_id: str,
+    dq: queue.Queue,
+    trigger_when_done: bool,
+    pool,
+    *,
+    generation: int | None = None,
+):
     """Runtime bridge: retain Hub display behavior while core owns orchestration."""
-    monitor_display_queue(agent_id, dq, pool, trigger_when_done)
+    monitor_display_queue(
+        agent_id,
+        dq,
+        pool,
+        trigger_when_done,
+        generation=generation,
+    )
 
 
 class ConductorService:
@@ -277,8 +339,8 @@ class ConductorService:
         # The pool is constructed first because the monitor bridge needs it.
         runtime = PoolRuntime(
             agent_factory=GenericAgent,
-            on_display_fn=lambda sid, dq, done: _monitor_core_display(
-                sid, dq, done, self.pool
+            on_display_fn=lambda sid, dq, done, generation=None: _monitor_core_display(
+                sid, dq, done, self.pool, generation=generation
             ),
             llm_selector=_configure_subagent,
         )
@@ -344,11 +406,32 @@ API: {base}??requests?GET /api/conductor/readme????GET /api/conductor/chat??????
 
     def add_chat_message(self, msg: str, role: str = "conductor", llm_index: Optional[int] = None) -> dict:
         request_id = self.usage_store.begin() if role == "user" else None
-        item = add_chat(msg, role, self.chat_messages)
+        try:
+            item = add_chat(
+                msg,
+                role,
+                self.chat_messages,
+                request_id=request_id,
+            )
+        except Exception:
+            if request_id:
+                self.usage_store.complete(request_id, "FAILED_ADMISSION")
+            raise
         if request_id:
-            item["request_id"] = request_id
-            self.notify({"type": "user_message", "msg": msg, "request_id": request_id})
-            self.start(llm_index)
+            try:
+                self.start(llm_index)
+            except Exception:
+                self.usage_store.complete(request_id, "FAILED_START")
+                raise
+            try:
+                self.notify({
+                    "type": "user_message",
+                    "msg": msg,
+                    "request_id": request_id,
+                })
+            except Exception:
+                self.usage_store.complete(request_id, "FAILED_ADMISSION")
+                raise
         return item
 
     def get_readmes(self) -> dict:

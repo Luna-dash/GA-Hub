@@ -27,6 +27,61 @@ class RequestUsage:
         row["total"] = self.input + self.output + self.cache_create + self.cache_read
         return row
 
+
+@dataclass(frozen=True)
+class UsageDelta:
+    input: int = 0
+    output: int = 0
+    cache_create: int = 0
+    cache_read: int = 0
+
+
+def _nonnegative_int(value) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _cached_tokens(usage: dict[str, Any], details_key: str, total_input: int) -> int:
+    details = usage.get(details_key)
+    if not isinstance(details, dict):
+        return 0
+    return min(total_input, _nonnegative_int(details.get("cached_tokens")))
+
+
+def _normalize_usage(
+    usage: dict[str, Any] | None, api_mode: str
+) -> UsageDelta | None:
+    if not usage:
+        return None
+    if api_mode == "messages":
+        return UsageDelta(
+            input=_nonnegative_int(usage.get("input_tokens")),
+            output=_nonnegative_int(usage.get("output_tokens")),
+            cache_create=_nonnegative_int(
+                usage.get("cache_creation_input_tokens")
+            ),
+            cache_read=_nonnegative_int(usage.get("cache_read_input_tokens")),
+        )
+    if api_mode == "chat_completions":
+        total_input = _nonnegative_int(usage.get("prompt_tokens"))
+        cached = _cached_tokens(usage, "prompt_tokens_details", total_input)
+        return UsageDelta(
+            input=total_input - cached,
+            output=_nonnegative_int(usage.get("completion_tokens")),
+            cache_read=cached,
+        )
+    if api_mode == "responses":
+        total_input = _nonnegative_int(usage.get("input_tokens"))
+        cached = _cached_tokens(usage, "input_tokens_details", total_input)
+        return UsageDelta(
+            input=total_input - cached,
+            output=_nonnegative_int(usage.get("output_tokens")),
+            cache_read=cached,
+        )
+    return None
+
 class RequestUsageStore:
     def __init__(self, clock=time.monotonic):
         self._clock = clock
@@ -47,27 +102,18 @@ class RequestUsageStore:
 
     def record(self, usage: dict[str, Any] | None, api_mode: str, request_id: str | None = None) -> None:
         rid = request_id or _CURRENT.get()
-        if not rid or not usage:
+        delta = _normalize_usage(usage, api_mode)
+        if not rid or delta is None:
             return
         with self._lock:
             row = self._rows.get(rid)
             if not row:
                 return
             row.requests += 1
-            if api_mode == "messages":
-                row.input += int(usage.get("input_tokens", 0) or 0)
-                row.cache_create += int(usage.get("cache_creation_input_tokens", 0) or 0)
-                row.cache_read += int(usage.get("cache_read_input_tokens", 0) or 0)
-                out = int(usage.get("output_tokens", 0) or 0)
-                if out > 1: row.output += out
-            elif api_mode == "chat_completions":
-                cached = int((usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0)
-                row.input += int(usage.get("prompt_tokens", 0) or 0) - cached
-                row.cache_read += cached
-            elif api_mode == "responses":
-                cached = int((usage.get("input_tokens_details") or {}).get("cached_tokens", 0) or 0)
-                row.input += int(usage.get("input_tokens", 0) or 0) - cached
-                row.cache_read += cached
+            row.input += delta.input
+            row.output += delta.output
+            row.cache_create += delta.cache_create
+            row.cache_read += delta.cache_read
 
     def complete(self, request_id: str, attribution: str = "OK") -> None:
         with self._lock:
