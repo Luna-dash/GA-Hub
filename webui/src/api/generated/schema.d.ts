@@ -2074,6 +2074,41 @@ export interface components {
                 [key: string]: components["schemas"]["SchedulerRuntimeStatus"] | components["schemas"]["SchedulerDomainStatus"];
             } | null;
         };
+        /** ArchiveZipEntryListResp */
+        ArchiveZipEntryListResp: {
+            /** Entries */
+            entries: components["schemas"]["ArchiveZipEntryResp"][];
+        };
+        /** ArchiveZipEntryResp */
+        ArchiveZipEntryResp: {
+            /** Name */
+            name: string;
+            /** Size */
+            size: number;
+            /** Date */
+            date: [
+                number,
+                number,
+                number,
+                number,
+                number,
+                number
+            ];
+        };
+        /** ArchiveZipListResp */
+        ArchiveZipListResp: {
+            /** Zips */
+            zips: components["schemas"]["ArchiveZipResp"][];
+        };
+        /** ArchiveZipResp */
+        ArchiveZipResp: {
+            /** Name */
+            name: string;
+            /** Size */
+            size: number;
+            /** Mtime */
+            mtime: number;
+        };
         /** Body_upload_api_upload_post */
         Body_upload_api_upload_post: {
             /** File */
@@ -2163,12 +2198,87 @@ export interface components {
              */
             msg: string;
         };
+        /** ConversationDetailResp */
+        ConversationDetailResp: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Messages */
+            messages: components["schemas"]["ConversationMessageResp"][];
+        };
+        /** ConversationListResp */
+        ConversationListResp: {
+            /** Total */
+            total: number;
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** Items */
+            items: components["schemas"]["ConversationSummaryResp"][];
+        };
+        /** ConversationMessageResp */
+        ConversationMessageResp: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Content */
+            content: string;
+        };
+        /** ConversationMutationResp */
+        ConversationMutationResp: {
+            /** Ok */
+            ok: boolean;
+            /** Id */
+            id: string;
+        };
+        /** ConversationRestoreResp */
+        ConversationRestoreResp: {
+            /** Ok */
+            ok: boolean;
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Restored Lines */
+            restored_lines: number;
+            /**
+             * Full
+             * @default true
+             */
+            full: boolean;
+        };
+        /** ConversationSummaryResp */
+        ConversationSummaryResp: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Message Count */
+            message_count: number;
+            /** Last User Preview */
+            last_user_preview: string;
+            /** Original User Preview */
+            original_user_preview: string;
+        };
         /** ConversationUpdate */
         ConversationUpdate: {
             /**
              * Title
              * @default
              */
+            title: string;
+        };
+        /** ConversationUpdateResp */
+        ConversationUpdateResp: {
+            /** Ok */
+            ok: boolean;
+            /** Id */
+            id: string;
+            /** Title */
             title: string;
         };
         /** EmailConfigReq */
@@ -3518,7 +3628,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConversationListResp"];
                 };
             };
             /** @description Validation Error */
@@ -3549,7 +3659,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConversationDetailResp"];
                 };
             };
             /** @description Validation Error */
@@ -3580,7 +3690,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConversationMutationResp"];
                 };
             };
             /** @description Validation Error */
@@ -3615,7 +3725,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConversationUpdateResp"];
                 };
             };
             /** @description Validation Error */
@@ -3646,7 +3756,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConversationRestoreResp"];
                 };
             };
             /** @description Validation Error */
@@ -3708,7 +3818,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ArchiveZipListResp"];
                 };
             };
         };
@@ -3730,7 +3840,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ArchiveZipEntryListResp"];
                 };
             };
             /** @description Validation Error */

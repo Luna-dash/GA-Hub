@@ -1,12 +1,7 @@
 import { QueryClient } from '@tanstack/react-query'
-import type { Conversation, ConversationSummary } from '@/api/types'
+import type { ConversationListResponse, Conversation } from '@/api/types'
 
-export interface ConversationListData {
-  total: number
-  offset: number
-  limit: number
-  items: ConversationSummary[]
-}
+export type ConversationListData = ConversationListResponse
 
 export const conversationKeys = {
   all: ['conversations'] as const,

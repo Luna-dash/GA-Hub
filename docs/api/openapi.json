@@ -834,7 +834,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationListResp"
+                }
               }
             }
           },
@@ -871,7 +873,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationDetailResp"
+                }
               }
             }
           },
@@ -916,7 +920,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationUpdateResp"
+                }
               }
             }
           },
@@ -951,7 +957,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationMutationResp"
+                }
               }
             }
           },
@@ -989,7 +997,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRestoreResp"
+                }
               }
             }
           },
@@ -1063,7 +1073,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveZipListResp"
+                }
               }
             }
           }
@@ -1090,7 +1102,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveZipEntryListResp"
+                }
               }
             }
           },
@@ -4325,6 +4339,106 @@
         "title": "AppStatusResp",
         "description": "Always-available application status contract.\n\nOptional fields are deliberately omitted rather than null in setup mode;\nuse ``response_model_exclude_unset=True`` to preserve that compatibility."
       },
+      "ArchiveZipEntryListResp": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/ArchiveZipEntryResp"
+            },
+            "type": "array",
+            "title": "Entries"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entries"
+        ],
+        "title": "ArchiveZipEntryListResp"
+      },
+      "ArchiveZipEntryResp": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "date": {
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array",
+            "maxItems": 6,
+            "minItems": 6,
+            "title": "Date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "size",
+          "date"
+        ],
+        "title": "ArchiveZipEntryResp"
+      },
+      "ArchiveZipListResp": {
+        "properties": {
+          "zips": {
+            "items": {
+              "$ref": "#/components/schemas/ArchiveZipResp"
+            },
+            "type": "array",
+            "title": "Zips"
+          }
+        },
+        "type": "object",
+        "required": [
+          "zips"
+        ],
+        "title": "ArchiveZipListResp"
+      },
+      "ArchiveZipResp": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "mtime": {
+            "type": "integer",
+            "title": "Mtime"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "size",
+          "mtime"
+        ],
+        "title": "ArchiveZipResp"
+      },
       "Body_upload_api_upload_post": {
         "properties": {
           "file": {
@@ -4512,6 +4626,169 @@
         ],
         "title": "ConductorSubagentAction"
       },
+      "ConversationDetailResp": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationMessageResp"
+            },
+            "type": "array",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "messages"
+        ],
+        "title": "ConversationDetailResp"
+      },
+      "ConversationListResp": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationSummaryResp"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "offset",
+          "limit",
+          "items"
+        ],
+        "title": "ConversationListResp"
+      },
+      "ConversationMessageResp": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "ConversationMessageResp"
+      },
+      "ConversationMutationResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "id"
+        ],
+        "title": "ConversationMutationResp"
+      },
+      "ConversationRestoreResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "restored_lines": {
+            "type": "integer",
+            "title": "Restored Lines"
+          },
+          "full": {
+            "type": "boolean",
+            "title": "Full",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "id",
+          "title",
+          "restored_lines"
+        ],
+        "title": "ConversationRestoreResp"
+      },
+      "ConversationSummaryResp": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "message_count": {
+            "type": "integer",
+            "title": "Message Count"
+          },
+          "last_user_preview": {
+            "type": "string",
+            "title": "Last User Preview"
+          },
+          "original_user_preview": {
+            "type": "string",
+            "title": "Original User Preview"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "message_count",
+          "last_user_preview",
+          "original_user_preview"
+        ],
+        "title": "ConversationSummaryResp"
+      },
       "ConversationUpdate": {
         "properties": {
           "title": {
@@ -4523,6 +4800,29 @@
         },
         "type": "object",
         "title": "ConversationUpdate"
+      },
+      "ConversationUpdateResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "id",
+          "title"
+        ],
+        "title": "ConversationUpdateResp"
       },
       "EmailConfigReq": {
         "properties": {

@@ -9,7 +9,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, EventSocket } from '@/api/client'
-import type { HubSession, LLMInfo, Message, ScheduledChat, SessionRuntime } from '@/api/types'
+import type {
+  HubSession,
+  LLMInfo,
+  ConversationMessage,
+  ScheduledChat,
+  SessionRuntime,
+} from '@/api/types'
 import { ImagePasteInput, type PasteAttachment } from '@/components/ImagePasteInput'
 import { MessageBubble } from '@/components/MessageBubble'
 import { SessionRail } from '@/components/SessionRail'
@@ -30,7 +36,7 @@ interface RestoreState {
   restoredFrom?: string
   restoredTitle?: string
   restoredLines?: number
-  messages?: Message[]
+  messages?: ConversationMessage[]
 }
 
 export default function LiveChat() {

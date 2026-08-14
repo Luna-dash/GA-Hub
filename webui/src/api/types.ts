@@ -22,6 +22,15 @@ export interface SetupStatus {
 
 export type AppStatus = ApiSchemas['AppStatusResp']
 export type AgentStatus = ApiSchemas['GlobalAgentStatus']
+export type ConversationSummary = ApiSchemas['ConversationSummaryResp']
+export type Conversation = ApiSchemas['ConversationDetailResp']
+export type ConversationListResponse = ApiSchemas['ConversationListResp']
+export type ConversationUpdateResponse = ApiSchemas['ConversationUpdateResp']
+export type ConversationDeleteResponse = ApiSchemas['ConversationMutationResp']
+export type ConversationRestoreResponse = ApiSchemas['ConversationRestoreResp']
+export type ConversationMessage = ApiSchemas['ConversationMessageResp']
+export type ArchiveZipListResponse = ApiSchemas['ArchiveZipListResp']
+export type ArchiveZipEntryListResponse = ApiSchemas['ArchiveZipEntryListResp']
 
 export interface LLMInfo {
   index: number
@@ -159,26 +168,6 @@ export interface FsCheckResult {
   agent_ok?: boolean
   agent_error?: string
   [key: string]: any
-}
-
-// ── Conversations ─────────────────────────────────────────
-export interface ConversationSummary {
-  id: string
-  title: string
-  message_count: number
-  last_user_preview: string
-  original_user_preview: string
-}
-
-export interface Message {
-  role: 'user' | 'assistant' | 'system' | string
-  content: string
-}
-
-export interface Conversation {
-  id: string
-  title: string
-  messages: Message[]
 }
 
 export type ScheduledChat = ApiSchemas['ScheduledChatResp']

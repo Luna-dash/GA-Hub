@@ -17,7 +17,11 @@ import type {
   ServicePanelResponse,
   ConductorSubagent,
   Conversation,
+  ConversationDeleteResponse,
+  ConversationListResponse,
   ConversationSummary,
+  ConversationRestoreResponse,
+  ConversationUpdateResponse,
   EmailConfig,
   FsCheckResult,
   FsStatus,
@@ -246,18 +250,18 @@ export const api = {
     if (q) sp.set('q', q)
     sp.set('offset', String(offset))
     sp.set('limit', String(limit))
-    return http<{ total: number; offset: number; limit: number; items: ConversationSummary[] }>(
+    return http<ConversationListResponse>(
       'GET', `/api/conversations?${sp}`)
   },
   conversation: (id: string) => http<Conversation>('GET', `/api/conversations/${encodeURIComponent(id)}`),
   updateConversation: (id: string, title: string) =>
-    http<{ ok: boolean; id: string; title: string }>('PATCH', `/api/conversations/${encodeURIComponent(id)}`, { title }),
+    http<ConversationUpdateResponse>('PATCH', `/api/conversations/${encodeURIComponent(id)}`, { title }),
   deleteConversation: (id: string) =>
-    http<{ ok: boolean; id: string }>('DELETE', `/api/conversations/${encodeURIComponent(id)}`),
+    http<ConversationDeleteResponse>('DELETE', `/api/conversations/${encodeURIComponent(id)}`),
   exportConversation: (id: string, format: 'md' | 'json') =>
     `/api/conversations/${encodeURIComponent(id)}/export?format=${format}`,
   restoreConversation: (id: string) =>
-    http<{ ok: boolean; restored_lines: number; title: string; id: string; full: boolean }>(
+    http<ConversationRestoreResponse>(
       'POST', `/api/conversations/${encodeURIComponent(id)}/restore`),
 
   // ── memory ───────────────────────────────────────────

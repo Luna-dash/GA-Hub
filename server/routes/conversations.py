@@ -15,6 +15,7 @@ import os
 import threading
 import zipfile
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse, Response
@@ -56,6 +57,67 @@ def _read_zip_entry_limited(entry) -> bytes:
 
 class ConversationUpdate(BaseModel):
     title: str = Field(default="", max_length=200)
+
+
+class ConversationSummaryResp(BaseModel):
+    id: str
+    title: str
+    message_count: int
+    last_user_preview: str
+    original_user_preview: str
+
+
+class ConversationListResp(BaseModel):
+    total: int
+    offset: int
+    limit: int
+    items: list[ConversationSummaryResp]
+
+
+class ConversationMessageResp(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ConversationDetailResp(BaseModel):
+    id: str
+    title: str
+    messages: list[ConversationMessageResp]
+
+
+class ConversationMutationResp(BaseModel):
+    ok: bool
+    id: str
+
+
+class ConversationUpdateResp(ConversationMutationResp):
+    title: str
+
+
+class ConversationRestoreResp(ConversationMutationResp):
+    title: str
+    restored_lines: int
+    full: bool = True
+
+
+class ArchiveZipResp(BaseModel):
+    name: str
+    size: int
+    mtime: int
+
+
+class ArchiveZipListResp(BaseModel):
+    zips: list[ArchiveZipResp]
+
+
+class ArchiveZipEntryResp(BaseModel):
+    name: str
+    size: int
+    date: tuple[int, int, int, int, int, int]
+
+
+class ArchiveZipEntryListResp(BaseModel):
+    entries: list[ArchiveZipEntryResp]
 
 
 # ── GA archive helpers ────────────────────────────────────────────
@@ -199,7 +261,7 @@ def _list_conversations_sync(
     }
 
 
-@router.get("/api/conversations")
+@router.get("/api/conversations", response_model=ConversationListResp)
 async def list_conversations(
     q: str | None = None,
     offset: int = 0,
@@ -208,7 +270,7 @@ async def list_conversations(
     return await asyncio.to_thread(_list_conversations_sync, q, offset, limit)
 
 
-@router.get("/api/conversations/{cid}")
+@router.get("/api/conversations/{cid}", response_model=ConversationDetailResp)
 async def get_conversation(cid: str):
     s = _session_by_id(cid)
     if s is None:
@@ -222,7 +284,10 @@ async def get_conversation(cid: str):
     }
 
 
-@router.patch("/api/conversations/{cid}")
+@router.patch(
+    "/api/conversations/{cid}",
+    response_model=ConversationUpdateResp,
+)
 async def update_conversation(cid: str, req: ConversationUpdate):
     s = _session_by_id(cid)
     if s is None:
@@ -232,7 +297,10 @@ async def update_conversation(cid: str, req: ConversationUpdate):
     return {"ok": True, "id": cid, "title": title}
 
 
-@router.delete("/api/conversations/{cid}")
+@router.delete(
+    "/api/conversations/{cid}",
+    response_model=ConversationMutationResp,
+)
 async def delete_conversation(cid: str):
     s = _session_by_id(cid)
     if s is None:
@@ -295,7 +363,10 @@ def _unlink_archive(cid: str, path: Path) -> None:
     _metadata.delete(cid, path)
 
 
-@router.post("/api/conversations/{cid}/restore")
+@router.post(
+    "/api/conversations/{cid}/restore",
+    response_model=ConversationRestoreResp,
+)
 async def restore_conversation(cid: str):
     """Restore a GA archive as the agent's working history.
 
@@ -360,7 +431,7 @@ def _archive_dir() -> str:
     return str(_paths.memory_dir() / "L4_raw_sessions")
 
 
-@router.get("/api/archive/zips")
+@router.get("/api/archive/zips", response_model=ArchiveZipListResp)
 async def list_archive_zips():
     adir = _archive_dir()
     if not os.path.isdir(adir):
@@ -377,7 +448,10 @@ async def list_archive_zips():
     return {"zips": zips}
 
 
-@router.get("/api/archive/zips/{name}/entries")
+@router.get(
+    "/api/archive/zips/{name}/entries",
+    response_model=ArchiveZipEntryListResp,
+)
 async def list_zip_entries(name: str):
     if "/" in name or ".." in name or not name.endswith(".zip"):
         raise HTTPException(400, "bad name")
