@@ -42,8 +42,11 @@ import type {
   MemoryTextResponse,
   MemoryWriteResponse,
   MyKeyBackup,
+  MyKeyBackupListResponse,
   MyKeyData,
+  MyKeyOpenResponse,
   MyKeySession,
+  MyKeySessionTestResult,
   MyKeySyncResult,
   MyKeyWriteResult,
   ProjectItem,
@@ -235,12 +238,12 @@ export const api = {
     http<MyKeyWriteResult>('POST', '/api/mykey/sessions', s),
   deleteMyKeySession: (varName: string) =>
     http<MyKeyWriteResult>('DELETE', `/api/mykey/sessions/${encodeURIComponent(varName)}`),
-  mykeyBackups: () => http<{ backups: MyKeyBackup[] }>('GET', '/api/mykey/backups'),
+  mykeyBackups: () => http<MyKeyBackupListResponse>('GET', '/api/mykey/backups'),
   restoreMyKeyBackup: (name: string) =>
     http<MyKeyWriteResult>('POST', `/api/mykey/backups/${encodeURIComponent(name)}/restore`),
   testMyKeySession: (varName: string) =>
-    http<LLMTestResult>('POST', `/api/mykey/sessions/${encodeURIComponent(varName)}/test`),
-  openMyKeyFile: () => http<{ ok: boolean; path: string }>('POST', '/api/mykey/open'),
+    http<MyKeySessionTestResult>('POST', `/api/mykey/sessions/${encodeURIComponent(varName)}/test`),
+  openMyKeyFile: () => http<MyKeyOpenResponse>('POST', '/api/mykey/open'),
   uploadMyKeySync: () => http<MyKeySyncResult>('POST', '/api/mykey/sync/upload'),
   fetchMyKeySync: () => http<MyKeySyncResult>('POST', '/api/mykey/sync/fetch'),
 

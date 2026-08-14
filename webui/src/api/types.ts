@@ -189,59 +189,27 @@ export interface UploadResult {
 }
 
 // ── mykey.py editor ──────────────────────────────────────
-export type MyKeySessionType = 'native_claude' | 'native_oai' | 'claude' | 'oai' | 'mixin'
-
-export interface MyKeySession {
+export type MyKeySessionType =
+  | 'native_claude' | 'native_oai' | 'claude' | 'oai' | 'mixin'
+export type MyKeySession = Omit<ApiSchemas['MyKeySession'], 'fields' | 'var' | 'type'> & {
   var: string
   type: MyKeySessionType
-  fields: Record<string, any>     // backend no longer masks apikey
-  lineno?: number
-  end_lineno?: number
+  fields: Record<string, any>
 }
-
-export interface MyKeyData {
-  path: string
-  exists: boolean
-  raw: string
-  mtime: number
+export type MyKeyData = Omit<ApiSchemas['MyKeyDataResp'], 'structured'> & {
   structured: {
     sessions: MyKeySession[]
     mixins: MyKeySession[]
-    /** Back-compat alias: first item of mixins, if any. */
     mixin: MyKeySession | null
     globals: Record<string, any>
   }
 }
-
-export interface MyKeyWriteResult {
-  ok: boolean
-  backup?: string | null
-  llms?: LLMInfo[]
-  warnings?: string[]
-  structured?: MyKeyData['structured']
-  error?: string
-  message?: string
-  line?: number
-  col?: number
-}
-
-export interface MyKeyBackup {
-  name: string
-  mtime: number
-  size: number
-}
-
-export interface MyKeySyncResult {
-  ok: boolean
-  action: 'upload' | 'fetch'
-  path: string
-  returncode: number
-  stdout: string
-  stderr: string
-  llms?: LLMInfo[]
-  warnings?: string[]
-  structured?: MyKeyData['structured']
-}
+export type MyKeyWriteResult = ApiSchemas['MyKeyWriteResp']
+export type MyKeySessionTestResult = ApiSchemas['MyKeySessionTestResp']
+export type MyKeyBackup = ApiSchemas['MyKeyBackup']
+export type MyKeyBackupListResponse = ApiSchemas['MyKeyBackupListResp']
+export type MyKeySyncResult = ApiSchemas['MyKeySyncResultResp']
+export type MyKeyOpenResponse = ApiSchemas['MyKeyOpenResp']
 
 // ── Chat WS protocol ─────────────────────────────────────
 export type ChatWSIn =

@@ -18,7 +18,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
-import type { LLMTestResult, MyKeyData, MyKeySession, MyKeySessionType, MyKeyWriteResult } from '@/api/types'
+import type { MyKeyData, MyKeySession, MyKeySessionTestResult, MyKeySessionType, MyKeyWriteResult } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { RawView } from '@/components/MyKeyRawView'
 import { dialog } from '@/stores/dialogStore'
@@ -252,7 +252,7 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
   const title = s.fields.name || s.var
   const canTest = s.type !== 'mixin'
   const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<LLMTestResult | null>(null)
+  const [testResult, setTestResult] = useState<MyKeySessionTestResult | null>(null)
   const runTest = async () => {
     setTesting(true)
     setTestResult(null)
@@ -279,7 +279,7 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
       : 'bg-amber-200 shadow-[0_0_10px_rgba(253,230,138,0.25)]'
   const mixinTargets = s.fields.llm_nos || []
   const summary = s.type !== 'mixin'
-    ? (s.fields.model || '未设置模型')
+    ? String(s.fields.model || '未设置模型')
     : (mixinTargets.join(' → ') || '未设置路由目标')
 
   return (
@@ -295,13 +295,15 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
               <div className="mt-1.5 flex items-center gap-2 min-w-0">
                 <div className={`h-2 w-2 rounded-full shrink-0 ${accentTone}`} />
                 <div className="min-w-0 truncate text-[13px] leading-5 text-slate-500 dark:text-slate-400 font-medium tracking-[0.01em]" title={String(summary)}>
-                  {summary}
+                  {String(summary)}
                 </div>
               </div>
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0 pl-2">
-            {expanded && <span className="text-[11px] text-slate-500 font-mono">L{s.lineno}</span>}
+            {expanded && s.lineno != null && (
+              <span className="text-[11px] text-slate-500 font-mono">L{String(s.lineno)}</span>
+            )}
             <span className={`flex h-8 w-8 items-center justify-center rounded-full border border-white/8 bg-white/[0.04] text-slate-300 shadow-inner shadow-white/5 transition-all duration-200 group-hover:bg-white/[0.07] ${expanded ? 'rotate-180 text-white' : ''}`}>
               <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
                 <path d="M5 7.5L10 12.5L15 7.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />

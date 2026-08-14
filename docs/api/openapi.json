@@ -2722,7 +2722,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeyDataResp"
+                }
               }
             }
           }
@@ -2751,7 +2753,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeyWriteResp"
+                }
               }
             }
           },
@@ -2790,7 +2794,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeyWriteResp"
+                }
               }
             }
           },
@@ -2830,7 +2836,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeyWriteResp"
+                }
               }
             }
           },
@@ -2871,7 +2879,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeySessionTestResp"
+                }
               }
             }
           },
@@ -2900,7 +2910,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeyBackupListResp"
+                }
               }
             }
           }
@@ -2930,7 +2942,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeyWriteResp"
+                }
               }
             }
           },
@@ -2960,7 +2974,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeySyncResultResp"
+                }
               }
             }
           }
@@ -2980,7 +2996,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeySyncResultResp"
+                }
               }
             }
           }
@@ -3000,7 +3018,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeyOpenResp"
+                }
               }
             }
           }
@@ -5977,6 +5997,377 @@
           "size"
         ],
         "title": "MemoryWriteResp"
+      },
+      "MyKeyBackup": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "mtime": {
+            "type": "integer",
+            "title": "Mtime"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "mtime",
+          "size"
+        ],
+        "title": "MyKeyBackup"
+      },
+      "MyKeyBackupListResp": {
+        "properties": {
+          "backups": {
+            "items": {
+              "$ref": "#/components/schemas/MyKeyBackup"
+            },
+            "type": "array",
+            "title": "Backups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "backups"
+        ],
+        "title": "MyKeyBackupListResp"
+      },
+      "MyKeyDataResp": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "exists": {
+            "type": "boolean",
+            "title": "Exists"
+          },
+          "raw": {
+            "type": "string",
+            "title": "Raw"
+          },
+          "structured": {
+            "$ref": "#/components/schemas/MyKeyStructured"
+          },
+          "mtime": {
+            "type": "integer",
+            "title": "Mtime"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "exists",
+          "raw",
+          "structured",
+          "mtime"
+        ],
+        "title": "MyKeyDataResp"
+      },
+      "MyKeyOpenResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "path"
+        ],
+        "title": "MyKeyOpenResp"
+      },
+      "MyKeySession": {
+        "properties": {
+          "var": {
+            "type": "string",
+            "title": "Var"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "native_claude",
+              "native_oai",
+              "claude",
+              "oai",
+              "mixin"
+            ],
+            "title": "Type"
+          },
+          "fields": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Fields"
+          },
+          "lineno": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineno"
+          },
+          "end_lineno": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Lineno"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "var",
+          "type",
+          "fields"
+        ],
+        "title": "MyKeySession"
+      },
+      "MyKeySessionTestResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "MyKeySessionTestResp"
+      },
+      "MyKeyStructured": {
+        "properties": {
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/MyKeySession"
+            },
+            "type": "array",
+            "title": "Sessions"
+          },
+          "mixins": {
+            "items": {
+              "$ref": "#/components/schemas/MyKeySession"
+            },
+            "type": "array",
+            "title": "Mixins"
+          },
+          "mixin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MyKeySession"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "globals": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Globals"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "sessions",
+          "mixins",
+          "globals"
+        ],
+        "title": "MyKeyStructured"
+      },
+      "MyKeySyncResultResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "returncode": {
+            "type": "integer",
+            "title": "Returncode"
+          },
+          "stdout": {
+            "type": "string",
+            "title": "Stdout"
+          },
+          "stderr": {
+            "type": "string",
+            "title": "Stderr"
+          },
+          "llms": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Llms",
+            "default": []
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "default": []
+          },
+          "structured": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MyKeyStructured"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "ok",
+          "action",
+          "path",
+          "returncode",
+          "stdout",
+          "stderr"
+        ],
+        "title": "MyKeySyncResultResp"
+      },
+      "MyKeyWriteResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "backup": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backup"
+          },
+          "llms": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Llms",
+            "default": []
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "default": []
+          },
+          "structured": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MyKeyStructured"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "MyKeyWriteResp"
       },
       "NavPreference": {
         "properties": {

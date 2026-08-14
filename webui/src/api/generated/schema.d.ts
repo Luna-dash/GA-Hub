@@ -2710,6 +2710,142 @@ export interface components {
             /** Size */
             size: number;
         };
+        /** MyKeyBackup */
+        MyKeyBackup: {
+            /** Name */
+            name: string;
+            /** Mtime */
+            mtime: number;
+            /** Size */
+            size: number;
+        };
+        /** MyKeyBackupListResp */
+        MyKeyBackupListResp: {
+            /** Backups */
+            backups: components["schemas"]["MyKeyBackup"][];
+        };
+        /** MyKeyDataResp */
+        MyKeyDataResp: {
+            /** Path */
+            path: string;
+            /** Exists */
+            exists: boolean;
+            /** Raw */
+            raw: string;
+            structured: components["schemas"]["MyKeyStructured"];
+            /** Mtime */
+            mtime: number;
+        };
+        /** MyKeyOpenResp */
+        MyKeyOpenResp: {
+            /** Ok */
+            ok: boolean;
+            /** Path */
+            path: string;
+        };
+        /** MyKeySession */
+        MyKeySession: {
+            /** Var */
+            var: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "native_claude" | "native_oai" | "claude" | "oai" | "mixin";
+            /** Fields */
+            fields: {
+                [key: string]: unknown;
+            };
+            /** Lineno */
+            lineno?: number | null;
+            /** End Lineno */
+            end_lineno?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** MyKeySessionTestResp */
+        MyKeySessionTestResp: {
+            /** Ok */
+            ok: boolean;
+            /** Error */
+            error?: string | null;
+            /** Latency Ms */
+            latency_ms?: number | null;
+            /** Preview */
+            preview?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Name */
+            name?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** MyKeyStructured */
+        MyKeyStructured: {
+            /** Sessions */
+            sessions: components["schemas"]["MyKeySession"][];
+            /** Mixins */
+            mixins: components["schemas"]["MyKeySession"][];
+            mixin?: components["schemas"]["MyKeySession"] | null;
+            /** Globals */
+            globals: {
+                [key: string]: unknown;
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        /** MyKeySyncResultResp */
+        MyKeySyncResultResp: {
+            /** Ok */
+            ok: boolean;
+            /** Action */
+            action: string;
+            /** Path */
+            path: string;
+            /** Returncode */
+            returncode: number;
+            /** Stdout */
+            stdout: string;
+            /** Stderr */
+            stderr: string;
+            /**
+             * Llms
+             * @default []
+             */
+            llms: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: string[];
+            structured?: components["schemas"]["MyKeyStructured"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** MyKeyWriteResp */
+        MyKeyWriteResp: {
+            /** Ok */
+            ok: boolean;
+            /** Backup */
+            backup?: string | null;
+            /**
+             * Llms
+             * @default []
+             */
+            llms: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: string[];
+            structured?: components["schemas"]["MyKeyStructured"] | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** NavPreference */
         NavPreference: {
             /** Id */
@@ -5732,7 +5868,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MyKeyDataResp"];
                 };
             };
         };
@@ -5756,7 +5892,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MyKeyWriteResp"];
                 };
             };
             /** @description Validation Error */
@@ -5789,7 +5925,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MyKeyWriteResp"];
                 };
             };
             /** @description Validation Error */
@@ -5820,7 +5956,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MyKeyWriteResp"];
                 };
             };
             /** @description Validation Error */
@@ -5851,7 +5987,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MyKeySessionTestResp"];
                 };
             };
             /** @description Validation Error */
@@ -5880,7 +6016,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MyKeyBackupListResp"];
                 };
             };
         };
@@ -5902,7 +6038,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MyKeyWriteResp"];
                 };
             };
             /** @description Validation Error */
@@ -5931,7 +6067,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MyKeySyncResultResp"];
                 };
             };
         };
@@ -5951,7 +6087,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MyKeySyncResultResp"];
                 };
             };
         };
@@ -5971,7 +6107,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MyKeyOpenResp"];
                 };
             };
         };

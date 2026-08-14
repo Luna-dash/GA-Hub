@@ -557,3 +557,81 @@ class ConductorStatusResp(BaseModel):
 
 class ConductorLifecycleResp(ConductorStatusResp):
     ok: bool
+
+
+# ── mykey ───────────────────────────────────────────────────────
+class MyKeySession(BaseModel):
+    model_config = {"extra": "allow"}
+
+    var: str
+    type: Literal["native_claude", "native_oai", "claude", "oai", "mixin"]
+    fields: dict[str, Any]
+    lineno: int | None = None
+    end_lineno: int | None = None
+
+
+class MyKeyStructured(BaseModel):
+    model_config = {"extra": "allow"}
+
+    sessions: list[MyKeySession]
+    mixins: list[MyKeySession]
+    mixin: MyKeySession | None = None
+    globals: dict[str, Any]
+
+
+class MyKeyDataResp(BaseModel):
+    path: str
+    exists: bool
+    raw: str
+    structured: MyKeyStructured
+    mtime: int
+
+
+class MyKeyWriteResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    ok: bool
+    backup: str | None = None
+    llms: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    structured: MyKeyStructured | None = None
+
+
+class MyKeySessionTestResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    ok: bool
+    error: str | None = None
+    latency_ms: int | None = None
+    preview: str | None = None
+    model: str | None = None
+    name: str | None = None
+
+
+class MyKeyBackup(BaseModel):
+    name: str
+    mtime: int
+    size: int
+
+
+class MyKeyBackupListResp(BaseModel):
+    backups: list[MyKeyBackup]
+
+
+class MyKeySyncResultResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    ok: bool
+    action: str
+    path: str
+    returncode: int
+    stdout: str
+    stderr: str
+    llms: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    structured: MyKeyStructured | None = None
+
+
+class MyKeyOpenResp(BaseModel):
+    ok: bool
+    path: str

@@ -38,6 +38,14 @@ from ..services.mykey_codec import (
     upsert_assignment,
     validate_text as _validate_text,
 )
+from ..schemas import (
+    MyKeyBackupListResp,
+    MyKeyDataResp,
+    MyKeyOpenResp,
+    MyKeySessionTestResp,
+    MyKeySyncResultResp,
+    MyKeyWriteResp,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/mykey", tags=["mykey"])
@@ -128,7 +136,7 @@ class SessionUpsertReq(BaseModel):
 
 # ── routes ─────────────────────────────────────────────────────────────
 @router.get("")
-async def get_mykey():
+async def get_mykey() -> MyKeyDataResp:
     p = _mykey_path()
     if not p.is_file():
         return {
@@ -149,7 +157,7 @@ async def get_mykey():
 
 
 @router.put("/raw")
-async def put_raw(req: RawWriteReq):
+async def put_raw(req: RawWriteReq) -> MyKeyWriteResp:
     p = _mykey_path()
     text = req.raw
     if not text.endswith("\n"): text += "\n"
@@ -176,7 +184,7 @@ async def put_raw(req: RawWriteReq):
 
 
 @router.post("/sessions")
-async def upsert_session(req: SessionUpsertReq):
+async def upsert_session(req: SessionUpsertReq) -> MyKeyWriteResp:
     p = _mykey_path()
     raw = p.read_text(encoding="utf-8") if p.is_file() else ""
     var = req.var.strip()
@@ -214,7 +222,7 @@ async def upsert_session(req: SessionUpsertReq):
 
 
 @router.delete("/sessions/{var}")
-async def delete_session(var: str):
+async def delete_session(var: str) -> MyKeyWriteResp:
     p = _mykey_path()
     if not p.is_file():
         raise HTTPException(404, "mykey.py 不存在")
@@ -248,7 +256,7 @@ async def delete_session(var: str):
 
 
 @router.post("/sessions/{var}/test")
-async def test_session(var: str):
+async def test_session(var: str) -> MyKeySessionTestResp:
     """Ping a single mykey session by variable name.
 
     This avoids fragile /api/llms index mapping: mykey cards know their
@@ -314,7 +322,7 @@ async def test_session(var: str):
 
 
 @router.get("/backups")
-async def list_backups():
+async def list_backups() -> MyKeyBackupListResp:
     bdir = _backup_dir()
     out = []
     for f in sorted(bdir.glob("mykey.py.*.bak"), key=lambda p: p.stat().st_mtime, reverse=True):
@@ -324,7 +332,7 @@ async def list_backups():
 
 
 @router.post("/backups/{name}/restore")
-async def restore_backup(name: str):
+async def restore_backup(name: str) -> MyKeyWriteResp:
     if "/" in name or ".." in name or not name.startswith("mykey.py.") or not name.endswith(".bak"):
         raise HTTPException(400, "非法备份名")
     bdir = _backup_dir()
@@ -412,7 +420,7 @@ def _run_mykey_sync(args: list[str]) -> dict[str, Any]:
 
 
 @router.post("/sync/upload")
-async def sync_upload_mykey():
+async def sync_upload_mykey() -> MyKeySyncResultResp:
     """Encrypt and upload current GA_ROOT/mykey.py to the configured sync server."""
     p = _mykey_path()
     if not p.is_file():
@@ -427,7 +435,7 @@ async def sync_upload_mykey():
 
 
 @router.post("/sync/fetch")
-async def sync_fetch_mykey():
+async def sync_fetch_mykey() -> MyKeySyncResultResp:
     """Fetch, decrypt and replace GA_ROOT/mykey.py from the configured sync server."""
     p = _mykey_path()
     result = _run_mykey_sync([
@@ -450,7 +458,7 @@ async def sync_fetch_mykey():
 
 
 @router.post("/open")
-async def open_mykey_file():
+async def open_mykey_file() -> MyKeyOpenResp:
     """Open mykey.py in system default editor."""
     import subprocess
     import sys
