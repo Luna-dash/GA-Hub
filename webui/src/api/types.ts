@@ -191,46 +191,14 @@ export type AutonomousReportDetailResponse = ApiSchemas['AutonomousReportDetailR
 // ── Scheduled Tasks ───────────────────────────────────────
 export type TaskScheduleType = 'cron' | 'interval'
 
-export interface TaskSchedule {
-  id: string
-  type: TaskScheduleType
-  enabled: boolean
-  prompt: string
-  cron: string
-  interval_minutes: number
-  notify_email: boolean
-  email_to: string
-  email_subject: string
-  last_fired_at: number
-  fire_count: number
-  name: string
-}
-
-export interface TaskRun {
-  id: string
-  task_id: string
-  task_name: string
-  fired_at: number
-  stream_id: string
-  finished_at: number
-  status: 'running' | 'done' | 'error' | 'timeout' | string
-  prompt_preview: string
-  result_preview: string
-  email_sent: boolean
-  email_error: string
-  note: string
-}
-
-export interface EmailConfig {
-  host: string
-  port: number
-  username: string
-  from_addr: string
-  default_to: string
-  use_tls: boolean
-  use_ssl: boolean
-  password_set: boolean
-}
+export type TaskSchedule = ApiSchemas['TaskScheduleResp']
+export type TaskScheduleListResponse = ApiSchemas['TaskScheduleListResp']
+export type TaskMutationResponse = ApiSchemas['TaskMutationResp']
+export type TaskTriggerResponse = ApiSchemas['TaskTriggerResp']
+export type TaskRun = ApiSchemas['TaskRunResp']
+export type TaskRunListResponse = ApiSchemas['TaskRunListResp']
+export type EmailConfig = ApiSchemas['EmailConfigResp']
+export type EmailTestResponse = ApiSchemas['EmailTestResp']
 
 // ── Upload ────────────────────────────────────────────────
 export interface UploadResult {

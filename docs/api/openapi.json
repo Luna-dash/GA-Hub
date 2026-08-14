@@ -3907,7 +3907,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TaskScheduleListResp"
+                }
               }
             }
           }
@@ -3934,7 +3936,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TaskScheduleResp"
+                }
               }
             }
           },
@@ -3974,7 +3978,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TaskMutationResp"
+                }
               }
             }
           },
@@ -4014,7 +4020,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TaskTriggerResp"
+                }
               }
             }
           },
@@ -4045,6 +4053,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
               "default": 100,
               "title": "Limit"
             }
@@ -4055,7 +4065,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TaskRunListResp"
+                }
               }
             }
           },
@@ -4084,7 +4096,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/EmailConfigResp"
+                }
               }
             }
           }
@@ -4111,7 +4125,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/EmailConfigResp"
+                }
               }
             }
           },
@@ -4150,7 +4166,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/EmailTestResp"
+                }
               }
             }
           },
@@ -5128,6 +5146,54 @@
         "type": "object",
         "title": "EmailConfigReq"
       },
+      "EmailConfigResp": {
+        "properties": {
+          "host": {
+            "type": "string",
+            "title": "Host"
+          },
+          "port": {
+            "type": "integer",
+            "title": "Port"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "from_addr": {
+            "type": "string",
+            "title": "From Addr"
+          },
+          "default_to": {
+            "type": "string",
+            "title": "Default To"
+          },
+          "use_tls": {
+            "type": "boolean",
+            "title": "Use Tls"
+          },
+          "use_ssl": {
+            "type": "boolean",
+            "title": "Use Ssl"
+          },
+          "password_set": {
+            "type": "boolean",
+            "title": "Password Set"
+          }
+        },
+        "type": "object",
+        "required": [
+          "host",
+          "port",
+          "username",
+          "from_addr",
+          "default_to",
+          "use_tls",
+          "use_ssl",
+          "password_set"
+        ],
+        "title": "EmailConfigResp"
+      },
       "EmailTestReq": {
         "properties": {
           "to": {
@@ -5148,6 +5214,35 @@
         },
         "type": "object",
         "title": "EmailTestReq"
+      },
+      "EmailTestResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "to": {
+            "type": "string",
+            "title": "To"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "to"
+        ],
+        "title": "EmailTestResp"
       },
       "FeishuProcessStatus": {
         "properties": {
@@ -6552,6 +6647,187 @@
         ],
         "title": "SkillSearchResp"
       },
+      "TaskMutationResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "TaskMutationResp"
+      },
+      "TaskRunListResp": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/TaskRunResp"
+            },
+            "type": "array",
+            "title": "Runs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "runs"
+        ],
+        "title": "TaskRunListResp"
+      },
+      "TaskRunResp": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "task_name": {
+            "type": "string",
+            "title": "Task Name"
+          },
+          "fired_at": {
+            "type": "integer",
+            "title": "Fired At"
+          },
+          "stream_id": {
+            "type": "string",
+            "title": "Stream Id"
+          },
+          "finished_at": {
+            "type": "integer",
+            "title": "Finished At"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "prompt_preview": {
+            "type": "string",
+            "title": "Prompt Preview"
+          },
+          "result_preview": {
+            "type": "string",
+            "title": "Result Preview"
+          },
+          "email_sent": {
+            "type": "boolean",
+            "title": "Email Sent"
+          },
+          "email_error": {
+            "type": "string",
+            "title": "Email Error"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "task_name",
+          "fired_at",
+          "stream_id",
+          "finished_at",
+          "status",
+          "prompt_preview",
+          "result_preview",
+          "email_sent",
+          "email_error",
+          "note"
+        ],
+        "title": "TaskRunResp"
+      },
+      "TaskScheduleListResp": {
+        "properties": {
+          "schedules": {
+            "items": {
+              "$ref": "#/components/schemas/TaskScheduleResp"
+            },
+            "type": "array",
+            "title": "Schedules"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schedules"
+        ],
+        "title": "TaskScheduleListResp"
+      },
+      "TaskScheduleResp": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "cron": {
+            "type": "string",
+            "title": "Cron"
+          },
+          "interval_minutes": {
+            "type": "integer",
+            "title": "Interval Minutes"
+          },
+          "notify_email": {
+            "type": "boolean",
+            "title": "Notify Email"
+          },
+          "email_to": {
+            "type": "string",
+            "title": "Email To"
+          },
+          "email_subject": {
+            "type": "string",
+            "title": "Email Subject"
+          },
+          "last_fired_at": {
+            "type": "integer",
+            "title": "Last Fired At"
+          },
+          "fire_count": {
+            "type": "integer",
+            "title": "Fire Count"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "enabled",
+          "prompt",
+          "cron",
+          "interval_minutes",
+          "notify_email",
+          "email_to",
+          "email_subject",
+          "last_fired_at",
+          "fire_count",
+          "name"
+        ],
+        "title": "TaskScheduleResp"
+      },
       "TaskScheduleUpsert": {
         "properties": {
           "id": {
@@ -6629,6 +6905,24 @@
         },
         "type": "object",
         "title": "TaskScheduleUpsert"
+      },
+      "TaskTriggerResp": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "stream_id": {
+            "type": "string",
+            "title": "Stream Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "stream_id"
+        ],
+        "title": "TaskTriggerResp"
       },
       "TextWrite": {
         "properties": {

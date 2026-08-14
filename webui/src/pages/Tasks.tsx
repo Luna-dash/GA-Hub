@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import cronstrue from 'cronstrue/i18n'
 import { CronExpressionParser } from 'cron-parser'
 import { api } from '@/api/client'
-import type { EmailConfig, TaskSchedule, TaskScheduleType } from '@/api/types'
+import type { EmailConfig, TaskRun, TaskSchedule, TaskScheduleType } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
@@ -63,7 +63,7 @@ export default function Tasks() {
                 </tr>
               </thead>
               <tbody>
-                {runs.map((r) => (
+                {runs.map((r: TaskRun) => (
                   <tr key={r.id} className="border-t border-line/60 align-top">
                     <td className="p-2.5 text-slate-400 whitespace-nowrap">{relTime(r.fired_at)}</td>
                     <td className="p-2.5 text-slate-200">{r.task_name || r.task_id}</td>
@@ -94,7 +94,7 @@ export default function Tasks() {
 function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; onFire: () => void }) {
   const qc = useQueryClient()
   const toggle = async () => {
-    await api.upsertTaskSchedule({ ...s, enabled: !s.enabled })
+    await api.upsertTaskSchedule({ ...s, type: s.type as TaskScheduleType, enabled: !s.enabled })
     qc.invalidateQueries({ queryKey: ['tasks.schedules'] })
   }
   const remove = async () => {

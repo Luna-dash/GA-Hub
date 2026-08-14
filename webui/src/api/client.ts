@@ -26,6 +26,7 @@ import type {
   ConversationRestoreResponse,
   ConversationUpdateResponse,
   EmailConfig,
+  EmailTestResponse,
   FsCheckResult,
   FsStatus,
   LLMInfo,
@@ -50,7 +51,11 @@ import type {
   SessionMessagesResponse,
   SessionRuntime,
   TaskRun,
+  TaskRunListResponse,
   TaskSchedule,
+  TaskScheduleListResponse,
+  TaskMutationResponse,
+  TaskTriggerResponse,
   TaskScheduleType,
   SetupStatus,
   SOPDetailResponse,
@@ -301,17 +306,17 @@ export const api = {
   report: (name: string) => http<AutonomousReportDetailResponse>('GET', `/api/autonomous/reports/${encodeURIComponent(name)}`),
 
   // ── scheduled tasks ──────────────────────────────────
-  taskSchedules: () => http<{ schedules: TaskSchedule[] }>('GET', '/api/tasks/schedules'),
+  taskSchedules: () => http<TaskScheduleListResponse>('GET', '/api/tasks/schedules'),
   upsertTaskSchedule: (s: Partial<TaskSchedule> & { type: TaskScheduleType }) =>
     http<TaskSchedule>('POST', '/api/tasks/schedules', s),
-  deleteTaskSchedule: (id: string) => http<{ ok: boolean }>('DELETE', `/api/tasks/schedules/${id}`),
-  triggerTaskSchedule: (id: string) => http<{ run_id: string; stream_id: string }>('POST', `/api/tasks/schedules/${id}/trigger`),
-  taskRuns: (limit = 100) => http<{ runs: TaskRun[] }>('GET', `/api/tasks/runs?limit=${limit}`),
+  deleteTaskSchedule: (id: string) => http<TaskMutationResponse>('DELETE', `/api/tasks/schedules/${id}`),
+  triggerTaskSchedule: (id: string) => http<TaskTriggerResponse>('POST', `/api/tasks/schedules/${id}/trigger`),
+  taskRuns: (limit = 100) => http<TaskRunListResponse>('GET', `/api/tasks/runs?limit=${limit}`),
   taskEmailConfig: () => http<EmailConfig>('GET', '/api/tasks/email-config'),
   saveTaskEmailConfig: (cfg: Partial<EmailConfig> & { password?: string }) =>
     http<EmailConfig>('PUT', '/api/tasks/email-config', cfg),
   testTaskEmail: (to: string, subject: string, body: string) =>
-    http<{ ok: boolean; to: string; error?: string }>('POST', '/api/tasks/email-test', { to, subject, body }),
+    http<EmailTestResponse>('POST', '/api/tasks/email-test', { to, subject, body }),
 
   // ── upload ───────────────────────────────────────────
   upload: async (file: File, init?: Pick<HttpOptions, 'signal' | 'timeoutMs'>): Promise<UploadResult> => {

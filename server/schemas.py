@@ -296,6 +296,53 @@ class TaskScheduleUpsert(BaseModel):
     email_subject: str = ""
 
 
+class TaskScheduleResp(BaseModel):
+    id: str
+    type: str
+    enabled: bool
+    prompt: str
+    cron: str
+    interval_minutes: int
+    notify_email: bool
+    email_to: str
+    email_subject: str
+    last_fired_at: int
+    fire_count: int
+    name: str
+
+
+class TaskScheduleListResp(BaseModel):
+    schedules: list[TaskScheduleResp]
+
+
+class TaskMutationResp(BaseModel):
+    ok: bool
+
+
+class TaskTriggerResp(BaseModel):
+    run_id: str
+    stream_id: str
+
+
+class TaskRunResp(BaseModel):
+    id: str
+    task_id: str
+    task_name: str
+    fired_at: int
+    stream_id: str
+    finished_at: int
+    status: str
+    prompt_preview: str
+    result_preview: str
+    email_sent: bool
+    email_error: str
+    note: str
+
+
+class TaskRunListResp(BaseModel):
+    runs: list[TaskRunResp]
+
+
 class EmailConfigReq(BaseModel):
     host: str = ""
     port: int = 587
@@ -307,10 +354,27 @@ class EmailConfigReq(BaseModel):
     use_ssl: bool = False
 
 
+class EmailConfigResp(BaseModel):
+    host: str
+    port: int
+    username: str
+    from_addr: str
+    default_to: str
+    use_tls: bool
+    use_ssl: bool
+    password_set: bool
+
+
 class EmailTestReq(BaseModel):
     to: str = ""
     subject: str = "GenericAgent 邮件测试"
     body: str = "这是一封来自 GA-Hub 的测试邮件。"
+
+
+class EmailTestResp(BaseModel):
+    ok: bool
+    to: str
+    error: str | None = None
 
 
 # ── conductor ──────────────────────────────────────────────────────────────────

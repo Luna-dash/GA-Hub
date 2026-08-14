@@ -2408,6 +2408,25 @@ export interface components {
              */
             use_ssl: boolean;
         };
+        /** EmailConfigResp */
+        EmailConfigResp: {
+            /** Host */
+            host: string;
+            /** Port */
+            port: number;
+            /** Username */
+            username: string;
+            /** From Addr */
+            from_addr: string;
+            /** Default To */
+            default_to: string;
+            /** Use Tls */
+            use_tls: boolean;
+            /** Use Ssl */
+            use_ssl: boolean;
+            /** Password Set */
+            password_set: boolean;
+        };
         /** EmailTestReq */
         EmailTestReq: {
             /**
@@ -2425,6 +2444,15 @@ export interface components {
              * @default 这是一封来自 GA-Hub 的测试邮件。
              */
             body: string;
+        };
+        /** EmailTestResp */
+        EmailTestResp: {
+            /** Ok */
+            ok: boolean;
+            /** To */
+            to: string;
+            /** Error */
+            error?: string | null;
         };
         /**
          * FeishuProcessStatus
@@ -2932,6 +2960,75 @@ export interface components {
             /** Query */
             query: string;
         };
+        /** TaskMutationResp */
+        TaskMutationResp: {
+            /** Ok */
+            ok: boolean;
+        };
+        /** TaskRunListResp */
+        TaskRunListResp: {
+            /** Runs */
+            runs: components["schemas"]["TaskRunResp"][];
+        };
+        /** TaskRunResp */
+        TaskRunResp: {
+            /** Id */
+            id: string;
+            /** Task Id */
+            task_id: string;
+            /** Task Name */
+            task_name: string;
+            /** Fired At */
+            fired_at: number;
+            /** Stream Id */
+            stream_id: string;
+            /** Finished At */
+            finished_at: number;
+            /** Status */
+            status: string;
+            /** Prompt Preview */
+            prompt_preview: string;
+            /** Result Preview */
+            result_preview: string;
+            /** Email Sent */
+            email_sent: boolean;
+            /** Email Error */
+            email_error: string;
+            /** Note */
+            note: string;
+        };
+        /** TaskScheduleListResp */
+        TaskScheduleListResp: {
+            /** Schedules */
+            schedules: components["schemas"]["TaskScheduleResp"][];
+        };
+        /** TaskScheduleResp */
+        TaskScheduleResp: {
+            /** Id */
+            id: string;
+            /** Type */
+            type: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Prompt */
+            prompt: string;
+            /** Cron */
+            cron: string;
+            /** Interval Minutes */
+            interval_minutes: number;
+            /** Notify Email */
+            notify_email: boolean;
+            /** Email To */
+            email_to: string;
+            /** Email Subject */
+            email_subject: string;
+            /** Last Fired At */
+            last_fired_at: number;
+            /** Fire Count */
+            fire_count: number;
+            /** Name */
+            name: string;
+        };
         /** TaskScheduleUpsert */
         TaskScheduleUpsert: {
             /** Id */
@@ -2976,6 +3073,13 @@ export interface components {
              * @default
              */
             email_subject: string;
+        };
+        /** TaskTriggerResp */
+        TaskTriggerResp: {
+            /** Run Id */
+            run_id: string;
+            /** Stream Id */
+            stream_id: string;
         };
         /** TextWrite */
         TextWrite: {
@@ -6425,7 +6529,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TaskScheduleListResp"];
                 };
             };
         };
@@ -6449,7 +6553,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TaskScheduleResp"];
                 };
             };
             /** @description Validation Error */
@@ -6480,7 +6584,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TaskMutationResp"];
                 };
             };
             /** @description Validation Error */
@@ -6511,7 +6615,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TaskTriggerResp"];
                 };
             };
             /** @description Validation Error */
@@ -6542,7 +6646,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TaskRunListResp"];
                 };
             };
             /** @description Validation Error */
@@ -6571,7 +6675,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EmailConfigResp"];
                 };
             };
         };
@@ -6595,7 +6699,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EmailConfigResp"];
                 };
             };
             /** @description Validation Error */
@@ -6628,7 +6732,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EmailTestResp"];
                 };
             };
             /** @description Validation Error */
