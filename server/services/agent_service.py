@@ -38,12 +38,9 @@ from frontends.continue_cmd import install as install_continue, reset_conversati
 from .chat_retry import ChatRetryConfig, classify_recoverable_error, load_chat_retry_config  # noqa: E402
 from .chat_stream_projection import ChatSnapshot, ChatStreamProjection  # noqa: E402
 from .event_bus import bus  # noqa: E402
+from .llm_preference_store import LlmPreferenceStore  # noqa: E402
 
 log = logging.getLogger(__name__)
-
-# Sentinel distinguishing "cache not yet loaded" from "no preference" (None)
-# so the submit hot-path can skip re-reading config.json on every turn.
-_PREFERRED_UNSET = object()
 
 _AUTO_CONTINUE_MAX = 2
 _AUTO_CONTINUE_MARKERS = ("[!!! 流异常中断", "[!!! Response truncated: max_tokens")
@@ -235,8 +232,8 @@ class AgentService:
         # User-preferred LLM. Persisted to admin config so it survives restarts;
         # also used to detect (and log) drift caused by other call sites
         # (autonomous tasks, /llm wechat command, code_run inline_eval, etc.)
+        self._llm_preferences = LlmPreferenceStore()
         if self._manage_global_preference:
-            self._preferred_llm_cache = _PREFERRED_UNSET
             self._wrap_next_llm_with_persistence()
             self._restore_preferred_llm()
 
@@ -302,14 +299,10 @@ class AgentService:
             log.warning("list_llms hot reload failed: %s", e)
         
         # Read user's preferred LLM index
-        preferred_no = None
         try:
-            cfg = _paths.load_config()
-            preferred_no = cfg.get("preferred_llm_no")
-            if preferred_no is not None:
-                preferred_no = int(preferred_no)
+            preferred_no = self._llm_preferences.get()
         except Exception:
-            pass
+            preferred_no = None
         
         out = []
         clients = getattr(self.agent, "llmclients", []) or []
@@ -378,35 +371,16 @@ class AgentService:
     # ── llm preference persistence ───────────────────────────────
     def _save_preferred_llm(self, n: int) -> None:
         try:
-            # Fast path: cached value already equals the new value → skip disk IO.
-            if getattr(self, "_preferred_llm_cache", _PREFERRED_UNSET) == n:
-                return
-            cfg = _paths.load_config()
-            if cfg.get("preferred_llm_no") == n:
-                self._preferred_llm_cache = int(n)
-                return
-            cfg["preferred_llm_no"] = int(n)
-            _paths.save_config(cfg)
-            self._preferred_llm_cache = int(n)
-            log.info("preferred_llm_no persisted: %s", n)
+            self._llm_preferences.set(n)
         except Exception as e:
             log.warning("failed to persist preferred_llm_no=%s: %s", n, e)
 
     def _get_preferred_llm_no(self):
         """Return the persisted preferred LLM index (int or None).
 
-        Backed by an in-memory cache so the submit hot-path does not re-read
-        ``config.json`` on every turn. ``None`` is cached (means "no
-        preference"); the sentinel ``_PREFERRED_UNSET`` means "not loaded yet".
+        Kept as a compatibility facade over LlmPreferenceStore.
         """
-        if getattr(self, "_preferred_llm_cache", _PREFERRED_UNSET) is _PREFERRED_UNSET:
-            try:
-                saved = _paths.load_config().get("preferred_llm_no")
-            except Exception as e:
-                log.warning("failed to read preferred llm: %s", e)
-                saved = None
-            self._preferred_llm_cache = saved
-        return self._preferred_llm_cache
+        return self._llm_preferences.get()
 
     def _restore_preferred_llm(self) -> None:
         try:

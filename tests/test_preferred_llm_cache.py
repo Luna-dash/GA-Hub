@@ -83,9 +83,7 @@ def _make_service(svc_mod, agent: _StubAgent):
     service = object.__new__(svc_mod.AgentService)
     service.agent = agent
     service._manage_global_preference = True
-    # The cache attribute must be initialised lazily by the methods themselves;
-    # if __init__ already sets it we tolerate either. We do NOT set it here so
-    # the test asserts the methods initialise it on first use.
+    service._llm_preferences = svc_mod.LlmPreferenceStore()
     return service
 
 
