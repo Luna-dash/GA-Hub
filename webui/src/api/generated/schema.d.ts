@@ -2257,6 +2257,65 @@ export interface components {
             /** Llm Index */
             llm_index?: number | null;
         };
+        /** ConductorChatListResp */
+        ConductorChatListResp: {
+            /** Items */
+            items: components["schemas"]["ConductorChatMessage"][];
+        };
+        /** ConductorChatMessage */
+        ConductorChatMessage: {
+            /** Id */
+            id: string;
+            /** Role */
+            role: string;
+            /** Msg */
+            msg: string;
+            /** Ts */
+            ts: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ConductorLifecycleResp */
+        ConductorLifecycleResp: {
+            /** Started */
+            started: boolean;
+            /** Stopping */
+            stopping: boolean;
+            /** Admission Open */
+            admission_open: boolean;
+            /** Loop Alive */
+            loop_alive: boolean;
+            /** Agent Alive */
+            agent_alive: boolean;
+            subagents: components["schemas"]["ConductorSubagentCounts"];
+            /** Chat Count */
+            chat_count: number;
+            /** Ok */
+            ok: boolean;
+        };
+        /** ConductorLogItem */
+        ConductorLogItem: {
+            /** Id */
+            id: string;
+            /** Ts */
+            ts: number;
+            /** Event */
+            event: string;
+            /** Turn */
+            turn: number | null;
+            /** Text */
+            text: string;
+        };
+        /** ConductorLogResp */
+        ConductorLogResp: {
+            /** Log */
+            log: components["schemas"]["ConductorLogItem"][];
+        };
+        /** ConductorMutationResp */
+        ConductorMutationResp: {
+            /** Ok */
+            ok: boolean;
+        };
         /** ConductorStartReq */
         ConductorStartReq: {
             /** Llm Index */
@@ -2268,6 +2327,39 @@ export interface components {
             prompt: string;
             /** Llm Index */
             llm_index?: number | null;
+        };
+        /** ConductorStatusResp */
+        ConductorStatusResp: {
+            /** Started */
+            started: boolean;
+            /** Stopping */
+            stopping: boolean;
+            /** Admission Open */
+            admission_open: boolean;
+            /** Loop Alive */
+            loop_alive: boolean;
+            /** Agent Alive */
+            agent_alive: boolean;
+            subagents: components["schemas"]["ConductorSubagentCounts"];
+            /** Chat Count */
+            chat_count: number;
+        };
+        /** ConductorSubagent */
+        ConductorSubagent: {
+            /** Id */
+            id: string;
+            /** Prompt */
+            prompt: string;
+            /** Reply */
+            reply: string;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at: number;
+            /** Updated At */
+            updated_at: number;
+        } & {
+            [key: string]: unknown;
         };
         /** ConductorSubagentAction */
         ConductorSubagentAction: {
@@ -2281,6 +2373,43 @@ export interface components {
              * @default
              */
             msg: string;
+        };
+        /** ConductorSubagentActionResp */
+        ConductorSubagentActionResp: {
+            /** Id */
+            id?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Error */
+            error?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ConductorSubagentCounts */
+        ConductorSubagentCounts: {
+            /** Running */
+            running: number;
+            /** Stopped */
+            stopped: number;
+        };
+        /** ConductorSubagentInstructionResp */
+        ConductorSubagentInstructionResp: {
+            /** Id */
+            id?: string | null;
+            /** Instruction */
+            instruction?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ConductorSubagentListResp */
+        ConductorSubagentListResp: {
+            /** Items */
+            items: components["schemas"]["ConductorSubagent"][];
+        };
+        /** ConductorTextResp */
+        ConductorTextResp: {
+            /** Content */
+            content: string;
         };
         /** ConversationDetailResp */
         ConversationDetailResp: {
@@ -4656,7 +4785,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConductorTextResp"];
                 };
             };
         };
@@ -4678,7 +4807,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConductorTextResp"];
                 };
             };
             /** @description Validation Error */
@@ -4709,7 +4838,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConductorChatListResp"];
                 };
             };
             /** @description Validation Error */
@@ -4742,7 +4871,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConductorChatMessage"];
                 };
             };
             /** @description Validation Error */
@@ -4771,7 +4900,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConductorSubagentListResp"];
                 };
             };
         };
@@ -4795,7 +4924,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConductorSubagentInstructionResp"];
                 };
             };
             /** @description Validation Error */
@@ -4828,7 +4957,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConductorSubagent"];
                 };
             };
             /** @description Validation Error */
@@ -4863,7 +4992,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConductorSubagentActionResp"];
                 };
             };
             /** @description Validation Error */
@@ -4896,7 +5025,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConductorMutationResp"];
                 };
             };
             /** @description Validation Error */
@@ -4925,7 +5054,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConductorLogResp"];
                 };
             };
         };
@@ -4945,7 +5074,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConductorStatusResp"];
                 };
             };
         };
@@ -4969,7 +5098,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConductorLifecycleResp"];
                 };
             };
             /** @description Validation Error */
@@ -4998,7 +5127,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConductorLifecycleResp"];
                 };
             };
         };

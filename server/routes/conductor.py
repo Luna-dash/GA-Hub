@@ -7,14 +7,25 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from ..schemas import (
     ConductorApproval,
     ConductorChatIn,
+    ConductorChatListResp,
+    ConductorChatMessage,
+    ConductorLifecycleResp,
+    ConductorLogResp,
+    ConductorMutationResp,
     ConductorStartReq,
     ConductorStartSubagent,
+    ConductorStatusResp,
+    ConductorSubagent,
+    ConductorSubagentActionResp,
     ConductorSubagentAction,
+    ConductorSubagentInstructionResp,
+    ConductorSubagentListResp,
+    ConductorTextResp,
 )
 from ..services.conductor_service import ConductorService, clean_log_text, short_id
 from ..services.event_bus import bus
@@ -38,12 +49,12 @@ def svc() -> ConductorService:
 
 # ── readme / docs ────────────────────────────────────────────────────────────
 @router.get("/api/conductor/readme")
-async def get_readme():
+async def get_readme() -> ConductorTextResp:
     return {"content": svc().get_readme("api")}
 
 
 @router.get("/api/conductor/readme/{topic}")
-async def get_readme_topic(topic: str):
+async def get_readme_topic(topic: str) -> ConductorTextResp:
     content = svc().get_readme(topic)
     if content is None:
         available = ", ".join(svc().get_readmes().keys())
@@ -53,23 +64,25 @@ async def get_readme_topic(topic: str):
 
 # ── chat ─────────────────────────────────────────────────────────────────────
 @router.get("/api/conductor/chat")
-async def get_chat(last: int = 20):
+async def get_chat(last: int = Query(default=20, ge=1, le=200)) -> ConductorChatListResp:
     return {"items": svc().get_chat_messages(last=last)}
 
 
 @router.post("/api/conductor/chat")
-async def post_chat(body: ConductorChatIn):
+async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
     return svc().add_chat_message(body.msg, role=body.role, llm_index=body.llm_index)
 
 
 # ── subagents ────────────────────────────────────────────────────────────────
 @router.get("/api/conductor/subagent")
-async def list_subagents():
+async def list_subagents() -> ConductorSubagentListResp:
     return {"items": svc().pool.snapshot()}
 
 
 @router.get("/api/conductor/subagent/{sid}")
-async def get_subagent(sid: str, max_len: int = 5000):
+async def get_subagent(
+    sid: str, max_len: int = Query(default=5000, ge=1, le=1_000_000)
+) -> ConductorSubagent:
     s = svc().pool.get(sid)
     if not s:
         raise HTTPException(404, "subagent not found")
@@ -85,14 +98,16 @@ async def get_subagent(sid: str, max_len: int = 5000):
 
 
 @router.post("/api/conductor/subagent")
-async def start_subagent(body: ConductorStartSubagent):
+async def start_subagent(body: ConductorStartSubagent) -> ConductorSubagentInstructionResp:
     result = svc().pool.start_subagent(body.prompt, llm_index=body.llm_index)
     result["instruction"] = INSTR_DISPATCHED
     return result
 
 
 @router.post("/api/conductor/subagent/{sid}")
-async def subagent_action(sid: str, body: ConductorSubagentAction):
+async def subagent_action(
+    sid: str, body: ConductorSubagentAction
+) -> ConductorSubagentActionResp:
     pool = svc().pool
     s = pool.get(sid)
     if not s:
@@ -113,7 +128,7 @@ async def subagent_action(sid: str, body: ConductorSubagentAction):
 
 # ── approval ─────────────────────────────────────────────────────────────────
 @router.post("/api/conductor/approval")
-async def post_approval(body: ConductorApproval):
+async def post_approval(body: ConductorApproval) -> ConductorMutationResp:
     bus.publish(
         "conductor:approval",
         {"item": {"id": short_id(), "prompt": body.prompt, "source": body.source}},
@@ -123,12 +138,12 @@ async def post_approval(body: ConductorApproval):
 
 # ── status / log ─────────────────────────────────────────────────────────────
 @router.get("/api/conductor/log")
-async def get_conductor_log():
+async def get_conductor_log() -> ConductorLogResp:
     return {"log": svc().get_conductor_log()}
 
 
 @router.get("/api/conductor/status")
-async def get_status():
+async def get_status() -> ConductorStatusResp:
     service = svc()
     running, stopped = service.pool.counts()
     lifecycle = service.lifecycle_status()
@@ -140,7 +155,7 @@ async def get_status():
 
 
 @router.post("/api/conductor/start")
-async def start_conductor(body: ConductorStartReq | None = None):
+async def start_conductor(body: ConductorStartReq | None = None) -> ConductorLifecycleResp:
     """Start the conductor supervisor."""
     service = svc()
     started = service.start(llm_index=body.llm_index if body else None)
@@ -149,7 +164,7 @@ async def start_conductor(body: ConductorStartReq | None = None):
 
 
 @router.post("/api/conductor/stop")
-async def stop_conductor():
+async def stop_conductor() -> ConductorLifecycleResp:
     """Stop the conductor supervisor."""
     service = svc()
     stopped = service.stop()

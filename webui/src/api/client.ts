@@ -13,8 +13,16 @@ import type {
   ChatWSIn,
   ChatWSOut,
   ConductorChatMessage,
+  ConductorChatListResponse,
+  ConductorLifecycleResponse,
   ConductorLogItem,
+  ConductorLogResponse,
+  ConductorMutationResponse,
   ConductorStatus,
+  ConductorSubagentActionResponse,
+  ConductorSubagentInstructionResponse,
+  ConductorSubagentListResponse,
+  ConductorTextResponse,
   TokenStatsResponse,
   TokenHistoryResponse,
   ServicePanelResponse,
@@ -364,24 +372,25 @@ export const api = {
   // ── conductor ────────────────────────────────────────
   conductorReadme: (topic = 'api') =>
     topic === 'api'
-      ? http<{ content: string }>('GET', '/api/conductor/readme')
-      : http<{ content: string }>('GET', `/api/conductor/readme/${topic}`),
-  conductorChat: (last = 50) => http<{ items: ConductorChatMessage[] }>('GET', `/api/conductor/chat?last=${last}`),
+      ? http<ConductorTextResponse>('GET', '/api/conductor/readme')
+      : http<ConductorTextResponse>('GET', `/api/conductor/readme/${topic}`),
+  conductorChat: (last = 50) => http<ConductorChatListResponse>('GET', `/api/conductor/chat?last=${last}`),
   conductorSendChat: (msg: string, role: 'user' | 'assistant' = 'user', llm_index?: number | null) =>
-    http<{ id: string; role: string; msg: string; ts: number }>('POST', '/api/conductor/chat', { msg, role, llm_index }),
-  conductorSubagents: () => http<{ items: ConductorSubagent[] }>('GET', '/api/conductor/subagent'),
+    http<ConductorChatMessage>('POST', '/api/conductor/chat', { msg, role, llm_index }),
+  conductorSubagents: () => http<ConductorSubagentListResponse>('GET', '/api/conductor/subagent'),
   conductorSubagent: (sid: string, max_len = 5000) => http<ConductorSubagent>('GET', `/api/conductor/subagent/${sid}?max_len=${max_len}`),
-  conductorStartSubagent: (prompt: string, llm_index?: number | null) => http<{ id: string }>('POST', '/api/conductor/subagent', { prompt, llm_index }),
+  conductorStartSubagent: (prompt: string, llm_index?: number | null) =>
+    http<ConductorSubagentInstructionResponse>('POST', '/api/conductor/subagent', { prompt, llm_index }),
   conductorSubagentAction: (sid: string, action: 'keyinfo' | 'done', msg: string) =>
-    http<{ ok: boolean }>('POST', `/api/conductor/subagent/${sid}`, { action, msg }),
+    http<ConductorSubagentActionResponse>('POST', `/api/conductor/subagent/${sid}`, { action, msg }),
   conductorApproval: (prompt: string, source: string) =>
-    http<{ ok: boolean }>('POST', '/api/conductor/approval', { prompt, source }),
+    http<ConductorMutationResponse>('POST', '/api/conductor/approval', { prompt, source }),
   tokenStats: () => http<TokenStatsResponse>('GET', '/api/tokens/stats'),
   tokenHistory: (hours = 24) => http<TokenHistoryResponse>('GET', `/api/tokens/history?hours=${hours}`),
   servicePanel: () => http<ServicePanelResponse>('GET', '/api/services/panel'),
-  conductorLog: () => http<{ log: ConductorLogItem[] }>('GET', '/api/conductor/log'),
+  conductorLog: () => http<ConductorLogResponse>('GET', '/api/conductor/log'),
   conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),
-  conductorStart: (llm_index?: number | null) => http<{ ok: boolean }>('POST', '/api/conductor/start', { llm_index }),
+  conductorStart: (llm_index?: number | null) => http<ConductorLifecycleResponse>('POST', '/api/conductor/start', { llm_index }),
   sessions: () => http<SessionList>('GET', '/api/sessions'),
   createSession: (req: Partial<ApiComponents['schemas']['SessionCreate']> = {}) =>
     http<GeneratedHubSession>('POST', '/api/sessions', req),
@@ -429,7 +438,7 @@ export const api = {
   cancelScheduledChat: (id: string, taskId: string) =>
     http<void>('DELETE', `/api/sessions/${encodeURIComponent(id)}/scheduled-chats/${encodeURIComponent(taskId)}`),
 
-  conductorStop: () => http<{ ok: boolean }>('POST', '/api/conductor/stop'),
+  conductorStop: () => http<ConductorLifecycleResponse>('POST', '/api/conductor/stop'),
 }
 
 // ── WebSocket helpers ──────────────────────────────────────

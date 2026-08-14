@@ -404,3 +404,85 @@ class ConductorSubagentAction(BaseModel):
 class ConductorApproval(BaseModel):
     prompt: str
     source: str = ""
+
+
+class ConductorTextResp(BaseModel):
+    content: str
+
+
+class ConductorChatMessage(BaseModel):
+    model_config = {"extra": "allow"}
+
+    id: str
+    role: str
+    msg: str
+    ts: int
+
+
+class ConductorChatListResp(BaseModel):
+    items: list[ConductorChatMessage]
+
+
+class ConductorSubagent(BaseModel):
+    model_config = {"extra": "allow"}
+
+    id: str
+    prompt: str
+    reply: str
+    status: str
+    created_at: int
+    updated_at: int
+
+
+class ConductorSubagentListResp(BaseModel):
+    items: list[ConductorSubagent]
+
+
+class ConductorSubagentInstructionResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    id: str | None = None
+    instruction: str | None = None
+
+
+class ConductorSubagentActionResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    id: str | None = None
+    status: str | None = None
+    error: str | None = None
+
+
+class ConductorMutationResp(BaseModel):
+    ok: bool
+
+
+class ConductorLogItem(BaseModel):
+    id: str
+    ts: int
+    event: str
+    turn: int | None
+    text: str
+
+
+class ConductorLogResp(BaseModel):
+    log: list[ConductorLogItem]
+
+
+class ConductorSubagentCounts(BaseModel):
+    running: int
+    stopped: int
+
+
+class ConductorStatusResp(BaseModel):
+    started: bool
+    stopping: bool
+    admission_open: bool
+    loop_alive: bool
+    agent_alive: bool
+    subagents: ConductorSubagentCounts
+    chat_count: int
+
+
+class ConductorLifecycleResp(ConductorStatusResp):
+    ok: bool

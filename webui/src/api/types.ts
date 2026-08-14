@@ -336,35 +336,18 @@ export interface EventBusEnvelope {
 export type BusEvent = EventBusEnvelope
 
 // ── Conductor ─────────────────────────────────────────────
-export interface ConductorChatMessage {
-  id: string
-  role: 'user' | 'assistant'
-  msg: string  // Backend uses "msg", not "content"
-  ts: number
-}
-
-export interface ConductorSubagent {
-  id: string
-  prompt: string
-  status: 'running' | 'stopped'
-  reply: string
-  created_at: number
-  updated_at: number
-}
-
-export interface ConductorLogItem {
-  id: string
-  ts: number
-  event: string
-  turn: number
-  text: string
-}
-
-export interface ConductorStatus {
-  started: boolean
-  subagents: { running: number; stopped: number }
-  chat_count: number
-}
+export type ConductorChatMessage = ApiSchemas['ConductorChatMessage']
+export type ConductorSubagent = ApiSchemas['ConductorSubagent']
+export type ConductorLogItem = ApiSchemas['ConductorLogItem']
+export type ConductorStatus = ApiSchemas['ConductorStatusResp']
+export type ConductorTextResponse = ApiSchemas['ConductorTextResp']
+export type ConductorChatListResponse = ApiSchemas['ConductorChatListResp']
+export type ConductorLogResponse = ApiSchemas['ConductorLogResp']
+export type ConductorMutationResponse = ApiSchemas['ConductorMutationResp']
+export type ConductorSubagentListResponse = ApiSchemas['ConductorSubagentListResp']
+export type ConductorSubagentInstructionResponse = ApiSchemas['ConductorSubagentInstructionResp']
+export type ConductorSubagentActionResponse = ApiSchemas['ConductorSubagentActionResp']
+export type ConductorLifecycleResponse = ApiSchemas['ConductorLifecycleResp']
 
 export interface TokenThreadStats {
   thread: string

@@ -1753,7 +1753,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorTextResp"
+                }
               }
             }
           }
@@ -1780,7 +1782,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorTextResp"
+                }
               }
             }
           },
@@ -1808,6 +1812,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
               "default": 20,
               "title": "Last"
             }
@@ -1818,7 +1824,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorChatListResp"
+                }
               }
             }
           },
@@ -1852,7 +1860,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorChatMessage"
+                }
               }
             }
           },
@@ -1878,7 +1888,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorSubagentListResp"
+                }
               }
             }
           }
@@ -1902,7 +1914,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorSubagentInstructionResp"
+                }
               }
             }
           },
@@ -1939,6 +1953,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 1000000,
+              "minimum": 1,
               "default": 5000,
               "title": "Max Len"
             }
@@ -1949,7 +1965,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorSubagent"
+                }
               }
             }
           },
@@ -1994,7 +2012,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorSubagentActionResp"
+                }
               }
             }
           },
@@ -2030,7 +2050,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorMutationResp"
+                }
               }
             }
           },
@@ -2056,7 +2078,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorLogResp"
+                }
               }
             }
           }
@@ -2072,7 +2096,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorStatusResp"
+                }
               }
             }
           }
@@ -2106,7 +2132,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorLifecycleResp"
+                }
               }
             }
           },
@@ -2133,7 +2161,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorLifecycleResp"
+                }
               }
             }
           }
@@ -4833,6 +4863,167 @@
         ],
         "title": "ConductorChatIn"
       },
+      "ConductorChatListResp": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConductorChatMessage"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "ConductorChatListResp"
+      },
+      "ConductorChatMessage": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Msg"
+          },
+          "ts": {
+            "type": "integer",
+            "title": "Ts"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "msg",
+          "ts"
+        ],
+        "title": "ConductorChatMessage"
+      },
+      "ConductorLifecycleResp": {
+        "properties": {
+          "started": {
+            "type": "boolean",
+            "title": "Started"
+          },
+          "stopping": {
+            "type": "boolean",
+            "title": "Stopping"
+          },
+          "admission_open": {
+            "type": "boolean",
+            "title": "Admission Open"
+          },
+          "loop_alive": {
+            "type": "boolean",
+            "title": "Loop Alive"
+          },
+          "agent_alive": {
+            "type": "boolean",
+            "title": "Agent Alive"
+          },
+          "subagents": {
+            "$ref": "#/components/schemas/ConductorSubagentCounts"
+          },
+          "chat_count": {
+            "type": "integer",
+            "title": "Chat Count"
+          },
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "started",
+          "stopping",
+          "admission_open",
+          "loop_alive",
+          "agent_alive",
+          "subagents",
+          "chat_count",
+          "ok"
+        ],
+        "title": "ConductorLifecycleResp"
+      },
+      "ConductorLogItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "ts": {
+            "type": "integer",
+            "title": "Ts"
+          },
+          "event": {
+            "type": "string",
+            "title": "Event"
+          },
+          "turn": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "ts",
+          "event",
+          "turn",
+          "text"
+        ],
+        "title": "ConductorLogItem"
+      },
+      "ConductorLogResp": {
+        "properties": {
+          "log": {
+            "items": {
+              "$ref": "#/components/schemas/ConductorLogItem"
+            },
+            "type": "array",
+            "title": "Log"
+          }
+        },
+        "type": "object",
+        "required": [
+          "log"
+        ],
+        "title": "ConductorLogResp"
+      },
+      "ConductorMutationResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "ConductorMutationResp"
+      },
       "ConductorStartReq": {
         "properties": {
           "llm_index": {
@@ -4874,6 +5065,87 @@
         ],
         "title": "ConductorStartSubagent"
       },
+      "ConductorStatusResp": {
+        "properties": {
+          "started": {
+            "type": "boolean",
+            "title": "Started"
+          },
+          "stopping": {
+            "type": "boolean",
+            "title": "Stopping"
+          },
+          "admission_open": {
+            "type": "boolean",
+            "title": "Admission Open"
+          },
+          "loop_alive": {
+            "type": "boolean",
+            "title": "Loop Alive"
+          },
+          "agent_alive": {
+            "type": "boolean",
+            "title": "Agent Alive"
+          },
+          "subagents": {
+            "$ref": "#/components/schemas/ConductorSubagentCounts"
+          },
+          "chat_count": {
+            "type": "integer",
+            "title": "Chat Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "started",
+          "stopping",
+          "admission_open",
+          "loop_alive",
+          "agent_alive",
+          "subagents",
+          "chat_count"
+        ],
+        "title": "ConductorStatusResp"
+      },
+      "ConductorSubagent": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "reply": {
+            "type": "string",
+            "title": "Reply"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "integer",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "integer",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "prompt",
+          "reply",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ConductorSubagent"
+      },
       "ConductorSubagentAction": {
         "properties": {
           "action": {
@@ -4901,6 +5173,122 @@
           "action"
         ],
         "title": "ConductorSubagentAction"
+      },
+      "ConductorSubagentActionResp": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "ConductorSubagentActionResp"
+      },
+      "ConductorSubagentCounts": {
+        "properties": {
+          "running": {
+            "type": "integer",
+            "title": "Running"
+          },
+          "stopped": {
+            "type": "integer",
+            "title": "Stopped"
+          }
+        },
+        "type": "object",
+        "required": [
+          "running",
+          "stopped"
+        ],
+        "title": "ConductorSubagentCounts"
+      },
+      "ConductorSubagentInstructionResp": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "instruction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instruction"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "ConductorSubagentInstructionResp"
+      },
+      "ConductorSubagentListResp": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConductorSubagent"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "ConductorSubagentListResp"
+      },
+      "ConductorTextResp": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "ConductorTextResp"
       },
       "ConversationDetailResp": {
         "properties": {
