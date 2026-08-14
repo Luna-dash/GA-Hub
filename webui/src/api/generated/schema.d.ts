@@ -2109,6 +2109,90 @@ export interface components {
             /** Mtime */
             mtime: number;
         };
+        /** AutonomousMutationResp */
+        AutonomousMutationResp: {
+            /** Ok */
+            ok: boolean;
+        };
+        /** AutonomousReportDetailResp */
+        AutonomousReportDetailResp: {
+            /** Name */
+            name: string;
+            /** Content */
+            content: string;
+        };
+        /** AutonomousReportItem */
+        AutonomousReportItem: {
+            /** Name */
+            name: string;
+            /** Size */
+            size: number;
+            /** Mtime */
+            mtime: number;
+        };
+        /** AutonomousReportListResp */
+        AutonomousReportListResp: {
+            /** Reports */
+            reports: components["schemas"]["AutonomousReportItem"][];
+        };
+        /** AutonomousRunListResp */
+        AutonomousRunListResp: {
+            /** Runs */
+            runs: components["schemas"]["AutonomousRunResp"][];
+        };
+        /** AutonomousRunResp */
+        AutonomousRunResp: {
+            /** Id */
+            id: string;
+            /** Schedule Id */
+            schedule_id: string;
+            /** Fired At */
+            fired_at: number;
+            /** Prompt Preview */
+            prompt_preview: string;
+            /** Report Paths */
+            report_paths?: string[];
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** AutonomousScheduleListResp */
+        AutonomousScheduleListResp: {
+            /** Schedules */
+            schedules: components["schemas"]["AutonomousScheduleResp"][];
+        };
+        /** AutonomousScheduleResp */
+        AutonomousScheduleResp: {
+            /** Id */
+            id: string;
+            /** Type */
+            type: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Prompt */
+            prompt: string;
+            /** Idle Minutes */
+            idle_minutes: number;
+            /** Cron */
+            cron: string;
+            /** Interval Minutes */
+            interval_minutes: number;
+            /** Last Fired At */
+            last_fired_at: number;
+            /** Fire Count */
+            fire_count: number;
+            /** Name */
+            name: string;
+        };
+        /** AutonomousTriggerResp */
+        AutonomousTriggerResp: {
+            /** Run Id */
+            run_id: string;
+            /** Stream Id */
+            stream_id: string;
+        };
         /** Body_upload_api_upload_post */
         Body_upload_api_upload_post: {
             /** File */
@@ -4271,7 +4355,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AutonomousScheduleListResp"];
                 };
             };
         };
@@ -4295,7 +4379,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AutonomousScheduleResp"];
                 };
             };
             /** @description Validation Error */
@@ -4326,7 +4410,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AutonomousMutationResp"];
                 };
             };
             /** @description Validation Error */
@@ -4357,7 +4441,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AutonomousTriggerResp"];
                 };
             };
             /** @description Validation Error */
@@ -4388,7 +4472,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AutonomousRunListResp"];
                 };
             };
             /** @description Validation Error */
@@ -4417,7 +4501,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AutonomousReportListResp"];
                 };
             };
         };
@@ -4439,7 +4523,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AutonomousReportDetailResp"];
                 };
             };
             /** @description Validation Error */

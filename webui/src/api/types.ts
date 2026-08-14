@@ -178,29 +178,15 @@ export type SkillDetailResponse = ApiSchemas['SkillDetailResp']
 // ── Autonomous ────────────────────────────────────────────
 export type ScheduleType = 'idle' | 'cron' | 'interval'
 
-export interface Schedule {
-  id: string
-  type: ScheduleType
-  enabled: boolean
-  prompt: string
-  idle_minutes: number
-  cron: string
-  interval_minutes: number
-  last_fired_at: number
-  fire_count: number
-  name: string
-}
-
-export interface AutonomousRun {
-  id: string
-  schedule_id: string
-  fired_at: number
-  prompt_preview: string
-  report_paths: string[]
-  note: string
-}
-
-export interface ReportItem { name: string; size: number; mtime: number }
+export type Schedule = ApiSchemas['AutonomousScheduleResp']
+export type ScheduleListResponse = ApiSchemas['AutonomousScheduleListResp']
+export type ScheduleMutationResponse = ApiSchemas['AutonomousMutationResp']
+export type ScheduleTriggerResponse = ApiSchemas['AutonomousTriggerResp']
+export type AutonomousRun = ApiSchemas['AutonomousRunResp']
+export type AutonomousRunListResponse = ApiSchemas['AutonomousRunListResp']
+export type ReportItem = ApiSchemas['AutonomousReportItem']
+export type AutonomousReportListResponse = ApiSchemas['AutonomousReportListResp']
+export type AutonomousReportDetailResponse = ApiSchemas['AutonomousReportDetailResp']
 
 // ── Scheduled Tasks ───────────────────────────────────────
 export type TaskScheduleType = 'cron' | 'interval'

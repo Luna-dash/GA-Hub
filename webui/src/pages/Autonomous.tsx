@@ -116,7 +116,7 @@ export default function Autonomous() {
 function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; onFire: () => void }) {
   const qc = useQueryClient()
   const toggle = async () => {
-    await api.upsertSchedule({ ...s, enabled: !s.enabled })
+    await api.upsertSchedule({ ...s, type: s.type as ScheduleType, enabled: !s.enabled })
     qc.invalidateQueries({ queryKey: ['schedules'] })
   }
   const remove = async () => {

@@ -1522,7 +1522,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomousScheduleListResp"
+                }
               }
             }
           }
@@ -1546,7 +1548,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomousScheduleResp"
+                }
               }
             }
           },
@@ -1583,7 +1587,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomousMutationResp"
+                }
               }
             }
           },
@@ -1620,7 +1626,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomousTriggerResp"
+                }
               }
             }
           },
@@ -1648,6 +1656,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
               "default": 100,
               "title": "Limit"
             }
@@ -1658,7 +1668,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomousRunListResp"
+                }
               }
             }
           },
@@ -1684,7 +1696,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomousReportListResp"
+                }
               }
             }
           }
@@ -1711,7 +1725,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomousReportDetailResp"
+                }
               }
             }
           },
@@ -4462,6 +4478,224 @@
           "mtime"
         ],
         "title": "ArchiveZipResp"
+      },
+      "AutonomousMutationResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "AutonomousMutationResp"
+      },
+      "AutonomousReportDetailResp": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "content"
+        ],
+        "title": "AutonomousReportDetailResp"
+      },
+      "AutonomousReportItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "mtime": {
+            "type": "integer",
+            "title": "Mtime"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "size",
+          "mtime"
+        ],
+        "title": "AutonomousReportItem"
+      },
+      "AutonomousReportListResp": {
+        "properties": {
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/AutonomousReportItem"
+            },
+            "type": "array",
+            "title": "Reports"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reports"
+        ],
+        "title": "AutonomousReportListResp"
+      },
+      "AutonomousRunListResp": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/AutonomousRunResp"
+            },
+            "type": "array",
+            "title": "Runs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "runs"
+        ],
+        "title": "AutonomousRunListResp"
+      },
+      "AutonomousRunResp": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "schedule_id": {
+            "type": "string",
+            "title": "Schedule Id"
+          },
+          "fired_at": {
+            "type": "integer",
+            "title": "Fired At"
+          },
+          "prompt_preview": {
+            "type": "string",
+            "title": "Prompt Preview"
+          },
+          "report_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Report Paths"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "schedule_id",
+          "fired_at",
+          "prompt_preview"
+        ],
+        "title": "AutonomousRunResp"
+      },
+      "AutonomousScheduleListResp": {
+        "properties": {
+          "schedules": {
+            "items": {
+              "$ref": "#/components/schemas/AutonomousScheduleResp"
+            },
+            "type": "array",
+            "title": "Schedules"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schedules"
+        ],
+        "title": "AutonomousScheduleListResp"
+      },
+      "AutonomousScheduleResp": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "idle_minutes": {
+            "type": "integer",
+            "title": "Idle Minutes"
+          },
+          "cron": {
+            "type": "string",
+            "title": "Cron"
+          },
+          "interval_minutes": {
+            "type": "integer",
+            "title": "Interval Minutes"
+          },
+          "last_fired_at": {
+            "type": "integer",
+            "title": "Last Fired At"
+          },
+          "fire_count": {
+            "type": "integer",
+            "title": "Fire Count"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "enabled",
+          "prompt",
+          "idle_minutes",
+          "cron",
+          "interval_minutes",
+          "last_fired_at",
+          "fire_count",
+          "name"
+        ],
+        "title": "AutonomousScheduleResp"
+      },
+      "AutonomousTriggerResp": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "stream_id": {
+            "type": "string",
+            "title": "Stream Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "stream_id"
+        ],
+        "title": "AutonomousTriggerResp"
       },
       "Body_upload_api_upload_post": {
         "properties": {

@@ -228,6 +228,60 @@ class ScheduleUpsert(BaseModel):
     interval_minutes: int | None = None
 
 
+class AutonomousScheduleResp(BaseModel):
+    id: str
+    type: str
+    enabled: bool
+    prompt: str
+    idle_minutes: int
+    cron: str
+    interval_minutes: int
+    last_fired_at: int
+    fire_count: int
+    name: str
+
+
+class AutonomousScheduleListResp(BaseModel):
+    schedules: list[AutonomousScheduleResp]
+
+
+class AutonomousMutationResp(BaseModel):
+    ok: bool
+
+
+class AutonomousTriggerResp(BaseModel):
+    run_id: str
+    stream_id: str
+
+
+class AutonomousRunResp(BaseModel):
+    id: str
+    schedule_id: str
+    fired_at: int
+    prompt_preview: str
+    report_paths: list[str] = Field(default_factory=list)
+    note: str = ""
+
+
+class AutonomousRunListResp(BaseModel):
+    runs: list[AutonomousRunResp]
+
+
+class AutonomousReportItem(BaseModel):
+    name: str
+    size: int
+    mtime: int
+
+
+class AutonomousReportListResp(BaseModel):
+    reports: list[AutonomousReportItem]
+
+
+class AutonomousReportDetailResp(BaseModel):
+    name: str
+    content: str
+
+
 # ── scheduled tasks ──────────────────────────────────────────────
 class TaskScheduleUpsert(BaseModel):
     id: str | None = None

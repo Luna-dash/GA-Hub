@@ -3,7 +3,10 @@
 // the backend serves the SPA itself, also same-origin.
 import type {
   AgentStatus,
+  AutonomousReportDetailResponse,
+  AutonomousReportListResponse,
   AutonomousRun,
+  AutonomousRunListResponse,
   BusEvent,
   BtwResp,
   ChatRetryConfig,
@@ -37,6 +40,9 @@ import type {
   ProjectItem,
   ReportItem,
   Schedule,
+  ScheduleListResponse,
+  ScheduleMutationResponse,
+  ScheduleTriggerResponse,
   ScheduleType,
   ScheduledChat,
   ScheduledChatListResponse,
@@ -285,14 +291,14 @@ export const api = {
     http<SkillSearchResult>('GET', `/api/memory/skills/search?q=${encodeURIComponent(q)}&limit=${limit}`),
 
   // ── autonomous ───────────────────────────────────────
-  schedules: () => http<{ schedules: Schedule[] }>('GET', '/api/autonomous/schedules'),
+  schedules: () => http<ScheduleListResponse>('GET', '/api/autonomous/schedules'),
   upsertSchedule: (s: Partial<Schedule> & { type: ScheduleType }) =>
     http<Schedule>('POST', '/api/autonomous/schedules', s),
-  deleteSchedule: (id: string) => http<{ ok: boolean }>('DELETE', `/api/autonomous/schedules/${id}`),
-  triggerSchedule: (id: string) => http<{ run_id: string; stream_id: string }>('POST', `/api/autonomous/schedules/${id}/trigger`),
-  runs: (limit = 100) => http<{ runs: AutonomousRun[] }>('GET', `/api/autonomous/runs?limit=${limit}`),
-  reports: () => http<{ reports: ReportItem[] }>('GET', '/api/autonomous/reports'),
-  report: (name: string) => http<{ name: string; content: string }>('GET', `/api/autonomous/reports/${encodeURIComponent(name)}`),
+  deleteSchedule: (id: string) => http<ScheduleMutationResponse>('DELETE', `/api/autonomous/schedules/${id}`),
+  triggerSchedule: (id: string) => http<ScheduleTriggerResponse>('POST', `/api/autonomous/schedules/${id}/trigger`),
+  runs: (limit = 100) => http<AutonomousRunListResponse>('GET', `/api/autonomous/runs?limit=${limit}`),
+  reports: () => http<AutonomousReportListResponse>('GET', '/api/autonomous/reports'),
+  report: (name: string) => http<AutonomousReportDetailResponse>('GET', `/api/autonomous/reports/${encodeURIComponent(name)}`),
 
   // ── scheduled tasks ──────────────────────────────────
   taskSchedules: () => http<{ schedules: TaskSchedule[] }>('GET', '/api/tasks/schedules'),
