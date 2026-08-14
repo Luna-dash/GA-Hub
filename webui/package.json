@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "tsc -b --noEmit",
+    "api:check": "node scripts/check-api-contract.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

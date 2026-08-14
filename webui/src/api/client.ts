@@ -335,7 +335,10 @@ export const api = {
     ),
 
   // ── conductor ────────────────────────────────────────
-  conductorReadme: (topic = 'api') => http<{ content: string }>('GET', `/api/conductor/readme${topic !== 'api' ? `/${topic}` : ''}`),
+  conductorReadme: (topic = 'api') =>
+    topic === 'api'
+      ? http<{ content: string }>('GET', '/api/conductor/readme')
+      : http<{ content: string }>('GET', `/api/conductor/readme/${topic}`),
   conductorChat: (last = 50) => http<{ items: ConductorChatMessage[] }>('GET', `/api/conductor/chat?last=${last}`),
   conductorSendChat: (msg: string, role: 'user' | 'assistant' = 'user', llm_index?: number | null) =>
     http<{ id: string; role: string; msg: string; ts: number }>('POST', '/api/conductor/chat', { msg, role, llm_index }),

@@ -494,6 +494,7 @@ def create_app() -> FastAPI:
             notify as notify_routes,
             tasks as task_routes,
             upload as upload_routes,
+            wechat as wechat_routes,
             feishu as feishu_routes,
         )
         app.include_router(agent_routes.router)
@@ -503,6 +504,7 @@ def create_app() -> FastAPI:
         app.include_router(autonomous_routes.router)
         app.include_router(conductor_routes.router)
         app.include_router(upload_routes.router)
+        app.include_router(wechat_routes.router)
         app.include_router(log_routes.router)
         app.include_router(mykey_routes.router)
         app.include_router(service_routes.router)
