@@ -22,7 +22,6 @@ import sys
 import threading
 import time
 import uuid
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +36,7 @@ from agentmain import GeneraticAgent  # noqa: E402  (resolved via _paths sys.pat
 from frontends.continue_cmd import install as install_continue, reset_conversation  # noqa: E402
 
 from .chat_retry import ChatRetryConfig, classify_recoverable_error, load_chat_retry_config  # noqa: E402
+from .chat_stream_projection import ChatSnapshot, ChatStreamProjection  # noqa: E402
 from .event_bus import bus  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -168,23 +168,6 @@ class StreamHandle:
 
 # ── chat replay snapshot (so a /ws/chat client that reconnects after a tab
 #    switch can rebuild the running conversation) ───────────────────────
-@dataclass
-class ChatSnapshot:
-    stream_id: str
-    source: str
-    query: str
-    started_at: float
-    content: str = ""           # latest cumulative assistant text
-    done: bool = False
-    finished_at: float = 0.0
-    aborted: bool = False
-    logical_id: str = ""
-    retry_attempt: int = 0
-    retry_max: int = 0
-    retry_of: str = ""
-    retry_reason: str = ""
-    session_id: str = ""
-    run_id: str = ""
 def _llm_membership_metadata(backends: list[object | None]) -> list[dict]:
     """Return read-only Mixin membership/runtime metadata for LLM clients."""
     all_mixin_members: set[str] = set()
@@ -231,7 +214,7 @@ class AgentService:
         self.agent.verbose = False
         self._streams: dict[str, StreamHandle] = {}
         # Per-stream UI snapshot (LRU-capped) for replay on reconnect
-        self._snapshots: "OrderedDict[str, ChatSnapshot]" = OrderedDict()
+        self._snapshots = ChatStreamProjection(capacity=self._SNAPSHOT_CAP)
         self._lock = threading.Lock()
         self._rewind_lock = threading.RLock()
         self._rewind_store = None
@@ -559,10 +542,7 @@ class AgentService:
         )
         with self._lock:
             self._streams[sid] = h
-            self._snapshots[sid] = snap
-            # LRU eviction
-            while len(self._snapshots) > self._SNAPSHOT_CAP:
-                self._snapshots.popitem(last=False)
+            self._snapshots.add(snap)
         submit_payload = {
             "stream_id": sid,
             "source": source,
