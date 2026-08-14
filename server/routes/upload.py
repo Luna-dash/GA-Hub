@@ -16,16 +16,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
 
 from .. import _paths
+from ..schemas import RevealFileReq, RevealFileResp, UploadResp
 
 log = logging.getLogger(__name__)
 router = APIRouter()
-
-
-class RevealRequest(BaseModel):
-    path: str
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -181,7 +177,7 @@ async def _save_upload_stream(file: UploadFile, path: Path, *, max_size: int) ->
 
 
 @router.post("/api/upload")
-async def upload(file: UploadFile = File(...)):
+async def upload(file: UploadFile = File(...)) -> UploadResp:
     """Accept image / file uploads (paste, drag-drop, or button picker).
 
     Returns ``{file_id, name, path, url, mime, size}``. ``path`` is the
@@ -234,7 +230,7 @@ async def get_file(fname: str):
 
 
 @router.post("/api/files/reveal")
-def reveal_file(req: RevealRequest):
+def reveal_file(req: RevealFileReq) -> RevealFileResp:
     """Open a local path with the host's default application.
 
     Any existing absolute path is allowed if its type is on the

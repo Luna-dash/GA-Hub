@@ -2194,7 +2194,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResp"
+                }
               }
             }
           },
@@ -2257,7 +2259,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RevealRequest"
+                "$ref": "#/components/schemas/RevealFileReq"
               }
             }
           },
@@ -2268,7 +2270,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RevealFileResp"
+                }
               }
             }
           },
@@ -6631,7 +6635,7 @@
         ],
         "title": "RawWriteReq"
       },
-      "RevealRequest": {
+      "RevealFileReq": {
         "properties": {
           "path": {
             "type": "string",
@@ -6642,7 +6646,25 @@
         "required": [
           "path"
         ],
-        "title": "RevealRequest"
+        "title": "RevealFileReq"
+      },
+      "RevealFileResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "path"
+        ],
+        "title": "RevealFileResp"
       },
       "RewindReq": {
         "properties": {
@@ -7927,6 +7949,44 @@
           "content"
         ],
         "title": "TextWrite"
+      },
+      "UploadResp": {
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "title": "File Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "mime": {
+            "type": "string",
+            "title": "Mime"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file_id",
+          "name",
+          "path",
+          "url",
+          "mime",
+          "size"
+        ],
+        "title": "UploadResp"
       },
       "ValidationError": {
         "properties": {

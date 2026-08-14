@@ -53,6 +53,7 @@ import type {
   MyKeyWriteResult,
   ProjectItem,
   ReportItem,
+  RevealFileResponse,
   Schedule,
   ScheduleListResponse,
   ScheduleMutationResponse,
@@ -366,7 +367,7 @@ export const api = {
   },
   fileUrlByPath: (absPath: string) => `/api/files-by-path?path=${encodeURIComponent(absPath)}`,
   revealFile: (path: string) =>
-    http<{ ok: boolean; path: string }>('POST', '/api/files/reveal', { path }),
+    http<RevealFileResponse>('POST', '/api/files/reveal', { path }),
 
   // ── logs ─────────────────────────────────────────────
   wechatLog: (tail = 200) => http<LogLinesResponse>('GET', `/api/logs/wechat?tail=${tail}`),

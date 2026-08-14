@@ -2944,8 +2944,15 @@ export interface components {
             /** Raw */
             raw: string;
         };
-        /** RevealRequest */
-        RevealRequest: {
+        /** RevealFileReq */
+        RevealFileReq: {
+            /** Path */
+            path: string;
+        };
+        /** RevealFileResp */
+        RevealFileResp: {
+            /** Ok */
+            ok: boolean;
             /** Path */
             path: string;
         };
@@ -3414,6 +3421,21 @@ export interface components {
         TextWrite: {
             /** Content */
             content: string;
+        };
+        /** UploadResp */
+        UploadResp: {
+            /** File Id */
+            file_id: string;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Url */
+            url: string;
+            /** Mime */
+            mime: string;
+            /** Size */
+            size: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -5457,7 +5479,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["UploadResp"];
                 };
             };
             /** @description Validation Error */
@@ -5511,7 +5533,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RevealRequest"];
+                "application/json": components["schemas"]["RevealFileReq"];
             };
         };
         responses: {
@@ -5521,7 +5543,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RevealFileResp"];
                 };
             };
             /** @description Validation Error */

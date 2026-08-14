@@ -669,3 +669,22 @@ class ServicePanelItem(BaseModel):
 class ServicePanelResp(BaseModel):
     services: list[ServicePanelItem]
     timestamp: int
+
+
+# Upload / local files
+class RevealFileReq(BaseModel):
+    path: str
+
+
+class UploadResp(BaseModel):
+    file_id: str
+    name: str
+    path: str
+    url: str
+    mime: str
+    size: int
+
+
+class RevealFileResp(BaseModel):
+    ok: bool
+    path: str
