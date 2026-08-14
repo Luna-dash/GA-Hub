@@ -2045,6 +2045,35 @@ export interface components {
              */
             title: string;
         };
+        /**
+         * AppStatusResp
+         * @description Always-available application status contract.
+         *
+         *     Optional fields are deliberately omitted rather than null in setup mode;
+         *     use ``response_model_exclude_unset=True`` to preserve that compatibility.
+         */
+        AppStatusResp: {
+            /** Configured */
+            configured: boolean;
+            /** Ga Root */
+            ga_root: string | null;
+            /** Python Path */
+            python_path: string | null;
+            /** Resolved Python */
+            resolved_python: string | null;
+            /** Resolved Python Source */
+            resolved_python_source: string | null;
+            /** Mode */
+            mode?: "setup" | null;
+            agent?: components["schemas"]["GlobalAgentStatus"] | null;
+            feishu?: components["schemas"]["FeishuProcessStatus"] | null;
+            autonomous?: components["schemas"]["SchedulerDomainCount"] | null;
+            tasks?: components["schemas"]["SchedulerDomainCount"] | null;
+            /** Schedulers */
+            schedulers?: {
+                [key: string]: components["schemas"]["SchedulerRuntimeStatus"] | components["schemas"]["SchedulerDomainStatus"];
+            } | null;
+        };
         /** Body_upload_api_upload_post */
         Body_upload_api_upload_post: {
             /** File */
@@ -2203,6 +2232,39 @@ export interface components {
              */
             body: string;
         };
+        /**
+         * FeishuProcessStatus
+         * @description Feishu gateway status, or an initialization diagnostic.
+         *
+         *     The OpenAPI schema intentionally describes the complete healthy response;
+         *     initialization failures are represented by ``error`` in ``/api/status``.
+         */
+        FeishuProcessStatus: {
+            /** Running */
+            running: boolean;
+            /** Pid */
+            pid: number | null;
+            /** Returncode */
+            returncode: number | null;
+            /** External */
+            external: boolean;
+            /** Fsapp Path */
+            fsapp_path: string;
+            /** Fsapp Exists */
+            fsapp_exists: boolean;
+            /** Python */
+            python: string;
+            /** Log File */
+            log_file: string;
+            /** Log Exists */
+            log_exists: boolean;
+            /** Last Check */
+            last_check: unknown | null;
+            /** Last Check Ts */
+            last_check_ts: number;
+        } & {
+            [key: string]: unknown;
+        };
         /** FsKeysReq */
         FsKeysReq: {
             /** App Id */
@@ -2231,6 +2293,25 @@ export interface components {
              * @default false
              */
             use_card: boolean;
+        };
+        /** GlobalAgentStatus */
+        GlobalAgentStatus: {
+            /** Is Running */
+            is_running: boolean;
+            /** Llm No */
+            llm_no: number;
+            /** Llm Name */
+            llm_name: string;
+            /** Llm Model */
+            llm_model: string;
+            /** Last Reply Time */
+            last_reply_time: number;
+            /** Queued Tasks */
+            queued_tasks: number;
+            /** History Lines */
+            history_lines: number;
+            /** Current Title */
+            current_title: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2418,6 +2499,28 @@ export interface components {
             images?: string[];
             /** Scheduled For */
             scheduled_for: number;
+        };
+        /** SchedulerDomainCount */
+        SchedulerDomainCount: {
+            /** Schedule Count */
+            schedule_count: number;
+        };
+        /** SchedulerDomainStatus */
+        SchedulerDomainStatus: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "stopped" | "error";
+            /** Schedule Count */
+            schedule_count: number | null;
+            /** Error */
+            error: string | null;
+        };
+        /** SchedulerRuntimeStatus */
+        SchedulerRuntimeStatus: {
+            /** Running */
+            running: boolean;
         };
         /** SessionCreate */
         SessionCreate: {
@@ -2741,7 +2844,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AppStatusResp"];
                 };
             };
         };

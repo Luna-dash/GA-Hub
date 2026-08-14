@@ -159,7 +159,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AppStatusResp"
+                }
               }
             }
           }
@@ -4183,6 +4185,142 @@
         "type": "object",
         "title": "AgentTitleReq"
       },
+      "AppStatusResp": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "ga_root": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ga Root"
+          },
+          "python_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Python Path"
+          },
+          "resolved_python": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Python"
+          },
+          "resolved_python_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Python Source"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "setup"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "agent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GlobalAgentStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "feishu": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeishuProcessStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "autonomous": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SchedulerDomainCount"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tasks": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SchedulerDomainCount"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schedulers": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SchedulerRuntimeStatus"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SchedulerDomainStatus"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedulers"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "configured",
+          "ga_root",
+          "python_path",
+          "resolved_python",
+          "resolved_python_source"
+        ],
+        "title": "AppStatusResp",
+        "description": "Always-available application status contract.\n\nOptional fields are deliberately omitted rather than null in setup mode;\nuse ``response_model_exclude_unset=True`` to preserve that compatibility."
+      },
       "Body_upload_api_upload_post": {
         "properties": {
           "file": {
@@ -4449,6 +4587,90 @@
         "type": "object",
         "title": "EmailTestReq"
       },
+      "FeishuProcessStatus": {
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "returncode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returncode"
+          },
+          "external": {
+            "type": "boolean",
+            "title": "External"
+          },
+          "fsapp_path": {
+            "type": "string",
+            "title": "Fsapp Path"
+          },
+          "fsapp_exists": {
+            "type": "boolean",
+            "title": "Fsapp Exists"
+          },
+          "python": {
+            "type": "string",
+            "title": "Python"
+          },
+          "log_file": {
+            "type": "string",
+            "title": "Log File"
+          },
+          "log_exists": {
+            "type": "boolean",
+            "title": "Log Exists"
+          },
+          "last_check": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Check"
+          },
+          "last_check_ts": {
+            "type": "number",
+            "title": "Last Check Ts"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "running",
+          "pid",
+          "returncode",
+          "external",
+          "fsapp_path",
+          "fsapp_exists",
+          "python",
+          "log_file",
+          "log_exists",
+          "last_check",
+          "last_check_ts"
+        ],
+        "title": "FeishuProcessStatus",
+        "description": "Feishu gateway status, or an initialization diagnostic.\n\nThe OpenAPI schema intentionally describes the complete healthy response;\ninitialization failures are represented by ``error`` in ``/api/status``."
+      },
       "FsKeysReq": {
         "properties": {
           "app_id": {
@@ -4502,6 +4724,54 @@
           "text"
         ],
         "title": "FsSendReq"
+      },
+      "GlobalAgentStatus": {
+        "properties": {
+          "is_running": {
+            "type": "boolean",
+            "title": "Is Running"
+          },
+          "llm_no": {
+            "type": "integer",
+            "title": "Llm No"
+          },
+          "llm_name": {
+            "type": "string",
+            "title": "Llm Name"
+          },
+          "llm_model": {
+            "type": "string",
+            "title": "Llm Model"
+          },
+          "last_reply_time": {
+            "type": "integer",
+            "title": "Last Reply Time"
+          },
+          "queued_tasks": {
+            "type": "integer",
+            "title": "Queued Tasks"
+          },
+          "history_lines": {
+            "type": "integer",
+            "title": "History Lines"
+          },
+          "current_title": {
+            "type": "string",
+            "title": "Current Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "is_running",
+          "llm_no",
+          "llm_name",
+          "llm_model",
+          "last_reply_time",
+          "queued_tasks",
+          "history_lines",
+          "current_title"
+        ],
+        "title": "GlobalAgentStatus"
       },
       "HTTPValidationError": {
         "properties": {
@@ -4990,6 +5260,74 @@
           "scheduled_for"
         ],
         "title": "ScheduledChatCreate"
+      },
+      "SchedulerDomainCount": {
+        "properties": {
+          "schedule_count": {
+            "type": "integer",
+            "title": "Schedule Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schedule_count"
+        ],
+        "title": "SchedulerDomainCount"
+      },
+      "SchedulerDomainStatus": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "running",
+              "stopped",
+              "error"
+            ],
+            "title": "State"
+          },
+          "schedule_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Count"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state",
+          "schedule_count",
+          "error"
+        ],
+        "title": "SchedulerDomainStatus"
+      },
+      "SchedulerRuntimeStatus": {
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          }
+        },
+        "type": "object",
+        "required": [
+          "running"
+        ],
+        "title": "SchedulerRuntimeStatus"
       },
       "SessionCreate": {
         "properties": {

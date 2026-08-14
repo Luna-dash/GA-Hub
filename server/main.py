@@ -33,6 +33,7 @@ from pydantic import BaseModel
 
 from . import _paths
 from .routes import events as event_routes  # safe to import in setup mode
+from .schemas import AppStatusResp
 from .services.event_bus import bus
 
 log = logging.getLogger(__name__)
@@ -398,7 +399,7 @@ def create_app() -> FastAPI:
     app.include_router(_setup_router())
     app.include_router(event_routes.router)
 
-    @app.get("/api/status")
+    @app.get("/api/status", response_model=AppStatusResp, response_model_exclude_unset=True)
     async def status():
         out: dict[str, Any] = {
             "configured": _paths.GA_ROOT is not None,

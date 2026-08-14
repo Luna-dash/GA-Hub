@@ -20,16 +20,8 @@ export interface SetupStatus {
   candidates: SetupCandidate[]
 }
 
-export interface AgentStatus {
-  is_running: boolean
-  llm_no: number
-  llm_name: string
-  llm_model: string
-  last_reply_time: number
-  queued_tasks: number
-  history_lines: number
-  current_title: string
-}
+export type AppStatus = ApiSchemas['AppStatusResp']
+export type AgentStatus = ApiSchemas['GlobalAgentStatus']
 
 export interface LLMInfo {
   index: number

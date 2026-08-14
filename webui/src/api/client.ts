@@ -76,6 +76,7 @@ export const DEFAULT_HTTP_TIMEOUT_MS = 30_000
 type HttpOptions = RequestInit & { timeoutMs?: number }
 export type ApiComponents = GeneratedApiComponents
 type GeneratedHubSession = ApiComponents['schemas']['HubSession']
+type AppStatusResponse = ApiComponents['schemas']['AppStatusResp']
 type NavigationPreferences = ApiComponents['schemas']['NavPreferencesResp']
 type SessionList = ApiComponents['schemas']['SessionListResp']
 type AbortSource = 'timeout' | 'external' | null
@@ -143,7 +144,7 @@ async function http<T>(method: string, path: string, body?: unknown, init?: Http
 
 export const api = {
   // ── status ───────────────────────────────────────────
-  status: () => http<{ configured: boolean; ga_root: string | null; python_path?: string | null; resolved_python?: string | null; resolved_python_source?: string; mode?: string; agent?: AgentStatus; feishu?: FsStatus; autonomous?: any }>('GET', '/api/status'),
+  status: () => http<AppStatusResponse>('GET', '/api/status'),
 
   // ── setup (always available, even in setup mode) ────
   setupStatus: () => http<SetupStatus>('GET', '/api/setup/status'),

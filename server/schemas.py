@@ -37,6 +37,76 @@ class ChatStreamMsg(BaseModel):
     error: str | None = None
 
 
+# ── application status ─────────────────────────────────────────────────────
+class GlobalAgentStatus(BaseModel):
+    is_running: bool
+    llm_no: int
+    llm_name: str
+    llm_model: str
+    last_reply_time: int
+    queued_tasks: int
+    history_lines: int
+    current_title: str
+
+
+class SchedulerRuntimeStatus(BaseModel):
+    running: bool
+
+
+class SchedulerDomainStatus(BaseModel):
+    state: Literal["running", "stopped", "error"]
+    schedule_count: int | None
+    error: str | None
+
+
+class FeishuProcessStatus(BaseModel):
+    """Feishu gateway status, or an initialization diagnostic.
+
+    The OpenAPI schema intentionally describes the complete healthy response;
+    initialization failures are represented by ``error`` in ``/api/status``.
+    """
+
+    model_config = {"extra": "allow"}
+
+    running: bool
+    pid: int | None
+    returncode: int | None
+    external: bool
+    fsapp_path: str
+    fsapp_exists: bool
+    python: str
+    log_file: str
+    log_exists: bool
+    last_check: Any | None
+    last_check_ts: float
+
+
+class SchedulerDomainCount(BaseModel):
+    schedule_count: int
+
+
+class AppStatusResp(BaseModel):
+    """Always-available application status contract.
+
+    Optional fields are deliberately omitted rather than null in setup mode;
+    use ``response_model_exclude_unset=True`` to preserve that compatibility.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    configured: bool
+    ga_root: str | None
+    python_path: str | None
+    resolved_python: str | None
+    resolved_python_source: str | None
+    mode: Literal["setup"] | None = None
+    agent: GlobalAgentStatus | None = None
+    feishu: FeishuProcessStatus | None = None
+    autonomous: SchedulerDomainCount | None = None
+    tasks: SchedulerDomainCount | None = None
+    schedulers: dict[str, SchedulerRuntimeStatus | SchedulerDomainStatus] | None = None
+
+
 # ── llm ──────────────────────────────────────────────────────────
 class LLMSwitch(BaseModel):
     index: int

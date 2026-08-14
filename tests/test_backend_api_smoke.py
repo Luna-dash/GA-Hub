@@ -79,6 +79,41 @@ class BackendApiSmokeTests(unittest.TestCase):
             self.assertEqual(events.status_code, 200)
             self.assertIn("events", events.json())
 
+    def test_status_response_contract_is_explicit(self) -> None:
+        app = self.main.create_app()
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            response = client.get("/openapi.json")
+
+        self.assertEqual(response.status_code, 200)
+        schema = response.json()["components"]["schemas"]["AppStatusResp"]
+        self.assertEqual(schema.get("additionalProperties"), False)
+        self.assertEqual(
+            set(schema["required"]),
+            {
+                "configured",
+                "ga_root",
+                "python_path",
+                "resolved_python",
+                "resolved_python_source",
+            },
+        )
+        self.assertEqual(
+            set(schema["properties"]),
+            {
+                "configured",
+                "ga_root",
+                "python_path",
+                "resolved_python",
+                "resolved_python_source",
+                "mode",
+                "agent",
+                "feishu",
+                "autonomous",
+                "tasks",
+                "schedulers",
+            },
+        )
+
     def test_built_spa_deep_link_and_hashed_entry_asset(self) -> None:
         app = self.main.create_app()
         with TestClient(app, base_url="http://127.0.0.1") as client:
