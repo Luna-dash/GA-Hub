@@ -688,3 +688,79 @@ class UploadResp(BaseModel):
 class RevealFileResp(BaseModel):
     ok: bool
     path: str
+
+
+# Feishu bot
+class FsSendReq(BaseModel):
+    receive_id: str
+    text: str
+    receive_id_type: Literal["open_id", "chat_id", "user_id", "union_id", "email"] = "open_id"
+    use_card: bool = False
+
+
+class FsKeysReq(BaseModel):
+    app_id: str = Field(min_length=1)
+    app_secret: str = Field(min_length=1)
+    allowed_users: str = ""
+
+
+class FsCheckResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    ready: bool | None = None
+    ok: bool | None = None
+    returncode: int | None = None
+    error: str | None = None
+    raw: str | None = None
+    fsapp_path: str | None = None
+    app_id_masked: str | None = None
+    app_secret_masked: str | None = None
+    allowed_users: list[str] | None = None
+    public_access: bool | None = None
+    pattern_count: int | None = None
+    agent_ok: bool | None = None
+    agent_error: str | None = None
+
+
+class FsStatusResp(BaseModel):
+    running: bool
+    pid: int | None
+    returncode: int | None
+    external: bool
+    fsapp_path: str
+    fsapp_exists: bool
+    python: str
+    log_file: str
+    log_exists: bool
+    last_check: FsCheckResp | None = None
+    last_check_ts: float = 0
+
+
+class FsKeysResp(BaseModel):
+    ok: bool
+    app_id_masked: str | None = None
+    allowed_users_saved: bool | None = None
+
+
+class FsStartResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    started: bool
+    running: bool
+    pid: int | None = None
+    log_file: str | None = None
+
+
+class FsStopResp(BaseModel):
+    stopped: bool
+    running: bool
+    pid: int | None = None
+
+
+class FsSendResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    ok: bool
+    returncode: int | None = None
+    raw: str | None = None
+    message_id: str | None = None

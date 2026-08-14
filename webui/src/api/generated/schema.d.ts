@@ -2632,6 +2632,37 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** FsCheckResp */
+        FsCheckResp: {
+            /** Ready */
+            ready?: boolean | null;
+            /** Ok */
+            ok?: boolean | null;
+            /** Returncode */
+            returncode?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Raw */
+            raw?: string | null;
+            /** Fsapp Path */
+            fsapp_path?: string | null;
+            /** App Id Masked */
+            app_id_masked?: string | null;
+            /** App Secret Masked */
+            app_secret_masked?: string | null;
+            /** Allowed Users */
+            allowed_users?: string[] | null;
+            /** Public Access */
+            public_access?: boolean | null;
+            /** Pattern Count */
+            pattern_count?: number | null;
+            /** Agent Ok */
+            agent_ok?: boolean | null;
+            /** Agent Error */
+            agent_error?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** FsKeysReq */
         FsKeysReq: {
             /** App Id */
@@ -2644,6 +2675,15 @@ export interface components {
              */
             allowed_users: string;
         };
+        /** FsKeysResp */
+        FsKeysResp: {
+            /** Ok */
+            ok: boolean;
+            /** App Id Masked */
+            app_id_masked?: string | null;
+            /** Allowed Users Saved */
+            allowed_users_saved?: boolean | null;
+        };
         /** FsSendReq */
         FsSendReq: {
             /** Receive Id */
@@ -2653,13 +2693,76 @@ export interface components {
             /**
              * Receive Id Type
              * @default open_id
+             * @enum {string}
              */
-            receive_id_type: string;
+            receive_id_type: "open_id" | "chat_id" | "user_id" | "union_id" | "email";
             /**
              * Use Card
              * @default false
              */
             use_card: boolean;
+        };
+        /** FsSendResp */
+        FsSendResp: {
+            /** Ok */
+            ok: boolean;
+            /** Returncode */
+            returncode?: number | null;
+            /** Raw */
+            raw?: string | null;
+            /** Message Id */
+            message_id?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** FsStartResp */
+        FsStartResp: {
+            /** Started */
+            started: boolean;
+            /** Running */
+            running: boolean;
+            /** Pid */
+            pid?: number | null;
+            /** Log File */
+            log_file?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** FsStatusResp */
+        FsStatusResp: {
+            /** Running */
+            running: boolean;
+            /** Pid */
+            pid: number | null;
+            /** Returncode */
+            returncode: number | null;
+            /** External */
+            external: boolean;
+            /** Fsapp Path */
+            fsapp_path: string;
+            /** Fsapp Exists */
+            fsapp_exists: boolean;
+            /** Python */
+            python: string;
+            /** Log File */
+            log_file: string;
+            /** Log Exists */
+            log_exists: boolean;
+            last_check?: components["schemas"]["FsCheckResp"] | null;
+            /**
+             * Last Check Ts
+             * @default 0
+             */
+            last_check_ts: number;
+        };
+        /** FsStopResp */
+        FsStopResp: {
+            /** Stopped */
+            stopped: boolean;
+            /** Running */
+            running: boolean;
+            /** Pid */
+            pid?: number | null;
         };
         /** GlobalAgentStatus */
         GlobalAgentStatus: {
@@ -4164,7 +4267,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FsStatusResp"];
                 };
             };
         };
@@ -4186,7 +4289,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FsCheckResp"];
                 };
             };
             /** @description Validation Error */
@@ -4219,7 +4322,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FsKeysResp"];
                 };
             };
             /** @description Validation Error */
@@ -4248,7 +4351,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FsStartResp"];
                 };
             };
         };
@@ -4268,7 +4371,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FsStopResp"];
                 };
             };
         };
@@ -4290,7 +4393,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["LogLinesResp"];
                 };
             };
             /** @description Validation Error */
@@ -4323,7 +4426,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FsSendResp"];
                 };
             };
             /** @description Validation Error */

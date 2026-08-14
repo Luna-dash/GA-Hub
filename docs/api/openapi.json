@@ -604,7 +604,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FsStatusResp"
+                }
               }
             }
           }
@@ -632,7 +634,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FsCheckResp"
+                }
               }
             }
           },
@@ -668,7 +672,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FsKeysResp"
+                }
               }
             }
           },
@@ -694,7 +700,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FsStartResp"
+                }
               }
             }
           }
@@ -710,7 +718,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FsStopResp"
+                }
               }
             }
           }
@@ -728,6 +738,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 5000,
+              "minimum": 1,
               "default": 300,
               "title": "Tail"
             }
@@ -738,7 +750,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LogLinesResp"
+                }
               }
             }
           },
@@ -774,7 +788,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FsSendResp"
+                }
               }
             }
           },
@@ -5822,6 +5838,159 @@
         "title": "FeishuProcessStatus",
         "description": "Feishu gateway status, or an initialization diagnostic.\n\nThe OpenAPI schema intentionally describes the complete healthy response;\ninitialization failures are represented by ``error`` in ``/api/status``."
       },
+      "FsCheckResp": {
+        "properties": {
+          "ready": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ready"
+          },
+          "ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ok"
+          },
+          "returncode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returncode"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw"
+          },
+          "fsapp_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fsapp Path"
+          },
+          "app_id_masked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Id Masked"
+          },
+          "app_secret_masked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Secret Masked"
+          },
+          "allowed_users": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Users"
+          },
+          "public_access": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Access"
+          },
+          "pattern_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pattern Count"
+          },
+          "agent_ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Ok"
+          },
+          "agent_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Error"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "FsCheckResp"
+      },
       "FsKeysReq": {
         "properties": {
           "app_id": {
@@ -5847,6 +6016,41 @@
         ],
         "title": "FsKeysReq"
       },
+      "FsKeysResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "app_id_masked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Id Masked"
+          },
+          "allowed_users_saved": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Users Saved"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "FsKeysResp"
+      },
       "FsSendReq": {
         "properties": {
           "receive_id": {
@@ -5859,7 +6063,13 @@
           },
           "receive_id_type": {
             "type": "string",
-            "pattern": "^(open_id|chat_id|user_id|union_id|email)$",
+            "enum": [
+              "open_id",
+              "chat_id",
+              "user_id",
+              "union_id",
+              "email"
+            ],
             "title": "Receive Id Type",
             "default": "open_id"
           },
@@ -5875,6 +6085,205 @@
           "text"
         ],
         "title": "FsSendReq"
+      },
+      "FsSendResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "returncode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returncode"
+          },
+          "raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "FsSendResp"
+      },
+      "FsStartResp": {
+        "properties": {
+          "started": {
+            "type": "boolean",
+            "title": "Started"
+          },
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "log_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log File"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "started",
+          "running"
+        ],
+        "title": "FsStartResp"
+      },
+      "FsStatusResp": {
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "returncode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returncode"
+          },
+          "external": {
+            "type": "boolean",
+            "title": "External"
+          },
+          "fsapp_path": {
+            "type": "string",
+            "title": "Fsapp Path"
+          },
+          "fsapp_exists": {
+            "type": "boolean",
+            "title": "Fsapp Exists"
+          },
+          "python": {
+            "type": "string",
+            "title": "Python"
+          },
+          "log_file": {
+            "type": "string",
+            "title": "Log File"
+          },
+          "log_exists": {
+            "type": "boolean",
+            "title": "Log Exists"
+          },
+          "last_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FsCheckResp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_check_ts": {
+            "type": "number",
+            "title": "Last Check Ts",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "running",
+          "pid",
+          "returncode",
+          "external",
+          "fsapp_path",
+          "fsapp_exists",
+          "python",
+          "log_file",
+          "log_exists"
+        ],
+        "title": "FsStatusResp"
+      },
+      "FsStopResp": {
+        "properties": {
+          "stopped": {
+            "type": "boolean",
+            "title": "Stopped"
+          },
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stopped",
+          "running"
+        ],
+        "title": "FsStopResp"
       },
       "GlobalAgentStatus": {
         "properties": {

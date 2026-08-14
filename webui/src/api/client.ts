@@ -37,7 +37,11 @@ import type {
   EmailTestResponse,
   EventRecentResponse,
   FsCheckResult,
+  FsKeysResponse,
+  FsSendResponse,
+  FsStartResponse,
   FsStatus,
+  FsStopResponse,
   LLMInfo,
   LogLinesResponse,
   LLMTestResult,
@@ -253,14 +257,14 @@ export const api = {
   // ── feishu ───────────────────────────────────────────
   fsStatus: () => http<FsStatus>('GET', '/api/feishu/status'),
   fsCheck: (initAgent = false) => http<FsCheckResult>('POST', `/api/feishu/check?init_agent=${initAgent ? 'true' : 'false'}`),
-  fsStart: () => http<{ started: boolean; running: boolean; pid?: number | null; log_file?: string }>('POST', '/api/feishu/start'),
-  fsStop: () => http<{ stopped: boolean; running: boolean; pid?: number | null }>('POST', '/api/feishu/stop'),
-  fsLogs: (tail = 300) => http<{ lines: string[]; file: string }>('GET', `/api/feishu/logs?tail=${tail}`),
+  fsStart: () => http<FsStartResponse>('POST', '/api/feishu/start'),
+  fsStop: () => http<FsStopResponse>('POST', '/api/feishu/stop'),
+  fsLogs: (tail = 300) => http<LogLinesResponse>('GET', `/api/feishu/logs?tail=${tail}`),
   fsRecentEvents: (limit = 100) => http<EventRecentResponse>('GET', `/api/events/recent?prefix=feishu:chat&limit=${limit}`),
   fsSaveKeys: (app_id: string, app_secret: string, allowed_users = '') =>
-    http<{ ok: boolean; app_id_masked?: string; allowed_users_saved?: boolean }>('PUT', '/api/feishu/keys', { app_id, app_secret, allowed_users }),
+    http<FsKeysResponse>('PUT', '/api/feishu/keys', { app_id, app_secret, allowed_users }),
   fsSend: (receive_id: string, text: string, receive_id_type = 'open_id', use_card = false) =>
-    http<{ ok: boolean; message_id?: string; raw?: string }>('POST', '/api/feishu/send', { receive_id, text, receive_id_type, use_card }),
+    http<FsSendResponse>('POST', '/api/feishu/send', { receive_id, text, receive_id_type, use_card }),
 
   // ── wechat (legacy endpoints kept for compatibility) ─
   wxStatus: () => http<WxStatus>('GET', '/api/wechat/status'),

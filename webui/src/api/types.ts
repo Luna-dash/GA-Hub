@@ -112,35 +112,12 @@ export type WxAllowlistResponse = ApiSchemas['WxAllowlistResp']
 export type WxAllowlistWriteResponse = ApiSchemas['WxAllowlistWriteResp']
 
 // ── Feishu ────────────────────────────────────────────────
-export interface FsStatus {
-  running: boolean
-  pid?: number | null
-  returncode?: number | null
-  external?: boolean
-  fsapp_path: string
-  fsapp_exists: boolean
-  python: string
-  log_file: string
-  log_exists: boolean
-  last_check?: FsCheckResult | null
-  last_check_ts?: number
-}
-
-export interface FsCheckResult {
-  ok?: boolean
-  ready?: boolean
-  returncode?: number
-  error?: string
-  raw?: string
-  app_id_masked?: string
-  app_secret_masked?: string
-  allowed_users?: string[]
-  public_access?: boolean
-  pattern_count?: number
-  agent_ok?: boolean
-  agent_error?: string
-  [key: string]: any
-}
+export type FsStatus = ApiSchemas['FsStatusResp']
+export type FsCheckResult = ApiSchemas['FsCheckResp']
+export type FsKeysResponse = ApiSchemas['FsKeysResp']
+export type FsStartResponse = ApiSchemas['FsStartResp']
+export type FsStopResponse = ApiSchemas['FsStopResp']
+export type FsSendResponse = ApiSchemas['FsSendResp']
 
 export type ScheduledChat = ApiSchemas['ScheduledChatResp']
 export type ScheduledChatListResponse = ApiSchemas['ScheduledChatListResp']
