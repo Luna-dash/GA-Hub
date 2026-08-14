@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import process from 'node:process'
 import ts from 'typescript'
@@ -9,6 +10,7 @@ const openapiPath = path.resolve(webuiRoot, '../docs/api/openapi.json')
 
 const openapi = JSON.parse(fs.readFileSync(openapiPath, 'utf8'))
 const sourceText = fs.readFileSync(clientPath, 'utf8')
+const generatedPath = path.join(webuiRoot, 'src/api/generated/schema.d.ts')
 const sourceFile = ts.createSourceFile(
   clientPath,
   sourceText,
@@ -111,4 +113,27 @@ if (unknown.length > 0) {
   console.log(
     `API contract check passed: ${calls.length} frontend HTTP call shapes match ${backendRoutes.size} OpenAPI operations.`,
   )
+}
+
+const generation = spawnSync(
+  process.execPath,
+  [path.join(webuiRoot, 'node_modules/openapi-typescript/bin/cli.js'), openapiPath, '--output', generatedPath],
+  { encoding: 'utf8' },
+)
+if (generation.error || generation.status !== 0) {
+  console.error('Generated TypeScript API contract could not be refreshed:')
+  console.error(generation.stderr || generation.error)
+  process.exitCode = 1
+} else if (generation.stdout.trim()) {
+  // The generator prints a short success banner on every run.
+  process.stdout.write(generation.stdout)
+}
+
+if (!process.exitCode) {
+  const status = spawnSync('git', ['-C', path.resolve(webuiRoot, '..'), 'diff', '--exit-code', '--', generatedPath], { encoding: 'utf8' })
+  if (status.status !== 0) {
+    console.error(`Generated TypeScript API contract is stale: ${generatedPath}`)
+    console.error('Refresh it with: npm run api:generate')
+    process.exitCode = 1
+  }
 }

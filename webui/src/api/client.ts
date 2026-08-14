@@ -49,6 +49,7 @@ import type {
   WxLogEntry,
   WxStatus,
 } from './types'
+import type { components as GeneratedApiComponents } from './generated/schema'
 
 class HttpError extends Error {
   status: number
@@ -74,6 +75,7 @@ export class HttpTimeoutError extends Error {
 export const DEFAULT_HTTP_TIMEOUT_MS = 30_000
 
 type HttpOptions = RequestInit & { timeoutMs?: number }
+export type ApiComponents = GeneratedApiComponents
 type AbortSource = 'timeout' | 'external' | null
 
 function requestAbortContext(externalSignal: AbortSignal | null | undefined, timeoutMs: number) {
@@ -356,7 +358,7 @@ export const api = {
   conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),
   conductorStart: (llm_index?: number | null) => http<{ ok: boolean }>('POST', '/api/conductor/start', { llm_index }),
   sessions: () => http<{ total: number; items: HubSession[] }>('GET', '/api/sessions'),
-  createSession: (req: { title?: string; llm_index?: number | null } = {}) =>
+  createSession: (req: Partial<ApiComponents['schemas']['SessionCreate']> = {}) =>
     http<HubSession>('POST', '/api/sessions', req),
   updateSession: (id: string, changes: { title?: string; llm_index?: number | null }) =>
     http<HubSession>('PATCH', `/api/sessions/${encodeURIComponent(id)}`, changes),
