@@ -97,41 +97,19 @@ export interface ChatRetryConfig {
 }
 
 // ── WeChat ────────────────────────────────────────────────
-export interface WxQRState {
-  status: string                // idle | waiting_scan | scanning | confirmed | expired | timeout | error
-  qrcode_id?: string
-  url?: string
-  bot_id?: string
-  error?: string
-}
+export type WxQRState = ApiSchemas['WxQRState']
 
-export interface WxStatus {
-  logged_in: boolean
-  bot_id: string
-  polling: boolean
-  qr: WxQRState
-  contacts: number
-  allowlist: string[]
-  log_count: number
-}
+export type WxStatus = ApiSchemas['WxStatusResp']
 
-export interface WxContact {
-  uid: string
-  last_text: string
-  last_ts: number
-  msg_count: number
-  nickname: string
-}
+export type WxContact = ApiSchemas['WxContact']
+export type WxContactListResponse = ApiSchemas['WxContactListResp']
 
-export interface WxLogEntry {
-  ts: number
-  direction: 'in' | 'out'
-  uid: string
-  text: string
-  media: string[]
-  context_token: string
-  nickname?: string
-}
+export type WxLogEntry = ApiSchemas['WxLogEntry']
+export type WxLogListResponse = ApiSchemas['WxLogListResp']
+export type WxMutationResponse = ApiSchemas['WxLogoutResp']
+export type WxPollStartResponse = ApiSchemas['WxPollStartResp']
+export type WxAllowlistResponse = ApiSchemas['WxAllowlistResp']
+export type WxAllowlistWriteResponse = ApiSchemas['WxAllowlistWriteResp']
 
 // ── Feishu ────────────────────────────────────────────────
 export interface FsStatus {

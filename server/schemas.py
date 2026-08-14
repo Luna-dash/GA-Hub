@@ -148,6 +148,77 @@ class WxAllowlistReq(BaseModel):
     allowlist: list[str]
 
 
+class WxQRState(BaseModel):
+    model_config = {"extra": "allow"}
+
+    status: str
+    qrcode_id: str | None = None
+    url: str | None = None
+    bot_id: str | None = None
+    error: str | None = None
+
+
+class WxStatusResp(BaseModel):
+    logged_in: bool
+    bot_id: str
+    polling: bool
+    qr: WxQRState
+    contacts: int
+    allowlist: list[str]
+    log_count: int
+
+
+class WxContact(BaseModel):
+    uid: str
+    last_text: str
+    last_ts: int
+    msg_count: int
+    nickname: str
+
+
+class WxContactListResp(BaseModel):
+    contacts: list[WxContact]
+
+
+class WxLogEntry(BaseModel):
+    ts: int
+    direction: str
+    uid: str
+    text: str
+    media: list[str]
+    context_token: str
+    nickname: str = ""
+
+
+class WxLogListResp(BaseModel):
+    messages: list[WxLogEntry]
+
+
+class WxLogoutResp(BaseModel):
+    ok: bool
+
+
+class WxPollStartResp(BaseModel):
+    started: bool
+
+
+class WxPollStopResp(BaseModel):
+    ok: bool
+
+
+class WxSendResp(BaseModel):
+    ok: bool
+
+
+class WxAllowlistResp(BaseModel):
+    allowlist: list[str]
+
+
+class WxAllowlistWriteResp(BaseModel):
+    ok: bool
+    allowlist: list[str]
+
+
 # ── conversations ────────────────────────────────────────────────
 class ConvRename(BaseModel):
     title: str

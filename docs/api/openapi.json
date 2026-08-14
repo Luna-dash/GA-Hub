@@ -2328,7 +2328,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WxStatusResp"
+                }
               }
             }
           }
@@ -2345,7 +2347,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WxQRState"
+                }
               }
             }
           }
@@ -2361,7 +2365,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WxLogoutResp"
+                }
               }
             }
           }
@@ -2377,7 +2383,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WxPollStartResp"
+                }
               }
             }
           }
@@ -2393,7 +2401,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WxPollStopResp"
+                }
               }
             }
           }
@@ -2409,7 +2419,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WxContactListResp"
+                }
               }
             }
           }
@@ -2443,6 +2455,8 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
               "default": 200,
               "title": "Limit"
             }
@@ -2453,7 +2467,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WxLogListResp"
+                }
               }
             }
           },
@@ -2477,7 +2493,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WxLogoutResp"
+                }
               }
             }
           }
@@ -2503,7 +2521,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WxSendResp"
+                }
               }
             }
           },
@@ -2529,7 +2549,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WxAllowlistResp"
+                }
               }
             }
           }
@@ -2553,7 +2575,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WxAllowlistWriteResp"
+                }
               }
             }
           },
@@ -7381,6 +7405,251 @@
         ],
         "title": "WxAllowlistReq"
       },
+      "WxAllowlistResp": {
+        "properties": {
+          "allowlist": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowlist"
+          }
+        },
+        "type": "object",
+        "required": [
+          "allowlist"
+        ],
+        "title": "WxAllowlistResp"
+      },
+      "WxAllowlistWriteResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "allowlist": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowlist"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "allowlist"
+        ],
+        "title": "WxAllowlistWriteResp"
+      },
+      "WxContact": {
+        "properties": {
+          "uid": {
+            "type": "string",
+            "title": "Uid"
+          },
+          "last_text": {
+            "type": "string",
+            "title": "Last Text"
+          },
+          "last_ts": {
+            "type": "integer",
+            "title": "Last Ts"
+          },
+          "msg_count": {
+            "type": "integer",
+            "title": "Msg Count"
+          },
+          "nickname": {
+            "type": "string",
+            "title": "Nickname"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uid",
+          "last_text",
+          "last_ts",
+          "msg_count",
+          "nickname"
+        ],
+        "title": "WxContact"
+      },
+      "WxContactListResp": {
+        "properties": {
+          "contacts": {
+            "items": {
+              "$ref": "#/components/schemas/WxContact"
+            },
+            "type": "array",
+            "title": "Contacts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "contacts"
+        ],
+        "title": "WxContactListResp"
+      },
+      "WxLogEntry": {
+        "properties": {
+          "ts": {
+            "type": "integer",
+            "title": "Ts"
+          },
+          "direction": {
+            "type": "string",
+            "title": "Direction"
+          },
+          "uid": {
+            "type": "string",
+            "title": "Uid"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "media": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Media"
+          },
+          "context_token": {
+            "type": "string",
+            "title": "Context Token"
+          },
+          "nickname": {
+            "type": "string",
+            "title": "Nickname",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "ts",
+          "direction",
+          "uid",
+          "text",
+          "media",
+          "context_token"
+        ],
+        "title": "WxLogEntry"
+      },
+      "WxLogListResp": {
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/WxLogEntry"
+            },
+            "type": "array",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "messages"
+        ],
+        "title": "WxLogListResp"
+      },
+      "WxLogoutResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "WxLogoutResp"
+      },
+      "WxPollStartResp": {
+        "properties": {
+          "started": {
+            "type": "boolean",
+            "title": "Started"
+          }
+        },
+        "type": "object",
+        "required": [
+          "started"
+        ],
+        "title": "WxPollStartResp"
+      },
+      "WxPollStopResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "WxPollStopResp"
+      },
+      "WxQRState": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "qrcode_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qrcode Id"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "bot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bot Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "WxQRState"
+      },
       "WxSendReq": {
         "properties": {
           "uid": {
@@ -7420,6 +7689,64 @@
           "uid"
         ],
         "title": "WxSendReq"
+      },
+      "WxSendResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "WxSendResp"
+      },
+      "WxStatusResp": {
+        "properties": {
+          "logged_in": {
+            "type": "boolean",
+            "title": "Logged In"
+          },
+          "bot_id": {
+            "type": "string",
+            "title": "Bot Id"
+          },
+          "polling": {
+            "type": "boolean",
+            "title": "Polling"
+          },
+          "qr": {
+            "$ref": "#/components/schemas/WxQRState"
+          },
+          "contacts": {
+            "type": "integer",
+            "title": "Contacts"
+          },
+          "allowlist": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowlist"
+          },
+          "log_count": {
+            "type": "integer",
+            "title": "Log Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "logged_in",
+          "bot_id",
+          "polling",
+          "qr",
+          "contacts",
+          "allowlist",
+          "log_count"
+        ],
+        "title": "WxStatusResp"
       }
     }
   }

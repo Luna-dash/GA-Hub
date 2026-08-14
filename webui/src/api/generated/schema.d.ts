@@ -3233,6 +3233,91 @@ export interface components {
             /** Allowlist */
             allowlist: string[];
         };
+        /** WxAllowlistResp */
+        WxAllowlistResp: {
+            /** Allowlist */
+            allowlist: string[];
+        };
+        /** WxAllowlistWriteResp */
+        WxAllowlistWriteResp: {
+            /** Ok */
+            ok: boolean;
+            /** Allowlist */
+            allowlist: string[];
+        };
+        /** WxContact */
+        WxContact: {
+            /** Uid */
+            uid: string;
+            /** Last Text */
+            last_text: string;
+            /** Last Ts */
+            last_ts: number;
+            /** Msg Count */
+            msg_count: number;
+            /** Nickname */
+            nickname: string;
+        };
+        /** WxContactListResp */
+        WxContactListResp: {
+            /** Contacts */
+            contacts: components["schemas"]["WxContact"][];
+        };
+        /** WxLogEntry */
+        WxLogEntry: {
+            /** Ts */
+            ts: number;
+            /** Direction */
+            direction: string;
+            /** Uid */
+            uid: string;
+            /** Text */
+            text: string;
+            /** Media */
+            media: string[];
+            /** Context Token */
+            context_token: string;
+            /**
+             * Nickname
+             * @default
+             */
+            nickname: string;
+        };
+        /** WxLogListResp */
+        WxLogListResp: {
+            /** Messages */
+            messages: components["schemas"]["WxLogEntry"][];
+        };
+        /** WxLogoutResp */
+        WxLogoutResp: {
+            /** Ok */
+            ok: boolean;
+        };
+        /** WxPollStartResp */
+        WxPollStartResp: {
+            /** Started */
+            started: boolean;
+        };
+        /** WxPollStopResp */
+        WxPollStopResp: {
+            /** Ok */
+            ok: boolean;
+        };
+        /** WxQRState */
+        WxQRState: {
+            /** Status */
+            status: string;
+            /** Qrcode Id */
+            qrcode_id?: string | null;
+            /** Url */
+            url?: string | null;
+            /** Bot Id */
+            bot_id?: string | null;
+            /** Error */
+            error?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** WxSendReq */
         WxSendReq: {
             /** Uid */
@@ -3246,6 +3331,27 @@ export interface components {
              * @default
              */
             context_token: string;
+        };
+        /** WxSendResp */
+        WxSendResp: {
+            /** Ok */
+            ok: boolean;
+        };
+        /** WxStatusResp */
+        WxStatusResp: {
+            /** Logged In */
+            logged_in: boolean;
+            /** Bot Id */
+            bot_id: string;
+            /** Polling */
+            polling: boolean;
+            qr: components["schemas"]["WxQRState"];
+            /** Contacts */
+            contacts: number;
+            /** Allowlist */
+            allowlist: string[];
+            /** Log Count */
+            log_count: number;
         };
     };
     responses: never;
@@ -5275,7 +5381,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WxStatusResp"];
                 };
             };
         };
@@ -5295,7 +5401,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WxQRState"];
                 };
             };
         };
@@ -5315,7 +5421,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WxLogoutResp"];
                 };
             };
         };
@@ -5335,7 +5441,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WxPollStartResp"];
                 };
             };
         };
@@ -5355,7 +5461,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WxPollStopResp"];
                 };
             };
         };
@@ -5375,7 +5481,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WxContactListResp"];
                 };
             };
         };
@@ -5398,7 +5504,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WxLogListResp"];
                 };
             };
             /** @description Validation Error */
@@ -5427,7 +5533,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WxLogoutResp"];
                 };
             };
         };
@@ -5451,7 +5557,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WxSendResp"];
                 };
             };
             /** @description Validation Error */
@@ -5480,7 +5586,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WxAllowlistResp"];
                 };
             };
         };
@@ -5504,7 +5610,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WxAllowlistWriteResp"];
                 };
             };
             /** @description Validation Error */

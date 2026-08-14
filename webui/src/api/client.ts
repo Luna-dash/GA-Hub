@@ -75,8 +75,15 @@ import type {
   SkillSearchResult,
   UploadResult,
   WxContact,
+  WxContactListResponse,
   WxLogEntry,
+  WxLogListResponse,
+  WxMutationResponse,
+  WxPollStartResponse,
   WxStatus,
+  WxAllowlistResponse,
+  WxAllowlistWriteResponse,
+  WxQRState,
 } from './types'
 import type { components as GeneratedApiComponents } from './generated/schema'
 
@@ -251,23 +258,23 @@ export const api = {
 
   // ── wechat (legacy endpoints kept for compatibility) ─
   wxStatus: () => http<WxStatus>('GET', '/api/wechat/status'),
-  wxLogin: () => http<any>('POST', '/api/wechat/login'),
-  wxLogout: () => http<{ ok: boolean }>('POST', '/api/wechat/logout'),
-  wxStartPoll: () => http<{ started: boolean }>('POST', '/api/wechat/poll/start'),
-  wxStopPoll: () => http<{ ok: boolean }>('POST', '/api/wechat/poll/stop'),
-  wxContacts: () => http<{ contacts: WxContact[] }>('GET', '/api/wechat/contacts'),
+  wxLogin: () => http<WxQRState>('POST', '/api/wechat/login'),
+  wxLogout: () => http<WxMutationResponse>('POST', '/api/wechat/logout'),
+  wxStartPoll: () => http<WxPollStartResponse>('POST', '/api/wechat/poll/start'),
+  wxStopPoll: () => http<WxMutationResponse>('POST', '/api/wechat/poll/stop'),
+  wxContacts: () => http<WxContactListResponse>('GET', '/api/wechat/contacts'),
   wxMessages: (uid?: string, limit = 200) => {
     const q = new URLSearchParams()
     if (uid) q.set('uid', uid)
     q.set('limit', String(limit))
-    return http<{ messages: WxLogEntry[] }>('GET', `/api/wechat/messages?${q}`)
+    return http<WxLogListResponse>('GET', `/api/wechat/messages?${q}`)
   },
   wxSend: (uid: string, text?: string, file_path?: string, context_token = '') =>
-    http<{ ok: boolean }>('POST', '/api/wechat/send', { uid, text, file_path, context_token }),
-  wxClearMessages: () => http<{ ok: boolean }>('DELETE', '/api/wechat/messages'),
-  wxAllowlist: () => http<{ allowlist: string[] }>('GET', '/api/wechat/allowlist'),
+    http<WxMutationResponse>('POST', '/api/wechat/send', { uid, text, file_path, context_token }),
+  wxClearMessages: () => http<WxMutationResponse>('DELETE', '/api/wechat/messages'),
+  wxAllowlist: () => http<WxAllowlistResponse>('GET', '/api/wechat/allowlist'),
   wxSetAllowlist: (allowlist: string[]) =>
-    http<{ ok: boolean; allowlist: string[] }>('PUT', '/api/wechat/allowlist', { allowlist }),
+    http<WxAllowlistWriteResponse>('PUT', '/api/wechat/allowlist', { allowlist }),
 
   // ── conversations ────────────────────────────────────
   conversations: (q?: string, offset = 0, limit = 50) => {
