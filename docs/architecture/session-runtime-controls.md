@@ -28,7 +28,7 @@ GA-Hub 当前同时存在两种 `AgentService` 实例域：
 | session GA runtime | `SessionCoordinator` | 无，按需恢复 | 每个 session 最多一个 runtime 实例 |
 | GA agent 与 backend history | session `AgentService` | GA native archive | 是 archive 的内存投影，不是跨重启真相 |
 | archive 生命周期锁 | `SessionRuntimeFactory` + GA `continue_cmd` | GA lock file | runtime 创建时取得，初始化失败时释放 |
-| worldline checkpoint | session `AgentService` | `.ga_rewind/<archive-key>/tree.json` 与 blobs | 从完整 native archive 对账，不从压缩后的 live history 对账 |
+| worldline checkpoint | session `AgentService` / `RewindAdapter` | `.ga_rewind/<archive-key>/tree.json` 与 blobs | 从完整 native archive 对账，不从压缩后的 live history 对账 |
 | 普通 run admission | `SessionCoordinator` | 无 | 负责同 session 串行和进程级 run capacity |
 | BTW reservation | `SessionCoordinator` | 无 | 不占普通 run capacity，保留 GA 已验证的旁路并发 |
 | rewind exclusive control | `SessionCoordinator` | native archive + worldline | 同 session 独占，不阻塞其他 session |
@@ -198,4 +198,4 @@ GA 侧 legacy `memory/chat_history.json` 的访问由 `LegacyChatHistoryStore` �
 
 ## 13. AgentService 职责拆分
 
-AgentService 保留 GA runtime facade、生命周期与全局兼容入口，但不再自己实现所有基础设施。第一片已把聊天回放投影抽为 `ChatStreamProjection`：它独立持有容量上限、插入顺序、快照复制与线程锁；AgentService 只提交快照并读取投影。第二片已把 preferred LLM 持久化抽为 `LlmPreferenceStore`，legacy chat history 读写也改为委托 `LegacyChatHistoryStore`。后续按同样边界继续拆出 rewind adapter 等组件，不用一次性重写 runtime facade。
+AgentService 保留 GA runtime facade、生命周期与全局兼容入口，但不再自己实现所有基础设施。第一片已把聊天回放投影抽为 `ChatStreamProjection`：它独立持有容量上限、插入顺序、快照复制与线程锁；AgentService 只提交快照并读取投影。第二片已把 preferred LLM 持久化抽为 `LlmPreferenceStore`，legacy chat history 读写也改为委托 `LegacyChatHistoryStore`。第三片已把 durable worldline checkpoint 绑定、archive/worldline rewind、working memory 恢复、snapshot 裁剪与 `chat:rewound` 事件抽为 `RewindAdapter`；AgentService 保留 `_rewind()` facade 和旧字段兼容入口。后续按同样边界继续拆出 GA runtime adapter 等组件，不用一次性重写 runtime facade。

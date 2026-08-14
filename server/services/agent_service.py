@@ -40,6 +40,7 @@ from .chat_stream_projection import ChatSnapshot, ChatStreamProjection  # noqa: 
 from .event_bus import bus  # noqa: E402
 from .llm_preference_store import LlmPreferenceStore  # noqa: E402
 from .legacy_chat_history_store import LegacyChatHistoryStore  # noqa: E402
+from .rewind_adapter import RewindAdapter  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -216,6 +217,7 @@ class AgentService:
         self._lock = threading.Lock()
         self._rewind_lock = threading.RLock()
         self._rewind_store = None
+        self._rewind_adapter: RewindAdapter | None = None
         self._legacy_chat_history = LegacyChatHistoryStore()
         self._next_id = 0
         self._run_thread: threading.Thread | None = None
@@ -907,217 +909,52 @@ class AgentService:
             self._rewind_lock = lock
         return lock
 
+    def _rewind(self) -> RewindAdapter:
+        adapter = getattr(self, "_rewind_adapter", None)
+        if adapter is None:
+            adapter = RewindAdapter(
+                agent=self.agent,
+                session_id=str(getattr(self, "session_id", "") or ""),
+                snapshots=self._snapshots,
+                lock=getattr(self, "_lock", None) or threading.RLock(),
+                checkpoint_lock=getattr(self, "_rewind_lock", None),
+                event_bus=bus,
+            )
+            adapter.store = getattr(self, "_rewind_store", None)
+            self._rewind_adapter = adapter
+        else:
+            adapter.session_id = str(getattr(self, "session_id", "") or "")
+            if adapter.store is None:
+                adapter.store = getattr(self, "_rewind_store", None)
+        return adapter
+
     def bind_rewind_store(self):
         """Bind a session runtime to GA's durable archive worldline."""
-        session_id = str(getattr(self, "session_id", "") or "")
-        if not session_id:
-            return None
-        log_path = str(getattr(self.agent, "log_path", "") or "")
-        if not log_path:
-            raise RuntimeError("session runtime has no GA archive path")
-
-        # Lazy imports keep lightweight AgentService tests compatible with
-        # their intentionally small frontends.continue_cmd stub.
-        from frontends.worldline import RewindStore  # type: ignore
-
-        temp_dir = os.path.normpath(os.path.join(str(_paths.GA_ROOT), "temp"))
-        store = RewindStore.for_log(temp_dir, log_path, temp_dir)
-        with self._rewind_guard():
-            self._rewind_store = store
-            self.agent._rw_store = store
-            try:
-                self._sync_rewind_store(strict=True)
-            except Exception:
-                self._rewind_store = None
-                if getattr(self.agent, "_rw_store", None) is store:
-                    self.agent._rw_store = None
-                raise
+        adapter = self._rewind()
+        store = adapter.bind_store()
+        self._rewind_store = adapter.store
         return store
 
     def _sync_rewind_store(self, *, strict: bool = False):
         """Reconcile the complete native archive into the worldline tree."""
-        try:
-            with self._rewind_guard():
-                store = getattr(self, "_rewind_store", None)
-                if store is None:
-                    if strict and str(getattr(self, "session_id", "") or ""):
-                        raise RuntimeError("durable rewind store is not bound")
-                    return None
-                log_path = str(getattr(self.agent, "log_path", "") or "")
-                if not log_path:
-                    raise RuntimeError("GA archive path is unavailable")
-
-                from frontends.continue_cmd import parse_native_log  # type: ignore
-
-                history = parse_native_log(log_path, allow_empty=True)
-                if history is None:
-                    raise RuntimeError("GA native archive could not be parsed")
-                store.reconcile(history)
-                store.save()
-                return store
-        except Exception:
-            if strict:
-                raise
-            log.exception(
-                "could not synchronize rewind checkpoint for session %s",
-                getattr(self, "session_id", ""),
-            )
-            return None
+        adapter = self._rewind()
+        store = adapter.sync_store(strict=strict)
+        self._rewind_store = adapter.store
+        return store
 
     def _sync_rewind_working_memory(self, result: dict) -> None:
-        """Keep GA working memory aligned with restored LLM history."""
-        agent = self.agent
-        handler = getattr(agent, "handler", None)
-        hist_info = result.get("hist_info")
-        if hist_info is not None:
-            restored = list(hist_info)
-            handler_history = getattr(handler, "history_info", None)
-            if isinstance(handler_history, list):
-                handler_history[:] = restored
-                agent.history = handler_history
-            else:
-                agent.history = restored
-        key_info = result.get("key_info")
-        working = getattr(handler, "working", None)
-        if key_info is not None and isinstance(working, dict):
-            working["key_info"] = key_info
+        """Compatibility facade for the extracted rewind adapter."""
+        self._rewind().sync_working_memory(result)
 
     def _apply_durable_rewind(self, store, n_eff: int) -> dict:
-        """Rewrite archive/worldline and return durable rewind metrics."""
-        self._sync_rewind_store(strict=True)
-        turn_nodes: list[str] = []
-        for node_id in store.linear_path():
-            message = store.first_user_message(node_id)
-            if message is not None and store._msg_user_text(message).strip():
-                turn_nodes.append(node_id)
-        if n_eff < 1 or n_eff > len(turn_nodes):
-            raise ValueError(f"n out of range 1..{len(turn_nodes)}")
-
-        try:
-            backend_history = self.agent.llmclient.backend.history
-        except AttributeError as exc:
-            raise RuntimeError(
-                f"agent has no llmclient.backend.history: {exc}"
-            ) from exc
-        old_len = len(backend_history)
-        first_removed_node = turn_nodes[-n_eff]
-        old_head = getattr(store, "head", None)
-        log_path = str(getattr(self.agent, "log_path", "") or "")
-
-        from frontends.continue_cmd import parse_native_log  # type: ignore
-        from frontends.worldline import restore_plan, rewrite_projection  # type: ignore
-
-        result = restore_plan(
-            store,
-            first_removed_node,
-            mode="conv",
-            to="before",
-            log_path=log_path,
-        )
-        if result is None or result.get("history") is None:
-            raise RuntimeError("GA worldline could not restore the requested turn")
-        restored_history = list(result["history"])
-
-        # GA's restore planner treats projection rewrite as best effort. Hub's
-        # session contract is stricter: a successful rewind must survive page
-        # refresh and process restart, so verify the native archive before
-        # mutating the live backend. Retry the atomic projection write once in
-        # case the planner's silent attempt failed.
-        archived_history = parse_native_log(log_path, allow_empty=True)
-        if archived_history != restored_history:
-            target = result.get("target")
-            rewritten = bool(target) and rewrite_projection(store, target, log_path)
-            archived_history = (
-                parse_native_log(log_path, allow_empty=True) if rewritten else None
-            )
-        if archived_history != restored_history:
-            rewind_head = getattr(store, "rewind_head", None)
-            if callable(rewind_head) and old_head is not None:
-                try:
-                    rewind_head(old_head)
-                except Exception:
-                    log.exception(
-                        "could not restore worldline head after archive rewrite failure"
-                    )
-            raise RuntimeError(
-                "GA native archive rewrite could not be verified; rewind was not applied"
-            )
-
-        backend_history[:] = restored_history
-        self._sync_rewind_working_memory(result)
-        return {
-            "kept": len(turn_nodes) - n_eff,
-            "history_lines": len(restored_history),
-            "removed_history_entries": max(0, old_len - len(restored_history)),
-        }
+        """Compatibility facade for durable archive rewind."""
+        return self._rewind().apply_durable(store, n_eff)
 
     def _rewind_session_turns(
         self, *, sid: str | None = None, n: int | None = None
     ) -> dict:
         """Durably rewind one Hub session without trusting UI snapshots."""
-        with self._rewind_guard():
-            if bool(getattr(self.agent, "is_running", False)):
-                raise RuntimeError(
-                    "cannot rewind while agent is running; abort first"
-                )
-
-            lock = getattr(self, "_lock", None)
-            if lock is None:
-                lock = threading.RLock()
-                self._lock = lock
-            with lock:
-                all_items = list(getattr(self, "_snapshots", {}).items())
-                done_items = [(stream_id, snap) for stream_id, snap in all_items if snap.done]
-                if sid:
-                    matches = [
-                        index
-                        for index, (stream_id, _snap) in enumerate(done_items)
-                        if stream_id == sid
-                    ]
-                    if not matches:
-                        raise ValueError(
-                            f"sid {sid!r} not found among current runtime turns"
-                        )
-                    n_eff = len(done_items) - matches[0]
-                elif n is not None:
-                    if n < 1:
-                        raise ValueError("n must be at least 1")
-                    n_eff = n
-                else:
-                    raise ValueError("either sid or n required")
-
-            store = getattr(self, "_rewind_store", None)
-            if store is None:
-                raise RuntimeError("durable rewind store is not bound")
-            result = self._apply_durable_rewind(store, n_eff)
-
-            removed_sids: list[str] = []
-            with lock:
-                if done_items:
-                    overlap = min(n_eff, len(done_items))
-                    first_removed_sid = done_items[-overlap][0]
-                    hit = False
-                    for stream_id, _snapshot in all_items:
-                        if stream_id == first_removed_sid:
-                            hit = True
-                        if hit:
-                            removed_sids.append(stream_id)
-                    for stream_id in removed_sids:
-                        self._snapshots.pop(stream_id, None)
-
-            result = {"removed_sids": removed_sids, **result}
-
-        bus.publish("chat:rewound", {
-            "removed_sids": removed_sids,
-            "kept": result["kept"],
-            "history_lines": result["history_lines"],
-            "session_id": getattr(self, "session_id", ""),
-        })
-        log.info(
-            "session rewind: dropped %d turn(s), removed %d history entries, sids=%s",
-            n_eff, result["removed_history_entries"], removed_sids,
-        )
-        return result
+        return self._rewind().rewind_session_turns(sid=sid, n=n)
 
     # ── rewind ───────────────────────────────────────────────────
     def rewind_turns(self, *, sid: str | None = None, n: int | None = None) -> dict:
@@ -1130,118 +967,7 @@ class AgentService:
         operates on GA-Hub's per-stream snapshots so the frontend can sync
         precisely by stream_id. Refuses while the agent is running.
         """
-        if str(getattr(self, "session_id", "") or ""):
-            return self._rewind_session_turns(sid=sid, n=n)
-
-        with self._lock:
-            if bool(getattr(self.agent, "is_running", False)):
-                raise RuntimeError(
-                    "cannot rewind while agent is running; abort first"
-                )
-
-            all_items = list(self._snapshots.items())
-            done_items = [(s, snap) for s, snap in all_items if snap.done]
-            if not done_items:
-                raise ValueError("no completed turns to rewind")
-
-            # 1. Resolve how many turns to drop.
-            if sid:
-                idxs = [i for i, (s, _) in enumerate(done_items) if s == sid]
-                if not idxs:
-                    raise ValueError(f"sid {sid!r} not found among done turns")
-                n_eff = len(done_items) - idxs[0]
-            elif n is not None:
-                if n < 1 or n > len(done_items):
-                    raise ValueError(
-                        f"n out of range 1..{len(done_items)}"
-                    )
-                n_eff = n
-            else:
-                raise ValueError("either sid or n required")
-
-            # 2. Locate cut position in real LLM history.
-            #    Logic mirrors GA frontends/tuiapp.py:_cmd_rewind (453-511):
-            #    a "real" user turn = role==user AND content is not a pure
-            #    tool_result block.
-            try:
-                backend_history = self.agent.llmclient.backend.history
-            except AttributeError as e:
-                raise RuntimeError(
-                    f"agent has no llmclient.backend.history: {e}"
-                ) from e
-
-            user_turn_idxs: list[int] = []
-            for i, msg in enumerate(backend_history):
-                if msg.get("role") != "user":
-                    continue
-                content = msg.get("content")
-                if isinstance(content, str):
-                    user_turn_idxs.append(i)
-                    continue
-                if isinstance(content, list):
-                    has_tool_result = any(
-                        isinstance(b, dict) and b.get("type") == "tool_result"
-                        for b in content
-                    )
-                    if has_tool_result:
-                        continue
-                    if any(
-                        isinstance(b, dict)
-                        and b.get("type") == "text"
-                        and (b.get("text") or "").strip()
-                        for b in content
-                    ):
-                        user_turn_idxs.append(i)
-
-            if n_eff > len(user_turn_idxs):
-                raise RuntimeError(
-                    f"_snapshots/backend.history mismatch: want -{n_eff} turns "
-                    f"but only {len(user_turn_idxs)} user-turns in history"
-                )
-            cut_at = user_turn_idxs[-n_eff]
-            removed_lines = len(backend_history) - cut_at
-            backend_history[:] = backend_history[:cut_at]
-
-            # 3. Drop snapshots from first_removed onwards (insertion order).
-            #    This also discards any non-done tail snapshots created after
-            #    the cut point (defensive).
-            first_removed_sid = done_items[-n_eff][0]
-            removed_sids: list[str] = []
-            hit = False
-            for s, _snap in all_items:
-                if s == first_removed_sid:
-                    hit = True
-                if hit:
-                    removed_sids.append(s)
-            for s in removed_sids:
-                self._snapshots.pop(s, None)
-
-            # 4. Mark in GA working-memory log (TUI parity).
-            try:
-                self.agent.history.append(f"[USER]: /rewind {n_eff}")
-            except Exception as exc:  # best-effort diagnostic marker; never fatal
-                log.debug("rewind: could not append /rewind marker to GA history: %s", exc)
-
-            result = {
-                "removed_sids": removed_sids,
-                "kept": len(self._snapshots),
-                "history_lines": len(backend_history),
-                "removed_history_entries": removed_lines,
-            }
-
-        # 5. Broadcast outside the lock — multi-tab sync via EventBus prefix
-        #    "chat:" already fans out through /api/events (routes/events.py).
-        bus.publish("chat:rewound", {
-            "removed_sids": removed_sids,
-            "kept": result["kept"],
-            "history_lines": result["history_lines"],
-            "session_id": getattr(self, "session_id", ""),
-        })
-        log.info(
-            "rewind: dropped %d turn(s), removed %d history entries, sids=%s",
-            n_eff, removed_lines, removed_sids,
-        )
-        return result
+        return self._rewind().rewind_turns(sid=sid, n=n)
 
     # ── hooks ────────────────────────────────────────────────────
     def _on_turn_end(self, ctx: dict) -> None:
