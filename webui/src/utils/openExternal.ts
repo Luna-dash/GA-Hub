@@ -1,6 +1,6 @@
 /**
  * Open http(s) URLs outside the embedded WebView so the SPA is never replaced.
- * Prefer pywebview js_api (default OS browser); fall back to window.open / <a>.
+ * Open through the desktop shell's native handler; fall back in browser mode.
  */
 
 export function isHttpUrl(href: string | null | undefined): boolean {
@@ -29,26 +29,15 @@ export function isAppInternalUrl(href: string): boolean {
  * External = different origin http(s). Open in OS default browser.
  * Returns true if we handled (caller should preventDefault).
  */
-export function openExternalIfNeeded(href: string | null | undefined): boolean {
+export async function openExternalIfNeeded(href: string | null | undefined): Promise<boolean> {
   if (!href || href.startsWith('#') || href.startsWith('javascript:')) return false
   if (!isHttpUrl(href)) return false
   if (isAppInternalUrl(href)) return false
 
   const url = new URL(href, window.location.href).href
 
-  const api = window.pywebview?.api
-  if (api && typeof api.open_url === 'function') {
-    try {
-      void Promise.resolve(api.open_url(url)).catch(() => {
-        fallbackOpen(url)
-      })
-      return true
-    } catch {
-      /* fall through */
-    }
-  }
-
-  fallbackOpen(url)
+  const { openExternalUrl } = await import('./desktop')
+  await openExternalUrl(url)
   return true
 }
 
@@ -79,7 +68,8 @@ export function installExternalLinkInterceptor(): () => void {
     const a = t?.closest?.('a[href]') as HTMLAnchorElement | null
     if (!a) return
     const href = a.getAttribute('href')
-    if (openExternalIfNeeded(href)) {
+    if (href !== null && isHttpUrl(href) && !isAppInternalUrl(href)) {
+      void openExternalIfNeeded(href).catch(() => undefined)
       ev.preventDefault()
       ev.stopPropagation()
     }

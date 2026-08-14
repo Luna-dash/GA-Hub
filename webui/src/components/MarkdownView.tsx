@@ -20,7 +20,7 @@ import rehypeHighlight from 'rehype-highlight'
 import { memo, ReactNode, useMemo, type MouseEvent } from 'react'
 import { useCopy } from '@/utils/clipboard'
 import { api } from '@/api/client'
-import { openExternalIfNeeded } from '@/utils/openExternal'
+import { isAppInternalUrl, isHttpUrl, openExternalIfNeeded } from '@/utils/openExternal'
 import { looksLikeToolTrace } from '@/utils/toolTrace'
 // Light paper-ish theme; token colors further tuned under .prose-chat in CSS
 import 'highlight.js/styles/github.css'
@@ -46,7 +46,8 @@ const MD_COMPONENTS = {
       href={href}
       {...props}
       onClick={(e: MouseEvent<HTMLAnchorElement>) => {
-        if (openExternalIfNeeded(href)) {
+        if (href !== null && isHttpUrl(href) && !isAppInternalUrl(href)) {
+          void openExternalIfNeeded(href).catch(() => undefined)
           e.preventDefault()
           e.stopPropagation()
         }

@@ -9,6 +9,7 @@ This shell is the production desktop lifecycle. `launch_webui.pyw` is retained o
 - The sidecar binds only loopback and asks the OS for a free port. It emits `{event:"starting", port, instance_token}`; the window is created only after `/api/desktop/ready` returns that same token.
 - Each shell owns only its child. Closing the main window writes a shutdown request to the child's stdin, waits 5 seconds, and kills only that child on timeout. Port occupants and prior pywebview services are never attached to or terminated.
 - `tauri-plugin-single-instance` forwards a duplicate launch to the existing window, which is shown and focused.
+- Native capabilities are intentionally narrow: the Web UI can use default dialog, notification, and opener permissions. Directory choice and export destination still come from user-initiated native dialogs; export text is written only to the selected path.
 - `GA_ADMIN_DATA` and `GA_ROOT` retain the backend's existing contracts. Tests should set both to disposable paths; production does not rewrite or migrate user data.
 
 ## Prerequisites

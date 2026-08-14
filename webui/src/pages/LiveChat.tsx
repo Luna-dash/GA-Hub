@@ -31,6 +31,7 @@ import { useDraftStore } from '@/stores/draftStore'
 import { capacityConflictFromError, errorMessageFromError, sessionChatHref } from '@/utils/sessionUi'
 import { createRafScheduler } from '@/utils/rafScheduler'
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
+import { isTauriDesktop, selectDirectory } from '@/utils/desktop'
 
 interface RestoreState {
   restoredFrom?: string
@@ -598,12 +599,11 @@ export default function LiveChat() {
           { confirmText: '选择目录' },
         )
         if (!proceed) return
-        const nativePicker = window.pywebview?.api?.select_directory
-        if (typeof nativePicker !== 'function') {
+        if (!(isTauriDesktop() || window.pywebview?.api?.select_directory)) {
           await dialog.alert('无法选择目录', '目录选择需要使用 GA-Hub 桌面窗口，请在桌面版中重试。')
           return
         }
-        const selection = await nativePicker()
+        const selection = await selectDirectory()
         if (selection?.cancelled) return
         if (!selection?.ok || !selection.path) {
           throw new Error(selection?.error || '未能打开目录选择器')

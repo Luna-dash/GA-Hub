@@ -7,6 +7,7 @@ import { PageShell } from '@/components/PageShell'
 import { MarkdownView } from '@/components/MarkdownView'
 import { ConversationIndexRail } from '@/components/ConversationIndexRail'
 import { previewText } from '@/utils/foldTurns'
+import { saveTextExport } from '@/utils/desktop'
 import { looksLikeToolTrace, stripWrapperFences } from '@/utils/toolTrace'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
@@ -80,29 +81,11 @@ export default function Conversations() {
       const resp = await fetch(url, { credentials: 'same-origin' })
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const filename = `${id}.${fmt}`
-      // pywebview desktop shell: <a download> + blob URL is swallowed by
-      // WebView2/WKWebView. Route through native save dialog via js_api.
-      const pywv: any = (window as any).pywebview
-      if (pywv && pywv.api && typeof pywv.api.save_export === 'function') {
-        const text = await resp.text()
-        const r = await pywv.api.save_export(filename, text)
-        if (r && r.ok === false && !r.cancelled) {
-          throw new Error(r.error || 'save failed')
-        }
-        if (r && r.cancelled) return
-        toast.success(`已导出 ${filename}`)
-        return
-      }
-      // Browser fallback
-      const blob = await resp.blob()
-      const objUrl = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = objUrl
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      setTimeout(() => URL.revokeObjectURL(objUrl), 1000)
+      const text = await resp.text()
+      const saved = await saveTextExport(filename, text)
+      if (!saved.ok && saved.cancelled) return
+      if (!saved.ok) throw new Error(saved.error || 'save failed')
+      toast.success(`已导出 ${filename}`)
     } catch (e: any) {
       dialog.alert('导出失败', String(e?.message || e))
     }

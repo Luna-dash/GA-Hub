@@ -2,16 +2,16 @@
 // app window currently has focus (no point firing OS notifs the user is
 // staring at).
 //
-// We're inside a PyWebView shell, so the browser ``Notification`` API is
-// unusable (WKWebView/WebView2 pin permission to "denied"). Instead we POST
-// to the backend, which shells out to the native notifier (macOS osascript /
-// Windows PowerShell / Linux notify-send). See ``server/services/notify_service.py``.
+// Desktop shells need host support for notifications. Tauri uses its native
+// notification plugin; the pywebview recovery path and server contexts use
+// the backend notifier below. See ``server/services/notify_service.py``.
 //
 // The OPT-IN flag still lives in localStorage — the toggle on the Settings
 // page just flips that bit; there's no permission state to track.
 
 import { create } from 'zustand'
 import { api } from '@/api/client'
+import { isTauriDesktop } from './desktop'
 
 const LS_KEY = 'ga.desktopNotifications.v1'
 
@@ -72,5 +72,14 @@ export function notify(
   lastNotifyAt = now
 
   // Fire-and-forget — backend has its own throttle and never raises.
+  if (isTauriDesktop()) {
+    void (async () => {
+      const notification = await import('@tauri-apps/plugin-notification')
+      if (!(await notification.isPermissionGranted()) && !(await notification.requestPermission())) return
+      notification.sendNotification({ title, body: opts.body })
+    })().catch(() => undefined)
+    return
+  }
+
   api.notify(title, opts.body || '').catch(() => { /* swallow */ })
 }

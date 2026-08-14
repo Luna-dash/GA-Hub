@@ -1,6 +1,7 @@
 use std::{
     env,
     io::{BufRead, BufReader, Write},
+    fs,
     net::TcpStream,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -18,6 +19,11 @@ const READY_TIMEOUT: Duration = Duration::from_secs(40);
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct OwnedSidecar(Mutex<Option<Child>>);
+
+#[tauri::command]
+fn save_text_export(target: String, contents: String) -> Result<(), String> {
+    fs::write(&target, contents).map_err(|e| format!("export write failed: {e}"))
+}
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -150,6 +156,9 @@ fn main() {
     let quitting = Arc::new(AtomicBool::new(false));
     let quitting_setup = quitting.clone();
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -157,6 +166,7 @@ fn main() {
             }
         }))
         .manage(OwnedSidecar(Mutex::new(None)))
+        .invoke_handler(tauri::generate_handler![save_text_export])
         .setup(move |app| {
             let (child, port, token) =
                 spawn_sidecar().map_err(|e| format!("GA-Hub desktop startup: {e}"))?;
