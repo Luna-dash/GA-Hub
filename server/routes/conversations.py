@@ -24,6 +24,7 @@ from .. import _paths
 from ..services.archive_messages import read_ui_messages
 from ..services.conversation_metadata import ConversationMetadataAdapter
 from ..services.conversation_titles import ConversationTitleStore
+from ..services.session_coordinator import AgentBusyError, SessionControlBusyError
 from ..services.session_metadata import SessionMetadataStore
 
 log = logging.getLogger(__name__)
@@ -237,7 +238,53 @@ async def delete_conversation(cid: str):
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = Path(s[0]).resolve()
-    # The path is obtained from the current GA archive enumeration; never trust cid as a path.
+    bound_session = _metadata._sessions.find_by_archive(path)
+    if bound_session is not None:
+        from ..routes import sessions as session_routes
+        coordinator = session_routes._coordinator
+        if coordinator is not None:
+            def _delete_archive() -> None:
+                # The binding was resolved before this session reservation was
+                # acquired. Refuse rather than unlink through a reservation that
+                # may now belong to a different archive identity.
+                current_binding = _metadata._sessions.find_by_archive(path)
+                if current_binding and current_binding["id"] != bound_session["id"]:
+                    raise HTTPException(409, {
+                        "code": "archive_binding_changed",
+                        "session_id": current_binding["id"],
+                    })
+                _unlink_archive(cid, path)
+
+            try:
+                coordinator.release_runtime(
+                    bound_session["id"],
+                    shutdown=lambda runtime: runtime.shutdown(),
+                    operation="archive_delete",
+                    after_release=_delete_archive,
+                )
+            except AgentBusyError as exc:
+                raise HTTPException(409, {
+                    "code": "session_active",
+                    "run_id": exc.active_run_id,
+                    "session_id": bound_session["id"],
+                })
+            except SessionControlBusyError as exc:
+                raise HTTPException(409, {
+                    "code": "session_control_active",
+                    "operation": exc.operation,
+                    "session_id": bound_session["id"],
+                })
+
+            _invalidate_session_index()
+            return {"ok": True, "id": cid}
+
+    _unlink_archive(cid, path)
+    _invalidate_session_index()
+    return {"ok": True, "id": cid}
+
+
+def _unlink_archive(cid: str, path: Path) -> None:
+    """Delete an archive whose identity was resolved from GA enumeration."""
     try:
         path.unlink()
     except FileNotFoundError:
@@ -246,8 +293,6 @@ async def delete_conversation(cid: str):
         log.exception("failed to delete conversation %s", cid)
         raise HTTPException(500, f"failed to delete conversation: {exc}")
     _metadata.delete(cid, path)
-    _invalidate_session_index()
-    return {"ok": True, "id": cid}
 
 
 @router.post("/api/conversations/{cid}/restore")

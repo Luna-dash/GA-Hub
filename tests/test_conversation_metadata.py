@@ -152,3 +152,54 @@ def test_session_metadata_persists_optional_project_binding(tmp_path):
     unbound = store.update(row["id"], {"project_name": None, "project_path": None})
     assert unbound["project_name"] is None
     assert unbound["project_path"] is None
+
+
+def test_deleting_bound_archive_releases_session_runtime_before_unlink(tmp_path, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.routes import conversations, sessions
+
+    sessions_store, _legacy, metadata = _stores(tmp_path)
+    archive = tmp_path / "model_responses_delete.txt"
+    archive.write_text("archive", encoding="utf-8")
+    row = sessions_store.create(title="Bound")
+    sessions_store.bind_archive(row["id"], archive)
+
+    released: list[str] = []
+    events: list[str] = []
+
+    class Coordinator:
+        def release_runtime(
+            self, session_id: str, *, shutdown, operation="release", after_release=None
+        ) -> bool:
+            released.append(session_id)
+
+            class Runtime:
+                def shutdown(self) -> None:
+                    events.append("shutdown")
+
+            shutdown(Runtime())
+            if after_release is not None:
+                after_release()
+            return True
+
+    monkeypatch.setattr(sessions, "_coordinator", Coordinator())
+    monkeypatch.setattr(conversations, "_metadata", metadata)
+    monkeypatch.setattr(
+        conversations,
+        "_session_by_id",
+        lambda cid: (str(archive), 0, "", 1),
+    )
+
+    app = FastAPI()
+    app.include_router(conversations.router)
+    with TestClient(app) as client:
+        response = client.delete(f"/api/conversations/{archive.name}")
+
+    assert response.status_code == 200
+    assert released == [row["id"]]
+    # Coordinator fakes execute the route callback synchronously; file absence
+    # and unbinding prove the callback ran before release returned.
+    assert not archive.exists()
+    assert sessions_store.find_by_archive(archive) is None

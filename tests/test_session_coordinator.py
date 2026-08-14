@@ -187,6 +187,102 @@ def test_inflight_btw_blocks_mutating_controls_but_not_submit() -> None:
     _wait_until(lambda: coordinator.active_run() is None)
 
 
+def test_release_runtime_is_exclusive_and_shuts_down_cached_runtime() -> None:
+    from server.services.session_coordinator import (
+        AgentBusyError,
+        SessionControlBusyError,
+        SessionCoordinator,
+    )
+
+    runtime = FakeRuntime("A")
+    coordinator = SessionCoordinator(lambda _session_id: runtime, poll_interval=0.005)
+    coordinator._runtimes["A"] = runtime
+    shutdowns: list[FakeRuntime] = []
+
+    assert coordinator.release_runtime("A", shutdown=shutdowns.append) is True
+    assert shutdowns == [runtime]
+    assert coordinator._runtimes == {}
+    assert coordinator.release_runtime("A", shutdown=shutdowns.append) is False
+    assert shutdowns == [runtime]
+
+    coordinator._runtimes["A"] = runtime
+    run = coordinator.submit("main", session_id="A")
+    with pytest.raises(AgentBusyError):
+        coordinator.release_runtime("A", shutdown=shutdowns.append)
+    assert coordinator._runtimes["A"] is runtime
+
+    runtime.handle.finished = True
+    _wait_until(lambda: coordinator.active_run() is None)
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_release() -> None:
+        started.set()
+        if not release.wait(1):
+            raise TimeoutError("release test gate timed out")
+
+    import threading as _threading
+    thread = _threading.Thread(
+        target=lambda: coordinator.exclusive("A", "archive_delete", blocking_release)
+    )
+    thread.start()
+    assert started.wait(1)
+    with pytest.raises(SessionControlBusyError):
+        coordinator.release_runtime("A", shutdown=shutdowns.append)
+    release.set()
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+
+
+def test_runtime_release_and_disposal_share_one_reservation() -> None:
+    from server.services.session_coordinator import (
+        SessionControlBusyError,
+        SessionCoordinator,
+    )
+
+    old_runtime = FakeRuntime("A")
+    new_runtime = FakeRuntime("A")
+    made: list[FakeRuntime] = []
+
+    def factory(_session_id: str) -> FakeRuntime:
+        runtime = made.pop(0) if made else new_runtime
+        return runtime
+
+    coordinator = SessionCoordinator(factory, poll_interval=0.005)
+    coordinator._runtimes["A"] = old_runtime
+    events: list[str] = []
+    disposal_started = threading.Event()
+    disposal_resume = threading.Event()
+
+    def dispose() -> None:
+        events.append("dispose")
+        disposal_started.set()
+        if not disposal_resume.wait(1):
+            raise TimeoutError("disposal test gate timed out")
+
+    thread = threading.Thread(
+        target=lambda: coordinator.release_runtime(
+            "A",
+            shutdown=lambda _runtime: events.append("shutdown"),
+            operation="archive_delete",
+            after_release=dispose,
+        )
+    )
+    thread.start()
+    assert disposal_started.wait(1)
+
+    with pytest.raises(SessionControlBusyError) as error:
+        coordinator.submit("main", session_id="A")
+    assert error.value.operation == "archive_delete"
+    assert new_runtime.submissions == []
+
+    disposal_resume.set()
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+    assert events == ["shutdown", "dispose"]
+
+
 def _wait_until(predicate, timeout: float = 1.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

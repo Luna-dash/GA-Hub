@@ -123,6 +123,21 @@ def stop_scheduled_chats() -> None:
         _scheduled_chats.shutdown()
 
 
+def stop_session_runtimes(timeout: float = 3.0) -> None:
+    """Ask active session runs to stop; errors retain their diagnostic state."""
+    if _coordinator is None:
+        return
+    for state in _coordinator.active_runs():
+        try:
+            _coordinator.abort(session_id=state.session_id, run_id=state.run_id or "")
+        except Exception:
+            log.exception(
+                "session runtime abort failed session_id=%s run_id=%s",
+                state.session_id,
+                state.run_id,
+            )
+
+
 class SessionCreate(BaseModel):
     title: str = Field(default="", max_length=200)
     llm_index: int | None = Field(default=None, ge=0)
@@ -668,19 +683,28 @@ async def session_events(ws: WebSocket, session_id: str):
 @router.delete("/api/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(session_id: str):
     try:
-        _store.get(session_id)
-        runtime = (
-            _coordinator.runtime_state(session_id)
-            if _coordinator is not None
-            else RuntimeState(session_id)
-        )
-        if runtime.status != "idle":
-            raise HTTPException(409, {
-                "code": "session_active",
-                "run_id": runtime.run_id,
-                "status": runtime.status,
-            })
-        _store.delete(session_id)
+        row = _store.get(session_id)
     except SessionNotFoundError:
         raise _not_found()
+
+    def _delete() -> None:
+        _store.delete(session_id)
+
+    try:
+        if _coordinator is None:
+            _delete()
+        else:
+            _coordinator.release_runtime(
+                session_id,
+                shutdown=lambda runtime: runtime.shutdown(),
+                operation="delete",
+                after_release=_delete,
+            )
+    except AgentBusyError as exc:
+        raise _busy_error(exc)
+    except SessionControlBusyError as exc:
+        raise HTTPException(409, {
+            "code": "session_control_active",
+            "operation": exc.operation,
+        })
     return Response(status_code=status.HTTP_204_NO_CONTENT)

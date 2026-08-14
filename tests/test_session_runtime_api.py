@@ -26,6 +26,8 @@ class FakeCoordinator:
         self.rewinds: list[dict] = []
         self.restore_error = False
         self.control_error: str | None = None
+        self.released: list[str] = []
+        self.exclusive_operations: list[tuple[str, str]] = []
 
     def runtime_state(self, session_id: str) -> RuntimeState:
         return self.states.get(session_id, RuntimeState(session_id))
@@ -67,6 +69,26 @@ class FakeCoordinator:
         request = {"session_id": session_id, "sid": sid, "n": n}
         self.rewinds.append(request)
         return {"removed_sids": ["stream-2"], "kept": 1, "history_lines": 2}
+
+    def release_runtime(
+        self, session_id: str, *, shutdown, operation="release", after_release=None
+    ) -> bool:
+        state = self.runtime_state(session_id)
+        if state.status != "idle":
+            raise AgentBusyError(
+                session_id,
+                state.run_id or "",
+                reason=AgentBusyError.REASON_SESSION_ACTIVE,
+            )
+        self.released.append(session_id)
+        shutdown(type("Runtime", (), {"shutdown": lambda self: None})())
+        if after_release is not None:
+            after_release()
+        return True
+
+    def exclusive(self, session_id: str, operation: str, action):
+        self.exclusive_operations.append((session_id, operation))
+        return action()
 
 
 def _client(tmp_path: Path, monkeypatch):
@@ -261,10 +283,26 @@ def test_active_session_cannot_be_deleted(tmp_path: Path, monkeypatch) -> None:
         assert response.status_code == 409
         assert response.json()["detail"] == {
             "code": "session_active",
-            "run_id": "run-a",
-            "status": "running",
+            "detail": response.json()["detail"]["detail"],
+            "active_session_id": sid,
+            "active_run_id": "run-a",
+            "capacity": 1,
+            "active_count": 1,
         }
         assert store.get(sid)["id"] == sid
+
+
+def test_deleting_idle_session_releases_cached_runtime_once(tmp_path: Path, monkeypatch) -> None:
+    client, store, coordinator = _client(tmp_path, monkeypatch)
+    sid = store.create(title="Idle")["id"]
+
+    with client:
+        response = client.delete(f"/api/sessions/{sid}")
+
+    assert response.status_code == 204
+    assert coordinator.released == [sid]
+    assert coordinator.exclusive_operations == []
+    assert store.list() == []
 
 
 def test_session_run_capacity_defaults_to_three_and_allows_one_to_three(monkeypatch) -> None:

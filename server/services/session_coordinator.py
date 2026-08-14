@@ -204,6 +204,50 @@ class SessionCoordinator:
                 if self._exclusive_controls.get(session_id) == "rewind":
                     self._exclusive_controls.pop(session_id, None)
 
+    def exclusive(
+        self,
+        session_id: str,
+        operation: str,
+        action: Callable[[], Any],
+    ) -> Any:
+        """Run a session-scoped mutating action under coordinator admission."""
+        with self._lock:
+            active = self._active_by_session.get(session_id)
+            if active is not None:
+                raise self._busy(active, reason=AgentBusyError.REASON_SESSION_ACTIVE)
+            self._raise_if_control_busy(session_id, include_side_questions=True)
+            self._exclusive_controls[session_id] = operation
+        try:
+            return action()
+        finally:
+            with self._lock:
+                if self._exclusive_controls.get(session_id) == operation:
+                    self._exclusive_controls.pop(session_id, None)
+
+    def release_runtime(
+        self,
+        session_id: str,
+        *,
+        shutdown: Callable[[SessionRuntime], Any] | None = None,
+        operation: str = "release",
+        after_release: Callable[[], Any] | None = None,
+    ) -> bool:
+        """Detach, stop, and dispose identity in one exclusive reservation.
+
+        ``after_release`` runs while the session control reservation is still
+        held. It is used for metadata/archive deletion so a concurrent submit
+        cannot recreate a runtime between shutdown and persistent deletion.
+        """
+        def _release() -> bool:
+            runtime = self._runtimes.pop(session_id, None)
+            if runtime is not None and shutdown is not None:
+                shutdown(runtime)
+            if after_release is not None:
+                after_release()
+            return runtime is not None
+
+        return self.exclusive(session_id, operation, _release)
+
     def session_snapshot(self, session_id: str) -> tuple[RuntimeState, dict[str, Any] | None]:
         """Return runtime identity and its matching active content together."""
         with self._lock:

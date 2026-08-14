@@ -140,3 +140,20 @@ runtime stream ID 只标识当前进程内某次提交，并受 snapshot 数量�
 4. **持久化 owner 收口**：每类数据指定唯一 repository/single writer；route 和 service 不再各自直接读写 JSON。
 5. **AgentService 拆分**：逐步拆为 GA runtime adapter、stream projector、rewind/archive adapter、LLM preference 等组件；`AgentService` 只做兼容 facade。
 6. **Tauri 收敛**：用新的 ADR supersede `adr/0001`，将 Tauri sidecar supervisor 设为唯一生产桌面生命周期；pywebview 先降为明确的迁移/恢复入口，完成真实窗口、进程回收、升级和数据兼容验收后删除。
+
+## 10. 会话与 archive 删除事务边界
+
+状态：已实施（2026-08-14）
+
+`SessionCoordinator` 现在提供两类可复用的生命周期入口：
+
+- `exclusive(session_id, operation, action)`：在同一 session 内串行执行 archive/session 生命周期变更，拒绝与普通 run、BTW、rewind、配置变更竞态。
+- `release_runtime(session_id, shutdown=..., operation=..., after_release=...)`：先取得独占权，再从缓存移除 idle runtime、执行阻塞式 shutdown，并在同一 reservation 内运行 `after_release` 删除 session/archive 身份；shutdown 或删除失败会向上抛出，调用方不得把事务视为已完成。
+
+绑定关系按以下规则执行：
+
+- `DELETE /api/sessions/{id}`：释放、停止缓存 runtime 和删除 session metadata 在同一个 `delete` 独占 reservation 中完成。
+- `DELETE /api/conversations/{cid}`：若 archive 已绑定 Hub session，释放、停止缓存 runtime 和删除原生 archive/派生 metadata 在同一个 `archive_delete` 独占 reservation 中完成；执行删除前重新校验 archive 绑定仍是当初解析出的 session。
+- 应用 shutdown 时先停止 scheduled chats，再逐个 abort 活跃 session run；全局 AgentService 与 token persistence 仍按既有顺序收尾。
+
+这解决了“metadata/archive 已删除但 idle runtime 仍持有 GA birth lock”的竞态。若 runtime 正在运行或持有控制操作，删除请求返回 409，而不是先删除身份再留下不可恢复的锁。

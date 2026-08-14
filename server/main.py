@@ -363,6 +363,11 @@ def create_app() -> FastAPI:
                 session_routes.stop_scheduled_chats()
             except Exception:
                 log.exception("scheduled chat shutdown failed")
+            try:
+                from .routes import sessions as session_routes
+                session_routes.stop_session_runtimes()
+            except Exception:
+                log.exception("session runtime abort failed")
             await _cancel_background_task(feishu_autostart_task)
             try:
                 from .services.task_scheduler import TaskScheduler
