@@ -1,5 +1,6 @@
 import json
 import importlib
+import subprocess
 import sys
 import types
 import unittest
@@ -9,6 +10,7 @@ from unittest import mock
 
 from server import _paths
 from server.services import chat_retry
+from server.services import ga_subprocess_patch
 
 
 def _touch_python(path: Path) -> Path:
@@ -216,6 +218,28 @@ class AgentServiceWebToolPatchTests(unittest.TestCase):
             ))
             self.assertEqual(calls[1][0], "web_execute_js")
             self.assertEqual(calls[1][1]["script"], "return 1")
+
+
+class GaSubprocessPatchTests(unittest.TestCase):
+    def test_patch_is_scoped_to_ga_and_preserves_stdlib_popen(self):
+        original_popen = subprocess.Popen
+        fake_subprocess = types.SimpleNamespace(Popen=lambda *_args, **_kwargs: None)
+        fake_ga = types.SimpleNamespace(subprocess=fake_subprocess)
+
+        try:
+            with mock.patch.dict(sys.modules, {"ga": fake_ga}), \
+                 mock.patch.object(_paths, "discover_user_python", return_value="/tmp/ga-python"):
+                ga_subprocess_patch._patch_ga_subprocess()
+
+            self.assertIsNot(fake_ga.subprocess, fake_subprocess)
+            self.assertIsNot(fake_ga.subprocess.Popen, original_popen)
+            self.assertTrue(fake_ga.subprocess.Popen._admin_wrapped)
+            self.assertIs(subprocess.Popen, original_popen)
+            self.assertIs(fake_ga.subprocess.CompletedProcess, subprocess.CompletedProcess)
+            self.assertIs(fake_ga.subprocess.PIPE, subprocess.PIPE)
+        finally:
+            with mock.patch.dict(sys.modules, {"ga": fake_ga}):
+                ga_subprocess_patch._patch_ga_subprocess()
 
 
 if __name__ == "__main__":

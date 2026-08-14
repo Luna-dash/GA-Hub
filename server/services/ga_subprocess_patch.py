@@ -9,10 +9,29 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import subprocess
 
 from .. import _paths
 
 log = logging.getLogger(__name__)
+
+
+class _GaSubprocessProxy:
+    """A narrowly scoped subprocess facade used only by GA.
+
+    GA commonly holds a reference to the standard-library subprocess module
+    itself.  Replacing Popen on that module would leak the GA compatibility
+    rewrite into every later subprocess in GA-Hub.  This facade keeps the real
+    module untouched while exposing the patched constructor at GA's existing
+    ga.subprocess.Popen call site.
+    """
+
+    def __init__(self, original: subprocess, popen):
+        object.__setattr__(self, "_original", original)
+        object.__setattr__(self, "Popen", popen)
+
+    def __getattr__(self, name: str):
+        return getattr(self._original, name)
 
 
 def _patch_ga_subprocess() -> None:
@@ -43,8 +62,10 @@ def _patch_ga_subprocess() -> None:
     path because user code routinely imports user-pip-installed packages
     (numpy, requests, …) that the frozen interpreter doesn't have.
 
-    Patching strategy is the same on all platforms: override the ``Popen``
-    reference inside ``ga``'s module namespace at admin-startup time. The
+    Patching strategy is the same on all platforms: replace `ga.subprocess`
+    with a narrow facade whose `Popen` is wrapped. The facade delegates all
+    other attributes to the real standard-library module, so GA's existing
+    call site works without mutating the process-global `subprocess.Popen`.
     wrapper rewrites GA ``code_run`` commands away from Admin's runtime and
     toward the configured / GA-local / system Python interpreter, while also
     preserving Windows no-console behavior. The GA repo stays untouched on
@@ -104,7 +125,7 @@ def _patch_ga_subprocess() -> None:
         return _orig_popen(*args, **kwargs)
 
     _admin_popen._admin_wrapped = True  # type: ignore[attr-defined]
-    _ga.subprocess.Popen = _admin_popen
+    _ga.subprocess = _GaSubprocessProxy(_sp, _admin_popen)
     log.info(
         "patched ga.subprocess.Popen for code_run python=%s no_window=%s",
         real_python or sys.executable,

@@ -27,6 +27,12 @@ class DesktopSidecarTests(unittest.TestCase):
             stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
         )
         line = self.proc.stdout.readline()
+        if not line:
+            _, stderr = self.proc.communicate(timeout=10)
+            self.fail(
+                "sidecar exited before emitting its lifecycle event "
+                f"(code={self.proc.returncode}, executable={sys.executable!r}, stderr={stderr!r})"
+            )
         self.event = json.loads(line)
 
     def tearDown(self) -> None:
