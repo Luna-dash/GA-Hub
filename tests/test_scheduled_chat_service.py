@@ -109,7 +109,19 @@ class ScheduledChatServiceTests(unittest.TestCase):
         from server.routes import sessions
 
         service = mock.Mock()
-        service.list.return_value = [{"id": "task-1"}]
+        service.list.return_value = [{
+            "id": "task-1",
+            "session_id": "alpha",
+            "text": "later",
+            "images": [],
+            "scheduled_for": 2.0,
+            "created_at": 1.0,
+            "status": "pending",
+            "sent_at": None,
+            "cancelled_at": None,
+            "last_error": None,
+            "retry_at": None,
+        }]
         with (
             mock.patch.object(sessions, "_session"),
             mock.patch.object(sessions, "_get_scheduled_chats", return_value=service),
@@ -117,7 +129,10 @@ class ScheduledChatServiceTests(unittest.TestCase):
             response = asyncio.run(sessions.list_scheduled_chats("alpha"))
 
         service.list.assert_called_once_with("alpha")
-        self.assertEqual(response, {"total": 1, "items": [{"id": "task-1"}]})
+        self.assertEqual(response, {
+            "total": 1,
+            "items": service.list.return_value,
+        })
 
     def test_reload_recovers_interrupted_dispatching_task(self):
         self.path.write_text(json.dumps([{

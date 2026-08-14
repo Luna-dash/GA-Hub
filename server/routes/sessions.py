@@ -206,6 +206,25 @@ class ScheduledChatCreate(BaseModel):
     scheduled_for: float
 
 
+class ScheduledChatResp(BaseModel):
+    id: str
+    session_id: str
+    text: str
+    images: list[str]
+    scheduled_for: float
+    created_at: float
+    status: Literal["pending", "dispatching", "sent", "cancelled"]
+    sent_at: float | None
+    cancelled_at: float | None
+    last_error: str | None
+    retry_at: float | None
+
+
+class ScheduledChatListResp(BaseModel):
+    total: int
+    items: list[ScheduledChatResp]
+
+
 class SessionRuntimeResp(BaseModel):
     session_id: str
     status: str
@@ -552,7 +571,7 @@ async def session_rewind(session_id: str, req: RewindReq):
 
 
 @router.get("/api/sessions/{session_id}/scheduled-chats")
-async def list_scheduled_chats(session_id: str):
+async def list_scheduled_chats(session_id: str) -> ScheduledChatListResp:
     _session(session_id)
     items = _get_scheduled_chats().list(session_id)
     return {"total": len(items), "items": items}
@@ -562,7 +581,9 @@ async def list_scheduled_chats(session_id: str):
     "/api/sessions/{session_id}/scheduled-chats",
     status_code=status.HTTP_201_CREATED,
 )
-async def create_scheduled_chat(session_id: str, req: ScheduledChatCreate):
+async def create_scheduled_chat(
+    session_id: str, req: ScheduledChatCreate
+) -> ScheduledChatResp:
     _session(session_id)
     now = time.time()
     if req.scheduled_for <= now:

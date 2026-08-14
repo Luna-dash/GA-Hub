@@ -181,19 +181,8 @@ export interface Conversation {
   messages: Message[]
 }
 
-export interface ScheduledChat {
-  id: string
-  session_id: string
-  text: string
-  images: string[]
-  scheduled_for: number
-  created_at: number
-  status: 'pending' | 'dispatching' | 'sent' | 'cancelled'
-  sent_at: number | null
-  cancelled_at: number | null
-  last_error: string | null
-  retry_at: number | null
-}
+export type ScheduledChat = ApiSchemas['ScheduledChatResp']
+export type ScheduledChatListResponse = ApiSchemas['ScheduledChatListResp']
 
 // ── Memory / SOPs ─────────────────────────────────────────
 export interface SOPItem { name: string; size: number; mtime: number }

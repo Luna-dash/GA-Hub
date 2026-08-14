@@ -33,6 +33,7 @@ import type {
   Schedule,
   ScheduleType,
   ScheduledChat,
+  ScheduledChatListResponse,
   SessionSnapshot,
   SessionMessagesResponse,
   SessionRuntime,
@@ -397,7 +398,7 @@ export const api = {
   abortSession: (id: string) =>
     http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/abort`),
   scheduledChats: (id: string) =>
-    http<{ total: number; items: ScheduledChat[] }>('GET', `/api/sessions/${encodeURIComponent(id)}/scheduled-chats`),
+    http<ScheduledChatListResponse>('GET', `/api/sessions/${encodeURIComponent(id)}/scheduled-chats`),
   createScheduledChat: (id: string, text: string, images: string[], scheduled_for: number) =>
     http<ScheduledChat>('POST', `/api/sessions/${encodeURIComponent(id)}/scheduled-chats`, {
       text,

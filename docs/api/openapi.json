@@ -3514,7 +3514,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledChatListResp"
+                }
               }
             }
           },
@@ -3559,7 +3561,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledChatResp"
+                }
               }
             }
           },
@@ -5260,6 +5264,127 @@
           "scheduled_for"
         ],
         "title": "ScheduledChatCreate"
+      },
+      "ScheduledChatListResp": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduledChatResp"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "items"
+        ],
+        "title": "ScheduledChatListResp"
+      },
+      "ScheduledChatResp": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "images": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Images"
+          },
+          "scheduled_for": {
+            "type": "number",
+            "title": "Scheduled For"
+          },
+          "created_at": {
+            "type": "number",
+            "title": "Created At"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "dispatching",
+              "sent",
+              "cancelled"
+            ],
+            "title": "Status"
+          },
+          "sent_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sent At"
+          },
+          "cancelled_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "retry_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "session_id",
+          "text",
+          "images",
+          "scheduled_for",
+          "created_at",
+          "status",
+          "sent_at",
+          "cancelled_at",
+          "last_error",
+          "retry_at"
+        ],
+        "title": "ScheduledChatResp"
       },
       "SchedulerDomainCount": {
         "properties": {

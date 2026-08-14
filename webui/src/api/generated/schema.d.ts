@@ -2500,6 +2500,41 @@ export interface components {
             /** Scheduled For */
             scheduled_for: number;
         };
+        /** ScheduledChatListResp */
+        ScheduledChatListResp: {
+            /** Total */
+            total: number;
+            /** Items */
+            items: components["schemas"]["ScheduledChatResp"][];
+        };
+        /** ScheduledChatResp */
+        ScheduledChatResp: {
+            /** Id */
+            id: string;
+            /** Session Id */
+            session_id: string;
+            /** Text */
+            text: string;
+            /** Images */
+            images: string[];
+            /** Scheduled For */
+            scheduled_for: number;
+            /** Created At */
+            created_at: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "dispatching" | "sent" | "cancelled";
+            /** Sent At */
+            sent_at: number | null;
+            /** Cancelled At */
+            cancelled_at: number | null;
+            /** Last Error */
+            last_error: string | null;
+            /** Retry At */
+            retry_at: number | null;
+        };
         /** SchedulerDomainCount */
         SchedulerDomainCount: {
             /** Schedule Count */
@@ -5829,7 +5864,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ScheduledChatListResp"];
                 };
             };
             /** @description Validation Error */
@@ -5864,7 +5899,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ScheduledChatResp"];
                 };
             };
             /** @description Validation Error */
