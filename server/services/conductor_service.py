@@ -391,15 +391,20 @@ API: {base}??requests?GET /api/conductor/readme????GET /api/conductor/chat??????
 - ??subagent??????????????????????????????????????
 {summary}"""
 
-    def start(self, llm_index: Optional[int] = None):
+    def start(self, llm_index: Optional[int] = None) -> bool:
         if llm_index is not None:
             self._conductor_llm_index = llm_index
-        if not self._started:
-            self.conductor.start()
-            self._started = True
+        started = self.conductor.start()
+        self._started = self.conductor.started
+        return started
 
-    def notify(self, event: dict):
-        self.conductor.notify(event)
+    def stop(self, timeout: float = 5.0) -> bool:
+        stopped = self.conductor.stop(timeout=timeout)
+        self._started = self.conductor.started
+        return stopped
+
+    def notify(self, event: dict) -> bool:
+        return self.conductor.notify(event)
 
     def get_chat_messages(self, last: int = 20) -> list:
         return self.chat_messages[-last:]
@@ -424,11 +429,13 @@ API: {base}??requests?GET /api/conductor/readme????GET /api/conductor/chat??????
                 self.usage_store.complete(request_id, "FAILED_START")
                 raise
             try:
-                self.notify({
+                accepted = self.notify({
                     "type": "user_message",
                     "msg": msg,
                     "request_id": request_id,
                 })
+                if not accepted:
+                    raise RuntimeError("conductor stopped before event admission")
             except Exception:
                 self.usage_store.complete(request_id, "FAILED_ADMISSION")
                 raise

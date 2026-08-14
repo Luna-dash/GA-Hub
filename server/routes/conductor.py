@@ -147,5 +147,6 @@ async def start_conductor(body: ConductorStartReq | None = None):
 @router.post("/api/conductor/stop")
 async def stop_conductor():
     """Stop the conductor supervisor."""
-    svc()._started = False
-    return {"ok": True, "started": svc()._started}
+    service = svc()
+    stopped = service.stop()
+    return {"ok": stopped, "started": service._started}

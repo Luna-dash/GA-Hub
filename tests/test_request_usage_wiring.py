@@ -13,7 +13,7 @@ def test_user_chat_message_starts_usage_request_and_returns_request_id():
     service.chat_messages = []
     service._started = True
     service.start = Mock()
-    service.notify = Mock()
+    service.notify = Mock(return_value=True)
     service.usage_store = RequestUsageStore(clock=lambda: 10.0)
 
     with patch("server.services.conductor_service.bus.publish"):
@@ -36,7 +36,7 @@ def _service_for_admission_test():
     service.chat_messages = []
     service._started = False
     service.start = Mock()
-    service.notify = Mock()
+    service.notify = Mock(return_value=True)
     service.usage_store = RequestUsageStore(clock=lambda: 10.0)
     return service
 
@@ -45,7 +45,7 @@ def test_user_admission_starts_conductor_before_notify():
     service = _service_for_admission_test()
     order = []
     service.start.side_effect = lambda _llm: order.append("start")
-    service.notify.side_effect = lambda _event: order.append("notify")
+    service.notify.side_effect = lambda _event: order.append("notify") or True
 
     with patch("server.services.conductor_service.bus.publish"):
         service.add_chat_message("hello", role="user")
@@ -95,3 +95,17 @@ def test_notify_failure_completes_request_as_failed_admission():
     assert row["attribution"] == "FAILED_ADMISSION"
     assert row["completed_at"] == 10.0
     service.start.assert_called_once_with(None)
+
+
+def test_notify_false_completes_request_as_failed_admission():
+    service = _service_for_admission_test()
+    service.notify.return_value = False
+
+    with patch("server.services.conductor_service.bus.publish"), pytest.raises(
+        RuntimeError, match="stopped before event admission"
+    ):
+        service.add_chat_message("hello", role="user")
+
+    row = service.usage_store.list()[0]
+    assert row["attribution"] == "FAILED_ADMISSION"
+    assert row["completed_at"] == 10.0

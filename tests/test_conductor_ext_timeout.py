@@ -53,6 +53,7 @@ class FakeState:
     status: str
     created_at: float
     updated_at: float
+    active_generation: int = 0
 
 
 class FakeCore:
@@ -84,6 +85,28 @@ def test_timeout_monitor_warns_once_per_kind_without_mutating_state():
         "conductor:subagent_timeout_total",
     ]
     assert all(payload["action"] == "warning_only" for _, payload in events)
+
+
+def test_timeout_monitor_warns_again_for_a_new_generation():
+    state = FakeState(
+        "retrying",
+        "running",
+        created_at=0.0,
+        updated_at=80.0,
+        active_generation=1,
+    )
+    monitor = TimeoutMonitor(
+        FakeCore(state),
+        silence_timeout=10.0,
+        total_timeout=50.0,
+        check_interval=1.0,
+        clock=lambda: 100.0,
+    )
+
+    assert monitor.check_once() == [("retrying", "silence"), ("retrying", "total")]
+
+    state.active_generation = 2
+    assert monitor.check_once() == [("retrying", "silence"), ("retrying", "total")]
 
 
 def test_timeout_monitor_validates_positive_configuration():

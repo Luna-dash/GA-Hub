@@ -109,7 +109,7 @@ class TimeoutMonitor:
         self.check_interval = check_interval
         self.publish = publish
         self.clock = clock
-        self._emitted: set[tuple[str, str]] = set()
+        self._emitted: set[tuple[str, int, str]] = set()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -128,19 +128,21 @@ class TimeoutMonitor:
             if getattr(state, "status", None) != "running":
                 continue
             agent_id = str(state.id)
+            generation = int(getattr(state, "active_generation", 0))
             checks = (
                 ("silence", now - float(state.updated_at), self.silence_timeout),
                 ("total", now - float(state.created_at), self.total_timeout),
             )
             for kind, elapsed, limit in checks:
-                key = (agent_id, kind)
+                key = (agent_id, generation, kind)
                 if elapsed < limit or key in self._emitted:
                     continue
                 self._emitted.add(key)
-                emitted.append(key)
+                emitted.append((agent_id, kind))
                 if self.publish is not None:
                     self.publish(f"conductor:subagent_timeout_{kind}", {
                         "id": agent_id,
+                        "generation": generation,
                         "elapsed_seconds": elapsed,
                         "limit_seconds": limit,
                         "action": "warning_only",
