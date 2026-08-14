@@ -395,13 +395,19 @@ API: {base}??requests?GET /api/conductor/readme????GET /api/conductor/chat??????
         if llm_index is not None:
             self._conductor_llm_index = llm_index
         started = self.conductor.start()
-        self._started = self.conductor.started
+        self.lifecycle_status()
         return started
 
     def stop(self, timeout: float = 5.0) -> bool:
         stopped = self.conductor.stop(timeout=timeout)
-        self._started = self.conductor.started
+        self.lifecycle_status()
         return stopped
+
+    def lifecycle_status(self) -> dict[str, bool]:
+        """Return the shared core's live lifecycle state."""
+        status = self.conductor.lifecycle_snapshot()
+        self._started = status["started"]
+        return status
 
     def notify(self, event: dict) -> bool:
         return self.conductor.notify(event)

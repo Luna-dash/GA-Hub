@@ -129,19 +129,23 @@ async def get_conductor_log():
 
 @router.get("/api/conductor/status")
 async def get_status():
-    running, stopped = svc().pool.counts()
+    service = svc()
+    running, stopped = service.pool.counts()
+    lifecycle = service.lifecycle_status()
     return {
-        "started": svc()._started,
+        **lifecycle,
         "subagents": {"running": running, "stopped": stopped},
-        "chat_count": len(svc().chat_messages),
+        "chat_count": len(service.chat_messages),
     }
 
 
 @router.post("/api/conductor/start")
 async def start_conductor(body: ConductorStartReq | None = None):
     """Start the conductor supervisor."""
-    svc().start(llm_index=body.llm_index if body else None)
-    return {"ok": True, "started": svc()._started}
+    service = svc()
+    started = service.start(llm_index=body.llm_index if body else None)
+    lifecycle = service.lifecycle_status()
+    return {"ok": started or lifecycle["started"], **lifecycle}
 
 
 @router.post("/api/conductor/stop")
@@ -149,4 +153,4 @@ async def stop_conductor():
     """Stop the conductor supervisor."""
     service = svc()
     stopped = service.stop()
-    return {"ok": stopped, "started": service._started}
+    return {"ok": stopped, **service.lifecycle_status()}

@@ -138,3 +138,22 @@ def test_conductor_and_goalhive_share_inactive_semantics_when_idle() -> None:
 
     assert (conductor.state, conductor.summary) == ("stopped", "当前未运行")
     assert (goalhive.state, goalhive.summary) == ("stopped", "当前未运行")
+
+
+def test_conductor_panel_uses_live_lifecycle_instead_of_cached_started() -> None:
+    lifecycle_status = mock.Mock(return_value={"started": False})
+    conductor_service = SimpleNamespace(
+        _started=True,
+        lifecycle_status=lifecycle_status,
+        pool=SimpleNamespace(counts=lambda: (0, 1)),
+        chat_messages=[],
+    )
+
+    with mock.patch(
+        "server.services.conductor_service.ConductorService._instance",
+        conductor_service,
+    ):
+        conductor = ServiceRegistry._conductor()
+
+    assert (conductor.state, conductor.summary) == ("stopped", "当前未运行")
+    lifecycle_status.assert_called_once_with()
