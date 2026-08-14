@@ -1,6 +1,6 @@
 # GA-Hub Tauri 2 desktop shell
 
-This shell is an additional entry point. `launch_webui.pyw`, `start.bat`, and the pywebview dependency remain unchanged.
+This shell is the production desktop lifecycle. `launch_webui.pyw` is retained only as an explicit source-checkout migration/recovery entry while native-dialog and release acceptance work completes.
 
 ## Runtime contract
 
