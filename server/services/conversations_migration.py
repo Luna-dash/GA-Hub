@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from server import _paths
+from server.services.legacy_chat_history_store import LegacyChatHistoryStore
 from server.services.conversation_repository import (
     Conversation,
     ConversationRepository,
@@ -32,28 +32,24 @@ MIGRATION_MARKER = ".migrated_v1"
 
 
 def _legacy_chat_history_path() -> Path | None:
-    """Path to the legacy GA-side chat_history.json, if GA_ROOT is configured."""
-    try:
-        return _paths.memory_dir() / "chat_history.json"
-    except RuntimeError:
-        # GA_ROOT not configured — nothing to migrate from.
-        return None
+    """Compatibility test hook backed by the legacy store adapter."""
+    store = _LEGACY_STORE
+    return store.path
+
+
+_LEGACY_STORE = LegacyChatHistoryStore()
 
 
 def _read_legacy_entries() -> list[dict[str, Any]]:
-    p = _legacy_chat_history_path()
-    if p is None or not p.exists():
+    path = _legacy_chat_history_path()
+    if path is None:
         return []
+    store = LegacyChatHistoryStore(path)
     try:
-        with open(p, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
+        return store.read()
+    except Exception as e:
         log.warning("could not read legacy chat_history.json: %s", e)
         return []
-    if not isinstance(data, list):
-        log.warning("legacy chat_history.json is not a list; skipping migration")
-        return []
-    return data
 
 
 def _entry_to_conversation(entry: dict[str, Any]) -> Conversation:

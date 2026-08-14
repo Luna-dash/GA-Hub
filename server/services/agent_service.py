@@ -39,6 +39,7 @@ from .chat_retry import ChatRetryConfig, classify_recoverable_error, load_chat_r
 from .chat_stream_projection import ChatSnapshot, ChatStreamProjection  # noqa: E402
 from .event_bus import bus  # noqa: E402
 from .llm_preference_store import LlmPreferenceStore  # noqa: E402
+from .legacy_chat_history_store import LegacyChatHistoryStore  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -215,6 +216,7 @@ class AgentService:
         self._lock = threading.Lock()
         self._rewind_lock = threading.RLock()
         self._rewind_store = None
+        self._legacy_chat_history = LegacyChatHistoryStore()
         self._next_id = 0
         self._run_thread: threading.Thread | None = None
         # ── conversation title ────────────────────────────────────
@@ -890,23 +892,7 @@ class AgentService:
             "source": "webui",
         }
 
-        hf = str(_paths.memory_dir() / "chat_history.json")
-        all_: list[dict] = []
-        if os.path.isfile(hf):
-            try:
-                with open(hf, encoding="utf-8") as f:
-                    loaded = json.load(f)
-                if isinstance(loaded, list):
-                    all_ = loaded
-            except Exception as e:
-                log.warning("chat_history.json unreadable, starting fresh: %s", e)
-        all_.append(entry)
-
-        os.makedirs(os.path.dirname(hf), exist_ok=True)
-        tmp = hf + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(all_, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, hf)
+        self._legacy_chat_history.append(entry)
         log.info("archived webui conversation %s (%d msgs) to chat_history.json",
                  entry["id"], len(messages))
 
