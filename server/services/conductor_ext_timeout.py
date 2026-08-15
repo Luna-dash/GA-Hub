@@ -124,7 +124,17 @@ class TimeoutMonitor:
         """Evaluate current state and return newly emitted ``(id, kind)`` pairs."""
         now = self.clock()
         emitted: list[tuple[str, str]] = []
-        for state in self._states():
+        states = self._states()
+        live_generations = {
+            (str(state.id), int(getattr(state, "active_generation", 0)))
+            for state in states
+            if getattr(state, "status", None) == "running"
+        }
+        self._emitted = {
+            key for key in self._emitted
+            if key[:2] in live_generations
+        }
+        for state in states:
             if getattr(state, "status", None) != "running":
                 continue
             agent_id = str(state.id)

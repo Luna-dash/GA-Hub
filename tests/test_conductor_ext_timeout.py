@@ -104,9 +104,36 @@ def test_timeout_monitor_warns_again_for_a_new_generation():
     )
 
     assert monitor.check_once() == [("retrying", "silence"), ("retrying", "total")]
+    assert {key[:2] for key in monitor._emitted} == {("retrying", 1)}
 
     state.active_generation = 2
     assert monitor.check_once() == [("retrying", "silence"), ("retrying", "total")]
+    assert {key[:2] for key in monitor._emitted} == {("retrying", 2)}
+    assert monitor.check_once() == []
+
+
+def test_timeout_monitor_discards_emissions_for_finished_or_removed_agents():
+    state = FakeState("finished", "running", created_at=0.0, updated_at=0.0)
+    core = FakeCore(state)
+    monitor = TimeoutMonitor(
+        core,
+        silence_timeout=10.0,
+        total_timeout=50.0,
+        check_interval=1.0,
+        clock=lambda: 100.0,
+    )
+
+    assert monitor.check_once() == [("finished", "silence"), ("finished", "total")]
+    assert monitor._emitted
+
+    state.status = "done"
+    assert monitor.check_once() == []
+    assert monitor._emitted == set()
+
+    with core.lock:
+        del core.subagents[state.id]
+    assert monitor.check_once() == []
+    assert monitor._emitted == set()
 
 
 def test_timeout_monitor_validates_positive_configuration():
