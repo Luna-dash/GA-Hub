@@ -12,6 +12,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
+import psutil
+
 from .. import _paths
 from .event_bus import bus
 
@@ -119,17 +121,16 @@ class FeishuService:
         """Find a running fsapp.py python process started outside this service instance."""
         try:
             if os.name == "nt":
-                ps = (
-                    "Get-CimInstance Win32_Process | "
-                    "Where-Object { $_.Name -match 'python' -and $_.CommandLine -like '*frontends*fsapp.py*' } | "
-                    "Sort-Object ProcessId -Descending | Select-Object -First 1 -ExpandProperty ProcessId"
-                )
-                p = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-                                   text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=6)
-                for line in (p.stdout or "").splitlines():
-                    line = line.strip()
-                    if line.isdigit():
-                        return int(line)
+                matches: list[int] = []
+                for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+                    try:
+                        name = str(proc.info.get("name") or "").lower()
+                        command = " ".join(proc.info.get("cmdline") or []).replace("\\", "/").lower()
+                        if "python" in name and "frontends/fsapp.py" in command:
+                            matches.append(int(proc.info["pid"]))
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, TypeError, ValueError):
+                        continue
+                return max(matches, default=None)
             else:
                 pattern = r"python.*frontends[/\\]fsapp\.py"
                 p = subprocess.run(["pgrep", "-f", pattern], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=6)
