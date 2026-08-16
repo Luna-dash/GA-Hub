@@ -1,6 +1,7 @@
 """Regression tests for the Feishu process probe."""
 from __future__ import annotations
 
+import subprocess
 from types import SimpleNamespace
 from unittest import mock
 
@@ -24,3 +25,33 @@ def test_windows_external_pid_probe_does_not_spawn_powershell():
 
     process_iter.assert_called_once_with(["pid", "name", "cmdline"])
     run.assert_not_called()
+
+
+def test_windows_helper_process_flags_hide_console_and_preserve_group():
+    service = FeishuService()
+    with (
+        mock.patch("server.services.feishu_service.os.name", "nt"),
+        mock.patch.object(subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True),
+        mock.patch.object(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True),
+    ):
+        assert service._creationflags() == 0x08000000
+        assert service._creationflags(new_process_group=True) == 0x08000200
+
+
+def test_windows_check_launches_python_without_console(tmp_path):
+    service = FeishuService()
+    fsapp = tmp_path / "fsapp.py"
+    fsapp.write_text("# test fixture", encoding="utf-8")
+    completed = SimpleNamespace(returncode=0, stdout='{"ready": true}')
+
+    with (
+        mock.patch("server.services.feishu_service.os.name", "nt"),
+        mock.patch.object(subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True),
+        mock.patch.object(service, "fsapp_path", return_value=fsapp),
+        mock.patch.object(service, "_python", return_value="python.exe"),
+        mock.patch("server.services.feishu_service.subprocess.run", return_value=completed) as run,
+    ):
+        result = service.check()
+
+    assert result["ready"] is True
+    assert run.call_args.kwargs["creationflags"] == 0x08000000

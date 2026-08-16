@@ -50,6 +50,16 @@ class FeishuService:
     def _python(self) -> str:
         return _paths.discover_user_python(_paths.GA_ROOT) or sys.executable
 
+    @staticmethod
+    def _creationflags(*, new_process_group: bool = False) -> int:
+        """Keep helper Python processes invisible in the Windows desktop build."""
+        if os.name != "nt":
+            return 0
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        if new_process_group:
+            flags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        return flags
+
     def _publish_chat_events_from_text(self, text: str) -> int:
         published = 0
         for line in (text or "").splitlines():
@@ -211,6 +221,7 @@ class FeishuService:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             timeout=20,
+            creationflags=self._creationflags(),
         )
         if p.returncode != 0:
             raise RuntimeError((p.stdout or "keychain save failed").strip())
@@ -246,6 +257,7 @@ class FeishuService:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 timeout=timeout,
+                creationflags=self._creationflags(),
             )
             raw = p.stdout or ""
             self._publish_chat_events_from_text(raw)
@@ -286,7 +298,7 @@ class FeishuService:
                 return {"started": False, "running": True, "pid": ext_pid, "external": True}
             log_file = self.log_file()
             log_file.parent.mkdir(parents=True, exist_ok=True)
-            flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
+            flags = self._creationflags(new_process_group=True)
             log_fh = log_file.open("a", encoding="utf-8", errors="replace")
             log_fh.write("\n" + "=" * 18 + " GA-Hub start feishuapp " + time.strftime("%Y-%m-%d %H:%M:%S") + " " + "=" * 18 + "\n")
             log_fh.flush()
@@ -357,6 +369,7 @@ class FeishuService:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             timeout=45,
+            creationflags=self._creationflags(),
         )
         raw = p.stdout or ""
         self._publish_chat_events_from_text(raw)
