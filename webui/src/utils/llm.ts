@@ -37,6 +37,10 @@ export interface LLMCapability {
   reason?: string                  // matched pattern (for debugging / tooltip)
 }
 
+export function defaultSessionLlmKey(llms: ReadonlyArray<{ key: string }>): string | undefined {
+  return llms[0]?.key
+}
+
 export function detectLLMCapability(name: string, model?: string): LLMCapability {
   const s = `${name || ''} ${model || ''}`
   for (const re of PATTERNS) {
