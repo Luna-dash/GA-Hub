@@ -19,6 +19,6 @@ url = "2"
 
 [profile.release]
 panic = "abort"
-codegen-units = 1
-lto = true
-strip = true
+codegen-units = 16
+lto = false
+strip = false

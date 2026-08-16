@@ -120,7 +120,7 @@ export default function App() {
         <ErrorBoundary>
           <Suspense fallback={<div className="h-full flex items-center justify-center text-slate-500 text-sm">载入中…</div>}>
             <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/" element={<Navigate to="/chat" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/chat" element={<LiveChat />} />
               <Route path="/feishu" element={<FeishuBot />} />

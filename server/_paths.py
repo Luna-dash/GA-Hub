@@ -258,6 +258,10 @@ def external_python_site_paths(ga_root: Path | None = None) -> list[str]:
     interpreter's site-packages to ``sys.path`` lets those in-process GA tools
     use the same environment that ``code_run`` will launch.
     """
+    if getattr(sys, "frozen", False) and os.environ.get(
+        "GA_HUB_ENABLE_EXTERNAL_SITE_PATHS", ""
+    ).strip() != "1":
+        return []
     python = discover_user_python(ga_root)
     if not python:
         return []

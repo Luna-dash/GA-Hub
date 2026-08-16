@@ -1,8 +1,10 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::{
     env,
-    io::{BufRead, BufReader, Write},
     fs,
-    net::TcpStream,
+    io::Write,
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -15,8 +17,12 @@ use std::{
 use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use url::Url;
 
-const READY_TIMEOUT: Duration = Duration::from_secs(40);
-const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+const READY_TIMEOUT: Duration = Duration::from_secs(600);
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 struct OwnedSidecar(Mutex<Option<Child>>);
 
@@ -57,55 +63,33 @@ fn sidecar_command() -> Result<Command, String> {
 
 fn spawn_sidecar() -> Result<(Child, u16, String), String> {
     let token = format!("{}-{}", std::process::id(), env!("CARGO_PKG_VERSION"));
+    let probe = TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| format!("sidecar port allocation failed: {e}"))?;
+    let port = probe
+        .local_addr()
+        .map_err(|e| format!("sidecar port lookup failed: {e}"))?
+        .port();
+    drop(probe);
+
     let mut command = sidecar_command()?;
+    let port_arg = port.to_string();
     command
+        .current_dir(repo_root())
         .args([
             "--host",
             "127.0.0.1",
             "--port",
-            "0",
+            &port_arg,
             "--instance-token",
             &token,
         ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
-    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let child = command
         .spawn()
         .map_err(|e| format!("sidecar spawn failed: {e}"))?;
-    let stdout = child.stdout.take().ok_or("sidecar stdout unavailable")?;
-    let deadline = Instant::now() + READY_TIMEOUT;
-    let mut reader = BufReader::new(stdout);
-    let mut line = String::new();
-    while Instant::now() < deadline {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => {
-                return Err(format!(
-                    "sidecar exited before ready: {:?}",
-                    child.try_wait()
-                ))
-            }
-            Ok(_) => {
-                if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {
-                    if event["event"] == "starting" && event["instance_token"] == token {
-                        let port = event["port"]
-                            .as_u64()
-                            .and_then(|v| u16::try_from(v).ok())
-                            .ok_or("invalid sidecar port")?;
-                        child.stdout = Some(reader.into_inner());
-                        return Ok((child, port, token));
-                    }
-                    if event["event"] == "failed" {
-                        return Err(format!("sidecar failed: {line}"));
-                    }
-                }
-            }
-            Err(e) => return Err(format!("sidecar protocol read failed: {e}")),
-        }
-    }
-    let _ = child.kill();
-    Err("sidecar startup protocol timed out".into())
+    Ok((child, port, token))
 }
 
 fn wait_http_ready(port: u16, token: &str) -> bool {
@@ -133,23 +117,27 @@ fn stop_owned(sidecar: &OwnedSidecar) {
     let Some(mut child) = sidecar.0.lock().unwrap().take() else {
         return;
     };
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(b"\n");
-    }
-    let deadline = Instant::now() + STOP_TIMEOUT;
-    while Instant::now() < deadline {
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) => thread::sleep(Duration::from_millis(100)),
-            Err(_) => break,
+    #[cfg(windows)]
+    {
+        // Do not block the UI thread on PyInstaller's parent/worker teardown.
+        // CREATE_NO_WINDOW also prevents taskkill from flashing a console.
+        let pid = child.id().to_string();
+        let result = Command::new("taskkill")
+            .args(["/PID", &pid, "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+        if result.is_err() {
+            let _ = child.kill();
         }
     }
-    eprintln!(
-        "[desktop] graceful sidecar stop timed out; killing owned pid {}",
-        child.id()
-    );
-    let _ = child.kill();
-    let _ = child.wait();
+    #[cfg(not(windows))]
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 fn main() {
@@ -195,6 +183,9 @@ fn main() {
             ..
         } if label == "main" && !quitting.swap(true, Ordering::SeqCst) => {
             api.prevent_close();
+            if let Some(window) = handle.get_webview_window("main") {
+                let _ = window.hide();
+            }
             stop_owned(&handle.state::<OwnedSidecar>());
             handle.exit(0);
         }

@@ -45,11 +45,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _stdin_shutdown(server: object) -> None:
-    """Treat a newline/EOF from the owning shell as a graceful stop request."""
+    """Treat a newline from the owning shell as a graceful stop request.
+
+    PyInstaller under a windowless parent may provide a stdin handle that is
+    already at EOF (or is invalid); that must NOT count as a stop request or
+    the server would shut down immediately after boot. Only a line containing
+    at least one byte (Tauri's stop_owned writes ``b\"\\n\"``) triggers exit.
+    """
     try:
-        sys.stdin.buffer.readline()
+        data = sys.stdin.buffer.readline()
     except (AttributeError, OSError):
-        pass
+        return
+    if not data:
+        return
     setattr(server, "should_exit", True)
     _emit("shutdown_requested", reason="owner_stdin")
 

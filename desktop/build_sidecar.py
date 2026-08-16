@@ -25,7 +25,9 @@ def main() -> int:
     command = [args.pyinstaller, "-m", "PyInstaller", "--clean", "--noconfirm", "--onefile",
                "--name", "ga-hub-sidecar", "--paths", str(ROOT),
                "--workpath", str(workpath), "--distpath", str(distpath),
-               "--specpath", str(specpath), "--collect-all", "server"]
+               "--specpath", str(specpath), "--collect-all", "server",
+               "--noconsole",
+               "--add-data", f"{ROOT / 'webui' / 'dist'};webui/dist"]
     if suffix:
         # PyInstaller does not automatically retain Conda's OpenSSL runtime,
         # even though _ssl.pyd links to it.  A frozen uvicorn import otherwise

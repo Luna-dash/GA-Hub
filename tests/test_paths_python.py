@@ -99,7 +99,19 @@ class PythonDiscoveryTests(unittest.TestCase):
             self.assertEqual(saved["ga_root"], str(ga_root.resolve()))
             self.assertEqual(saved["python_path"], str(python_path.resolve()))
 
-    def test_bootstrap_sys_path_adds_external_python_site_packages(self):
+    def test_external_site_paths_skips_probe_when_frozen(self):
+        with mock.patch.object(_paths.sys, "frozen", True, create=True), \
+             mock.patch.object(_paths, "discover_user_python") as discover:
+            self.assertEqual(_paths.external_python_site_paths(Path("/ga")), [])
+            discover.assert_not_called()
+
+    def test_external_site_paths_can_be_enabled_when_frozen(self):
+        with mock.patch.object(_paths.sys, "frozen", True, create=True), \
+             mock.patch.dict(_paths.os.environ, {"GA_HUB_ENABLE_EXTERNAL_SITE_PATHS": "1"}), \
+             mock.patch.object(_paths, "discover_user_python", return_value=None) as discover:
+            self.assertEqual(_paths.external_python_site_paths(Path("/ga")), [])
+            discover.assert_called_once_with(Path("/ga"))
+
         with TemporaryDirectory() as td:
             root = Path(td)
             ga_root = root / "GenericAgent"
