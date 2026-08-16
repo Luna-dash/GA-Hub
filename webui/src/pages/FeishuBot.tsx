@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { EventSocket, api } from '@/api/client'
-import type { BusEvent, FsCheckResult } from '@/api/types'
+import type { BusEvent } from '@/api/types'
 import { MessageBubble } from '@/components/MessageBubble'
 import { PageShell } from '@/components/PageShell'
 import { useChatStore } from '@/stores/chatStore'
 import { useFeishuStore, type FeishuMsg } from '@/stores/feishuStore'
+import { deriveFeishuUiState } from '@/utils/feishuStatus'
 
 function fmtTime(ts?: number) {
   if (!ts) return '尚未检测'
@@ -21,7 +22,7 @@ export default function FeishuBot() {
   const remoteMsgs = useFeishuStore((s) => s.msgs)
   const addMsgs = useFeishuStore((s) => s.addMsgs)
   const statusQ = useQuery({ queryKey: ['feishu-status'], queryFn: api.fsStatus, refetchInterval: 60000 })
-  const checkQ = useQuery({ queryKey: ['feishu-check'], queryFn: () => api.fsCheck(false), enabled: false })
+  const checkQ = useQuery({ queryKey: ['feishu-check'], queryFn: () => api.fsCheck(false) })
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
   const [showKeys, setShowKeys] = useState(false)
@@ -69,15 +70,17 @@ export default function FeishuBot() {
   }
 
   const st = statusQ.data
-  const check: FsCheckResult | null | undefined = checkQ.data || st?.last_check
+  const check = checkQ.data || st?.last_check
   const connected = Boolean(st?.running)
-  const configured = Boolean(check?.ready)
-  const state = useMemo(() => {
-    if (!st) return { label: '检测中', dot: 'bg-amber-400', text: '读取飞书长连接状态…' }
-    if (!configured) return { label: '未配置', dot: 'bg-rose-500', text: '请在下方发送框里填入飞书 Key。' }
-    if (connected) return { label: '已连接', dot: 'bg-emerald-500', text: st.pid ? `PID ${st.pid}` : '长连接在线' }
-    return { label: '未连接', dot: 'bg-slate-400', text: 'Key 已配置，网关未运行。' }
-  }, [st, connected, configured])
+  const configured = check?.ready === true
+  const state = deriveFeishuUiState({
+    statusLoaded: Boolean(st),
+    connected,
+    pid: st?.pid,
+    checkReady: check?.ready ?? undefined,
+    checkPending: checkQ.isPending,
+    checkFailed: checkQ.isError,
+  })
 
   const grouped = useMemo(() => {
     const result: FeishuMsg[][] = []
