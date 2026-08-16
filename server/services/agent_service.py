@@ -39,6 +39,7 @@ from .chat_retry import ChatRetryConfig, classify_recoverable_error, load_chat_r
 from .chat_stream_projection import ChatSnapshot, ChatStreamProjection  # noqa: E402
 from .event_bus import bus  # noqa: E402
 from .llm_preference_store import LlmPreferenceStore  # noqa: E402
+from .llm_registry import LlmRegistry, LlmUnavailableError  # noqa: E402
 from .legacy_chat_history_store import LegacyChatHistoryStore  # noqa: E402
 from .rewind_adapter import RewindAdapter  # noqa: E402
 
@@ -297,17 +298,9 @@ class AgentService:
         return title
 
     def list_llms(self) -> list[dict]:
-        try:
-            self.agent.load_llm_sessions()
-        except Exception as e:
-            log.warning("list_llms hot reload failed: %s", e)
-        
-        # Read user's preferred LLM index
-        try:
-            preferred_no = self._llm_preferences.get()
-        except Exception:
-            preferred_no = None
-        
+        entries = LlmRegistry.reload_and_snapshot(self.agent)
+        keys = {index: key for key, index in entries}
+        preferred_key = self._llm_preferences.get_key()
         out = []
         clients = getattr(self.agent, "llmclients", []) or []
         backends = [getattr(client, "backend", None) for client in clients]
@@ -335,9 +328,10 @@ class AgentService:
                 pass
             out.append({
                 "index": int(i),
+                "key": keys.get(i, ""),
                 "name": name,
                 "current": bool(current),
-                "preferred": (preferred_no is not None and i == preferred_no),
+                "preferred": bool(preferred_key and keys.get(i) == preferred_key),
                 "kind": meta["kind"],
                 "members": meta["members"],
                 "active_member": meta["active_member"],
@@ -348,29 +342,22 @@ class AgentService:
             })
         return out
 
+    def _select_llm_for_key(self, key: str) -> None:
+        """Resolve and select one MyKey assignment without persisting preference."""
+        LlmRegistry.switch_by_key(self.agent, key)
+
     def _select_llm_for_task(self, n: int) -> None:
         """Transiently select an LLM for one submission without persisting preference."""
-        clients = getattr(self.agent, "llmclients", None)
-        if clients is None:
-            try:
-                self.agent.load_llm_sessions()
-                clients = getattr(self.agent, "llmclients", []) or []
-            except Exception:
-                clients = []
-        idx = int(n)
-        if idx < 0 or (clients and idx >= len(clients)):
-            raise RuntimeError(f"llm index out of range: {idx}")
-        if int(getattr(self.agent, "llm_no", -1)) != idx:
-            self.agent.next_llm(idx)
+        LlmRegistry.switch_by_index(self.agent, int(n))
 
     def switch_llm(self, n: int) -> dict:
         if bool(getattr(self.agent, "is_running", False)):
             raise RuntimeError("agent is running; wait for the current reply or stop it before switching LLM")
-        self.agent.next_llm(int(n))
+        selected, key = LlmRegistry.switch_by_index(self.agent, int(n))
         # Mark this as the user's explicit preference (separate from the
         # transient agent.llm_no which any code path can mutate).
-        self._save_preferred_llm(int(self.agent.llm_no))
-        return {"llm_no": self.agent.llm_no, "name": self.agent.get_llm_name()}
+        self._llm_preferences.set_selection(key, selected)
+        return {"llm_no": selected, "key": key, "name": self.agent.get_llm_name()}
 
     # ── llm preference persistence ───────────────────────────────
     def _save_preferred_llm(self, n: int) -> None:
@@ -388,18 +375,31 @@ class AgentService:
 
     def _restore_preferred_llm(self) -> None:
         try:
-            saved = self._get_preferred_llm_no()
+            saved, legacy_index = self._llm_preferences.get_selection()
+            if saved is None:
+                if legacy_index is None:
+                    return
+                entries = LlmRegistry.reload_and_snapshot(self.agent)
+                saved = {
+                    index: assignment for assignment, index in entries
+                }.get(int(legacy_index))
+                if saved is None:
+                    log.warning(
+                        "legacy preferred llm index is unavailable: %s",
+                        legacy_index,
+                    )
+                    return
+                self._llm_preferences.set_selection(saved, int(legacy_index))
+                log.info("migrated preferred_llm_no=%s to key=%s", legacy_index, saved)
             if saved is None:
                 return
-            n = int(saved)
-            clients = getattr(self.agent, "llmclients", None) or []
-            if n < 0 or n >= len(clients):
-                log.info("preferred_llm_no=%s out of range (have %d), skipping", saved, len(clients))
-                return
-            if int(self.agent.llm_no) == n:
+            n = LlmRegistry.resolve(self.agent, saved)
+            if int(getattr(self.agent, "llm_no", -1)) == n:
                 return
             self.agent.next_llm(n)
-            log.info("restored preferred_llm_no=%s (%s)", n, self.agent.get_llm_name())
+            log.info("restored preferred_llm_key=%s (%s)", n, self.agent.get_llm_name())
+        except LlmUnavailableError as e:
+            log.warning("preferred llm is unavailable: %s", e)
         except Exception as e:
             log.warning("failed to restore preferred llm: %s", e)
 
@@ -472,6 +472,7 @@ class AgentService:
         retry_reason: str = "",
         retry_max: int = 0,
         llm_index: int | None = None,
+        llm_key: str | None = None,
         session_id: str | None = None,
         run_id: str = "",
     ) -> StreamHandle:
@@ -482,7 +483,9 @@ class AgentService:
         # provided; otherwise they reassert the persisted/global preference.
         # Other sources (autonomous, wechat, reflect) keep whatever llm_no is
         # currently active unless an explicit override is supplied.
-        if llm_index is not None:
+        if llm_key is not None:
+            self._select_llm_for_key(llm_key)
+        elif llm_index is not None:
             self._select_llm_for_task(llm_index)
         elif self._manage_global_preference and source in ("user", "webui"):
             self._restore_preferred_llm()

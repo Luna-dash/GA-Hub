@@ -218,26 +218,27 @@ export default function LiveChat() {
   const activeProjectPath = session?.project_path
     ?? (session?.project_name ? projects.find((project) => project.name === session.project_name)?.path : undefined)
     ?? ''
-  const selectedLlmIndex = session?.llm_index
-    ?? llms.find((item) => item.preferred)?.index
-    ?? llms.find((item) => item.current)?.index
-    ?? llms[0]?.index
+  const preferredLlmKey = llms.find((item) => item.preferred)?.key
+  const selectedLlmKey = session?.llm_key
+    ?? preferredLlmKey
+    ?? llms.find((item) => item.current)?.key
+    ?? llms[0]?.key
+  const sessionLlmUnconfirmed = Boolean(session && session.llm_key == null && session.llm_index != null)
 
   const changeModel = async (value: string) => {
     const sid = session?.id
-    const nextIndex = Number(value)
-    if (!sid || sessionIdRef.current !== sid || !Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex === session.llm_index) return
+    if (!sid || sessionIdRef.current !== sid || (value === selectedLlmKey && !sessionLlmUnconfirmed)) return
     const changeSeq = ++llmChangeSeqRef.current
-    const previousIndex = session.llm_index
+    const previousKey = session.llm_key
     setLlmSaving(true)
     try {
-      const updated = await api.updateSessionModel(sid, nextIndex)
+      const updated = await api.updateSessionModel(sid, value === '' ? null : value)
       if (sessionIdRef.current !== sid || llmChangeSeqRef.current !== changeSeq) return
       setSession(updated)
-      pushSystem(`_已切换模型:${updated.llm_index == null ? '默认' : (llms.find((item) => item.index === updated.llm_index)?.name || String(updated.llm_index))}_`)
+      pushSystem(`_已切换模型:${updated.llm_key == null ? '默认' : (llms.find((item) => item.key === updated.llm_key)?.name || updated.llm_key)}_`)
     } catch (e: any) {
       if (sessionIdRef.current === sid && llmChangeSeqRef.current === changeSeq) {
-        setSession((current) => current ? { ...current, llm_index: previousIndex } : current)
+        setSession((current) => current ? { ...current, llm_key: previousKey } : current)
         pushSystem(`_切换模型失败:${e?.body?.detail || e?.message || String(e)}_`)
       }
     } finally {
@@ -402,7 +403,7 @@ export default function LiveChat() {
         setCreatingSession(true)
         const switchSeq = ++sessionSwitchSeqRef.current
         try {
-          const created = await api.createSession({ title: '', llm_index: null })
+          const created = await api.createSession({ title: '', llm_key: null })
           if (sessionSwitchSeqRef.current !== switchSeq || sessionIdRef.current) return
           sid = created.id
           submitKey = `liveChat:${created.id}`
@@ -454,7 +455,13 @@ export default function LiveChat() {
             pushSystem(`_会话运行容量已满${usage}，请先在左侧会话栏选择一个运行中的会话并停止任务。草稿已保留，可直接重试。_`)
           }
         } else {
-          pushSystem(`_发送失败：${e?.body?.detail?.code || e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`)
+          const code = e?.body?.detail?.code
+          const modelHint = code === 'llm_unconfirmed'
+            ? '该会话的模型绑定来自旧版本，请在右上角重新选择模型。'
+            : code === 'llm_unavailable'
+              ? '该会话绑定的 LLM 已不存在，请重新选择模型。'
+              : ''
+          pushSystem(`_发送失败：${modelHint || e?.body?.detail?.detail || e?.body?.detail?.code || e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`)
         }
       }
     })().catch((e: any) => {
@@ -492,7 +499,7 @@ export default function LiveChat() {
     try {
       let sid = session?.id
       if (!sid) {
-        const created = await api.createSession({ title: '', llm_index: null })
+        const created = await api.createSession({ title: '', llm_key: null })
         sid = created.id
         queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
           total: (cached?.total ?? 0) + 1,
@@ -542,7 +549,7 @@ export default function LiveChat() {
     const switchSeq = ++sessionSwitchSeqRef.current
     const previousSid = sessionIdRef.current
     try {
-      const next = await api.createSession({ title: '', llm_index: session?.llm_index ?? null })
+      const next = await api.createSession({ title: '', llm_key: session?.llm_key ?? null })
       if (sessionSwitchSeqRef.current !== switchSeq || sessionIdRef.current !== previousSid) return false
       queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
         total: (cached?.total ?? 0) + 1,
@@ -555,7 +562,7 @@ export default function LiveChat() {
       creatingSessionRef.current = false
       setCreatingSession(false)
     }
-  }, [nav, queryClient, session?.llm_index])
+  }, [nav, queryClient, session?.llm_key])
 
   const selectSession = useCallback((id: string) => {
     if (id === sessionIdRef.current) return
@@ -804,15 +811,19 @@ export default function LiveChat() {
       }
       actions={
         <select
-          value={selectedLlmIndex == null ? '' : String(selectedLlmIndex)}
+          value={selectedLlmKey == null || sessionLlmUnconfirmed ? '__reselect__' : selectedLlmKey}
           onChange={(e) => { void changeModel(e.target.value) }}
           disabled={!session || llmLoading || llmSaving || sessionRunning || llms.length === 0}
           className="max-w-[400px] min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
           title="选择当前会话使用的模型"
           aria-label="当前会话模型"
         >
+          {sessionLlmUnconfirmed && (
+            <option value="__reselect__">请重新选择模型（旧数据按位置绑定）</option>
+          )}
+          <option value="">默认（跟随全局模型）</option>
           {llms.map((item) => (
-            <option key={item.index} value={item.index}>{item.name}</option>
+            <option key={item.key} value={item.key}>{item.name}</option>
           ))}
         </select>
       }

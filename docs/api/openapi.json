@@ -6356,6 +6356,17 @@
             "type": "string",
             "title": "Title"
           },
+          "llm_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Key"
+          },
           "llm_index": {
             "anyOf": [
               {
@@ -6831,6 +6842,11 @@
               }
             ],
             "title": "Backup"
+          },
+          "removed_mixin_references": {
+            "type": "integer",
+            "title": "Removed Mixin References",
+            "default": 0
           },
           "llms": {
             "items": {
@@ -7625,6 +7641,19 @@
             "title": "Title",
             "default": ""
           },
+          "llm_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Key"
+          },
           "llm_index": {
             "anyOf": [
               {
@@ -7745,16 +7774,33 @@
       },
       "SessionModelUpdate": {
         "properties": {
+          "llm_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Key"
+          },
           "llm_index": {
-            "type": "integer",
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Llm Index"
           }
         },
         "type": "object",
-        "required": [
-          "llm_index"
-        ],
         "title": "SessionModelUpdate"
       },
       "SessionProjectUpdate": {
@@ -7867,6 +7913,19 @@
               }
             ],
             "title": "Title"
+          },
+          "llm_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Key"
           },
           "llm_index": {
             "anyOf": [

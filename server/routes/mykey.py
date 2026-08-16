@@ -31,6 +31,7 @@ from ..services.mykey_codec import (
     InvalidSourceError,
     classify_config as _classify,
     delete_assignment,
+    delete_base_assignment,
     render_assign as _render_assign,
     render_dict as _render_dict,
     render_value as _render_value,
@@ -46,6 +47,7 @@ from ..schemas import (
     MyKeySyncResultResp,
     MyKeyWriteResp,
 )
+from ..services.llm_registry import LlmRegistry
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/mykey", tags=["mykey"])
@@ -113,14 +115,20 @@ def _trigger_reload() -> tuple[list[dict], list[str]]:
     except Exception as e:
         return [], [f"agent_service 实例化失败: {e}"]
     try:
-        svc.agent.load_llm_sessions()
-    except Exception as e:
-        return [], [f"load_llm_sessions 抛出: {type(e).__name__}: {e}"]
-    try:
         llms = svc.list_llms()
     except Exception as e:
         return [], [f"list_llms 抛出: {type(e).__name__}: {e}"]
     return llms, []
+
+
+def _delete_session_assignment(raw: str, var: str) -> tuple[str, int]:
+    """Remove a base LLM or mixin, cleaning stale references for base LLMs."""
+    structured = _structurize(raw)
+    if any(item["var"] == var for item in structured["sessions"]):
+        return delete_base_assignment(raw, var)
+    if any(item["var"] == var for item in structured["mixins"]):
+        return delete_assignment(raw, var), 0
+    raise AssignmentNotFoundError(var)
 
 
 # ── pydantic models ────────────────────────────────────────────────────
@@ -171,9 +179,10 @@ async def put_raw(req: RawWriteReq) -> MyKeyWriteResp:
             "col": col,
         })
 
-    backup = _backup_current(p)
-    _atomic_write(p, text)
-    llms, warnings = _trigger_reload()
+    with LlmRegistry.synchronized():
+        backup = _backup_current(p)
+        _atomic_write(p, text)
+        llms, warnings = _trigger_reload()
     return {
         "ok": True,
         "backup": backup,
@@ -186,32 +195,32 @@ async def put_raw(req: RawWriteReq) -> MyKeyWriteResp:
 @router.post("/sessions")
 async def upsert_session(req: SessionUpsertReq) -> MyKeyWriteResp:
     p = _mykey_path()
-    raw = p.read_text(encoding="utf-8") if p.is_file() else ""
     var = req.var.strip()
     if not var.replace("_", "").isalnum():
         raise HTTPException(400, "变量名只允许字母 / 数字 / 下划线")
 
-    try:
-        new_text = upsert_assignment(raw, var, req.fields)
-    except InvalidSourceError as e:
-        raise HTTPException(400, {
-            "error": "syntax_error_after_render",
-            "message": e.message,
-            "line": e.line,
-            "col": e.col,
-        })
-    ok, msg, line, col = _validate_text(new_text)
-    if not ok:
-        raise HTTPException(400, {
-            "error": "syntax_error_after_render",
-            "message": msg,
-            "line": line,
-            "col": col,
-        })
-
-    backup = _backup_current(p)
-    _atomic_write(p, new_text)
-    llms, warnings = _trigger_reload()
+    with LlmRegistry.synchronized():
+        raw = p.read_text(encoding="utf-8") if p.is_file() else ""
+        try:
+            new_text = upsert_assignment(raw, var, req.fields)
+        except InvalidSourceError as e:
+            raise HTTPException(400, {
+                "error": "syntax_error_after_render",
+                "message": e.message,
+                "line": e.line,
+                "col": e.col,
+            })
+        ok, msg, line, col = _validate_text(new_text)
+        if not ok:
+            raise HTTPException(400, {
+                "error": "syntax_error_after_render",
+                "message": msg,
+                "line": line,
+                "col": col,
+            })
+        backup = _backup_current(p)
+        _atomic_write(p, new_text)
+        llms, warnings = _trigger_reload()
     return {
         "ok": True,
         "backup": backup,
@@ -226,29 +235,31 @@ async def delete_session(var: str) -> MyKeyWriteResp:
     p = _mykey_path()
     if not p.is_file():
         raise HTTPException(404, "mykey.py 不存在")
-    raw = p.read_text(encoding="utf-8")
-    try:
-        new_text = delete_assignment(raw, var)
-    except InvalidSourceError as e:
-        raise HTTPException(400, f"当前 mykey.py 语法错误，无法定位：{e.message}")
-    except AssignmentNotFoundError:
-        raise HTTPException(404, f"找不到变量 {var}")
 
-    ok, msg, line, col = _validate_text(new_text)
-    if not ok:
-        raise HTTPException(400, {
-            "error": "syntax_error_after_delete",
-            "message": msg,
-            "line": line,
-            "col": col,
-        })
+    with LlmRegistry.synchronized():
+        raw = p.read_text(encoding="utf-8")
+        try:
+            new_text, removed_references = _delete_session_assignment(raw, var)
+        except InvalidSourceError as e:
+            raise HTTPException(400, f"当前 mykey.py 语法错误，无法定位：{e.message}")
+        except AssignmentNotFoundError:
+            raise HTTPException(404, f"找不到变量 {var}")
 
-    backup = _backup_current(p)
-    _atomic_write(p, new_text)
-    llms, warnings = _trigger_reload()
+        ok, msg, line, col = _validate_text(new_text)
+        if not ok:
+            raise HTTPException(400, {
+                "error": "syntax_error_after_delete",
+                "message": msg,
+                "line": line,
+                "col": col,
+            })
+        backup = _backup_current(p)
+        _atomic_write(p, new_text)
+        llms, warnings = _trigger_reload()
     return {
         "ok": True,
         "backup": backup,
+        "removed_mixin_references": removed_references,
         "llms": llms,
         "warnings": warnings,
         "structured": _structurize(new_text),
@@ -350,9 +361,10 @@ async def restore_backup(name: str) -> MyKeyWriteResp:
             "col": col,
         })
     # snapshot current before restore (so user can re-roll-forward)
-    backup = _backup_current(p)
-    _atomic_write(p, text)
-    llms, warnings = _trigger_reload()
+    with LlmRegistry.synchronized():
+        backup = _backup_current(p)
+        _atomic_write(p, text)
+        llms, warnings = _trigger_reload()
     return {
         "ok": True,
         "backup": backup,

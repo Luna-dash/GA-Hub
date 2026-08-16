@@ -592,6 +592,7 @@ class MyKeyWriteResp(BaseModel):
 
     ok: bool
     backup: str | None = None
+    removed_mixin_references: int = 0
     llms: list[dict[str, Any]] = []
     warnings: list[str] = []
     structured: MyKeyStructured | None = None

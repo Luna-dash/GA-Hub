@@ -12,6 +12,7 @@ const session = (id: string, title = ''): HubSession => ({
   id,
   title,
   llm_index: null,
+  llm_key: null,
   archive_path: null,
   created_at: '2026-08-04T10:00:00Z',
   updated_at: '2026-08-04T10:00:00Z',

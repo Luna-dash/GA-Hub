@@ -411,7 +411,7 @@ export const api = {
   sessions: () => http<SessionList>('GET', '/api/sessions'),
   createSession: (req: Partial<ApiComponents['schemas']['SessionCreate']> = {}) =>
     http<GeneratedHubSession>('POST', '/api/sessions', req),
-  updateSession: (id: string, changes: { title?: string; llm_index?: number | null }) =>
+  updateSession: (id: string, changes: { title?: string; llm_key?: string | null }) =>
     http<GeneratedHubSession>('PATCH', `/api/sessions/${encodeURIComponent(id)}`, changes),
   deleteSession: (id: string) =>
     http<void>('DELETE', `/api/sessions/${encodeURIComponent(id)}`),
@@ -440,8 +440,12 @@ export const api = {
       `/api/sessions/${encodeURIComponent(id)}/rewind`,
       req,
     ),
-  updateSessionModel: (id: string, llm_index: number) =>
-    http<GeneratedHubSession>('PUT', `/api/sessions/${encodeURIComponent(id)}/model`, { llm_index }),
+  updateSessionModel: (id: string, llm_key: string | null) =>
+    http<GeneratedHubSession>(
+      'PUT',
+      `/api/sessions/${encodeURIComponent(id)}/model`,
+      { llm_key },
+    ),
   abortSession: (id: string) =>
     http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/abort`),
   scheduledChats: (id: string) =>

@@ -16,6 +16,8 @@ from frontends import workspace_cmd
 from ..schemas import BtwReq, BtwResp, RewindReq, RewindResp
 from ..services.archive_messages import HistoryUnavailableError, read_archive_messages
 from ..services.event_bus import Event, bus
+from ..services.llm_preference_store import LlmPreferenceStore
+from ..services.llm_registry import LlmUnavailableError, LlmRegistryError
 from ..services.session_coordinator import (
     AgentBusyError,
     RuntimeState,
@@ -99,13 +101,34 @@ def _get_coordinator() -> SessionCoordinator:
 
 def _dispatch_scheduled_chat(task: ScheduledChat) -> None:
     row = _store.get(task.session_id)
+    try:
+        llm_key = _effective_llm_key(row)
+    except LlmUnconfirmedError:
+        log.warning(
+            "scheduled chat skipped: session model must be reconfirmed session_id=%s",
+            task.session_id,
+        )
+        return
     _get_coordinator().submit(
         task.text,
         session_id=task.session_id,
         images=task.images,
         source="scheduled",
-        llm_index=row.get("llm_index"),
+        llm_key=llm_key,
     )
+
+
+class LlmUnconfirmedError(RuntimeError):
+    """A legacy session still stores only a positional LLM reference."""
+
+
+def _effective_llm_key(row: dict) -> str | None:
+    key = row.get("llm_key")
+    if isinstance(key, str) and key.strip():
+        return key.strip()
+    if row.get("llm_index") is not None:
+        raise LlmUnconfirmedError("session llm binding must be reconfirmed")
+    return LlmPreferenceStore().get_key()
 
 
 def _get_scheduled_chats() -> ScheduledChatService:
@@ -141,21 +164,25 @@ def stop_session_runtimes(timeout: float = 3.0) -> None:
 
 class SessionCreate(BaseModel):
     title: str = Field(default="", max_length=200)
+    llm_key: str | None = Field(default=None, min_length=1, max_length=200)
     llm_index: int | None = Field(default=None, ge=0)
 
 
 class SessionUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=200)
+    llm_key: str | None = Field(default=None, min_length=1, max_length=200)
     llm_index: int | None = Field(default=None, ge=0)
 
 
 class SessionModelUpdate(BaseModel):
-    llm_index: int = Field(ge=0)
+    llm_key: str | None = Field(default=None, min_length=1, max_length=200)
+    llm_index: int | None = Field(default=None, ge=0)
 
 
 class HubSession(BaseModel):
     id: str
     title: str
+    llm_key: str | None = None
     llm_index: int | None
     archive_path: str | None
     status: str = "idle"
@@ -430,7 +457,7 @@ async def list_sessions() -> SessionListResp:
 
 @router.post("/api/sessions", status_code=status.HTTP_201_CREATED)
 async def create_session(req: SessionCreate) -> HubSession:
-    return _store.create(title=req.title, llm_index=req.llm_index)
+    return _store.create(title=req.title, llm_key=req.llm_key, llm_index=req.llm_index)
 
 
 @router.get("/api/sessions/{session_id}")
@@ -472,8 +499,32 @@ async def update_session(session_id: str, req: SessionUpdate) -> HubSession:
 
 @router.put("/api/sessions/{session_id}/model")
 async def update_session_model(session_id: str, req: SessionModelUpdate) -> HubSession:
+    if req.llm_key is None and req.llm_index is None:
+        return _clear_session_llm_binding(session_id)
+    if req.llm_key is not None and req.llm_index is not None:
+        raise _api_error(400, "llm_conflict", "llm_key 与 llm_index 不能同时提交。")
+    if req.llm_key is not None:
+        key, index = req.llm_key, None
+    else:
+        try:
+            from ..services.agent_service import get_agent_service
+            from ..services.llm_registry import LlmRegistry
+            entries = LlmRegistry.reload_and_snapshot(get_agent_service().agent)
+            key = dict((index, assignment) for assignment, index in entries).get(req.llm_index)
+            if not key:
+                raise LlmUnavailableError(f"llm index has no assignment: {req.llm_index}")
+        except (LlmUnavailableError, LlmRegistryError) as exc:
+            raise _api_error(409, "llm_unavailable", f"当前模型不可用，请重新选择。{exc}")
+        index = req.llm_index
     try:
-        return _store.update(session_id, {"llm_index": req.llm_index})
+        return _store.update(session_id, {"llm_key": key, "llm_index": index})
+    except SessionNotFoundError:
+        raise _not_found()
+
+
+def _clear_session_llm_binding(session_id: str) -> HubSession:
+    try:
+        return _store.update(session_id, {"llm_key": None, "llm_index": None})
     except SessionNotFoundError:
         raise _not_found()
 
@@ -486,13 +537,21 @@ async def update_session_model(session_id: str, req: SessionModelUpdate) -> HubS
 async def submit_run(session_id: str, req: RunSubmit) -> SessionRuntimeResp:
     row = _session(session_id)
     try:
+        llm_key = _effective_llm_key(row)
+    except LlmUnconfirmedError:
+        raise _api_error(409, "llm_unconfirmed", "该会话的模型绑定需要重新确认。")
+    try:
         state = _get_coordinator().submit(
             req.text,
             session_id=session_id,
             source=req.source,
             images=req.images,
-            llm_index=row.get("llm_index"),
+            llm_key=llm_key,
         )
+    except LlmUnavailableError:
+        raise _api_error(409, "llm_unavailable", "该会话绑定的 LLM 已不存在，请重新选择。")
+    except LlmRegistryError:
+        raise _api_error(409, "llm_registry_error", "LLM 配置映射校验失败，请检查 MyKey 配置。")
     except AgentBusyError as exc:
         # Same-session busy (run still aborting) vs. genuine capacity overflow
         # are now distinct codes so the UI can tell the user the right thing.

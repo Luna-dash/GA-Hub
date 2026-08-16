@@ -313,6 +313,7 @@ def test_lazy_runtime_is_reused_and_run_identity_is_propagated() -> None:
         "source": "webui",
         "images": None,
         "llm_index": 2,
+        "llm_key": None,
         "session_id": "A",
         "run_id": first.run_id,
     }]

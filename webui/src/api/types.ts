@@ -33,6 +33,7 @@ export type ArchiveZipListResponse = ApiSchemas['ArchiveZipListResp']
 export type ArchiveZipEntryListResponse = ApiSchemas['ArchiveZipEntryListResp']
 
 export interface LLMInfo {
+  key: string
   index: number
   name: string
   current: boolean
@@ -70,6 +71,7 @@ export interface SessionSnapshot {
 export interface HubSession {
   id: string
   title: string
+  llm_key?: string | null
   llm_index: number | null
   archive_path: string | null
   project_name?: string | null

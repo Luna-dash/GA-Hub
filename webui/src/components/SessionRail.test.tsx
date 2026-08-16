@@ -9,9 +9,9 @@ import { SessionRail } from './SessionRail'
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const sessions: HubSession[] = [
-  { id: 'aaaaaaaa-1111-4111-8111-111111111111', title: '研究任务', llm_index: null, archive_path: null, project_name: 'alpha', project_path: 'D:/projects/alpha', created_at: '2026-08-05T08:00:00Z', updated_at: '2026-08-05T09:00:00Z' },
-  { id: 'bbbbbbbb-2222-4222-8222-222222222222', title: '', llm_index: null, archive_path: null, created_at: '2026-08-05T08:00:00Z', updated_at: '2026-08-05T10:00:00Z' },
-  { id: 'cccccccc-3333-4333-8333-333333333333', title: '', llm_index: null, archive_path: 'D:/archives/chat.json', created_at: '2026-08-05T08:00:00Z', updated_at: '2026-08-05T11:00:00Z' },
+  { id: 'aaaaaaaa-1111-4111-8111-111111111111', title: '研究任务', llm_key: null, llm_index: null, archive_path: null, project_name: 'alpha', project_path: 'D:/projects/alpha', created_at: '2026-08-05T08:00:00Z', updated_at: '2026-08-05T09:00:00Z' },
+  { id: 'bbbbbbbb-2222-4222-8222-222222222222', title: '', llm_key: null, llm_index: null, archive_path: null, created_at: '2026-08-05T08:00:00Z', updated_at: '2026-08-05T10:00:00Z' },
+  { id: 'cccccccc-3333-4333-8333-333333333333', title: '', llm_key: null, llm_index: null, archive_path: 'D:/archives/chat.json', created_at: '2026-08-05T08:00:00Z', updated_at: '2026-08-05T11:00:00Z' },
 ]
 const runtimes: Record<string, SessionRuntime> = {
   'aaaaaaaa-1111-4111-8111-111111111111': { session_id: 'aaaaaaaa-1111-4111-8111-111111111111', status: 'running', run_id: 'run-a', stream_id: 'stream-a' },

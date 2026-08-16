@@ -9,6 +9,8 @@ from server.services.mykey_codec import (
     InvalidSourceError,
     classify_config,
     delete_assignment,
+    delete_base_assignment,
+    remove_mixin_references,
     render_assign,
     structurize,
     upsert_assignment,
@@ -90,6 +92,48 @@ dynamic = make_config()
             upsert_assignment("broken = {\n", "new_config", {})
         with self.assertRaises(InvalidSourceError):
             delete_assignment("broken = {\n", "broken")
+
+    def test_remove_mixin_references_by_name_and_index(self) -> None:
+        raw = '''alpha_oai_config = {"name": "alpha", "apikey": "secret"}
+beta_oai_config = {"name": "beta", "apikey": "secret"}
+mixin_one_config = {"llm_nos": ["alpha", "beta"]}
+mixin_two_config = {"llm_nos": [0, 1]}
+other_mixin_config = {"llm_nos": ["beta"]}
+'''
+
+        updated, removed = remove_mixin_references(raw, "alpha_oai_config", target_index=0)
+        rendered = structurize(updated)
+        self.assertEqual(removed, 2)
+        self.assertEqual(rendered["mixins"][0]["fields"]["llm_nos"], ["beta"])
+        self.assertEqual(rendered["mixins"][1]["fields"]["llm_nos"], [1])
+        self.assertEqual(rendered["mixins"][2]["fields"]["llm_nos"], ["beta"])
+
+        final, removed = remove_mixin_references(updated, "alpha_oai_config", target_index=0)
+        self.assertEqual(removed, 0)
+        self.assertIn("alpha_oai_config", final)
+
+    def test_remove_mixin_references_by_index_without_name(self) -> None:
+        raw = '''alpha_oai_config = {"apikey": "secret"}
+beta_oai_config = {"apikey": "other"}
+mixin_config = {"llm_nos": [0, 1]}
+'''
+
+        updated, removed = remove_mixin_references(raw, "alpha_oai_config", target_index=0)
+        rendered = structurize(updated)
+        self.assertEqual(removed, 1)
+        self.assertEqual(rendered["mixins"][0]["fields"]["llm_nos"], [1])
+
+    def test_delete_base_assignment_preserves_source_order_indexes(self) -> None:
+        raw = '''mixin_config = {"llm_nos": [0, 1, 2]}
+alpha_oai_config = {"name": "alpha", "apikey": "secret"}
+beta_oai_config = {"name": "beta", "apikey": "other"}
+'''
+
+        updated, removed = delete_base_assignment(raw, "alpha_oai_config")
+        rendered = structurize(updated)
+        self.assertEqual(removed, 1)
+        self.assertEqual(rendered["mixins"][0]["fields"]["llm_nos"], [0, 2])
+        self.assertFalse(any(item["var"] == "alpha_oai_config" for item in rendered["sessions"]))
 
 
 if __name__ == "__main__":

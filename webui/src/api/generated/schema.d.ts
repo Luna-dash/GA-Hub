@@ -2794,6 +2794,8 @@ export interface components {
             id: string;
             /** Title */
             title: string;
+            /** Llm Key */
+            llm_key?: string | null;
             /** Llm Index */
             llm_index: number | null;
             /** Archive Path */
@@ -2956,6 +2958,11 @@ export interface components {
             ok: boolean;
             /** Backup */
             backup?: string | null;
+            /**
+             * Removed Mixin References
+             * @default 0
+             */
+            removed_mixin_references: number;
             /**
              * Llms
              * @default []
@@ -3258,6 +3265,8 @@ export interface components {
              * @default
              */
             title: string;
+            /** Llm Key */
+            llm_key?: string | null;
             /** Llm Index */
             llm_index?: number | null;
         };
@@ -3297,8 +3306,10 @@ export interface components {
         };
         /** SessionModelUpdate */
         SessionModelUpdate: {
+            /** Llm Key */
+            llm_key?: string | null;
             /** Llm Index */
-            llm_index: number;
+            llm_index?: number | null;
         };
         /** SessionProjectUpdate */
         SessionProjectUpdate: {
@@ -3328,6 +3339,8 @@ export interface components {
         SessionUpdate: {
             /** Title */
             title?: string | null;
+            /** Llm Key */
+            llm_key?: string | null;
             /** Llm Index */
             llm_index?: number | null;
         };

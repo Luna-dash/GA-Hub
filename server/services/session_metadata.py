@@ -47,11 +47,12 @@ class SessionMetadataStore:
         if not self.path.exists():
             return {"schema_version": 1, "sessions": []}
         data = json.loads(self.path.read_text("utf-8"))
-        if data.get("schema_version") != 1 or not isinstance(data.get("sessions"), list):
+        if data.get("schema_version") not in {1, 2} or not isinstance(data.get("sessions"), list):
             raise ValueError("unsupported session metadata format")
         return data
 
     def _write(self, data: dict[str, Any]) -> None:
+        data["schema_version"] = 2
         tmp = self.path.with_suffix(f".{uuid4().hex}.tmp")
         try:
             tmp.write_text(
@@ -77,13 +78,20 @@ class SessionMetadataStore:
                     return dict(row)
         raise SessionNotFoundError(session_id)
 
-    def create(self, *, title: str = "", llm_index: int | None = None) -> dict[str, Any]:
+    def create(
+        self,
+        *,
+        title: str = "",
+        llm_key: str | None = None,
+        llm_index: int | None = None,
+    ) -> dict[str, Any]:
         with self._lock:
             data = self._read()
             timestamp = _now()
             row = {
                 "id": uuid4().hex,
                 "title": title.strip(),
+                "llm_key": llm_key,
                 "llm_index": llm_index,
                 "status": "idle",
                 "archive_path": None,
@@ -103,6 +111,9 @@ class SessionMetadataStore:
                 if row["id"] == session_id:
                     if "title" in changes:
                         row["title"] = changes["title"].strip()
+                    if "llm_key" in changes:
+                        value = changes["llm_key"]
+                        row["llm_key"] = value.strip() if isinstance(value, str) and value.strip() else None
                     if "llm_index" in changes:
                         row["llm_index"] = changes["llm_index"]
                     if "project_name" in changes:
@@ -175,6 +186,7 @@ class SessionMetadataStore:
             row = {
                 "id": stable_id,
                 "title": title.strip(),
+                "llm_key": None,
                 "llm_index": None,
                 "status": "idle",
                 "archive_path": path,

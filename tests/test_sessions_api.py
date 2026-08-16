@@ -29,12 +29,12 @@ def test_session_metadata_crud_is_message_free(tmp_path: Path, monkeypatch) -> N
     with _client(tmp_path, monkeypatch) as client:
         created = client.post(
             "/api/sessions",
-            json={"title": "Research", "llm_index": 2},
+            json={"title": "Research", "llm_key": "native_oai_config"},
         )
         assert created.status_code == 201
         item = created.json()
         assert item["title"] == "Research"
-        assert item["llm_index"] == 2
+        assert item["llm_key"] == "native_oai_config"
         assert item["status"] == "idle"
         assert "messages" not in item
 
@@ -59,11 +59,11 @@ def test_session_metadata_crud_is_message_free(tmp_path: Path, monkeypatch) -> N
         assert changed.json()["updated_at"] >= item["updated_at"]
 
         model = client.put(
-            f"/api/sessions/{item['id']}/model", json={"llm_index": 7}
+            f"/api/sessions/{item['id']}/model", json={"llm_key": "native_oai_backup_config"}
         )
         assert model.status_code == 200
-        assert model.json()["llm_index"] == 7
-        assert client.get(f"/api/sessions/{item['id']}").json()["llm_index"] == 7
+        assert model.json()["llm_key"] == "native_oai_backup_config"
+        assert client.get(f"/api/sessions/{item['id']}").json()["llm_key"] == "native_oai_backup_config"
         assert client.put(
             f"/api/sessions/{item['id']}/model", json={"llm_index": -1}
         ).status_code == 422
@@ -74,7 +74,7 @@ def test_session_metadata_crud_is_message_free(tmp_path: Path, monkeypatch) -> N
     persisted = json.loads((tmp_path / "sessions.json").read_text("utf-8"))
     encoded = json.dumps(persisted)
     assert "messages" not in encoded
-    assert persisted == {"schema_version": 1, "sessions": []}
+    assert persisted == {"schema_version": 2, "sessions": []}
 
 
 def test_bound_missing_archive_is_structured_error_without_path_leak(
@@ -192,17 +192,17 @@ def test_scheduled_dispatch_matches_coordinator_submit_contract(
     from server.services.session_metadata import SessionMetadataStore
 
     store = SessionMetadataStore(tmp_path)
-    row = store.create(title="Scheduled", llm_index=7)
+    row = store.create(title="Scheduled", llm_key="native_oai_config")
     calls = []
 
     class StrictCoordinator:
-        def submit(self, text, *, session_id, source, images, llm_index):
+        def submit(self, text, *, session_id, source, images, llm_key):
             calls.append({
                 "text": text,
                 "session_id": session_id,
                 "source": source,
                 "images": images,
-                "llm_index": llm_index,
+                "llm_key": llm_key,
             })
 
     monkeypatch.setattr(sessions, "_store", store)
@@ -221,7 +221,7 @@ def test_scheduled_dispatch_matches_coordinator_submit_contract(
         "session_id": row["id"],
         "source": "scheduled",
         "images": ["image.png"],
-        "llm_index": 7,
+        "llm_key": "native_oai_config",
     }]
 
 
@@ -291,6 +291,7 @@ def test_project_registry_create_and_session_binding_api(tmp_path: Path, monkeyp
     coordinator._runtimes[row["id"]] = runtime
     monkeypatch.setattr(sessions, "_store", store)
     monkeypatch.setattr(sessions, "_coordinator", coordinator)
+    monkeypatch.setattr(sessions.LlmPreferenceStore, "get_key", lambda _self: None)
 
     app = FastAPI()
     app.include_router(sessions.router)
@@ -364,6 +365,7 @@ def test_project_registry_create_and_session_binding_api(tmp_path: Path, monkeyp
             "source": "webui",
             "images": [],
             "llm_index": None,
+            "llm_key": None,
             "session_id": row["id"],
             "run_id": submitted_payload["run_id"],
         }

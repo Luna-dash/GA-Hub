@@ -99,8 +99,12 @@ class PreferredLlmCacheTests(unittest.TestCase):
 
         with mock.patch.object(
             self.svc_mod._paths, "load_config",
-            return_value={"preferred_llm_no": 2},
+            return_value={"preferred_llm_key": "gamma_oai_config"},
         ) as lc:
+            mock.patch.object(
+                self.svc_mod.LlmRegistry, "resolve", return_value=2
+            ).start()
+            self.addCleanup(mock.patch.stopall)
             service._restore_preferred_llm()
             service._restore_preferred_llm()
             service._restore_preferred_llm()
@@ -129,17 +133,49 @@ class PreferredLlmCacheTests(unittest.TestCase):
             f"load_config should be called at most once, got {lc.call_count}",
         )
 
+    def test_restore_migrates_legacy_index_to_stable_key(self):
+        agent = _StubAgent(llm_no=0, n_clients=3)
+        service = _make_service(self.svc_mod, agent)
+        saved = []
+
+        with mock.patch.object(
+            self.svc_mod._paths,
+            "load_config",
+            return_value={"preferred_llm_no": 2},
+        ) as lc, mock.patch.object(
+            self.svc_mod._paths, "save_config", side_effect=saved.append
+        ):
+            self.svc_mod.LlmRegistry.reload_and_snapshot = mock.MagicMock(
+                return_value=[("alpha_oai_config", 0), ("beta_oai_config", 1), ("gamma_oai_config", 2)]
+            )
+            mock.patch.object(self.svc_mod.LlmRegistry, "resolve", return_value=2).start()
+            self.addCleanup(mock.patch.stopall)
+            service._restore_preferred_llm()
+            service._restore_preferred_llm()
+
+        self.assertEqual(saved, [{
+            "preferred_llm_no": 2,
+            "preferred_llm_key": "gamma_oai_config",
+        }])
+        self.assertEqual(agent.llm_no, 2)
+        self.assertEqual(agent.next_llm_calls, [2])
+        self.assertLessEqual(lc.call_count, 2)
+
     # ── save caches the new value ────────────────────────────────
-    def test_save_updates_cache_and_avoids_subsequent_restore_load(self):
+    def test_switch_updates_key_cache_and_avoids_subsequent_restore_load(self):
         agent = _StubAgent(llm_no=1, n_clients=3)
         agent.get_llm_name = lambda: "LLM-3"  # restore logs the name
         service = _make_service(self.svc_mod, agent)
 
         with mock.patch.object(self.svc_mod._paths, "save_config") as sc, \
              mock.patch.object(self.svc_mod._paths, "load_config") as lc:
-            service._save_preferred_llm(3)
-            # save may read config once to check the persisted value already
-            # equals n (avoids a redundant write); that is the upper bound.
+            mock.patch.object(
+                self.svc_mod.LlmRegistry,
+                "switch_by_index",
+                return_value=(3, "gamma_oai_config"),
+            ).start()
+            self.addCleanup(mock.patch.stopall)
+            service.switch_llm(3)
             self.assertLessEqual(
                 lc.call_count, 1,
                 f"save should load_config at most once, got {lc.call_count}",
@@ -150,6 +186,10 @@ class PreferredLlmCacheTests(unittest.TestCase):
         # After save populated the cache, a restore must NOT touch load_config
         # at all — this is the whole point of the cache (submit hot-path).
         with mock.patch.object(self.svc_mod._paths, "load_config") as lc2:
+            mock.patch.object(
+                self.svc_mod.LlmRegistry, "resolve", return_value=3
+            ).start()
+            self.addCleanup(mock.patch.stopall)
             service._restore_preferred_llm()
         self.assertEqual(
             lc2.call_count, 0,
@@ -166,8 +206,12 @@ class PreferredLlmCacheTests(unittest.TestCase):
 
         with mock.patch.object(
             self.svc_mod._paths, "load_config",
-            return_value={"preferred_llm_no": 2},
+            return_value={"preferred_llm_key": "gamma_oai_config"},
         ) as lc:
+            mock.patch.object(
+                self.svc_mod.LlmRegistry, "resolve", return_value=2
+            ).start()
+            self.addCleanup(mock.patch.stopall)
             service._restore_preferred_llm()
         # transient selection drifts llm_no away from preferred
         agent.llm_no = 1

@@ -203,3 +203,62 @@ def delete_assignment(raw: str, var: str) -> str:
     lines = raw.splitlines(keepends=True)
     end_lineno = getattr(node, "end_lineno", node.lineno)
     return "".join(lines[: node.lineno - 1]) + "".join(lines[end_lineno:])
+
+
+def remove_mixin_references(
+    raw: str,
+    var: str,
+    *,
+    target_index: int | None = None,
+) -> tuple[str, int]:
+    """Remove one base assignment's references from all mixin configs."""
+    structured = structurize(raw)
+    target = next(
+        (item for item in structured["sessions"] if item["var"] == var),
+        None,
+    )
+    if target is None:
+        raise AssignmentNotFoundError(var)
+    target_name = str(target["fields"].get("name", "")).strip()
+    if not target_name and target_index is None:
+        return raw, 0
+
+    updated = raw
+    removed = 0
+    for mixin in structured["mixins"]:
+        old_members = mixin["fields"].get("llm_nos")
+        if not isinstance(old_members, list):
+            continue
+        new_members = [
+            member
+            for member in old_members
+            if not (
+                (isinstance(member, str) and member == target_name)
+                or (target_index is not None and isinstance(member, int) and not isinstance(member, bool) and member == target_index)
+            )
+        ]
+        if len(new_members) == len(old_members):
+            continue
+        fields = dict(mixin["fields"])
+        fields["llm_nos"] = new_members
+        updated = upsert_assignment(updated, mixin["var"], fields)
+        removed += len(old_members) - len(new_members)
+    return updated, removed
+
+
+def delete_base_assignment(raw: str, var: str) -> tuple[str, int]:
+    """Delete one base LLM and stale mixin references in source order."""
+    structured = structurize(raw)
+    if not any(item["var"] == var for item in structured["sessions"]):
+        raise AssignmentNotFoundError(var)
+    ordered = sorted(
+        (item for bucket in ("sessions", "mixins") for item in structured[bucket]),
+        key=lambda item: item["lineno"],
+    )
+    target_index = next(
+        index for index, item in enumerate(ordered) if item["var"] == var
+    )
+    new_text, removed_references = remove_mixin_references(
+        raw, var, target_index=target_index
+    )
+    return delete_assignment(new_text, var), removed_references

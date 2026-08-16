@@ -275,6 +275,7 @@ class SessionCoordinator:
         source: str = "webui",
         images: list[str] | None = None,
         llm_index: int | None = None,
+        llm_key: str | None = None,
     ) -> RuntimeState:
         # Admission, per-session identity reservation, runtime creation and
         # submit are one critical section. No concurrent caller can overbook a
@@ -303,6 +304,7 @@ class SessionCoordinator:
                     source=source,
                     images=images,
                     llm_index=llm_index,
+                    llm_key=llm_key,
                     session_id=session_id,
                     run_id=run_id,
                 )

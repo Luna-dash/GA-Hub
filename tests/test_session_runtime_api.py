@@ -137,7 +137,7 @@ def test_list_session_runtimes_returns_all_sessions_in_one_response(
 
 def test_restore_failure_is_stable_error(tmp_path: Path, monkeypatch) -> None:
     client, store, coordinator = _client(tmp_path, monkeypatch)
-    sid = store.create(title="Restore", llm_index=0)["id"]
+    sid = store.create(title="Restore", llm_key="native_oai_config")["id"]
     coordinator.restore_error = True
 
     with client:
@@ -198,7 +198,7 @@ def test_submit_run_uses_session_metadata_and_returns_runtime_state(
     tmp_path: Path, monkeypatch
 ) -> None:
     client, store, coordinator = _client(tmp_path, monkeypatch)
-    sid = store.create(title="A", llm_index=4)["id"]
+    sid = store.create(title="A", llm_key="native_oai_config")["id"]
 
     with client:
         response = client.post(
@@ -218,9 +218,50 @@ def test_submit_run_uses_session_metadata_and_returns_runtime_state(
             "session_id": sid,
             "source": "webui",
             "images": ["a.png"],
-            "llm_index": 4,
+            "llm_key": "native_oai_config",
         }]
         assert client.get(f"/api/sessions/{sid}/runtime").json() == response.json()
+
+
+def test_submit_run_rejects_legacy_positional_llm_binding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client, store, coordinator = _client(tmp_path, monkeypatch)
+    sid = store.create(title="Legacy")["id"]
+    store.update(sid, {"llm_key": None, "llm_index": 2})
+
+    with client:
+        response = client.post(f"/api/sessions/{sid}/runs", json={"text": "hello"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "llm_unconfirmed"
+    assert coordinator.submissions == []
+
+
+def test_unbound_session_run_inherits_preferred_llm_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from server.routes import sessions
+
+    client, store, coordinator = _client(tmp_path, monkeypatch)
+    sid = store.create(title="Follow global")["id"]
+    monkeypatch.setattr(
+        sessions,
+        "LlmPreferenceStore",
+        lambda: type("Preferences", (), {"get_key": lambda self: "native_oai_config"})(),
+    )
+
+    with client:
+        response = client.post(f"/api/sessions/{sid}/runs", json={"text": "hello"})
+
+    assert response.status_code == 202
+    assert coordinator.submissions == [{
+        "text": "hello",
+        "session_id": sid,
+        "source": "webui",
+        "images": [],
+        "llm_key": "native_oai_config",
+    }]
 
 
 def test_global_busy_and_unknown_session_are_explicit(tmp_path: Path, monkeypatch) -> None:

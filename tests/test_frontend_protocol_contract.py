@@ -30,7 +30,7 @@ def test_live_chat_lazily_creates_sessions_only_on_submit_or_explicit_new():
     # The empty state remains sendable; submit owns the lazy create path.
     assert "disabled={creatingSession}" in source
     submit_block = source[source.index("  const submit ="):source.index("  const newConv =")]
-    assert "api.createSession({ title: '', llm_index: null })" in submit_block
+    assert "api.createSession({ title: '', llm_key: null })" in submit_block
     assert "liveChat:pending" in source
 
 
