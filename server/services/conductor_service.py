@@ -335,6 +335,7 @@ class ConductorService:
             log.debug("Direct usage attribution sink unavailable", exc_info=True)
         self._started = False
         self._conductor_llm_index = None
+        self._subagent_llm_index = None
         self.callbacks = HubConductorCallbacks(self)
         # The pool is constructed first because the monitor bridge needs it.
         runtime = PoolRuntime(
@@ -342,7 +343,10 @@ class ConductorService:
             on_display_fn=lambda sid, dq, done, generation=None: _monitor_core_display(
                 sid, dq, done, self.pool, generation=generation
             ),
-            llm_selector=_configure_subagent,
+            llm_selector=lambda agent, llm_index=None: _configure_subagent(
+                agent,
+                llm_index if llm_index is not None else self._subagent_llm_index,
+            ),
         )
         self.pool = CoreSubagentPool(runtime=runtime, callbacks=self.callbacks)
         self.contract_ext = ConductorContractExt(self.pool, publish=bus.publish)
@@ -391,9 +395,12 @@ API: {base}??requests?GET /api/conductor/readme????GET /api/conductor/chat??????
 - ??subagent??????????????????????????????????????
 {summary}"""
 
-    def start(self, llm_index: Optional[int] = None) -> bool:
+    def start(self, llm_index: Optional[int] = None, subagent_llm_index: Optional[int] = None) -> bool:
         if llm_index is not None:
             self._conductor_llm_index = llm_index
+        self._subagent_llm_index = (
+            subagent_llm_index if subagent_llm_index is not None else self._conductor_llm_index
+        )
         started = self.conductor.start()
         self.lifecycle_status()
         return started

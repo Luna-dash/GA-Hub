@@ -36,8 +36,8 @@ class FakeService:
         self._started = self._lifecycle["started"]
         return dict(self._lifecycle)
 
-    def start(self, llm_index=None):
-        self.start_calls.append(llm_index)
+    def start(self, llm_index=None, subagent_llm_index=None):
+        self.start_calls.append((llm_index, subagent_llm_index))
         already_started = self._lifecycle["started"]
         self._lifecycle = dict(RUNNING)
         return not already_started
@@ -70,7 +70,21 @@ def test_start_route_returns_live_lifecycle_and_remains_idempotent(monkeypatch):
     result = asyncio.run(conductor_routes.start_conductor())
 
     assert result == {"ok": True, **RUNNING}
-    assert service.start_calls == [None]
+    assert service.start_calls == [(None, None)]
+
+
+def test_start_route_forwards_main_and_subagent_models(monkeypatch):
+    service = FakeService(STOPPED)
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    result = asyncio.run(
+        conductor_routes.start_conductor(
+            conductor_routes.ConductorStartReq(llm_index=2, subagent_llm_index=5)
+        )
+    )
+
+    assert result == {"ok": True, **RUNNING}
+    assert service.start_calls == [(2, 5)]
 
 
 def test_stop_route_delegates_and_returns_live_lifecycle(monkeypatch):

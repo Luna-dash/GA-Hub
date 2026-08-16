@@ -463,8 +463,9 @@ class ConductorStartSubagent(BaseModel):
 
 
 class ConductorStartReq(BaseModel):
-    # Page-scoped override. None means fallback to persisted/global preference.
+    # Page-scoped selections. None subagent selection means follow conductor.
     llm_index: int | None = None
+    subagent_llm_index: int | None = None
 
 
 class ConductorSubagentAction(BaseModel):

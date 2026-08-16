@@ -44,6 +44,16 @@ def _tail(args_text: str, label: str) -> str:
     return f"\n\n{label}：{args_text}"
 
 
+def _worker_llm_instruction(llm_index: int | None) -> str:
+    """Pin every Hive worker process to the page-selected subagent model."""
+    if llm_index is None:
+        return ""
+    return (
+        "\n\n子代理模型规则：本次所有 Hive worker 启动命令都必须追加 "
+        f"`--llm_no {int(llm_index)}`；包括首个 worker 和后续扩容 worker，不得省略。"
+    )
+
+
 @dataclass
 class HiveMessage:
     id: str
@@ -76,7 +86,13 @@ class GoalHiveService:
             log.info("GoalHive agent initialized (separate instance)")
         return self.agent
 
-    def submit(self, text: str, mode: str = "goal", llm_index: int | None = None) -> str:
+    def submit(
+        self,
+        text: str,
+        mode: str = "goal",
+        llm_index: int | None = None,
+        subagent_llm_index: int | None = None,
+    ) -> str:
         """Submit a goal/hive task. Returns stream_id for tracking."""
         agent = self.ensure_agent()
 
@@ -119,7 +135,12 @@ class GoalHiveService:
         # Build prompt with goal/hive preamble (verbatim slash_cmds semantics)
         label = "集群目标" if mode == "hive" else "用户目标"
         preamble = _HIVE_PROMPT if mode == "hive" else _GOAL_PROMPT
-        prompt = preamble + _tail(text, label)
+        worker_instruction = (
+            _worker_llm_instruction(subagent_llm_index)
+            if mode == "hive"
+            else ""
+        )
+        prompt = preamble + worker_instruction + _tail(text, label)
 
         # Submit to the agent's own queue
         display_queue = agent.put_task(prompt, source="goalhive")

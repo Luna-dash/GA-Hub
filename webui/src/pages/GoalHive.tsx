@@ -59,6 +59,7 @@ export default function GoalHive() {
 
   // Page-local LLM selector
   const [selectedLlmIndex, setSelectedLlmIndex] = useState<number | null>(null)
+  const [subagentLlmIndex, setSubagentLlmIndex] = useState<number | null>(null)
   const { data: llmsData } = useQuery({
     queryKey: ['llms'],
     queryFn: api.llms,
@@ -66,6 +67,7 @@ export default function GoalHive() {
   const llms = llmsData?.llms ?? []
   const preferredLlmIndex = llms.findIndex((l) => l.preferred)
   const effectiveLlmIndex = selectedLlmIndex ?? (preferredLlmIndex >= 0 ? preferredLlmIndex : null)
+  const effectiveSubagentLlmIndex = subagentLlmIndex ?? effectiveLlmIndex
 
   const config = modeConfigs[mode]
   const streaming = msgs.some((m) => m.streaming)
@@ -163,6 +165,7 @@ export default function GoalHive() {
       text,
       mode,
       llm_index: effectiveLlmIndex,
+      subagent_llm_index: effectiveSubagentLlmIndex,
     }))
     clearGoalDraft()
   }
@@ -189,17 +192,31 @@ export default function GoalHive() {
       }
       actions={
         <div className="flex items-center gap-2">
+          <span className="text-xs text-[#7B6D5A]">主模型</span>
           <select
             value={effectiveLlmIndex ?? -1}
             onChange={(e) => setSelectedLlmIndex(Number(e.target.value))}
             disabled={!llms.length}
-            className="max-w-[400px] min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
-            title="选择本页 LLM 链路（不影响侧边栏全局选择；未手动选择时使用全局保底）"
+            className="max-w-[260px] min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
+            title="选择 Goal / Hive 使用的主模型"
           >
             {llms.map((llm, i) => (
               <option key={i} value={i}>
-                {llm.name}{llm.preferred ? '（全局）' : ''}{i === selectedLlmIndex ? ' ✓' : ''}
+                {llm.name}{i === selectedLlmIndex ? ' ✓' : ''}
               </option>
+            ))}
+          </select>
+          <span className="text-xs text-[#7B6D5A]">子代理模型</span>
+          <select
+            value={subagentLlmIndex ?? -1}
+            onChange={(e) => setSubagentLlmIndex(Number(e.target.value) < 0 ? null : Number(e.target.value))}
+            disabled={!llms.length || mode !== 'hive'}
+            className="max-w-[260px] min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
+            title={mode === 'hive' ? '选择 Hive 子代理使用的模型' : 'Goal 模式不启动子代理'}
+          >
+            <option value={-1}>跟随主模型</option>
+            {llms.map((llm, i) => (
+              <option key={i} value={i}>{llm.name}</option>
             ))}
           </select>
           <div className="inline-flex rounded-xl border border-line bg-bg-soft p-1">

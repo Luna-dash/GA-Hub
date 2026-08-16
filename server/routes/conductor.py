@@ -158,7 +158,10 @@ async def get_status() -> ConductorStatusResp:
 async def start_conductor(body: ConductorStartReq | None = None) -> ConductorLifecycleResp:
     """Start the conductor supervisor."""
     service = svc()
-    started = service.start(llm_index=body.llm_index if body else None)
+    started = service.start(
+        llm_index=body.llm_index if body else None,
+        subagent_llm_index=body.subagent_llm_index if body else None,
+    )
     lifecycle = service.lifecycle_status()
     return {"ok": started or lifecycle["started"], **lifecycle}
 

@@ -407,7 +407,8 @@ export const api = {
   servicePanel: () => http<ServicePanelResponse>('GET', '/api/services/panel'),
   conductorLog: () => http<ConductorLogResponse>('GET', '/api/conductor/log'),
   conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),
-  conductorStart: (llm_index?: number | null) => http<ConductorLifecycleResponse>('POST', '/api/conductor/start', { llm_index }),
+  conductorStart: (llm_index?: number | null, subagent_llm_index?: number | null) =>
+    http<ConductorLifecycleResponse>('POST', '/api/conductor/start', { llm_index, subagent_llm_index }),
   sessions: () => http<SessionList>('GET', '/api/sessions'),
   createSession: (req: Partial<ApiComponents['schemas']['SessionCreate']> = {}) =>
     http<GeneratedHubSession>('POST', '/api/sessions', req),

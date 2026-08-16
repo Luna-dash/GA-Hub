@@ -53,7 +53,13 @@ async def ws_goalhive(ws: WebSocket):
                 text = msg.get("text", "")
                 mode = msg.get("mode", "goal")
                 llm_index = msg.get("llm_index")
-                service.submit(text, mode=mode, llm_index=llm_index)
+                subagent_llm_index = msg.get("subagent_llm_index")
+                service.submit(
+                    text,
+                    mode=mode,
+                    llm_index=llm_index,
+                    subagent_llm_index=subagent_llm_index,
+                )
             
             elif msg_type == "abort":
                 service.abort()
