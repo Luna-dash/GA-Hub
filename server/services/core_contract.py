@@ -140,6 +140,10 @@ def _core_commit(ga_root: Path) -> str | None:
         out = subprocess.run(
             ["git", "-C", str(ga_root), "rev-parse", "--short", "HEAD"],
             capture_output=True,
+            # The desktop sidecar reserves stdin as its owner-shutdown pipe.
+            # Git for Windows may keep reading an inherited open pipe, which
+            # blocks ``communicate()`` and therefore the entire app lifespan.
+            stdin=subprocess.DEVNULL,
             text=True,
             timeout=5,
             **hidden_process_kwargs(),

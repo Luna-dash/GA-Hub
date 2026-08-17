@@ -1,5 +1,6 @@
 """Black-box lifecycle tests for the Tauri-owned Python sidecar."""
 from __future__ import annotations
+import io
 import json
 import os
 import socket
@@ -9,12 +10,60 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from threading import Event, Thread
+from unittest.mock import patch
 from urllib.request import urlopen
+
+from server import desktop_sidecar
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGED_SIDECAR = (
     ROOT / "src-tauri" / "binaries" / "ga-hub-sidecar-x86_64-pc-windows-msvc.exe"
 )
+
+
+class OwnerStdinReaderTests(unittest.TestCase):
+    def test_waiting_for_owner_does_not_lock_buffered_stdin(self) -> None:
+        read_fd, write_fd = os.pipe()
+        raw = os.fdopen(read_fd, "rb", buffering=0)
+        buffered = io.BufferedReader(raw)
+        stdin = io.TextIOWrapper(buffered, encoding="utf-8")
+        server = type("Server", (), {"should_exit": False})()
+        reader = Thread(target=desktop_sidecar._stdin_shutdown, args=(server,), daemon=True)
+        fileno_called = Event()
+        probe_done = Event()
+
+        class ObservedStdin:
+            buffer = stdin.buffer
+
+            def fileno(self) -> int:
+                fileno_called.set()
+                return stdin.fileno()
+
+        try:
+            with patch.object(desktop_sidecar.sys, "stdin", ObservedStdin()):
+                reader.start()
+                self.assertTrue(fileno_called.wait(1))
+
+                def probe_buffer() -> None:
+                    stdin.buffer.read(0)
+                    probe_done.set()
+
+                probe = Thread(target=probe_buffer, daemon=True)
+                probe.start()
+                self.assertTrue(
+                    probe_done.wait(1),
+                    "owner-pipe wait must not monopolise BufferedReader's lock",
+                )
+                os.write(write_fd, b"\n")
+                reader.join(1)
+                probe.join(1)
+        finally:
+            os.close(write_fd)
+            stdin.close()
+
+        self.assertFalse(reader.is_alive())
+        self.assertTrue(server.should_exit)
 
 
 class DesktopSidecarTests(unittest.TestCase):

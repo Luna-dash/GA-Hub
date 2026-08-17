@@ -15,7 +15,9 @@ Two concerns are covered:
 from __future__ import annotations
 
 import os
+import subprocess
 import unittest
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
@@ -77,6 +79,15 @@ class ContractReportStructureTests(unittest.TestCase):
             errors=["e"],
         )
         self.assertEqual(rep2.to_dict()["items"], [{"name": "n", "ok": False, "detail": "d"}])
+
+    def test_git_probe_does_not_inherit_desktop_owner_pipe(self):
+        from server.services import core_contract
+
+        completed = subprocess.CompletedProcess([], 0, stdout="abc123\n", stderr="")
+        with mock.patch("subprocess.run", return_value=completed) as run:
+            self.assertEqual(core_contract._core_commit(Path("C:/ga")), "abc123")
+
+        self.assertIs(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
 
 
 class LiveContractTests(unittest.TestCase):

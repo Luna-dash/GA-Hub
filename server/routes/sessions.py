@@ -138,6 +138,11 @@ def _get_scheduled_chats() -> ScheduledChatService:
     return _scheduled_chats
 
 
+def scheduled_chat_service() -> ScheduledChatService:
+    """Return the process-owned scheduled-chat domain for lifecycle hosts."""
+    return _get_scheduled_chats()
+
+
 def start_scheduled_chats() -> None:
     _get_scheduled_chats().start()
 

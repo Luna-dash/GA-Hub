@@ -52,9 +52,14 @@ def _stdin_shutdown(server: object) -> None:
     the server would shut down immediately after boot. Only a line containing
     at least one byte (Tauri's stop_owned writes ``b\"\\n\"``) triggers exit.
     """
+    # Keep this private control channel below Python's buffered stdin layer.
+    # The owner deliberately holds the pipe open for the whole desktop
+    # lifetime, so a blocking BufferedReader call would monopolise its lock
+    # while libraries and child-process probes inspect standard I/O.
     try:
-        data = sys.stdin.buffer.readline()
-    except (AttributeError, OSError):
+        fd = sys.stdin.fileno()
+        data = os.read(fd, 1)
+    except (AttributeError, OSError, ValueError):
         return
     if not data:
         return
