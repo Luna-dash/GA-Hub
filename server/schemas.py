@@ -660,7 +660,7 @@ class LogLinesResp(BaseModel):
 class EventBusEnvelope(BaseModel):
     topic: str
     payload: dict[str, Any]
-    ts: int
+    ts: float
 
 
 class EventRecentResp(BaseModel):

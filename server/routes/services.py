@@ -8,5 +8,5 @@ router = APIRouter()
 
 
 @router.get("/api/services/panel")
-async def service_panel() -> ServicePanelResp:
+def service_panel() -> ServicePanelResp:
     return registry.panel()

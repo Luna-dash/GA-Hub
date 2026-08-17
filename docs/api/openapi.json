@@ -5930,7 +5930,7 @@
             "title": "Payload"
           },
           "ts": {
-            "type": "integer",
+            "type": "number",
             "title": "Ts"
           }
         },

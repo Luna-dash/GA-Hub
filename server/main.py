@@ -400,7 +400,7 @@ def create_app() -> FastAPI:
     app.include_router(event_routes.router)
 
     @app.get("/api/status", response_model=AppStatusResp, response_model_exclude_unset=True)
-    async def status():
+    def status():
         out: dict[str, Any] = {
             "configured": _paths.GA_ROOT is not None,
             "ga_root": str(_paths.GA_ROOT) if _paths.GA_ROOT else None,
@@ -437,7 +437,7 @@ def create_app() -> FastAPI:
         return out
 
     @app.get("/api/health")
-    async def health_summary():
+    def health_summary():
         """Stable process/service health vocabulary for diagnostics."""
         report = getattr(app.state, "core_contract", None)
         if setup_mode:
