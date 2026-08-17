@@ -3,9 +3,10 @@ import clsx from 'clsx'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { PageShell } from '@/components/PageShell'
+import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
+import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useDraftStore } from '@/stores/draftStore'
 import { useGoalHiveStore } from '@/stores/goalhiveStore'
-import type { LLMInfo } from '@/api/types'
 
 type GoalMode = 'goal' | 'hive'
 
@@ -57,21 +58,24 @@ export default function GoalHive() {
   const targetRef = useRef<HTMLTextAreaElement | null>(null)
   const conditionRef = useRef<HTMLTextAreaElement | null>(null)
 
-  // Page-local LLM selector
-  const [selectedLlmIndex, setSelectedLlmIndex] = useState<number | null>(null)
-  const [subagentLlmIndex, setSubagentLlmIndex] = useState<number | null>(null)
+  // Conductor and Goal/Hive share durable key-based model preferences.
   const { data: llmsData } = useQuery({
     queryKey: ['llms'],
     queryFn: api.llms,
   })
   const llms = llmsData?.llms ?? []
-  const preferredLlmIndex = llms.findIndex((l) => l.preferred)
-  const effectiveLlmIndex = selectedLlmIndex ?? (preferredLlmIndex >= 0 ? preferredLlmIndex : null)
-  const effectiveSubagentLlmIndex = subagentLlmIndex ?? effectiveLlmIndex
+  const {
+    mainLlmKey,
+    subagentLlmKey,
+    mainLlmIndex: effectiveLlmIndex,
+    subagentLlmIndex: effectiveSubagentLlmIndex,
+    selectMainLlm,
+    selectSubagentLlm,
+  } = useSharedModelSelection(llms)
 
   const config = modeConfigs[mode]
   const streaming = msgs.some((m) => m.streaming)
-  const canSubmit = target.trim().length > 0 && conn === 'open' && !streaming
+  const canSubmit = target.trim().length > 0 && conn === 'open' && !streaming && effectiveLlmIndex !== null
 
   const preview = useMemo(() => {
     const parts = [target.trim(), condition.trim()].filter(Boolean)
@@ -193,32 +197,24 @@ export default function GoalHive() {
       actions={
         <div className="flex items-center gap-2">
           <span className="text-xs text-[#7B6D5A]">主模型</span>
-          <select
-            value={effectiveLlmIndex ?? -1}
-            onChange={(e) => setSelectedLlmIndex(Number(e.target.value))}
-            disabled={!llms.length}
-            className="max-w-[260px] min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
+          <MainModelSelect
+            llms={llms}
+            value={mainLlmKey}
+            onChange={selectMainLlm}
+            className="max-w-[260px]"
             title="选择 Goal / Hive 使用的主模型"
-          >
-            {llms.map((llm, i) => (
-              <option key={i} value={i}>
-                {llm.name}{i === selectedLlmIndex ? ' ✓' : ''}
-              </option>
-            ))}
-          </select>
+            aria-label="Goal / Hive 主模型"
+          />
           <span className="text-xs text-[#7B6D5A]">子代理模型</span>
-          <select
-            value={subagentLlmIndex ?? -1}
-            onChange={(e) => setSubagentLlmIndex(Number(e.target.value) < 0 ? null : Number(e.target.value))}
-            disabled={!llms.length || mode !== 'hive'}
-            className="max-w-[260px] min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
+          <SubagentModelSelect
+            llms={llms}
+            value={subagentLlmKey}
+            onChange={selectSubagentLlm}
+            disabled={mode !== 'hive'}
+            className="max-w-[260px]"
             title={mode === 'hive' ? '选择 Hive 子代理使用的模型' : 'Goal 模式不启动子代理'}
-          >
-            <option value={-1}>跟随主模型</option>
-            {llms.map((llm, i) => (
-              <option key={i} value={i}>{llm.name}</option>
-            ))}
-          </select>
+            aria-label="Goal / Hive 子代理模型"
+          />
           <div className="inline-flex rounded-xl border border-line bg-bg-soft p-1">
             {(['goal', 'hive'] as GoalMode[]).map((item) => (
             <button

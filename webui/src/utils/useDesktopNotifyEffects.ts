@@ -6,63 +6,59 @@
 // Throttling + visibility checks live inside notify() itself; this module
 // only translates state transitions into notify() calls.
 
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { useChatStore } from '@/stores/chatStore'
 import { useAgentStore } from '@/stores/agentStore'
 import { useConductorStore } from '@/stores/conductorStore'
 import { notify } from './notify'
 
 export function useDesktopNotifyEffects() {
-  const streaming = useChatStore((s) => s.streaming)
-  const msgs = useChatStore((s) => s.msgs)
-  const recent = useAgentStore((s) => s.recent)
-  const conductorMsgs = useConductorStore((s) => s.chatMessages)
-
-  // ── (1) stream done ──
-  const wasStreamingRef = useRef(false)
   useEffect(() => {
-    if (wasStreamingRef.current && !streaming) {
-      const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant')
+    let lastWxAnnounced = Math.floor(Date.now() / 1000)
+    let conductorAssistantCount = useConductorStore
+      .getState()
+      .chatMessages
+      .filter((message) => message.role === 'assistant').length
+
+    const unsubscribeChat = useChatStore.subscribe((state, previous) => {
+      if (!previous.streaming || state.streaming) return
+      const lastAssistant = [...state.msgs].reverse().find((message) => message.role === 'assistant')
       const preview = (lastAssistant?.content || '').replace(/\s+/g, ' ').slice(0, 140)
       notify('Agent 已回复', { body: preview, tag: 'agent-stream-done' })
-    }
-    wasStreamingRef.current = streaming
-  }, [streaming, msgs])
+    })
 
-  // ── (2) wechat new message ──
-  // We watch the head of `recent` for `wechat:message_in` topics. To avoid
-  // re-firing on store rehydration, we remember the timestamp of the last
-  // event we already announced.
-  const lastWxAnnouncedRef = useRef<number>(Math.floor(Date.now() / 1000))
-  useEffect(() => {
-    for (const e of recent) {
-      if (!('topic' in e) || e.topic !== 'wechat:message_in') continue
-      if (!('ts' in e) || e.ts <= lastWxAnnouncedRef.current) break
-      const p = 'payload' in e ? e.payload : {}
-      const uid = p?.uid || ''
-      const text = p?.text || '(媒体消息)'
-      notify(`💬 微信 · ${uid.slice(0, 16) || '联系人'}`, {
-        body: text.slice(0, 140),
-        tag: `wechat-${uid}`,
-      })
-      lastWxAnnouncedRef.current = Math.max(lastWxAnnouncedRef.current, 'ts' in e ? e.ts : 0)
-    }
-  }, [recent])
+    const unsubscribeAgent = useAgentStore.subscribe((state, previous) => {
+      if (state.recent === previous.recent) return
+      for (const event of state.recent) {
+        if (!('topic' in event) || event.topic !== 'wechat:message_in') continue
+        if (!('ts' in event) || event.ts <= lastWxAnnounced) break
+        const payload = 'payload' in event ? event.payload : {}
+        const uid = payload?.uid || ''
+        const message = payload?.text || '(媒体消息)'
+        notify(`💬 微信 · ${uid.slice(0, 16) || '联系人'}`, {
+          body: message.slice(0, 140),
+          tag: `wechat-${uid}`,
+        })
+        lastWxAnnounced = Math.max(lastWxAnnounced, event.ts)
+      }
+    })
 
-  // ── (3) conductor task done ──
-  // Watch for new assistant messages in Conductor chatMessages array.
-  // Fire notification when a new assistant message appears (task completed).
-  const lastConductorCountRef = useRef(0)
-  useEffect(() => {
-    const assistantMsgs = conductorMsgs.filter((m) => m.role === 'assistant')
-    const newCount = assistantMsgs.length
-    
-    if (newCount > lastConductorCountRef.current && lastConductorCountRef.current > 0) {
-      const lastMsg = assistantMsgs[assistantMsgs.length - 1]
-      const preview = (lastMsg?.msg || '').replace(/\s+/g, ' ').slice(0, 140)
-      notify('Conductor 任务完成', { body: preview, tag: 'conductor-task-done' })
+    const unsubscribeConductor = useConductorStore.subscribe((state, previous) => {
+      if (state.chatMessages === previous.chatMessages) return
+      const assistantMessages = state.chatMessages.filter((message) => message.role === 'assistant')
+      const nextCount = assistantMessages.length
+      if (nextCount > conductorAssistantCount && conductorAssistantCount > 0) {
+        const lastMessage = assistantMessages[assistantMessages.length - 1]
+        const preview = (lastMessage?.msg || '').replace(/\s+/g, ' ').slice(0, 140)
+        notify('Conductor 任务完成', { body: preview, tag: 'conductor-task-done' })
+      }
+      conductorAssistantCount = nextCount
+    })
+
+    return () => {
+      unsubscribeChat()
+      unsubscribeAgent()
+      unsubscribeConductor()
     }
-    
-    lastConductorCountRef.current = newCount
-  }, [conductorMsgs])
+  }, [])
 }

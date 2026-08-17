@@ -30,7 +30,7 @@ window.addEventListener('vite:preloadError', (event) => {
 const qc = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5_000,
+      staleTime: 30_000,
       refetchOnWindowFocus: false,
       retry: 1,
     },

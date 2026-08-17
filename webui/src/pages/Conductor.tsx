@@ -135,7 +135,8 @@ export default function Conductor() {
   const { data: status } = useQuery({
     queryKey: ['conductor', 'status'],
     queryFn: () => api.conductorStatus(),
-    refetchInterval: 3000,
+    refetchInterval: 12_000,
+    refetchIntervalInBackground: false,
   })
 
   // Conductor and Goal/Hive share durable key-based model preferences.
@@ -170,7 +171,8 @@ export default function Conductor() {
       setSubagents(res.items)
       return res.items
     },
-    refetchInterval: 2000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   })
 
   // Poll chat
@@ -181,7 +183,8 @@ export default function Conductor() {
       setChatMessages(res.items)
       return res.items
     },
-    refetchInterval: 2000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   })
 
   // Poll log
@@ -192,7 +195,8 @@ export default function Conductor() {
       setLog(res.log)
       return res.log
     },
-    refetchInterval: 2000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   })
 
   // EventSocket for real-time updates (CORRECTED topic names)
@@ -202,11 +206,9 @@ export default function Conductor() {
       if (evt.topic === 'conductor:chat' && evt.payload.item) {
         shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
         addChatMessage(evt.payload.item)
-        qc.invalidateQueries({ queryKey: ['conductor', 'chat'] })
       }
       if (evt.topic === 'conductor:subagents' && evt.payload.items) {
         setSubagents(evt.payload.items)
-        qc.invalidateQueries({ queryKey: ['conductor', 'subagents'] })
       }
       if (evt.topic === 'conductor:log' && evt.payload.item) {
         shouldFollowLogRef.current = isNearScrollTop(logScrollRef.current)
@@ -218,7 +220,7 @@ export default function Conductor() {
     }
     sock.open()
     return () => sock.close()
-  }, [qc, addChatMessage, setSubagents, addLogItem, addApproval])
+  }, [addChatMessage, setSubagents, addLogItem, addApproval])
 
   useEffect(() => {
     return () => {

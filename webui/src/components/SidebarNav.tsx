@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
+import { preloadRoute } from '@/routes/routeLoaders'
 import clsx from 'clsx'
 import {
   getNavPreferences,
@@ -130,6 +131,8 @@ export function SidebarNav() {
           </div>
           <NavLink
             to="/settings"
+            onMouseEnter={() => preloadRoute('/settings')}
+            onFocus={() => preloadRoute('/settings')}
             className={({ isActive }) =>
               clsx('ga-brand-settings', isActive && 'active')
             }
@@ -146,6 +149,8 @@ export function SidebarNav() {
           <NavLink
             key={it.to}
             to={it.to}
+            onMouseEnter={() => preloadRoute(it.to)}
+            onFocus={() => preloadRoute(it.to)}
             className={({ isActive }) =>
               clsx('ga-sidebar-item', isActive && 'active')
             }

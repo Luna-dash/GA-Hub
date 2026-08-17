@@ -202,8 +202,7 @@ describe('SessionRail', () => {
     })
   })
 
-  it('starts collapsed on every mount and expansion only lasts for the current window', () => {
-    localStorage.setItem('gahub.sessionRailCollapsed', 'false')
+  it('starts collapsed and returns to the collapsed state when the active session changes', () => {
     act(() => root.render(
       <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,
     ))
@@ -213,15 +212,9 @@ describe('SessionRail', () => {
     expect(host.querySelector('[aria-label="会话工作区"]')?.getAttribute('aria-hidden')).toBe('true')
     act(() => toggle.click())
     expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('false')
-    expect(localStorage.getItem('gahub.sessionRailCollapsed')).toBe('false')
 
-    act(() => root.unmount())
-    host.remove()
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
     act(() => root.render(
-      <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,
+      <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[1].id} onSelect={vi.fn()} />,
     ))
     expect(host.querySelector('[aria-label="展开会话管理"]')).not.toBeNull()
     expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('true')

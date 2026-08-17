@@ -11,6 +11,7 @@ import { useDocumentTitle } from '@/utils/useDocumentTitle'
 import { useDesktopNotifyEffects } from '@/utils/useDesktopNotifyEffects'
 import { hydrateNavPreferences } from '@/config/navigation'
 import { api } from '@/api/client'
+import { routeLoaders } from '@/routes/routeLoaders'
 
 const routeFallback = (
   <div className="h-full flex items-center justify-center text-slate-500 text-sm">载入中…</div>
@@ -18,18 +19,18 @@ const routeFallback = (
 
 // Keep route pages out of the startup bundle. The shell (stores, sockets,
 // sidebar, command palette) loads first; individual feature pages load on demand.
-const Dashboard = lazy(() => import('@/pages/Dashboard'))
-const LiveChat = lazy(() => import('@/pages/LiveChat'))
-const FeishuBot = lazy(() => import('@/pages/FeishuBot'))
-const Conversations = lazy(() => import('@/pages/Conversations'))
-const Memory = lazy(() => import('@/pages/Memory'))
-const GoalHive = lazy(() => import('@/pages/GoalHive'))
-const Conductor = lazy(() => import('@/pages/Conductor'))
-const MyKey = lazy(() => import('@/pages/MyKey'))
-const Settings = lazy(() => import('@/pages/Settings'))
-const Tasks = lazy(() => import('@/pages/Tasks'))
-const Autonomous = lazy(() => import('@/pages/Autonomous'))
-const TokenStats = lazy(() => import('@/pages/TokenStats'))
+const Dashboard = lazy(routeLoaders.dashboard)
+const LiveChat = lazy(routeLoaders.chat)
+const FeishuBot = lazy(routeLoaders.feishu)
+const Conversations = lazy(routeLoaders.conversations)
+const Memory = lazy(routeLoaders.memory)
+const GoalHive = lazy(routeLoaders.goalHive)
+const Conductor = lazy(routeLoaders.conductor)
+const MyKey = lazy(routeLoaders.mykey)
+const Settings = lazy(routeLoaders.settings)
+const Tasks = lazy(routeLoaders.tasks)
+const Autonomous = lazy(routeLoaders.autonomous)
+const TokenStats = lazy(routeLoaders.tokens)
 
 export default function App() {
   const start = useAgentStore((s) => s.start)

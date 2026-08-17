@@ -79,6 +79,12 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
   const [recentActivity, setRecentActivity] = useState<string[]>(() => readJson<string[]>(RECENT_KEY, []))
   const previousActivity = useRef<Record<string, ReturnType<typeof sessionActivity>>>({})
 
+  // Session switches reuse the LiveChat route/component. Always return the
+  // rail to its compact state instead of carrying expansion across sessions.
+  useEffect(() => {
+    setCollapsed(true)
+  }, [currentId])
+
   useEffect(() => {
     const nextTerminal = { ...terminalState }
     const nextRecent = [...recentActivity]
