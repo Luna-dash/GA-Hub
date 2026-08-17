@@ -87,8 +87,13 @@ def test_list_conversations_keeps_search_and_pagination_semantics(tmp_path, monk
 def test_list_uses_first_user_question_only_for_untitled_page_items(tmp_path, monkeypatch):
     untitled = tmp_path / "untitled.txt"
     titled = tmp_path / "titled.txt"
-    untitled.write_text("archive", encoding="utf-8")
-    titled.write_text("archive", encoding="utf-8")
+    native = (
+        "=== Prompt === 2026-08-17 12:00:00\n"
+        '{"role":"user","content":[{"type":"text","text":"  Original\\n  question  "}]}\n'
+        "=== Response === 2026-08-17 12:00:01\n[]\n"
+    )
+    untitled.write_text(native, encoding="utf-8")
+    titled.write_text(native, encoding="utf-8")
     monkeypatch.setattr(
         conversations,
         "_ga_sessions",
@@ -102,18 +107,14 @@ def test_list_uses_first_user_question_only_for_untitled_page_items(tmp_path, mo
         "_conversation_title",
         lambda cid, path: "Renamed" if cid == "titled.txt" else "",
     )
-    parsed: list[str] = []
-
-    def extract(path):
-        parsed.append(path)
-        return [
-            {"role": "system", "content": "instructions"},
-            {"role": "user", "content": "  Original\n  question  "},
-            {"role": "assistant", "content": "answer"},
-            {"role": "user", "content": "last question"},
-        ]
-
-    monkeypatch.setattr(conversations, "_ga_extract", extract)
+    monkeypatch.setattr(
+        conversations,
+        "_ga_extract",
+        lambda _path: (_ for _ in ()).throw(
+            AssertionError("conversation list must not parse full archives")
+        ),
+    )
+    conversations._first_user_preview_head.cache_clear()
 
     result = asyncio.run(conversations.list_conversations(offset=0, limit=2))
 
@@ -121,8 +122,45 @@ def test_list_uses_first_user_question_only_for_untitled_page_items(tmp_path, mo
         "Original question",
         "",
     ]
-    assert parsed == [str(untitled)]
     assert all("_archive_path" not in item for item in result["items"])
+
+
+def test_first_user_preview_reads_a_bounded_head_and_invalidates_on_append(tmp_path, monkeypatch):
+    archive = tmp_path / "large.txt"
+    archive.write_text(
+        "=== Prompt ===\n"
+        '{"role":"user","content":[{"type":"text","text":"中文任务 🚀"}]}\n'
+        "=== Response ===\n[]\n"
+        + ("x" * (conversations._FIRST_USER_PREVIEW_READ_BYTES * 2)),
+        encoding="utf-8",
+    )
+    conversations._first_user_preview_head.cache_clear()
+
+    reads: list[int] = []
+    original_open = open
+
+    def bounded_open(path, mode="r", *args, **kwargs):
+        handle = original_open(path, mode, *args, **kwargs)
+        if str(path) == str(archive) and "b" in mode:
+            original_read = handle.read
+
+            def read(size=-1):
+                reads.append(size)
+                return original_read(size)
+
+            handle.read = read
+        return handle
+
+    monkeypatch.setattr("builtins.open", bounded_open)
+    assert conversations._first_user_preview(str(archive)) == "中文任务 🚀"
+    assert reads == [conversations._FIRST_USER_PREVIEW_READ_BYTES]
+
+    archive.write_text(archive.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    assert conversations._first_user_preview(str(archive)) == "中文任务 🚀"
+    assert reads == [
+        conversations._FIRST_USER_PREVIEW_READ_BYTES,
+        conversations._FIRST_USER_PREVIEW_READ_BYTES,
+    ]
 
 
 def test_detail_and_export_parsing_do_not_block_event_loop(tmp_path, monkeypatch):

@@ -8,10 +8,12 @@ in-memory working history via GA's own `restore()` helper.
 from __future__ import annotations
 
 import asyncio
+from functools import lru_cache
 import io
 import json
 import logging
 import os
+import re
 import threading
 import zipfile
 from pathlib import Path
@@ -38,6 +40,17 @@ _ZIP_READ_CHUNK_SIZE = 64 * 1024
 _session_index_lock = threading.Lock()
 _session_index_state = None
 _session_index: dict[str, tuple] = {}
+
+# Listing only needs the first real user question.  Reading a bounded head is
+# enough for native GA archives (the prompt header and JSON normally occur in
+# the first few KB), while keeping a pathological multi-GB archive from
+# turning one list request into a full-history parse.  The key includes the
+# archive identity so edits naturally invalidate the cache.
+_FIRST_USER_PREVIEW_READ_BYTES = 64 * 1024
+_PROMPT_BLOCK_RE = re.compile(
+    r"^=== Prompt ===[^\r\n]*\r?\n(.*?)(?=^=== (?:Prompt|Response) ===|\Z)",
+    re.DOTALL | re.MULTILINE,
+)
 
 
 class ZipEntryTooLarge(Exception):
@@ -195,18 +208,41 @@ def _conversation_title(cid: str, path: str) -> str:
     return _metadata.get_title(cid, path)
 
 
+@lru_cache(maxsize=1024)
+def _first_user_preview_head(path: str, mtime_ns: int, size: int) -> str:
+    """Extract the first user question from a bounded archive head.
+
+    ``mtime_ns`` and ``size`` are part of the cache key; callers never need a
+    global invalidation when a session is appended or replaced.  Parsing uses
+    GA's own ``_user_text`` filtering so tool-result continuations and working
+    memory injections retain the existing title semantics.
+    """
+    del mtime_ns, size  # identity-only cache inputs
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(_FIRST_USER_PREVIEW_READ_BYTES)
+        from frontends.continue_cmd import _user_text
+    except (OSError, ImportError):
+        return ""
+    text = head.decode("utf-8", errors="replace")
+    for body in _PROMPT_BLOCK_RE.findall(text):
+        content = _user_text(body)
+        if content:
+            return " ".join(content.split())[:200]
+    return ""
+
+
 def _first_user_preview(path: str) -> str:
     """Return the original user question used as the default display title."""
     try:
-        messages = _ga_extract(path)
-    except (OSError, ValueError, TypeError, UnicodeError):
+        stat = os.stat(path)
+    except OSError:
         return ""
-    for message in messages:
-        if message.get("role") != "user":
-            continue
-        content = str(message.get("content") or "")
-        return " ".join(content.split())[:200]
-    return ""
+    return _first_user_preview_head(
+        os.path.abspath(path),
+        int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
+        int(stat.st_size),
+    )
 
 
 # ── conversation list / detail / export / restore ─────────────────
