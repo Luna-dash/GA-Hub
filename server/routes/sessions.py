@@ -7,7 +7,7 @@ import os
 import time
 import uuid
 
-from fastapi import APIRouter, HTTPException, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
 from typing import Literal
 from pydantic import BaseModel, Field
 
@@ -294,6 +294,9 @@ class SessionMessagesResp(BaseModel):
     archive_bound: bool
     revision: str | None
     items: list[SessionMessageProjection]
+    total: int = 0
+    has_more: bool = False
+    next_before: int | None = None
 
 
 def _state_payload(state: RuntimeState, *, ok: bool | None = None) -> dict:
@@ -469,10 +472,20 @@ async def get_session(session_id: str) -> HubSession:
 
 
 @router.get("/api/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str) -> SessionMessagesResp:
+async def get_session_messages(
+    session_id: str,
+    before: int | None = Query(default=None, ge=0),
+    limit: int | None = Query(default=None, ge=1, le=200),
+    max_chars: int | None = Query(default=None, ge=10_000, le=2_000_000),
+) -> SessionMessagesResp:
     row = _session(session_id)
     try:
-        projection = read_archive_messages(row.get("archive_path"))
+        projection = read_archive_messages(
+            row.get("archive_path"),
+            before=before,
+            limit=limit,
+            max_chars=max_chars,
+        )
     except HistoryUnavailableError:
         log.warning(
             "session_history_unavailable session_id=%s code=history_unavailable",

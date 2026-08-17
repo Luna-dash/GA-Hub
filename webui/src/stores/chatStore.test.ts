@@ -42,6 +42,11 @@ describe('chatStore lifecycle', () => {
       hydrating: true,
       historyStatus: 'idle',
       historyError: null,
+      historyRevision: null,
+      historyHasMore: false,
+      historyBefore: null,
+      olderHistoryStatus: 'idle',
+      olderHistoryError: null,
       sock: null,
       sessionId: null,
       sessionViews: {},
@@ -311,5 +316,91 @@ describe('chatStore lifecycle', () => {
     while (frames.length) frames.shift()!(0)
 
     expect(useChatStore.getState().msgs).toEqual([])
+  })
+
+  it('requests a bounded latest-history page on first hydration', async () => {
+    const getHistory = vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
+      session_id: 'session-a', archive_bound: true, revision: 'a1',
+      items: [], total: 0, has_more: false, next_before: null,
+    })
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+
+    expect(getHistory).toHaveBeenCalledWith('session-a', expect.objectContaining({
+      limit: 32,
+      maxChars: 400_000,
+      signal: expect.any(AbortSignal),
+    }))
+  })
+
+  it('prepends older history without duplicating the current page', async () => {
+    const getHistory = vi.spyOn(api, 'getSessionMessages')
+      .mockResolvedValueOnce({
+        session_id: 'session-a', archive_bound: true, revision: 'a1', total: 4,
+        has_more: true, next_before: 2,
+        items: [
+          { id: 'question-2', role: 'user', content: 'newer question', ordinal: 2 },
+          { id: 'answer-2', role: 'assistant', content: 'newer answer', ordinal: 3 },
+        ],
+      })
+      .mockResolvedValueOnce({
+        session_id: 'session-a', archive_bound: true, revision: 'a1', total: 4,
+        has_more: false, next_before: null,
+        items: [
+          { id: 'question-1', role: 'user', content: 'older question', ordinal: 0 },
+          { id: 'answer-1', role: 'assistant', content: 'older answer', ordinal: 1 },
+        ],
+      })
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyBefore).toBe(2))
+    await useChatStore.getState().loadOlderHistory()
+
+    expect(getHistory).toHaveBeenLastCalledWith('session-a', expect.objectContaining({ before: 2 }))
+    expect(useChatStore.getState().msgs.map((message) => message.content)).toEqual([
+      'older question', 'older answer', 'newer question', 'newer answer',
+    ])
+    expect(useChatStore.getState()).toMatchObject({
+      historyHasMore: false,
+      historyBefore: null,
+      olderHistoryStatus: 'idle',
+    })
+  })
+
+  it('bounds inactive session projections and never caches the active session', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockImplementation(async (sessionId) => ({
+      session_id: sessionId, archive_bound: true, revision: `${sessionId}-revision`,
+      items: [{ id: `${sessionId}-message`, role: 'assistant', content: sessionId, ordinal: 0 }],
+      total: 1, has_more: false, next_before: null,
+    }))
+
+    for (const sessionId of ['session-a', 'session-b', 'session-c', 'session-d', 'session-e']) {
+      useChatStore.getState().start(sessionId)
+      await vi.waitFor(() => {
+        expect(useChatStore.getState()).toMatchObject({ sessionId, historyStatus: 'ready' })
+      })
+      await new Promise((resolve) => setTimeout(resolve, 2))
+    }
+
+    const cachedIds = Object.keys(useChatStore.getState().sessionViews)
+    expect(cachedIds).toHaveLength(3)
+    expect(cachedIds).not.toContain('session-e')
+    expect(cachedIds).not.toContain('session-a')
+  })
+
+  it('drops a deleted current session before another switch can cache it again', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockImplementation(async (sessionId) => ({
+      session_id: sessionId, archive_bound: true, revision: `${sessionId}-revision`,
+      items: [], total: 0, has_more: false, next_before: null,
+    }))
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    useChatStore.getState().dropSessionView('session-a')
+    useChatStore.getState().start('session-b')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+
+    expect(useChatStore.getState().sessionViews['session-a']).toBeUndefined()
   })
 })

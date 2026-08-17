@@ -34,7 +34,12 @@ interface Props {
   onRewind?: (sid: string) => void
   /** Compact mode: hide role labels and reduce padding (for FeishuBot) */
   compact?: boolean
+  /** Delay Markdown parsing for exceptionally large archived replies. */
+  deferLongContent?: boolean
 }
+
+const LONG_HISTORY_THRESHOLD = 60_000
+const LONG_HISTORY_PREVIEW_CHARS = 20_000
 
 const FILE_HINT = 'If you need to show files to user, use [FILE:filepath] in your response.'
 
@@ -74,9 +79,10 @@ function formatDuration(milliseconds: number): string {
     : `${minutes}:${String(rest).padStart(2, '0')}`
 }
 
-export const MessageBubble = memo(function MessageBubble({ role, content, streaming, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact }: Props) {
+export const MessageBubble = memo(function MessageBubble({ role, content, streaming, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact, deferLongContent }: Props) {
   const [fontScale, setFontScale] = useState(getChatFontScale)
   const [clock, setClock] = useState(Date.now)
+  const [longContentExpanded, setLongContentExpanded] = useState(false)
 
   useEffect(() => {
     const sync = (event: Event) => setFontScale((event as CustomEvent<number>).detail || getChatFontScale())
@@ -127,7 +133,15 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
     )
   }
 
-  const segs = foldTurns(content)
+  const isLongHistory = Boolean(
+    deferLongContent
+    && !streaming
+    && content.length > LONG_HISTORY_THRESHOLD,
+  )
+  const renderedContent = isLongHistory && !longContentExpanded
+    ? `${content.slice(0, LONG_HISTORY_PREVIEW_CHARS)}…`
+    : content
+  const segs = foldTurns(renderedContent)
   return (
     <div className="flex justify-start group/msg">
       <div className="max-w-full min-w-0 flex flex-col items-start gap-1.5">
@@ -161,16 +175,25 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
                 <details key={i} className="turn-fold">
                   <summary>{seg.title || '中间步骤'}</summary>
                   {/* Intermediate turns are mostly tool dumps — no math / hljs. */}
-                  <div><MarkdownView mode="plain">{seg.content}</MarkdownView></div>
+                  <div><MarkdownView mode="plain" cache={!streaming}>{seg.content}</MarkdownView></div>
                 </details>
               ) : (
                 <div key={i} className={clsx(streaming && i === segs.length - 1 && 'cursor-blink')}>
                   {/* Final segment: auto-detect tool-only tails vs real prose. */}
-                  <MarkdownView mode="auto">{seg.content}</MarkdownView>
+                  <MarkdownView mode="auto" cache={!streaming}>{seg.content}</MarkdownView>
                 </div>
               ),
             )}
           </div>
+          {isLongHistory && !longContentExpanded && (
+            <button
+              type="button"
+              onClick={() => setLongContentExpanded(true)}
+              className="mt-3 rounded-md border border-line bg-bg-soft px-3 py-1.5 text-xs text-[#665741] transition-colors hover:bg-bg-card hover:text-[#2C2418]"
+            >
+              历史回复较长，展开完整内容
+            </button>
+          )}
         </div>
         {(timeLabel || startedAt) && (
           <span className={clsx("shrink-0 whitespace-nowrap px-0.5 text-[10px] leading-4 tabular-nums", isSystem ? "text-[#8A6B3E]" : "text-[#8A7B65]")}>

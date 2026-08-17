@@ -87,4 +87,21 @@ describe('MessageBubble render isolation', () => {
     expect(card?.classList.contains('min-w-0')).toBe(true)
     expect(card?.classList.contains('max-w-full')).toBe(true)
   })
+
+  it('defers full Markdown parsing for a very large archived reply', () => {
+    const content = 'x'.repeat(70_000)
+    act(() => root.render(
+      <MessageBubble role="assistant" content={content} deferLongContent streaming={false} />,
+    ))
+
+    expect(markdownRender.mock.calls.at(-1)?.[0].children).toHaveLength(20_001)
+    expect(host.textContent).toContain('历史回复较长，展开完整内容')
+
+    const expandButton = Array.from(host.querySelectorAll('button'))
+      .find(button => button.textContent?.includes('历史回复较长'))
+    expect(expandButton).toBeDefined()
+    act(() => expandButton!.click())
+
+    expect(markdownRender.mock.calls.at(-1)?.[0].children).toBe(content)
+  })
 })

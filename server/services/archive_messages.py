@@ -75,10 +75,60 @@ def read_ui_messages(archive_path: str | Path) -> list[dict[str, Any]]:
         raise HistoryUnavailableError from exc
 
 
-def read_archive_messages(archive_path: str | Path | None) -> dict[str, Any]:
+def _window_items(
+    items: list[dict[str, Any]],
+    *,
+    before: int | None,
+    limit: int | None,
+    max_chars: int | None,
+) -> tuple[list[dict[str, Any]], bool, int | None]:
+    """Return a newest-first bounded slice while preserving display order.
+
+    ``before`` is an exclusive message ordinal.  A missing ``limit`` keeps the
+    legacy full-history behaviour for non-GA-Hub clients.  When bounded, the
+    character budget prevents a handful of very large Markdown responses from
+    rebuilding a multi-megabyte DOM on first paint.
+    """
+    end = len(items) if before is None else max(0, min(before, len(items)))
+    if limit is None:
+        return items[:end], False, None
+
+    start = end
+    selected_chars = 0
+    while start > 0 and end - start < limit:
+        item_chars = len(str(items[start - 1].get("content", "")))
+        if max_chars is not None and start < end and selected_chars + item_chars > max_chars:
+            break
+        start -= 1
+        selected_chars += item_chars
+
+    # Avoid opening a page with an orphaned assistant answer when the paired
+    # user prompt is immediately before it.  This may exceed the soft budget by
+    # one message, which is preferable to losing the turn boundary.
+    if start > 0 and items[start].get("role") == "assistant" and items[start - 1].get("role") == "user":
+        start -= 1
+
+    has_more = start > 0
+    return items[start:end], has_more, start if has_more else None
+
+
+def read_archive_messages(
+    archive_path: str | Path | None,
+    *,
+    before: int | None = None,
+    limit: int | None = None,
+    max_chars: int | None = None,
+) -> dict[str, Any]:
     """Return UI messages from one bound GA archive, never persisting content."""
     if not archive_path:
-        return {"archive_bound": False, "revision": None, "items": []}
+        return {
+            "archive_bound": False,
+            "revision": None,
+            "items": [],
+            "total": 0,
+            "has_more": False,
+            "next_before": None,
+        }
     path = Path(archive_path).resolve()
     try:
         data = path.read_bytes()
@@ -96,8 +146,17 @@ def read_archive_messages(archive_path: str | Path | None) -> dict[str, Any]:
         }
         for index, message in enumerate(messages)
     ]
+    window, has_more, next_before = _window_items(
+        items,
+        before=before,
+        limit=limit,
+        max_chars=max_chars,
+    )
     return {
         "archive_bound": True,
         "revision": hashlib.sha256(data).hexdigest(),
-        "items": items,
+        "items": window,
+        "total": len(items),
+        "has_more": has_more,
+        "next_before": next_before,
     }

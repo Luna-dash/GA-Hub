@@ -91,7 +91,16 @@ export interface ProjectItem {
 
 export type SessionRuntime = ApiSchemas['SessionRuntimeResp']
 export type SessionMessageProjection = ApiSchemas['SessionMessageProjection']
-export type SessionMessagesResponse = ApiSchemas['SessionMessagesResp']
+type GeneratedSessionMessagesResponse = ApiSchemas['SessionMessagesResp']
+export type SessionMessagesResponse = Omit<
+  GeneratedSessionMessagesResponse,
+  'total' | 'has_more' | 'next_before'
+> & {
+  /** Optional during rolling upgrades from a pre-pagination backend. */
+  total?: number
+  has_more?: boolean
+  next_before?: number | null
+}
 
 export interface ChatRetryConfig {
   enabled: boolean

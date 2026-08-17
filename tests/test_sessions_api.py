@@ -45,6 +45,9 @@ def test_session_metadata_crud_is_message_free(tmp_path: Path, monkeypatch) -> N
             "archive_bound": False,
             "revision": None,
             "items": [],
+            "total": 0,
+            "has_more": False,
+            "next_before": None,
         }
 
         listed = client.get("/api/sessions").json()
@@ -161,6 +164,9 @@ def test_bound_archive_projects_ga_messages_without_copying_body(
             "2026-08-05T09:10:12",
         ]
         assert len({item["id"] for item in body["items"]}) == 2
+        assert body["total"] == 2
+        assert body["has_more"] is False
+        assert body["next_before"] is None
 
     sidecar = (tmp_path / "sessions.json").read_text("utf-8")
     assert "hello archive" not in sidecar
@@ -182,6 +188,45 @@ def test_legacy_archive_without_header_times_projects_null_timestamps(tmp_path: 
     items = read_archive_messages(archive)["items"]
     assert [item["role"] for item in items] == ["user", "assistant"]
     assert [item["timestamp"] for item in items] == [None, None]
+
+
+def test_archive_messages_support_bounded_backwards_paging(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from server.routes import sessions
+
+    archive = tmp_path / "paged_archive.txt"
+    archive.write_text(
+        "".join(
+            f'=== Prompt === 2026-08-05 09:10:1{index}\n'
+            f'{{"content":[{{"type":"text","text":"question {index}"}}]}}\n'
+            f'=== Response === 2026-08-05 09:10:2{index}\n'
+            f"[{{'type': 'text', 'text': 'answer {index}'}}]\n"
+            for index in range(3)
+        ),
+        encoding="utf-8",
+    )
+
+    with _client(tmp_path, monkeypatch) as client:
+        created = client.post("/api/sessions", json={"title": "Paged"}).json()
+        sessions._store.bind_archive(created["id"], archive)
+
+        newest = client.get(
+            f"/api/sessions/{created['id']}/messages",
+            params={"limit": 2, "max_chars": 10_000},
+        ).json()
+        assert newest["total"] == 6
+        assert [item["ordinal"] for item in newest["items"]] == [4, 5]
+        assert newest["has_more"] is True
+        assert newest["next_before"] == 4
+
+        older = client.get(
+            f"/api/sessions/{created['id']}/messages",
+            params={"before": newest["next_before"], "limit": 2, "max_chars": 10_000},
+        ).json()
+        assert [item["ordinal"] for item in older["items"]] == [2, 3]
+        assert older["has_more"] is True
+        assert older["next_before"] == 2
 
 
 def test_scheduled_dispatch_matches_coordinator_submit_contract(

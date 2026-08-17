@@ -11,6 +11,9 @@ const openapiPath = path.resolve(webuiRoot, '../docs/api/openapi.json')
 const openapi = JSON.parse(fs.readFileSync(openapiPath, 'utf8'))
 const sourceText = fs.readFileSync(clientPath, 'utf8')
 const generatedPath = path.join(webuiRoot, 'src/api/generated/schema.d.ts')
+const generatedBefore = fs.existsSync(generatedPath)
+  ? fs.readFileSync(generatedPath, 'utf8')
+  : null
 const sourceFile = ts.createSourceFile(
   clientPath,
   sourceText,
@@ -130,8 +133,8 @@ if (generation.error || generation.status !== 0) {
 }
 
 if (!process.exitCode) {
-  const status = spawnSync('git', ['-C', path.resolve(webuiRoot, '..'), 'diff', '--exit-code', '--', generatedPath], { encoding: 'utf8' })
-  if (status.status !== 0) {
+  const generatedAfter = fs.readFileSync(generatedPath, 'utf8')
+  if (generatedBefore !== generatedAfter) {
     console.error(`Generated TypeScript API contract is stale: ${generatedPath}`)
     console.error('Refresh it with: npm run api:generate')
     process.exitCode = 1

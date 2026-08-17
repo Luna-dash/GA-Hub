@@ -3325,6 +3325,18 @@ export interface components {
             revision: string | null;
             /** Items */
             items: components["schemas"]["SessionMessageProjection"][];
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
+            /** Next Before */
+            next_before?: number | null;
         };
         /** SessionModelUpdate */
         SessionModelUpdate: {
@@ -6654,7 +6666,11 @@ export interface operations {
     };
     get_session_messages_api_sessions__session_id__messages_get: {
         parameters: {
-            query?: never;
+            query?: {
+                before?: number | null;
+                limit?: number | null;
+                max_chars?: number | null;
+            };
             header?: never;
             path: {
                 session_id: string;

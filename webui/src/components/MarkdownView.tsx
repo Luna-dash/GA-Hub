@@ -12,7 +12,6 @@
 //   6. Math (remark-math + KaTeX) only in mode=chat; single-$ disabled so
 //      shell/$var tool dumps are not italicized as formulas. mode=plain|auto
 //      keeps tool traces monochrome (GFM only, no highlight/math).
-import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
@@ -22,6 +21,7 @@ import { useCopy } from '@/utils/clipboard'
 import { api } from '@/api/client'
 import { isAppInternalUrl, isHttpUrl, openExternalIfNeeded } from '@/utils/openExternal'
 import { looksLikeToolTrace } from '@/utils/toolTrace'
+import { renderMarkdownTree } from '@/utils/markdownRenderCache'
 // Light paper-ish theme; token colors further tuned under .prose-chat in CSS
 import 'highlight.js/styles/github.css'
 
@@ -129,10 +129,13 @@ function normalizeMathDelimiters(src: string): string {
 export const MarkdownView = memo(function MarkdownView({
   children,
   mode = 'chat',
+  cache = true,
 }: {
   children: string
   /** Default chat. Use plain/auto for tool folds and code_run dumps. */
   mode?: MarkdownMode
+  /** Streaming content changes every chunk and must not enter the LRU. */
+  cache?: boolean
 }) {
   const resolved: 'chat' | 'plain' =
     mode === 'plain'
@@ -151,6 +154,15 @@ export const MarkdownView = memo(function MarkdownView({
 
   const remarkPlugins = resolved === 'chat' ? MD_REMARK_CHAT : MD_REMARK_PLAIN
   const rehypePlugins = resolved === 'chat' ? MD_REHYPE_CHAT : MD_REHYPE_PLAIN
+  // react-markdown's synchronous Markdown() function does not use hooks. Keep
+  // its finished React tree in a bounded LRU so virtual rows can remount
+  // without repeating remark/rehype parsing.
+  const rendered = useMemo(() => renderMarkdownTree(resolved, text, {
+    children: text,
+    remarkPlugins,
+    rehypePlugins,
+    components: MD_COMPONENTS,
+  }, cache), [cache, rehypePlugins, remarkPlugins, resolved, text])
 
   return (
     <div
@@ -160,13 +172,7 @@ export const MarkdownView = memo(function MarkdownView({
           : 'prose-chat min-w-0 max-w-full break-words [overflow-wrap:anywhere]'
       }
     >
-      <ReactMarkdown
-        remarkPlugins={remarkPlugins}
-        rehypePlugins={rehypePlugins}
-        components={MD_COMPONENTS}
-      >
-        {text}
-      </ReactMarkdown>
+      {rendered}
     </div>
   )
 })

@@ -26,13 +26,16 @@ import {
 } from '@/components/slashCommands'
 import { PageShell } from '@/components/PageShell'
 import { dialog } from '@/stores/dialogStore'
-import { useChatStore } from '@/stores/chatStore'
+import { useChatStore, type ChatMsg } from '@/stores/chatStore'
 import { useDraftStore } from '@/stores/draftStore'
 import { capacityConflictFromError, errorMessageFromError, sessionChatHref } from '@/utils/sessionUi'
 import { createRafScheduler } from '@/utils/rafScheduler'
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { isTauriDesktop, selectDirectory } from '@/utils/desktop'
-import { defaultSessionLlmKey } from '@/utils/llm'
+import { defaultSessionLlmKey, resolveSessionLlmKey } from '@/utils/llm'
+import { MainModelSelect } from '@/components/ModelSelect'
+import { VirtualMessageList, type VirtualMessageListHandle } from '@/components/VirtualMessageList'
+import { useChatPerformanceProbe } from '@/utils/useChatPerformanceProbe'
 
 interface RestoreState {
   restoredFrom?: string
@@ -54,7 +57,12 @@ export default function LiveChat() {
   const hydrating = useChatStore((s) => s.hydrating)
   const historyStatus = useChatStore((s) => s.historyStatus)
   const historyError = useChatStore((s) => s.historyError)
+  const historyHasMore = useChatStore((s) => s.historyHasMore)
+  const olderHistoryStatus = useChatStore((s) => s.olderHistoryStatus)
+  const olderHistoryError = useChatStore((s) => s.olderHistoryError)
   const retryHistory = useChatStore((s) => s.retryHistory)
+  const loadOlderHistory = useChatStore((s) => s.loadOlderHistory)
+  const dropSessionView = useChatStore((s) => s.dropSessionView)
   const startChat = useChatStore((s) => s.start)
   const stopChat = useChatStore((s) => s.stop)
   const stageWebui = useChatStore((s) => s.stageWebui)
@@ -89,7 +97,7 @@ export default function LiveChat() {
     right: number
   } | null>(null)
   const llmChangeSeqRef = useRef(0)
-  const llmMigrationAttemptedRef = useRef(new Set<string>())
+  const llmRepairAttemptedRef = useRef(new Map<string, string>())
   const queryClient = useQueryClient()
   const sessionsQuery = useQuery({
     queryKey: ['sessions'],
@@ -105,7 +113,8 @@ export default function LiveChat() {
     queryKey: ['session.runtimes'],
     queryFn: api.sessionRuntimes,
     enabled: sessions.length > 0,
-    refetchInterval: 5000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   })
   const runtimes = runtimesQuery.data ?? {}
   const scheduledChatsQuery = useQuery({
@@ -150,6 +159,7 @@ export default function LiveChat() {
         }),
       )
     }
+    socket.open()
     return () => socket.close()
   }, [queryClient])
 
@@ -221,32 +231,41 @@ export default function LiveChat() {
     ?? (session?.project_name ? projects.find((project) => project.name === session.project_name)?.path : undefined)
     ?? ''
   const defaultLlmKey = defaultSessionLlmKey(llms)
-  const selectedLlmKey = session?.llm_key ?? defaultLlmKey
-  const sessionLlmUnconfirmed = Boolean(session && session.llm_key == null && session.llm_index != null)
+  const selectedLlmKey = resolveSessionLlmKey(llms, session?.llm_key)
+  const sessionLlmNeedsRepair = Boolean(
+    session
+    && selectedLlmKey
+    && session.llm_key !== selectedLlmKey,
+  )
 
-  // Sessions created before per-session model binding may have no model key.
-  // Persist the concrete model shown in the selector instead of continuing to
-  // inherit the runtime-wide compatibility preference invisibly.
+  // Old positional bindings, empty bindings, and bindings to deleted models
+  // all converge on the first configured model. Persist the resolved key so
+  // switching sessions cannot revive stale positional/model identities.
   useEffect(() => {
     const sid = session?.id
+    const repairKey = `${session?.llm_key ?? ''}:${session?.llm_index ?? ''}->${selectedLlmKey ?? ''}`
     if (
       !sid
-      || session.llm_key != null
-      || session.llm_index != null
-      || !defaultLlmKey
+      || !selectedLlmKey
+      || !sessionLlmNeedsRepair
       || llmLoading
       || llmSaving
       || sessionRunning
-      || llmMigrationAttemptedRef.current.has(sid)
+      || llmRepairAttemptedRef.current.get(sid) === repairKey
     ) return
 
-    llmMigrationAttemptedRef.current.add(sid)
+    llmRepairAttemptedRef.current.set(sid, repairKey)
     const changeSeq = ++llmChangeSeqRef.current
     setLlmSaving(true)
-    void api.updateSessionModel(sid, defaultLlmKey)
+    void api.updateSessionModel(sid, selectedLlmKey)
       .then((updated) => {
         if (sessionIdRef.current !== sid || llmChangeSeqRef.current !== changeSeq) return
         setSession(updated)
+        queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => (
+          cached
+            ? { ...cached, items: cached.items.map((item) => item.id === sid ? updated : item) }
+            : cached
+        ))
       })
       .catch((e: any) => {
         if (sessionIdRef.current === sid && llmChangeSeqRef.current === changeSeq) {
@@ -256,7 +275,7 @@ export default function LiveChat() {
       .finally(() => {
         if (llmChangeSeqRef.current === changeSeq) setLlmSaving(false)
       })
-  }, [defaultLlmKey, llmLoading, llmSaving, session?.id, session?.llm_index, session?.llm_key, sessionRunning])
+  }, [llmLoading, llmSaving, queryClient, selectedLlmKey, session?.id, session?.llm_index, session?.llm_key, sessionLlmNeedsRepair, sessionRunning])
 
   const changeModel = async (value: string) => {
     const sid = session?.id
@@ -264,7 +283,7 @@ export default function LiveChat() {
       !sid
       || !value
       || sessionIdRef.current !== sid
-      || (value === selectedLlmKey && session.llm_key != null && !sessionLlmUnconfirmed)
+      || (value === selectedLlmKey && session.llm_key === selectedLlmKey)
     ) return
     const changeSeq = ++llmChangeSeqRef.current
     const previousKey = session.llm_key
@@ -273,6 +292,11 @@ export default function LiveChat() {
       const updated = await api.updateSessionModel(sid, value)
       if (sessionIdRef.current !== sid || llmChangeSeqRef.current !== changeSeq) return
       setSession(updated)
+      queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => (
+        cached
+          ? { ...cached, items: cached.items.map((item) => item.id === sid ? updated : item) }
+          : cached
+      ))
       pushSystem(`_已切换模型:${llms.find((item) => item.key === updated.llm_key)?.name || updated.llm_key}_`)
     } catch (e: any) {
       if (sessionIdRef.current === sid && llmChangeSeqRef.current === changeSeq) {
@@ -292,7 +316,22 @@ export default function LiveChat() {
   const [unread, setUnread] = useState(0)
   const [activeTurn, setActiveTurn] = useState(-1)
   const navigationTargetRef = useRef<number | null>(null)
+  const prependingHistoryRef = useRef(false)
+  const virtualListRef = useRef<VirtualMessageListHandle>(null)
   const turnCount = useMemo(() => msgs.reduce((count, message) => count + (message.role === 'user' ? 1 : 0), 0), [msgs])
+  useChatPerformanceProbe({
+    rootRef: scrollRef,
+    sessionId: session?.id ?? null,
+    historyStatus,
+    messages: msgs,
+    streaming,
+  })
+  const turnMessageIndexes = useMemo(
+    () => msgs.flatMap((message, index) => message.role === 'user' ? [index] : []),
+    [msgs],
+  )
+  const turnMessageIndexesRef = useRef<number[]>(turnMessageIndexes)
+  turnMessageIndexesRef.current = turnMessageIndexes
 
 
   // Apply navigation-state restore once (e.g. coming from Conversations page).
@@ -317,9 +356,6 @@ export default function LiveChat() {
   }, [])
 
   // Track whether the user is still pinned to the bottom of the scroll area.
-  // Turn nodes only change when the message structure changes; scroll events
-  // reuse this cache and are coalesced to at most one computation per frame.
-  const turnNodesRef = useRef<HTMLElement[]>([])
   const recomputeStuck = () => {
     const el = scrollRef.current
     if (!el) return
@@ -328,7 +364,7 @@ export default function LiveChat() {
     setStuckBottom(at)
     if (at) setUnread(0)
 
-    const turns = turnNodesRef.current
+    const turns = turnMessageIndexesRef.current
     if (turns.length === 0) {
       setActiveTurn(-1)
       return
@@ -341,8 +377,9 @@ export default function LiveChat() {
 
     let current = at ? turns.length - 1 : 0
     if (!at) {
+      const firstVisibleIndex = virtualListRef.current?.getFirstVisibleIndex(48) ?? 0
       for (let i = 0; i < turns.length; i += 1) {
-        if (turns[i].offsetTop <= el.scrollTop + 48) current = i
+        if (turns[i] <= firstVisibleIndex) current = i
         else break
       }
     }
@@ -351,7 +388,6 @@ export default function LiveChat() {
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    turnNodesRef.current = Array.from(el.querySelectorAll<HTMLElement>('[data-chat-turn]'))
     recomputeStuck()
     const scrollScheduler = createRafScheduler(recomputeStuck)
     const releaseNavigationTarget = () => { navigationTargetRef.current = null }
@@ -377,12 +413,30 @@ export default function LiveChat() {
     if (!el) return
     const grew = msgs.length > lastLenRef.current
     lastLenRef.current = msgs.length
+    if (prependingHistoryRef.current) return
     if (stuckBottom) {
       el.scrollTop = el.scrollHeight
     } else if (grew) {
       setUnread((n) => n + 1)
     }
   }, [msgs, stuckBottom])
+
+  const handleLoadOlderHistory = useCallback(async () => {
+    const el = scrollRef.current
+    if (!el || olderHistoryStatus === 'loading') return
+    const oldHeight = el.scrollHeight
+    const oldTop = el.scrollTop
+    prependingHistoryRef.current = true
+    try {
+      await loadOlderHistory()
+    } finally {
+      requestAnimationFrame(() => {
+        const current = scrollRef.current
+        if (current) current.scrollTop = oldTop + (current.scrollHeight - oldHeight)
+        prependingHistoryRef.current = false
+      })
+    }
+  }, [loadOlderHistory, olderHistoryStatus])
 
   const jumpToBottom = () => {
     const el = scrollRef.current
@@ -400,18 +454,11 @@ export default function LiveChat() {
     const current = activeTurn < 0 ? (stuckBottom ? turnCount - 1 : 0) : activeTurn
     const next = Math.max(0, Math.min(turnCount - 1, current + direction))
     if (next === current) return
-    const target = turnNodesRef.current[next]
-    if (!target) return
-
-    const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
-    const anchorTop = Math.max(0, Math.min(maxScrollTop, target.offsetTop - 16))
-    const targetTop = direction < 0 && anchorTop >= el.scrollTop - 1
-      ? Math.max(0, el.scrollTop - Math.max(96, el.clientHeight * 0.4))
-      : anchorTop
-
     navigationTargetRef.current = next
     setActiveTurn(next)
-    el.scrollTo({ top: targetTop, behavior: 'smooth' })
+    const targetIndex = turnMessageIndexesRef.current[next]
+    if (targetIndex == null) return
+    virtualListRef.current?.scrollToIndex(targetIndex, { behavior: 'smooth', align: 'start' })
   }
 
   const submit = () => {
@@ -428,9 +475,9 @@ export default function LiveChat() {
         .catch((e: any) => pushSystem(`_新建会话失败：${e?.body?.detail || e?.message || String(e)}。命令已保留，可直接重试。_`))
       return
     }
-    if (streaming || sessionRunning || llmSaving || creatingSessionRef.current) return
-    if (session && !session.llm_key) {
-      pushSystem('_发送前请先在右上角为当前会话选择一个模型。草稿已保留。_')
+    if (streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair || creatingSessionRef.current) return
+    if (session && !selectedLlmKey) {
+      pushSystem('_当前没有可用模型，请先在设置中配置模型。草稿已保留。_')
       return
     }
 
@@ -499,12 +546,7 @@ export default function LiveChat() {
           }
         } else {
           const code = e?.body?.detail?.code
-          const modelHint = code === 'llm_unconfirmed'
-            ? '该会话的模型绑定来自旧版本，请在右上角重新选择模型。'
-            : code === 'llm_unavailable'
-              ? '该会话绑定的 LLM 已不存在，请重新选择模型。'
-              : ''
-          pushSystem(`_发送失败：${modelHint || e?.body?.detail?.detail || e?.body?.detail?.code || e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`)
+          pushSystem(`_发送失败：${e?.body?.detail?.detail || code || e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`)
         }
       }
     })().catch((e: any) => {
@@ -536,8 +578,12 @@ export default function LiveChat() {
       setScheduleError('发送时间不能超过未来 48 小时。')
       return
     }
-    if (session && !session.llm_key) {
-      setScheduleError('请先在右上角为当前会话选择一个模型。')
+    if (llmSaving || sessionLlmNeedsRepair) {
+      setScheduleError('正在应用默认模型，请稍候。')
+      return
+    }
+    if (session && !selectedLlmKey) {
+      setScheduleError('当前没有可用模型，请先在设置中配置模型。')
       return
     }
 
@@ -721,6 +767,7 @@ export default function LiveChat() {
   const deleteSession = useCallback(async (id: string) => {
     try {
       await api.deleteSession(id)
+      dropSessionView(id)
       const remaining = sessions.filter((item) => item.id !== id)
       queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], {
         total: remaining.length,
@@ -737,8 +784,6 @@ export default function LiveChat() {
 
       setSession(null)
       localStorage.removeItem('gahub.currentSessionId')
-      stopChat()
-      clearLocal()
       nav('/chat', { replace: true })
     } catch (error: any) {
       const detail = error?.status === 409
@@ -747,7 +792,7 @@ export default function LiveChat() {
       pushSystem(`_删除会话失败：${detail}_`)
       throw error
     }
-  }, [clearLocal, nav, pushSystem, queryClient, sessions, stopChat])
+  }, [dropSessionView, nav, pushSystem, queryClient, sessions])
 
   // Keep the callback stable while streaming chunks update `msgs`; otherwise
   // every completed assistant bubble receives a new prop and rebuilds Markdown.
@@ -802,6 +847,32 @@ export default function LiveChat() {
     }
     void handleRewind(streamId)
   }
+
+  const renderChatMessage = useCallback((m: ChatMsg) => {
+    const role = (m.role === 'system' ? 'assistant' : m.role) as 'user' | 'assistant'
+    const tag = m.source && m.source !== 'webui' && m.source !== 'user' && m.source !== 'history'
+      ? sourceLabel(m.source)
+      : undefined
+    return (
+      <div
+        {...(m.role === 'user' ? { 'data-chat-turn': true } : {})}
+        style={m.source === 'history' ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' } : undefined}
+      >
+        <MessageBubble
+          role={role}
+          content={tag ? `${tag}\n\n${m.content}` : m.content}
+          streaming={m.streaming}
+          timestamp={m.timestamp}
+          startedAt={m.startedAt}
+          finishedAt={m.finishedAt}
+          attachments={m.attachments}
+          streamId={role === 'assistant' ? m.streamId : undefined}
+          onRewind={role === 'assistant' ? handleRewind : undefined}
+          deferLongContent={m.source === 'history'}
+        />
+      </div>
+    )
+  }, [handleRewind])
 
   return (
     <PageShell
@@ -860,22 +931,15 @@ export default function LiveChat() {
         </div>
       }
       actions={
-        <select
-          value={selectedLlmKey == null || sessionLlmUnconfirmed ? '__reselect__' : selectedLlmKey}
-          onChange={(e) => { void changeModel(e.target.value) }}
-          disabled={!session || llmLoading || llmSaving || sessionRunning || llms.length === 0}
-          className="max-w-[400px] min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
+        <MainModelSelect
+          llms={llms}
+          value={selectedLlmKey ?? ''}
+          onChange={(llmKey) => { void changeModel(llmKey) }}
+          disabled={!session || !selectedLlmKey || llmLoading || llmSaving || sessionRunning}
+          className="max-w-[400px]"
           title="选择当前会话使用的模型"
           aria-label="当前会话模型"
-        >
-          {sessionLlmUnconfirmed && (
-            <option value="__reselect__">请重新选择模型（旧数据按位置绑定）</option>
-          )}
-          <option value="" disabled>请选择模型</option>
-          {llms.map((item) => (
-            <option key={item.key} value={item.key}>{item.name}</option>
-          ))}
-        </select>
+        />
       }
     >
       <div className="flex h-full min-h-0 flex-col">
@@ -891,11 +955,26 @@ export default function LiveChat() {
           onDelete={deleteSession}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col relative">
-        <div ref={scrollRef} tabIndex={-1} className="relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto py-4 pl-4 pr-[76px] space-y-2 outline-none md:pl-10">
+        <div ref={scrollRef} tabIndex={-1} className="relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto py-4 pl-4 pr-[76px] outline-none [overflow-anchor:none] md:pl-10">
           {historyStatus === 'history_error' && (
             <div className="sticky top-0 z-10 mx-auto flex w-fit max-w-full items-center gap-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 shadow-sm">
               <span>历史消息加载失败：{historyError || '未知错误'}。实时消息仍可继续接收。</span>
               <button type="button" className="ga-btn shrink-0" onClick={retryHistory}>重试</button>
+            </div>
+          )}
+          {historyStatus === 'ready' && (historyHasMore || olderHistoryStatus === 'error') && (
+            <div className="flex flex-col items-center gap-1 pb-2">
+              <button
+                type="button"
+                className="ga-btn"
+                disabled={olderHistoryStatus === 'loading'}
+                onClick={() => { void handleLoadOlderHistory() }}
+              >
+                {olderHistoryStatus === 'loading' ? '正在加载更早消息…' : '加载更早消息'}
+              </button>
+              {olderHistoryStatus === 'error' && (
+                <span className="text-xs text-red-600">{olderHistoryError || '加载失败，请重试'}</span>
+              )}
             </div>
           )}
           {sessionError && msgs.length === 0 && (
@@ -912,30 +991,15 @@ export default function LiveChat() {
               开始一段对话，或粘贴一张图问个问题。
             </div>
           )}
-          {msgs.map((m, i) => {
-            const role = (m.role === 'system' ? 'assistant' : m.role) as 'user' | 'assistant'
-            const tag = m.source && m.source !== 'webui' && m.source !== 'user' && m.source !== 'history'
-              ? sourceLabel(m.source)
-              : undefined
-            return (
-              <div
-                key={`${m.streamId ?? 'local'}-${i}`}
-                {...(m.role === 'user' ? { 'data-chat-turn': true } : {})}
-              >
-                <MessageBubble
-                  role={role}
-                  content={tag ? `${tag}\n\n${m.content}` : m.content}
-                  streaming={m.streaming}
-                  timestamp={m.timestamp}
-                  startedAt={m.startedAt}
-                  finishedAt={m.finishedAt}
-                  attachments={m.attachments}
-                  streamId={role === 'assistant' ? m.streamId : undefined}
-                  onRewind={role === 'assistant' ? handleRewind : undefined}
-                />
-              </div>
-            )
-          })}
+          <VirtualMessageList
+            ref={virtualListRef}
+            items={msgs}
+            scrollRef={scrollRef}
+            pinnedToBottom={stuckBottom}
+            itemKey={chatMessageKey}
+            estimateSize={estimateChatMessageSize}
+            renderItem={renderChatMessage}
+          />
         </div>
 
         {/* Narrow utility rail: scheduled notices above, turn navigation below. */}
@@ -1056,7 +1120,7 @@ export default function LiveChat() {
             onSlashCommand={handleSlashCommand}
             placeholder="输入消息,或输入 / 查看命令"
             disabled={creatingSession}
-            submitDisabled={streaming || sessionRunning}
+            submitDisabled={streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair}
           />
         </div>
       </div>
@@ -1108,6 +1172,29 @@ export default function LiveChat() {
 function toLocalDateTimeValue(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function chatMessageKey(message: ChatMsg): string {
+  const identity = message.streamId || message.pendingWebuiId
+  if (identity) return `${message.role}:${identity}`
+  // Local system notes do not have a stream id. Fingerprint a bounded sample
+  // so prepending archive pages does not change every existing row key.
+  const source = `${message.role}|${message.source ?? ''}|${message.timestamp ?? ''}|${message.content.length}|${message.content.slice(0, 256)}|${message.content.slice(-256)}`
+  let hash = 2_166_136_261
+  for (let cursor = 0; cursor < source.length; cursor += 1) {
+    hash ^= source.charCodeAt(cursor)
+    hash = Math.imul(hash, 16_777_619)
+  }
+  return `${message.role}:local:${(hash >>> 0).toString(36)}`
+}
+
+function estimateChatMessageSize(message: ChatMsg): number {
+  const content = message.content || ''
+  const lineCount = content.split('\n').length + Math.ceil(content.length / 90)
+  const base = message.role === 'user' ? 52 : 94
+  const lineHeight = message.role === 'user' ? 24 : 22
+  const attachmentExtra = message.attachments?.length ? 120 : 0
+  return Math.min(820, base + Math.min(28, lineCount) * lineHeight + attachmentExtra + 8)
 }
 
 function formatCompactScheduleCountdown(scheduledFor: number, now: number): string {

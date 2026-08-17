@@ -127,7 +127,10 @@ export class HttpTimeoutError extends Error {
 
 export const DEFAULT_HTTP_TIMEOUT_MS = 30_000
 
-type HttpOptions = RequestInit & { timeoutMs?: number }
+type HttpOptions = RequestInit & {
+  timeoutMs?: number
+  query?: URLSearchParams
+}
 export type ApiComponents = GeneratedApiComponents
 type GeneratedHubSession = ApiComponents['schemas']['HubSession']
 type AppStatusResponse = ApiComponents['schemas']['AppStatusResp']
@@ -165,11 +168,15 @@ function requestAbortContext(externalSignal: AbortSignal | null | undefined, tim
 }
 
 async function http<T>(method: string, path: string, body?: unknown, init?: HttpOptions): Promise<T> {
-  const { timeoutMs = DEFAULT_HTTP_TIMEOUT_MS, signal: externalSignal, ...requestInit } = init ?? {}
+  const { timeoutMs = DEFAULT_HTTP_TIMEOUT_MS, signal: externalSignal, query, ...requestInit } = init ?? {}
   const abortContext = requestAbortContext(externalSignal, timeoutMs)
+  const queryString = query?.toString()
+  const requestPath = queryString
+    ? `${path}${path.includes('?') ? '&' : '?'}${queryString}`
+    : path
 
   try {
-    const res = await fetch(path, {
+    const res = await fetch(requestPath, {
       method,
       headers: body ? { 'Content-Type': 'application/json' } : undefined,
       body: body ? JSON.stringify(body) : undefined,
@@ -188,10 +195,10 @@ async function http<T>(method: string, path: string, body?: unknown, init?: Http
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       if (abortContext.source() === 'external') throw error
-      if (abortContext.source() === 'timeout') throw new HttpTimeoutError(path, timeoutMs)
+      if (abortContext.source() === 'timeout') throw new HttpTimeoutError(requestPath, timeoutMs)
     }
     if (error instanceof TypeError) {
-      const networkError = new Error(`Network request failed: ${path}`)
+      const networkError = new Error(`Network request failed: ${requestPath}`)
       networkError.name = 'NetworkError'
       ;(networkError as Error & { code: string }).code = 'network_error'
       throw networkError
@@ -486,12 +493,11 @@ export const api = {
     if (options.before !== undefined) query.set('before', String(options.before))
     if (options.limit !== undefined) query.set('limit', String(options.limit))
     if (options.maxChars !== undefined) query.set('max_chars', String(options.maxChars))
-    const suffix = query.size > 0 ? `?${query.toString()}` : ''
     return http<SessionMessagesResponse>(
       'GET',
-      `/api/sessions/${encodeURIComponent(id)}/messages${suffix}`,
+      `/api/sessions/${encodeURIComponent(id)}/messages`,
       undefined,
-      { signal: options.signal },
+      { signal: options.signal, query },
     )
   },
   sessionBtw: (id: string, text: string) =>

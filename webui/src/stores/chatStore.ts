@@ -41,6 +41,12 @@ interface SessionView {
   streaming: boolean
   historyStatus: ChatState['historyStatus']
   historyError: string | null
+  historyRevision: string | null
+  historyHasMore: boolean
+  historyBefore: number | null
+  olderHistoryStatus: ChatState['olderHistoryStatus']
+  olderHistoryError: string | null
+  lastAccessedAt: number
 }
 
 interface ChatState {
@@ -50,6 +56,11 @@ interface ChatState {
   hydrating: boolean              // legacy alias for historyStatus === 'loading_history'
   historyStatus: 'idle' | 'loading_history' | 'ready' | 'history_error'
   historyError: string | null
+  historyRevision: string | null
+  historyHasMore: boolean
+  historyBefore: number | null
+  olderHistoryStatus: 'idle' | 'loading' | 'error'
+  olderHistoryError: string | null
   sock: ChatSocket | null
   sessionId: string | null
   /** Per-session in-memory projections make switching instant; WS replay catches them up. */
@@ -57,6 +68,8 @@ interface ChatState {
 
   start: (sessionId: string, options?: { forceHistory?: boolean }) => void
   retryHistory: () => void
+  loadOlderHistory: () => Promise<void>
+  dropSessionView: (sessionId: string) => void
   stop: () => void
 
   /** Stage a local user bubble before LiveChat submits through session HTTP. */
@@ -228,6 +241,7 @@ function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
 
 let historyGeneration = 0
 let historyAbort: AbortController | null = null
+let olderHistoryAbort: AbortController | null = null
 let liveCleanup: (() => void) | null = null
 let webuiStageSequence = 0
 const sessionCursors = new Map<string, ChatEventCursor>()
@@ -417,6 +431,44 @@ function anyStreaming(msgs: ChatMsg[]): boolean {
   return msgs.some((m) => m.streaming)
 }
 
+const HISTORY_PAGE_LIMIT = 32
+const HISTORY_PAGE_MAX_CHARS = 400_000
+const MAX_CACHED_SESSION_VIEWS = 3
+const MAX_CACHED_SESSION_CHARS = 3_000_000
+
+function sessionViewChars(view: SessionView): number {
+  return view.msgs.reduce((total, message) => total + message.content.length, 0)
+}
+
+function pruneSessionViews(views: Record<string, SessionView>): Record<string, SessionView> {
+  const entries = Object.entries(views)
+  const protectedEntries = entries.filter(([, view]) => view.streaming)
+  const ordinaryEntries = entries
+    .filter(([, view]) => !view.streaming)
+    .sort(([, left], [, right]) => right.lastAccessedAt - left.lastAccessedAt)
+
+  const kept = new Map(protectedEntries)
+  let retainedChars = protectedEntries.reduce((total, [, view]) => total + sessionViewChars(view), 0)
+  for (const [sessionId, view] of ordinaryEntries) {
+    if (kept.size >= MAX_CACHED_SESSION_VIEWS) break
+    const chars = sessionViewChars(view)
+    if (chars > MAX_CACHED_SESSION_CHARS || retainedChars + chars > MAX_CACHED_SESSION_CHARS) continue
+    kept.set(sessionId, view)
+    retainedChars += chars
+  }
+  return Object.fromEntries(kept)
+}
+
+function prependUniqueHistory(older: ChatMsg[], current: ChatMsg[]): ChatMsg[] {
+  const seen = new Set<string>()
+  return [...older, ...current].filter((message) => {
+    if (!message.streamId) return true
+    if (seen.has(message.streamId)) return false
+    seen.add(message.streamId)
+    return true
+  })
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   msgs: [],
   conn: 'connecting',
@@ -424,6 +476,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   hydrating: true,
   historyStatus: 'idle',
   historyError: null,
+  historyRevision: null,
+  historyHasMore: false,
+  historyBefore: null,
+  olderHistoryStatus: 'idle',
+  olderHistoryError: null,
   sock: null,
   sessionId: null,
   sessionViews: {},
@@ -439,24 +496,40 @@ export const useChatStore = create<ChatState>((set, get) => ({
     liveCleanup = null
     current = get()
     current.sock?.close()
+    olderHistoryAbort?.abort()
+    olderHistoryAbort = null
 
     const switching = current.sessionId !== sessionId
+    const sessionViews = { ...current.sessionViews }
     if (current.sessionId && switching) {
       const previousView: SessionView = {
         msgs: current.msgs,
         streaming: current.streaming,
         historyStatus: current.historyStatus,
         historyError: current.historyError,
+        historyRevision: current.historyRevision,
+        historyHasMore: current.historyHasMore,
+        historyBefore: current.historyBefore,
+        olderHistoryStatus: current.olderHistoryStatus === 'loading' ? 'idle' : current.olderHistoryStatus,
+        olderHistoryError: current.olderHistoryError,
+        lastAccessedAt: Date.now(),
       }
-      set((st) => ({ sessionViews: { ...st.sessionViews, [current.sessionId!]: previousView } }))
+      sessionViews[current.sessionId] = previousView
     }
-    const cached = switching ? get().sessionViews[sessionId] : undefined
+    const cached = switching ? sessionViews[sessionId] : undefined
+    if (switching) delete sessionViews[sessionId]
     const resumeCachedView = !forceHistory && switching && cached?.historyStatus === 'ready'
     set({
       msgs: switching ? (cached?.msgs ?? []) : current.msgs,
       streaming: switching ? (cached?.streaming ?? false) : current.streaming,
       historyStatus: resumeCachedView ? cached.historyStatus : 'loading_history',
       historyError: resumeCachedView ? cached.historyError : null,
+      historyRevision: resumeCachedView ? cached.historyRevision : null,
+      historyHasMore: resumeCachedView ? cached.historyHasMore : false,
+      historyBefore: resumeCachedView ? cached.historyBefore : null,
+      olderHistoryStatus: resumeCachedView ? cached.olderHistoryStatus : 'idle',
+      olderHistoryError: resumeCachedView ? cached.olderHistoryError : null,
+      sessionViews: pruneSessionViews(sessionViews),
       // Like the Tauri desktop, switching only rebinds the already-live
       // per-session projection.  The cursor WebSocket catches up events that
       // arrived while this session was hidden; archive hydration is only for
@@ -654,7 +727,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     sock.open()
     set({ sock, sessionId, conn: 'connecting' })
 
-    if (!resumeCachedView) void api.getSessionMessages(sessionId, abort.signal).then((history) => {
+    if (!resumeCachedView) void api.getSessionMessages(sessionId, {
+      limit: HISTORY_PAGE_LIMIT,
+      maxChars: HISTORY_PAGE_MAX_CHARS,
+      signal: abort.signal,
+    }).then((history) => {
       if (generation !== historyGeneration || get().sessionId !== sessionId) return
       historyReady = true
       const queued = bufferedEvents.splice(0)
@@ -666,6 +743,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
           hydrating: false,
           historyStatus: 'ready',
           historyError: null,
+          historyRevision: history.revision ?? null,
+          historyHasMore: history.has_more ?? false,
+          historyBefore: history.next_before ?? null,
+          olderHistoryStatus: 'idle',
+          olderHistoryError: null,
         }
       })
       for (const event of queued) handleReadyMessage(event, false)
@@ -679,6 +761,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         hydrating: false,
         historyStatus: 'history_error',
         historyError: error instanceof Error ? error.message : '历史消息加载失败',
+        historyRevision: null,
+        historyHasMore: false,
+        historyBefore: null,
+        olderHistoryStatus: 'idle',
+        olderHistoryError: null,
       }))
       for (const event of queued) handleReadyMessage(event, false)
     })
@@ -691,13 +778,119 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  loadOlderHistory: async () => {
+    const current = get()
+    if (
+      !current.sessionId
+      || current.historyStatus !== 'ready'
+      || !current.historyHasMore
+      || current.historyBefore == null
+      || current.olderHistoryStatus === 'loading'
+    ) return
+
+    const sessionId = current.sessionId
+    const before = current.historyBefore
+    olderHistoryAbort?.abort()
+    const abort = new AbortController()
+    olderHistoryAbort = abort
+    set({ olderHistoryStatus: 'loading', olderHistoryError: null })
+
+    try {
+      const history = await api.getSessionMessages(sessionId, {
+        before,
+        limit: HISTORY_PAGE_LIMIT,
+        maxChars: HISTORY_PAGE_MAX_CHARS,
+        signal: abort.signal,
+      })
+      if (abort.signal.aborted || get().sessionId !== sessionId) return
+
+      const revision = history.revision ?? null
+      if (get().historyRevision !== revision) {
+        set({ olderHistoryStatus: 'idle', olderHistoryError: null })
+        queueMicrotask(() => {
+          if (get().sessionId === sessionId) get().start(sessionId, { forceHistory: true })
+        })
+        return
+      }
+
+      const older = historyToMessages(history.items)
+      set((state) => {
+        if (state.sessionId !== sessionId) return state
+        return {
+          msgs: prependUniqueHistory(older, state.msgs),
+          historyHasMore: history.has_more ?? false,
+          historyBefore: history.next_before ?? null,
+          olderHistoryStatus: 'idle',
+          olderHistoryError: null,
+        }
+      })
+    } catch (error: unknown) {
+      if (abort.signal.aborted || get().sessionId !== sessionId) return
+      set({
+        olderHistoryStatus: 'error',
+        olderHistoryError: error instanceof Error ? error.message : '更早的历史消息加载失败',
+      })
+    } finally {
+      if (olderHistoryAbort === abort) olderHistoryAbort = null
+    }
+  },
+
+  dropSessionView: (sessionId) => {
+    sessionCursors.delete(sessionId)
+    const current = get()
+    const sessionViews = { ...current.sessionViews }
+    delete sessionViews[sessionId]
+    if (current.sessionId !== sessionId) {
+      set({ sessionViews })
+      return
+    }
+
+    historyGeneration++
+    historyAbort?.abort()
+    olderHistoryAbort?.abort()
+    olderHistoryAbort = null
+    liveCleanup?.()
+    liveCleanup = null
+    current.sock?.close()
+    set({
+      msgs: [],
+      conn: 'closed',
+      streaming: false,
+      hydrating: false,
+      historyStatus: 'idle',
+      historyError: null,
+      historyRevision: null,
+      historyHasMore: false,
+      historyBefore: null,
+      olderHistoryStatus: 'idle',
+      olderHistoryError: null,
+      sock: null,
+      sessionId: null,
+      sessionViews,
+    })
+  },
+
   stop: () => {
     historyGeneration++
     historyAbort?.abort()
+    olderHistoryAbort?.abort()
+    olderHistoryAbort = null
     liveCleanup?.()
     liveCleanup = null
     get().sock?.close()
-    set({ sock: null, sessionId: null, conn: 'closed', hydrating: false, historyStatus: 'idle', historyError: null })
+    set({
+      sock: null,
+      sessionId: null,
+      conn: 'closed',
+      hydrating: false,
+      historyStatus: 'idle',
+      historyError: null,
+      historyRevision: null,
+      historyHasMore: false,
+      historyBefore: null,
+      olderHistoryStatus: 'idle',
+      olderHistoryError: null,
+    })
   },
 
   stageWebui: (text, atts) => {
@@ -722,7 +915,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   }),
 
-  clearLocal: () => set({ msgs: [], streaming: false }),
+  clearLocal: () => set({
+    msgs: [],
+    streaming: false,
+    historyRevision: null,
+    historyHasMore: false,
+    historyBefore: null,
+    olderHistoryStatus: 'idle',
+    olderHistoryError: null,
+  }),
   pushSystem: (content) =>
     set((st) => ({ msgs: [...st.msgs, { role: 'assistant', content, source: 'system', timestamp: Date.now() }] })),
   markIdle: () =>
