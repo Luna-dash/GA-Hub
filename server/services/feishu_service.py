@@ -29,8 +29,14 @@ class FeishuService:
         self._proc: subprocess.Popen | None = None
         self._last_check: dict[str, Any] | None = None
         self._last_check_ts = 0.0
+        self._chat_event_lock = threading.Lock()
         self._chat_event_seen: set[str] = set()
         self._chat_event_order: deque[str] = deque(maxlen=1000)
+        self._log_lock = threading.Lock()
+        self._log_cursor_path: Path | None = None
+        self._log_cursor_identity: tuple[int, int] | None = None
+        self._log_cursor_offset = 0
+        self._log_cursor_pending = ""
         self._poll_stop = threading.Event()
         self._poll_thread: threading.Thread | None = None
 
@@ -52,7 +58,7 @@ class FeishuService:
         return _paths.discover_user_python(_paths.GA_ROOT) or sys.executable
 
     def _publish_chat_events_from_text(self, text: str) -> int:
-        published = 0
+        payloads: list[dict[str, Any]] = []
         for line in (text or "").splitlines():
             marker_at = line.find(self._CHAT_MARKER)
             if marker_at < 0:
@@ -68,19 +74,86 @@ class FeishuService:
             if not event_id:
                 event_id = f"{payload.get('task_id') or ''}:{payload.get('type') or ''}:{payload.get('ts') or time.time()}"
                 payload["event_id"] = event_id
-            if event_id in self._chat_event_seen:
-                continue
-            self._chat_event_seen.add(event_id)
-            self._chat_event_order.append(event_id)
-            while len(self._chat_event_seen) > self._chat_event_order.maxlen:
-                old = self._chat_event_order.popleft()
-                self._chat_event_seen.discard(old)
+            with self._chat_event_lock:
+                if event_id in self._chat_event_seen:
+                    continue
+                self._chat_event_seen.add(event_id)
+                self._chat_event_order.append(event_id)
+                while len(self._chat_event_seen) > self._chat_event_order.maxlen:
+                    old = self._chat_event_order.popleft()
+                    self._chat_event_seen.discard(old)
+            payloads.append(payload)
+        for payload in payloads:
             bus.publish("feishu:chat", payload)
-            published += 1
-        return published
+        return len(payloads)
+
+    @staticmethod
+    def _tail_lines_from_handle(handle: Any, n: int) -> list[str]:
+        """Read only enough bytes from the end of a log to produce ``n`` lines."""
+        end = int(handle.seek(0, os.SEEK_END))
+        if end <= 0:
+            return []
+        block_size = 64 * 1024
+        position = end
+        data = b""
+        while position > 0 and data.count(b"\n") <= n:
+            start = max(0, position - block_size)
+            handle.seek(start)
+            data = handle.read(position - start) + data
+            position = start
+        text = data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+        return text.splitlines(keepends=True)[-n:]
+
+    @staticmethod
+    def _split_complete_lines(text: str) -> tuple[str, str]:
+        """Return complete lines and retain a final unterminated fragment."""
+        if not text:
+            return "", ""
+        lines = text.splitlines(keepends=True)
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            return "".join(lines[:-1]), lines[-1]
+        return text, ""
+
+    def _read_incremental_log_text(self, n: int = 300) -> str:
+        """Read the log tail once, then consume only bytes appended since the last read."""
+        path = self.log_file()
+        n = max(1, min(int(n or 300), 5000))
+        with self._log_lock:
+            try:
+                with path.open("rb") as handle:
+                    stat = os.fstat(handle.fileno())
+                    identity = (int(getattr(stat, "st_dev", 0)), int(getattr(stat, "st_ino", 0)))
+                    size = int(stat.st_size)
+                    reset = (
+                        self._log_cursor_path != path
+                        or self._log_cursor_identity != identity
+                        or size < self._log_cursor_offset
+                    )
+                    if reset:
+                        lines = self._tail_lines_from_handle(handle, n)
+                        self._log_cursor_path = path
+                        self._log_cursor_identity = identity
+                        self._log_cursor_offset = size
+                        complete, pending = self._split_complete_lines("".join(lines))
+                        self._log_cursor_pending = pending
+                        return complete
+
+                    handle.seek(self._log_cursor_offset)
+                    chunk = handle.read()
+                    self._log_cursor_offset = handle.tell()
+                    decoded = chunk.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+                    complete, pending = self._split_complete_lines(self._log_cursor_pending + decoded)
+                    self._log_cursor_pending = pending
+                    return complete
+            except FileNotFoundError:
+                self._log_cursor_path = None
+                self._log_cursor_identity = None
+                self._log_cursor_offset = 0
+                self._log_cursor_pending = ""
+                return ""
 
     def _publish_chat_events_from_log(self, n: int = 300) -> int:
-        return self._publish_chat_events_from_text("".join(self.tail(n)))
+        return self._publish_chat_events_from_text(self._read_incremental_log_text(n))
 
     def start_log_watcher(self, interval: float = 1.0) -> bool:
         """Continuously mirror fsapp stdout markers into the in-process EventBus."""
@@ -274,8 +347,8 @@ class FeishuService:
         if not path.is_file():
             return []
         n = max(1, min(int(n or 300), 5000))
-        with path.open("r", encoding="utf-8", errors="replace") as f:
-            return list(deque(f, maxlen=n))
+        with path.open("rb") as handle:
+            return self._tail_lines_from_handle(handle, n)
 
     def start(self) -> dict[str, Any]:
         fsapp = self.fsapp_path()

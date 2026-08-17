@@ -1,12 +1,83 @@
 """Regression tests for the Feishu process probe."""
 from __future__ import annotations
 
+import json
 import subprocess
 from types import SimpleNamespace
 from unittest import mock
 
 from server.process_utils import hidden_process_kwargs
 from server.services.feishu_service import FeishuService
+
+
+def _chat_line(event_id: str, *, newline: bool = True) -> str:
+    payload = {"event_id": event_id, "type": "message", "text": event_id}
+    suffix = "\n" if newline else ""
+    return f"INFO {FeishuService._CHAT_MARKER}{json.dumps(payload)}{suffix}"
+
+
+def test_feishu_log_cursor_reads_tail_then_only_appends(tmp_path):
+    log_file = tmp_path / "feishuapp.log"
+    log_file.write_text(_chat_line("initial-1") + _chat_line("initial-2"), encoding="utf-8")
+    service = FeishuService()
+
+    with mock.patch.object(service, "log_file", return_value=log_file), mock.patch(
+        "server.services.feishu_service.bus.publish"
+    ) as publish:
+        assert service._publish_chat_events_from_log() == 2
+        assert publish.call_count == 2
+
+        with log_file.open("a", encoding="utf-8") as handle:
+            handle.write(_chat_line("appended"))
+        assert service._publish_chat_events_from_log() == 1
+        assert service._publish_chat_events_from_log() == 0
+
+    assert [call.args[1]["event_id"] for call in publish.call_args_list] == [
+        "initial-1",
+        "initial-2",
+        "appended",
+    ]
+
+
+def test_feishu_log_cursor_waits_for_partial_final_line(tmp_path):
+    log_file = tmp_path / "feishuapp.log"
+    log_file.write_text(_chat_line("partial", newline=False), encoding="utf-8")
+    service = FeishuService()
+
+    with mock.patch.object(service, "log_file", return_value=log_file), mock.patch(
+        "server.services.feishu_service.bus.publish"
+    ) as publish:
+        assert service._publish_chat_events_from_log() == 0
+        with log_file.open("a", encoding="utf-8") as handle:
+            handle.write("\n")
+        assert service._publish_chat_events_from_log() == 1
+        assert publish.call_args.args[1]["event_id"] == "partial"
+
+
+def test_feishu_log_cursor_resets_after_replacement_and_deduplicates_ids(tmp_path):
+    log_file = tmp_path / "feishuapp.log"
+    log_file.write_text(_chat_line("before"), encoding="utf-8")
+    service = FeishuService()
+
+    with mock.patch.object(service, "log_file", return_value=log_file), mock.patch(
+        "server.services.feishu_service.bus.publish"
+    ) as publish:
+        assert service._publish_chat_events_from_log() == 1
+        replacement = tmp_path / "feishuapp.log.new"
+        replacement.write_text(_chat_line("after") + _chat_line("after"), encoding="utf-8")
+        replacement.replace(log_file)
+        assert service._publish_chat_events_from_log() == 1
+
+    assert [call.args[1]["event_id"] for call in publish.call_args_list] == ["before", "after"]
+
+
+def test_feishu_tail_reads_bounded_lines(tmp_path):
+    log_file = tmp_path / "feishuapp.log"
+    log_file.write_text("".join(f"line-{i}\n" for i in range(1000)), encoding="utf-8")
+    service = FeishuService()
+
+    with mock.patch.object(service, "log_file", return_value=log_file):
+        assert service.tail(3) == ["line-997\n", "line-998\n", "line-999\n"]
 
 
 def test_windows_external_pid_probe_does_not_spawn_powershell():
