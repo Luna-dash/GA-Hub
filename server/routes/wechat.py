@@ -1,6 +1,8 @@
 """WeChat bot routes."""
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Query
 
 from ..schemas import (
@@ -80,9 +82,9 @@ async def send(req: WxSendReq) -> WxSendResp:
     if not s.bot.has_token:
         raise HTTPException(400, "wechat not logged in")
     if req.text:
-        s.send_text(req.uid, req.text, req.context_token)
+        await asyncio.to_thread(s.send_text, req.uid, req.text, req.context_token)
     if req.file_path:
-        s.send_file(req.uid, req.file_path, req.context_token)
+        await asyncio.to_thread(s.send_file, req.uid, req.file_path, req.context_token)
     if not req.text and not req.file_path:
         raise HTTPException(400, "text or file_path required")
     return {"ok": True}

@@ -5,6 +5,7 @@ the shared EventBus (/ws/events?prefix=conductor:), not a dedicated WS.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
@@ -71,7 +72,8 @@ async def get_chat(last: int = Query(default=20, ge=1, le=200)) -> ConductorChat
 @router.post("/api/conductor/chat")
 async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
     try:
-        return svc().add_chat_message(
+        return await asyncio.to_thread(
+            svc().add_chat_message,
             body.msg,
             role=body.role,
             llm_index=body.llm_index,
@@ -109,7 +111,8 @@ async def get_subagent(
 @router.post("/api/conductor/subagent")
 async def start_subagent(body: ConductorStartSubagent) -> ConductorSubagentInstructionResp:
     try:
-        result = svc().start_subagent(
+        result = await asyncio.to_thread(
+            svc().start_subagent,
             body.prompt,
             llm_index=body.llm_index,
             conductor_llm_index=body.conductor_llm_index,
@@ -138,7 +141,8 @@ async def subagent_action(
         return result
     if action in ("input", "reply", "append", "message", "msg"):
         try:
-            result = service.input_subagent(
+            result = await asyncio.to_thread(
+                service.input_subagent,
                 sid,
                 body.msg,
                 llm_index=body.llm_index,
@@ -151,7 +155,7 @@ async def subagent_action(
         result["instruction"] = INSTR_DISPATCHED
         return result
     if action in ("abort", "stop"):
-        return pool.abort_subagent(sid)
+        return await asyncio.to_thread(pool.abort_subagent, sid)
     raise HTTPException(400, f"unknown action: {body.action}")
 
 
@@ -188,7 +192,8 @@ async def start_conductor(body: ConductorStartReq | None = None) -> ConductorLif
     """Start the conductor supervisor."""
     service = svc()
     try:
-        started = service.start(
+        started = await asyncio.to_thread(
+            service.start,
             llm_index=body.llm_index if body else None,
             subagent_llm_index=body.subagent_llm_index if body else None,
             subagent_model_policy=body.subagent_model_policy if body else None,
@@ -203,5 +208,5 @@ async def start_conductor(body: ConductorStartReq | None = None) -> ConductorLif
 async def stop_conductor() -> ConductorLifecycleResp:
     """Stop the conductor supervisor."""
     service = svc()
-    stopped = service.stop()
+    stopped = await asyncio.to_thread(service.stop)
     return {"ok": stopped, **service.lifecycle_status()}

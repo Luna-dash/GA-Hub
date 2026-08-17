@@ -14,6 +14,7 @@ GA 已经支持 mykey.py 热更新：``llmcore.reload_mykeys()`` 基于 mtime，
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import subprocess
@@ -275,6 +276,10 @@ async def test_session(var: str) -> MyKeySessionTestResp:
     assignment variable, so resolve a fresh client directly from mykey.py.
     Mixin routes are intentionally not tested here.
     """
+    return await asyncio.to_thread(_test_session_sync, var)
+
+
+def _test_session_sync(var: str) -> MyKeySessionTestResp:
     if _classify(var) == "mixin":
         return {"ok": False, "error": "mixin session cannot be ping-tested here"}
 
@@ -440,7 +445,7 @@ async def sync_upload_mykey() -> MyKeySyncResultResp:
     if not p.is_file():
         raise HTTPException(404, "mykey.py 不存在")
     upload_url = os.environ.get("GA_MYKEY_SYNC_UPLOAD_URL") or f"{_sync_base_url()}/api/mykey/upload"
-    result = _run_mykey_sync([
+    result = await asyncio.to_thread(_run_mykey_sync, [
         "upload",
         "--upload-url", upload_url,
         "--source", str(p),
@@ -452,14 +457,13 @@ async def sync_upload_mykey() -> MyKeySyncResultResp:
 async def sync_fetch_mykey() -> MyKeySyncResultResp:
     """Fetch, decrypt and replace GA_ROOT/mykey.py from the configured sync server."""
     p = _mykey_path()
-    result = _run_mykey_sync([
+    result = await asyncio.to_thread(_run_mykey_sync, [
         "fetch",
         "--base-url", _sync_base_url(),
         "--target", str(p),
         "--force",
     ])
-    raw = p.read_text(encoding="utf-8") if p.is_file() else ""
-    llms, warnings = _trigger_reload()
+    raw, llms, warnings = await asyncio.to_thread(_read_and_reload_mykey, p)
     return {
         "ok": True,
         "action": "fetch",
@@ -469,6 +473,12 @@ async def sync_fetch_mykey() -> MyKeySyncResultResp:
         "structured": _structurize(raw),
         **result,
     }
+
+
+def _read_and_reload_mykey(path: Path) -> tuple[str, list[dict], list[str]]:
+    raw = path.read_text(encoding="utf-8") if path.is_file() else ""
+    llms, warnings = _trigger_reload()
+    return raw, llms, warnings
 
 
 @router.post("/open")

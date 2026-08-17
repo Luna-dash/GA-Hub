@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
@@ -112,7 +113,7 @@ async def put_chat_retry_config(req: ChatRetryConfigReq):
 async def sessions():
     """Recoverable model_responses snapshots (used by /continue)."""
     from frontends.continue_cmd import list_sessions
-    out = list_sessions()
+    out = await asyncio.to_thread(list_sessions)
     return {
         "sessions": [
             {"path": p, "mtime": int(m), "preview": preview, "rounds": n}
@@ -123,18 +124,26 @@ async def sessions():
 
 @router.post("/api/agent/sessions/{idx}/restore")
 async def restore_session(idx: int):
-    from frontends.continue_cmd import list_sessions, restore
-    sessions = list_sessions()
-    if idx < 0 or idx >= len(sessions):
-        raise HTTPException(404, "session index out of range")
     s = svc()
-    msg, full = restore(s.agent, sessions[idx][0])
+    restored = await asyncio.to_thread(_restore_session_sync, s, idx)
+    if restored is None:
+        raise HTTPException(404, "session index out of range")
+    msg, full = restored
     # Reset live chat snapshots — the agent's history is now a different
     # conversation, so any in-flight UI bubbles would be misleading.
     with s._lock:
         s._snapshots.clear()
     bus.publish("chat:reset", {"reason": "session_restored"})
     return {"ok": True, "message": msg, "full": full}
+
+
+def _restore_session_sync(service: AgentService, idx: int) -> tuple[str, str] | None:
+    from frontends.continue_cmd import list_sessions, restore
+
+    sessions = list_sessions()
+    if idx < 0 or idx >= len(sessions):
+        return None
+    return restore(service.agent, sessions[idx][0])
 
 
 # ── LLMs ─────────────────────────────────────────────────────────
@@ -161,13 +170,15 @@ async def test_llm(idx: int):
 
     Returns: {ok, latency_ms, preview, model, error?}
     """
-    import time
     s = svc()
     clients = getattr(s.agent, "llmclients", None)
     if clients is None or idx < 0 or idx >= len(clients):
         raise HTTPException(404, f"llm index out of range: {idx}")
 
-    client = clients[idx]
+    return await asyncio.to_thread(_test_llm_sync, s, clients[idx])
+
+
+def _test_llm_sync(service: AgentService, client):
     backend = getattr(client, "backend", None)
     if backend is None:
         return {"ok": False, "error": "client has no backend"}
@@ -203,14 +214,14 @@ async def test_llm(idx: int):
             "ok": True,
             "latency_ms": elapsed_ms,
             "preview": (text or "").strip()[:120],
-            "model": s.agent.get_llm_name(client, model=True),
-            "name": s.agent.get_llm_name(client),
+            "model": service.agent.get_llm_name(client, model=True),
+            "name": service.agent.get_llm_name(client),
         }
     except Exception as e:
         return {
             "ok": False,
             "error": f"{type(e).__name__}: {e}",
-            "name": s.agent.get_llm_name(client) if client else "?",
+            "name": service.agent.get_llm_name(client) if client else "?",
         }
     finally:
         try:

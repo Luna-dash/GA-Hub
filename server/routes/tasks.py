@@ -1,6 +1,8 @@
 """Generic scheduled task routes."""
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Query
 
 from ..schemas import (
@@ -55,8 +57,7 @@ async def trigger_schedule(sid: str):
 
 @router.get("/runs", response_model=TaskRunListResp)
 async def list_runs(limit: int = Query(default=100, ge=1, le=1000)):
-    import asyncio
-    runs = await asyncio.get_event_loop().run_in_executor(None, svc().list_runs, limit)
+    runs = await asyncio.to_thread(svc().list_runs, limit)
     return {"runs": runs}
 
 
@@ -78,4 +79,4 @@ async def put_email_config(req: EmailConfigReq):
 
 @router.post("/email-test", response_model=EmailTestResp)
 async def test_email(req: EmailTestReq):
-    return email_service.test_email(req.to, req.subject, req.body)
+    return await asyncio.to_thread(email_service.test_email, req.to, req.subject, req.body)

@@ -63,7 +63,7 @@ async def _delayed_feishu_autostart(delay_seconds: int = FEISHU_AUTO_START_DELAY
     try:
         from .services.feishu_service import FeishuService
 
-        result = FeishuService.instance().start()
+        result = await asyncio.to_thread(FeishuService.instance().start)
         log.info("feishu auto-start completed after %ss: %s", delay_seconds, result)
     except Exception as e:
         log.warning("feishu auto-start skipped after %ss: %s", delay_seconds, e)
