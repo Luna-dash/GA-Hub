@@ -157,13 +157,15 @@ describe('api request failure handling', () => {
       subagentLlmIndex: 5,
       subagentModelPolicy: 'locked' as const,
     }
-    await api.conductorSendChat('plan', 'user', models)
-    await api.conductorStartSubagent('inspect', 3, models)
+    const chatMessage = '请规划中文任务 🚀'
+    const workerPrompt = '检查 D:\\项目\\资料，保留 emoji 🧪'
+    await api.conductorSendChat(chatMessage, 'user', models)
+    await api.conductorStartSubagent(workerPrompt, 3, models)
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/conductor/chat', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({
-        msg: 'plan',
+        msg: chatMessage,
         role: 'user',
         llm_index: 1,
         subagent_llm_index: 5,
@@ -173,7 +175,7 @@ describe('api request failure handling', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/conductor/subagent', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({
-        prompt: 'inspect',
+        prompt: workerPrompt,
         llm_index: 3,
         conductor_llm_index: 1,
         subagent_llm_index: 5,

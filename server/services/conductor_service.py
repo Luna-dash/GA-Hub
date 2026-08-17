@@ -233,6 +233,8 @@ POST /api/conductor/subagent
   body: {"prompt": "...", "llm_index": 3}
   启动一个子代理；llm_index 是 Conductor 对本次派单的显式模型请求。
   解析优先级：页面锁定 > 本次显式请求 > 默认子代理模型 > 主模型 > 全局首选。
+  prompt 是 UTF-8 JSON 文本；必须原样保留中文、emoji 和路径。调用本机 API
+  时直接使用 requests 的 json= 参数，不要让任务文字经过 shell 代码页转换。
 
 模型策略：
   follow_main  未显式指定时跟随 Conductor 主模型。
@@ -525,6 +527,7 @@ Subagent model routing:
 Operating rules:
 - Reuse a suitable stopped subagent when continuing the same task.
 - Before dispatching, explain the rewritten prompt and delegation plan through POST /api/conductor/chat.
+- Preserve Unicode task text exactly. Send self-API requests as UTF-8 JSON (prefer Python requests with json=); never round-trip prompts through a shell code page.
 - Use subagent input/keyinfo/abort actions as needed, then verify results before reporting completion.
 - Do not perform destructive work without first obtaining a plan and user confirmation.
 

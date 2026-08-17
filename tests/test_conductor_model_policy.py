@@ -1,10 +1,12 @@
 """Conductor-owned subagent model routing policy tests."""
 from __future__ import annotations
 
+import queue
 import threading
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from server.services.conductor_service import ConductorService
+from server.services.conductor_service import ConductorService, CoreSubagentPool
 
 
 def _service(
@@ -72,10 +74,11 @@ def test_explicit_follow_main_clears_default_worker_model():
 
 def test_dispatch_entrypoint_applies_same_locked_policy():
     service = _service(worker=5, policy="locked")
+    prompt = "检查中文路径 D:\\项目\\资料 🚀"
 
-    result = service.start_subagent("inspect", llm_index=3)
+    result = service.start_subagent(prompt, llm_index=3)
 
-    service.pool.start_subagent.assert_called_once_with("inspect", llm_index=5)
+    service.pool.start_subagent.assert_called_once_with(prompt, llm_index=5)
     assert result["llm_index"] == 5
     assert result["model_policy"] == "locked"
 
@@ -121,3 +124,43 @@ def test_default_and_locked_policies_require_a_worker_model():
             assert "subagent_llm_index is required" in str(exc)
         else:
             raise AssertionError(f"{policy} should require subagent_llm_index")
+
+
+def test_conductor_prompt_has_no_replacement_question_marks():
+    service = _service(main=1)
+    service.pool.counts.return_value = (1, 2)
+    service.chat_messages = [{"role": "user", "read": False}]
+    service.callbacks = SimpleNamespace()
+
+    prompt = service._build_prompt([{"type": "user_message"}])
+
+    assert "You are the Conductor supervisor" in prompt
+    assert "API base:" in prompt
+    assert "Preserve Unicode task text exactly" in prompt
+    assert "??" not in prompt
+
+
+def test_core_pool_put_task_preserves_unicode_prompt():
+    prompt = "分析 C:\\资料\\项目，保留中文、emoji 🚀 和符号 €"
+    calls = []
+
+    class Agent:
+        def put_task(self, msg, *, source):
+            calls.append((msg, source))
+            return queue.Queue()
+
+    pool = object.__new__(CoreSubagentPool)
+    pool.lock = threading.RLock()
+    pool.subagents = {
+        "worker-1": SimpleNamespace(
+            agent=Agent(),
+            active_generation=0,
+            terminal_event=None,
+        )
+    }
+    pool._start_monitor = Mock()
+
+    result = pool._send_msg("worker-1", prompt)
+
+    assert result == {"id": "worker-1", "status": "running"}
+    assert calls == [(prompt, "subagent:worker-1")]

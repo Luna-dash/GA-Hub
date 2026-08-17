@@ -159,11 +159,12 @@ def test_chat_route_forwards_model_policy(monkeypatch):
 def test_subagent_route_uses_service_policy_boundary(monkeypatch):
     service = FakeService(STOPPED)
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+    prompt = "请检查中文路径 D:\\项目\\指挥 🚀，不要改动原文件。"
 
     result = asyncio.run(
         conductor_routes.start_subagent(
             conductor_routes.ConductorStartSubagent(
-                prompt="inspect",
+                prompt=prompt,
                 llm_index=3,
                 conductor_llm_index=1,
                 subagent_llm_index=5,
@@ -174,7 +175,7 @@ def test_subagent_route_uses_service_policy_boundary(monkeypatch):
 
     assert result["instruction"] == conductor_routes.INSTR_DISPATCHED
     assert service.subagent_calls == [(
-        "inspect",
+        prompt,
         {
             "llm_index": 3,
             "conductor_llm_index": 1,
