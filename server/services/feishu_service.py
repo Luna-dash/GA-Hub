@@ -23,12 +23,17 @@ class FeishuService:
     _instance: "FeishuService | None" = None
 
     _CHAT_MARKER = "__GAHUB_FEISHU_CHAT__"
+    _CHECK_CACHE_TTL_SECONDS = 15.0
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._proc: subprocess.Popen | None = None
         self._last_check: dict[str, Any] | None = None
         self._last_check_ts = 0.0
+        self._check_condition = threading.Condition()
+        self._check_cache: dict[bool, tuple[float, dict[str, Any]]] = {}
+        self._check_inflight: set[bool] = set()
+        self._check_generation = 0
         self._chat_event_lock = threading.Lock()
         self._chat_event_seen: set[str] = set()
         self._chat_event_order: deque[str] = deque(maxlen=1000)
@@ -226,6 +231,9 @@ class FeishuService:
         self._publish_chat_events_from_log()
         fsapp = self.fsapp_path()
         log_file = self.log_file()
+        with self._check_condition:
+            last_check = dict(self._last_check) if self._last_check is not None else None
+            last_check_ts = self._last_check_ts
         with self._lock:
             proc = self._proc
             running = self._running_locked()
@@ -246,8 +254,8 @@ class FeishuService:
             "python": self._python(),
             "log_file": str(log_file),
             "log_exists": log_file.is_file(),
-            "last_check": self._last_check,
-            "last_check_ts": self._last_check_ts,
+            "last_check": last_check,
+            "last_check_ts": last_check_ts,
         }
 
     def save_keys(self, app_id: str, app_secret: str, allowed_users: str = "") -> dict[str, Any]:
@@ -289,8 +297,11 @@ class FeishuService:
         )
         if p.returncode != 0:
             raise RuntimeError((p.stdout or "keychain save failed").strip())
-        self._last_check = None
-        self._last_check_ts = 0.0
+        with self._check_condition:
+            self._check_cache.clear()
+            self._check_generation += 1
+            self._last_check = None
+            self._last_check_ts = 0.0
         evt = {"ok": True, "app_id_masked": self._mask(app_id), "allowed_users_saved": bool(allowed_users)}
         bus.publish("feishu:keys_saved", evt)
         return evt
@@ -302,13 +313,10 @@ class FeishuService:
             return "*" * len(value)
         return value[:4] + "*" * (len(value) - 8) + value[-4:]
 
-    def check(self, init_agent: bool = False, timeout: int = 25) -> dict[str, Any]:
+    def _run_check(self, init_agent: bool, timeout: int) -> dict[str, Any]:
         fsapp = self.fsapp_path()
         if not fsapp.is_file():
-            out = {"ready": False, "ok": False, "error": f"fsapp.py not found: {fsapp}", "fsapp_path": str(fsapp)}
-            self._last_check = out
-            self._last_check_ts = time.time()
-            return out
+            return {"ready": False, "ok": False, "error": f"fsapp.py not found: {fsapp}", "fsapp_path": str(fsapp)}
         cmd = [self._python(), "-X", "utf8", "-u", str(fsapp), "--check-agent" if init_agent else "--check"]
         try:
             p = subprocess.run(
@@ -337,8 +345,37 @@ class FeishuService:
             parsed["ok"] = bool(parsed.get("ready")) and p.returncode == 0
         except Exception as e:
             parsed = {"ready": False, "ok": False, "error": str(e)}
-        self._last_check = parsed
-        self._last_check_ts = time.time()
+        return parsed
+
+    def check(self, init_agent: bool = False, timeout: int = 25, force: bool = False) -> dict[str, Any]:
+        """Run one probe per mode, coalescing concurrent callers and caching briefly."""
+        key = bool(init_agent)
+        with self._check_condition:
+            cached = self._check_cache.get(key)
+            if not force and cached and time.monotonic() - cached[0] < self._CHECK_CACHE_TTL_SECONDS:
+                return dict(cached[1])
+            if key in self._check_inflight:
+                while key in self._check_inflight:
+                    self._check_condition.wait()
+                cached = self._check_cache.get(key)
+                if cached is not None:
+                    return dict(cached[1])
+            self._check_inflight.add(key)
+            generation = self._check_generation
+
+        try:
+            parsed = self._run_check(key, timeout)
+        except Exception as exc:
+            parsed = {"ready": False, "ok": False, "error": str(exc)}
+
+        checked_at = time.time()
+        with self._check_condition:
+            if generation == self._check_generation:
+                self._check_cache[key] = (time.monotonic(), dict(parsed))
+                self._last_check = dict(parsed)
+                self._last_check_ts = checked_at
+            self._check_inflight.discard(key)
+            self._check_condition.notify_all()
         bus.publish("feishu:check", parsed)
         return parsed
 

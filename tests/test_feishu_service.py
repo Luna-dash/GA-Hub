@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest import mock
 
@@ -126,3 +127,47 @@ def test_windows_check_launches_python_without_console(tmp_path):
 
     assert result["ready"] is True
     assert run.call_args.kwargs["creationflags"] == 0x08000000
+
+
+def test_check_singleflight_shares_one_probe_between_threads(tmp_path):
+    service = FeishuService()
+    fsapp = tmp_path / "fsapp.py"
+    fsapp.write_text("# test fixture", encoding="utf-8")
+    completed = SimpleNamespace(returncode=0, stdout='{"ready": true}')
+
+    def slow_run(*_args, **_kwargs):
+        import time
+
+        time.sleep(0.15)
+        return completed
+
+    with (
+        mock.patch.object(service, "fsapp_path", return_value=fsapp),
+        mock.patch.object(service, "_python", return_value="python.exe"),
+        mock.patch("server.services.feishu_service.subprocess.run", side_effect=slow_run) as run,
+        mock.patch("server.services.feishu_service.bus.publish"),
+    ):
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lambda _index: service.check(), range(8)))
+
+    assert run.call_count == 1
+    assert all(result["ok"] is True for result in results)
+
+
+def test_check_cache_supports_explicit_refresh(tmp_path):
+    service = FeishuService()
+    fsapp = tmp_path / "fsapp.py"
+    fsapp.write_text("# test fixture", encoding="utf-8")
+    completed = SimpleNamespace(returncode=0, stdout='{"ready": true}')
+
+    with (
+        mock.patch.object(service, "fsapp_path", return_value=fsapp),
+        mock.patch.object(service, "_python", return_value="python.exe"),
+        mock.patch("server.services.feishu_service.subprocess.run", return_value=completed) as run,
+        mock.patch("server.services.feishu_service.bus.publish"),
+    ):
+        service.check()
+        service.check()
+        service.check(force=True)
+
+    assert run.call_count == 2

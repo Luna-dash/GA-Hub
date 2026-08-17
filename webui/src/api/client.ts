@@ -276,7 +276,10 @@ export const api = {
 
   // ── feishu ───────────────────────────────────────────
   fsStatus: () => http<FsStatus>('GET', '/api/feishu/status'),
-  fsCheck: (initAgent = false) => http<FsCheckResult>('POST', `/api/feishu/check?init_agent=${initAgent ? 'true' : 'false'}`),
+  fsCheck: (initAgent = false, force = false) => http<FsCheckResult>(
+    'POST',
+    `/api/feishu/check?init_agent=${initAgent ? 'true' : 'false'}${force ? '&force=true' : ''}`,
+  ),
   fsStart: () => http<FsStartResponse>('POST', '/api/feishu/start'),
   fsStop: () => http<FsStopResponse>('POST', '/api/feishu/stop'),
   fsLogs: (tail = 300) => http<LogLinesResponse>('GET', `/api/feishu/logs?tail=${tail}`),

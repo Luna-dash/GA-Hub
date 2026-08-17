@@ -15,9 +15,9 @@ from server.routes import feishu
 def test_slow_feishu_check_does_not_block_other_window_requests() -> None:
     service = SimpleNamespace()
 
-    def slow_check(*, init_agent: bool = False) -> dict[str, bool]:
+    def slow_check(*, init_agent: bool = False, force: bool = False) -> dict[str, bool]:
         time.sleep(0.3)
-        return {"ready": not init_agent, "ok": True}
+        return {"ready": not init_agent, "ok": not force}
 
     service.check = slow_check
     app = FastAPI()

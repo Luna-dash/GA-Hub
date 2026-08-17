@@ -4323,6 +4323,7 @@ export interface operations {
         parameters: {
             query?: {
                 init_agent?: boolean;
+                force?: boolean;
             };
             header?: never;
             path?: never;

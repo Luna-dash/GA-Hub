@@ -34,8 +34,8 @@ def status() -> FsStatusResp:
 
 
 @router.post("/api/feishu/check")
-def check(init_agent: bool = False) -> FsCheckResp:
-    return svc().check(init_agent=init_agent)
+def check(init_agent: bool = False, force: bool = False) -> FsCheckResp:
+    return svc().check(init_agent=init_agent, force=force)
 
 
 @router.put("/api/feishu/keys")

@@ -93,6 +93,20 @@ describe('api request failure handling', () => {
     )
   })
 
+  it('marks an explicit Feishu refresh as forced', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ready: true,
+      ok: true,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.fsCheck(false, true)
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      '/api/feishu/check?init_agent=false&force=true',
+    )
+  })
+
   it('routes BTW and rewind through the encoded session runtime endpoints', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, content: 'side answer' }), {

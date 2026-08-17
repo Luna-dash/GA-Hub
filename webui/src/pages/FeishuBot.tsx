@@ -63,7 +63,8 @@ export default function FeishuBot() {
   async function handleRefresh() {
     setRefreshing(true)
     try {
-      await Promise.all([statusQ.refetch(), checkQ.refetch(), loadMessages()])
+      const [, freshCheck] = await Promise.all([statusQ.refetch(), api.fsCheck(false, true), loadMessages()])
+      qc.setQueryData(['feishu-check'], freshCheck)
     } finally {
       setRefreshing(false)
     }
