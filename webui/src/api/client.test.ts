@@ -22,7 +22,7 @@ describe('api request failure handling', () => {
     const controller = new AbortController()
     controller.abort()
 
-    await expect(api.getSessionMessages('already-cancelled', controller.signal)).rejects.toMatchObject({
+    await expect(api.getSessionMessages('already-cancelled', { signal: controller.signal })).rejects.toMatchObject({
       name: 'AbortError',
     })
     expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true)
@@ -32,7 +32,7 @@ describe('api request failure handling', () => {
     const fetchMock = pendingFetch()
     vi.stubGlobal('fetch', fetchMock)
     const controller = new AbortController()
-    const request = api.getSessionMessages('cancel-in-flight', controller.signal)
+    const request = api.getSessionMessages('cancel-in-flight', { signal: controller.signal })
     controller.abort()
 
     await expect(request).rejects.toMatchObject({ name: 'AbortError' })
@@ -68,6 +68,29 @@ describe('api request failure handling', () => {
     })))
 
     await expect(api.projects()).resolves.toEqual(payload)
+  })
+
+  it('encodes bounded session-history paging options', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      session_id: 'session/with space',
+      archive_bound: true,
+      revision: 'rev-1',
+      items: [],
+      total: 10,
+      has_more: true,
+      next_before: 4,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.getSessionMessages('session/with space', {
+      before: 8,
+      limit: 32,
+      maxChars: 400_000,
+    })
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      '/api/sessions/session%2Fwith%20space/messages?before=8&limit=32&max_chars=400000',
+    )
   })
 
   it('routes BTW and rewind through the encoded session runtime endpoints', async () => {
@@ -116,6 +139,46 @@ describe('api request failure handling', () => {
     }))
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/projects/alpha%20name-1234', expect.objectContaining({
       method: 'DELETE',
+    }))
+  })
+
+  it('sends Conductor model policy on chat and approval dispatches', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'chat-1', role: 'user', msg: 'plan', ts: 1,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'worker-1', status: 'running', instruction: 'ok',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const models = {
+      llmIndex: 1,
+      subagentLlmIndex: 5,
+      subagentModelPolicy: 'locked' as const,
+    }
+    await api.conductorSendChat('plan', 'user', models)
+    await api.conductorStartSubagent('inspect', 3, models)
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/conductor/chat', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        msg: 'plan',
+        role: 'user',
+        llm_index: 1,
+        subagent_llm_index: 5,
+        subagent_model_policy: 'locked',
+      }),
+    }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/conductor/subagent', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        prompt: 'inspect',
+        llm_index: 3,
+        conductor_llm_index: 1,
+        subagent_llm_index: 5,
+        subagent_model_policy: 'locked',
+      }),
     }))
   })
 })

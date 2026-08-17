@@ -453,24 +453,36 @@ class ConductorChatIn(BaseModel):
     msg: str
     role: Literal["conductor", "system", "user"] = "conductor"
     # Page-scoped override. None means fallback to persisted/global preference.
-    llm_index: int | None = None
+    llm_index: int | None = Field(default=None, ge=0)
+    subagent_llm_index: int | None = Field(default=None, ge=0)
+    subagent_model_policy: Literal["follow_main", "default", "locked"] | None = None
 
 
 class ConductorStartSubagent(BaseModel):
     prompt: str
-    # Page-scoped override. None means fallback to persisted/global preference.
-    llm_index: int | None = None
+    # Explicit per-dispatch request from the Conductor or approval UI.
+    llm_index: int | None = Field(default=None, ge=0)
+    # Optional page configuration; omitted fields preserve service state.
+    conductor_llm_index: int | None = Field(default=None, ge=0)
+    subagent_llm_index: int | None = Field(default=None, ge=0)
+    subagent_model_policy: Literal["follow_main", "default", "locked"] | None = None
 
 
 class ConductorStartReq(BaseModel):
-    # Page-scoped selections. None subagent selection means follow conductor.
-    llm_index: int | None = None
-    subagent_llm_index: int | None = None
+    # Page-scoped selections. Omitted policy preserves the current service state.
+    llm_index: int | None = Field(default=None, ge=0)
+    subagent_llm_index: int | None = Field(default=None, ge=0)
+    subagent_model_policy: Literal["follow_main", "default", "locked"] | None = None
 
 
 class ConductorSubagentAction(BaseModel):
     action: Literal["keyinfo", "input", "reply", "append", "message", "msg", "abort", "stop"]
     msg: str = ""
+    # Used when input/reply resumes a stopped subagent.
+    llm_index: int | None = Field(default=None, ge=0)
+    conductor_llm_index: int | None = Field(default=None, ge=0)
+    subagent_llm_index: int | None = Field(default=None, ge=0)
+    subagent_model_policy: Literal["follow_main", "default", "locked"] | None = None
 
 
 class ConductorApproval(BaseModel):

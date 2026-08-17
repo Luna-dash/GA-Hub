@@ -2256,6 +2256,10 @@ export interface components {
             role: "conductor" | "system" | "user";
             /** Llm Index */
             llm_index?: number | null;
+            /** Subagent Llm Index */
+            subagent_llm_index?: number | null;
+            /** Subagent Model Policy */
+            subagent_model_policy?: ("follow_main" | "default" | "locked") | null;
         };
         /** ConductorChatListResp */
         ConductorChatListResp: {
@@ -2320,6 +2324,10 @@ export interface components {
         ConductorStartReq: {
             /** Llm Index */
             llm_index?: number | null;
+            /** Subagent Llm Index */
+            subagent_llm_index?: number | null;
+            /** Subagent Model Policy */
+            subagent_model_policy?: ("follow_main" | "default" | "locked") | null;
         };
         /** ConductorStartSubagent */
         ConductorStartSubagent: {
@@ -2327,6 +2335,12 @@ export interface components {
             prompt: string;
             /** Llm Index */
             llm_index?: number | null;
+            /** Conductor Llm Index */
+            conductor_llm_index?: number | null;
+            /** Subagent Llm Index */
+            subagent_llm_index?: number | null;
+            /** Subagent Model Policy */
+            subagent_model_policy?: ("follow_main" | "default" | "locked") | null;
         };
         /** ConductorStatusResp */
         ConductorStatusResp: {
@@ -2373,6 +2387,14 @@ export interface components {
              * @default
              */
             msg: string;
+            /** Llm Index */
+            llm_index?: number | null;
+            /** Conductor Llm Index */
+            conductor_llm_index?: number | null;
+            /** Subagent Llm Index */
+            subagent_llm_index?: number | null;
+            /** Subagent Model Policy */
+            subagent_model_policy?: ("follow_main" | "default" | "locked") | null;
         };
         /** ConductorSubagentActionResp */
         ConductorSubagentActionResp: {

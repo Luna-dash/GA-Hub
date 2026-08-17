@@ -1,14 +1,25 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { api, EventSocket } from '@/api/client'
+import { api, EventSocket, type ConductorSubagentModelPolicy } from '@/api/client'
 import { useConductorStore } from '@/stores/conductorStore'
 import type { ConductorApprovalItem, ConductorLogItem, ConductorSubagent } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
+import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
+import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 
 const TECHNICAL_ACTION_RE = /^\s*\[Action\]\s+Running\s+([^:\n]+)(?:\s+in\s+([^:\n]+))?/i
 const LLM_RUNNING_RE = /\*{0,2}LLM Running \(Turn \d+\) \.{3}\*{0,2}/gi
 const scrollMemory = { chatTop: 0, logTop: 0 }
+const SUBAGENT_MODEL_LOCK_KEY = 'gahub.conductor.subagentModelLocked.v1'
+
+function readSubagentModelLock(): boolean {
+  try {
+    return localStorage.getItem(SUBAGENT_MODEL_LOCK_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
 
 function agentTooltip(sub: ConductorSubagent, index: number): string {
   const status = sub.status === 'running' ? '运行中' : '已停止'
@@ -86,8 +97,7 @@ export default function Conductor() {
   const qc = useQueryClient()
   const [userMsg, setUserMsg] = useState('')
   const [selectedSubagent, setSelectedSubagent] = useState<string | null>(null)
-  const [selectedLlmIndex, setSelectedLlmIndex] = useState<number | null>(null)
-  const [subagentLlmIndex, setSubagentLlmIndex] = useState<number | null>(null)
+  const [subagentModelLocked, setSubagentModelLocked] = useState(readSubagentModelLock)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const logScrollRef = useRef<HTMLDivElement>(null)
@@ -128,15 +138,29 @@ export default function Conductor() {
     refetchInterval: 3000,
   })
 
-  // Page-local main-model selector.
+  // Conductor and Goal/Hive share durable key-based model preferences.
   const { data: llmsData } = useQuery({
     queryKey: ['llms'],
     queryFn: api.llms,
   })
   const llms = llmsData?.llms ?? []
-  const preferredLlmIndex = llms.findIndex((l) => l.preferred)
-  const effectiveLlmIndex = selectedLlmIndex ?? (preferredLlmIndex >= 0 ? preferredLlmIndex : null)
-  const effectiveSubagentLlmIndex = subagentLlmIndex ?? effectiveLlmIndex
+  const {
+    mainLlmKey,
+    subagentLlmKey,
+    mainLlmIndex: effectiveLlmIndex,
+    subagentLlmIndex: effectiveSubagentLlmIndex,
+    selectedSubagentLlmIndex,
+    selectMainLlm,
+    selectSubagentLlm,
+  } = useSharedModelSelection(llms)
+  const subagentModelPolicy: ConductorSubagentModelPolicy = subagentLlmKey === null
+    ? 'follow_main'
+    : subagentModelLocked ? 'locked' : 'default'
+  const conductorModelSettings = useMemo(() => ({
+    llmIndex: effectiveLlmIndex,
+    subagentLlmIndex: selectedSubagentLlmIndex,
+    subagentModelPolicy,
+  }), [effectiveLlmIndex, selectedSubagentLlmIndex, subagentModelPolicy])
 
   // Poll subagents
   useQuery({
@@ -237,14 +261,14 @@ export default function Conductor() {
 
   const sendChat = async (e: FormEvent) => {
     e.preventDefault()
-    if (!userMsg.trim()) return
+    if (!userMsg.trim() || effectiveLlmIndex === null) return
     const msg = userMsg.trim()
     setUserMsg('')
 
     // Send and use returned item (with real id) for instant display.
     // EventBus + 2s poll will dedupe by id, no duplicates.
     try {
-      const item = await api.conductorSendChat(msg, 'user', effectiveLlmIndex)
+      const item = await api.conductorSendChat(msg, 'user', conductorModelSettings)
       shouldFollowChatRef.current = true
       addChatMessage({
         id: item.id,
@@ -256,11 +280,6 @@ export default function Conductor() {
       console.error('sendChat failed', err)
       setUserMsg(msg)  // restore on failure
     }
-  }
-
-  const startConductor = async () => {
-    await api.conductorStart(effectiveLlmIndex, effectiveSubagentLlmIndex)
-    qc.invalidateQueries({ queryKey: ['conductor', 'status'] })
   }
 
   const stopConductor = async () => {
@@ -278,7 +297,12 @@ export default function Conductor() {
   }, [userMsg])
 
   const approveTask = async (item: ConductorApprovalItem) => {
-    await api.conductorStartSubagent(item.prompt, effectiveLlmIndex)
+    if (effectiveSubagentLlmIndex === null) return
+    await api.conductorStartSubagent(
+      item.prompt,
+      effectiveSubagentLlmIndex,
+      conductorModelSettings,
+    )
     removeApproval(item.id)
     qc.invalidateQueries({ queryKey: ['conductor', 'subagents'] })
   }
@@ -314,32 +338,44 @@ export default function Conductor() {
       actions={
         <div className="flex items-center gap-2">
           <span className="text-xs text-[#7B6D5A]">主模型</span>
-          <select
-            value={effectiveLlmIndex ?? -1}
-            onChange={(e) => setSelectedLlmIndex(Number(e.target.value))}
-            disabled={!llms.length}
-            className="max-w-[280px] min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
+          <MainModelSelect
+            llms={llms}
+            value={mainLlmKey}
+            onChange={selectMainLlm}
+            className="max-w-[280px]"
             title="选择 Conductor 使用的主模型"
+            aria-label="Conductor 主模型"
+          />
+          <span className="text-xs text-[#7B6D5A]">默认子代理模型</span>
+          <SubagentModelSelect
+            llms={llms}
+            value={subagentLlmKey}
+            onChange={selectSubagentLlm}
+            className="max-w-[280px]"
+            title="选择未显式指定时使用的子代理模型"
+            aria-label="Conductor 子代理模型"
+          />
+          <label
+            className={clsx(
+              'flex items-center gap-1 text-xs text-[#7B6D5A]',
+              subagentLlmKey === null && 'opacity-50',
+            )}
+            title="锁定后忽略 Conductor 单次派单指定的其他模型"
           >
-            {llms.map((llm, i) => (
-              <option key={i} value={i}>
-                {llm.name}{i === selectedLlmIndex ? ' ✓' : ''}
-              </option>
-            ))}
-          </select>
-          <span className="text-xs text-[#7B6D5A]">子代理模型</span>
-          <select
-            value={subagentLlmIndex ?? -1}
-            onChange={(e) => setSubagentLlmIndex(Number(e.target.value) < 0 ? null : Number(e.target.value))}
-            disabled={!llms.length}
-            className="max-w-[280px] min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50"
-            title="选择子代理使用的模型"
-          >
-            <option value={-1}>跟随主模型</option>
-            {llms.map((llm, i) => (
-              <option key={i} value={i}>{llm.name}</option>
-            ))}
-          </select>
+            <input
+              type="checkbox"
+              checked={subagentModelLocked}
+              disabled={subagentLlmKey === null}
+              onChange={(event) => {
+                const locked = event.target.checked
+                setSubagentModelLocked(locked)
+                try {
+                  localStorage.setItem(SUBAGENT_MODEL_LOCK_KEY, String(locked))
+                } catch {}
+              }}
+            />
+            锁定
+          </label>
           <button onClick={stopConductor} disabled={!status?.started} className="ga-btn-danger">停止</button>
         </div>
       }
@@ -418,7 +454,7 @@ export default function Conductor() {
                 />
                 <button
                   type="submit"
-                  disabled={!userMsg.trim()}
+                  disabled={!userMsg.trim() || effectiveLlmIndex === null}
                   className="shrink-0 rounded bg-accent px-4 py-2 text-sm text-white hover:bg-accent/90 disabled:opacity-50"
                 >
                   发送
@@ -498,7 +534,8 @@ export default function Conductor() {
               <div className="flex gap-2">
                 <button
                   onClick={() => approveTask(item)}
-                  className="flex-1 rounded bg-accent px-3 py-1.5 text-sm text-white hover:bg-accent/90"
+                  disabled={effectiveSubagentLlmIndex === null}
+                  className="flex-1 rounded bg-accent px-3 py-1.5 text-sm text-white hover:bg-accent/90 disabled:opacity-50"
                 >
                   批准
                 </button>

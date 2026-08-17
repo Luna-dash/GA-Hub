@@ -70,7 +70,16 @@ async def get_chat(last: int = Query(default=20, ge=1, le=200)) -> ConductorChat
 
 @router.post("/api/conductor/chat")
 async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
-    return svc().add_chat_message(body.msg, role=body.role, llm_index=body.llm_index)
+    try:
+        return svc().add_chat_message(
+            body.msg,
+            role=body.role,
+            llm_index=body.llm_index,
+            subagent_llm_index=body.subagent_llm_index,
+            subagent_model_policy=body.subagent_model_policy,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 # ── subagents ────────────────────────────────────────────────────────────────
@@ -99,7 +108,16 @@ async def get_subagent(
 
 @router.post("/api/conductor/subagent")
 async def start_subagent(body: ConductorStartSubagent) -> ConductorSubagentInstructionResp:
-    result = svc().pool.start_subagent(body.prompt, llm_index=body.llm_index)
+    try:
+        result = svc().start_subagent(
+            body.prompt,
+            llm_index=body.llm_index,
+            conductor_llm_index=body.conductor_llm_index,
+            subagent_llm_index=body.subagent_llm_index,
+            subagent_model_policy=body.subagent_model_policy,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     result["instruction"] = INSTR_DISPATCHED
     return result
 
@@ -108,7 +126,8 @@ async def start_subagent(body: ConductorStartSubagent) -> ConductorSubagentInstr
 async def subagent_action(
     sid: str, body: ConductorSubagentAction
 ) -> ConductorSubagentActionResp:
-    pool = svc().pool
+    service = svc()
+    pool = service.pool
     s = pool.get(sid)
     if not s:
         raise HTTPException(404, "subagent not found")
@@ -118,7 +137,17 @@ async def subagent_action(
         result["instruction"] = INSTR_KEYINFO
         return result
     if action in ("input", "reply", "append", "message", "msg"):
-        result = pool.input_subagent(sid, body.msg)
+        try:
+            result = service.input_subagent(
+                sid,
+                body.msg,
+                llm_index=body.llm_index,
+                conductor_llm_index=body.conductor_llm_index,
+                subagent_llm_index=body.subagent_llm_index,
+                subagent_model_policy=body.subagent_model_policy,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
         result["instruction"] = INSTR_DISPATCHED
         return result
     if action in ("abort", "stop"):
@@ -158,10 +187,14 @@ async def get_status() -> ConductorStatusResp:
 async def start_conductor(body: ConductorStartReq | None = None) -> ConductorLifecycleResp:
     """Start the conductor supervisor."""
     service = svc()
-    started = service.start(
-        llm_index=body.llm_index if body else None,
-        subagent_llm_index=body.subagent_llm_index if body else None,
-    )
+    try:
+        started = service.start(
+            llm_index=body.llm_index if body else None,
+            subagent_llm_index=body.subagent_llm_index if body else None,
+            subagent_model_policy=body.subagent_model_policy if body else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     lifecycle = service.lifecycle_status()
     return {"ok": started or lifecycle["started"], **lifecycle}
 

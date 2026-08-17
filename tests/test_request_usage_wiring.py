@@ -12,7 +12,8 @@ def test_user_chat_message_starts_usage_request_and_returns_request_id():
     service = object.__new__(ConductorService)
     service.chat_messages = []
     service._started = True
-    service.start = Mock()
+    service.configure_models = Mock()
+    service.ensure_started = Mock()
     service.notify = Mock(return_value=True)
     service.usage_store = RequestUsageStore(clock=lambda: 10.0)
 
@@ -25,7 +26,12 @@ def test_user_chat_message_starts_usage_request_and_returns_request_id():
     row = service.usage_store.list()[0]
     assert row["request_id"] == request_id
     assert row["attribution"] == "PENDING"
-    service.start.assert_called_once_with(None)
+    service.configure_models.assert_called_once_with(
+        llm_index=None,
+        subagent_llm_index=None,
+        subagent_model_policy=None,
+    )
+    service.ensure_started.assert_called_once_with()
     service.notify.assert_called_once_with(
         {"type": "user_message", "msg": "hello", "request_id": request_id}
     )
@@ -35,7 +41,8 @@ def _service_for_admission_test():
     service = object.__new__(ConductorService)
     service.chat_messages = []
     service._started = False
-    service.start = Mock()
+    service.configure_models = Mock()
+    service.ensure_started = Mock()
     service.notify = Mock(return_value=True)
     service.usage_store = RequestUsageStore(clock=lambda: 10.0)
     return service
@@ -44,13 +51,14 @@ def _service_for_admission_test():
 def test_user_admission_starts_conductor_before_notify():
     service = _service_for_admission_test()
     order = []
-    service.start.side_effect = lambda _llm: order.append("start")
+    service.configure_models.side_effect = lambda **_kwargs: order.append("configure")
+    service.ensure_started.side_effect = lambda: order.append("start")
     service.notify.side_effect = lambda _event: order.append("notify") or True
 
     with patch("server.services.conductor_service.bus.publish"):
         service.add_chat_message("hello", role="user")
 
-    assert order == ["start", "notify"]
+    assert order == ["configure", "start", "notify"]
 
 
 def test_add_chat_failure_completes_request_as_failed_admission():
@@ -69,7 +77,7 @@ def test_add_chat_failure_completes_request_as_failed_admission():
 
 def test_start_failure_completes_request_as_failed_start():
     service = _service_for_admission_test()
-    service.start.side_effect = RuntimeError("start failed")
+    service.ensure_started.side_effect = RuntimeError("start failed")
 
     with patch("server.services.conductor_service.bus.publish"), pytest.raises(
         RuntimeError, match="start failed"
@@ -94,7 +102,7 @@ def test_notify_failure_completes_request_as_failed_admission():
     row = service.usage_store.list()[0]
     assert row["attribution"] == "FAILED_ADMISSION"
     assert row["completed_at"] == 10.0
-    service.start.assert_called_once_with(None)
+    service.ensure_started.assert_called_once_with()
 
 
 def test_notify_false_completes_request_as_failed_admission():

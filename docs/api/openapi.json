@@ -4930,13 +4930,42 @@
           "llm_index": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "integer",
+                "minimum": 0.0
               },
               {
                 "type": "null"
               }
             ],
             "title": "Llm Index"
+          },
+          "subagent_llm_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagent Llm Index"
+          },
+          "subagent_model_policy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "follow_main",
+                  "default",
+                  "locked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagent Model Policy"
           }
         },
         "type": "object",
@@ -5111,13 +5140,42 @@
           "llm_index": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "integer",
+                "minimum": 0.0
               },
               {
                 "type": "null"
               }
             ],
             "title": "Llm Index"
+          },
+          "subagent_llm_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagent Llm Index"
+          },
+          "subagent_model_policy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "follow_main",
+                  "default",
+                  "locked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagent Model Policy"
           }
         },
         "type": "object",
@@ -5132,13 +5190,54 @@
           "llm_index": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "integer",
+                "minimum": 0.0
               },
               {
                 "type": "null"
               }
             ],
             "title": "Llm Index"
+          },
+          "conductor_llm_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conductor Llm Index"
+          },
+          "subagent_llm_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagent Llm Index"
+          },
+          "subagent_model_policy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "follow_main",
+                  "default",
+                  "locked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagent Model Policy"
           }
         },
         "type": "object",
@@ -5248,6 +5347,58 @@
             "type": "string",
             "title": "Msg",
             "default": ""
+          },
+          "llm_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Index"
+          },
+          "conductor_llm_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conductor Llm Index"
+          },
+          "subagent_llm_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagent Llm Index"
+          },
+          "subagent_model_policy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "follow_main",
+                  "default",
+                  "locked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagent Model Policy"
           }
         },
         "type": "object",

@@ -27,20 +27,44 @@ class FakeService:
     def __init__(self, lifecycle):
         self._started = not lifecycle["started"]
         self._lifecycle = dict(lifecycle)
-        self.pool = SimpleNamespace(counts=lambda: (2, 3))
+        self.pool = SimpleNamespace(
+            counts=lambda: (2, 3),
+            get=lambda _sid: SimpleNamespace(),
+        )
         self.chat_messages = [{"role": "user"}]
         self.start_calls = []
+        self.chat_calls = []
+        self.subagent_calls = []
         self.stop_calls = 0
 
     def lifecycle_status(self):
         self._started = self._lifecycle["started"]
         return dict(self._lifecycle)
 
-    def start(self, llm_index=None, subagent_llm_index=None):
-        self.start_calls.append((llm_index, subagent_llm_index))
+    def start(
+        self,
+        llm_index=None,
+        subagent_llm_index=None,
+        subagent_model_policy=None,
+    ):
+        self.start_calls.append(
+            (llm_index, subagent_llm_index, subagent_model_policy)
+        )
         already_started = self._lifecycle["started"]
         self._lifecycle = dict(RUNNING)
         return not already_started
+
+    def add_chat_message(self, msg, **kwargs):
+        self.chat_calls.append((msg, kwargs))
+        return {"id": "chat-1", "role": kwargs["role"], "msg": msg, "ts": 1}
+
+    def start_subagent(self, prompt, **kwargs):
+        self.subagent_calls.append((prompt, kwargs))
+        return {"id": "worker-1", "status": "running"}
+
+    def input_subagent(self, sid, msg, **kwargs):
+        self.subagent_calls.append(((sid, msg), kwargs))
+        return {"id": sid, "status": "running"}
 
     def stop(self):
         self.stop_calls += 1
@@ -70,7 +94,7 @@ def test_start_route_returns_live_lifecycle_and_remains_idempotent(monkeypatch):
     result = asyncio.run(conductor_routes.start_conductor())
 
     assert result == {"ok": True, **RUNNING}
-    assert service.start_calls == [(None, None)]
+    assert service.start_calls == [(None, None, None)]
 
 
 def test_start_route_forwards_main_and_subagent_models(monkeypatch):
@@ -84,7 +108,110 @@ def test_start_route_forwards_main_and_subagent_models(monkeypatch):
     )
 
     assert result == {"ok": True, **RUNNING}
-    assert service.start_calls == [(2, 5)]
+    assert service.start_calls == [(2, 5, None)]
+
+
+def test_start_route_forwards_locked_policy(monkeypatch):
+    service = FakeService(STOPPED)
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    asyncio.run(
+        conductor_routes.start_conductor(
+            conductor_routes.ConductorStartReq(
+                llm_index=2,
+                subagent_llm_index=5,
+                subagent_model_policy="locked",
+            )
+        )
+    )
+
+    assert service.start_calls == [(2, 5, "locked")]
+
+
+def test_chat_route_forwards_model_policy(monkeypatch):
+    service = FakeService(STOPPED)
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    result = asyncio.run(
+        conductor_routes.post_chat(
+            conductor_routes.ConductorChatIn(
+                msg="hello",
+                role="user",
+                llm_index=1,
+                subagent_llm_index=5,
+                subagent_model_policy="default",
+            )
+        )
+    )
+
+    assert result["id"] == "chat-1"
+    assert service.chat_calls == [(
+        "hello",
+        {
+            "role": "user",
+            "llm_index": 1,
+            "subagent_llm_index": 5,
+            "subagent_model_policy": "default",
+        },
+    )]
+
+
+def test_subagent_route_uses_service_policy_boundary(monkeypatch):
+    service = FakeService(STOPPED)
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    result = asyncio.run(
+        conductor_routes.start_subagent(
+            conductor_routes.ConductorStartSubagent(
+                prompt="inspect",
+                llm_index=3,
+                conductor_llm_index=1,
+                subagent_llm_index=5,
+                subagent_model_policy="locked",
+            )
+        )
+    )
+
+    assert result["instruction"] == conductor_routes.INSTR_DISPATCHED
+    assert service.subagent_calls == [(
+        "inspect",
+        {
+            "llm_index": 3,
+            "conductor_llm_index": 1,
+            "subagent_llm_index": 5,
+            "subagent_model_policy": "locked",
+        },
+    )]
+
+
+def test_resume_route_uses_service_policy_boundary(monkeypatch):
+    service = FakeService(STOPPED)
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    result = asyncio.run(
+        conductor_routes.subagent_action(
+            "worker-1",
+            conductor_routes.ConductorSubagentAction(
+                action="input",
+                msg="retry",
+                llm_index=3,
+                conductor_llm_index=1,
+                subagent_llm_index=5,
+                subagent_model_policy="locked",
+            ),
+        )
+    )
+
+    assert result["instruction"] == conductor_routes.INSTR_DISPATCHED
+    assert service.subagent_calls == [(
+        ("worker-1", "retry"),
+        {
+            "llm_index": 3,
+            "conductor_llm_index": 1,
+            "subagent_llm_index": 5,
+            "subagent_model_policy": "locked",
+        },
+    )]
 
 
 def test_stop_route_delegates_and_returns_live_lifecycle(monkeypatch):

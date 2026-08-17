@@ -18,7 +18,7 @@ import re
 import threading
 import time
 import uuid
-from typing import Dict, Optional
+from typing import Dict, Literal, Optional
 
 from .. import _paths
 
@@ -45,6 +45,9 @@ log = logging.getLogger(__name__)
 # Constants
 HOST = "127.0.0.1"
 PORT = None  # Not needed, integrated into main GA-Hub server
+
+SubagentModelPolicy = Literal["follow_main", "default", "locked"]
+SUBAGENT_MODEL_POLICIES = frozenset({"follow_main", "default", "locked"})
 
 
 def _get_webui_port() -> int:
@@ -79,10 +82,10 @@ def _resolve_llm_index(llm_index: Optional[int] = None) -> Optional[int]:
     return _get_preferred_llm()
 
 
-def _apply_llm_selection(agent: GenericAgent, llm_index: Optional[int], label: str) -> None:
+def _apply_llm_selection(agent: GenericAgent, llm_index: Optional[int], label: str) -> bool:
     selected = _resolve_llm_index(llm_index)
     if selected is None:
-        return
+        return False
     try:
         agent.load_llm_sessions()
         clients = getattr(agent, "llmclients", []) or []
@@ -90,10 +93,12 @@ def _apply_llm_selection(agent: GenericAgent, llm_index: Optional[int], label: s
             agent.next_llm(selected)
             source = "page" if llm_index is not None else "preferred_llm_no"
             log.info("%s selected LLM %s via %s", label, selected, source)
+            return True
         else:
             log.warning("%s requested invalid LLM index %s (available=%s)", label, selected, len(clients))
     except Exception as e:
         log.warning("Failed to set LLM for %s: %s", label, e)
+    return False
 
 _TURN_SPLIT_RE = re.compile(r'\**LLM Running \(Turn \d+\) \.\.\.\**')
 _SUMMARY_RE = re.compile(r'<summary>(.*?)</summary>\s*', re.DOTALL)
@@ -219,21 +224,35 @@ def monitor_display_queue(
 READMES = {
     "api": """Conductor API (integrated into GA-Hub)
 
-POST /api/conductor/chat           body: {"msg": "..."}  给用户发消息
-POST /api/conductor/subagent       body: {"prompt": "..."}  启动新subagent
-POST /api/conductor/approval       body: {"prompt": "...", "source": "..."}  推待批任务
-POST /api/conductor/subagent/{id}  body: {"action": "keyinfo", "msg": "..."}  注入key_info
-POST /api/conductor/subagent/{id}  body: {"action": "input", "msg": "..."}  追加任务
-POST /api/conductor/subagent/{id}  body: {"action": "stop"}  中断执行
-GET /api/conductor/chat?last=N     返回最近N条对话（默认20）
-GET /api/conductor/subagent        返回 {"items": [...]}  查看所有subagent状态
-GET /api/conductor/subagent/{id}?max_len=N  返回单个subagent详情
+POST /api/conductor/chat
+  body: {"msg": "...", "role": "user", "llm_index": 1,
+         "subagent_llm_index": 5, "subagent_model_policy": "default"}
+  添加用户消息、更新页面模型配置，并确保 Conductor 已启动。
+
+POST /api/conductor/subagent
+  body: {"prompt": "...", "llm_index": 3}
+  启动一个子代理；llm_index 是 Conductor 对本次派单的显式模型请求。
+  解析优先级：页面锁定 > 本次显式请求 > 默认子代理模型 > 主模型 > 全局首选。
+
+模型策略：
+  follow_main  未显式指定时跟随 Conductor 主模型。
+  default      未显式指定时用页面默认模型；允许本次派单覆盖。
+  locked       始终使用页面锁定模型；忽略本次派单的其他模型。
+
+POST /api/conductor/approval       body: {"prompt": "...", "source": "..."}
+POST /api/conductor/subagent/{id}  body: {"action": "keyinfo", "msg": "..."}
+POST /api/conductor/subagent/{id}  body: {"action": "input", "msg": "...", "llm_index": 3}
+POST /api/conductor/subagent/{id}  body: {"action": "stop"}
+GET  /api/conductor/chat?last=N
+GET  /api/conductor/subagent
+GET  /api/conductor/subagent/{id}?max_len=N
 """,
     "usermsg": """用户消息流程：
 1. 结合记忆、上下文和用户偏好判断真实需求；不清楚时用精简checklist一次性问用户。
 2. 判断是新任务还是延续现有任务；优先复用已有stopped subagent（用input追加）。
 3. 分派前必须POST /api/conductor/chat告知用户：改写后的prompt + 分派方案。
-4. 执行分派，完成即停。危险操作必须改成先让subagent出方案；验收后请用户确认。""",
+4. 派发时可用 llm_index 指定本次子代理模型；locked 策略下页面锁定值优先。
+5. 执行分派，完成即停。危险操作必须改成先让subagent出方案；验收后请用户确认。""",
     "subagent": """subagent完成流程：
 1. 读subagent输出；若最后一条不足以判断，GET /api/conductor/subagent/{id}?max_len=3000 补足信息。
 2. 预测用户是否满意；不满意就reply/keyinfo要求返工、修改、优化，继续监督。
@@ -336,6 +355,8 @@ class ConductorService:
         self._started = False
         self._conductor_llm_index = None
         self._subagent_llm_index = None
+        self._subagent_model_policy: SubagentModelPolicy = "follow_main"
+        self._model_lock = threading.RLock()
         self.callbacks = HubConductorCallbacks(self)
         # The pool is constructed first because the monitor bridge needs it.
         runtime = PoolRuntime(
@@ -343,10 +364,11 @@ class ConductorService:
             on_display_fn=lambda sid, dq, done, generation=None: _monitor_core_display(
                 sid, dq, done, self.pool, generation=generation
             ),
-            llm_selector=lambda agent, llm_index=None: _configure_subagent(
-                agent,
-                llm_index if llm_index is not None else self._subagent_llm_index,
-            ),
+            # The service resolves one immutable dispatch snapshot before
+            # entering the GA core.  The injected selector only applies that
+            # resolved index, so a concurrent policy update cannot re-route an
+            # already admitted dispatch.
+            llm_selector=_configure_subagent,
         )
         self.pool = CoreSubagentPool(runtime=runtime, callbacks=self.callbacks)
         self.contract_ext = ConductorContractExt(self.pool, publish=bus.publish)
@@ -371,6 +393,109 @@ class ConductorService:
         """Stop Hub-owned background helpers without creating new work."""
         self.timeout_monitor.stop()
 
+    @staticmethod
+    def _normalize_model_index(value: Optional[int], label: str) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            selected = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} must be an integer") from exc
+        if selected < 0:
+            raise ValueError(f"{label} must be non-negative")
+        return selected
+
+    def configure_models(
+        self,
+        llm_index: Optional[int] = None,
+        subagent_llm_index: Optional[int] = None,
+        subagent_model_policy: Optional[SubagentModelPolicy] = None,
+    ) -> dict:
+        """Update model routing without changing the conductor lifecycle.
+
+        Omitted fields preserve the current configuration. Explicit
+        ``follow_main`` clears the default worker model. Supplying a worker
+        model without a policy keeps backward compatibility by establishing a
+        default-model policy when the service was still following the main
+        model.
+        """
+        main_index = self._normalize_model_index(llm_index, "llm_index")
+        worker_index = self._normalize_model_index(
+            subagent_llm_index, "subagent_llm_index"
+        )
+        if (
+            subagent_model_policy is not None
+            and subagent_model_policy not in SUBAGENT_MODEL_POLICIES
+        ):
+            raise ValueError(
+                "subagent_model_policy must be follow_main, default, or locked"
+            )
+
+        with self._model_lock:
+            next_main = (
+                main_index if main_index is not None else self._conductor_llm_index
+            )
+            next_worker = self._subagent_llm_index
+            next_policy: SubagentModelPolicy = self._subagent_model_policy
+
+            if worker_index is not None:
+                next_worker = worker_index
+                if subagent_model_policy is None and next_policy == "follow_main":
+                    next_policy = "default"
+            if subagent_model_policy is not None:
+                next_policy = subagent_model_policy
+                if next_policy == "follow_main":
+                    next_worker = None
+
+            if next_policy in ("default", "locked") and next_worker is None:
+                raise ValueError(
+                    f"subagent_llm_index is required for {next_policy} policy"
+                )
+
+            self._conductor_llm_index = next_main
+            self._subagent_llm_index = next_worker
+            self._subagent_model_policy = next_policy
+            return self.model_policy_snapshot()
+
+    def model_policy_snapshot(self) -> dict:
+        with self._model_lock:
+            return {
+                "llm_index": self._conductor_llm_index,
+                "subagent_llm_index": self._subagent_llm_index,
+                "subagent_model_policy": self._subagent_model_policy,
+            }
+
+    def resolve_subagent_model(
+        self, requested_llm_index: Optional[int] = None
+    ) -> Optional[int]:
+        """Resolve one dispatch using the Hub policy priority chain."""
+        return self._resolve_subagent_model_from_snapshot(
+            requested_llm_index, self.model_policy_snapshot()
+        )
+
+    def _resolve_subagent_model_from_snapshot(
+        self,
+        requested_llm_index: Optional[int],
+        models: dict,
+    ) -> Optional[int]:
+        """Resolve against one immutable configuration snapshot."""
+        requested = self._normalize_model_index(
+            requested_llm_index, "requested llm_index"
+        )
+        policy = models["subagent_model_policy"]
+        default_index = models["subagent_llm_index"]
+        main_index = models["llm_index"]
+
+        if policy == "locked" and default_index is not None:
+            return default_index
+        if requested is not None:
+            return requested
+        if policy == "default" and default_index is not None:
+            return default_index
+        if main_index is not None:
+            return main_index
+        return _get_preferred_llm()
+
     def _build_prompt(self, events: list) -> str:
         running, stopped = self.pool.counts()
         unread = sum(1 for m in self.chat_messages if m.get("role") == "user" and not m.get("read"))
@@ -380,30 +505,92 @@ class ConductorService:
                     m["read"] = True
             bus.publish("conductor:chat_read", {})
         done_count = sum(1 for e in events if e.get("type") == "subagent_done")
-        summary = f"subagents: {running} running, {stopped} stopped | {unread}???????, {done_count}?subagent????"
-        base = f"http://{HOST}:{_get_webui_port()}/api/conductor"
-        return f"""??agent??????????????????????????????????agent????
-API: {base}??requests?GET /api/conductor/readme????GET /api/conductor/chat??????GET /api/conductor/subagent????POST /api/conductor/chat???????????
-????????: GET /api/conductor/readme/usermsg | GET /api/conductor/readme/subagent
-
-???
-- ????????/???????????subagent???????????????
-- ????????????????/?subagent/reply/keyinfo/abort?????????????????
-- ??prompt??????????????????????????/????????
-
-???
-- ??subagent??????????????????????????????????????
-{summary}"""
-
-    def start(self, llm_index: Optional[int] = None, subagent_llm_index: Optional[int] = None) -> bool:
-        if llm_index is not None:
-            self._conductor_llm_index = llm_index
-        self._subagent_llm_index = (
-            subagent_llm_index if subagent_llm_index is not None else self._conductor_llm_index
+        summary = (
+            f"subagents: {running} running, {stopped} stopped | "
+            f"{unread} unread user messages, {done_count} completed events"
         )
+        base = f"http://{HOST}:{_get_webui_port()}/api/conductor"
+        models = self.model_policy_snapshot()
+        return f"""You are the Conductor supervisor. Delegate independent work to subagents and report concise results to the user.
+API base: {base}. Use GET /api/conductor/readme for the complete contract.
+
+Subagent model routing:
+- Current policy: {models['subagent_model_policy']}
+- Conductor model index: {models['llm_index']}
+- Default/locked subagent model index: {models['subagent_llm_index']}
+- To request a model for one dispatch, POST /api/conductor/subagent with
+  {{"prompt": "...", "llm_index": N}}. The locked policy overrides N;
+  otherwise an explicit N overrides the configured default.
+
+Operating rules:
+- Reuse a suitable stopped subagent when continuing the same task.
+- Before dispatching, explain the rewritten prompt and delegation plan through POST /api/conductor/chat.
+- Use subagent input/keyinfo/abort actions as needed, then verify results before reporting completion.
+- Do not perform destructive work without first obtaining a plan and user confirmation.
+
+Current state: {summary}"""
+
+    def ensure_started(self) -> bool:
         started = self.conductor.start()
         self.lifecycle_status()
         return started
+
+    def start(
+        self,
+        llm_index: Optional[int] = None,
+        subagent_llm_index: Optional[int] = None,
+        subagent_model_policy: Optional[SubagentModelPolicy] = None,
+    ) -> bool:
+        """Compatibility facade: configure models, then ensure lifecycle."""
+        self.configure_models(
+            llm_index=llm_index,
+            subagent_llm_index=subagent_llm_index,
+            subagent_model_policy=subagent_model_policy,
+        )
+        return self.ensure_started()
+
+    def start_subagent(
+        self,
+        prompt: str,
+        llm_index: Optional[int] = None,
+        *,
+        conductor_llm_index: Optional[int] = None,
+        subagent_llm_index: Optional[int] = None,
+        subagent_model_policy: Optional[SubagentModelPolicy] = None,
+    ) -> dict:
+        """Dispatch through the single Hub model-policy boundary."""
+        models = self.configure_models(
+            llm_index=conductor_llm_index,
+            subagent_llm_index=subagent_llm_index,
+            subagent_model_policy=subagent_model_policy,
+        )
+        selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
+        result = self.pool.start_subagent(prompt, llm_index=selected)
+        result.setdefault("llm_index", selected)
+        result.setdefault("model_policy", models["subagent_model_policy"])
+        return result
+
+    def input_subagent(
+        self,
+        sid: str,
+        msg: str,
+        llm_index: Optional[int] = None,
+        *,
+        conductor_llm_index: Optional[int] = None,
+        subagent_llm_index: Optional[int] = None,
+        subagent_model_policy: Optional[SubagentModelPolicy] = None,
+    ) -> dict:
+        """Resume a stopped worker through the same model-policy boundary."""
+        models = self.configure_models(
+            llm_index=conductor_llm_index,
+            subagent_llm_index=subagent_llm_index,
+            subagent_model_policy=subagent_model_policy,
+        )
+        selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
+        result = self.pool.input_subagent(sid, msg, llm=selected)
+        result.setdefault("llm_index", selected)
+        result.setdefault("model_policy", models["subagent_model_policy"])
+        return result
 
     def stop(self, timeout: float = 5.0) -> bool:
         stopped = self.conductor.stop(timeout=timeout)
@@ -422,7 +609,14 @@ API: {base}??requests?GET /api/conductor/readme????GET /api/conductor/chat??????
     def get_chat_messages(self, last: int = 20) -> list:
         return self.chat_messages[-last:]
 
-    def add_chat_message(self, msg: str, role: str = "conductor", llm_index: Optional[int] = None) -> dict:
+    def add_chat_message(
+        self,
+        msg: str,
+        role: str = "conductor",
+        llm_index: Optional[int] = None,
+        subagent_llm_index: Optional[int] = None,
+        subagent_model_policy: Optional[SubagentModelPolicy] = None,
+    ) -> dict:
         request_id = self.usage_store.begin() if role == "user" else None
         try:
             item = add_chat(
@@ -437,7 +631,12 @@ API: {base}??requests?GET /api/conductor/readme????GET /api/conductor/chat??????
             raise
         if request_id:
             try:
-                self.start(llm_index)
+                self.configure_models(
+                    llm_index=llm_index,
+                    subagent_llm_index=subagent_llm_index,
+                    subagent_model_policy=subagent_model_policy,
+                )
+                self.ensure_started()
             except Exception:
                 self.usage_store.complete(request_id, "FAILED_START")
                 raise

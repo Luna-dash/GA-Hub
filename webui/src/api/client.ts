@@ -97,6 +97,13 @@ import type {
 } from './types'
 import type { components as GeneratedApiComponents } from './generated/schema'
 
+export interface SessionMessagePageOptions {
+  before?: number
+  limit?: number
+  maxChars?: number
+  signal?: AbortSignal
+}
+
 class HttpError extends Error {
   status: number
   body: any
@@ -127,6 +134,12 @@ type AppStatusResponse = ApiComponents['schemas']['AppStatusResp']
 type NavigationPreferences = ApiComponents['schemas']['NavPreferencesResp']
 type SessionList = ApiComponents['schemas']['SessionListResp']
 type AbortSource = 'timeout' | 'external' | null
+export type ConductorSubagentModelPolicy = 'follow_main' | 'default' | 'locked'
+export interface ConductorModelSettings {
+  llmIndex?: number | null
+  subagentLlmIndex?: number | null
+  subagentModelPolicy?: ConductorSubagentModelPolicy
+}
 
 function requestAbortContext(externalSignal: AbortSignal | null | undefined, timeoutMs: number) {
   const controller = new AbortController()
@@ -392,14 +405,47 @@ export const api = {
       ? http<ConductorTextResponse>('GET', '/api/conductor/readme')
       : http<ConductorTextResponse>('GET', `/api/conductor/readme/${topic}`),
   conductorChat: (last = 50) => http<ConductorChatListResponse>('GET', `/api/conductor/chat?last=${last}`),
-  conductorSendChat: (msg: string, role: 'user' | 'assistant' = 'user', llm_index?: number | null) =>
-    http<ConductorChatMessage>('POST', '/api/conductor/chat', { msg, role, llm_index }),
+  conductorSendChat: (
+    msg: string,
+    role: 'user' | 'assistant' = 'user',
+    models: ConductorModelSettings = {},
+  ) =>
+    http<ConductorChatMessage>('POST', '/api/conductor/chat', {
+      msg,
+      role,
+      llm_index: models.llmIndex,
+      subagent_llm_index: models.subagentLlmIndex,
+      subagent_model_policy: models.subagentModelPolicy,
+    }),
   conductorSubagents: () => http<ConductorSubagentListResponse>('GET', '/api/conductor/subagent'),
   conductorSubagent: (sid: string, max_len = 5000) => http<ConductorSubagent>('GET', `/api/conductor/subagent/${sid}?max_len=${max_len}`),
-  conductorStartSubagent: (prompt: string, llm_index?: number | null) =>
-    http<ConductorSubagentInstructionResponse>('POST', '/api/conductor/subagent', { prompt, llm_index }),
-  conductorSubagentAction: (sid: string, action: 'keyinfo' | 'done', msg: string) =>
-    http<ConductorSubagentActionResponse>('POST', `/api/conductor/subagent/${sid}`, { action, msg }),
+  conductorStartSubagent: (
+    prompt: string,
+    llm_index?: number | null,
+    models: ConductorModelSettings = {},
+  ) =>
+    http<ConductorSubagentInstructionResponse>('POST', '/api/conductor/subagent', {
+      prompt,
+      llm_index,
+      conductor_llm_index: models.llmIndex,
+      subagent_llm_index: models.subagentLlmIndex,
+      subagent_model_policy: models.subagentModelPolicy,
+    }),
+  conductorSubagentAction: (
+    sid: string,
+    action: 'keyinfo' | 'input' | 'reply' | 'append' | 'message' | 'msg' | 'abort' | 'stop',
+    msg: string,
+    llm_index?: number | null,
+    models: ConductorModelSettings = {},
+  ) =>
+    http<ConductorSubagentActionResponse>('POST', `/api/conductor/subagent/${sid}`, {
+      action,
+      msg,
+      llm_index,
+      conductor_llm_index: models.llmIndex,
+      subagent_llm_index: models.subagentLlmIndex,
+      subagent_model_policy: models.subagentModelPolicy,
+    }),
   conductorApproval: (prompt: string, source: string) =>
     http<ConductorMutationResponse>('POST', '/api/conductor/approval', { prompt, source }),
   tokenStats: () => http<TokenStatsResponse>('GET', '/api/tokens/stats'),
@@ -407,8 +453,12 @@ export const api = {
   servicePanel: () => http<ServicePanelResponse>('GET', '/api/services/panel'),
   conductorLog: () => http<ConductorLogResponse>('GET', '/api/conductor/log'),
   conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),
-  conductorStart: (llm_index?: number | null, subagent_llm_index?: number | null) =>
-    http<ConductorLifecycleResponse>('POST', '/api/conductor/start', { llm_index, subagent_llm_index }),
+  conductorStart: (models: ConductorModelSettings = {}) =>
+    http<ConductorLifecycleResponse>('POST', '/api/conductor/start', {
+      llm_index: models.llmIndex,
+      subagent_llm_index: models.subagentLlmIndex,
+      subagent_model_policy: models.subagentModelPolicy,
+    }),
   sessions: () => http<SessionList>('GET', '/api/sessions'),
   createSession: (req: Partial<ApiComponents['schemas']['SessionCreate']> = {}) =>
     http<GeneratedHubSession>('POST', '/api/sessions', req),
@@ -431,8 +481,19 @@ export const api = {
     http<SessionRuntime>('GET', `/api/sessions/${encodeURIComponent(id)}/runtime`),
   sessionRuntimes: () =>
     http<Record<string, SessionRuntime>>('GET', '/api/session-runtimes'),
-  getSessionMessages: (id: string, signal?: AbortSignal) =>
-    http<SessionMessagesResponse>('GET', `/api/sessions/${encodeURIComponent(id)}/messages`, undefined, { signal }),
+  getSessionMessages: (id: string, options: SessionMessagePageOptions = {}) => {
+    const query = new URLSearchParams()
+    if (options.before !== undefined) query.set('before', String(options.before))
+    if (options.limit !== undefined) query.set('limit', String(options.limit))
+    if (options.maxChars !== undefined) query.set('max_chars', String(options.maxChars))
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    return http<SessionMessagesResponse>(
+      'GET',
+      `/api/sessions/${encodeURIComponent(id)}/messages${suffix}`,
+      undefined,
+      { signal: options.signal },
+    )
+  },
   sessionBtw: (id: string, text: string) =>
     http<BtwResp>('POST', `/api/sessions/${encodeURIComponent(id)}/btw`, { text }),
   rewindSession: (id: string, req: { sid?: string; n?: number }) =>
