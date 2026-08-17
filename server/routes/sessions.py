@@ -485,7 +485,8 @@ async def get_session_messages(
 ) -> SessionMessagesResp:
     row = _session(session_id)
     try:
-        projection = read_archive_messages(
+        projection = await asyncio.to_thread(
+            read_archive_messages,
             row.get("archive_path"),
             before=before,
             limit=limit,

@@ -7,7 +7,7 @@ import time
 from types import SimpleNamespace
 from unittest import mock
 
-from server.routes import agent, conductor, mykey, tasks, wechat
+from server.routes import agent, conductor, mykey, sessions, tasks, wechat
 
 
 async def _run_with_probe(awaitable):
@@ -129,3 +129,35 @@ def test_session_restore_runs_in_worker_thread() -> None:
 
     assert result == {"ok": True, "message": "ok", "full": "full"}
     assert service._snapshots == []
+
+
+def test_archive_page_projection_runs_in_worker_thread() -> None:
+    projection = {
+        "archive_bound": True,
+        "revision": "revision",
+        "items": [],
+        "total": 0,
+        "has_more": False,
+        "next_before": None,
+    }
+    with (
+        mock.patch.object(sessions, "_session", return_value={"archive_path": "archive.txt"}),
+        mock.patch.object(
+            sessions,
+            "read_archive_messages",
+            side_effect=lambda *_args, **_kwargs: _slow_result(projection),
+        ),
+    ):
+        result = asyncio.run(
+            _run_with_probe(
+                sessions.get_session_messages(
+                    "session-id",
+                    before=None,
+                    limit=32,
+                    max_chars=400_000,
+                )
+            )
+        )
+
+    assert result.total == 0
+    assert result.items == []
