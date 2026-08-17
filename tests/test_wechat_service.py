@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from server.services import wechat_service as wx
@@ -41,6 +42,22 @@ class FakeAgentService:
 
 
 class WeChatServiceHelperTests(unittest.TestCase):
+    def test_load_log_tail_keeps_latest_records(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "wechat.jsonl"
+            path.write_text(
+                "".join(
+                    f'{{"ts":{index},"direction":"in","uid":"u{index}"}}\n'
+                    for index in range(5)
+                ),
+                encoding="utf-8",
+            )
+            entries = wx._load_log_tail(path, 2)
+
+        self.assertEqual([entry.uid for entry in entries], ["u3", "u4"])
+
     def test_build_agent_prompt_keeps_original_format(self):
         self.assertEqual(
             wx._build_agent_prompt("hello", []),

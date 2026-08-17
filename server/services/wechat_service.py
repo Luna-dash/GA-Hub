@@ -36,6 +36,7 @@ from frontends.chatapp_common import public_access, to_allowed_set  # noqa: E402
 
 from .agent_service import AgentService  # noqa: E402
 from .event_bus import bus  # noqa: E402
+from .file_tail import read_tail_lines  # noqa: E402
 from .wx_bot_client import WxBotClient, download_media  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -188,19 +189,8 @@ def _load_log_tail(file: Path, n: int) -> list[WxLogEntry]:
     if not file.is_file():
         return []
     try:
-        size = file.stat().st_size
-        if size <= 5 * 1024 * 1024:
-            text = file.read_text("utf-8", errors="replace")
-        else:
-            # Seek-tail to avoid loading huge files. Drop the (likely
-            # truncated) first line.
-            with file.open("rb") as f:
-                f.seek(-2 * 1024 * 1024, os.SEEK_END)
-                text = f.read().decode("utf-8", errors="replace")
-            text = text.split("\n", 1)[1] if "\n" in text else text
-        lines = text.splitlines()
         out: list[WxLogEntry] = []
-        for line in lines[-n:]:
+        for line in read_tail_lines(file, n, max_limit=max(1, n)):
             line = line.strip()
             if not line:
                 continue

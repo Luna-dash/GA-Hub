@@ -1,6 +1,8 @@
 """Autonomous evolution routes."""
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Query
 
 from ..schemas import (
@@ -54,7 +56,7 @@ async def trigger_schedule(sid: str):
 
 @router.get("/api/autonomous/runs", response_model=AutonomousRunListResp)
 async def list_runs(limit: int = Query(default=100, ge=1, le=1000)):
-    return {"runs": svc().list_runs(limit=limit)}
+    return {"runs": await asyncio.to_thread(svc().list_runs, limit=limit)}
 
 
 @router.get("/api/autonomous/reports", response_model=AutonomousReportListResp)
@@ -68,7 +70,7 @@ async def list_reports():
 )
 async def read_report(name: str):
     try:
-        content = svc().read_report(name)
+        content = await asyncio.to_thread(svc().read_report, name)
     except FileNotFoundError:
         raise HTTPException(404, "report not found")
     except ValueError:

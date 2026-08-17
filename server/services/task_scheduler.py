@@ -18,6 +18,7 @@ from .. import _paths
 from . import email_service
 from .agent_service import AgentService
 from .event_bus import bus
+from .file_tail import read_jsonl_tail
 
 log = logging.getLogger(__name__)
 
@@ -291,15 +292,8 @@ class TaskScheduler:
         path = self._runs_file()
         if not os.path.isfile(path):
             return []
-        out: list[dict] = []
         try:
-            with open(path, encoding="utf-8") as f:
-                lines = f.readlines()[-limit:]
-            for ln in reversed(lines):
-                try:
-                    out.append(json.loads(ln))
-                except Exception:
-                    continue
+            return read_jsonl_tail(path, limit)
         except Exception as e:
             log.warning("failed to read task runs: %s", e)
-        return out
+            return []
