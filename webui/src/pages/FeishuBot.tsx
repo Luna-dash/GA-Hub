@@ -21,7 +21,12 @@ export default function FeishuBot() {
   const chatConn = useChatStore((s) => s.conn)
   const remoteMsgs = useFeishuStore((s) => s.msgs)
   const addMsgs = useFeishuStore((s) => s.addMsgs)
-  const statusQ = useQuery({ queryKey: ['feishu-status'], queryFn: api.fsStatus, refetchInterval: 60000 })
+  const statusQ = useQuery({
+    queryKey: ['feishu-status'],
+    queryFn: api.fsStatus,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+  })
   const checkQ = useQuery({ queryKey: ['feishu-check'], queryFn: () => api.fsCheck(false) })
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)

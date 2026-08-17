@@ -26,8 +26,18 @@ const verdictTone = {
 }
 
 export default function Dashboard() {
-  const panel = useQuery({ queryKey: ['service-panel'], queryFn: api.servicePanel, refetchInterval: 8000 })
-  const tokens = useQuery({ queryKey: ['token-stats'], queryFn: api.tokenStats, refetchInterval: 15000 })
+  const panel = useQuery({
+    queryKey: ['service-panel'],
+    queryFn: api.servicePanel,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+  })
+  const tokens = useQuery({
+    queryKey: ['token-stats'],
+    queryFn: api.tokenStats,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+  })
   const services = panel.data?.services ?? []
   const attention = attentionServices(services)
   const active = activeServices(services)

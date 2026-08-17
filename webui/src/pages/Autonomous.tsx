@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import cronstrue from 'cronstrue/i18n'
 import { CronExpressionParser } from 'cron-parser'
-import { api } from '@/api/client'
+import { api, EventSocket } from '@/api/client'
 import type { Schedule, ScheduleType } from '@/api/types'
 import { MarkdownView } from '@/components/MarkdownView'
 import { PageShell } from '@/components/PageShell'
@@ -13,9 +13,39 @@ import { dialog } from '@/stores/dialogStore'
 
 export default function Autonomous() {
   const qc = useQueryClient()
-  const { data: schData } = useQuery({ queryKey: ['schedules'], queryFn: api.schedules, refetchInterval: 8000 })
-  const { data: runData } = useQuery({ queryKey: ['auto.runs'], queryFn: () => api.runs(50), refetchInterval: 8000 })
-  const { data: rep } = useQuery({ queryKey: ['auto.reports'], queryFn: api.reports, refetchInterval: 12000 })
+  const { data: schData } = useQuery({
+    queryKey: ['schedules'],
+    queryFn: api.schedules,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+  })
+  const { data: runData } = useQuery({
+    queryKey: ['auto.runs'],
+    queryFn: () => api.runs(50),
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+  })
+  const { data: rep } = useQuery({
+    queryKey: ['auto.reports'],
+    queryFn: api.reports,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+  })
+
+  useEffect(() => {
+    const socket = new EventSocket('autonomous:', 0)
+    socket.onEvent = (event) => {
+      if (event.topic === 'autonomous:upsert' || event.topic === 'autonomous:delete' || event.topic === 'autonomous:fired') {
+        qc.invalidateQueries({ queryKey: ['schedules'] })
+      }
+      if (event.topic === 'autonomous:report_saved') {
+        qc.invalidateQueries({ queryKey: ['auto.runs'] })
+        qc.invalidateQueries({ queryKey: ['auto.reports'] })
+      }
+    }
+    socket.open()
+    return () => socket.close()
+  }, [qc])
 
   const [editor, setEditor] = useState<Partial<Schedule> | null>(null)
   const [activeReport, setActiveReport] = useState<string | null>(null)

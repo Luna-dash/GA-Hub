@@ -11,19 +11,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { EventSocket, api } from '@/api/client'
-import type { BusEvent, WxLogEntry } from '@/api/types'
+import type { BusEvent, WxLogEntry, WxLogListResponse, WxStatus } from '@/api/types'
 import { ImagePasteInput, type PasteAttachment } from '@/components/ImagePasteInput'
 import { PageShell } from '@/components/PageShell'
 import { QRCodeDisplay } from '@/components/QRCodeDisplay'
 import { dialog } from '@/stores/dialogStore'
 import { useDraftStore } from '@/stores/draftStore'
+import { applyWechatMessageEvent, applyWechatStatusEvent } from '@/utils/wechatQuery'
 
 export function WechatBot() {
   const qc = useQueryClient()
   const { data: status } = useQuery({
     queryKey: ['wxStatus'],
     queryFn: api.wxStatus,
-    refetchInterval: 3000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   })
 
   // Pull the full log (all uids, time-sorted on server). 1000 entries is
@@ -32,21 +34,24 @@ export function WechatBot() {
   const { data: msgData } = useQuery({
     queryKey: ['wxMessages'],
     queryFn: () => api.wxMessages(undefined, 1000),
-    refetchInterval: 4000,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
     enabled: !!status?.logged_in,
   })
   const messages = msgData?.messages ?? []
 
-  // Live event push: refresh on incoming/outgoing
+  // Live events update local query state; polling is only a reconnect fallback.
   useEffect(() => {
     const s = new EventSocket('wechat:', 0)
     s.onEvent = (e: BusEvent) => {
       if (!('topic' in e)) return
       if (e.topic === 'wechat:message_in' || e.topic === 'wechat:message_out' || e.topic === 'wechat:log_cleared') {
-        qc.invalidateQueries({ queryKey: ['wxMessages'] })
+        qc.setQueryData<WxLogListResponse>(['wxMessages'], (current) =>
+          applyWechatMessageEvent(current, e.topic, e.payload))
       }
-      if (e.topic === 'wechat:qr_status' || e.topic === 'wechat:logout' || e.topic === 'wechat:polling') {
-        qc.invalidateQueries({ queryKey: ['wxStatus'] })
+      if (e.topic === 'wechat:qr_status' || e.topic === 'wechat:logout' || e.topic === 'wechat:polling' || e.topic === 'wechat:allowlist') {
+        qc.setQueryData<WxStatus>(['wxStatus'], (current) =>
+          applyWechatStatusEvent(current, e.topic, e.payload))
       }
     }
     s.open()
@@ -105,7 +110,6 @@ export function WechatBot() {
         await api.wxSend(replyTo, undefined, a.path)
       }
       clearDraft()
-      qc.invalidateQueries({ queryKey: ['wxMessages'] })
     } catch (e: any) {
       await dialog.alert('发送失败', e?.message || String(e))
     } finally {
@@ -134,7 +138,7 @@ export function WechatBot() {
     })
     if (!ok) return
     await api.wxClearMessages()
-    qc.invalidateQueries({ queryKey: ['wxMessages'] })
+    qc.setQueryData<WxLogListResponse>(['wxMessages'], { messages: [] })
   }
 
   const [showAllow, setShowAllow] = useState(false)

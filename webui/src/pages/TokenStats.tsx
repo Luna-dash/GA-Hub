@@ -121,7 +121,12 @@ function SessionUsage({ rows }: { rows: TokenThreadStats[] }) {
 
 export default function TokenStats() {
   const [days, setDays] = useState<7 | 30>(7)
-  const stats = useQuery({ queryKey: ['tokenStats'], queryFn: api.tokenStats, refetchInterval: 15_000 })
+  const stats = useQuery({
+    queryKey: ['tokenStats'],
+    queryFn: api.tokenStats,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+  })
   return <PageShell title="用量统计">
     {stats.isLoading && <div className="rounded-xl border border-border bg-surface p-10 text-center text-sm text-slate-400">正在加载用量数据…</div>}
     {stats.isError && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-600">用量数据读取失败，请稍后重试。</div>}

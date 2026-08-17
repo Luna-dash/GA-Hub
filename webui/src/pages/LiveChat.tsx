@@ -129,6 +129,7 @@ export default function LiveChat() {
       // so a completed task leaves the utility rail promptly.
       return nextDueIn <= 60_000 ? 1_000 : 60_000
     },
+    refetchIntervalInBackground: false,
   })
   const scheduledChats = useMemo(
     () => [...(scheduledChatsQuery.data?.items ?? [])]
