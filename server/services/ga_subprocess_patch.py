@@ -12,6 +12,7 @@ import sys
 import subprocess
 
 from .. import _paths
+from ..process_utils import hidden_process_kwargs
 
 log = logging.getLogger(__name__)
 
@@ -90,8 +91,6 @@ def _patch_ga_subprocess() -> None:
 
     _orig_popen = _sp.Popen
     _current_exe = os.path.abspath(sys.executable)
-    CREATE_NO_WINDOW = 0x08000000
-
     def _admin_popen(*args, **kwargs):
         cmd = args[0] if args else kwargs.get("args")
         if real_python and isinstance(cmd, (list, tuple)) and cmd:
@@ -120,8 +119,12 @@ def _patch_ga_subprocess() -> None:
                     kwargs["args"] = new_cmd
 
         if os.name == "nt":
-            cf = kwargs.get("creationflags") or 0
-            kwargs["creationflags"] = cf | CREATE_NO_WINDOW
+            existing_startupinfo = kwargs.get("startupinfo")
+            kwargs.update(hidden_process_kwargs(
+                existing_creationflags=kwargs.get("creationflags") or 0,
+            ))
+            if existing_startupinfo is not None:
+                kwargs["startupinfo"] = existing_startupinfo
         return _orig_popen(*args, **kwargs)
 
     _admin_popen._admin_wrapped = True  # type: ignore[attr-defined]

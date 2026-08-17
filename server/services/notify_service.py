@@ -28,6 +28,8 @@ import sys
 import threading
 import time
 
+from ..process_utils import hidden_process_kwargs
+
 log = logging.getLogger(__name__)
 
 _THROTTLE_SEC = 0.8       # mirrors the frontend's 800ms throttle as a backstop
@@ -50,8 +52,7 @@ def _spawn(cmd: list[str], *, wait_sec: float = 4.0) -> bool:
             stderr=subprocess.DEVNULL,
             close_fds=(sys.platform != "win32"),
         )
-        if sys.platform == "win32":
-            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        popen_kwargs.update(hidden_process_kwargs())
         proc = subprocess.Popen(cmd, **popen_kwargs)
         if wait_sec <= 0:
             return True

@@ -69,3 +69,18 @@ def test_open_windows_file_uses_default_application(tmp_path, monkeypatch):
     upload._open_in_default_app(target)
 
     startfile.assert_called_once_with(str(target))
+
+
+def test_open_windows_folder_uses_default_application_without_explorer_process(tmp_path, monkeypatch):
+    target = tmp_path / "reports"
+    target.mkdir()
+    startfile = Mock()
+    popen = Mock()
+    monkeypatch.setattr(upload.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(upload.os, "startfile", startfile, raising=False)
+    monkeypatch.setattr(upload.subprocess, "Popen", popen)
+
+    upload._open_in_default_app(target)
+
+    startfile.assert_called_once_with(str(target))
+    popen.assert_not_called()

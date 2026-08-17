@@ -18,6 +18,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from .. import _paths
+from ..process_utils import hidden_process_kwargs
 from ..schemas import RevealFileReq, RevealFileResp, UploadResp
 
 log = logging.getLogger(__name__)
@@ -111,13 +112,18 @@ def _open_in_default_app(path: Path) -> None:
     system = platform.system()
     if path.is_dir():
         if system == "Windows":
-            args = ["explorer.exe", str(path)]
+            try:
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            except OSError as exc:
+                log.warning("Cannot open %s: %s", path, exc)
+                raise HTTPException(500, "default application is unavailable") from exc
+            return
         elif system == "Darwin":
             args = ["open", str(path)]
         else:
             args = ["xdg-open", str(path)]
         try:
-            subprocess.Popen(args)
+            subprocess.Popen(args, **hidden_process_kwargs())
         except OSError as exc:
             log.warning("Cannot open %s: %s", path, exc)
             raise HTTPException(500, "default application is unavailable") from exc
@@ -127,9 +133,9 @@ def _open_in_default_app(path: Path) -> None:
         if system == "Windows":
             os.startfile(str(path))  # type: ignore[attr-defined]
         elif system == "Darwin":
-            subprocess.Popen(["open", str(path)])
+            subprocess.Popen(["open", str(path)], **hidden_process_kwargs())
         else:
-            subprocess.Popen(["xdg-open", str(path)])
+            subprocess.Popen(["xdg-open", str(path)], **hidden_process_kwargs())
     except OSError as exc:
         log.warning("Cannot open %s: %s", path, exc)
         raise HTTPException(500, "default application is unavailable") from exc

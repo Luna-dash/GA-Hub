@@ -33,6 +33,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .process_utils import hidden_process_kwargs
+
 log = logging.getLogger(__name__)
 
 # ── fixed paths ─────────────────────────────────────────────────
@@ -282,8 +284,7 @@ def external_python_site_paths(ga_root: Path | None = None) -> list[str]:
     )
     try:
         kwargs: dict = dict(text=True, stderr=subprocess.DEVNULL, timeout=5)
-        if sys.platform == "win32":
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        kwargs.update(hidden_process_kwargs())
         out = subprocess.check_output(
             [python, "-c", code],
             **kwargs,

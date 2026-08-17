@@ -26,6 +26,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import _paths
+from ..process_utils import hidden_process_kwargs
 from ..services.mykey_codec import (
     AssignmentNotFoundError,
     InvalidSourceError,
@@ -406,6 +407,7 @@ def _run_mykey_sync(args: list[str]) -> dict[str, Any]:
             capture_output=True,
             timeout=90,
             check=False,
+            **hidden_process_kwargs(),
         )
     except subprocess.TimeoutExpired as e:
         raise HTTPException(504, {
@@ -472,20 +474,17 @@ async def sync_fetch_mykey() -> MyKeySyncResultResp:
 @router.post("/open")
 async def open_mykey_file() -> MyKeyOpenResp:
     """Open mykey.py in system default editor."""
-    import subprocess
-    import sys
-    
     p = _mykey_path()
     if not p.is_file():
         raise HTTPException(404, "mykey.py 不存在")
     
     try:
         if sys.platform == "win32":
-            subprocess.Popen(["cmd", "/c", "start", "", str(p)], shell=True)
+            os.startfile(str(p))  # type: ignore[attr-defined]
         elif sys.platform == "darwin":
-            subprocess.Popen(["open", str(p)])
+            subprocess.Popen(["open", str(p)], **hidden_process_kwargs())
         else:
-            subprocess.Popen(["xdg-open", str(p)])
+            subprocess.Popen(["xdg-open", str(p)], **hidden_process_kwargs())
         return {"ok": True, "path": str(p)}
     except Exception as e:
         raise HTTPException(500, f"打开文件失败: {str(e)}")

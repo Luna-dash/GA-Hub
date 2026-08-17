@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import _paths
+from ..process_utils import hidden_process_kwargs
 
 log = _paths.log  # reuse the configured logger
 
@@ -141,9 +142,7 @@ def _core_commit(ga_root: Path) -> str | None:
             capture_output=True,
             text=True,
             timeout=5,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            if _paths.sys.platform == "win32"
-            else 0,
+            **hidden_process_kwargs(),
         )
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()

@@ -11,12 +11,13 @@ import json
 import logging
 import os
 import subprocess
-import sys
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+from ..process_utils import hidden_process_kwargs
 
 log = logging.getLogger(__name__)
 
@@ -153,8 +154,7 @@ class _ExternalGaWebTools:
             cwd=str(self.ga_root),
             env=env,
         )
-        if sys.platform == "win32":
-            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        popen_kwargs.update(hidden_process_kwargs())
         self._proc = subprocess.Popen(
             [self.python, "-u", "-c", _WEB_TOOL_WORKER_SCRIPT],
             **popen_kwargs,

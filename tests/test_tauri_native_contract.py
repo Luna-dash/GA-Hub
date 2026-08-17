@@ -51,11 +51,43 @@ def test_frontend_uses_one_desktop_capability_facade() -> None:
     assert "window.pywebview?.api" in desktop
     assert "source-checkout recovery path" in desktop
 
-    for page in ("webui/src/pages/Conversations.tsx", "webui/src/pages/LiveChat.tsx"):
+    for page in (
+        "webui/src/pages/Conversations.tsx",
+        "webui/src/pages/LiveChat.tsx",
+        "webui/src/pages/Settings.tsx",
+    ):
         source = _read(page)
         assert "pywebview.api.save_export" not in source
         assert "pywebview.api.select_directory" not in source
         assert "from '@/utils/desktop'" in source
+
+
+def test_tauri_shutdown_is_immediate_for_the_window_and_graceful_for_the_sidecar() -> None:
+    rust = _read("src-tauri/src/main.rs")
+
+    assert "const STOP_TIMEOUT: Duration = Duration::from_secs(5)" in rust
+    assert ".stdin(Stdio::piped())" in rust
+    assert 'stdin.write_all(b"\\n")' in rust
+    assert "fn spawn_background_shutdown" in rust
+    assert "thread::spawn(move ||" in rust
+    assert "api.prevent_close()" in rust
+    assert "window.hide()" in rust
+    assert "if !wait_for_child_exit(child, STOP_TIMEOUT)" in rust
+    assert 'Command::new("taskkill")' in rust
+
+
+def test_tauri_startup_fails_early_and_release_cwd_is_portable() -> None:
+    rust = _read("src-tauri/src/main.rs")
+
+    assert "fn wait_http_ready(child: &mut Child" in rust
+    assert "child.try_wait()" in rust
+    assert "sidecar exited before readiness" in rust
+    assert ".current_dir(sidecar_working_dir()?)" in rust
+    assert "#[cfg(not(debug_assertions))]" in rust
+    assert "env::current_exe()" in rust
+    assert ".parent()" in rust
+    assert ".current_dir(repo_root())" not in rust
+    assert "command.creation_flags(CREATE_NO_WINDOW)" in rust
 
 
 def test_tauri_notifications_do_not_fall_back_to_backend() -> None:

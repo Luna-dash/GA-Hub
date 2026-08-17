@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,9 @@ from pathlib import Path
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
+PACKAGED_SIDECAR = (
+    ROOT / "src-tauri" / "binaries" / "ga-hub-sidecar-x86_64-pc-windows-msvc.exe"
+)
 
 
 class DesktopSidecarTests(unittest.TestCase):
@@ -74,6 +78,50 @@ class DesktopSidecarTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("loopback", result.stderr)
+
+    @unittest.skipUnless(PACKAGED_SIDECAR.is_file(), "packaged Windows sidecar is not staged")
+    def test_packaged_sidecar_preserves_owner_stdin_shutdown(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        base = Path(self.temp.name)
+        ga = base / "invalid-ga"
+        ga.mkdir()
+        env = os.environ.copy()
+        env.update({"GA_ROOT": str(ga), "GA_ADMIN_DATA": str(base / "admin-data")})
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = int(probe.getsockname()[1])
+        self.proc = subprocess.Popen(
+            [
+                str(PACKAGED_SIDECAR),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--instance-token",
+                "packaged-test-token",
+            ],
+            cwd=PACKAGED_SIDECAR.parent,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + 45
+        while True:
+            if self.proc.poll() is not None:
+                self.fail(f"packaged sidecar exited before readiness: {self.proc.returncode}")
+            try:
+                with urlopen(f"http://127.0.0.1:{port}/api/desktop/ready", timeout=1) as response:
+                    ready = json.load(response)
+                break
+            except Exception:
+                if time.monotonic() >= deadline:
+                    self.fail("packaged sidecar did not become ready")
+                time.sleep(0.1)
+        self.assertEqual(ready["instance_token"], "packaged-test-token")
+        self.proc.stdin.write(b"\n")
+        self.proc.stdin.flush()
+        self.assertEqual(self.proc.wait(timeout=15), 0)
 
 
 if __name__ == "__main__":

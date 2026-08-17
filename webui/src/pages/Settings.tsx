@@ -21,12 +21,14 @@ import {
   setNavPreferences,
   type NavPreference,
 } from '@/config/navigation'
+import { isDesktopShell, selectDirectory } from '@/utils/desktop'
 export default function Settings({ initialMode = 'settings' }: { initialMode?: 'settings' | 'setup' }) {
   const qc = useQueryClient()
   const { data: setup, refetch } = useQuery({ queryKey: ['setup'], queryFn: api.setupStatus })
   const [input, setInput] = useState('')
   const [pythonInput, setPythonInput] = useState('')
   const [validating, setValidating] = useState(false)
+  const [picking, setPicking] = useState(false)
   const [validResult, setValidResult] = useState<{ valid: boolean; resolved: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
@@ -49,6 +51,25 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
       toast.error('路径校验请求失败：' + (e?.message || String(e)))
     } finally {
       setValidating(false)
+    }
+  }
+
+  const pickGaRoot = async () => {
+    setPicking(true)
+    try {
+      const result = await selectDirectory()
+      if (result.cancelled) return
+      if (!result.ok || !result.path) {
+        toast.error(`目录选择失败：${result.error || '未知错误'}`)
+        return
+      }
+      setInput(result.path)
+      setValidResult(null)
+      await validate(result.path)
+    } catch (e: any) {
+      toast.error(`目录选择失败：${e?.message || String(e)}`)
+    } finally {
+      setPicking(false)
     }
   }
 
@@ -112,7 +133,16 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
               placeholder="/path/to/GenericAgent"
               className="flex-1 bg-bg-soft border border-line rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"
             />
+            {isDesktopShell() && (
+              <button
+                type="button"
+                onClick={pickGaRoot}
+                disabled={picking || validating}
+                className="px-3 py-2 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm disabled:opacity-40"
+              >{picking ? '选择中…' : '浏览…'}</button>
+            )}
             <button
+              type="button"
               onClick={() => validate(input)}
               disabled={validating}
               className="px-3 py-2 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm"

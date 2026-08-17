@@ -24,9 +24,10 @@ The production contract is:
 1. Tauri starts exactly one sidecar it owns. It never adopts or kills a process by port, process name, or any identity it did not create.
 2. The sidecar binds loopback on an allocated port and emits `starting` with its PID, port, and instance token.
 3. The shell creates the webview only after the same token is returned by `/api/desktop/ready`.
-4. Closing the main window requests graceful sidecar shutdown, waits five seconds, then kills only that owned child.
+4. Closing the main window hides it immediately. A background Rust worker requests graceful sidecar shutdown, waits up to five seconds for application shutdown hooks, then kills only that owned child if it times out.
 5. A duplicate shell launch focuses the existing window instead of starting another backend.
 6. Browser/server-only and developer modes remain available through `python -m server.run` and `npm run desktop:dev`; they are not production package lifecycles.
+7. Release startup resolves its working directory from the installed executable, never from the repository path embedded at compile time. The configured GenericAgent root remains a separate backend setting persisted in `~/.genericagent-admin/config.json`.
 
 ## Migration and rollback
 

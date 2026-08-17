@@ -5,6 +5,7 @@ import subprocess
 from types import SimpleNamespace
 from unittest import mock
 
+from server.process_utils import hidden_process_kwargs
 from server.services.feishu_service import FeishuService
 
 
@@ -28,14 +29,13 @@ def test_windows_external_pid_probe_does_not_spawn_powershell():
 
 
 def test_windows_helper_process_flags_hide_console_and_preserve_group():
-    service = FeishuService()
     with (
         mock.patch("server.services.feishu_service.os.name", "nt"),
         mock.patch.object(subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True),
         mock.patch.object(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200, create=True),
     ):
-        assert service._creationflags() == 0x08000000
-        assert service._creationflags(new_process_group=True) == 0x08000200
+        assert hidden_process_kwargs()["creationflags"] == 0x08000000
+        assert hidden_process_kwargs(new_process_group=True)["creationflags"] == 0x08000200
 
 
 def test_windows_check_launches_python_without_console(tmp_path):
