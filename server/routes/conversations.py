@@ -51,6 +51,7 @@ _PROMPT_BLOCK_RE = re.compile(
     r"^=== Prompt ===[^\r\n]*\r?\n(.*?)(?=^=== (?:Prompt|Response) ===|\Z)",
     re.DOTALL | re.MULTILINE,
 )
+_SEARCH_READ_CHUNK_BYTES = 256 * 1024
 
 
 class ZipEntryTooLarge(Exception):
@@ -245,6 +246,47 @@ def _first_user_preview(path: str) -> str:
     )
 
 
+@lru_cache(maxsize=2048)
+def _archive_contains_query(
+    path: str,
+    mtime_ns: int,
+    size: int,
+    query: str,
+) -> bool:
+    """Search an archive in bounded chunks, caching by file revision."""
+    del mtime_ns, size
+    needle = query.encode("utf-8", errors="ignore").lower()
+    if not needle:
+        return True
+    overlap = max(0, len(needle) - 1)
+    carry = b""
+    try:
+        with open(path, "rb") as handle:
+            while True:
+                chunk = handle.read(_SEARCH_READ_CHUNK_BYTES)
+                if not chunk:
+                    return False
+                haystack = carry + chunk.lower()
+                if needle in haystack:
+                    return True
+                carry = haystack[-overlap:] if overlap else b""
+    except OSError:
+        return False
+
+
+def _archive_contains(path: str, query: str) -> bool:
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return False
+    return _archive_contains_query(
+        os.path.abspath(path),
+        int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
+        int(stat.st_size),
+        query,
+    )
+
+
 # ── conversation list / detail / export / restore ─────────────────
 def _list_conversations_sync(
     q: str | None,
@@ -275,12 +317,8 @@ def _list_conversations_sync(
                     or ql in (it["last_user_preview"] or "").lower()):
                 keep.append(it)
                 continue
-            try:
-                with open(path, encoding="utf-8", errors="replace") as fh:
-                    if ql in fh.read().lower():
-                        keep.append(it)
-            except OSError:
-                continue
+            if _archive_contains(path, ql):
+                keep.append(it)
         items = keep
     total = len(items)
     page = items[offset: offset + limit]

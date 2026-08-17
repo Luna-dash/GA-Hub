@@ -274,3 +274,41 @@ def test_repeated_detail_and_export_requests_are_consistent(tmp_path, monkeypatc
 
     assert details[0] == details[1]
     assert exports[0].body == exports[1].body
+
+
+def test_content_search_reads_in_chunks_and_finds_boundary_match(tmp_path, monkeypatch):
+    archive = tmp_path / "large.txt"
+    needle = "跨块搜索目标"
+    archive.write_bytes(b"a" * (conversations._SEARCH_READ_CHUNK_BYTES - 2) + needle.encode() + b"\n")
+    conversations._archive_contains_query.cache_clear()
+    reads: list[int] = []
+    original_open = open
+
+    def tracking_open(path, mode="r", *args, **kwargs):
+        handle = original_open(path, mode, *args, **kwargs)
+        if str(path) == str(archive) and "b" in mode:
+            original_read = handle.read
+
+            def read(size=-1):
+                reads.append(size)
+                return original_read(size)
+
+            handle.read = read
+        return handle
+
+    monkeypatch.setattr("builtins.open", tracking_open)
+    assert conversations._archive_contains(str(archive), needle.lower()) is True
+    assert reads
+    assert all(size == conversations._SEARCH_READ_CHUNK_BYTES for size in reads[:-1])
+    assert all(size >= 0 for size in reads)
+
+
+def test_content_search_cache_invalidates_after_archive_append(tmp_path):
+    archive = tmp_path / "archive.txt"
+    archive.write_text("old content", encoding="utf-8")
+    conversations._archive_contains_query.cache_clear()
+
+    assert conversations._archive_contains(str(archive), "new content") is False
+    with archive.open("a", encoding="utf-8") as handle:
+        handle.write(" new content")
+    assert conversations._archive_contains(str(archive), "new content") is True
