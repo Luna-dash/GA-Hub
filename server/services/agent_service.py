@@ -46,6 +46,7 @@ from .rewind_adapter import RewindAdapter  # noqa: E402
 log = logging.getLogger(__name__)
 
 _AUTO_CONTINUE_MAX = 2
+_STREAM_MIRROR_QUEUE_CAPACITY = 2
 _AUTO_CONTINUE_MARKERS = ("[!!! 流异常中断", "[!!! Response truncated: max_tokens")
 _AUTO_CONTINUE_PROMPT = "继续上一条回复，从中断处继续，不要重复已经完成的内容。"
 _ERROR_RETRY_PROMPT_TEMPLATE = (
@@ -152,7 +153,11 @@ class AgentStatus:
 
 @dataclass
 class StreamHandle:
-    """A live agent task stream. Multiple WS clients may attach to the same stream."""
+    """A live agent task stream with one legacy queue consumer.
+
+    WebSocket clients receive the bus/snapshot projection; ``display_queue``
+    remains a compatibility channel for the synchronous WeChat consumer.
+    """
     stream_id: str
     display_queue: "_q.Queue"
     started_at: float = field(default_factory=time.time)
@@ -216,6 +221,9 @@ class AgentService:
         # Per-stream UI snapshot (LRU-capped) for replay on reconnect
         self._snapshots = ChatStreamProjection(capacity=self._SNAPSHOT_CAP)
         self._lock = threading.Lock()
+        self._submit_admission_lock = threading.Lock()
+        self._fanout_stop_event = threading.Event()
+        self._fanout_threads: set[threading.Thread] = set()
         self._rewind_lock = threading.RLock()
         self._rewind_store = None
         self._rewind_adapter: RewindAdapter | None = None
@@ -256,18 +264,49 @@ class AgentService:
         self._run_thread.start()
         log.info("agent run thread started")
 
-    def shutdown(self, timeout: float = 5.0) -> None:
-        """Stop the GA run loop and release a fully stopped singleton."""
-        thread = self._run_thread
+    def shutdown(self, timeout: float = 5.0) -> bool:
+        """Stop the GA run loop and fanout workers before releasing singleton."""
+        deadline = time.monotonic() + max(0.0, timeout)
+        fanout_stop = getattr(self, "_fanout_stop_event", None)
+        if fanout_stop is not None:
+            fanout_stop.set()
+        submit_lock = getattr(self, "_submit_admission_lock", None)
+        submission_stopped = True
+        if submit_lock is not None:
+            submission_stopped = submit_lock.acquire(
+                timeout=max(0.0, deadline - time.monotonic())
+            )
+            if submission_stopped:
+                submit_lock.release()
+        thread = getattr(self, "_run_thread", None)
         if thread is not None and thread.is_alive():
             if getattr(self.agent, "is_running", False):
                 self.agent.abort()
             self.agent.task_queue.put("__shutdown__")
-            thread.join(timeout=max(0.0, timeout))
-        if thread is None or not thread.is_alive():
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
+        fanout_threads = getattr(self, "_fanout_threads", None)
+        if fanout_threads is None:
+            fanouts_stopped = True
+        else:
+            with self._lock:
+                current = tuple(fanout_threads)
+            current_thread = threading.current_thread()
+            for worker in current:
+                if worker is not current_thread:
+                    worker.join(timeout=max(0.0, deadline - time.monotonic()))
+            with self._lock:
+                alive = {worker for worker in fanout_threads if worker.is_alive()}
+                fanout_threads.intersection_update(alive)
+                fanouts_stopped = not fanout_threads
+
+        run_stopped = thread is None or not thread.is_alive()
+        stopped = submission_stopped and run_stopped and fanouts_stopped
+        if stopped:
             self._run_thread = None
             if type(self)._instance is self:
                 type(self)._instance = None
+        return stopped
 
     def status(self) -> AgentStatus:
         a = self.agent
@@ -459,7 +498,14 @@ class AgentService:
         from frontends.btw_cmd import handle_frontend_command  # type: ignore
         return handle_frontend_command(self.agent, raw) or ""
 
-    def submit(
+    def submit(self, query: str, **kwargs: Any) -> StreamHandle:
+        """Admit one task while shutdown is excluded from the submit path."""
+        with self._submit_admission_lock:
+            if self._fanout_stop_event.is_set():
+                raise RuntimeError("agent service is shutting down")
+            return self._submit_impl(query, **kwargs)
+
+    def _submit_impl(
         self,
         query: str,
         *,
@@ -498,7 +544,11 @@ class AgentService:
         # The agent's own queue (drained by our fan-out below).
         src_q = self.agent.put_task(query, source=source, images=images or [])
         # The handle queue we hand to callers (kept in sync by the drainer).
-        out_q: "_q.Queue" = _q.Queue()
+        # ``next`` payloads are cumulative, so retaining every intermediate
+        # version only duplicates the reply for callers that do not consume
+        # this legacy queue (the normal Web UI uses bus events). Keep enough
+        # room for the latest progress plus the terminal item instead.
+        out_q: "_q.Queue" = _q.Queue(maxsize=_STREAM_MIRROR_QUEUE_CAPACITY)
         h = StreamHandle(
             stream_id=sid,
             display_queue=out_q,
@@ -557,10 +607,18 @@ class AgentService:
                 "retry_reason": retry_reason,
             })
         bus.publish("chat:started", started_payload)
-        threading.Thread(
+        fanout_thread = threading.Thread(
             target=self._fanout, args=(src_q, out_q, h, snap),
             daemon=True, name=f"agent-fanout-{sid}",
-        ).start()
+        )
+        with self._lock:
+            self._fanout_threads.add(fanout_thread)
+        try:
+            fanout_thread.start()
+        except BaseException:
+            with self._lock:
+                self._fanout_threads.discard(fanout_thread)
+            raise
         return h
 
     def _fanout(self, src_q: "_q.Queue", out_q: "_q.Queue", h: StreamHandle, snap: ChatSnapshot) -> None:
@@ -569,17 +627,54 @@ class AgentService:
           - update the snapshot.
           - publish chat:next / chat:done to the bus.
         """
+        terminal_committed = False
+        fanout_stop = getattr(self, "_fanout_stop_event", None)
+        heartbeat_deadline = time.monotonic() + 300
         try:
             while True:
                 try:
-                    item = src_q.get(timeout=300)
+                    item = src_q.get(timeout=1 if fanout_stop is not None else 300)
                 except _q.Empty:
-                    # Liveness ping so subscribers know we're still here.
-                    bus.publish("chat:heartbeat", {"stream_id": h.stream_id})
+                    if fanout_stop is not None and fanout_stop.is_set():
+                        content = h.last_chunk or snap.content or ""
+                        error_content = (
+                            f"{content}\n[stream aborted: service shutdown]"
+                            if content else "[stream aborted: service shutdown]"
+                        )
+                        with self._lock:
+                            snap.content = error_content
+                            snap.done = True
+                            snap.aborted = True
+                            snap.finished_at = time.time()
+                        h.finished = True
+                        h.final_text = error_content
+                        self._mirror_stream_item(out_q, {"done": error_content, "source": snap.source})
+                        terminal_committed = True
+                        bus.publish("chat:done", {
+                            "stream_id": h.stream_id,
+                            "source": snap.source,
+                            "content": error_content,
+                            "logical_id": h.logical_id,
+                            "retry_attempt": snap.retry_attempt,
+                            "retry_max": snap.retry_max,
+                            "retry_of": snap.retry_of,
+                            "retry_reason": snap.retry_reason,
+                            "session_id": h.session_id,
+                            "run_id": h.run_id,
+                        })
+                        return
+                    if time.monotonic() >= heartbeat_deadline:
+                        # Liveness ping so subscribers know we're still here.
+                        bus.publish("chat:heartbeat", {"stream_id": h.stream_id})
+                        heartbeat_deadline = time.monotonic() + 300
                     continue
-                # mirror first so wechat_service keeps working
-                out_q.put(item)
+                if fanout_stop is not None and fanout_stop.is_set() and "done" not in item:
+                    continue
                 if "next" in item:
+                    # Mirror without back-pressuring the sole GA queue drainer.
+                    # Slow/absent legacy consumers only need the newest cumulative
+                    # progress item.
+                    self._mirror_stream_item(out_q, item)
                     content = item["next"]
                     h.last_chunk = content
                     with self._lock:
@@ -609,6 +704,11 @@ class AgentService:
                     self._sync_rewind_store()
                     h.finished = True
                     self.agent.last_reply_time = int(time.time())
+                    # Commit exactly one terminal item only after durable
+                    # completion work succeeds. If that work raises, the
+                    # outer error path emits the sole error terminal instead.
+                    self._mirror_stream_item(out_q, {"done": content, "source": snap.source})
+                    terminal_committed = True
                     bus.publish("chat:done", {
                         "stream_id": h.stream_id,
                         "source": snap.source,
@@ -623,11 +723,19 @@ class AgentService:
                     })
                     bus.publish("agent:done", {"stream_id": h.stream_id, "len": len(content)})
                     self._record_session_usage(h.session_id)
-                    handled_recoverable_error = self._maybe_retry_recoverable_error(h, snap, content)
-                    if not handled_recoverable_error:
-                        self._maybe_auto_continue(h, snap, content)
+                    try:
+                        handled_recoverable_error = self._maybe_retry_recoverable_error(h, snap, content)
+                        if not handled_recoverable_error:
+                            self._maybe_auto_continue(h, snap, content)
+                    except Exception:
+                        # The current turn is already terminal. A retry or
+                        # continuation failure must not rewrite that terminal.
+                        log.exception("post-terminal continuation failed for %s", h.stream_id)
                     return
         except Exception as e:
+            if terminal_committed:
+                log.exception("post-terminal fanout failed for %s: %s", h.stream_id, e)
+                return
             log.exception("fanout crashed for %s: %s", h.stream_id, e)
             # Keep the cleanup path usable for lightweight/test instances created
             # without __init__; normal service instances always have _lock.
@@ -643,6 +751,7 @@ class AgentService:
                 snap.finished_at = time.time()
             h.finished = True
             h.final_text = error_content
+            self._mirror_stream_item(out_q, {"done": error_content, "source": snap.source})
             bus.publish("chat:done", {
                 "stream_id": h.stream_id,
                 "source": snap.source,
@@ -656,6 +765,30 @@ class AgentService:
                 "run_id": h.run_id,
             })
             self._record_session_usage(h.session_id)
+        finally:
+            lock = getattr(self, "_lock", None)
+            streams = getattr(self, "_streams", None)
+            fanout_threads = getattr(self, "_fanout_threads", None)
+            if lock is not None:
+                with lock:
+                    if streams is not None and streams.get(h.stream_id) is h:
+                        streams.pop(h.stream_id, None)
+                    if fanout_threads is not None:
+                        fanout_threads.discard(threading.current_thread())
+
+    @staticmethod
+    def _mirror_stream_item(out_q: "_q.Queue", item: dict) -> None:
+        """Keep the mirror bounded while ensuring the newest item is visible."""
+        while True:
+            try:
+                out_q.put_nowait(item)
+                return
+            except _q.Full:
+                try:
+                    out_q.get_nowait()
+                except _q.Empty:
+                    # A concurrent consumer freed the slot between operations.
+                    continue
 
     @staticmethod
     def _record_session_usage(session_id: str) -> None:
