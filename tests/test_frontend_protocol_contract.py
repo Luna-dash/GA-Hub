@@ -57,6 +57,16 @@ def test_live_chat_clears_only_the_deleted_session_draft_after_success():
     assert delete_block.index(delete_request) < delete_block.index(clear_draft)
 
 
+def test_live_chat_draft_subscription_stays_in_composer_leaf():
+    live_chat = _read("pages/LiveChat.tsx")
+    composer = _read("components/LiveChatComposer.tsx")
+
+    assert "<LiveChatComposer" in live_chat
+    assert "useDraftStore((" not in live_chat
+    assert "state.texts[draftKey]" in composer
+    assert "state.attachments[draftKey]" in composer
+
+
 def test_chat_store_session_socket_is_receive_only():
     source = _read("stores/chatStore.ts")
 

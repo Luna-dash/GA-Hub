@@ -16,7 +16,11 @@ import type {
   ScheduledChat,
   SessionRuntime,
 } from '@/api/types'
-import { ImagePasteInput, type PasteAttachment } from '@/components/ImagePasteInput'
+import {
+  LiveChatComposer,
+  readLiveChatDraftSnapshot,
+  type LiveChatDraftSnapshot,
+} from '@/components/LiveChatComposer'
 import { MessageBubble } from '@/components/MessageBubble'
 import { SessionRail } from '@/components/SessionRail'
 import {
@@ -74,10 +78,6 @@ export default function LiveChat() {
 
   const [session, setSession] = useState<HubSession | null>(null)
   const draftKey = session ? `liveChat:${session.id}` : 'liveChat:pending'
-  const text = useDraftStore((state) => state.texts[draftKey] ?? '')
-  const atts = useDraftStore((state) => state.attachments[draftKey] ?? [])
-  const setText = (value: string) => useDraftStore.getState().setText(draftKey, value)
-  const setAtts = (value: PasteAttachment[]) => useDraftStore.getState().setAttachments(draftKey, value)
   const [sessionError, setSessionError] = useState('')
   const [llms, setLlms] = useState<LLMInfo[]>([])
   const [llmLoading, setLlmLoading] = useState(false)
@@ -453,13 +453,13 @@ export default function LiveChat() {
     virtualListRef.current?.scrollToIndex(targetIndex, { behavior: 'smooth', align: 'start' })
   }
 
-  const submit = () => {
-    const t = text.trim()
-    if (!t && atts.length === 0) return
+  const submit = (draft: LiveChatDraftSnapshot) => {
+    const t = draft.text.trim()
+    if (!t && draft.attachments.length === 0) return
     if (t === '/new') {
-      const commandKey = draftKey
-      const commandText = text
-      const commandAtts = atts
+      const commandKey = draft.draftKey
+      const commandText = draft.text
+      const commandAtts = draft.attachments
       void newConv()
         .then((created) => {
           if (created) useDraftStore.getState().clearDraftIfMatch(commandKey, commandText, commandAtts)
@@ -473,9 +473,9 @@ export default function LiveChat() {
       return
     }
 
-    const sourceKey = draftKey
-    const sourceText = text
-    const sourceAtts = atts
+    const sourceKey = draft.draftKey
+    const sourceText = draft.text
+    const sourceAtts = draft.attachments
     void (async () => {
       let sid = session?.id
       let submitKey = sourceKey
@@ -556,8 +556,9 @@ export default function LiveChat() {
 
   const saveSchedule = async () => {
     if (scheduleSaving) return
-    const sourceText = text
-    const sourceAtts = atts
+    const draft = readLiveChatDraftSnapshot(draftKey)
+    const sourceText = draft.text
+    const sourceAtts = draft.attachments
     const t = sourceText.trim()
     if (!t && sourceAtts.length === 0) return
     const scheduledFor = new Date(scheduleAt).getTime()
@@ -601,7 +602,7 @@ export default function LiveChat() {
       const fileHint = sourceAtts.length ? 'If you need to show files to user, use [FILE:filepath] in your response.\n\n' : ''
       const promptText = fileHint + t + (fileMarkers ? (t ? '\n' : '') + fileMarkers : '')
       await api.createScheduledChat(sid, promptText, sourceAtts.map((a) => a.path), scheduledFor / 1000)
-      useDraftStore.getState().clearDraftIfMatch(draftKey, sourceText, sourceAtts)
+      useDraftStore.getState().clearDraftIfMatch(draft.draftKey, sourceText, sourceAtts)
       await queryClient.invalidateQueries({ queryKey: ['session.scheduledChats', sid] })
       setScheduleNow(Date.now())
       setScheduleOpen(false)
@@ -818,11 +819,14 @@ export default function LiveChat() {
     }
   }, [pushSystem, retryHistory, sessionRunning, streaming])
 
-  const handleSlashCommand = (command: Exclude<SlashCommand['name'], '/btw'>) => {
+  const handleSlashCommand = (
+    command: Exclude<SlashCommand['name'], '/btw'>,
+    draft: LiveChatDraftSnapshot,
+  ) => {
     if (command === '/new') {
-      const commandKey = draftKey
-      const commandText = text
-      const commandAtts = atts
+      const commandKey = draft.draftKey
+      const commandText = draft.text
+      const commandAtts = draft.attachments
       void newConv()
         .then((created) => {
           if (created) useDraftStore.getState().clearDraftIfMatch(commandKey, commandText, commandAtts)
@@ -832,7 +836,7 @@ export default function LiveChat() {
         })
       return
     }
-    setText('')
+    useDraftStore.getState().setText(draft.draftKey, '')
     const streamId = findLatestRewindStreamId(msgs)
     if (!streamId) {
       pushSystem('_当前没有可回退的已完成回复。_')
@@ -1094,29 +1098,22 @@ export default function LiveChat() {
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-line/40 bg-transparent px-3 py-2.5">
-        <div className="w-full rounded-xl border border-line/60 bg-bg-card shadow-sm">
-          <ImagePasteInput
-            btwSessionId={session?.id}
-            text={text}
-            onText={setText}
-            attachments={atts}
-            onAttachments={setAtts}
-            onSubmit={submit}
-            onSchedule={openSchedule}
-            onStop={() => {
-              const sid = session?.id
-              if (!sid || sessionIdRef.current !== sid || !sessionRunning) return
-              void api.abortSession(sid).then(() => refreshRuntime(sid))
-            }}
-            stopActive={sessionRunning}
-            onSlashCommand={handleSlashCommand}
-            placeholder="输入消息,或输入 / 查看命令"
-            disabled={creatingSession}
-            submitDisabled={streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair}
-          />
-        </div>
-      </div>
+      <LiveChatComposer
+        draftKey={draftKey}
+        sessionId={session?.id}
+        onSubmit={submit}
+        onSchedule={openSchedule}
+        onStop={() => {
+          const sid = session?.id
+          if (!sid || sessionIdRef.current !== sid || !sessionRunning) return
+          void api.abortSession(sid).then(() => refreshRuntime(sid))
+        }}
+        stopActive={sessionRunning}
+        onSlashCommand={handleSlashCommand}
+        placeholder="输入消息,或输入 / 查看命令"
+        disabled={creatingSession}
+        submitDisabled={streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair}
+      />
       </div>
 
       {scheduleOpen && (
