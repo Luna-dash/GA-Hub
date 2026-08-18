@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import queue
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -11,6 +12,7 @@ from server.services.conductor_service import (
     CoreConductor,
     HubConductorCallbacks,
     RequestOutcome,
+    SubAgentEvent,
 )
 from server.services.request_usage import RequestUsageStore
 
@@ -63,6 +65,22 @@ def test_conductor_success_outcome_publishes_explicit_completion_event():
             "item": service.chat_messages[-1],
         },
     )
+
+
+def test_subagent_stream_publishes_one_snapshot_without_per_chunk_metadata():
+    service = object.__new__(ConductorService)
+    service.pool = SimpleNamespace(snapshot=lambda: [])
+    callbacks = HubConductorCallbacks(service)
+
+    with patch("server.services.conductor_service.push_subagent_cards") as snapshot:
+        with patch("server.services.conductor_service.bus.publish") as publish:
+            callbacks.on_subagent_output("sid", "partial", False)
+            callbacks.on_subagent_event(
+                "sid", SubAgentEvent.RUNNING, {"output_len": 7}
+            )
+
+    snapshot.assert_called_once()
+    publish.assert_not_called()
 
 
 @pytest.mark.parametrize(

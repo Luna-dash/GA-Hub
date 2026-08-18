@@ -204,11 +204,9 @@ def monitor_display_queue(
         if "next" in item:
             output = budget.append(item.get("next") or "")
             display(output, done=False)
-            push_subagent_cards(pool.snapshot())
         if "done" in item:
             done = budget.finish(item.get("done") or budget.output)
             accepted = display(done, done=True)
-            push_subagent_cards(pool.snapshot())
             if trigger_when_done and accepted:
                 # Notify conductor that subagent finished
                 ConductorService.instance().notify({
@@ -335,15 +333,17 @@ class HubConductorCallbacks(ConductorCallbacks):
 
     def on_subagent_output(self, agent_id: str, output: str, done: bool) -> None:
         push_subagent_cards(self.service.pool.snapshot())
-        bus.publish("conductor:subagent_output", {
-            "id": agent_id, "done": done, "output_len": len(output),
-        })
 
     def on_subagent_completed(self, agent_id: str, output: str) -> None:
         """The generation-aware monitor emits the single conductor wake-up."""
         pass
 
     def on_subagent_event(self, agent_id: str, event: SubAgentEvent, payload: dict) -> None:
+        # RUNNING is emitted for every output chunk; the snapshot above is the
+        # authoritative UI update, so a second per-chunk lifecycle frame only
+        # increases queue pressure without adding information.
+        if event == SubAgentEvent.RUNNING:
+            return
         bus.publish(f"conductor:subagent_{event.value}", {"id": agent_id, **payload})
 
     def on_conductor_event(self, event_type: str, payload: dict) -> None:
