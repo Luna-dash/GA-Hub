@@ -33,6 +33,7 @@ from .. import _paths
 from .agent_service import AgentService
 from .event_bus import bus
 from .file_tail import read_jsonl_tail
+from .watcher_registry import WatcherRegistry
 
 log = logging.getLogger(__name__)
 
@@ -115,7 +116,10 @@ class AutonomousScheduler:
         )
         self._idle_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._watchers = WatcherRegistry(self._stop_event)
+        self._admission_lock = threading.Lock()
         self._lock = threading.Lock()
+        self._run_write_lock = threading.Lock()
         self._load()
 
     @classmethod
@@ -125,6 +129,9 @@ class AutonomousScheduler:
         *,
         scheduler_runtime: Any | None = None,
     ) -> "AutonomousScheduler":
+        if cls._instance is not None and cls._instance._stop_event.is_set():
+            if not cls._instance.shutdown(timeout=0):
+                raise RuntimeError("previous autonomous scheduler is still shutting down")
         if cls._instance is None:
             assert agent_service is not None
             cls._instance = cls(agent_service, scheduler_runtime=scheduler_runtime)
@@ -170,12 +177,17 @@ class AutonomousScheduler:
 
     def _record_run(self, run: Run) -> None:
         path = _runs_file()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(run.to_dict(), ensure_ascii=False) + "\n")
+        with self._run_write_lock:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(run.to_dict(), ensure_ascii=False) + "\n")
 
     # ── lifecycle ────────────────────────────────────────────────
     def start(self) -> None:
+        if self._watchers.stopping:
+            if self._idle_thread is not None and self._idle_thread.is_alive():
+                raise RuntimeError("cannot restart while autonomous idle thread is stopping")
+            self._watchers.reset()
         if not self._sched.running:
             self._sched.start()
         # rebuild jobs from schedules
@@ -183,24 +195,50 @@ class AutonomousScheduler:
             self._install_job(s)
         # idle ticker
         if not self._idle_thread or not self._idle_thread.is_alive():
-            self._stop_event.clear()
             self._idle_thread = threading.Thread(target=self._idle_loop, daemon=True, name="auto-idle")
             self._idle_thread.start()
 
-    def shutdown(self, timeout: float = 5.0) -> None:
-        self._stop_event.set()
-        thread = self._idle_thread
-        if thread is not None:
-            thread.join(timeout=max(0.0, timeout))
-            if not thread.is_alive():
-                self._idle_thread = None
+    def shutdown(self, timeout: float = 5.0) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout)
+        stop_event = getattr(self, "_stop_event", None)
+        if stop_event is not None:
+            stop_event.set()
+        admission_stopped = True
+        admission_lock = getattr(self, "_admission_lock", None)
+        if admission_lock is not None:
+            admission_stopped = admission_lock.acquire(
+                timeout=max(0.0, deadline - time.monotonic())
+            )
+            if admission_stopped:
+                admission_lock.release()
+        watchers = getattr(self, "_watchers", None)
+        if watchers is None:
+            pass
+        else:
+            watchers.request_stop()
         if getattr(self, "_owns_sched", True):
             try:
-                self._sched.shutdown(wait=False)
+                scheduler = getattr(self, "_sched", None)
+                if scheduler is not None:
+                    scheduler.shutdown(wait=False)
             except Exception:
                 pass
-        if (thread is None or not thread.is_alive()) and type(self)._instance is self:
+        thread = getattr(self, "_idle_thread", None)
+        if thread is not None:
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+            if not thread.is_alive():
+                self._idle_thread = None
+        watchers_stopped = watchers is None or watchers.shutdown(
+            timeout=max(0.0, deadline - time.monotonic())
+        )
+        stopped = (
+            admission_stopped
+            and (thread is None or not thread.is_alive())
+            and watchers_stopped
+        )
+        if stopped and type(self)._instance is self:
             type(self)._instance = None
+        return stopped
 
     # ── job management ───────────────────────────────────────────
     def _job_id(self, sch_id: str) -> str:
@@ -254,47 +292,59 @@ class AutonomousScheduler:
         return self._fire(schedule_id)
 
     def _fire(self, schedule_id: str) -> dict:
-        with self._lock:
-            s = self.schedules.get(schedule_id)
-            if s is None:
-                return {"error": "not_found"}
-            now = int(time.time())
-            s.last_fired_at = now
-            s.fire_count += 1
-            self._persist()
+        with self._admission_lock:
+            with self._lock:
+                if self._stop_event.is_set():
+                    return {"error": "shutting_down"}
+                s = self.schedules.get(schedule_id)
+                if s is None:
+                    return {"error": "not_found"}
+                now = int(time.time())
+                s.last_fired_at = now
+                s.fire_count += 1
+                self._persist()
 
-            existing_reports = self._snapshot_reports()
-            handle = self.agent_service.submit(s.prompt or DEFAULT_PROMPT, source="autonomous")
-            run = Run(
-                id=uuid.uuid4().hex,
-                schedule_id=s.id,
-                fired_at=now,
-                prompt_preview=(s.prompt or DEFAULT_PROMPT)[:120],
-            )
+                existing_reports = self._snapshot_reports()
+                if self._stop_event.is_set():
+                    return {"error": "shutting_down"}
+                handle = self.agent_service.submit(s.prompt or DEFAULT_PROMPT, source="autonomous")
+                run = Run(
+                    id=uuid.uuid4().hex,
+                    schedule_id=s.id,
+                    fired_at=now,
+                    prompt_preview=(s.prompt or DEFAULT_PROMPT)[:120],
+                )
 
-        bus.publish("autonomous:fired", {
-            "schedule_id": s.id, "schedule_name": s.name, "run_id": run.id,
-            "stream_id": handle.stream_id, "fired_at": now,
-        })
+            bus.publish("autonomous:fired", {
+                "schedule_id": s.id, "schedule_name": s.name, "run_id": run.id,
+                "stream_id": handle.stream_id, "fired_at": now,
+            })
 
-        # background watcher: record produced reports once task is done
-        def _watch():
-            try:
-                while not handle.finished:
-                    time.sleep(2)
-                    if (time.time() - run.fired_at) > 60 * 60:
-                        run.note = "watch_timeout"
-                        break
-                # re-snapshot to detect new reports
-                produced = self._diff_reports(existing_reports)
-                run.report_paths = produced
-                self._record_run(run)
-                bus.publish("autonomous:report_saved", run.to_dict())
-            except Exception as e:
-                log.exception("autonomous watch crash: %s", e)
+            # Register before releasing admission so shutdown cannot miss it.
+            def _watch(stop_event: threading.Event) -> None:
+                try:
+                    while not handle.finished:
+                        if stop_event.wait(2):
+                            return
+                        if (time.time() - run.fired_at) > 60 * 60:
+                            run.note = "watch_timeout"
+                            break
+                    if stop_event.is_set():
+                        return
+                    produced = self._diff_reports(existing_reports)
+                    run.report_paths = produced
 
-        threading.Thread(target=_watch, daemon=True, name="auto-watch").start()
-        return {"run_id": run.id, "stream_id": handle.stream_id}
+                    def commit() -> None:
+                        self._record_run(run)
+                        bus.publish("autonomous:report_saved", run.to_dict())
+
+                    self._watchers.run_if_active(commit)
+                except Exception as e:
+                    log.exception("autonomous watch crash: %s", e)
+
+            if not self._watchers.start(_watch, name=f"auto-watch-{run.id[:8]}"):
+                return {"error": "shutting_down"}
+            return {"run_id": run.id, "stream_id": handle.stream_id}
 
     @staticmethod
     def _snapshot_reports() -> set[str]:

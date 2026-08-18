@@ -19,6 +19,7 @@ from . import email_service
 from .agent_service import AgentService
 from .event_bus import bus
 from .file_tail import read_jsonl_tail
+from .watcher_registry import WatcherRegistry
 
 log = logging.getLogger(__name__)
 
@@ -87,7 +88,11 @@ class TaskScheduler:
             if scheduler_runtime is not None
             else BackgroundScheduler(timezone=self._tz) if self._tz else BackgroundScheduler()
         )
+        self._stop_event = threading.Event()
+        self._watchers = WatcherRegistry(self._stop_event)
+        self._admission_lock = threading.Lock()
         self._lock = threading.Lock()
+        self._run_write_lock = threading.Lock()
         self._load()
 
     @classmethod
@@ -97,6 +102,9 @@ class TaskScheduler:
         *,
         scheduler_runtime: Any | None = None,
     ) -> "TaskScheduler":
+        if cls._instance is not None and cls._instance._stop_event.is_set():
+            if not cls._instance.shutdown(timeout=0):
+                raise RuntimeError("previous task scheduler is still shutting down")
         if cls._instance is None:
             assert agent_service is not None
             cls._instance = cls(agent_service, scheduler_runtime=scheduler_runtime)
@@ -133,24 +141,51 @@ class TaskScheduler:
 
     def _record_run(self, run: TaskRun) -> None:
         path = self._runs_file()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(run.to_dict(), ensure_ascii=False) + "\n")
+        with self._run_write_lock:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(run.to_dict(), ensure_ascii=False) + "\n")
 
     def start(self) -> None:
+        if self._watchers.stopping:
+            self._watchers.reset()
         if not self._sched.running:
             self._sched.start()
         for s in self.schedules.values():
             self._install_job(s)
 
-    def shutdown(self) -> None:
+    def shutdown(self, timeout: float = 5.0) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout)
+        stop_event = getattr(self, "_stop_event", None)
+        if stop_event is not None:
+            stop_event.set()
+        admission_stopped = True
+        admission_lock = getattr(self, "_admission_lock", None)
+        if admission_lock is not None:
+            admission_stopped = admission_lock.acquire(
+                timeout=max(0.0, deadline - time.monotonic())
+            )
+            if admission_stopped:
+                admission_lock.release()
+        watchers = getattr(self, "_watchers", None)
+        if watchers is None:
+            pass
+        else:
+            watchers.request_stop()
         if getattr(self, "_owns_sched", True):
             try:
-                self._sched.shutdown(wait=False)
+                scheduler = getattr(self, "_sched", None)
+                if scheduler is not None:
+                    scheduler.shutdown(wait=False)
             except Exception:
                 pass
-        if type(self)._instance is self:
+        watchers_stopped = watchers is None or watchers.shutdown(
+            timeout=max(0.0, deadline - time.monotonic())
+        )
+        stopped = admission_stopped and watchers_stopped
+        if stopped and type(self)._instance is self:
             type(self)._instance = None
+        return stopped
 
     def _job_id(self, sch_id: str) -> str:
         return f"task_{sch_id}"
@@ -183,61 +218,80 @@ class TaskScheduler:
         return self._fire(schedule_id)
 
     def _fire(self, schedule_id: str) -> dict:
-        with self._lock:
-            s = self.schedules.get(schedule_id)
-            if s is None:
-                return {"error": "not_found"}
-            now = int(time.time())
-            s.last_fired_at = now
-            s.fire_count += 1
-            self._persist()
-            handle = self.agent_service.submit(s.prompt, source="scheduled_task")
-            run = TaskRun(
-                id=uuid.uuid4().hex,
-                task_id=s.id,
-                task_name=s.name,
-                fired_at=now,
-                stream_id=handle.stream_id,
-                prompt_preview=(s.prompt or "")[:160],
-            )
+        with self._admission_lock:
+            with self._lock:
+                if self._stop_event.is_set():
+                    return {"error": "shutting_down"}
+                s = self.schedules.get(schedule_id)
+                if s is None:
+                    return {"error": "not_found"}
+                now = int(time.time())
+                s.last_fired_at = now
+                s.fire_count += 1
+                self._persist()
+                if self._stop_event.is_set():
+                    return {"error": "shutting_down"}
+                handle = self.agent_service.submit(s.prompt, source="scheduled_task")
+                run = TaskRun(
+                    id=uuid.uuid4().hex,
+                    task_id=s.id,
+                    task_name=s.name,
+                    fired_at=now,
+                    stream_id=handle.stream_id,
+                    prompt_preview=(s.prompt or "")[:160],
+                )
 
-        bus.publish("task:fired", {
-            "task_id": s.id, "task_name": s.name, "run_id": run.id,
-            "stream_id": handle.stream_id, "fired_at": now,
-        })
+            bus.publish("task:fired", {
+                "task_id": s.id, "task_name": s.name, "run_id": run.id,
+                "stream_id": handle.stream_id, "fired_at": now,
+            })
 
-        def _watch():
-            try:
-                deadline = run.fired_at + 60 * 60
-                while not handle.finished:
-                    time.sleep(2)
-                    if time.time() > deadline:
-                        run.status = "timeout"
-                        run.note = "watch_timeout"
-                        break
-                if handle.finished:
-                    run.status = "done"
+            def _watch(stop_event: threading.Event) -> None:
+                try:
+                    deadline = run.fired_at + 60 * 60
+                    while not handle.finished:
+                        if stop_event.wait(2):
+                            return
+                        if time.time() > deadline:
+                            run.status = "timeout"
+                            run.note = "watch_timeout"
+                            break
+                    if stop_event.is_set():
+                        return
+                    if handle.finished:
+                        run.status = "done"
+                        run.finished_at = int(time.time())
+                        run.result_preview = (handle.final_text or handle.last_chunk or "")[:500]
+                    else:
+                        run.finished_at = int(time.time())
+                        run.result_preview = (handle.last_chunk or "")[:500]
+                    if s.notify_email:
+                        result = self._send_run_email(s, run, handle.final_text or handle.last_chunk or "")
+                        run.email_sent = bool(result.get("ok"))
+                        run.email_error = str(result.get("error") or "")[:400]
+
+                    def commit_done() -> None:
+                        self._record_run(run)
+                        bus.publish("task:done", run.to_dict())
+
+                    self._watchers.run_if_active(commit_done)
+                except Exception as e:
+                    log.exception("task watch crash: %s", e)
+                    if stop_event.is_set():
+                        return
+                    run.status = "error"
                     run.finished_at = int(time.time())
-                    run.result_preview = (handle.final_text or handle.last_chunk or "")[:500]
-                else:
-                    run.finished_at = int(time.time())
-                    run.result_preview = (handle.last_chunk or "")[:500]
-                if s.notify_email:
-                    result = self._send_run_email(s, run, handle.final_text or handle.last_chunk or "")
-                    run.email_sent = bool(result.get("ok"))
-                    run.email_error = str(result.get("error") or "")[:400]
-                self._record_run(run)
-                bus.publish("task:done", run.to_dict())
-            except Exception as e:
-                log.exception("task watch crash: %s", e)
-                run.status = "error"
-                run.finished_at = int(time.time())
-                run.note = str(e)[:400]
-                self._record_run(run)
-                bus.publish("task:error", run.to_dict())
+                    run.note = str(e)[:400]
 
-        threading.Thread(target=_watch, daemon=True, name="task-watch").start()
-        return {"run_id": run.id, "stream_id": handle.stream_id}
+                    def commit_error() -> None:
+                        self._record_run(run)
+                        bus.publish("task:error", run.to_dict())
+
+                    self._watchers.run_if_active(commit_error)
+
+            if not self._watchers.start(_watch, name=f"task-watch-{run.id[:8]}"):
+                return {"error": "shutting_down"}
+            return {"run_id": run.id, "stream_id": handle.stream_id}
 
     def _send_run_email(self, s: TaskSchedule, run: TaskRun, final_text: str) -> dict[str, Any]:
         subject = s.email_subject or "GenericAgent 定时任务结果: {name}"
