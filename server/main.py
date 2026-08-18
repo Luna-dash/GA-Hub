@@ -380,6 +380,12 @@ def create_app() -> FastAPI:
             except Exception:
                 log.exception("conductor shutdown failed")
             try:
+                from .services.goalhive_service import shutdown_goalhive_service
+                if not shutdown_goalhive_service():
+                    log.warning("goalhive shutdown exceeded its graceful deadline")
+            except Exception:
+                log.exception("goalhive shutdown failed")
+            try:
                 from .services.feishu_service import FeishuService
                 FeishuService.instance().shutdown()
             except Exception:
