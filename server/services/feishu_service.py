@@ -24,6 +24,8 @@ class FeishuService:
 
     _CHAT_MARKER = "__GAHUB_FEISHU_CHAT__"
     _CHECK_CACHE_TTL_SECONDS = 15.0
+    _STATUS_PID_CACHE_TTL_SECONDS = 1.0
+    _STATUS_LOG_REFRESH_SECONDS = 1.0
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -34,6 +36,9 @@ class FeishuService:
         self._check_cache: dict[bool, tuple[float, dict[str, Any]]] = {}
         self._check_inflight: set[bool] = set()
         self._check_generation = 0
+        self._status_pid_condition = threading.Condition()
+        self._status_pid_cache: tuple[float, int | None] | None = None
+        self._status_pid_inflight = False
         self._chat_event_lock = threading.Lock()
         self._chat_event_seen: set[str] = set()
         self._chat_event_order: deque[str] = deque(maxlen=1000)
@@ -42,6 +47,9 @@ class FeishuService:
         self._log_cursor_identity: tuple[int, int] | None = None
         self._log_cursor_offset = 0
         self._log_cursor_pending = ""
+        self._log_refresh_condition = threading.Condition()
+        self._log_refresh_inflight = False
+        self._log_refresh_last_success = 0.0
         self._poll_stop = threading.Event()
         self._poll_thread: threading.Thread | None = None
 
@@ -157,8 +165,49 @@ class FeishuService:
                 self._log_cursor_pending = ""
                 return ""
 
-    def _publish_chat_events_from_log(self, n: int = 300) -> int:
-        return self._publish_chat_events_from_text(self._read_incremental_log_text(n))
+    def _publish_chat_events_from_log(
+        self, n: int = 300, *, min_interval: float = 0.0
+    ) -> int:
+        """Refresh log events once for concurrent callers.
+
+        Watcher/start callers keep ``min_interval=0`` and therefore preserve
+        their force-refresh behavior. Status callers use a short freshness
+        window so multiple app windows share the same cursor read.
+        """
+        freshness = max(0.0, min_interval)
+        with self._log_refresh_condition:
+            now = time.monotonic()
+            if (
+                freshness > 0.0
+                and now - self._log_refresh_last_success < freshness
+            ):
+                return 0
+            if self._log_refresh_inflight:
+                while self._log_refresh_inflight:
+                    self._log_refresh_condition.wait()
+                now = time.monotonic()
+                if (
+                    freshness > 0.0
+                    and now - self._log_refresh_last_success < freshness
+                ):
+                    return 0
+            self._log_refresh_inflight = True
+
+        try:
+            published = self._publish_chat_events_from_text(
+                self._read_incremental_log_text(n)
+            )
+        except BaseException:
+            with self._log_refresh_condition:
+                self._log_refresh_inflight = False
+                self._log_refresh_condition.notify_all()
+            raise
+
+        with self._log_refresh_condition:
+            self._log_refresh_last_success = time.monotonic()
+            self._log_refresh_inflight = False
+            self._log_refresh_condition.notify_all()
+        return published
 
     def start_log_watcher(self, interval: float = 1.0) -> bool:
         """Continuously mirror fsapp stdout markers into the in-process EventBus."""
@@ -221,6 +270,42 @@ class FeishuService:
             return None
         return None
 
+    def _status_external_pid(self) -> int | None:
+        """Share one short-lived external-process scan across status callers."""
+        with self._status_pid_condition:
+            now = time.monotonic()
+            cached = self._status_pid_cache
+            if (
+                cached is not None
+                and now - cached[0] < self._STATUS_PID_CACHE_TTL_SECONDS
+            ):
+                return cached[1]
+            if self._status_pid_inflight:
+                while self._status_pid_inflight:
+                    self._status_pid_condition.wait()
+                now = time.monotonic()
+                cached = self._status_pid_cache
+                if (
+                    cached is not None
+                    and now - cached[0] < self._STATUS_PID_CACHE_TTL_SECONDS
+                ):
+                    return cached[1]
+            self._status_pid_inflight = True
+
+        try:
+            pid = self._find_external_pid()
+        except BaseException:
+            with self._status_pid_condition:
+                self._status_pid_inflight = False
+                self._status_pid_condition.notify_all()
+            raise
+
+        with self._status_pid_condition:
+            self._status_pid_cache = (time.monotonic(), pid)
+            self._status_pid_inflight = False
+            self._status_pid_condition.notify_all()
+        return pid
+
     def is_running(self) -> bool:
         with self._lock:
             if self._running_locked():
@@ -228,7 +313,9 @@ class FeishuService:
         return bool(self._find_external_pid())
 
     def status(self) -> dict[str, Any]:
-        self._publish_chat_events_from_log()
+        self._publish_chat_events_from_log(
+            min_interval=self._STATUS_LOG_REFRESH_SECONDS
+        )
         fsapp = self.fsapp_path()
         log_file = self.log_file()
         with self._check_condition:
@@ -241,7 +328,7 @@ class FeishuService:
             returncode = None if proc is None else proc.poll()
         external = False
         if not running:
-            ext_pid = self._find_external_pid()
+            ext_pid = self._status_external_pid()
             if ext_pid:
                 running, pid, returncode, external = True, ext_pid, None, True
         return {

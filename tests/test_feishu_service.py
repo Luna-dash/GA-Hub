@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest import mock
@@ -171,3 +172,129 @@ def test_check_cache_supports_explicit_refresh(tmp_path):
         service.check(force=True)
 
     assert run.call_count == 2
+
+
+def test_status_external_pid_probe_is_singleflight_and_negative_cached(tmp_path):
+    service = FeishuService()
+    fsapp = tmp_path / "fsapp.py"
+    log_file = tmp_path / "feishuapp.log"
+    fsapp.write_text("# fixture", encoding="utf-8")
+
+    def slow_probe():
+        time.sleep(0.1)
+        return None
+
+    with (
+        mock.patch.object(service, "fsapp_path", return_value=fsapp),
+        mock.patch.object(service, "log_file", return_value=log_file),
+        mock.patch.object(service, "_python", return_value="python.exe"),
+        mock.patch.object(service, "_publish_chat_events_from_log", return_value=0),
+        mock.patch.object(service, "_find_external_pid", side_effect=slow_probe) as probe,
+    ):
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lambda _index: service.status(), range(8)))
+        cached = service.status()
+
+    assert probe.call_count == 1
+    assert all(result["running"] is False for result in [*results, cached])
+
+
+def test_status_external_pid_cache_expires(tmp_path):
+    service = FeishuService()
+    service._STATUS_PID_CACHE_TTL_SECONDS = 0.02
+    fsapp = tmp_path / "fsapp.py"
+    log_file = tmp_path / "feishuapp.log"
+
+    with (
+        mock.patch.object(service, "fsapp_path", return_value=fsapp),
+        mock.patch.object(service, "log_file", return_value=log_file),
+        mock.patch.object(service, "_python", return_value="python.exe"),
+        mock.patch.object(service, "_publish_chat_events_from_log", return_value=0),
+        mock.patch.object(service, "_find_external_pid", return_value=None) as probe,
+    ):
+        service.status()
+        service.status()
+        time.sleep(0.03)
+        service.status()
+
+    assert probe.call_count == 2
+
+
+def test_start_bypasses_negative_status_pid_cache(tmp_path):
+    service = FeishuService()
+    fsapp = tmp_path / "fsapp.py"
+    log_file = tmp_path / "feishuapp.log"
+    fsapp.write_text("# fixture", encoding="utf-8")
+
+    with (
+        mock.patch.object(service, "fsapp_path", return_value=fsapp),
+        mock.patch.object(service, "log_file", return_value=log_file),
+        mock.patch.object(service, "_python", return_value="python.exe"),
+        mock.patch.object(service, "_publish_chat_events_from_log", return_value=0),
+        mock.patch.object(service, "_find_external_pid", side_effect=[None, 43210]) as probe,
+        mock.patch("server.services.feishu_service.subprocess.Popen") as popen,
+    ):
+        assert service.status()["running"] is False
+        result = service.start()
+
+    assert result == {
+        "started": False,
+        "running": True,
+        "pid": 43210,
+        "external": True,
+    }
+    assert probe.call_count == 2
+    popen.assert_not_called()
+
+
+def test_status_log_refresh_is_singleflight_but_forced_reads_remain_live():
+    service = FeishuService()
+
+    def slow_read(_n=300):
+        time.sleep(0.1)
+        return _chat_line("status")
+
+    with (
+        mock.patch.object(service, "_read_incremental_log_text", side_effect=slow_read) as read,
+        mock.patch.object(service, "_publish_chat_events_from_text", return_value=1),
+    ):
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(
+                lambda _index: service._publish_chat_events_from_log(min_interval=1.0),
+                range(8),
+            ))
+        service._publish_chat_events_from_log()
+        service._publish_chat_events_from_log()
+
+    assert read.call_count == 3
+    assert results.count(1) == 1
+    assert results.count(0) == 7
+
+
+def test_failed_log_refresh_releases_waiters_and_allows_retry():
+    service = FeishuService()
+    attempts = 0
+
+    def flaky_read(_n=300):
+        nonlocal attempts
+        attempts += 1
+        time.sleep(0.05)
+        if attempts == 1:
+            raise OSError("temporary log failure")
+        return _chat_line("retry")
+
+    def refresh(_index):
+        try:
+            return service._publish_chat_events_from_log(min_interval=1.0)
+        except OSError:
+            return "error"
+
+    with (
+        mock.patch.object(service, "_read_incremental_log_text", side_effect=flaky_read),
+        mock.patch.object(service, "_publish_chat_events_from_text", return_value=1),
+    ):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(refresh, range(2)))
+
+    assert sorted(results, key=str) == [1, "error"]
+    assert attempts == 2
