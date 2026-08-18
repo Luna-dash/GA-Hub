@@ -110,12 +110,9 @@ export default function Conductor() {
 
   // Extract store actions (stable references) to avoid socket churn
   const addChatMessage = useConductorStore((s) => s.addChatMessage)
-  const mergeChatMessages = useConductorStore((s) => s.mergeChatMessages)
-  const replaceSubagents = useConductorStore((s) => s.replaceSubagents)
   const hydrateSubagents = useConductorStore((s) => s.hydrateSubagents)
-  const mergeLogItems = useConductorStore((s) => s.mergeLogItems)
-  const addLogItem = useConductorStore((s) => s.addLogItem)
-  const addApproval = useConductorStore((s) => s.addApproval)
+  const hydrateChatMessages = useConductorStore((s) => s.hydrateChatMessages)
+  const hydrateLogItems = useConductorStore((s) => s.hydrateLogItems)
   const chatMessages = useConductorStore((s) => s.chatMessages)
   const subagents = useConductorStore((s) => s.subagents)
   const log = useConductorStore((s) => s.log)
@@ -179,13 +176,19 @@ export default function Conductor() {
 
   const { data: chatSnapshot } = useQuery({
     queryKey: queryKeys.conductor.chat,
-    queryFn: async () => (await api.conductorChat(200)).items,
+    queryFn: async () => {
+      const generation = useConductorStore.getState().generation
+      return { items: (await api.conductorChat(200)).items, generation }
+    },
     refetchOnMount: 'always',
   })
 
   const { data: logSnapshot } = useQuery({
     queryKey: queryKeys.conductor.log,
-    queryFn: async () => (await api.conductorLog()).log,
+    queryFn: async () => {
+      const generation = useConductorStore.getState().generation
+      return { items: (await api.conductorLog()).log, generation }
+    },
     refetchOnMount: 'always',
   })
 
@@ -199,27 +202,21 @@ export default function Conductor() {
   }, [hydrateSubagents, subagentSnapshot])
 
   useEffect(() => {
-    if (chatSnapshot) mergeChatMessages(chatSnapshot)
-  }, [chatSnapshot, mergeChatMessages])
+    if (chatSnapshot) {
+      hydrateChatMessages(chatSnapshot.items, chatSnapshot.generation)
+    }
+  }, [chatSnapshot, hydrateChatMessages])
 
   useEffect(() => {
-    if (logSnapshot) mergeLogItems(logSnapshot)
-  }, [logSnapshot, mergeLogItems])
+    if (logSnapshot) hydrateLogItems(logSnapshot.items, logSnapshot.generation)
+  }, [hydrateLogItems, logSnapshot])
 
   useHubEvent('conductor:', (event) => {
     if (event.topic === 'conductor:chat' && event.payload.item) {
       shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
-      addChatMessage(event.payload.item)
-    }
-    if (event.topic === 'conductor:subagents' && event.payload.items) {
-      replaceSubagents(event.payload.items)
     }
     if (event.topic === 'conductor:log' && event.payload.item) {
       shouldFollowLogRef.current = isNearScrollTop(logScrollRef.current)
-      addLogItem(event.payload.item)
-    }
-    if (event.topic === 'conductor:approval' && event.payload.item) {
-      addApproval(event.payload.item)
     }
   })
 

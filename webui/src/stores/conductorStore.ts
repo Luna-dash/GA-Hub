@@ -18,14 +18,17 @@ interface ConductorState {
   chatMessages: ConductorChatMessage[]
   subagents: ConductorSubagent[]
   subagentsRevision: number
+  generation: number
   log: ConductorLogItem[]
   approvals: ConductorApprovalItem[]
   addChatMessage: (msg: ConductorChatMessage) => void
   mergeChatMessages: (msgs: ConductorChatMessage[]) => void
+  hydrateChatMessages: (msgs: ConductorChatMessage[], generation: number) => void
   replaceSubagents: (items: ConductorSubagent[]) => void
   hydrateSubagents: (items: ConductorSubagent[], expectedRevision: number) => void
   addLogItem: (item: ConductorLogItem) => void
   mergeLogItems: (items: ConductorLogItem[]) => void
+  hydrateLogItems: (items: ConductorLogItem[], generation: number) => void
   addApproval: (item: ConductorApprovalItem) => void
   removeApproval: (id: string) => void
   clear: () => void
@@ -55,6 +58,7 @@ export const useConductorStore = create<ConductorState>((set) => ({
   chatMessages: [],
   subagents: [],
   subagentsRevision: 0,
+  generation: 0,
   log: [],
   approvals: [],
 
@@ -66,6 +70,13 @@ export const useConductorStore = create<ConductorState>((set) => ({
 
   mergeChatMessages: (msgs) =>
     set((state) => {
+      const chatMessages = mergeTimeline(state.chatMessages, msgs, 200)
+      return chatMessages === state.chatMessages ? state : { chatMessages }
+    }),
+
+  hydrateChatMessages: (msgs, generation) =>
+    set((state) => {
+      if (state.generation !== generation) return state
       const chatMessages = mergeTimeline(state.chatMessages, msgs, 200)
       return chatMessages === state.chatMessages ? state : { chatMessages }
     }),
@@ -95,6 +106,13 @@ export const useConductorStore = create<ConductorState>((set) => ({
       return log === state.log ? state : { log }
     }),
 
+  hydrateLogItems: (items, generation) =>
+    set((state) => {
+      if (state.generation !== generation) return state
+      const log = mergeTimeline(state.log, items, 50)
+      return log === state.log ? state : { log }
+    }),
+
   addApproval: (item) =>
     set((state) => {
       const exists = state.approvals.some((a) => a.id === item.id)
@@ -109,6 +127,7 @@ export const useConductorStore = create<ConductorState>((set) => ({
     chatMessages: [],
     subagents: [],
     subagentsRevision: state.subagentsRevision + 1,
+    generation: state.generation + 1,
     log: [],
     approvals: [],
   })),

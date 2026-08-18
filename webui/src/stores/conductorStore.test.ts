@@ -94,12 +94,25 @@ describe('conductorStore', () => {
 
   it('does not let an in-flight snapshot revive state after clear', () => {
     const expectedRevision = useConductorStore.getState().subagentsRevision
+    const expectedGeneration = useConductorStore.getState().generation
+    useConductorStore.getState().addChatMessage(chat('old', 1))
+    useConductorStore.getState().addLogItem(logItem('old', 1))
     useConductorStore.getState().clear()
     useConductorStore.getState().hydrateSubagents(
       [subagent('stale', 'running')],
       expectedRevision,
     )
+    useConductorStore.getState().hydrateChatMessages(
+      [chat('stale-chat', 2)],
+      expectedGeneration,
+    )
+    useConductorStore.getState().hydrateLogItems(
+      [logItem('stale-log', 2)],
+      expectedGeneration,
+    )
 
     expect(useConductorStore.getState().subagents).toEqual([])
+    expect(useConductorStore.getState().chatMessages).toEqual([])
+    expect(useConductorStore.getState().log).toEqual([])
   })
 })

@@ -114,6 +114,24 @@ describe('HubEventClient', () => {
     client.stop()
   })
 
+  it('notifies control subscribers without exposing control frames as events', () => {
+    const client = new HubEventClient(['agent:'])
+    const control = vi.fn()
+    const event = vi.fn()
+    client.subscribeControl(control)
+    client.subscribe('', event)
+    client.start()
+    const socket = FakeWebSocket.instances[0]
+
+    socket.message({ type: 'resync_required', reason: 'server_restarted', epoch: 'epoch-b' })
+    socket.message({ type: 'replay_done', event_id: 3, epoch: 'epoch-b' })
+
+    expect(control).toHaveBeenCalledTimes(2)
+    expect(control.mock.calls[0][0]).toMatchObject({ type: 'resync_required' })
+    expect(event).not.toHaveBeenCalled()
+    client.stop()
+  })
+
   it('resumes from the replay boundary after a disconnect', async () => {
     vi.useFakeTimers()
     const client = new HubEventClient(['agent:'])

@@ -14,6 +14,7 @@ export const CONTROL_EVENT_PREFIXES = [
 export type HubEventConnectionState = ManagedSocketState
 type EventHandler = (event: BusEvent) => void
 type StateHandler = (state: HubEventConnectionState) => void
+type ControlHandler = (control: HubEventControl) => void
 type EventCursor = { event_id: number; epoch: string }
 
 function isControlEvent(message: HubEventMessage): message is HubEventControl {
@@ -37,6 +38,7 @@ export class HubEventClient {
   private acceptingEvents = false
   private readonly eventHandlers = new Map<number, { prefix: string; handler: EventHandler }>()
   private readonly stateHandlers = new Map<number, StateHandler>()
+  private readonly controlHandlers = new Map<number, ControlHandler>()
 
   constructor(private readonly prefixes: readonly string[] = CONTROL_EVENT_PREFIXES) {
     this.transport = new ManagedJsonSocket({ path: () => this.connectionPath() })
@@ -69,6 +71,14 @@ export class HubEventClient {
     }
   }
 
+  subscribeControl(handler: ControlHandler): () => void {
+    const id = this.nextSubscriberId++
+    this.controlHandlers.set(id, handler)
+    return () => {
+      this.controlHandlers.delete(id)
+    }
+  }
+
   private connectionPath(): string {
     const query = new URLSearchParams()
     for (const prefix of this.prefixes) query.append('prefix', prefix)
@@ -84,6 +94,9 @@ export class HubEventClient {
   private handleMessage(message: HubEventMessage): void {
     if (!message || typeof message !== 'object') return
     if (isControlEvent(message)) {
+      for (const handler of this.controlHandlers.values()) {
+        try { handler(message) } catch {}
+      }
       if (message.type === 'resync_required') {
         this.cursor = undefined
         this.acceptingEvents = false
