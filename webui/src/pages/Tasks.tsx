@@ -7,17 +7,18 @@ import type { EmailConfig, TaskRun, TaskSchedule, TaskScheduleType } from '@/api
 import { PageShell } from '@/components/PageShell'
 import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
+import { queryKeys } from '@/queries/queryKeys'
 
 export default function Tasks() {
   const qc = useQueryClient()
   const { data: schData } = useQuery({
-    queryKey: ['tasks.schedules'],
+    queryKey: queryKeys.tasks.schedules,
     queryFn: api.taskSchedules,
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
   })
   const { data: runData } = useQuery({
-    queryKey: ['tasks.runs'],
+    queryKey: queryKeys.tasks.runs,
     queryFn: () => api.taskRuns(80),
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
@@ -35,7 +36,7 @@ export default function Tasks() {
     )
     if (!ok) return
     await api.triggerTaskSchedule(id)
-    qc.invalidateQueries({ queryKey: ['tasks.runs'] })
+    qc.invalidateQueries({ queryKey: queryKeys.tasks.runs })
   }
 
   return (
@@ -105,7 +106,7 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
   const qc = useQueryClient()
   const toggle = async () => {
     await api.upsertTaskSchedule({ ...s, type: s.type as TaskScheduleType, enabled: !s.enabled })
-    qc.invalidateQueries({ queryKey: ['tasks.schedules'] })
+    qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
   }
   const remove = async () => {
     const ok = await dialog.confirm('删除该定时任务？', s.name || s.id, {
@@ -114,7 +115,7 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
     })
     if (!ok) return
     await api.deleteTaskSchedule(s.id)
-    qc.invalidateQueries({ queryKey: ['tasks.schedules'] })
+    qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
   }
   return (
     <div className={`rounded-xl border p-4 ${s.enabled ? 'border-accent/60 bg-accent-soft/20' : 'border-line bg-bg-card'}`}>
@@ -188,7 +189,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
     setSaving(true)
     try {
       await api.upsertTaskSchedule({ ...s, type })
-      qc.invalidateQueries({ queryKey: ['tasks.schedules'] })
+      qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
       onClose()
     } catch (e: any) {
       await dialog.alert('保存失败', e?.body?.detail || e?.message || String(e))
@@ -263,7 +264,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
 
 function EmailSettings() {
   const qc = useQueryClient()
-  const { data } = useQuery({ queryKey: ['tasks.emailConfig'], queryFn: api.taskEmailConfig })
+  const { data } = useQuery({ queryKey: queryKeys.tasks.emailConfig, queryFn: api.taskEmailConfig })
   const [editing, setEditing] = useState(false)
   const [cfg, setCfg] = useState<Partial<EmailConfig> & { password?: string }>({})
   const [testTo, setTestTo] = useState('')
@@ -290,7 +291,7 @@ function EmailSettings() {
     setSavingCfg(true)
     try {
       await api.saveTaskEmailConfig(cfg)
-      await qc.invalidateQueries({ queryKey: ['tasks.emailConfig'] })
+      await qc.invalidateQueries({ queryKey: queryKeys.tasks.emailConfig })
       setEditing(false)
       setResult('已保存')
     } catch (e: any) {
@@ -316,7 +317,7 @@ function EmailSettings() {
     setResult('')
     try {
       await api.saveTaskEmailConfig(cfg)
-      await qc.invalidateQueries({ queryKey: ['tasks.emailConfig'] })
+      await qc.invalidateQueries({ queryKey: queryKeys.tasks.emailConfig })
       const r = await api.testTaskEmail(testRecipient, 'GenericAgent 邮件测试', '这是一封来自 GA-Hub 的测试邮件。')
       const msg = r.ok ? `测试邮件已发送到 ${r.to}` : `发送失败: ${r.error || 'unknown'}`
       setResult(msg)

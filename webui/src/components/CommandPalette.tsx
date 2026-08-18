@@ -19,6 +19,7 @@ import { api } from '@/api/client'
 import { useChatStore } from '@/stores/chatStore'
 import { dialog } from '@/stores/dialogStore'
 import { conversationKeys } from '@/queries/conversations'
+import { queryKeys } from '@/queries/queryKeys'
 
 interface Action {
   id: string
@@ -87,19 +88,19 @@ export function CommandPalette() {
 
   // Data sources — only fetched while the palette is open
   const { data: llms } = useQuery({
-    queryKey: ['llms'],
+    queryKey: queryKeys.llms,
     queryFn: api.llms,
     enabled: open,
     staleTime: 30_000,
   })
   const { data: schedules } = useQuery({
-    queryKey: ['schedules'],
+    queryKey: queryKeys.schedules,
     queryFn: api.schedules,
     enabled: open,
     staleTime: 30_000,
   })
   const { data: sops } = useQuery({
-    queryKey: ['sops'],
+    queryKey: queryKeys.memory.sops,
     queryFn: api.sops,
     enabled: open,
     staleTime: 60_000,
@@ -171,8 +172,8 @@ export function CommandPalette() {
         label: `[${l.index}] ${l.name}`,
         run: async () => {
           await api.switchLLM(l.index)
-          qc.invalidateQueries({ queryKey: ['llms'] })
-          qc.invalidateQueries({ queryKey: ['status'] })
+          qc.invalidateQueries({ queryKey: queryKeys.llms })
+          qc.invalidateQueries({ queryKey: queryKeys.servicePanel })
           pushSystem(`_已切换到 [${l.index}] ${l.name}_`)
         },
       })
@@ -189,7 +190,7 @@ export function CommandPalette() {
           const ok = await dialog.confirm('立即触发？', s.name || s.id, { confirmText: '触发' })
           if (!ok) return
           await api.triggerSchedule(s.id)
-          qc.invalidateQueries({ queryKey: ['auto.runs'] })
+          qc.invalidateQueries({ queryKey: queryKeys.autonomous.runs })
           nav('/autonomous')
         },
       })

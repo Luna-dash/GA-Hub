@@ -8,6 +8,7 @@ import { PageShell } from '@/components/PageShell'
 import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useHubEvent } from '@/hooks/useHubEvent'
+import { queryKeys } from '@/queries/queryKeys'
 
 const TECHNICAL_ACTION_RE = /^\s*\[Action\]\s+Running\s+([^:\n]+)(?:\s+in\s+([^:\n]+))?/i
 const LLM_RUNNING_RE = /\*{0,2}LLM Running \(Turn \d+\) \.{3}\*{0,2}/gi
@@ -134,7 +135,7 @@ export default function Conductor() {
 
   // Poll status
   const { data: status } = useQuery({
-    queryKey: ['conductor', 'status'],
+    queryKey: queryKeys.conductor.status,
     queryFn: () => api.conductorStatus(),
     refetchInterval: 12_000,
     refetchIntervalInBackground: false,
@@ -142,7 +143,7 @@ export default function Conductor() {
 
   // Conductor and Goal/Hive share durable key-based model preferences.
   const { data: llmsData } = useQuery({
-    queryKey: ['llms'],
+    queryKey: queryKeys.llms,
     queryFn: api.llms,
   })
   const llms = llmsData?.llms ?? []
@@ -166,7 +167,7 @@ export default function Conductor() {
 
   // Poll subagents
   useQuery({
-    queryKey: ['conductor', 'subagents'],
+    queryKey: queryKeys.conductor.subagents,
     queryFn: async () => {
       const res = await api.conductorSubagents()
       setSubagents(res.items)
@@ -178,7 +179,7 @@ export default function Conductor() {
 
   // Poll chat
   useQuery({
-    queryKey: ['conductor', 'chat'],
+    queryKey: queryKeys.conductor.chat,
     queryFn: async () => {
       const res = await api.conductorChat(50)
       setChatMessages(res.items)
@@ -190,7 +191,7 @@ export default function Conductor() {
 
   // Poll log
   useQuery({
-    queryKey: ['conductor', 'log'],
+    queryKey: queryKeys.conductor.log,
     queryFn: async () => {
       const res = await api.conductorLog()
       setLog(res.log)
@@ -281,7 +282,7 @@ export default function Conductor() {
 
   const stopConductor = async () => {
     await api.conductorStop()
-    qc.invalidateQueries({ queryKey: ['conductor', 'status'] })
+    qc.invalidateQueries({ queryKey: queryKeys.conductor.status })
   }
 
   const removeApproval = useConductorStore((s) => s.removeApproval)
@@ -301,7 +302,7 @@ export default function Conductor() {
       conductorModelSettings,
     )
     removeApproval(item.id)
-    qc.invalidateQueries({ queryKey: ['conductor', 'subagents'] })
+    qc.invalidateQueries({ queryKey: queryKeys.conductor.subagents })
   }
 
   const rejectTask = (item: ConductorApprovalItem) => {

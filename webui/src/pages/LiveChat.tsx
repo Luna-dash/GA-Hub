@@ -40,6 +40,7 @@ import { isTauriDesktop, selectDirectory } from '@/utils/desktop'
 import { defaultSessionLlmKey, resolveSessionLlmKey } from '@/utils/llm'
 import { MainModelSelect } from '@/components/ModelSelect'
 import { useHubEvent } from '@/hooks/useHubEvent'
+import { queryKeys } from '@/queries/queryKeys'
 
 interface RestoreState {
   restoredFrom?: string
@@ -86,17 +87,17 @@ export default function LiveChat() {
   const llmRepairAttemptedRef = useRef(new Map<string, string>())
   const queryClient = useQueryClient()
   const sessionsQuery = useQuery({
-    queryKey: ['sessions'],
+    queryKey: queryKeys.sessions,
     queryFn: api.sessions,
   })
   const sessions = useMemo(() => sessionsQuery.data?.items ?? [], [sessionsQuery.data])
   const projectsQuery = useQuery({
-    queryKey: ['projects'],
+    queryKey: queryKeys.projects,
     queryFn: api.projects,
   })
   const projects = projectsQuery.data?.items ?? []
   const runtimesQuery = useQuery({
-    queryKey: ['session.runtimes'],
+    queryKey: queryKeys.runtimes,
     queryFn: api.sessionRuntimes,
     enabled: sessions.length > 0,
     refetchInterval: 30_000,
@@ -104,7 +105,7 @@ export default function LiveChat() {
   })
   const runtimes = runtimesQuery.data ?? {}
   const scheduledChatsQuery = useQuery({
-    queryKey: ['session.scheduledChats', session?.id],
+    queryKey: queryKeys.scheduledChats(session?.id),
     queryFn: () => api.scheduledChats(session!.id),
     enabled: Boolean(session?.id),
     refetchInterval: (query) => {
@@ -152,7 +153,7 @@ export default function LiveChat() {
       try {
         const requestedId = new URLSearchParams(location.search).get('session')
         const storedId = localStorage.getItem('gahub.currentSessionId')
-        const listed = await queryClient.fetchQuery({ queryKey: ['sessions'], queryFn: api.sessions })
+        const listed = await queryClient.fetchQuery({ queryKey: queryKeys.sessions, queryFn: api.sessions })
         let current = requestedId ? listed.items.find((item) => item.id === requestedId) : undefined
         if (!current) current = storedId ? listed.items.find((item) => item.id === storedId) : undefined
         if (!current) current = listed.items[0]
@@ -454,7 +455,7 @@ export default function LiveChat() {
       const promptText = fileHint + t + (fileMarkers ? (t ? '\n' : '') + fileMarkers : '')
       await api.createScheduledChat(sid, promptText, sourceAtts.map((a) => a.path), scheduledFor / 1000)
       useDraftStore.getState().clearDraftIfMatch(draft.draftKey, sourceText, sourceAtts)
-      await queryClient.invalidateQueries({ queryKey: ['session.scheduledChats', sid] })
+      await queryClient.invalidateQueries({ queryKey: queryKeys.scheduledChats(sid) })
       setScheduleNow(Date.now())
       setScheduleOpen(false)
     } catch (e: any) {
@@ -474,7 +475,7 @@ export default function LiveChat() {
     if (!ok) return
     try {
       await api.cancelScheduledChat(session.id, task.id)
-      await queryClient.invalidateQueries({ queryKey: ['session.scheduledChats', session.id] })
+      await queryClient.invalidateQueries({ queryKey: queryKeys.scheduledChats(session.id) })
     } catch (e: any) {
       pushSystem(`_取消定时消息失败：${e?.body?.detail?.message || e?.body?.detail || e?.message || String(e)}。_`)
     }
@@ -556,7 +557,7 @@ export default function LiveChat() {
           throw new Error(selection?.error || '未能打开目录选择器')
         }
         const created = await api.createProject(selection.path)
-        await queryClient.invalidateQueries({ queryKey: ['projects'] })
+        await queryClient.invalidateQueries({ queryKey: queryKeys.projects })
         updated = await api.bindProject(sid, created.name, created.path)
       } else if (!value) {
         updated = await api.unbindProject(sid)
@@ -600,7 +601,7 @@ export default function LiveChat() {
       if (sessionIdRef.current === sid) setSession(updated)
 
       await api.deleteProject(selected.name)
-      await queryClient.invalidateQueries({ queryKey: ['projects'] })
+        await queryClient.invalidateQueries({ queryKey: queryKeys.projects })
     } catch (error: unknown) {
       pushSystem(`_移除项目映射失败：${errorMessageFromError(error)}_`)
     } finally {

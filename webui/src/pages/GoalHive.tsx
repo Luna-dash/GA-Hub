@@ -8,6 +8,7 @@ import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useDraftStore } from '@/stores/draftStore'
 import { useGoalHiveStore } from '@/stores/goalhiveStore'
 import { GoalHiveSocket } from '@/runtime/goalHiveSocket'
+import { queryKeys } from '@/queries/queryKeys'
 
 type GoalMode = 'goal' | 'hive'
 
@@ -61,7 +62,7 @@ export default function GoalHive() {
 
   // Conductor and Goal/Hive share durable key-based model preferences.
   const { data: llmsData } = useQuery({
-    queryKey: ['llms'],
+    queryKey: queryKeys.llms,
     queryFn: api.llms,
   })
   const llms = llmsData?.llms ?? []

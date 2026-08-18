@@ -22,9 +22,10 @@ import {
   type NavPreference,
 } from '@/config/navigation'
 import { isDesktopShell, selectDirectory } from '@/utils/desktop'
+import { queryKeys } from '@/queries/queryKeys'
 export default function Settings({ initialMode = 'settings' }: { initialMode?: 'settings' | 'setup' }) {
   const qc = useQueryClient()
-  const { data: setup, refetch } = useQuery({ queryKey: ['setup'], queryFn: api.setupStatus })
+  const { data: setup } = useQuery({ queryKey: queryKeys.setup, queryFn: api.setupStatus })
   const [input, setInput] = useState('')
   const [pythonInput, setPythonInput] = useState('')
   const [validating, setValidating] = useState(false)
@@ -78,9 +79,10 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
     try {
       const r = await api.setupSave(input.trim(), pythonInput.trim())
       setSaveMsg(`✓ 已保存：${r.ga_root}\n请重启后端（关闭并重开窗口）以加载新配置。`)
-      qc.invalidateQueries({ queryKey: ['setup'] })
-      qc.invalidateQueries({ queryKey: ['status'] })
-      refetch()
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: queryKeys.setup }),
+        qc.invalidateQueries({ queryKey: queryKeys.servicePanel }),
+      ])
     } catch (e: any) {
       const msg = e?.body?.detail || e?.message || String(e)
       setSaveErr(msg)
@@ -318,7 +320,7 @@ function ChatAppearancePanel() {
 
 function ChatRetryPanel() {
   const qc = useQueryClient()
-  const { data, isLoading } = useQuery({ queryKey: ['agent.chatRetryConfig'], queryFn: api.chatRetryConfig })
+  const { data, isLoading } = useQuery({ queryKey: queryKeys.agent.chatRetryConfig, queryFn: api.chatRetryConfig })
   const [cfg, setCfg] = useState<ChatRetryConfig>({ enabled: true, max_attempts: 2 })
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
@@ -336,7 +338,7 @@ function ChatRetryPanel() {
         max_attempts: Math.max(0, Math.min(5, Math.floor(Number(cfg.max_attempts) || 0))),
       })
       setCfg(saved)
-      await qc.invalidateQueries({ queryKey: ['agent.chatRetryConfig'] })
+      await qc.invalidateQueries({ queryKey: queryKeys.agent.chatRetryConfig })
       setMsg('已保存')
     } catch (e: any) {
       setMsg(`保存失败：${e?.body?.detail || e?.message || String(e)}`)

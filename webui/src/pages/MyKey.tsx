@@ -23,6 +23,7 @@ import { PageShell } from '@/components/PageShell'
 import { RawView } from '@/components/MyKeyRawView'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
+import { queryKeys } from '@/queries/queryKeys'
 
 type Tab = 'structured' | 'raw'
 
@@ -39,7 +40,7 @@ export default function MyKey() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('structured')
   const [syncBusy, setSyncBusy] = useState<'upload' | 'fetch' | null>(null)
-  const { data, isLoading, refetch } = useQuery({ queryKey: ['mykey'], queryFn: api.mykey })
+  const { data, isLoading, refetch } = useQuery({ queryKey: queryKeys.mykey.data, queryFn: api.mykey })
 
   const onWriteResult = (r: MyKeyWriteResult) => {
     if (r.warnings && r.warnings.length) {
@@ -47,9 +48,9 @@ export default function MyKey() {
     } else {
       toast.success('已保存到 mykey.py')
     }
-    qc.invalidateQueries({ queryKey: ['mykey'] })
-    qc.invalidateQueries({ queryKey: ['llms'] })
-    qc.invalidateQueries({ queryKey: ['status'] })
+    qc.invalidateQueries({ queryKey: queryKeys.mykey.data })
+    qc.invalidateQueries({ queryKey: queryKeys.llms })
+    qc.invalidateQueries({ queryKey: queryKeys.servicePanel })
   }
 
   const handleOpenFile = async () => {
@@ -95,9 +96,9 @@ export default function MyKey() {
       } else {
         toast.success((r.stdout || 'mykey 下载完成').trim().split('\n').slice(-1)[0])
       }
-      qc.invalidateQueries({ queryKey: ['mykey'] })
-      qc.invalidateQueries({ queryKey: ['llms'] })
-      qc.invalidateQueries({ queryKey: ['status'] })
+      qc.invalidateQueries({ queryKey: queryKeys.mykey.data })
+      qc.invalidateQueries({ queryKey: queryKeys.llms })
+      qc.invalidateQueries({ queryKey: queryKeys.servicePanel })
     } catch (e: any) {
       dialog.alert('下载 mykey 失败', syncFailureMessage(e))
     } finally {

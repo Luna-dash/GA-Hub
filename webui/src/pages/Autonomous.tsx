@@ -11,23 +11,24 @@ import { PageShell } from '@/components/PageShell'
 import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
 import { useHubEvent } from '@/hooks/useHubEvent'
+import { queryKeys } from '@/queries/queryKeys'
 
 export default function Autonomous() {
   const qc = useQueryClient()
   const { data: schData } = useQuery({
-    queryKey: ['schedules'],
+    queryKey: queryKeys.schedules,
     queryFn: api.schedules,
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
   })
   const { data: runData } = useQuery({
-    queryKey: ['auto.runs'],
+    queryKey: queryKeys.autonomous.runs,
     queryFn: () => api.runs(50),
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
   })
   const { data: rep } = useQuery({
-    queryKey: ['auto.reports'],
+    queryKey: queryKeys.autonomous.reports,
     queryFn: api.reports,
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
@@ -35,18 +36,18 @@ export default function Autonomous() {
 
   useHubEvent('autonomous:', (event) => {
     if (event.topic === 'autonomous:upsert' || event.topic === 'autonomous:delete' || event.topic === 'autonomous:fired') {
-      qc.invalidateQueries({ queryKey: ['schedules'] })
+      qc.invalidateQueries({ queryKey: queryKeys.schedules })
     }
     if (event.topic === 'autonomous:report_saved') {
-      qc.invalidateQueries({ queryKey: ['auto.runs'] })
-      qc.invalidateQueries({ queryKey: ['auto.reports'] })
+      qc.invalidateQueries({ queryKey: queryKeys.autonomous.runs })
+      qc.invalidateQueries({ queryKey: queryKeys.autonomous.reports })
     }
   })
 
   const [editor, setEditor] = useState<Partial<Schedule> | null>(null)
   const [activeReport, setActiveReport] = useState<string | null>(null)
   const { data: report } = useQuery({
-    queryKey: ['auto.report', activeReport],
+    queryKey: queryKeys.autonomous.report(activeReport),
     queryFn: () => api.report(activeReport!),
     enabled: !!activeReport,
   })
@@ -63,7 +64,7 @@ export default function Autonomous() {
     )
     if (!ok) return
     await api.triggerSchedule(id)
-    qc.invalidateQueries({ queryKey: ['auto.runs'] })
+    qc.invalidateQueries({ queryKey: queryKeys.autonomous.runs })
   }
 
   return (
@@ -143,7 +144,7 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
   const qc = useQueryClient()
   const toggle = async () => {
     await api.upsertSchedule({ ...s, type: s.type as ScheduleType, enabled: !s.enabled })
-    qc.invalidateQueries({ queryKey: ['schedules'] })
+    qc.invalidateQueries({ queryKey: queryKeys.schedules })
   }
   const remove = async () => {
     const ok = await dialog.confirm('删除该计划？', s.name || s.id, {
@@ -152,7 +153,7 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
     })
     if (!ok) return
     await api.deleteSchedule(s.id)
-    qc.invalidateQueries({ queryKey: ['schedules'] })
+    qc.invalidateQueries({ queryKey: queryKeys.schedules })
   }
   return (
     <div className={`rounded-xl border p-4 ${s.enabled ? 'border-accent/60 bg-accent-soft/20' : 'border-line bg-bg-card'}`}>
@@ -193,7 +194,7 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
   })
   const save = async () => {
     await api.upsertSchedule({ ...s, type: (s.type ?? 'idle') as ScheduleType })
-    qc.invalidateQueries({ queryKey: ['schedules'] })
+    qc.invalidateQueries({ queryKey: queryKeys.schedules })
     onClose()
   }
   return (

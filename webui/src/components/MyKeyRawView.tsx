@@ -4,6 +4,7 @@ import { api } from '@/api/client'
 import type { MyKeyBackup, MyKeyData, MyKeyWriteResult } from '@/api/types'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
+import { queryKeys } from '@/queries/queryKeys'
 
 // ── raw view ────────────────────────────────────────────────────────
 export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKeyWriteResult) => void }) {
@@ -85,7 +86,7 @@ function BackupDrawer({ onClose, onRestored }: {
   onRestored: (r: MyKeyWriteResult) => void
 }) {
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['mykey.backups'],
+    queryKey: queryKeys.mykey.backups,
     queryFn: api.mykeyBackups,
   })
   const [busy, setBusy] = useState<string | null>(null)

@@ -145,8 +145,6 @@ export default function Conversations() {
     setRestoring(id)
     try {
       const r = await api.restoreConversation(id)
-      qc.invalidateQueries({ queryKey: ['agent.status'] })
-      qc.invalidateQueries({ queryKey: ['status'] })
       nav('/chat', {
         state: {
           restoredFrom: id,

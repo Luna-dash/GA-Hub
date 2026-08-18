@@ -19,11 +19,12 @@ import { dialog } from '@/stores/dialogStore'
 import { useDraftStore } from '@/stores/draftStore'
 import { applyWechatMessageEvent, applyWechatStatusEvent } from '@/utils/wechatQuery'
 import { useHubEvent } from '@/hooks/useHubEvent'
+import { queryKeys } from '@/queries/queryKeys'
 
 export function WechatBot() {
   const qc = useQueryClient()
   const { data: status } = useQuery({
-    queryKey: ['wxStatus'],
+    queryKey: queryKeys.wechat.status,
     queryFn: api.wxStatus,
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
@@ -33,7 +34,7 @@ export function WechatBot() {
   // plenty for the scroll buffer; older history sits on disk and reloads
   // on next launch.
   const { data: msgData } = useQuery({
-    queryKey: ['wxMessages'],
+    queryKey: queryKeys.wechat.messages,
     queryFn: () => api.wxMessages(undefined, 1000),
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
@@ -115,7 +116,7 @@ export function WechatBot() {
   // ── login flow ──
   const startLogin = async () => {
     await api.wxLogin()
-    qc.invalidateQueries({ queryKey: ['wxStatus'] })
+    qc.invalidateQueries({ queryKey: queryKeys.wechat.status })
   }
   const logout = async () => {
     const ok = await dialog.confirm('确认退出微信登录？', undefined, {
@@ -124,7 +125,7 @@ export function WechatBot() {
     })
     if (!ok) return
     await api.wxLogout()
-    qc.invalidateQueries({ queryKey: ['wxStatus'] })
+    qc.invalidateQueries({ queryKey: queryKeys.wechat.status })
   }
   const clearLog = async () => {
     const ok = await dialog.confirm('清空微信对话记录？', '本地与磁盘上的 wechat_log.jsonl 都会被删除，无法撤销。', {
@@ -339,7 +340,7 @@ function WxMessage({ m, showSender }: { m: WxLogEntry; showSender: boolean }) {
 
 function AllowlistDrawer({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
-  const { data } = useQuery({ queryKey: ['wxAllow'], queryFn: api.wxAllowlist })
+  const { data } = useQuery({ queryKey: queryKeys.wechat.allowlist, queryFn: api.wxAllowlist })
   const [list, setList] = useState<string[]>([])
   const [input, setInput] = useState('')
   useEffect(() => { if (data) setList(data.allowlist) }, [data])
@@ -347,8 +348,8 @@ function AllowlistDrawer({ onClose }: { onClose: () => void }) {
 
   const save = async () => {
     await api.wxSetAllowlist(list)
-    qc.invalidateQueries({ queryKey: ['wxAllow'] })
-    qc.invalidateQueries({ queryKey: ['wxStatus'] })
+    qc.invalidateQueries({ queryKey: queryKeys.wechat.allowlist })
+    qc.invalidateQueries({ queryKey: queryKeys.wechat.status })
     onClose()
   }
 

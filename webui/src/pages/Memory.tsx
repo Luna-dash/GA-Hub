@@ -5,6 +5,7 @@ import { api } from '@/api/client'
 import { MarkdownEditor } from '@/components/MarkdownEditor'
 import { toast } from '@/stores/toastStore'
 import { PageShell } from '@/components/PageShell'
+import { queryKeys } from '@/queries/queryKeys'
 
 type Tab = 'sop' | 'skill' | 'insight' | 'global'
 
@@ -39,7 +40,7 @@ export default function Memory() {
 
 function GlobalMem() {
   const qc = useQueryClient()
-  const { data, isLoading } = useQuery({ queryKey: ['mem.global'], queryFn: api.globalMem })
+  const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.global, queryFn: api.globalMem })
   const [v, setV] = useState('')
   const [dirty, setDirty] = useState(false)
   useEffect(() => { if (data) { setV(data.content); setDirty(false) } }, [data])
@@ -50,14 +51,14 @@ function GlobalMem() {
       value={v}
       dirty={dirty}
       onChange={(s) => { setV(s); setDirty(true) }}
-      onSave={async () => { try { await api.setGlobalMem(v); setDirty(false); qc.invalidateQueries({ queryKey: ['mem.global'] }); toast.success('已保存 global_mem.txt') } catch (e: any) { toast.error('保存失败：' + (e?.message || String(e))) } }}
+      onSave={async () => { try { await api.setGlobalMem(v); setDirty(false); qc.invalidateQueries({ queryKey: queryKeys.memory.global }); toast.success('已保存 global_mem.txt') } catch (e: any) { toast.error('保存失败：' + (e?.message || String(e))) } }}
     />
   )
 }
 
 function Insight() {
   const qc = useQueryClient()
-  const { data } = useQuery({ queryKey: ['mem.insight'], queryFn: api.insight })
+  const { data } = useQuery({ queryKey: queryKeys.memory.insight, queryFn: api.insight })
   const [v, setV] = useState(''); const [dirty, setDirty] = useState(false)
   useEffect(() => { if (data) { setV(data.content); setDirty(false) } }, [data])
   return (
@@ -66,17 +67,17 @@ function Insight() {
       value={v}
       dirty={dirty}
       onChange={(s) => { setV(s); setDirty(true) }}
-      onSave={async () => { try { await api.setInsight(v); setDirty(false); qc.invalidateQueries({ queryKey: ['mem.insight'] }); toast.success('已保存 insight') } catch (e: any) { toast.error('保存失败：' + (e?.message || String(e))) } }}
+      onSave={async () => { try { await api.setInsight(v); setDirty(false); qc.invalidateQueries({ queryKey: queryKeys.memory.insight }); toast.success('已保存 insight') } catch (e: any) { toast.error('保存失败：' + (e?.message || String(e))) } }}
     />
   )
 }
 
 function SopList() {
   const qc = useQueryClient()
-  const { data } = useQuery({ queryKey: ['sops'], queryFn: api.sops })
+  const { data } = useQuery({ queryKey: queryKeys.memory.sops, queryFn: api.sops })
   const sops = data?.sops ?? []
   const [active, setActive] = useState<string | null>(null)
-  const { data: cur } = useQuery({ queryKey: ['sop', active], queryFn: () => api.sop(active!), enabled: !!active })
+  const { data: cur } = useQuery({ queryKey: queryKeys.memory.sop(active), queryFn: () => api.sop(active!), enabled: !!active })
   const [v, setV] = useState(''); const [dirty, setDirty] = useState(false)
   useEffect(() => { if (cur) { setV(cur.content); setDirty(false) } }, [cur])
 
@@ -108,7 +109,7 @@ function SopList() {
             value={v}
             dirty={dirty}
             onChange={(s) => { setV(s); setDirty(true) }}
-            onSave={async () => { try { await api.setSop(active, v); setDirty(false); qc.invalidateQueries({ queryKey: ['sop', active] }); toast.success('已保存 ' + active) } catch (e: any) { toast.error('保存失败：' + (e?.message || String(e))) } }}
+            onSave={async () => { try { await api.setSop(active, v); setDirty(false); qc.invalidateQueries({ queryKey: queryKeys.memory.sop(active) }); toast.success('已保存 ' + active) } catch (e: any) { toast.error('保存失败：' + (e?.message || String(e))) } }}
           />
         )}
       </div>
@@ -117,10 +118,10 @@ function SopList() {
 }
 
 function SkillList() {
-  const { data } = useQuery({ queryKey: ['skills'], queryFn: () => api.skills() })
+  const { data } = useQuery({ queryKey: queryKeys.skills.list(), queryFn: () => api.skills() })
   const skills = data?.skills ?? []
   const [active, setActive] = useState<string | null>(null)
-  const { data: cur } = useQuery({ queryKey: ['skill', active], queryFn: () => api.skill(active!), enabled: !!active })
+  const { data: cur } = useQuery({ queryKey: queryKeys.skills.detail(active), queryFn: () => api.skill(active!), enabled: !!active })
 
   return (
     <div className="h-full grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)] gap-4 p-6">

@@ -7,6 +7,7 @@ import { MessageBubble } from '@/components/MessageBubble'
 import { PageShell } from '@/components/PageShell'
 import { useFeishuStore, type FeishuMsg } from '@/stores/feishuStore'
 import { deriveFeishuUiState } from '@/utils/feishuStatus'
+import { queryKeys } from '@/queries/queryKeys'
 
 function fmtTime(ts?: number) {
   if (!ts) return '尚未检测'
@@ -20,12 +21,12 @@ export default function FeishuBot() {
   const remoteMsgs = useFeishuStore((s) => s.msgs)
   const addMsgs = useFeishuStore((s) => s.addMsgs)
   const statusQ = useQuery({
-    queryKey: ['feishu-status'],
+    queryKey: queryKeys.feishu.status,
     queryFn: api.fsStatus,
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
   })
-  const checkQ = useQuery({ queryKey: ['feishu-check'], queryFn: () => api.fsCheck(false) })
+  const checkQ = useQuery({ queryKey: queryKeys.feishu.check, queryFn: () => api.fsCheck(false) })
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
   const [showKeys, setShowKeys] = useState(false)
@@ -118,8 +119,8 @@ export default function FeishuBot() {
       setNotice('飞书 Key 已保存。重启飞书网关后生效。')
       setShowKeys(false); setAppSecret('')
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ['feishu-status'] }),
-        qc.invalidateQueries({ queryKey: ['feishu-check'] }),
+        qc.invalidateQueries({ queryKey: queryKeys.feishu.status }),
+        qc.invalidateQueries({ queryKey: queryKeys.feishu.check }),
       ])
     } catch (e: any) {
       setNotice(`保存失败：${e?.message || e}`)

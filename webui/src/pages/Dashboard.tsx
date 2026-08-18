@@ -10,6 +10,7 @@ import {
   serviceActivityLabel,
   usefulMetrics,
 } from '@/utils/dashboardUi'
+import { queryKeys } from '@/queries/queryKeys'
 
 const exactNf = new Intl.NumberFormat('zh-CN')
 const compactNf = new Intl.NumberFormat('en', { notation: 'compact', compactDisplay: 'short', maximumSignificantDigits: 3 })
@@ -27,13 +28,13 @@ const verdictTone = {
 
 export default function Dashboard() {
   const panel = useQuery({
-    queryKey: ['service-panel'],
+    queryKey: queryKeys.servicePanel,
     queryFn: api.servicePanel,
     refetchInterval: 15_000,
     refetchIntervalInBackground: false,
   })
   const tokens = useQuery({
-    queryKey: ['token-stats'],
+    queryKey: queryKeys.tokenStats,
     queryFn: api.tokenStats,
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,

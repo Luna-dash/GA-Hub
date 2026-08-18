@@ -4,11 +4,12 @@ import { api } from '@/api/client'
 import type { SkillSearchHit } from '@/api/types'
 import { MarkdownView } from '@/components/MarkdownView'
 import { PageShell } from '@/components/PageShell'
+import { queryKeys } from '@/queries/queryKeys'
 
 type Mode = 'path' | 'content'
 
 export function Skills() {
-  const { data: listData } = useQuery({ queryKey: ['skills'], queryFn: () => api.skills(500) })
+  const { data: listData } = useQuery({ queryKey: queryKeys.skills.list(500), queryFn: () => api.skills(500) })
   const allSkills = listData?.skills ?? []
 
   const [mode, setMode] = useState<Mode>('path')
@@ -24,13 +25,13 @@ export function Skills() {
 
   // Content-mode search hits.
   const { data: searchData, isFetching: searching } = useQuery({
-    queryKey: ['skills.search', debouncedFilter],
+    queryKey: queryKeys.skills.search(debouncedFilter),
     queryFn: () => api.searchSkills(debouncedFilter, 80),
     enabled: mode === 'content' && debouncedFilter.trim().length >= 2,
   })
 
   const { data: cur } = useQuery({
-    queryKey: ['skill', active],
+    queryKey: queryKeys.skills.detail(active),
     queryFn: () => api.skill(active!),
     enabled: !!active,
   })

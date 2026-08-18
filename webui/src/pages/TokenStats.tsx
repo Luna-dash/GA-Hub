@@ -4,6 +4,7 @@ import { api } from '@/api/client'
 import { PageShell } from '@/components/PageShell'
 import type { TokenDayStats, TokenStatsResponse, TokenThreadStats, TokenTotals } from '@/api/types'
 import { compactTokens, filterThreads, pageItems, readableThreadName, visibleWeeks } from '@/utils/tokenStatsUi'
+import { queryKeys } from '@/queries/queryKeys'
 
 const exactNf = new Intl.NumberFormat('zh-CN')
 const fmt = compactTokens
@@ -122,7 +123,7 @@ function SessionUsage({ rows }: { rows: TokenThreadStats[] }) {
 export default function TokenStats() {
   const [days, setDays] = useState<7 | 30>(7)
   const stats = useQuery({
-    queryKey: ['tokenStats'],
+    queryKey: queryKeys.tokenStats,
     queryFn: api.tokenStats,
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
