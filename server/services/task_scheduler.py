@@ -168,9 +168,7 @@ class TaskScheduler:
             if admission_stopped:
                 admission_lock.release()
         watchers = getattr(self, "_watchers", None)
-        if watchers is None:
-            pass
-        else:
+        if watchers is not None and admission_stopped:
             watchers.request_stop()
         if getattr(self, "_owns_sched", True):
             try:
@@ -179,9 +177,16 @@ class TaskScheduler:
                     scheduler.shutdown(wait=False)
             except Exception:
                 pass
-        watchers_stopped = watchers is None or watchers.shutdown(
-            timeout=max(0.0, deadline - time.monotonic())
-        )
+        if watchers is None:
+            watchers_stopped = True
+        elif admission_stopped:
+            watchers_stopped = watchers.shutdown(
+                timeout=max(0.0, deadline - time.monotonic())
+            )
+        else:
+            # Keep admission open until the in-flight fire can register its
+            # watcher; the stop event makes that watcher exit immediately.
+            watchers_stopped = False
         stopped = admission_stopped and watchers_stopped
         if stopped and type(self)._instance is self:
             type(self)._instance = None

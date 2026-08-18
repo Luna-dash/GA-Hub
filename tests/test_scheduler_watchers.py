@@ -223,3 +223,47 @@ def test_completed_task_watcher_records_and_reaps_itself() -> None:
 
     assert [call.args[0] for call in publish.call_args_list] == ["task:fired", "task:done"]
     assert service._watchers.active_count == 0
+
+
+@pytest.mark.parametrize(
+    ("factory", "schedule_id"),
+    [(_autonomous_scheduler, "auto-1"), (_task_scheduler, "task-1")],
+)
+def test_timed_out_shutdown_keeps_inflight_fire_admissible(
+    factory, schedule_id: str,
+) -> None:
+    service = factory(_Handle())
+    entered = threading.Event()
+    release = threading.Event()
+    result: list[dict] = []
+
+    def blocked_submit(_prompt: str, *, source: str) -> _Handle:
+        assert source in {"autonomous", "scheduled_task"}
+        entered.set()
+        release.wait()
+        return service.agent_service.handle
+
+    service.agent_service.submit = blocked_submit
+    with (
+        mock.patch.object(service, "_persist"),
+        mock.patch("server.services.autonomous_scheduler.bus.publish"),
+        mock.patch("server.services.task_scheduler.bus.publish"),
+    ):
+        fire_thread = threading.Thread(
+            target=lambda: result.append(service.trigger_now(schedule_id)),
+            daemon=True,
+        )
+        fire_thread.start()
+        assert entered.wait(1)
+        assert service.shutdown(timeout=0.01) is False
+
+        release.set()
+        fire_thread.join(timeout=1)
+        assert not fire_thread.is_alive()
+        assert result and "run_id" in result[0]
+
+        deadline = time.monotonic() + 1
+        while service._watchers.active_count and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert service._watchers.active_count == 0
+        assert service.shutdown(timeout=1) is True

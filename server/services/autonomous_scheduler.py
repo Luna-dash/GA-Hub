@@ -212,9 +212,7 @@ class AutonomousScheduler:
             if admission_stopped:
                 admission_lock.release()
         watchers = getattr(self, "_watchers", None)
-        if watchers is None:
-            pass
-        else:
+        if watchers is not None and admission_stopped:
             watchers.request_stop()
         if getattr(self, "_owns_sched", True):
             try:
@@ -228,9 +226,17 @@ class AutonomousScheduler:
             thread.join(timeout=max(0.0, deadline - time.monotonic()))
             if not thread.is_alive():
                 self._idle_thread = None
-        watchers_stopped = watchers is None or watchers.shutdown(
-            timeout=max(0.0, deadline - time.monotonic())
-        )
+        if watchers is None:
+            watchers_stopped = True
+        elif admission_stopped:
+            watchers_stopped = watchers.shutdown(
+                timeout=max(0.0, deadline - time.monotonic())
+            )
+        else:
+            # An in-flight fire still owns admission and must be allowed to
+            # register its watcher after this timed-out shutdown returns.
+            # stop_event already asks that watcher to exit promptly.
+            watchers_stopped = False
         stopped = (
             admission_stopped
             and (thread is None or not thread.is_alive())
