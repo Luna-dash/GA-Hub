@@ -1105,6 +1105,7 @@ dependencies = [
 name = "ga-hub-desktop"
 version = "0.3.4"
 dependencies = [
+ "libc",
  "serde_json",
  "tauri",
  "tauri-build",
@@ -1114,6 +1115,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "url",
  "uuid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

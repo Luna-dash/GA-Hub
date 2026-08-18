@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicU8, Ordering},
         Arc, Mutex,
     },
     thread,
@@ -17,11 +17,41 @@ use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use url::Url;
 use uuid::Uuid;
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 #[cfg(windows)]
-use std::os::windows::process::CommandExt;
+use std::os::windows::{
+    io::{AsRawHandle, FromRawHandle, OwnedHandle},
+    process::CommandExt,
+};
+
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::{HANDLE, INVALID_HANDLE_VALUE},
+    System::{
+        Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+        },
+        JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        },
+        Threading::{OpenThread, ResumeThread, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME},
+    },
+};
+
+#[cfg(all(windows, test))]
+use windows_sys::Win32::System::JobObjects::{
+    JobObjectBasicAccountingInformation, QueryInformationJobObject,
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+const FORCE_REAP_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(unix)]
+const GROUP_TERM_TIMEOUT: Duration = Duration::from_secs(1);
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -33,9 +63,338 @@ enum BackendReadiness {
     Failed(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExitPhase {
+    Running = 0,
+    Cleaning = 1,
+    AllowExit = 2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExitAction {
+    StartCleanup,
+    WaitForCleanup,
+    AllowExit,
+}
+
+#[derive(Clone)]
+struct ExitCoordinator {
+    phase: Arc<AtomicU8>,
+}
+
+impl ExitCoordinator {
+    fn new() -> Self {
+        Self {
+            phase: Arc::new(AtomicU8::new(ExitPhase::Running as u8)),
+        }
+    }
+
+    fn phase(&self) -> ExitPhase {
+        match self.phase.load(Ordering::Acquire) {
+            value if value == ExitPhase::Running as u8 => ExitPhase::Running,
+            value if value == ExitPhase::Cleaning as u8 => ExitPhase::Cleaning,
+            value if value == ExitPhase::AllowExit as u8 => ExitPhase::AllowExit,
+            _ => ExitPhase::Cleaning,
+        }
+    }
+
+    fn is_running(&self) -> bool {
+        self.phase() == ExitPhase::Running
+    }
+
+    fn request_exit(&self) -> ExitAction {
+        loop {
+            match self.phase() {
+                ExitPhase::Running => {
+                    if self
+                        .phase
+                        .compare_exchange(
+                            ExitPhase::Running as u8,
+                            ExitPhase::Cleaning as u8,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        return ExitAction::StartCleanup;
+                    }
+                }
+                ExitPhase::Cleaning => return ExitAction::WaitForCleanup,
+                ExitPhase::AllowExit => return ExitAction::AllowExit,
+            }
+        }
+    }
+
+    fn allow_exit(&self) {
+        self.phase
+            .store(ExitPhase::AllowExit as u8, Ordering::Release);
+    }
+}
+
+#[cfg(windows)]
+struct KillOnCloseJob(OwnedHandle);
+
+#[cfg(windows)]
+impl KillOnCloseJob {
+    fn new() -> Result<Self, String> {
+        let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if raw.is_null() {
+            return Err(format!(
+                "CreateJobObjectW failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        // OwnedHandle closes the job on every return path. The kill-on-close
+        // limit then tears down any descendant still attached to the job.
+        let handle = unsafe { OwnedHandle::from_raw_handle(raw as _) };
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = unsafe {
+            SetInformationJobObject(
+                handle.as_raw_handle() as HANDLE,
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as _,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if configured == 0 {
+            return Err(format!(
+                "SetInformationJobObject failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(Self(handle))
+    }
+
+    fn assign(&self, child: &Child) -> Result<(), String> {
+        let assigned = unsafe {
+            AssignProcessToJobObject(
+                self.0.as_raw_handle() as HANDLE,
+                child.as_raw_handle() as HANDLE,
+            )
+        };
+        if assigned == 0 {
+            return Err(format!(
+                "AssignProcessToJobObject failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
+
+    fn terminate(&self) -> bool {
+        unsafe { TerminateJobObject(self.0.as_raw_handle() as HANDLE, 1) != 0 }
+    }
+
+    #[cfg(test)]
+    fn active_processes(&self) -> Result<u32, String> {
+        let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
+        let queried = unsafe {
+            QueryInformationJobObject(
+                self.0.as_raw_handle() as HANDLE,
+                JobObjectBasicAccountingInformation,
+                &mut accounting as *mut _ as _,
+                std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if queried == 0 {
+            return Err(format!(
+                "QueryInformationJobObject failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(accounting.ActiveProcesses)
+    }
+}
+
+#[cfg(windows)]
+fn resume_suspended_main_thread(process_id: u32) -> Result<(), String> {
+    let snapshot_raw = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot_raw == INVALID_HANDLE_VALUE {
+        return Err(format!(
+            "CreateToolhelp32Snapshot failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot_raw as _) };
+    let mut entry: THREADENTRY32 = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+    let mut has_entry =
+        unsafe { Thread32First(snapshot.as_raw_handle() as HANDLE, &mut entry) } != 0;
+    while has_entry {
+        if entry.th32OwnerProcessID == process_id {
+            let thread_raw = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
+            if thread_raw.is_null() {
+                return Err(format!(
+                    "OpenThread failed for suspended sidecar: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let thread = unsafe { OwnedHandle::from_raw_handle(thread_raw as _) };
+            let previous_count = unsafe { ResumeThread(thread.as_raw_handle() as HANDLE) };
+            if previous_count == u32::MAX {
+                return Err(format!(
+                    "ResumeThread failed for suspended sidecar: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            if previous_count != 1 {
+                return Err(format!(
+                    "suspended sidecar had unexpected thread suspend count {previous_count}"
+                ));
+            }
+            return Ok(());
+        }
+        has_entry = unsafe { Thread32Next(snapshot.as_raw_handle() as HANDLE, &mut entry) } != 0;
+    }
+    Err(format!(
+        "suspended sidecar main thread was not found for process {process_id}"
+    ))
+}
+
+struct OwnedProcess {
+    // Keep the Windows job before the Child handle so field teardown closes
+    // the kill-on-close job first, while the root process handle is still live.
+    #[cfg(windows)]
+    job: KillOnCloseJob,
+    #[cfg(unix)]
+    process_group: libc::pid_t,
+    #[cfg(unix)]
+    group_swept: bool,
+    child: Child,
+    cleanup_complete: bool,
+}
+
+impl OwnedProcess {
+    fn spawn(mut command: Command) -> Result<Self, String> {
+        #[cfg(unix)]
+        command.process_group(0);
+
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+
+        #[cfg(windows)]
+        let job = KillOnCloseJob::new()?;
+
+        let mut child = command
+            .spawn()
+            .map_err(|e| format!("sidecar spawn failed: {e}"))?;
+
+        #[cfg(windows)]
+        {
+            if let Err(error) = job.assign(&child) {
+                // Assignment is performed immediately after CreateProcess. If
+                // it fails, use the platform fallback before dropping the job;
+                // the child was never owned by the kill-on-close handle.
+                force_stop_unmanaged_child(&mut child);
+                return Err(error);
+            }
+            if let Err(error) = resume_suspended_main_thread(child.id()) {
+                let _ = job.terminate();
+                let _ = child.kill();
+                let _ = wait_for_raw_child_exit(&mut child, FORCE_REAP_TIMEOUT);
+                return Err(error);
+            }
+            Ok(Self {
+                job,
+                child,
+                cleanup_complete: false,
+            })
+        }
+
+        #[cfg(unix)]
+        {
+            let process_group = libc::pid_t::try_from(child.id())
+                .map_err(|_| "sidecar pid cannot be represented as a process group".to_string());
+            let process_group = match process_group {
+                Ok(value) if value > 0 => value,
+                Ok(_) | Err(_) => {
+                    let _ = child.kill();
+                    let _ = wait_for_raw_child_exit(&mut child, FORCE_REAP_TIMEOUT);
+                    return Err("sidecar process group allocation failed".to_string());
+                }
+            };
+            return Ok(Self {
+                process_group,
+                group_swept: false,
+                child,
+                cleanup_complete: false,
+            });
+        }
+    }
+
+    #[cfg(windows)]
+    fn root_has_exited(&mut self) -> std::io::Result<bool> {
+        self.child.try_wait().map(|status| status.is_some())
+    }
+
+    #[cfg(unix)]
+    fn root_has_exited(&mut self) -> std::io::Result<bool> {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                self.process_group as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if result != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(unsafe { info.si_pid() } != 0)
+    }
+
+    fn finish_exited_tree(&mut self) -> bool {
+        #[cfg(windows)]
+        let _ = self.job.terminate();
+
+        #[cfg(unix)]
+        {
+            // waitid(WNOWAIT) left the exited group leader unreaped, so its
+            // PID/PGID cannot be reused before this final descendant sweep.
+            if !self.group_swept {
+                let _ = unsafe { libc::kill(-self.process_group, libc::SIGKILL) };
+                self.group_swept = true;
+            }
+        }
+
+        let reaped = matches!(self.child.try_wait(), Ok(Some(_)));
+        self.cleanup_complete = reaped;
+        reaped
+    }
+}
+
+impl Drop for OwnedProcess {
+    fn drop(&mut self) {
+        if self.cleanup_complete {
+            return;
+        }
+
+        // Drop cannot wait without risking a destructor-time deadlock. It does
+        // make one last non-blocking tree/root termination request. On Windows,
+        // OwnedHandle then closes the kill-on-close job before Child is dropped.
+        #[cfg(windows)]
+        {
+            let _ = self.job.terminate();
+            let _ = self.child.kill();
+        }
+        #[cfg(unix)]
+        {
+            if self.group_swept {
+                return;
+            }
+            let _ = unsafe { libc::kill(-self.process_group, libc::SIGKILL) };
+            self.group_swept = true;
+            let _ = self.child.kill();
+        }
+    }
+}
+
 #[derive(Clone)]
 struct OwnedSidecar {
-    child: Arc<Mutex<Option<Child>>>,
+    child: Arc<Mutex<Option<OwnedProcess>>>,
     readiness: Arc<Mutex<BackendReadiness>>,
 }
 
@@ -47,11 +406,11 @@ impl OwnedSidecar {
         }
     }
 
-    fn store_child(&self, mut child: Child) -> Result<(), String> {
+    fn store_child(&self, mut child: OwnedProcess) -> Result<(), String> {
         let mut slot = self.child.lock().unwrap_or_else(|e| e.into_inner());
         if slot.is_some() {
             drop(slot);
-            stop_child(&mut child);
+            stop_owned_process(&mut child);
             return Err("desktop shell already owns a sidecar".to_string());
         }
         *slot = Some(child);
@@ -59,7 +418,7 @@ impl OwnedSidecar {
         Ok(())
     }
 
-    fn take_child(&self) -> Option<Child> {
+    fn take_child(&self) -> Option<OwnedProcess> {
         self.child.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
 
@@ -139,7 +498,7 @@ fn sidecar_command() -> Result<Command, String> {
     }
 }
 
-fn spawn_sidecar() -> Result<(Child, u16, String), String> {
+fn allocate_sidecar_identity() -> Result<(u16, String), String> {
     let token = Uuid::new_v4().to_string();
     let probe = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("sidecar port allocation failed: {e}"))?;
@@ -148,7 +507,10 @@ fn spawn_sidecar() -> Result<(Child, u16, String), String> {
         .map_err(|e| format!("sidecar port lookup failed: {e}"))?
         .port();
     drop(probe);
+    Ok((port, token))
+}
 
+fn spawn_sidecar(port: u16, token: &str) -> Result<OwnedProcess, String> {
     let mut command = sidecar_command()?;
     let port_arg = port.to_string();
     command
@@ -159,17 +521,13 @@ fn spawn_sidecar() -> Result<(Child, u16, String), String> {
             "--port",
             &port_arg,
             "--instance-token",
-            &token,
+            token,
+            "--owned-stdin",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
-    let child = command
-        .spawn()
-        .map_err(|e| format!("sidecar spawn failed: {e}"))?;
-    Ok((child, port, token))
+    OwnedProcess::spawn(command)
 }
 
 fn ready_response_matches(response: &str, token: &str) -> bool {
@@ -206,14 +564,14 @@ fn wait_http_ready(
     sidecar: &OwnedSidecar,
     port: u16,
     token: &str,
-    quitting: &AtomicBool,
+    exit: &ExitCoordinator,
 ) -> Result<ReadinessWait, String> {
     let deadline = Instant::now() + READY_TIMEOUT;
     let address = format!("127.0.0.1:{port}")
         .parse()
         .map_err(|e| format!("invalid sidecar address: {e}"))?;
     while Instant::now() < deadline {
-        if quitting.load(Ordering::SeqCst) {
+        if !exit.is_running() {
             return Ok(ReadinessWait::Cancelled);
         }
 
@@ -223,22 +581,22 @@ fn wait_http_ready(
         let child_status = {
             let mut slot = sidecar.child.lock().unwrap_or_else(|e| e.into_inner());
             match slot.as_mut() {
-                Some(child) => Some(
-                    child
-                        .try_wait()
-                        .map_err(|e| format!("sidecar status check failed: {e}"))?,
-                ),
+                Some(process) => {
+                    let exited = process
+                        .root_has_exited()
+                        .map_err(|e| format!("sidecar status check failed: {e}"))?;
+                    if exited {
+                        let _ = process.finish_exited_tree();
+                    }
+                    Some(exited)
+                }
                 None => None,
             }
         };
         match child_status {
-            Some(Some(status)) => {
-                return Err(format!(
-                    "sidecar exited before readiness with status {status}"
-                ));
-            }
-            Some(None) => {}
-            None if quitting.load(Ordering::SeqCst) => return Ok(ReadinessWait::Cancelled),
+            Some(true) => return Err("sidecar exited before readiness".to_string()),
+            Some(false) => {}
+            None if !exit.is_running() => return Ok(ReadinessWait::Cancelled),
             None => return Err("owned sidecar disappeared before readiness".to_string()),
         }
 
@@ -264,7 +622,7 @@ fn wait_http_ready(
 fn request_owned_shutdown(sidecar: &OwnedSidecar) {
     let stdin = {
         let mut slot = sidecar.child.lock().unwrap_or_else(|e| e.into_inner());
-        slot.as_mut().and_then(|child| child.stdin.take())
+        slot.as_mut().and_then(|child| child.child.stdin.take())
     };
     if let Some(mut stdin) = stdin {
         let _ = stdin.write_all(b"\n");
@@ -276,13 +634,13 @@ fn spawn_background_readiness(
     sidecar: OwnedSidecar,
     port: u16,
     token: String,
-    quitting: Arc<AtomicBool>,
+    exit: ExitCoordinator,
 ) {
     thread::spawn(
-        move || match wait_http_ready(&sidecar, port, &token, &quitting) {
-            Ok(ReadinessWait::Ready) if !quitting.load(Ordering::SeqCst) => sidecar.set_ready(),
+        move || match wait_http_ready(&sidecar, port, &token, &exit) {
+            Ok(ReadinessWait::Ready) if exit.is_running() => sidecar.set_ready(),
             Ok(ReadinessWait::Ready | ReadinessWait::Cancelled) => {}
-            Err(error) if !quitting.load(Ordering::SeqCst) => {
+            Err(error) if exit.is_running() => {
                 sidecar.set_failed(format!("GA-Hub desktop startup: {error}"));
                 // Keep the Child in the shared owner slot so CloseRequested can
                 // still take it immediately. This quick request handles the usual
@@ -345,78 +703,113 @@ fn is_allowed_main_navigation(url: &Url) -> bool {
     tauri_app || vite_dev
 }
 
-fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> bool {
+fn wait_for_raw_child_exit(child: &mut Child, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => {
-                let _ = child.wait();
-                return true;
-            }
+            Ok(Some(_)) => return true,
             Ok(None) if Instant::now() < deadline => thread::sleep(PROCESS_POLL_INTERVAL),
             Ok(None) | Err(_) => return false,
         }
     }
 }
 
-fn force_stop_child(child: &mut Child) {
-    #[cfg(windows)]
-    {
-        let pid = child.id().to_string();
-        let stopped = Command::new("taskkill")
-            .args(["/PID", &pid, "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false);
-        if !stopped {
-            let _ = child.kill();
+fn wait_for_child_exit(process: &mut OwnedProcess, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match process.root_has_exited() {
+            Ok(true) => return process.finish_exited_tree(),
+            Ok(false) if Instant::now() < deadline => thread::sleep(PROCESS_POLL_INTERVAL),
+            Ok(false) | Err(_) => return false,
         }
     }
-    #[cfg(not(windows))]
-    {
-        let _ = child.kill();
-    }
-    let _ = child.wait();
 }
 
-fn stop_child(child: &mut Child) {
-    if let Some(mut stdin) = child.stdin.take() {
+#[cfg(windows)]
+fn force_stop_unmanaged_child(child: &mut Child) {
+    let pid = child.id().to_string();
+    if let Ok(mut killer) = Command::new("taskkill")
+        .args(["/PID", &pid, "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+    {
+        if !wait_for_raw_child_exit(&mut killer, FORCE_REAP_TIMEOUT) {
+            let _ = killer.kill();
+        }
+    }
+    let _ = child.kill();
+    let _ = wait_for_raw_child_exit(child, FORCE_REAP_TIMEOUT);
+}
+
+fn force_stop_owned_process(process: &mut OwnedProcess) -> bool {
+    #[cfg(windows)]
+    {
+        let _ = process.job.terminate();
+        // TerminateJobObject can fail (for example if the job is already being
+        // torn down). Always target the root child as an independent fallback.
+        let _ = process.child.kill();
+    }
+
+    #[cfg(unix)]
+    {
+        // The group leader is deliberately left unreaped during this grace
+        // period, so its process-group id cannot be reused before SIGKILL.
+        let _ = unsafe { libc::kill(-process.process_group, libc::SIGTERM) };
+        thread::sleep(GROUP_TERM_TIMEOUT);
+        let _ = unsafe { libc::kill(-process.process_group, libc::SIGKILL) };
+        process.group_swept = true;
+        // A process-group signal can fail or race with group teardown. The root
+        // Child handle remains an independent, owned fallback.
+        let _ = process.child.kill();
+    }
+    wait_for_child_exit(process, FORCE_REAP_TIMEOUT)
+}
+
+fn stop_owned_process(process: &mut OwnedProcess) {
+    if process.cleanup_complete {
+        return;
+    }
+    #[cfg(unix)]
+    if process.group_swept {
+        process.cleanup_complete = matches!(process.child.try_wait(), Ok(Some(_)));
+        return;
+    }
+    if let Some(mut stdin) = process.child.stdin.take() {
         let _ = stdin.write_all(b"\n");
         let _ = stdin.flush();
     }
-    if !wait_for_child_exit(child, STOP_TIMEOUT) {
-        force_stop_child(child);
-    }
+    let stopped = wait_for_child_exit(process, STOP_TIMEOUT) || force_stop_owned_process(process);
+    process.cleanup_complete = stopped;
 }
 
 fn stop_owned(sidecar: &OwnedSidecar) {
-    let Some(mut child) = sidecar.take_child() else {
+    let Some(mut process) = sidecar.take_child() else {
         return;
     };
-    stop_child(&mut child);
+    stop_owned_process(&mut process);
 }
 
-fn spawn_background_shutdown(handle: tauri::AppHandle) {
+fn spawn_background_shutdown(handle: tauri::AppHandle, exit: ExitCoordinator) {
     thread::spawn(move || {
         stop_owned(&handle.state::<OwnedSidecar>());
+        exit.allow_exit();
         handle.exit(0);
     });
 }
 
 fn main() {
-    let quitting = Arc::new(AtomicBool::new(false));
-    let quitting_setup = quitting.clone();
-    let quitting_single_instance = quitting.clone();
+    let exit = ExitCoordinator::new();
+    let exit_setup = exit.clone();
+    let exit_single_instance = exit.clone();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(move |app, _, _| {
-            if quitting_single_instance.load(Ordering::SeqCst) {
+            if !exit_single_instance.is_running() {
                 return;
             }
             if let Some(window) = app.get_webview_window("main") {
@@ -430,28 +823,31 @@ fn main() {
             desktop_backend_ready
         ])
         .setup(move |app| {
-            let (child, port, token) =
-                spawn_sidecar().map_err(|e| format!("GA-Hub desktop startup: {e}"))?;
+            let (port, token) =
+                allocate_sidecar_identity().map_err(|e| format!("GA-Hub desktop startup: {e}"))?;
             let owned = app.state::<OwnedSidecar>().inner().clone();
-            owned
-                .store_child(child)
-                .map_err(|e| format!("GA-Hub desktop startup: {e}"))?;
             let runtime_script = runtime_initialization_script(port, &token);
-            if let Err(error) =
-                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                    .initialization_script(runtime_script)
-                    .on_navigation(is_allowed_main_navigation)
-                    .title("GA-Hub")
-                    .inner_size(1320.0, 860.0)
-                    .min_inner_size(960.0, 600.0)
-                    .resizable(true)
-                    .build()
-            {
-                stop_owned(&owned);
-                return Err(error.into());
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .initialization_script(runtime_script)
+                .on_navigation(is_allowed_main_navigation)
+                .title("GA-Hub")
+                .inner_size(1320.0, 860.0)
+                .min_inner_size(960.0, 600.0)
+                .resizable(true)
+                .build()?;
+
+            let process = match spawn_sidecar(port, &token) {
+                Ok(process) => process,
+                Err(error) => {
+                    owned.set_failed(format!("GA-Hub desktop startup: {error}"));
+                    return Ok(());
+                }
+            };
+            if let Err(error) = owned.store_child(process) {
+                owned.set_failed(format!("GA-Hub desktop startup: {error}"));
+                return Ok(());
             }
-            quitting_setup.store(false, Ordering::SeqCst);
-            spawn_background_readiness(owned, port, token, quitting_setup.clone());
+            spawn_background_readiness(owned, port, token, exit_setup.clone());
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -462,22 +858,28 @@ fn main() {
             label,
             event: WindowEvent::CloseRequested { api, .. },
             ..
-        } if label == "main" => {
-            api.prevent_close();
-            if let Some(window) = handle.get_webview_window("main") {
-                let _ = window.hide();
+        } if label == "main" => match exit.request_exit() {
+            ExitAction::StartCleanup => {
+                api.prevent_close();
+                if let Some(window) = handle.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+                spawn_background_shutdown(handle.clone(), exit.clone());
             }
-            if !quitting.swap(true, Ordering::SeqCst) {
-                spawn_background_shutdown(handle.clone());
+            ExitAction::WaitForCleanup => api.prevent_close(),
+            ExitAction::AllowExit => {}
+        },
+        RunEvent::ExitRequested { api, .. } => match exit.request_exit() {
+            ExitAction::StartCleanup => {
+                api.prevent_exit();
+                if let Some(window) = handle.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+                spawn_background_shutdown(handle.clone(), exit.clone());
             }
-        }
-        RunEvent::ExitRequested { api, .. } if !quitting.swap(true, Ordering::SeqCst) => {
-            api.prevent_exit();
-            if let Some(window) = handle.get_webview_window("main") {
-                let _ = window.hide();
-            }
-            spawn_background_shutdown(handle.clone());
-        }
+            ExitAction::WaitForCleanup => api.prevent_exit(),
+            ExitAction::AllowExit => {}
+        },
         _ => {}
     });
 }
@@ -559,5 +961,56 @@ mod tests {
         assert_eq!(sidecar.ready(), Ok(true));
         sidecar.set_failed("failed".to_string());
         assert_eq!(sidecar.ready(), Err("failed".to_string()));
+    }
+
+    #[test]
+    fn exit_coordinator_blocks_repeat_requests_until_cleanup_finishes() {
+        let exit = ExitCoordinator::new();
+        let worker = exit.clone();
+        assert!(exit.is_running());
+        assert_eq!(exit.request_exit(), ExitAction::StartCleanup);
+        assert_eq!(worker.phase(), ExitPhase::Cleaning);
+        assert_eq!(worker.request_exit(), ExitAction::WaitForCleanup);
+        worker.allow_exit();
+        assert_eq!(exit.request_exit(), ExitAction::AllowExit);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn suspended_job_owns_and_terminates_descendant_tree() {
+        let mut command = Command::new("cmd.exe");
+        command
+            .args(["/D", "/C", "ping.exe 127.0.0.1 -n 30 >NUL"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut process = OwnedProcess::spawn(command).expect("owned test process should start");
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut observed_descendant = false;
+        while Instant::now() < deadline {
+            if process
+                .job
+                .active_processes()
+                .expect("test job accounting should be readable")
+                >= 2
+            {
+                observed_descendant = true;
+                break;
+            }
+            thread::sleep(PROCESS_POLL_INTERVAL);
+        }
+        if !observed_descendant {
+            stop_owned_process(&mut process);
+            panic!("resumed job should contain cmd.exe and its ping.exe descendant");
+        }
+
+        let terminated = process.job.terminate();
+        let exited = wait_for_child_exit(&mut process, FORCE_REAP_TIMEOUT);
+        if !exited {
+            stop_owned_process(&mut process);
+        }
+        assert!(terminated, "test job should accept tree termination");
+        assert!(exited, "terminating the job must stop its root child");
     }
 }

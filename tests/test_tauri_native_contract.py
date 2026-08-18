@@ -64,16 +64,55 @@ def test_frontend_uses_one_desktop_capability_facade() -> None:
 
 def test_tauri_shutdown_is_immediate_for_the_window_and_graceful_for_the_sidecar() -> None:
     rust = _read("src-tauri/src/main.rs")
+    cargo = _read("src-tauri/Cargo.toml")
 
     assert "const STOP_TIMEOUT: Duration = Duration::from_secs(5)" in rust
+    assert '"--owned-stdin"' in rust
     assert ".stdin(Stdio::piped())" in rust
     assert 'stdin.write_all(b"\\n")' in rust
     assert "fn spawn_background_shutdown" in rust
     assert "thread::spawn(move ||" in rust
     assert "api.prevent_close()" in rust
     assert "window.hide()" in rust
-    assert "if !wait_for_child_exit(child, STOP_TIMEOUT)" in rust
-    assert 'Command::new("taskkill")' in rust
+    assert "wait_for_child_exit(process, STOP_TIMEOUT)" in rust
+    assert "const FORCE_REAP_TIMEOUT: Duration = Duration::from_secs(2)" in rust
+    assert "impl Drop for OwnedProcess" in rust
+    assert "cleanup_complete" in rust
+    assert "let _ = process.child.kill();" in rust
+    assert "wait_for_child_exit(process, FORCE_REAP_TIMEOUT)" in rust
+
+    assert "[target.'cfg(windows)'.dependencies]" in cargo
+    assert 'windows-sys = { version = "0.59"' in cargo
+    assert "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE" in rust
+    assert "CreateJobObjectW" in rust
+    assert "SetInformationJobObject" in rust
+    assert "AssignProcessToJobObject" in rust
+    assert "TerminateJobObject" in rust
+    assert "OwnedHandle::from_raw_handle" in rust
+    assert '"Win32_System_Diagnostics_ToolHelp"' in cargo
+    assert "CREATE_SUSPENDED" in rust
+    assert "resume_suspended_main_thread" in rust
+    assert "ResumeThread" in rust
+    owned_spawn = rust.split("impl OwnedProcess", 1)[1]
+    assert owned_spawn.index("job.assign(&child)") < owned_spawn.index(
+        "resume_suspended_main_thread(child.id())"
+    )
+
+    assert "[target.'cfg(unix)'.dependencies]" in cargo
+    assert 'libc = "0.2"' in cargo
+    assert "command.process_group(0)" in rust
+    assert "libc::waitid(" in rust
+    assert "libc::WNOWAIT" in rust
+    assert "group_swept" in rust
+    assert "libc::kill(-process.process_group, libc::SIGTERM)" in rust
+    assert "libc::kill(-process.process_group, libc::SIGKILL)" in rust
+    assert "fn suspended_job_owns_and_terminates_descendant_tree" in rust
+
+    for phase in ("Running", "Cleaning", "AllowExit"):
+        assert phase in rust
+    assert "ExitAction::WaitForCleanup => api.prevent_close()" in rust
+    assert "ExitAction::WaitForCleanup => api.prevent_exit()" in rust
+    assert "exit.allow_exit();" in rust
 
 
 def test_tauri_startup_is_local_first_and_release_cwd_is_portable() -> None:
@@ -108,7 +147,9 @@ def test_tauri_startup_is_local_first_and_release_cwd_is_portable() -> None:
     assert "response.contains(token)" not in rust
 
     setup = rust.split(".setup(move |app| {", 1)[1]
-    assert setup.index(".store_child(child)") < setup.index("WebviewWindowBuilder::new")
+    assert setup.index("WebviewWindowBuilder::new") < setup.index("spawn_sidecar(port, &token)")
+    assert setup.index("spawn_sidecar(port, &token)") < setup.index("owned.store_child(process)")
+    assert 'owned.set_failed(format!("GA-Hub desktop startup: {error}"))' in setup
     assert setup.index(".build()") < setup.index("spawn_background_readiness(")
 
     assert ".current_dir(sidecar_working_dir()?)" in rust
@@ -116,7 +157,7 @@ def test_tauri_startup_is_local_first_and_release_cwd_is_portable() -> None:
     assert "env::current_exe()" in rust
     assert ".parent()" in rust
     assert ".current_dir(repo_root())" not in rust
-    assert "command.creation_flags(CREATE_NO_WINDOW)" in rust
+    assert "command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED)" in rust
 
 
 def test_local_app_router_gate_and_csp_contract() -> None:
