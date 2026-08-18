@@ -1,47 +1,77 @@
 import { create } from 'zustand'
-import type { AgentStatus, BusEvent } from '@/api/types'
-import { EventSocket, api } from '@/api/client'
+import type { AgentStatus } from '@/api/types'
+import { api } from '@/api/client'
+import { hubEventClient } from '@/runtime/hubEventClient'
 
 interface State {
   status: AgentStatus | null
-  recent: BusEvent[]
-  sock: EventSocket | null
   refreshStatus: () => Promise<void>
   start: () => void
   stop: () => void
 }
 
+let unsubscribeAgentEvents: (() => void) | undefined
+let unsubscribeHubState: (() => void) | undefined
+let refreshTimer: number | undefined
+let refreshInFlight: Promise<void> | null = null
+let refreshAgain = false
+
 export const useAgentStore = create<State>((set, get) => ({
   status: null,
-  recent: [],
-  sock: null,
 
   refreshStatus: async () => {
+    if (refreshInFlight) {
+      refreshAgain = true
+      return refreshInFlight
+    }
+
+    const refresh = async () => {
+      do {
+        refreshAgain = false
+        try {
+          set({ status: await api.agentStatus() })
+        } catch {}
+      } while (refreshAgain)
+    }
+
+    refreshInFlight = refresh()
     try {
-      const s = await api.agentStatus()
-      set({ status: s })
-    } catch {}
+      await refreshInFlight
+    } finally {
+      refreshInFlight = null
+    }
   },
 
   start: () => {
-    if (get().sock) return
-    const sock = new EventSocket('', 50)
-    sock.onEvent = (e) => {
-      set((st) => {
-        const recent = [e, ...st.recent].slice(0, 200)
-        return { recent }
-      })
-      if ('topic' in e && e.topic.startsWith('agent:')) {
-        get().refreshStatus()
-      }
-    }
-    sock.open()
-    set({ sock })
-    get().refreshStatus()
+    if (unsubscribeAgentEvents) return
+    unsubscribeAgentEvents = hubEventClient.subscribe('agent:', () => {
+      if (refreshTimer !== undefined) return
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined
+        void get().refreshStatus()
+      }, 100)
+    })
+    unsubscribeHubState = hubEventClient.subscribeState((state) => {
+      if (state !== 'open') return
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined
+        void get().refreshStatus()
+      }, 0)
+    })
+    // Keep status available even if a proxy blocks the control WebSocket.
+    void get().refreshStatus()
   },
 
   stop: () => {
-    get().sock?.close()
-    set({ sock: null })
+    unsubscribeAgentEvents?.()
+    unsubscribeAgentEvents = undefined
+    unsubscribeHubState?.()
+    unsubscribeHubState = undefined
+    refreshAgain = false
+    if (refreshTimer !== undefined) {
+      window.clearTimeout(refreshTimer)
+      refreshTimer = undefined
+    }
   },
 }))

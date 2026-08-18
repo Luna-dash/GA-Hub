@@ -2,7 +2,7 @@
 //
 // Why a global store?
 //   Switching tabs unmounts FeishuBot, killing local useState. The
-//   messages are pushed via EventSocket and need to survive navigation.
+//   messages need to survive navigation while snapshots are refreshed.
 //   Unlike WechatBot (which polls the backend for full history), Feishu
 //   messages are streamed incrementally, so we persist them client-side.
 

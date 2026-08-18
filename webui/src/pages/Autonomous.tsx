@@ -1,15 +1,16 @@
 // Autonomous evolution: schedule CRUD + run history + report viewer.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import cronstrue from 'cronstrue/i18n'
 import { CronExpressionParser } from 'cron-parser'
-import { api, EventSocket } from '@/api/client'
+import { api } from '@/api/client'
 import type { Schedule, ScheduleType } from '@/api/types'
 import { MarkdownView } from '@/components/MarkdownView'
 import { PageShell } from '@/components/PageShell'
 import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
+import { useHubEvent } from '@/hooks/useHubEvent'
 
 export default function Autonomous() {
   const qc = useQueryClient()
@@ -32,20 +33,15 @@ export default function Autonomous() {
     refetchIntervalInBackground: false,
   })
 
-  useEffect(() => {
-    const socket = new EventSocket('autonomous:', 0)
-    socket.onEvent = (event) => {
-      if (event.topic === 'autonomous:upsert' || event.topic === 'autonomous:delete' || event.topic === 'autonomous:fired') {
-        qc.invalidateQueries({ queryKey: ['schedules'] })
-      }
-      if (event.topic === 'autonomous:report_saved') {
-        qc.invalidateQueries({ queryKey: ['auto.runs'] })
-        qc.invalidateQueries({ queryKey: ['auto.reports'] })
-      }
+  useHubEvent('autonomous:', (event) => {
+    if (event.topic === 'autonomous:upsert' || event.topic === 'autonomous:delete' || event.topic === 'autonomous:fired') {
+      qc.invalidateQueries({ queryKey: ['schedules'] })
     }
-    socket.open()
-    return () => socket.close()
-  }, [qc])
+    if (event.topic === 'autonomous:report_saved') {
+      qc.invalidateQueries({ queryKey: ['auto.runs'] })
+      qc.invalidateQueries({ queryKey: ['auto.reports'] })
+    }
+  })
 
   const [editor, setEditor] = useState<Partial<Schedule> | null>(null)
   const [activeReport, setActiveReport] = useState<string | null>(null)

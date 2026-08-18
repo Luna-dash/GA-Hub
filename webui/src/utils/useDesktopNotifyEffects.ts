@@ -8,8 +8,8 @@
 
 import { useEffect } from 'react'
 import { useChatStore } from '@/stores/chatStore'
-import { useAgentStore } from '@/stores/agentStore'
 import { useConductorStore } from '@/stores/conductorStore'
+import { hubEventClient } from '@/runtime/hubEventClient'
 import { notify } from './notify'
 
 export function useDesktopNotifyEffects() {
@@ -27,20 +27,15 @@ export function useDesktopNotifyEffects() {
       notify('Agent 已回复', { body: preview, tag: 'agent-stream-done' })
     })
 
-    const unsubscribeAgent = useAgentStore.subscribe((state, previous) => {
-      if (state.recent === previous.recent) return
-      for (const event of state.recent) {
-        if (!('topic' in event) || event.topic !== 'wechat:message_in') continue
-        if (!('ts' in event) || event.ts <= lastWxAnnounced) break
-        const payload = 'payload' in event ? event.payload : {}
-        const uid = payload?.uid || ''
-        const message = payload?.text || '(媒体消息)'
-        notify(`💬 微信 · ${uid.slice(0, 16) || '联系人'}`, {
-          body: message.slice(0, 140),
-          tag: `wechat-${uid}`,
-        })
-        lastWxAnnounced = Math.max(lastWxAnnounced, event.ts)
-      }
+    const unsubscribeWechat = hubEventClient.subscribe('wechat:message_in', (event) => {
+      if (event.ts <= lastWxAnnounced) return
+      const uid = event.payload?.uid || ''
+      const message = event.payload?.text || '(媒体消息)'
+      notify(`💬 微信 · ${uid.slice(0, 16) || '联系人'}`, {
+        body: message.slice(0, 140),
+        tag: `wechat-${uid}`,
+      })
+      lastWxAnnounced = event.ts
     })
 
     const unsubscribeConductor = useConductorStore.subscribe((state, previous) => {
@@ -57,7 +52,7 @@ export function useDesktopNotifyEffects() {
 
     return () => {
       unsubscribeChat()
-      unsubscribeAgent()
+      unsubscribeWechat()
       unsubscribeConductor()
     }
   }, [])

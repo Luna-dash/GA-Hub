@@ -120,11 +120,12 @@ class EventBusBehaviorTests(unittest.TestCase):
             bus.publish("chat:a", {})
             bus.publish("chat:b", {})
             bus.publish("wechat:c", {})
+            bus.publish("wechat:d", {})
 
             seen: list[str] = []
 
             async def consume():
-                async for evt in bus.subscribe("chat:", replay=10):
+                async for evt in bus.subscribe("chat:", replay=2):
                     seen.append(evt.topic)
                     if len(seen) >= 2:
                         return
@@ -133,6 +134,94 @@ class EventBusBehaviorTests(unittest.TestCase):
             return seen
 
         self.assertEqual(self._run(scenario()), ["chat:a", "chat:b"])
+
+    def test_multiple_prefixes_filter_replay(self):
+        async def scenario():
+            bus = EventBus(history=10)
+            bus.attach_loop(asyncio.get_running_loop())
+            bus.publish("agent:status", {"phase": "old"})
+            bus.publish("chat:next", {"content": "old"})
+            bus.publish("wechat:message_in", {"text": "old"})
+
+            seen: list[str] = []
+
+            async def consume():
+                async for evt in bus.subscribe(
+                    ("agent:", "wechat:"),
+                    replay=10,
+                ):
+                    seen.append(evt.topic)
+                    if len(seen) >= 2:
+                        return
+
+            await asyncio.wait_for(consume(), timeout=2.0)
+            return seen
+
+        self.assertEqual(
+            self._run(scenario()),
+            [
+                "agent:status", "wechat:message_in",
+            ],
+        )
+
+    def test_multiple_prefixes_filter_before_bounded_queue(self):
+        async def scenario():
+            bus = EventBus(queue_size=2)
+            bus.attach_loop(asyncio.get_running_loop())
+            subscription = await bus.subscribe_after(("agent:", "wechat:"))
+            try:
+                bus.publish("agent:status", {})
+                bus.publish("wechat:message_in", {})
+                for i in range(5):
+                    bus.publish("chat:next", {"i": i})
+                await asyncio.sleep(0)
+
+                queued = [
+                    subscription.queue.get_nowait().topic,
+                    subscription.queue.get_nowait().topic,
+                ]
+                return queued, subscription.live_resync_reason
+            finally:
+                await subscription.close()
+
+        queued, resync_reason = self._run(scenario())
+        self.assertEqual(queued, ["agent:status", "wechat:message_in"])
+        self.assertIsNone(resync_reason)
+
+    def test_empty_prefix_in_union_preserves_match_all_semantics(self):
+        bus = EventBus(history=10)
+        bus.publish("agent:status", {})
+        bus.publish("chat:next", {})
+
+        self.assertEqual(
+            [event.topic for event in bus.history(("", "agent:"))],
+            ["agent:status", "chat:next"],
+        )
+
+    def test_subscribe_after_replays_multiple_prefixes(self):
+        async def scenario():
+            bus = EventBus(history=10)
+            bus.attach_loop(asyncio.get_running_loop())
+            bus.publish("agent:status", {})
+            cursor = bus._next_event_id - 1
+            bus.publish("chat:next", {})
+            bus.publish("session:runtime", {})
+            bus.publish("wechat:message_in", {})
+
+            subscription = await bus.subscribe_after(
+                ("session:", "wechat:"),
+                after_event_id=cursor,
+                epoch=bus.epoch,
+            )
+            try:
+                return [event.topic for event in subscription.replay]
+            finally:
+                await subscription.close()
+
+        self.assertEqual(
+            self._run(scenario()),
+            ["session:runtime", "wechat:message_in"],
+        )
 
     def test_history_method_filters_and_limits(self):
         bus = EventBus(history=10)

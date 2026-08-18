@@ -7,6 +7,7 @@ import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useDraftStore } from '@/stores/draftStore'
 import { useGoalHiveStore } from '@/stores/goalhiveStore'
+import { resolveWsUrl } from '@/runtime/runtimeConfig'
 
 type GoalMode = 'goal' | 'hive'
 
@@ -84,8 +85,7 @@ export default function GoalHive() {
 
   // Independent /ws/goalhive WebSocket connection
   useEffect(() => {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const url = `${proto}//${location.host}/ws/goalhive`
+    const url = resolveWsUrl('/ws/goalhive')
     const ws = new WebSocket(url)
     wsRef.current = ws
 

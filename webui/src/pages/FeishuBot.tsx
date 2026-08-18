@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { EventSocket, api } from '@/api/client'
+import { api } from '@/api/client'
 import type { BusEvent } from '@/api/types'
 import { MessageBubble } from '@/components/MessageBubble'
 import { PageShell } from '@/components/PageShell'
-import { useChatStore } from '@/stores/chatStore'
 import { useFeishuStore, type FeishuMsg } from '@/stores/feishuStore'
 import { deriveFeishuUiState } from '@/utils/feishuStatus'
 
@@ -18,7 +17,6 @@ function fmtTime(ts?: number) {
 
 export default function FeishuBot() {
   const qc = useQueryClient()
-  const chatConn = useChatStore((s) => s.conn)
   const remoteMsgs = useFeishuStore((s) => s.msgs)
   const addMsgs = useFeishuStore((s) => s.addMsgs)
   const statusQ = useQuery({

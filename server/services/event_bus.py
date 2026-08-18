@@ -4,8 +4,8 @@ Bridges blocking producer threads (agent run loop, WeChat polling) and
 asyncio consumers (WebSocket subscribers). Producers call ``publish``
 from any thread; consumers ``subscribe`` from the asyncio event loop.
 
-Topics use ``namespace:event`` convention. A subscriber may filter by
-prefix (e.g. ``"wechat:"``) or subscribe to all (``""``).
+Topics use ``namespace:event`` convention. A subscriber may filter by one
+or more prefixes (e.g. ``"wechat:"``) or subscribe to all (``""``).
 """
 from __future__ import annotations
 
@@ -16,12 +16,28 @@ import threading
 import time
 import uuid
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
 log = logging.getLogger(__name__)
+
+EventPrefixFilter = str | Iterable[str]
+
+
+def _normalize_prefixes(prefixes: EventPrefixFilter = "") -> tuple[str, ...]:
+    """Return a stable prefix set; an empty tuple matches every topic."""
+    if isinstance(prefixes, str):
+        return (prefixes,) if prefixes else ()
+    values = tuple(prefixes)
+    if not values or "" in values:
+        return ()
+    return tuple(dict.fromkeys(values))
+
+
+def _matches_topic(topic: str, prefixes: tuple[str, ...]) -> bool:
+    return not prefixes or any(topic.startswith(prefix) for prefix in prefixes)
 
 
 def _json_safe(value: Any) -> Any:
@@ -75,7 +91,7 @@ class EventSubscription:
     """Atomically captured replay window followed by live events."""
 
     bus: "EventBus"
-    prefix: str
+    prefixes: tuple[str, ...]
     queue: asyncio.Queue
     boundary_id: int
     replay: list[Event]
@@ -102,7 +118,9 @@ class EventSubscription:
         self.closed = True
         async with self.bus._lock:
             self.bus._subs[:] = [
-                (p, q) for p, q in self.bus._subs if q is not self.queue
+                (prefixes, q)
+                for prefixes, q in self.bus._subs
+                if q is not self.queue
             ]
             self.bus._resumable_subs.pop(self.queue, None)
 
@@ -118,7 +136,7 @@ class EventBus:
 
     def __init__(self, history: int = 200, queue_size: int = 256):
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._subs: list[tuple[str, asyncio.Queue[Event]]] = []
+        self._subs: list[tuple[tuple[str, ...], asyncio.Queue[Event]]] = []
         self._resumable_subs: dict[asyncio.Queue[Event], EventSubscription] = {}
         self._history: deque[Event] = deque(maxlen=history)
         self._queue_size = queue_size
@@ -149,8 +167,8 @@ class EventBus:
         self._loop.call_soon_threadsafe(self._dispatch_async, evt)
 
     def _dispatch_async(self, evt: Event) -> None:
-        for prefix, q in list(self._subs):
-            if prefix and not evt.topic.startswith(prefix):
+        for prefixes, q in list(self._subs):
+            if not _matches_topic(evt.topic, prefixes):
                 continue
             try:
                 q.put_nowait(evt)
@@ -180,32 +198,42 @@ class EventBus:
 
     # ── consumers ────────────────────────────────────────────────
     async def subscribe(
-        self, prefix: str = "", *, replay: int = 0
+        self, prefix: EventPrefixFilter = "", *, replay: int = 0
     ) -> AsyncIterator[Event]:
-        """Async generator yielding events matching ``prefix``.
+        """Async generator yielding events matching any requested prefix.
 
         ``replay``: if >0, replay up to N most recent matching events from history.
         """
+        prefixes = _normalize_prefixes(prefix)
         q: asyncio.Queue[Event] = asyncio.Queue(maxsize=self._queue_size)
         async with self._lock:
-            self._subs.append((prefix, q))
+            self._subs.append((prefixes, q))
         try:
             if replay:
-                for evt in list(self._history)[-replay:]:
-                    if not prefix or evt.topic.startswith(prefix):
-                        yield evt
+                matching_history = [
+                    evt
+                    for evt in list(self._history)
+                    if _matches_topic(evt.topic, prefixes)
+                ]
+                for evt in matching_history[-replay:]:
+                    yield evt
             while True:
                 evt = await q.get()
                 yield evt
         finally:
             async with self._lock:
-                self._subs[:] = [(p, qq) for p, qq in self._subs if qq is not q]
+                self._subs[:] = [
+                    (sub_prefixes, qq)
+                    for sub_prefixes, qq in self._subs
+                    if qq is not q
+                ]
 
     async def subscribe_after(
-        self, prefix: str = "", *, after_event_id: int | None = None,
+        self, prefix: EventPrefixFilter = "", *, after_event_id: int | None = None,
         epoch: str | None = None,
     ) -> EventSubscription:
         """Atomically subscribe and capture events through a fixed boundary."""
+        prefixes = _normalize_prefixes(prefix)
         q: asyncio.Queue[Event] = asyncio.Queue(maxsize=self._queue_size)
         async with self._lock:
             with self._state_lock:
@@ -224,19 +252,20 @@ class EventBus:
                     e for e in history
                     if e.event_id > after_event_id
                     and e.event_id <= boundary_id
-                    and (not prefix or e.topic.startswith(prefix))
+                    and _matches_topic(e.topic, prefixes)
                 ]
                 subscription = EventSubscription(
-                    bus=self, prefix=prefix, queue=q, boundary_id=boundary_id,
+                    bus=self, prefixes=prefixes, queue=q, boundary_id=boundary_id,
                     replay=replay, resync_reason=resync_reason,
                 )
-                self._subs.append((prefix, q))
+                self._subs.append((prefixes, q))
                 self._resumable_subs[q] = subscription
         return subscription
 
-    def history(self, prefix: str = "", limit: int = 100) -> list[Event]:
+    def history(self, prefix: EventPrefixFilter = "", limit: int = 100) -> list[Event]:
+        prefixes = _normalize_prefixes(prefix)
         with self._state_lock:
-            out = [e for e in self._history if not prefix or e.topic.startswith(prefix)]
+            out = [e for e in self._history if _matches_topic(e.topic, prefixes)]
         return out[-limit:]
 
 

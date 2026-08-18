@@ -10,7 +10,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { EventSocket, api } from '@/api/client'
+import { api } from '@/api/client'
 import type { BusEvent, WxLogEntry, WxLogListResponse, WxStatus } from '@/api/types'
 import { ImagePasteInput, type PasteAttachment } from '@/components/ImagePasteInput'
 import { PageShell } from '@/components/PageShell'
@@ -18,6 +18,7 @@ import { QRCodeDisplay } from '@/components/QRCodeDisplay'
 import { dialog } from '@/stores/dialogStore'
 import { useDraftStore } from '@/stores/draftStore'
 import { applyWechatMessageEvent, applyWechatStatusEvent } from '@/utils/wechatQuery'
+import { useHubEvent } from '@/hooks/useHubEvent'
 
 export function WechatBot() {
   const qc = useQueryClient()
@@ -41,22 +42,16 @@ export function WechatBot() {
   const messages = msgData?.messages ?? []
 
   // Live events update local query state; polling is only a reconnect fallback.
-  useEffect(() => {
-    const s = new EventSocket('wechat:', 0)
-    s.onEvent = (e: BusEvent) => {
-      if (!('topic' in e)) return
-      if (e.topic === 'wechat:message_in' || e.topic === 'wechat:message_out' || e.topic === 'wechat:log_cleared') {
-        qc.setQueryData<WxLogListResponse>(['wxMessages'], (current) =>
-          applyWechatMessageEvent(current, e.topic, e.payload))
-      }
-      if (e.topic === 'wechat:qr_status' || e.topic === 'wechat:logout' || e.topic === 'wechat:polling' || e.topic === 'wechat:allowlist') {
-        qc.setQueryData<WxStatus>(['wxStatus'], (current) =>
-          applyWechatStatusEvent(current, e.topic, e.payload))
-      }
+  useHubEvent('wechat:', (event: BusEvent) => {
+    if (event.topic === 'wechat:message_in' || event.topic === 'wechat:message_out' || event.topic === 'wechat:log_cleared') {
+      qc.setQueryData<WxLogListResponse>(['wxMessages'], (current) =>
+        applyWechatMessageEvent(current, event.topic, event.payload))
     }
-    s.open()
-    return () => s.close()
-  }, [qc])
+    if (event.topic === 'wechat:qr_status' || event.topic === 'wechat:logout' || event.topic === 'wechat:polling' || event.topic === 'wechat:allowlist') {
+      qc.setQueryData<WxStatus>(['wxStatus'], (current) =>
+        applyWechatStatusEvent(current, event.topic, event.payload))
+    }
+  })
 
   // Auto-track the most recent inbound sender as reply target. User can
   // override via the dropdown; their pick persists until they clear it.

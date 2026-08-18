@@ -16,10 +16,7 @@ export function isHttpUrl(href: string | null | undefined): boolean {
 /** Same-origin app routes stay in the WebView (SPA). */
 export function isAppInternalUrl(href: string): boolean {
   try {
-    const u = new URL(href, window.location.href)
-    if (u.origin !== window.location.origin) return false
-    // backend API / docs / static still "internal" to hub host
-    return true
+    return new URL(href, window.location.href).origin === window.location.origin
   } catch {
     return false
   }

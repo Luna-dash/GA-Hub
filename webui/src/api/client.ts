@@ -7,7 +7,6 @@ import type {
   AutonomousReportListResponse,
   AutonomousRun,
   AutonomousRunListResponse,
-  BusEvent,
   BtwResp,
   ChatRetryConfig,
   ChatWSIn,
@@ -96,6 +95,7 @@ import type {
   WxQRState,
 } from './types'
 import type { components as GeneratedApiComponents } from './generated/schema'
+import { resolveApiUrl, resolveWsUrl } from '@/runtime/runtimeConfig'
 
 export interface SessionMessagePageOptions {
   before?: number
@@ -176,7 +176,7 @@ async function http<T>(method: string, path: string, body?: unknown, init?: Http
     : path
 
   try {
-    const res = await fetch(requestPath, {
+    const res = await fetch(resolveApiUrl(requestPath), {
       method,
       headers: body ? { 'Content-Type': 'application/json' } : undefined,
       body: body ? JSON.stringify(body) : undefined,
@@ -324,7 +324,7 @@ export const api = {
   deleteConversation: (id: string) =>
     http<ConversationDeleteResponse>('DELETE', `/api/conversations/${encodeURIComponent(id)}`),
   exportConversation: (id: string, format: 'md' | 'json') =>
-    `/api/conversations/${encodeURIComponent(id)}/export?format=${format}`,
+    resolveApiUrl(`/api/conversations/${encodeURIComponent(id)}/export?format=${format}`),
   restoreConversation: (id: string) =>
     http<ConversationRestoreResponse>(
       'POST', `/api/conversations/${encodeURIComponent(id)}/restore`),
@@ -373,9 +373,10 @@ export const api = {
     const { timeoutMs = DEFAULT_HTTP_TIMEOUT_MS, signal: externalSignal } = init ?? {}
     const abortContext = requestAbortContext(externalSignal, timeoutMs)
     try {
-      const res = await fetch('/api/upload', { method: 'POST', body: fd, signal: abortContext.signal })
+      const res = await fetch(resolveApiUrl('/api/upload'), { method: 'POST', body: fd, signal: abortContext.signal })
       if (!res.ok) throw new HttpError(res.status, await res.text())
-      return res.json()
+      const result = await res.json() as UploadResult
+      return { ...result, url: resolveApiUrl(result.url) }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         if (abortContext.source() === 'external') throw error
@@ -392,7 +393,8 @@ export const api = {
       abortContext.cleanup()
     }
   },
-  fileUrlByPath: (absPath: string) => `/api/files-by-path?path=${encodeURIComponent(absPath)}`,
+  fileUrlByPath: (absPath: string) =>
+    resolveApiUrl(`/api/files-by-path?path=${encodeURIComponent(absPath)}`),
   revealFile: (path: string) =>
     http<RevealFileResponse>('POST', '/api/files/reveal', { path }),
 
@@ -534,11 +536,6 @@ export const api = {
 }
 
 // ── WebSocket helpers ──────────────────────────────────────
-function wsUrl(path: string): string {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${location.host}${path}`
-}
-
 export class ChatSocket {
   ws?: WebSocket
   private readonly path: string | (() => string)
@@ -556,7 +553,7 @@ export class ChatSocket {
     this.explicitlyClosed = false
     this.onState('connecting')
     const path = typeof this.path === 'function' ? this.path() : this.path
-    const ws = new WebSocket(wsUrl(path))
+    const ws = new WebSocket(resolveWsUrl(path))
     this.ws = ws
     ws.onopen = () => {
       this.reconnectAttempts = 0
@@ -578,45 +575,6 @@ export class ChatSocket {
 
   send(msg: ChatWSIn) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg))
-  }
-
-  close() {
-    this.explicitlyClosed = true
-    if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer)
-    this.ws?.close()
-  }
-}
-
-export class EventSocket {
-  private ws?: WebSocket
-  private readonly url: string
-  private reconnectTimer?: number
-  private reconnectAttempts = 0
-  private explicitlyClosed = false
-  onEvent: (e: BusEvent) => void = () => {}
-
-  constructor(prefix = '', replay = 0) {
-    this.url = wsUrl(`/ws/events?prefix=${encodeURIComponent(prefix)}&replay=${replay}`)
-  }
-
-  open() {
-    this.explicitlyClosed = false
-    const ws = new WebSocket(this.url)
-    this.ws = ws
-    ws.onopen = () => {
-      this.reconnectAttempts = 0
-    }
-    ws.onmessage = (ev) => {
-      try { this.onEvent(JSON.parse(ev.data) as BusEvent) } catch {}
-    }
-    ws.onclose = () => {
-      if (!this.explicitlyClosed) {
-        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000)
-        this.reconnectAttempts++
-        this.reconnectTimer = window.setTimeout(() => this.open(), delay)
-      }
-    }
-    ws.onerror = () => { try { ws.close() } catch {} }
   }
 
   close() {

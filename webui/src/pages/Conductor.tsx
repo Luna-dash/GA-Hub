@@ -1,12 +1,13 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { api, EventSocket, type ConductorSubagentModelPolicy } from '@/api/client'
+import { api, type ConductorSubagentModelPolicy } from '@/api/client'
 import { useConductorStore } from '@/stores/conductorStore'
 import type { ConductorApprovalItem, ConductorLogItem, ConductorSubagent } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
+import { useHubEvent } from '@/hooks/useHubEvent'
 
 const TECHNICAL_ACTION_RE = /^\s*\[Action\]\s+Running\s+([^:\n]+)(?:\s+in\s+([^:\n]+))?/i
 const LLM_RUNNING_RE = /\*{0,2}LLM Running \(Turn \d+\) \.{3}\*{0,2}/gi
@@ -199,28 +200,22 @@ export default function Conductor() {
     refetchIntervalInBackground: false,
   })
 
-  // EventSocket for real-time updates (CORRECTED topic names)
-  useEffect(() => {
-    const sock = new EventSocket('conductor:', 0)
-    sock.onEvent = (evt) => {
-      if (evt.topic === 'conductor:chat' && evt.payload.item) {
-        shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
-        addChatMessage(evt.payload.item)
-      }
-      if (evt.topic === 'conductor:subagents' && evt.payload.items) {
-        setSubagents(evt.payload.items)
-      }
-      if (evt.topic === 'conductor:log' && evt.payload.item) {
-        shouldFollowLogRef.current = isNearScrollTop(logScrollRef.current)
-        addLogItem(evt.payload.item)
-      }
-      if (evt.topic === 'conductor:approval' && evt.payload.item) {
-        addApproval(evt.payload.item)
-      }
+  useHubEvent('conductor:', (event) => {
+    if (event.topic === 'conductor:chat' && event.payload.item) {
+      shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
+      addChatMessage(event.payload.item)
     }
-    sock.open()
-    return () => sock.close()
-  }, [addChatMessage, setSubagents, addLogItem, addApproval])
+    if (event.topic === 'conductor:subagents' && event.payload.items) {
+      setSubagents(event.payload.items)
+    }
+    if (event.topic === 'conductor:log' && event.payload.item) {
+      shouldFollowLogRef.current = isNearScrollTop(logScrollRef.current)
+      addLogItem(event.payload.item)
+    }
+    if (event.topic === 'conductor:approval' && event.payload.item) {
+      addApproval(event.payload.item)
+    }
+  })
 
   useEffect(() => {
     return () => {

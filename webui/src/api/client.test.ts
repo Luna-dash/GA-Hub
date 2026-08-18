@@ -12,6 +12,7 @@ function pendingFetch() {
 
 describe('api request failure handling', () => {
   afterEach(() => {
+    delete window.__GA_HUB_RUNTIME__
     vi.unstubAllGlobals()
     vi.useRealTimers()
   })
@@ -68,6 +69,30 @@ describe('api request failure handling', () => {
     })))
 
     await expect(api.projects()).resolves.toEqual(payload)
+  })
+
+  it('routes API and returned file URLs through an injected runtime origin', async () => {
+    window.__GA_HUB_RUNTIME__ = { apiOrigin: 'http://127.0.0.1:43123' }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      file_id: 'file-1',
+      name: 'sample.png',
+      path: 'D:/uploads/sample.png',
+      url: '/api/files/sample.png',
+      mime: 'image/png',
+      size: 4,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const upload = await api.upload(new File(['data'], 'sample.png'))
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:43123/api/upload')
+    expect(upload.url).toBe('http://127.0.0.1:43123/api/files/sample.png')
+    expect(api.fileUrlByPath('D:/a b.png')).toBe(
+      'http://127.0.0.1:43123/api/files-by-path?path=D%3A%2Fa%20b.png',
+    )
+    expect(api.exportConversation('a/b', 'md')).toBe(
+      'http://127.0.0.1:43123/api/conversations/a%2Fb/export?format=md',
+    )
   })
 
   it('encodes bounded session-history paging options', async () => {

@@ -49,13 +49,20 @@ async def ws_events(ws: WebSocket):
         await ws.close(code=1008, reason="Forbidden origin")
         return
     await ws.accept()
-    prefix = ws.query_params.get("prefix", "")
+    prefixes = ws.query_params.getlist("prefix")
+    prefix_filter: str | tuple[str, ...]
+    if not prefixes:
+        prefix_filter = ""
+    elif len(prefixes) == 1:
+        prefix_filter = prefixes[0]
+    else:
+        prefix_filter = tuple(prefixes)
     try:
         replay_n = int(ws.query_params.get("replay", "0"))
     except ValueError:
         replay_n = 0
     try:
-        async for evt in bus.subscribe(prefix=prefix, replay=replay_n):
+        async for evt in bus.subscribe(prefix=prefix_filter, replay=replay_n):
             await ws.send_json({
                 "topic": evt.topic,
                 "payload": evt.payload,

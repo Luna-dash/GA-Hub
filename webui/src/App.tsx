@@ -12,6 +12,7 @@ import { useDesktopNotifyEffects } from '@/utils/useDesktopNotifyEffects'
 import { hydrateNavPreferences } from '@/config/navigation'
 import { api } from '@/api/client'
 import { routeLoaders } from '@/routes/routeLoaders'
+import { hubEventClient } from '@/runtime/hubEventClient'
 
 const routeFallback = (
   <div className="h-full flex items-center justify-center text-slate-500 text-sm">载入中…</div>
@@ -56,7 +57,9 @@ export default function App() {
     if (setup?.configured) {
       void hydrateNavPreferences()
       start()
+      hubEventClient.start()
       return () => {
+        hubEventClient.stop()
         stop()
       }
     }

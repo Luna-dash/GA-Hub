@@ -18,6 +18,10 @@ interface PywebviewApi {
 
 interface Window {
   pywebview?: { api?: PywebviewApi }
+  __GA_HUB_RUNTIME__?: {
+    apiOrigin?: string
+    wsOrigin?: string
+  }
 }
 
 declare module '*.png' {

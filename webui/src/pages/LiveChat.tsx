@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, EventSocket } from '@/api/client'
+import { api } from '@/api/client'
 import type {
   HubSession,
   LLMInfo,
@@ -36,6 +36,7 @@ import { defaultSessionLlmKey, resolveSessionLlmKey } from '@/utils/llm'
 import { MainModelSelect } from '@/components/ModelSelect'
 import { VirtualMessageList, type VirtualMessageListHandle } from '@/components/VirtualMessageList'
 import { useChatPerformanceProbe } from '@/utils/useChatPerformanceProbe'
+import { useHubEvent } from '@/hooks/useHubEvent'
 
 interface RestoreState {
   restoredFrom?: string
@@ -143,26 +144,21 @@ export default function LiveChat() {
     return () => window.clearInterval(timer)
   }, [])
 
-  useEffect(() => {
-    const socket = new EventSocket('session:', 0)
-    socket.onEvent = (event) => {
-      if (event.topic !== 'session:runtime') return
-      const runtime = event.payload as Partial<SessionRuntime>
-      if (typeof runtime.session_id !== 'string') return
-      queryClient.setQueryData<Record<string, SessionRuntime>>(
-        ['session.runtimes'],
-        (current) => ({
-          ...(current ?? {}),
-          [runtime.session_id as string]: {
-            ...(current?.[runtime.session_id as string] ?? {}),
-            ...runtime,
-          } as SessionRuntime,
-        }),
-      )
-    }
-    socket.open()
-    return () => socket.close()
-  }, [queryClient])
+  useHubEvent('session:', (event) => {
+    if (event.topic !== 'session:runtime') return
+    const runtime = event.payload as Partial<SessionRuntime>
+    if (typeof runtime.session_id !== 'string') return
+    queryClient.setQueryData<Record<string, SessionRuntime>>(
+      ['session.runtimes'],
+      (current) => ({
+        ...(current ?? {}),
+        [runtime.session_id as string]: {
+          ...(current?.[runtime.session_id as string] ?? {}),
+          ...runtime,
+        } as SessionRuntime,
+      }),
+    )
+  })
 
   useEffect(() => {
     let cancelled = false
