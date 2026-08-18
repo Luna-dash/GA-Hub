@@ -71,7 +71,12 @@ def test_windows_mykey_sync_uses_hidden_process_policy(tmp_path):
     with (
         mock.patch.object(mykey._paths, "GA_ROOT", tmp_path),
         mock.patch.object(mykey, "_mykey_sync_script", return_value=script),
-        mock.patch.object(mykey._paths, "discover_user_python", return_value=str(python)),
+        mock.patch.object(
+            mykey,
+            "_mykey_python_candidates",
+            return_value=[(str(python), "config.python_path")],
+        ),
+        mock.patch.object(mykey, "_probe_mykey_python", return_value=((3, 12), True)),
         mock.patch.dict(mykey.os.environ, {
             "GA_MYKEY_SYNC_PASSPHRASE": "passphrase-sentinel",
             "GA_MYKEY_UPLOAD_TOKEN": "token-sentinel",
@@ -98,7 +103,7 @@ def test_windows_mykey_sync_uses_hidden_process_policy(tmp_path):
     assert run.call_args.kwargs["env"]["GA_MYKEY_UPLOAD_TOKEN"] == "token-sentinel"
 
 
-def test_packaged_mykey_sync_rejects_sidecar_as_python(tmp_path):
+def test_packaged_mykey_sync_rejects_sidecar_when_no_fallback_exists(tmp_path):
     script = tmp_path / "assets" / "mykey_sync.py"
     script.parent.mkdir()
     script.write_text("# sync", encoding="utf-8")
@@ -108,9 +113,14 @@ def test_packaged_mykey_sync_rejects_sidecar_as_python(tmp_path):
     with (
         mock.patch.object(mykey._paths, "GA_ROOT", tmp_path),
         mock.patch.object(mykey, "_mykey_sync_script", return_value=script),
-        mock.patch.object(mykey._paths, "discover_user_python", return_value=str(sidecar)),
+        mock.patch.object(
+            mykey,
+            "_mykey_python_candidates",
+            return_value=[(str(sidecar), "config.python_path")],
+        ),
         mock.patch.object(mykey.sys, "executable", str(sidecar)),
         mock.patch.object(mykey.sys, "frozen", True, create=True),
+        mock.patch.object(mykey, "_probe_mykey_python") as probe,
         mock.patch.object(mykey.subprocess, "run") as run,
         pytest.raises(HTTPException) as error,
     ):
@@ -118,7 +128,168 @@ def test_packaged_mykey_sync_rejects_sidecar_as_python(tmp_path):
 
     assert error.value.status_code == 503
     assert error.value.detail["error"] == "mykey_python_unavailable"
+    assert error.value.detail["candidate_failures"] == [
+        {"source": "config.python_path", "reason": "frozen_sidecar"},
+    ]
+    probe.assert_not_called()
     run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "configured_capability",
+    [
+        ((3, 10), True),
+        ((3, 12), False),
+    ],
+)
+def test_mykey_sync_falls_back_to_compatible_ga_python(
+    tmp_path,
+    configured_capability,
+):
+    configured = tmp_path / "configured-python.exe"
+    configured.write_bytes(b"")
+    ga_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    ga_python.parent.mkdir(parents=True)
+    ga_python.write_bytes(b"")
+
+    def probe(path: str):
+        if path == str(configured):
+            return configured_capability
+        if path == str(ga_python):
+            return (3, 12), True
+        return None
+
+    with (
+        mock.patch.object(
+            mykey,
+            "_mykey_python_candidates",
+            return_value=[
+                (str(configured), "config.python_path"),
+                (str(ga_python), "ga_venv"),
+            ],
+        ),
+        mock.patch.object(mykey, "_probe_mykey_python", side_effect=probe) as capability_probe,
+    ):
+        selected = mykey._mykey_sync_python()
+
+    assert selected == str(ga_python)
+    assert capability_probe.call_args_list == [mock.call(str(configured)), mock.call(str(ga_python))]
+
+
+def test_mykey_python_candidates_continue_after_configured_python(tmp_path):
+    configured = tmp_path / "configured-python.exe"
+    configured.write_bytes(b"")
+    ga_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    ga_python.parent.mkdir(parents=True)
+    ga_python.write_bytes(b"")
+
+    expected = [
+        (str(configured.resolve()), "config.python_path"),
+        (str(ga_python.resolve()), "ga_venv"),
+    ]
+    with (
+        mock.patch.object(mykey._paths, "GA_ROOT", tmp_path),
+        mock.patch.object(mykey._paths, "user_python_candidates", return_value=expected) as discover,
+    ):
+        candidates = mykey._mykey_python_candidates()
+
+    assert candidates == expected
+    discover.assert_called_once_with(tmp_path, allow_current_process=True)
+
+
+def test_mykey_python_probe_reads_version_and_crypto_capability():
+    completed = SimpleNamespace(
+        returncode=0,
+        stdout="GA_HUB_MYKEY_PYTHON=3.12;CRYPTOGRAPHY=1",
+    )
+    with (
+        mock.patch.dict(mykey.os.environ, {
+            "GA_MYKEY_SYNC_PASSPHRASE": "passphrase-sentinel",
+            "GA_MYKEY_UPLOAD_TOKEN": "token-sentinel",
+        }),
+        mock.patch.object(mykey.subprocess, "run", return_value=completed) as run,
+    ):
+        capability = mykey._probe_mykey_python("/usr/bin/python3")
+
+    assert capability == ((3, 12), True)
+    assert run.call_args.args[0][:2] == ["/usr/bin/python3", "-c"]
+    assert run.call_args.kwargs["stdin"] is subprocess.DEVNULL
+    assert run.call_args.kwargs["stderr"] is subprocess.DEVNULL
+    assert run.call_args.kwargs["timeout"] == mykey._MYKEY_PYTHON_PROBE_TIMEOUT
+    assert "GA_MYKEY_SYNC_PASSPHRASE" not in run.call_args.kwargs["env"]
+    assert "GA_MYKEY_UPLOAD_TOKEN" not in run.call_args.kwargs["env"]
+
+
+def test_frozen_sidecar_falls_back_to_ga_python(tmp_path):
+    sidecar = tmp_path / "ga-hub-sidecar.exe"
+    sidecar.write_bytes(b"")
+    ga_python = tmp_path / "venv-python.exe"
+    ga_python.write_bytes(b"")
+
+    with (
+        mock.patch.object(
+            mykey,
+            "_mykey_python_candidates",
+            return_value=[
+                (str(sidecar), "config.python_path"),
+                (str(ga_python), "ga_venv"),
+            ],
+        ),
+        mock.patch.object(mykey.sys, "executable", str(sidecar)),
+        mock.patch.object(mykey.sys, "frozen", True, create=True),
+        mock.patch.object(mykey, "_probe_mykey_python", return_value=((3, 12), True)) as probe,
+    ):
+        selected = mykey._mykey_sync_python()
+
+    assert selected == str(ga_python)
+    probe.assert_called_once_with(str(ga_python))
+
+
+def test_mykey_sync_error_distinguishes_old_python_and_missing_cryptography(tmp_path):
+    old_python = tmp_path / "python310.exe"
+    old_python.write_bytes(b"")
+    missing_crypto = tmp_path / "python312.exe"
+    missing_crypto.write_bytes(b"")
+    capabilities = {
+        str(old_python): ((3, 10), True),
+        str(missing_crypto): ((3, 12), False),
+    }
+
+    with (
+        mock.patch.object(
+            mykey,
+            "_mykey_python_candidates",
+            return_value=[
+                (str(old_python), "config.python_path"),
+                (str(missing_crypto), "ga_venv"),
+            ],
+        ),
+        mock.patch.object(
+            mykey,
+            "_probe_mykey_python",
+            side_effect=lambda path: capabilities[path],
+        ),
+        pytest.raises(HTTPException) as error,
+    ):
+        mykey._mykey_sync_python()
+
+    assert error.value.status_code == 503
+    assert error.value.detail["required_python"] == ">=3.11"
+    assert error.value.detail["required_module"] == "cryptography"
+    assert error.value.detail["candidate_failures"] == [
+        {
+            "source": "config.python_path",
+            "reason": "python_too_old",
+            "version": "3.10",
+        },
+        {
+            "source": "ga_venv",
+            "reason": "missing_cryptography",
+            "version": "3.12",
+        },
+    ]
+    assert "Python 3.11" in error.value.detail["message"]
+    assert "cryptography" in error.value.detail["message"]
 
 
 def test_mykey_sync_reports_missing_cryptography_actionably(tmp_path):
@@ -136,7 +307,12 @@ def test_mykey_sync_reports_missing_cryptography_actionably(tmp_path):
     with (
         mock.patch.object(mykey._paths, "GA_ROOT", tmp_path),
         mock.patch.object(mykey, "_mykey_sync_script", return_value=script),
-        mock.patch.object(mykey._paths, "discover_user_python", return_value=str(python)),
+        mock.patch.object(
+            mykey,
+            "_mykey_python_candidates",
+            return_value=[(str(python), "config.python_path")],
+        ),
+        mock.patch.object(mykey, "_probe_mykey_python", return_value=((3, 12), True)),
         mock.patch.object(mykey.subprocess, "run", return_value=completed),
         pytest.raises(HTTPException) as error,
     ):

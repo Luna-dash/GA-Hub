@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -394,29 +395,146 @@ def _sync_base_url() -> str:
     return os.environ.get("GA_MYKEY_SYNC_URL", "https://sector.lunadash.me").rstrip("/")
 
 
+_MYKEY_MIN_PYTHON = (3, 11)
+_MYKEY_PYTHON_PROBE_TIMEOUT = 4
+_MYKEY_PYTHON_PROBE = (
+    "import sys\n"
+    "try:\n"
+    " from cryptography.hazmat.primitives import hashes\n"
+    " from cryptography.hazmat.primitives.ciphers.aead import AESGCM\n"
+    " from cryptography.hazmat.primitives.kdf.hkdf import HKDF\n"
+    "except Exception:\n"
+    " cryptography_ok = 0\n"
+    "else:\n"
+    " cryptography_ok = 1\n"
+    "sys.stdout.write('GA_HUB_MYKEY_PYTHON=%d.%d;CRYPTOGRAPHY=%d' % "
+    "(sys.version_info[0], sys.version_info[1], cryptography_ok))\n"
+)
+
+
+def _is_packaged_process() -> bool:
+    return any((
+        bool(getattr(sys, "frozen", False)),
+        hasattr(sys, "_MEIPASS"),
+        "__compiled__" in globals(),
+    ))
+
+
+def _mykey_python_candidates() -> list[tuple[str, str]]:
+    """Use shared discovery, excluding this executable in packaged builds."""
+    return _paths.user_python_candidates(
+        _paths.GA_ROOT,
+        allow_current_process=not _is_packaged_process(),
+    )
+
+
+def _probe_mykey_python(python: str) -> tuple[tuple[int, int], bool] | None:
+    """Read the candidate version and verify the sync script's crypto imports."""
+    env = os.environ.copy()
+    env.pop("GA_MYKEY_SYNC_PASSPHRASE", None)
+    env.pop("GA_MYKEY_UPLOAD_TOKEN", None)
+    try:
+        proc = subprocess.run(
+            [python, "-c", _MYKEY_PYTHON_PROBE],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="ascii",
+            errors="replace",
+            timeout=_MYKEY_PYTHON_PROBE_TIMEOUT,
+            check=False,
+            **hidden_process_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if proc.returncode != 0:
+        return None
+    match = re.search(
+        r"GA_HUB_MYKEY_PYTHON=(\d+)\.(\d+);CRYPTOGRAPHY=([01])",
+        proc.stdout or "",
+    )
+    if not match:
+        return None
+    try:
+        version = int(match.group(1)), int(match.group(2))
+    except (TypeError, ValueError):
+        return None
+    return version, match.group(3) == "1"
+
+
+def _mykey_python_error(failures: list[dict[str, str]]) -> HTTPException:
+    reasons = {failure["reason"] for failure in failures}
+    if "missing_cryptography" in reasons and "python_too_old" in reasons:
+        message = (
+            "未找到可运行 mykey 同步脚本的 Python：候选解释器要么低于 Python 3.11，"
+            "要么缺少 cryptography。请在设置中选择安装了 cryptography 的 Python 3.11+，"
+            "或修复 GA 虚拟环境。"
+        )
+    elif "missing_cryptography" in reasons:
+        message = (
+            "找到了 Python 3.11 或更高版本，但其中缺少 mykey 同步依赖 cryptography。"
+            "请为该解释器安装 cryptography，或在设置中选择已安装该依赖的 GA Python。"
+        )
+    elif "python_too_old" in reasons:
+        message = (
+            "找到的 Python 解释器版本低于 3.11，无法运行 mykey 同步脚本。"
+            "请在设置中配置 Python 3.11 或更高版本，或升级 GA 虚拟环境。"
+        )
+    else:
+        message = (
+            "未找到可运行 mykey 同步脚本的兼容 Python 解释器。"
+            "请在设置中配置安装了 cryptography 的 Python 3.11+，"
+            "或安装/选择 GA 虚拟环境。"
+        )
+    return HTTPException(503, {
+        "error": "mykey_python_unavailable",
+        "message": message,
+        "required_python": ">=3.11",
+        "required_module": "cryptography",
+        "candidate_failures": failures,
+    })
+
+
 def _mykey_sync_python() -> str:
     """Return a real interpreter for GA's external sync script.
 
     In a packaged desktop build ``sys.executable`` is the PyInstaller sidecar,
     not Python.  Re-launching it with ``mykey_sync.py`` argv only starts the
-    sidecar argument parser and exits, so always use the interpreter selected
-    by the shared GA runtime configuration.
+    sidecar argument parser and exits.  The sync script also uses
+    ``datetime.UTC``, so Python 3.11 is the minimum supported version.  Keep
+    searching after an unsuitable configured candidate instead of treating it
+    as authoritative.
     """
-    python = _paths.discover_user_python(_paths.GA_ROOT)
-    if python:
-        try:
-            is_frozen_launcher = (
-                bool(getattr(sys, "frozen", False))
-                and Path(python).resolve() == Path(sys.executable).resolve()
-            )
-        except OSError:
-            is_frozen_launcher = False
-        if not is_frozen_launcher:
-            return python
-    raise HTTPException(503, {
-        "error": "mykey_python_unavailable",
-        "message": "未找到可运行 mykey 同步脚本的 Python 解释器，请在设置中配置 Python 解释器",
-    })
+    failures: list[dict[str, str]] = []
+    for python, source in _mykey_python_candidates():
+        if _is_packaged_process() and _paths._same_as_current_process(python):
+            failures.append({"source": source, "reason": "frozen_sidecar"})
+            continue
+        capability = _probe_mykey_python(python)
+        if capability is None:
+            failures.append({"source": source, "reason": "probe_failed"})
+            continue
+        version, has_cryptography = capability
+        version_text = f"{version[0]}.{version[1]}"
+        if version < _MYKEY_MIN_PYTHON:
+            failures.append({
+                "source": source,
+                "reason": "python_too_old",
+                "version": version_text,
+            })
+            continue
+        if not has_cryptography:
+            failures.append({
+                "source": source,
+                "reason": "missing_cryptography",
+                "version": version_text,
+            })
+            continue
+        return python
+
+    raise _mykey_python_error(failures)
 
 
 def _run_mykey_sync(args: list[str]) -> dict[str, Any]:

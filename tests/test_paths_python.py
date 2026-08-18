@@ -66,6 +66,24 @@ class PythonDiscoveryTests(unittest.TestCase):
                  mock.patch.object(_paths.shutil, "which", return_value=str(path_python)):
                 self.assertEqual(_paths._discover_user_python_with_source()[0], str(known_python.resolve()))
 
+    def test_python_candidates_are_unique_and_can_skip_current_process(self):
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            current = _touch_python(root / "sidecar.exe")
+            fallback = _touch_python(root / "python.exe")
+
+            with mock.patch.dict(_paths.os.environ, {"GA_PYTHON": str(current)}, clear=True), \
+                 mock.patch.object(_paths, "load_config", return_value={"python_path": str(current)}), \
+                 mock.patch.object(_paths, "_ga_venv_python_candidates", return_value=[]), \
+                 mock.patch.object(_paths, "_known_python_candidates", return_value=[str(fallback)]), \
+                 mock.patch.object(_paths.shutil, "which", return_value=str(fallback)), \
+                 mock.patch.object(_paths.sys, "executable", str(current)):
+                candidates = _paths.user_python_candidates(
+                    allow_current_process=False
+                )
+
+            self.assertEqual(candidates, [(str(fallback.resolve()), "known_location")])
+
     def test_set_ga_root_rejects_bad_python_path(self):
         with TemporaryDirectory() as td:
             root = Path(td)

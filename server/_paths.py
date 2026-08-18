@@ -133,6 +133,16 @@ def validate_python_path(path: str | None) -> str | None:
     return str(p)
 
 
+def _same_as_current_process(path: str | None) -> bool:
+    """Return whether ``path`` resolves to this process executable."""
+    if not path:
+        return False
+    try:
+        return Path(path).resolve() == Path(sys.executable).resolve()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+
+
 def _ga_venv_python_candidates(ga_root: Path | None) -> list[Path]:
     if ga_root is None:
         return []
@@ -172,52 +182,75 @@ def _known_python_candidates() -> list[str]:
     return candidates
 
 
-def _discover_user_python_with_source(ga_root: Path | None = None) -> tuple[str | None, str]:
+def user_python_candidates(
+    ga_root: Path | None = None,
+    *,
+    allow_current_process: bool = True,
+) -> list[tuple[str, str]]:
+    """Return unique, validated Python candidates in discovery order."""
     target_root = ga_root or GA_ROOT
+    candidates: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(raw: object, source: str, *, report_invalid: bool = False) -> None:
+        if not raw:
+            return
+        try:
+            candidate = validate_python_path(str(raw))
+        except ValueError:
+            if report_invalid:
+                log.warning("%s=%s is not a valid Python executable; ignoring", source, raw)
+            return
+        if candidate is None:
+            return
+        if not allow_current_process and _same_as_current_process(candidate):
+            log.warning("%s resolves to the packaged sidecar; continuing Python discovery", source)
+            return
+        key = os.path.normcase(candidate)
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append((candidate, source))
 
     env = os.environ.get("GA_PYTHON", "").strip()
-    if env:
-        try:
-            return validate_python_path(env), "GA_PYTHON"
-        except ValueError:
-            log.warning("$GA_PYTHON=%s is not a valid Python executable; ignoring", env)
+    add(env, "GA_PYTHON", report_invalid=True)
 
     saved = load_config().get("python_path")
-    if saved:
-        try:
-            return validate_python_path(str(saved)), "config.python_path"
-        except ValueError:
-            log.warning("configured python_path=%s is not a valid Python executable; ignoring", saved)
+    add(saved, "config.python_path", report_invalid=True)
 
     for cand in _ga_venv_python_candidates(target_root):
-        if cand.is_file():
-            try:
-                return validate_python_path(str(cand)), "ga_venv"
-            except ValueError:
-                log.warning("GA venv python=%s is not a valid Python executable; ignoring", cand)
+        add(cand, "ga_venv")
 
     for cand in _known_python_candidates():
-        if Path(cand).is_file():
-            try:
-                return validate_python_path(cand), "known_location"
-            except ValueError:
-                log.warning("known python=%s is not a valid Python executable; ignoring", cand)
+        add(cand, "known_location")
 
     for name in ("python3", "python"):
-        found = shutil.which(name)
-        if found:
-            try:
-                return validate_python_path(found), f"PATH:{name}"
-            except ValueError:
-                log.warning("PATH %s=%s is not a valid Python executable; ignoring", name, found)
+        add(shutil.which(name), f"PATH:{name}")
 
-    try:
-        return validate_python_path(sys.executable), "current_process"
-    except ValueError:
-        return None, "current_process"
+    add(sys.executable, "current_process")
+    return candidates
 
 
-def discover_user_python(ga_root: Path | None = None) -> str | None:
+def _discover_user_python_with_source(
+    ga_root: Path | None = None,
+    *,
+    allow_current_process: bool = True,
+) -> tuple[str | None, str]:
+    candidates = user_python_candidates(
+        ga_root,
+        allow_current_process=allow_current_process,
+    )
+    if candidates:
+        return candidates[0]
+
+    return None, "current_process"
+
+
+def discover_user_python(
+    ga_root: Path | None = None,
+    *,
+    allow_current_process: bool = True,
+) -> str | None:
     """Resolve a system Python suitable for running GA's ``code_run``.
 
     Why this exists: in a PyInstaller-frozen ``.app`` build, ``sys.executable``
@@ -231,15 +264,18 @@ def discover_user_python(ga_root: Path | None = None) -> str | None:
       1. ``$GA_PYTHON`` env override (escape hatch for tests / weird setups)
       2. saved config: ``python_path`` (UI-configured path)
       3. GenericAgent project virtualenvs (``.venv``, ``venv``, ``env``)
-      4. ``python3`` / ``python`` against the parent process's PATH
-      5. macOS Homebrew, pyenv shim, Apple stub, common Windows installs
+      4. macOS Homebrew, pyenv shim, Apple stub, common Windows installs
+      5. ``python3`` / ``python`` against the parent process's PATH
+      6. the current process executable
 
     Returns absolute path, or ``None`` if nothing usable was found. Callers
     should treat ``None`` as "fall back to ``sys.executable``" — acceptable
     in dev (where ``sys.executable`` is already a real interpreter) but a
     fatal misconfiguration in frozen-mac builds.
     """
-    return _discover_user_python_with_source(ga_root)[0]
+    return _discover_user_python_with_source(
+        ga_root, allow_current_process=allow_current_process
+    )[0]
 
 
 def python_status(ga_root: Path | None = None) -> dict[str, str | None]:
