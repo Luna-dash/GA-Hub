@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
@@ -6,6 +6,7 @@ import type { ConversationSummary } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { MarkdownView } from '@/components/MarkdownView'
 import { ConversationIndexRail } from '@/components/ConversationIndexRail'
+import { VirtualMessageList } from '@/components/VirtualMessageList'
 import { previewText } from '@/utils/foldTurns'
 import { saveTextExport } from '@/utils/desktop'
 import { looksLikeToolTrace, stripWrapperFences } from '@/utils/toolTrace'
@@ -45,6 +46,7 @@ export default function Conversations() {
   const [page, setPage] = useState(0)
   const [viewMode, setViewMode] = useState<ViewMode>('round')
   const [openConclusion, setOpenConclusion] = useState<Record<string, boolean>>({})
+  const detailScrollRef = useRef<HTMLDivElement>(null)
   const limit = 50
 
   useEffect(() => {
@@ -74,6 +76,12 @@ export default function Conversations() {
       setPage(Math.max(0, Math.ceil(total / limit) - 1))
     }
   }, [total, page, limit])
+  useEffect(() => {
+    // A deep-link change reuses the same page component. Reset the shared
+    // viewport so measurements and the reader position start at the new
+    // conversation header instead of an arbitrary offset from the old one.
+    if (detailScrollRef.current) detailScrollRef.current.scrollTop = 0
+  }, [active, viewMode])
   const rounds = useMemo(() => buildRounds((detail?.messages || []) as Msg[]), [detail])
 
   const handleExport = async (id: string, fmt: 'md' | 'json') => {
@@ -223,7 +231,7 @@ export default function Conversations() {
           )}
         </ConversationIndexRail>
 
-        <div className="flex-1 overflow-y-auto">
+        <div ref={detailScrollRef} className="min-w-0 flex-1 overflow-y-auto [overflow-anchor:none]">
           {!active && <div className="h-full flex items-center justify-center text-slate-500 text-sm">选择左侧会话查看详情</div>}
           {active && detail && (
             <div className="p-6 max-w-5xl mx-auto">
@@ -285,13 +293,21 @@ export default function Conversations() {
               {viewMode === 'round'
                 ? (
                   <RoundView
+                    key={`round:${detail.id}`}
                     convId={detail.id}
                     rounds={rounds}
+                    scrollRef={detailScrollRef}
                     openConclusion={openConclusion}
                     setOpenConclusion={setOpenConclusion}
                   />
                 )
-                : <FlatView messages={(detail.messages || []) as Msg[]} />}
+                : (
+                  <FlatView
+                    key={`flat:${detail.id}`}
+                    messages={(detail.messages || []) as Msg[]}
+                    scrollRef={detailScrollRef}
+                  />
+                )}
             </div>
           )}
         </div>
@@ -303,11 +319,13 @@ export default function Conversations() {
 function RoundView({
   convId,
   rounds,
+  scrollRef,
   openConclusion,
   setOpenConclusion,
 }: {
   convId: string
   rounds: Round[]
+  scrollRef: RefObject<HTMLDivElement>
   openConclusion: Record<string, boolean>
   setOpenConclusion: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
 }) {
@@ -316,8 +334,14 @@ function RoundView({
   }
 
   return (
-    <div className="space-y-5">
-      {rounds.map((r, i) => {
+    <VirtualMessageList
+      items={rounds}
+      scrollRef={scrollRef}
+      virtualizationThreshold={12}
+      overscanPx={700}
+      itemKey={roundItemKey}
+      estimateSize={estimateRoundSize}
+      renderItem={(r) => {
         const roundKey = `${convId}:${r.index}`
         const isProcessOpen = !!openConclusion[roundKey]
         const summaryText = r.conclusion || r.turnSummaries[r.turnSummaries.length - 1]?.summary || '（无结论）'
@@ -325,86 +349,96 @@ function RoundView({
         const hasTurnSummaries = r.turnSummaries.length > 0
 
         return (
-          <div key={roundKey} className="rounded-2xl border border-line bg-bg-soft/40 p-4 md:p-5 shadow-sm">
-            <div className="space-y-3.5">
-              {r.user && (
-                <div className="flex justify-end">
-                  <div className="w-[70%] rounded-[18px] border border-emerald-900/30 bg-emerald-800/70 px-4 py-3 shadow-sm">
-                    <div className="text-sm text-white whitespace-pre-wrap leading-6">{r.user.content || ''}</div>
+          <div className="pb-3">
+            <div className="rounded-2xl border border-line bg-bg-soft/40 p-4 shadow-sm md:p-5">
+              <div className="space-y-3.5">
+                {r.user && (
+                  <div className="flex justify-end">
+                    <div className="w-[70%] rounded-[18px] border border-emerald-900/30 bg-emerald-800/70 px-4 py-3 shadow-sm">
+                      <div className="whitespace-pre-wrap text-sm leading-6 text-white">{r.user.content || ''}</div>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              <div className="flex justify-start">
-                <div className="w-[86%] rounded-[18px] border border-line bg-bg-card px-4 py-3 shadow-sm">
-                  <div className="flex items-center gap-3 mb-2">
-                    {hasTurnSummaries && (
-                      <button
-                        type="button"
-                        onClick={() => setOpenConclusion((s) => ({ ...s, [roundKey]: !isProcessOpen }))}
-                        className="text-xs text-accent hover:underline shrink-0"
-                      >
-                        {isProcessOpen ? '收起过程' : '展开过程'}
-                      </button>
+                <div className="flex justify-start">
+                  <div className="w-[86%] rounded-[18px] border border-line bg-bg-card px-4 py-3 shadow-sm">
+                    <div className="mb-2 flex items-center gap-3">
+                      {hasTurnSummaries && (
+                        <button
+                          type="button"
+                          onClick={() => setOpenConclusion((s) => ({ ...s, [roundKey]: !isProcessOpen }))}
+                          className="shrink-0 text-xs text-accent hover:underline"
+                        >
+                          {isProcessOpen ? '收起过程' : '展开过程'}
+                        </button>
+                      )}
+                    </div>
+
+                    {isProcessOpen && hasTurnSummaries && (
+                      <div className="mb-4 space-y-1.5">
+                        <div className="text-[11px] uppercase tracking-wider text-slate-500">turn summaries</div>
+                        {r.turnSummaries.map((ts, idx) => (
+                          <div key={`${roundKey}-ts-${idx}`} className="rounded-lg border border-line/70 bg-bg-soft/50 px-3 py-2 text-sm leading-5 text-slate-200">
+                            <span className="mr-2 text-[11px] uppercase tracking-wider text-slate-500">Turn {ts.turn}</span>
+                            <span className="whitespace-pre-wrap">{ts.summary}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {detailText && (
+                      <div className={isProcessOpen && hasTurnSummaries ? 'border-t border-line/70 pt-3' : ''}>
+                        <div className="mb-2 text-[11px] uppercase tracking-wider text-slate-500">assistant conclusion</div>
+                        <MarkdownView mode="auto">{detailText}</MarkdownView>
+                      </div>
                     )}
                   </div>
-
-                  {isProcessOpen && hasTurnSummaries && (
-                    <div className="space-y-1.5 mb-4">
-                      <div className="text-[11px] uppercase tracking-wider text-slate-500">turn summaries</div>
-                      {r.turnSummaries.map((ts, idx) => (
-                        <div key={`${roundKey}-ts-${idx}`} className="rounded-lg border border-line/70 bg-bg-soft/50 px-3 py-2 text-sm text-slate-200 leading-5">
-                          <span className="text-[11px] uppercase tracking-wider text-slate-500 mr-2">Turn {ts.turn}</span>
-                          <span className="whitespace-pre-wrap">{ts.summary}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {detailText && (
-                    <div className={isProcessOpen && hasTurnSummaries ? 'border-t border-line/70 pt-3' : ''}>
-                      <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">assistant conclusion</div>
-                      <MarkdownView mode="auto">{detailText}</MarkdownView>
-                    </div>
-                  )}
                 </div>
+
+                {r.others.length > 0 && (
+                  <div className="space-y-2">
+                    {r.others.map((m, idx) => (
+                      <MessageBlock key={`o-${idx}`} m={m} label={m.role || `message ${idx + 1}`} tone="other" />
+                    ))}
+                  </div>
+                )}
               </div>
-
-              {r.others.length > 0 && (
-                <div className="space-y-2">
-                  {r.others.map((m, idx) => (
-                    <MessageBlock key={`o-${idx}`} m={m} label={m.role || `message ${idx + 1}`} tone="other" />
-                  ))}
-                </div>
-              )}
             </div>
           </div>
         )
-      })}
-    </div>
+      }}
+    />
   )
 }
 
-function FlatView({ messages }: { messages: Msg[] }) {
+function FlatView({ messages, scrollRef }: { messages: Msg[]; scrollRef: RefObject<HTMLDivElement> }) {
   return (
-    <div className="space-y-4">
-      {messages.map((m, i) => {
+    <VirtualMessageList
+      items={messages}
+      scrollRef={scrollRef}
+      virtualizationThreshold={12}
+      overscanPx={700}
+      itemKey={flatMessageKey}
+      estimateSize={estimateFlatMessageSize}
+      renderItem={(m, i) => {
         const isUser = m.role === 'user'
         const isAssistant = m.role === 'assistant'
         const label = isUser ? '你' : isAssistant ? '助手' : (m.role || `消息 ${i + 1}`)
         return (
-          <div key={i} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-            <div className={`w-fit max-w-[85%] ${isUser ? 'ml-12' : 'mr-12'}`}>
-              <MessageBlock
-                m={m}
-                label={label}
-                tone={isUser ? 'user' : isAssistant ? 'assistant' : 'other'}
-              />
+          <div className="pb-2">
+            <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+              <div className={`w-fit max-w-[85%] ${isUser ? 'ml-12' : 'mr-12'}`}>
+                <MessageBlock
+                  m={m}
+                  label={label}
+                  tone={isUser ? 'user' : isAssistant ? 'assistant' : 'other'}
+                />
+              </div>
             </div>
           </div>
         )
-      })}
-    </div>
+      }}
+    />
   )
 }
 
@@ -420,6 +454,49 @@ function MessageBlock({ m, label, tone }: { m: Msg; label: string; tone: 'user' 
       <MarkdownView mode="auto">{m.content || ''}</MarkdownView>
     </div>
   )
+}
+
+function boundedContentFingerprint(content: string): string {
+  const source = `${content.length}|${content.slice(0, 96)}|${content.slice(-96)}`
+  let hash = 2_166_136_261
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index)
+    hash = Math.imul(hash, 16_777_619)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+function roundItemKey(round: Round): string {
+  return `round:${round.index}:${boundedContentFingerprint(round.user?.content || '')}:${boundedContentFingerprint(round.detail)}`
+}
+
+function flatMessageKey(message: Msg, index: number): string {
+  return `${index}:${message.role || 'message'}:${boundedContentFingerprint(message.content || '')}`
+}
+
+function estimatedLines(content: string, columns = 90): number {
+  if (!content) return 0
+  const wrapped = Math.ceil(content.length / columns)
+  if (wrapped >= 48) return 48
+  let lineBreaks = 0
+  for (let index = 0; index < content.length && lineBreaks < 48; index += 1) {
+    if (content.charCodeAt(index) === 10) lineBreaks += 1
+  }
+  return Math.min(48, wrapped + lineBreaks)
+}
+
+function estimateRoundSize(round: Round): number {
+  const userLines = estimatedLines(round.user?.content || '', 72)
+  const detailLines = estimatedLines(round.detail || round.conclusion, 90)
+  const otherLines = round.others.reduce(
+    (total, message) => total + estimatedLines(message.content || '', 90),
+    0,
+  )
+  return Math.min(1_600, 190 + userLines * 24 + detailLines * 22 + otherLines * 22)
+}
+
+function estimateFlatMessageSize(message: Msg): number {
+  return Math.min(1_400, 92 + estimatedLines(message.content || '', 90) * 22)
 }
 
 function buildRounds(messages: Msg[]): Round[] {

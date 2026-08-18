@@ -164,6 +164,32 @@ describe('conversation route selection', () => {
     })
   })
 
+  it('windows a large conversation instead of mounting every markdown row', async () => {
+    const messages = Array.from({ length: 80 }, (_, index) => ([
+      { role: 'user', content: `question ${index}` },
+      { role: 'assistant', content: `answer ${index}` },
+    ])).flat()
+    apiMock.conversation.mockResolvedValueOnce({
+      id: 'large-thread',
+      title: 'Large conversation',
+      messages,
+    })
+
+    await renderAt('/conversations/large-thread')
+    await waitFor(() => {
+      expect(host.textContent).toContain('Large conversation')
+      expect(host.querySelector('[data-chat-virtual-list]')).not.toBeNull()
+    })
+
+    const list = host.querySelector('[data-chat-virtual-list]')
+    expect(list?.getAttribute('data-virtualized')).toBe('true')
+    expect(list?.getAttribute('data-total-count')).toBe('80')
+    const rendered = Number(list?.getAttribute('data-rendered-count'))
+    expect(rendered).toBeGreaterThan(0)
+    expect(rendered).toBeLessThan(80)
+    expect(host.querySelectorAll('[data-chat-message]')).toHaveLength(rendered)
+  })
+
   it('returns to the collection route after deleting the active deep-linked conversation', async () => {
     await renderAt('/conversations/alpha%20beta')
     await waitFor(() => expect(host.textContent).toContain('Detail alpha beta'))
