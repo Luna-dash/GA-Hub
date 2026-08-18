@@ -57,10 +57,89 @@ const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum BackendReadiness {
-    Starting,
+enum SidecarPhase {
+    Spawning,
+    Running,
     Ready,
     Failed(String),
+    Stopping,
+    Stopped,
+}
+
+struct SidecarLifecycle<P> {
+    phase: SidecarPhase,
+    process: Option<P>,
+}
+
+enum ShutdownClaim<P> {
+    Owner(Option<P>),
+    InProgress,
+    Complete,
+}
+
+impl<P> SidecarLifecycle<P> {
+    fn new() -> Self {
+        Self {
+            phase: SidecarPhase::Spawning,
+            process: None,
+        }
+    }
+
+    fn commit_spawn(&mut self, process: P) -> Result<(), P> {
+        if self.phase == SidecarPhase::Spawning && self.process.is_none() {
+            self.process = Some(process);
+            self.phase = SidecarPhase::Running;
+            Ok(())
+        } else {
+            Err(process)
+        }
+    }
+
+    fn mark_ready(&mut self) -> bool {
+        if self.phase == SidecarPhase::Running && self.process.is_some() {
+            self.phase = SidecarPhase::Ready;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn mark_failed(&mut self, error: String) -> bool {
+        if matches!(self.phase, SidecarPhase::Spawning | SidecarPhase::Running) {
+            self.phase = SidecarPhase::Failed(error);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn readiness(&self) -> Result<bool, String> {
+        match &self.phase {
+            SidecarPhase::Ready => Ok(true),
+            SidecarPhase::Failed(error) => Err(error.clone()),
+            SidecarPhase::Spawning
+            | SidecarPhase::Running
+            | SidecarPhase::Stopping
+            | SidecarPhase::Stopped => Ok(false),
+        }
+    }
+
+    fn begin_shutdown(&mut self) -> ShutdownClaim<P> {
+        match self.phase {
+            SidecarPhase::Stopping => ShutdownClaim::InProgress,
+            SidecarPhase::Stopped => ShutdownClaim::Complete,
+            _ => {
+                self.phase = SidecarPhase::Stopping;
+                ShutdownClaim::Owner(self.process.take())
+            }
+        }
+    }
+
+    fn finish_shutdown(&mut self) {
+        if self.phase == SidecarPhase::Stopping {
+            self.phase = SidecarPhase::Stopped;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -394,48 +473,78 @@ impl Drop for OwnedProcess {
 
 #[derive(Clone)]
 struct OwnedSidecar {
-    child: Arc<Mutex<Option<OwnedProcess>>>,
-    readiness: Arc<Mutex<BackendReadiness>>,
+    lifecycle: Arc<Mutex<SidecarLifecycle<OwnedProcess>>>,
 }
 
 impl OwnedSidecar {
     fn new() -> Self {
         Self {
-            child: Arc::new(Mutex::new(None)),
-            readiness: Arc::new(Mutex::new(BackendReadiness::Starting)),
+            lifecycle: Arc::new(Mutex::new(SidecarLifecycle::new())),
         }
     }
 
-    fn store_child(&self, mut child: OwnedProcess) -> Result<(), String> {
-        let mut slot = self.child.lock().unwrap_or_else(|e| e.into_inner());
-        if slot.is_some() {
-            drop(slot);
-            stop_owned_process(&mut child);
-            return Err("desktop shell already owns a sidecar".to_string());
+    fn commit_spawn(
+        &self,
+        process: OwnedProcess,
+        exit: &ExitCoordinator,
+    ) -> Result<(), OwnedProcess> {
+        let mut lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        if !exit.is_running() {
+            return Err(process);
         }
-        *slot = Some(child);
-        *self.readiness.lock().unwrap_or_else(|e| e.into_inner()) = BackendReadiness::Starting;
-        Ok(())
+        lifecycle.commit_spawn(process)
     }
 
-    fn take_child(&self) -> Option<OwnedProcess> {
-        self.child.lock().unwrap_or_else(|e| e.into_inner()).take()
+    fn set_ready(&self, exit: &ExitCoordinator) -> bool {
+        let mut lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        exit.is_running() && lifecycle.mark_ready()
     }
 
-    fn set_ready(&self) {
-        *self.readiness.lock().unwrap_or_else(|e| e.into_inner()) = BackendReadiness::Ready;
+    fn set_failed(&self, error: String, exit: &ExitCoordinator) -> bool {
+        let mut lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        exit.is_running() && lifecycle.mark_failed(error)
     }
 
-    fn set_failed(&self, error: String) {
-        *self.readiness.lock().unwrap_or_else(|e| e.into_inner()) = BackendReadiness::Failed(error);
+    fn child_root_has_exited(&self) -> std::io::Result<Option<bool>> {
+        let mut lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(process) = lifecycle.process.as_mut() else {
+            return Ok(None);
+        };
+        let exited = process.root_has_exited()?;
+        if exited {
+            let _ = process.finish_exited_tree();
+        }
+        Ok(Some(exited))
+    }
+
+    fn take_owner_stdin(&self) -> Option<std::process::ChildStdin> {
+        self.lifecycle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .process
+            .as_mut()
+            .and_then(|process| process.child.stdin.take())
+    }
+
+    fn begin_shutdown(&self) -> ShutdownClaim<OwnedProcess> {
+        self.lifecycle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .begin_shutdown()
+    }
+
+    fn finish_shutdown(&self) {
+        self.lifecycle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .finish_shutdown();
     }
 
     fn ready(&self) -> Result<bool, String> {
-        match &*self.readiness.lock().unwrap_or_else(|e| e.into_inner()) {
-            BackendReadiness::Starting => Ok(false),
-            BackendReadiness::Ready => Ok(true),
-            BackendReadiness::Failed(error) => Err(error.clone()),
-        }
+        self.lifecycle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .readiness()
     }
 }
 
@@ -575,24 +684,12 @@ fn wait_http_ready(
             return Ok(ReadinessWait::Cancelled);
         }
 
-        // Never retain the child mutex while connecting, reading, or sleeping.
+        // Never retain the lifecycle lock while connecting, reading, or sleeping.
         // Window shutdown can therefore take ownership of the child immediately,
         // even while the packaged one-file sidecar is still extracting.
-        let child_status = {
-            let mut slot = sidecar.child.lock().unwrap_or_else(|e| e.into_inner());
-            match slot.as_mut() {
-                Some(process) => {
-                    let exited = process
-                        .root_has_exited()
-                        .map_err(|e| format!("sidecar status check failed: {e}"))?;
-                    if exited {
-                        let _ = process.finish_exited_tree();
-                    }
-                    Some(exited)
-                }
-                None => None,
-            }
-        };
+        let child_status = sidecar
+            .child_root_has_exited()
+            .map_err(|e| format!("sidecar status check failed: {e}"))?;
         match child_status {
             Some(true) => return Err("sidecar exited before readiness".to_string()),
             Some(false) => {}
@@ -620,36 +717,69 @@ fn wait_http_ready(
 }
 
 fn request_owned_shutdown(sidecar: &OwnedSidecar) {
-    let stdin = {
-        let mut slot = sidecar.child.lock().unwrap_or_else(|e| e.into_inner());
-        slot.as_mut().and_then(|child| child.child.stdin.take())
-    };
-    if let Some(mut stdin) = stdin {
+    if let Some(mut stdin) = sidecar.take_owner_stdin() {
         let _ = stdin.write_all(b"\n");
         let _ = stdin.flush();
     }
 }
 
-fn spawn_background_readiness(
+fn run_sidecar_supervisor<F>(
     sidecar: OwnedSidecar,
     port: u16,
     token: String,
     exit: ExitCoordinator,
-) {
-    thread::spawn(
-        move || match wait_http_ready(&sidecar, port, &token, &exit) {
-            Ok(ReadinessWait::Ready) if exit.is_running() => sidecar.set_ready(),
-            Ok(ReadinessWait::Ready | ReadinessWait::Cancelled) => {}
-            Err(error) if exit.is_running() => {
-                sidecar.set_failed(format!("GA-Hub desktop startup: {error}"));
+    spawn: F,
+) where
+    F: FnOnce(u16, &str) -> Result<OwnedProcess, String>,
+{
+    if !exit.is_running() {
+        return;
+    }
+
+    let process = match spawn(port, &token) {
+        Ok(process) => process,
+        Err(error) => {
+            let _ = sidecar.set_failed(format!("GA-Hub desktop startup: {error}"), &exit);
+            return;
+        }
+    };
+
+    // The lifecycle lock and ExitCoordinator check form one commit point with
+    // shutdown. If close won first, this process never enters shared ownership
+    // and is stopped locally. If commit won first, shutdown must observe and
+    // take the process from the same lock.
+    if let Err(mut process) = sidecar.commit_spawn(process, &exit) {
+        stop_owned_process(&mut process);
+        return;
+    }
+
+    match wait_http_ready(&sidecar, port, &token, &exit) {
+        Ok(ReadinessWait::Ready) => {
+            let _ = sidecar.set_ready(&exit);
+        }
+        Ok(ReadinessWait::Cancelled) => {}
+        Err(error) => {
+            if sidecar.set_failed(format!("GA-Hub desktop startup: {error}"), &exit) {
                 // Keep the Child in the shared owner slot so CloseRequested can
                 // still take it immediately. This quick request handles the usual
                 // timeout case without transferring ownership to this worker.
                 request_owned_shutdown(&sidecar);
             }
-            Err(_) => {}
-        },
-    );
+        }
+    }
+}
+
+fn spawn_background_supervisor(
+    sidecar: OwnedSidecar,
+    port: u16,
+    token: String,
+    exit: ExitCoordinator,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("desktop-sidecar-supervisor".to_string())
+        .spawn(move || run_sidecar_supervisor(sidecar, port, token, exit, spawn_sidecar))
+        .map(|_| ())
+        .map_err(|error| format!("sidecar supervisor thread failed: {error}"))
 }
 
 fn runtime_config_json(port: u16, token: &str) -> String {
@@ -786,10 +916,13 @@ fn stop_owned_process(process: &mut OwnedProcess) {
 }
 
 fn stop_owned(sidecar: &OwnedSidecar) {
-    let Some(mut process) = sidecar.take_child() else {
+    let ShutdownClaim::Owner(process) = sidecar.begin_shutdown() else {
         return;
     };
-    stop_owned_process(&mut process);
+    if let Some(mut process) = process {
+        stop_owned_process(&mut process);
+    }
+    sidecar.finish_shutdown();
 }
 
 fn spawn_background_shutdown(handle: tauri::AppHandle, exit: ExitCoordinator) {
@@ -823,6 +956,9 @@ fn main() {
             desktop_backend_ready
         ])
         .setup(move |app| {
+            // The existing frontend contract reads this identity synchronously
+            // from the initialization script. Port reservation and UUID creation
+            // are intentionally the only sidecar preparation left in setup.
             let (port, token) =
                 allocate_sidecar_identity().map_err(|e| format!("GA-Hub desktop startup: {e}"))?;
             let owned = app.state::<OwnedSidecar>().inner().clone();
@@ -836,18 +972,13 @@ fn main() {
                 .resizable(true)
                 .build()?;
 
-            let process = match spawn_sidecar(port, &token) {
-                Ok(process) => process,
-                Err(error) => {
-                    owned.set_failed(format!("GA-Hub desktop startup: {error}"));
-                    return Ok(());
-                }
-            };
-            if let Err(error) = owned.store_child(process) {
-                owned.set_failed(format!("GA-Hub desktop startup: {error}"));
-                return Ok(());
+            // CreateProcess, Windows Job / Unix process-group setup, PyInstaller
+            // extraction, and HTTP readiness all run off the Tauri setup thread.
+            if let Err(error) =
+                spawn_background_supervisor(owned.clone(), port, token, exit_setup.clone())
+            {
+                let _ = owned.set_failed(format!("GA-Hub desktop startup: {error}"), &exit_setup);
             }
-            spawn_background_readiness(owned, port, token, exit_setup.clone());
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -955,12 +1086,71 @@ mod tests {
 
     #[test]
     fn readiness_state_has_stable_command_semantics() {
-        let sidecar = OwnedSidecar::new();
-        assert_eq!(sidecar.ready(), Ok(false));
-        sidecar.set_ready();
-        assert_eq!(sidecar.ready(), Ok(true));
-        sidecar.set_failed("failed".to_string());
-        assert_eq!(sidecar.ready(), Err("failed".to_string()));
+        let mut ready = SidecarLifecycle::new();
+        assert_eq!(ready.readiness(), Ok(false));
+        assert_eq!(ready.commit_spawn(()), Ok(()));
+        assert_eq!(ready.readiness(), Ok(false));
+        assert!(ready.mark_ready());
+        assert_eq!(ready.readiness(), Ok(true));
+
+        let mut failed = SidecarLifecycle::<()>::new();
+        assert!(failed.mark_failed("failed".to_string()));
+        assert_eq!(failed.readiness(), Err("failed".to_string()));
+    }
+
+    #[test]
+    fn shutdown_before_spawn_commit_rejects_the_late_process() {
+        let mut lifecycle = SidecarLifecycle::<u32>::new();
+        assert!(matches!(
+            lifecycle.begin_shutdown(),
+            ShutdownClaim::Owner(None)
+        ));
+        assert_eq!(lifecycle.phase, SidecarPhase::Stopping);
+        assert_eq!(lifecycle.commit_spawn(41), Err(41));
+
+        lifecycle.finish_shutdown();
+        assert_eq!(lifecycle.phase, SidecarPhase::Stopped);
+        assert_eq!(lifecycle.commit_spawn(42), Err(42));
+    }
+
+    #[test]
+    fn late_readiness_or_error_cannot_revive_shutdown() {
+        let mut lifecycle = SidecarLifecycle::new();
+        assert_eq!(lifecycle.commit_spawn(7_u32), Ok(()));
+        assert!(matches!(
+            lifecycle.begin_shutdown(),
+            ShutdownClaim::Owner(Some(7))
+        ));
+
+        assert!(!lifecycle.mark_ready());
+        assert!(!lifecycle.mark_failed("late failure".to_string()));
+        assert_eq!(lifecycle.phase, SidecarPhase::Stopping);
+
+        lifecycle.finish_shutdown();
+        assert!(!lifecycle.mark_ready());
+        assert!(!lifecycle.mark_failed("later failure".to_string()));
+        assert_eq!(lifecycle.phase, SidecarPhase::Stopped);
+        assert_eq!(lifecycle.readiness(), Ok(false));
+    }
+
+    #[test]
+    fn shutdown_claim_is_idempotent_and_has_one_cleanup_owner() {
+        let mut lifecycle = SidecarLifecycle::new();
+        assert_eq!(lifecycle.commit_spawn(9_u32), Ok(()));
+        assert!(matches!(
+            lifecycle.begin_shutdown(),
+            ShutdownClaim::Owner(Some(9))
+        ));
+        assert!(matches!(
+            lifecycle.begin_shutdown(),
+            ShutdownClaim::InProgress
+        ));
+
+        lifecycle.finish_shutdown();
+        assert!(matches!(
+            lifecycle.begin_shutdown(),
+            ShutdownClaim::Complete
+        ));
     }
 
     #[test]

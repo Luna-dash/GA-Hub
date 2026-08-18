@@ -136,8 +136,12 @@ def test_tauri_startup_is_local_first_and_release_cwd_is_portable() -> None:
     for field in ("apiOrigin", "wsOrigin", "instanceToken", "desktop"):
         assert f'"{field}"' in rust
 
-    assert "#[derive(Clone)]\nstruct OwnedSidecar" in rust
-    assert "fn spawn_background_readiness" in rust
+    assert "struct SidecarLifecycle<P>" in rust
+    assert "lifecycle: Arc<Mutex<SidecarLifecycle<OwnedProcess>>>" in rust
+    for phase in ("Spawning", "Running", "Ready", "Failed", "Stopping", "Stopped"):
+        assert phase in rust
+    assert "fn run_sidecar_supervisor" in rust
+    assert "fn spawn_background_supervisor" in rust
     assert "fn desktop_backend_ready" in rust
     assert "desktop_backend_ready\n        ])" in rust
     assert "fn wait_http_ready(" in rust
@@ -146,11 +150,22 @@ def test_tauri_startup_is_local_first_and_release_cwd_is_portable() -> None:
     assert "ready_response_matches(&response, token)" in rust
     assert "response.contains(token)" not in rust
 
-    setup = rust.split(".setup(move |app| {", 1)[1]
-    assert setup.index("WebviewWindowBuilder::new") < setup.index("spawn_sidecar(port, &token)")
-    assert setup.index("spawn_sidecar(port, &token)") < setup.index("owned.store_child(process)")
-    assert 'owned.set_failed(format!("GA-Hub desktop startup: {error}"))' in setup
-    assert setup.index(".build()") < setup.index("spawn_background_readiness(")
+    setup = rust.split(".setup(move |app| {", 1)[1].split(
+        ".build(tauri::generate_context!())", 1
+    )[0]
+    assert "spawn_sidecar(port, &token)" not in setup
+    assert "store_child" not in setup
+    assert setup.index("WebviewWindowBuilder::new") < setup.index(
+        "spawn_background_supervisor("
+    )
+    assert setup.index(".build()") < setup.index("spawn_background_supervisor(")
+
+    supervisor = rust.split("fn run_sidecar_supervisor", 1)[1].split(
+        "fn spawn_background_supervisor", 1
+    )[0]
+    assert "spawn(port, &token)" in supervisor
+    assert "sidecar.commit_spawn(process, &exit)" in supervisor
+    assert "stop_owned_process(&mut process)" in supervisor
 
     assert ".current_dir(sidecar_working_dir()?)" in rust
     assert "#[cfg(not(debug_assertions))]" in rust
