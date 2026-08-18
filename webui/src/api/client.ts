@@ -236,7 +236,8 @@ export const api = {
     ),
 
   // ── agent ────────────────────────────────────────────
-  agentStatus: () => http<AgentStatus>('GET', '/api/agent/status'),
+  agentStatus: (init?: Pick<RequestInit, 'signal'>) =>
+    http<AgentStatus>('GET', '/api/agent/status', undefined, init),
   agentAbort: () => http<{ ok: boolean }>('POST', '/api/agent/abort'),
   btw: (text: string) => http<BtwResp>('POST', '/api/agent/btw', { text }),
   agentNew: () => http<{ ok: boolean; message: string }>('POST', '/api/agent/new'),
