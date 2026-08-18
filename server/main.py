@@ -384,7 +384,8 @@ def create_app() -> FastAPI:
             host = services.scheduler_host
             if host is not None:
                 try:
-                    host.shutdown_all()
+                    if host.shutdown_all() is False:
+                        log.warning("scheduler host shutdown exceeded its graceful deadline")
                 except Exception:
                     log.exception("scheduler host shutdown failed")
             try:

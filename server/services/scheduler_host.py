@@ -6,6 +6,7 @@ models or their persistence formats.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import threading
 from dataclasses import dataclass
@@ -71,40 +72,59 @@ class SchedulerHost:
                 raise
 
             for item in self._registrations:
+                service = None
                 try:
                     service = item.factory()
-                    getattr(service, item.starter)()
                     item.service = service
+                    getattr(service, item.starter)()
                     item.started = True
                     item.error = None
                 except Exception as exc:
-                    item.service = None
+                    if service is None:
+                        item.service = None
                     item.started = False
                     item.error = str(exc)
                     log.exception("scheduler domain %s failed to start", item.name)
 
-    def shutdown_all(self, *, timeout: float = 5.0) -> None:
+    def shutdown_all(self, *, timeout: float = 5.0) -> bool:
         """Stop producers in reverse order, then stop the shared runtime last."""
         with self._lock:
+            all_stopped = True
             for item in reversed(self._registrations):
                 if item.service is None:
                     continue
                 try:
                     stopper = getattr(item.service, item.stopper)
                     try:
-                        stopper(timeout=timeout)
-                    except TypeError:
-                        stopper()
-                    item.started = False
+                        accepts_timeout = "timeout" in inspect.signature(stopper).parameters
+                    except (TypeError, ValueError):
+                        accepts_timeout = False
+                    if accepts_timeout:
+                        result = stopper(timeout=timeout)
+                    else:
+                        result = stopper()
+                    if result is False:
+                        all_stopped = False
+                        item.error = "shutdown timeout"
+                        item.started = True
+                    else:
+                        item.started = False
+                        item.error = None
                 except Exception:
+                    all_stopped = False
+                    item.error = "shutdown failed"
+                    item.started = True
                     log.exception("scheduler domain %s failed to stop", item.name)
 
             runtime = self._runtime
-            if runtime is not None:
+            if runtime is not None and all_stopped:
                 try:
                     runtime.shutdown(wait=False)
+                    self._runtime = None
                 except Exception:
+                    all_stopped = False
                     log.exception("shared scheduler runtime failed to stop")
+            return all_stopped
 
     def status(self) -> dict[str, dict[str, Any]]:
         with self._lock:

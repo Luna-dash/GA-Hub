@@ -37,6 +37,17 @@ class Service:
         self.stopped = True
 
 
+class TimeoutService(Service):
+    def shutdown(self, *, timeout: float) -> bool:
+        self.stopped = True
+        return False
+
+
+class FailingStartService(Service):
+    def start(self) -> None:
+        raise RuntimeError("start failed")
+
+
 def test_host_shares_runtime_and_stops_domains_in_reverse() -> None:
     runtime = Runtime()
     first = Service("scheduled", {"one": object()})
@@ -81,3 +92,30 @@ def test_domain_startup_failure_is_recorded_without_blocking_other_domains() -> 
     assert status["bad"]["error"] == "boom"
     assert status["good"]["state"] == "running"
     assert good.started
+
+
+def test_shutdown_timeout_keeps_runtime_and_domain_owned() -> None:
+    runtime = Runtime()
+    service = TimeoutService("slow")
+    host = SchedulerHost(lambda: runtime)
+    host.register("slow", lambda: service)
+    host.start_all()
+
+    assert host.shutdown_all(timeout=0) is False
+    assert runtime.shutdown_calls == 0
+    assert host.status()["runtime"] == {"running": True}
+    assert host.status()["slow"]["state"] == "error"
+    assert host.status()["slow"]["error"] == "shutdown timeout"
+
+
+def test_start_failure_keeps_created_service_for_cleanup() -> None:
+    runtime = Runtime()
+    service = FailingStartService("broken")
+    host = SchedulerHost(lambda: runtime)
+    host.register("broken", lambda: service)
+    host.start_all()
+
+    assert host._registrations[0].service is service
+    assert host.status()["broken"]["schedule_count"] == 0
+    assert host.shutdown_all(timeout=0) is True
+    assert runtime.shutdown_calls == 1
