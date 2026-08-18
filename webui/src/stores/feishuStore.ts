@@ -15,6 +15,7 @@ export interface FeishuMsg {
   type: 'user' | 'summary' | 'final'
   content: string
   ts: number
+  eventId?: string
 }
 
 interface FeishuState {
@@ -30,10 +31,10 @@ export const useFeishuStore = create<FeishuState>((set) => ({
     set((state) => {
       // 用Set快速查重，避免O(n²)
       const existingKeys = new Set(
-        state.msgs.map(m => `${m.taskId}:${m.type}:${m.content}`)
+        state.msgs.map(messageKey)
       )
       const toAdd = msgs.filter(
-        msg => !existingKeys.has(`${msg.taskId}:${msg.type}:${msg.content}`)
+        msg => !existingKeys.has(messageKey(msg))
       )
       if (toAdd.length === 0) return state
       return { msgs: [...state.msgs, ...toAdd] }
@@ -41,3 +42,9 @@ export const useFeishuStore = create<FeishuState>((set) => ({
   setMsgs: (msgs) => set({ msgs }),
   clear: () => set({ msgs: [] }),
 }))
+
+function messageKey(message: FeishuMsg): string {
+  return message.eventId
+    ? `event:${message.eventId}`
+    : `legacy:${message.taskId}:${message.type}:${message.content}`
+}

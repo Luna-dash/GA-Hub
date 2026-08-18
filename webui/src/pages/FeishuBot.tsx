@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { api } from '@/api/client'
-import type { BusEvent } from '@/api/types'
 import { MessageBubble } from '@/components/MessageBubble'
 import { PageShell } from '@/components/PageShell'
 import { useFeishuStore, type FeishuMsg } from '@/stores/feishuStore'
 import { deriveFeishuUiState } from '@/utils/feishuStatus'
+import { toFeishuMsg } from '@/utils/feishuMessage'
+import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 
 function fmtTime(ts?: number) {
@@ -36,29 +37,32 @@ export default function FeishuBot() {
   const [refreshing, setRefreshing] = useState(false)
   const [expandedTasks, setExpandedTasks] = useState<Set<number>>(new Set())
 
-  function toRemoteMsg(e: BusEvent): FeishuMsg | null {
-    const p = e.payload || {}
-    if (e.topic !== 'feishu:chat' || !p.task_id || !p.role || p.content === undefined) return null
-    const rawType = String(p.type || 'summary')
-    return {
-      taskId: String(p.task_id || ''),
-      chatId: String(p.chat_id || ''),
-      role: p.role === 'user' ? 'user' : 'assistant',
-      type: rawType === 'done' ? 'final' : (rawType as FeishuMsg['type']),
-      content: String(p.content || ''),
-      ts: typeof p.ts === 'number' ? p.ts * 1000 : e.ts ? e.ts * 1000 : Date.now(),
-    }
-  }
-
   const loadMessages = async () => {
     try {
       const res = await api.fsRecentEvents(500)
-      const msgs = (res.events || []).map(toRemoteMsg).filter(Boolean) as FeishuMsg[]
+      const msgs = (res.events || []).map(toFeishuMsg).filter(Boolean) as FeishuMsg[]
       if (msgs.length > 0) addMsgs(msgs)
     } catch { /* ignore */ }
   }
 
-  // 挂载时拉取一次历史；放弃实时推送，改为手动刷新以避免卡顿
+  useHubEvent('feishu:', (event) => {
+    const message = toFeishuMsg(event)
+    if (message) {
+      addMsgs([message])
+      return
+    }
+    if (
+      event.topic === 'feishu:started'
+      || event.topic === 'feishu:stopped'
+      || event.topic === 'feishu:check'
+      || event.topic === 'feishu:keys_saved'
+    ) {
+      void qc.invalidateQueries({ queryKey: queryKeys.feishu.status })
+      void qc.invalidateQueries({ queryKey: queryKeys.feishu.check })
+    }
+  })
+
+  // 挂载时拉取一次历史；实时消息由 EventBus 增量补充，轮询只兜底外部进程状态。
   useEffect(() => {
     loadMessages()
     // eslint-disable-next-line react-hooks/exhaustive-deps
