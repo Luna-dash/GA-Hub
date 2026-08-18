@@ -116,13 +116,14 @@ class EventSubscription:
         if self.closed:
             return
         self.closed = True
-        async with self.bus._lock:
+        with self.bus._state_lock:
             self.bus._subs[:] = [
                 (prefixes, q)
                 for prefixes, q in self.bus._subs
                 if q is not self.queue
             ]
             self.bus._resumable_subs.pop(self.queue, None)
+            self.bus._subscriber_loops.pop(self.queue, None)
 
 
 class EventBus:
@@ -138,6 +139,12 @@ class EventBus:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._subs: list[tuple[tuple[str, ...], asyncio.Queue[Event]]] = []
         self._resumable_subs: dict[asyncio.Queue[Event], EventSubscription] = {}
+        # ``_subs`` is intentionally kept as the legacy two-tuple shape for
+        # callers/tests.  Keep the owning loop beside it so a new lifespan
+        # never dispatches into a queue created by an older loop.
+        self._subscriber_loops: dict[
+            asyncio.Queue[Event], asyncio.AbstractEventLoop
+        ] = {}
         self._history: deque[Event] = deque(maxlen=history)
         # Unrelated high-volume topics must not invalidate a filtered cursor.
         self._evicted_topic_ids: dict[str, int] = {}
@@ -146,24 +153,164 @@ class EventBus:
         self._state_lock = threading.Lock()
         self.epoch = uuid.uuid4().hex
         self._next_event_id = 1
+        # Producers can publish from several worker threads.  Keep one
+        # scheduled callback per burst instead of one callback per event;
+        # this prevents high-volume streams from flooding the loop's ready
+        # queue while retaining the event-id order in ``_pending_dispatch``.
+        self._pending_dispatch: deque[Event] = deque()
+        self._dispatch_scheduled = False
+        self._dispatch_generation = 0
+        self._dispatch_batch_size = 512
 
     def attach_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Bind producers to the asyncio loop currently owning the app lifespan."""
+        schedule = False
+        generation = 0
+        retired: list[tuple[asyncio.Queue[Event], asyncio.AbstractEventLoop | None]] = []
         with self._state_lock:
+            if self._loop is loop:
+                return
+            old_loop = self._loop
+            if old_loop is not None:
+                # A new lifespan may replace an owner whose finalizer did not
+                # run. Its queued live delivery belongs to the old subscriber
+                # set; history remains available for cursor replay.
+                self._pending_dispatch.clear()
+                self._dispatch_scheduled = False
+                retired = self._retire_subscriptions_locked(old_loop, "server_restarted")
             self._loop = loop
+            self._dispatch_generation += 1
+            generation = self._dispatch_generation
+            if self._pending_dispatch and not self._dispatch_scheduled:
+                self._dispatch_scheduled = True
+                schedule = True
+        self._wake_retired(retired)
+        if schedule:
+            self._schedule_dispatch(loop, generation)
 
     def detach_loop(self, loop: asyncio.AbstractEventLoop) -> bool:
         """Release ``loop`` without detaching a newer lifespan owner."""
+        retired: list[tuple[asyncio.Queue[Event], asyncio.AbstractEventLoop | None]] = []
         with self._state_lock:
             if self._loop is not loop:
                 return False
             self._loop = None
-            return True
+            self._dispatch_generation += 1
+            self._dispatch_scheduled = False
+            # Pending events remain in history and can be replayed by a new
+            # subscriber. They must not cross an application lifespan into a
+            # different loop or stale subscriber set.
+            self._pending_dispatch.clear()
+            retired = self._retire_subscriptions_locked(loop, "server_restarted")
+        self._wake_retired(retired)
+        return True
+
+    def _retire_subscriptions_locked(
+        self,
+        owner: asyncio.AbstractEventLoop,
+        reason: str,
+    ) -> list[tuple[asyncio.Queue[Event], asyncio.AbstractEventLoop | None]]:
+        """Remove subscriptions owned by ``owner`` while holding state lock."""
+        retired: list[tuple[asyncio.Queue[Event], asyncio.AbstractEventLoop | None]] = []
+        kept: list[tuple[tuple[str, ...], asyncio.Queue[Event]]] = []
+        for prefixes, queue in self._subs:
+            queue_owner = self._subscriber_loops.get(queue)
+            # Entries restored by legacy callers may not have an owner map;
+            # treat them as stale when replacing/detaching an owner.
+            if queue_owner is not owner and queue_owner is not None:
+                kept.append((prefixes, queue))
+                continue
+            subscription = self._resumable_subs.pop(queue, None)
+            if subscription is not None:
+                subscription.live_resync_reason = reason
+            self._subscriber_loops.pop(queue, None)
+            retired.append((queue, queue_owner))
+        self._subs[:] = kept
+        return retired
+
+    @staticmethod
+    def _wake_queue(queue: asyncio.Queue[Event]) -> None:
+        """Wake a retired consumer without crossing its loop thread."""
+        while True:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        try:
+            queue.put_nowait(None)  # type: ignore[arg-type]
+        except asyncio.QueueFull:
+            # A queue can only refill between the drain and put for a custom
+            # queue implementation; the subscription is already retired.
+            pass
+
+    def _wake_retired(
+        self,
+        retired: list[tuple[asyncio.Queue[Event], asyncio.AbstractEventLoop | None]],
+    ) -> None:
+        for queue, owner in retired:
+            if owner is None or owner.is_closed():
+                continue
+            try:
+                owner.call_soon_threadsafe(self._wake_queue, queue)
+            except RuntimeError:
+                # The old loop can close between the check and scheduling.
+                continue
+
+    def _schedule_dispatch(
+        self, loop: asyncio.AbstractEventLoop, generation: int
+    ) -> None:
+        try:
+            loop.call_soon_threadsafe(self._drain_dispatch, loop, generation)
+        except RuntimeError:
+            # A loop may close between acquiring the state lock and posting
+            # the callback. Keep history, but make the bus available for a
+            # later lifespan or a clean detach.
+            with self._state_lock:
+                if self._loop is loop and self._dispatch_generation == generation:
+                    self._loop = None
+                    self._dispatch_scheduled = False
+                    self._pending_dispatch.clear()
+
+    def _drain_dispatch(
+        self, loop: asyncio.AbstractEventLoop, generation: int
+    ) -> None:
+        """Dispatch one bounded batch and schedule the next batch if needed."""
+        with self._state_lock:
+            if self._loop is not loop or self._dispatch_generation != generation:
+                return
+            batch: list[Event] = []
+            while self._pending_dispatch and len(batch) < self._dispatch_batch_size:
+                batch.append(self._pending_dispatch.popleft())
+            has_more = bool(self._pending_dispatch)
+            if not has_more:
+                self._dispatch_scheduled = False
+
+        try:
+            for evt in batch:
+                try:
+                    self._dispatch_async(evt)
+                except Exception:
+                    # One malformed/stale subscriber must not abort the rest
+                    # of a bounded batch or strand the next scheduled batch.
+                    log.exception("event bus subscriber dispatch failed")
+        finally:
+            if has_more:
+                try:
+                    loop.call_soon(self._drain_dispatch, loop, generation)
+                except RuntimeError:
+                    with self._state_lock:
+                        if self._loop is loop and self._dispatch_generation == generation:
+                            self._loop = None
+                            self._dispatch_scheduled = False
+                            self._pending_dispatch.clear()
 
     # ── producers ────────────────────────────────────────────────
     def publish(self, topic: str, payload: dict | None = None) -> None:
         """Thread-safe publish. Safe to call from any thread."""
         safe_payload = _json_safe(payload or {})
+        schedule = False
+        loop: asyncio.AbstractEventLoop | None = None
+        generation = 0
         with self._state_lock:
             event_id = self._next_event_id
             self._next_event_id += 1
@@ -184,30 +331,36 @@ class EventBus:
             loop = self._loop
             if loop is None:
                 return
-            try:
-                loop.call_soon_threadsafe(self._dispatch_async, evt)
-            except RuntimeError:
-                # A loop may close unexpectedly between application teardown
-                # and a late producer publish. Keep history, but do not let the
-                # stale delivery target break that producer thread.
-                if not loop.is_closed():
-                    raise
-                if self._loop is loop:
-                    self._loop = None
+            self._pending_dispatch.append(evt)
+            if not self._dispatch_scheduled:
+                self._dispatch_scheduled = True
+                generation = self._dispatch_generation
+                schedule = True
+        if schedule and loop is not None:
+            self._schedule_dispatch(loop, generation)
 
     def _dispatch_async(self, evt: Event) -> None:
-        for prefixes, q in list(self._subs):
+        with self._state_lock:
+            subscriptions = list(self._subs)
+            subscriber_loops = dict(self._subscriber_loops)
+        current_loop = asyncio.get_running_loop()
+        for prefixes, q in subscriptions:
+            owner = subscriber_loops.get(q)
+            if owner is not None and owner is not current_loop:
+                continue
             if not _matches_topic(evt.topic, prefixes):
                 continue
             try:
                 q.put_nowait(evt)
             except asyncio.QueueFull:
-                resumable = self._resumable_subs.get(q)
+                with self._state_lock:
+                    resumable = self._resumable_subs.get(q)
                 if resumable is not None:
                     # A resumable subscriber must never silently skip an event.
                     # Discard queued data, then wake live() with a sentinel;
                     # the client will reconnect without a cursor.
-                    resumable.live_resync_reason = "subscriber_overflow"
+                    with self._state_lock:
+                        resumable.live_resync_reason = "subscriber_overflow"
                     while True:
                         try:
                             q.get_nowait()
@@ -235,8 +388,11 @@ class EventBus:
         """
         prefixes = _normalize_prefixes(prefix)
         q: asyncio.Queue[Event] = asyncio.Queue(maxsize=self._queue_size)
+        owner_loop = asyncio.get_running_loop()
         async with self._lock:
-            self._subs.append((prefixes, q))
+            with self._state_lock:
+                self._subs.append((prefixes, q))
+                self._subscriber_loops[q] = owner_loop
         try:
             if replay:
                 matching_history = [
@@ -248,14 +404,17 @@ class EventBus:
                     yield evt
             while True:
                 evt = await q.get()
+                if evt is None:
+                    return
                 yield evt
         finally:
-            async with self._lock:
+            with self._state_lock:
                 self._subs[:] = [
                     (sub_prefixes, qq)
                     for sub_prefixes, qq in self._subs
                     if qq is not q
                 ]
+                self._subscriber_loops.pop(q, None)
 
     async def subscribe_after(
         self, prefix: EventPrefixFilter = "", *, after_event_id: int | None = None,
@@ -264,6 +423,7 @@ class EventBus:
         """Atomically subscribe and capture events through a fixed boundary."""
         prefixes = _normalize_prefixes(prefix)
         q: asyncio.Queue[Event] = asyncio.Queue(maxsize=self._queue_size)
+        owner_loop = asyncio.get_running_loop()
         async with self._lock:
             with self._state_lock:
                 history = list(self._history)
@@ -302,6 +462,7 @@ class EventBus:
                 )
                 self._subs.append((prefixes, q))
                 self._resumable_subs[q] = subscription
+                self._subscriber_loops[q] = owner_loop
         return subscription
 
     def history(self, prefix: EventPrefixFilter = "", limit: int = 100) -> list[Event]:

@@ -13,6 +13,7 @@ import asyncio
 import dataclasses
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -105,6 +106,123 @@ class EventBusBehaviorTests(unittest.TestCase):
             if not second.is_closed():
                 second.close()
 
+    def test_stale_loop_callback_cannot_consume_new_lifespan_events(self):
+        bus = EventBus()
+        first = asyncio.new_event_loop()
+        second = asyncio.new_event_loop()
+        try:
+            bus.attach_loop(first)
+            bus.publish("chat:old", {})
+            self.assertTrue(bus.detach_loop(first))
+            bus.attach_loop(second)
+
+            async def scenario():
+                subscription = await bus.subscribe_after("chat:")
+                bus.publish("chat:new", {})
+                await asyncio.sleep(0)
+                event = subscription.queue.get_nowait()
+                await subscription.close()
+                return event.topic
+
+            # The stale callback is still queued on ``first``. Running it after
+            # the new loop is attached must not reset or drain the new owner.
+            first.run_until_complete(asyncio.sleep(0))
+            self.assertEqual(second.run_until_complete(scenario()), "chat:new")
+        finally:
+            bus.detach_loop(second)
+            first.close()
+            second.close()
+
+    def test_direct_loop_replacement_resets_stale_dispatch_state(self):
+        bus = EventBus()
+        first = asyncio.new_event_loop()
+        second = asyncio.new_event_loop()
+        try:
+            bus.attach_loop(first)
+            bus.publish("chat:old", {})
+            bus.attach_loop(second)
+
+            async def scenario():
+                subscription = await bus.subscribe_after("chat:")
+                bus.publish("chat:new", {})
+                await asyncio.sleep(0)
+                event = subscription.queue.get_nowait()
+                await subscription.close()
+                return event.topic
+
+            first.run_until_complete(asyncio.sleep(0))
+            self.assertEqual(second.run_until_complete(scenario()), "chat:new")
+            self.assertFalse(bus._pending_dispatch)
+            self.assertFalse(bus._dispatch_scheduled)
+        finally:
+            bus.detach_loop(second)
+            first.close()
+            second.close()
+
+    def test_loop_replacement_retires_waiting_old_subscriber(self):
+        bus = EventBus()
+        first = asyncio.new_event_loop()
+        second = asyncio.new_event_loop()
+        old_task = None
+        try:
+            bus.attach_loop(first)
+
+            async def register_old_waiter():
+                subscription = await bus.subscribe_after("chat:")
+
+                async def wait_for_event():
+                    async for _event in subscription.live():
+                        pass
+
+                return subscription, asyncio.create_task(wait_for_event())
+
+            old_subscription, old_task = first.run_until_complete(register_old_waiter())
+            first.run_until_complete(asyncio.sleep(0))
+            self.assertFalse(old_task.done())
+
+            # Replacement must wake and retire the queue before the old loop
+            # is closed; otherwise the next owner can dispatch into its waiter.
+            bus.attach_loop(second)
+            first.run_until_complete(asyncio.wait_for(old_task, timeout=1.0))
+            self.assertEqual(old_subscription.live_resync_reason, "server_restarted")
+
+            async def new_owner():
+                subscription = await bus.subscribe_after("chat:")
+                bus.publish("chat:new", {})
+                await asyncio.sleep(0)
+                event = subscription.queue.get_nowait()
+                await subscription.close()
+                return event.topic
+
+            self.assertEqual(second.run_until_complete(new_owner()), "chat:new")
+        finally:
+            if old_task is not None and not old_task.done():
+                old_task.cancel()
+                first.run_until_complete(asyncio.gather(old_task, return_exceptions=True))
+            bus.detach_loop(second)
+            first.close()
+            second.close()
+
+    def test_dispatch_exception_does_not_strand_followup_batch(self):
+        async def scenario():
+            bus = EventBus()
+            bus.attach_loop(asyncio.get_running_loop())
+            with mock.patch.object(
+                bus,
+                "_dispatch_async",
+                side_effect=[RuntimeError("stale queue"), *([None] * 600)],
+            ) as dispatch:
+                for _ in range(601):
+                    bus.publish("chat:next", {})
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                return dispatch.call_count, len(bus._pending_dispatch), bus._dispatch_scheduled
+
+        call_count, pending, scheduled = self._run(scenario())
+        self.assertEqual(call_count, 601)
+        self.assertEqual(pending, 0)
+        self.assertFalse(scheduled)
+
     def test_publish_routes_by_prefix(self):
         async def scenario():
             bus = EventBus()
@@ -134,6 +252,37 @@ class EventBusBehaviorTests(unittest.TestCase):
         self.assertEqual(chat, ["chat:hello", "chat:bye"])
         # all_ saw the first two publishes (we stop after 2)
         self.assertEqual(all_[:2], ["chat:hello", "wechat:msg"])
+
+    def test_publish_burst_coalesces_loop_wakeup_and_preserves_order(self):
+        async def scenario():
+            bus = EventBus(queue_size=128)
+            bus.attach_loop(asyncio.get_running_loop())
+            subscription = await bus.subscribe_after("chat:")
+            scheduled = 0
+            original = bus._schedule_dispatch
+
+            def counted(loop, generation):
+                nonlocal scheduled
+                scheduled += 1
+                return original(loop, generation)
+
+            with mock.patch.object(bus, "_schedule_dispatch", side_effect=counted):
+                for index in range(100):
+                    bus.publish("chat:next", {"index": index})
+                await asyncio.sleep(0)
+
+            events = []
+            while True:
+                try:
+                    events.append(subscription.queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
+            await subscription.close()
+            return scheduled, [event.event_id for event in events]
+
+        scheduled, event_ids = self._run(scenario())
+        self.assertEqual(scheduled, 1)
+        self.assertEqual(event_ids, list(range(1, 101)))
 
     def test_history_replay(self):
         async def scenario():
