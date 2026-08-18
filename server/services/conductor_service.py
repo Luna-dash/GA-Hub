@@ -345,6 +345,18 @@ class ConductorService:
     _lock = threading.Lock()
 
     def __init__(self):
+        # Application shutdown is a terminal lifecycle separate from the
+        # user-facing ``stop`` route.  Keep the singleton alive while a close
+        # is in progress (or after a timeout) so a late request cannot create a
+        # second core/monitor pair beside the one still being reaped.
+        self._shutdown_lock = threading.RLock()
+        self._shutdown_in_progress = False
+        self._shutdown_complete = False
+        self._shutdown_event = threading.Event()
+        self._shutdown_event.set()
+        self._shutdown_core_stopped = False
+        self._shutdown_monitor_stopped = False
+        self._closed = False
         self.chat_messages: list = []
         self.usage_store = RequestUsageStore()
         try:
@@ -391,9 +403,140 @@ class ConductorService:
                     cls._instance = cls()
         return cls._instance
 
-    def shutdown(self) -> None:
-        """Stop Hub-owned background helpers without creating new work."""
-        self.timeout_monitor.stop()
+    def _ensure_shutdown_state(self) -> None:
+        """Backfill lifecycle fields for legacy ``object.__new__`` tests.
+
+        A few integrations construct a service shell without invoking
+        ``__init__`` to exercise one method in isolation.  Keeping this small
+        compatibility shim avoids making those callers know about the new
+        terminal-close state while normal instances initialize everything
+        eagerly above.
+        """
+        if not hasattr(self, "_shutdown_lock"):
+            self._shutdown_lock = threading.RLock()
+        if not hasattr(self, "_shutdown_in_progress"):
+            self._shutdown_in_progress = False
+        if not hasattr(self, "_shutdown_complete"):
+            self._shutdown_complete = False
+        if not hasattr(self, "_shutdown_event"):
+            self._shutdown_event = threading.Event()
+            self._shutdown_event.set()
+        if not hasattr(self, "_shutdown_core_stopped"):
+            self._shutdown_core_stopped = False
+        if not hasattr(self, "_shutdown_monitor_stopped"):
+            self._shutdown_monitor_stopped = False
+        if not hasattr(self, "_closed"):
+            self._closed = False
+
+    @staticmethod
+    def _stop_result(result: object) -> bool:
+        """Interpret old best-effort stop helpers compatibly.
+
+        The shared core and the timeout monitor return ``bool``.  Treating a
+        legacy ``None`` return as success preserves compatibility with simple
+        test doubles and older adapters; an explicit ``False`` remains a
+        failed/retryable close.
+        """
+        return result is not False
+
+    def shutdown(self, timeout: float = 2.0) -> bool:
+        """Terminally close the core and monitor under one shared deadline.
+
+        Exactly one caller owns cleanup for an attempt.  Concurrent callers
+        wait on that attempt's event for their own remaining budget and never
+        run a second ``stop`` pair concurrently.  A timeout or exception keeps
+        the singleton closed but retryable; only a complete core+monitor reap
+        is cached as successful.
+        """
+        self._ensure_shutdown_state()
+        deadline = time.monotonic() + max(0.0, float(timeout))
+
+        with self._shutdown_lock:
+            if self._shutdown_complete:
+                return True
+            if self._shutdown_in_progress:
+                event = self._shutdown_event
+                remaining = max(0.0, deadline - time.monotonic())
+                # Do not hold the lifecycle lock while waiting for the owner.
+                owner = False
+            else:
+                self._shutdown_in_progress = True
+                self._closed = True
+                event = threading.Event()
+                self._shutdown_event = event
+                owner = True
+
+        if not owner:
+            event.wait(max(0.0, remaining))
+            with self._shutdown_lock:
+                return bool(self._shutdown_complete)
+
+        core_ok = self._shutdown_core_stopped
+        monitor_ok = self._shutdown_monitor_stopped
+        try:
+            conductor = getattr(self, "conductor", None)
+            if not core_ok:
+                if conductor is None:
+                    core_ok = True
+                else:
+                    try:
+                        stop = getattr(conductor, "stop", None)
+                        core_ok = (
+                            True
+                            if not callable(stop)
+                            else self._stop_result(
+                                stop(timeout=max(0.0, deadline - time.monotonic()))
+                            )
+                        )
+                    except Exception:
+                        core_ok = False
+                        log.exception("conductor core shutdown failed")
+                self._shutdown_core_stopped = core_ok
+
+            # Always attempt the monitor, even when the core raised or used up
+            # the whole deadline.  Passing the remaining budget (including
+            # zero) keeps the two components within one atomic time envelope.
+            monitor = getattr(self, "timeout_monitor", None)
+            if not monitor_ok:
+                if monitor is None:
+                    monitor_ok = True
+                else:
+                    try:
+                        stop = getattr(monitor, "stop", None)
+                        monitor_ok = (
+                            True
+                            if not callable(stop)
+                            else self._stop_result(
+                                stop(timeout=max(0.0, deadline - time.monotonic()))
+                            )
+                        )
+                    except Exception:
+                        monitor_ok = False
+                        log.exception("conductor timeout monitor shutdown failed")
+                self._shutdown_monitor_stopped = monitor_ok
+        finally:
+            with self._shutdown_lock:
+                self._shutdown_core_stopped = bool(core_ok)
+                self._shutdown_monitor_stopped = bool(monitor_ok)
+                complete = bool(core_ok and monitor_ok)
+                self._shutdown_complete = complete
+                self._shutdown_in_progress = False
+                event.set()
+
+        if not complete:
+            log.warning(
+                "Conductor shutdown did not finish before deadline "
+                "(core=%s monitor=%s)",
+                core_ok,
+                monitor_ok,
+            )
+        return complete
+
+    def _assert_open(self) -> None:
+        self._ensure_shutdown_state()
+        with self._shutdown_lock:
+            if self._closed:
+                raise RuntimeError("Conductor service is closed")
 
     @staticmethod
     def _normalize_model_index(value: Optional[int], label: str) -> Optional[int]:
@@ -534,7 +677,11 @@ Operating rules:
 Current state: {summary}"""
 
     def ensure_started(self) -> bool:
-        started = self.conductor.start()
+        self._ensure_shutdown_state()
+        with self._shutdown_lock:
+            if self._closed:
+                raise RuntimeError("Conductor service is closed")
+            started = self.conductor.start()
         self.lifecycle_status()
         return started
 
@@ -562,6 +709,7 @@ Current state: {summary}"""
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
     ) -> dict:
         """Dispatch through the single Hub model-policy boundary."""
+        self._assert_open()
         models = self.configure_models(
             llm_index=conductor_llm_index,
             subagent_llm_index=subagent_llm_index,
@@ -584,6 +732,7 @@ Current state: {summary}"""
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
     ) -> dict:
         """Resume a stopped worker through the same model-policy boundary."""
+        self._assert_open()
         models = self.configure_models(
             llm_index=conductor_llm_index,
             subagent_llm_index=subagent_llm_index,
@@ -620,6 +769,7 @@ Current state: {summary}"""
         subagent_llm_index: Optional[int] = None,
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
     ) -> dict:
+        self._assert_open()
         request_id = self.usage_store.begin() if role == "user" else None
         try:
             item = add_chat(
@@ -664,3 +814,18 @@ Current state: {summary}"""
 
     def get_conductor_log(self) -> list:
         return self.conductor.log
+
+
+def shutdown_conductor_service(timeout: float = 2.0) -> bool:
+    """Close the existing singleton without constructing one at app exit.
+
+    Unlike restartable service registries, the terminally closed instance is
+    intentionally retained.  This prevents a late request during ASGI
+    teardown from installing a second core while a timed-out first owner is
+    still finishing, and it lets a later shutdown call reap that same owner.
+    """
+    with ConductorService._lock:
+        service = ConductorService._instance
+    if service is None:
+        return True
+    return service.shutdown(timeout=timeout)

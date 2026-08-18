@@ -374,9 +374,9 @@ def create_app() -> FastAPI:
                 except Exception:
                     log.exception("scheduler host shutdown failed")
             try:
-                from .services.conductor_service import ConductorService
-                if ConductorService._instance is not None:
-                    ConductorService._instance.shutdown()
+                from .services.conductor_service import shutdown_conductor_service
+                if not shutdown_conductor_service():
+                    log.warning("conductor shutdown exceeded its graceful deadline")
             except Exception:
                 log.exception("conductor shutdown failed")
             try:

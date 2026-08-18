@@ -168,11 +168,43 @@ class TimeoutMonitor:
         )
         self._thread.start()
 
-    def stop(self, timeout: float = 1.0) -> None:
+    def stop(self, timeout: float = 1.0) -> bool:
+        """Request the monitor to stop and reap it within ``timeout``.
+
+        The monitor is deliberately never force-killed.  A timed-out thread
+        remains referenced so a later shutdown attempt can finish reaping the
+        same owner.  Returning the join result lets the service aggregate this
+        helper with the core conductor under one shutdown deadline.
+        """
         self._stop.set()
         thread = self._thread
-        if thread is not None:
-            thread.join(timeout=max(0.0, timeout))
+        if thread is None:
+            return True
+        if thread is threading.current_thread():
+            # Joining the current thread would raise and would make shutdown
+            # non-idempotent when called from an unusual monitor callback.
+            return False
+
+        try:
+            alive = thread.is_alive()
+        except Exception:
+            # Thread-like test doubles may not expose ``is_alive``.  Preserve
+            # the old best-effort behavior and let join determine the result.
+            alive = True
+        if alive:
+            thread.join(timeout=max(0.0, float(timeout)))
+
+        try:
+            alive = thread.is_alive()
+        except Exception:
+            alive = False
+        if not alive:
+            # Clear only after observing termination.  On timeout the live
+            # reference is intentionally retained for the next retry.
+            if self._thread is thread:
+                self._thread = None
+            return True
+        return False
 
     def _run(self) -> None:
         while not self._stop.wait(self.check_interval):
