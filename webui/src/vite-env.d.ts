@@ -17,10 +17,13 @@ interface PywebviewApi {
 }
 
 interface Window {
+  __TAURI_INTERNALS__?: unknown
   pywebview?: { api?: PywebviewApi }
   __GA_HUB_RUNTIME__?: {
     apiOrigin?: string
     wsOrigin?: string
+    desktop?: boolean
+    instanceToken?: string
   }
 }
 

@@ -1,6 +1,6 @@
-// Centralized HTTP + WS client. Vite dev proxy forwards /api and /ws to
-// the FastAPI backend, so no base URL is needed in dev. In Tauri/prod
-// the backend serves the SPA itself, also same-origin.
+// Centralized HTTP + WS client. Browser/server and Vite proxy modes keep
+// relative same-origin paths; packaged Tauri injects the owned sidecar's
+// random loopback origins before this module is evaluated.
 import type {
   AgentStatus,
   AutonomousReportDetailResponse,

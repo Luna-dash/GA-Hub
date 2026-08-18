@@ -10,7 +10,7 @@ Accepted. Supersedes ADR 0001's Option C coexistence policy after its implementa
 
 GA-Hub now has two shell implementations:
 
-- A Tauri 2 supervisor that starts an owned FastAPI sidecar on an allocated loopback port, verifies a startup token through `/api/desktop/ready`, creates the window only after readiness, forwards duplicate launches to the existing window, and owns shutdown of only that child process.
+- A Tauri 2 supervisor that starts an owned FastAPI sidecar on an allocated loopback port, creates a local-asset window immediately, verifies a startup token through `/api/desktop/ready` in the background, forwards duplicate launches to the existing window, and owns shutdown of only that child process.
 - A legacy pywebview launcher with fixed-port discovery/cleanup, tray behavior, shell-local file/dialog APIs, and considerable platform-specific recovery code.
 
 Continuing to present both as ordinary production entry points keeps lifecycle ownership ambiguous, duplicates packaging work, and makes recovery dependent on who happened to start the backend.
@@ -23,11 +23,12 @@ The production contract is:
 
 1. Tauri starts exactly one sidecar it owns. It never adopts or kills a process by port, process name, or any identity it did not create.
 2. The sidecar binds loopback on an allocated port and emits `starting` with its PID, port, and instance token.
-3. The shell creates the webview only after the same token is returned by `/api/desktop/ready`.
+3. The shell creates the local-asset webview immediately with an immutable runtime identity and random loopback HTTP/WebSocket origins injected before application JavaScript. The frontend remains in a local startup gate until the background supervisor receives the exact same token from `/api/desktop/ready`; no API query or WebSocket starts before that transition.
 4. Closing the main window hides it immediately. A background Rust worker requests graceful sidecar shutdown, waits up to five seconds for application shutdown hooks, then kills only that owned child if it times out.
 5. A duplicate shell launch focuses the existing window instead of starting another backend.
 6. Browser/server-only and developer modes remain available through `python -m server.run` and `npm run desktop:dev`; they are not production package lifecycles.
 7. Release startup resolves its working directory from the installed executable, never from the repository path embedded at compile time. The configured GenericAgent root remains a separate backend setting persisted in `~/.genericagent-admin/config.json`.
+8. Tauri asset origins and loopback development origins share one explicit HTTP CORS/WebSocket Origin policy. Opaque and external origins are rejected; command-line WebSocket clients without an Origin header remain supported.
 
 ## Migration and rollback
 

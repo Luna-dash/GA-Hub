@@ -132,10 +132,71 @@ class BackendApiSmokeTests(unittest.TestCase):
             self.assertIn("javascript", entry.headers["content-type"])
             self.assertGreater(len(entry.content), 100)
 
-    def test_event_websocket_allows_local_origins(self) -> None:
+    def test_cors_allows_tauri_and_loopback_ui_origins(self) -> None:
         app = self.main.create_app()
         with TestClient(app, base_url="http://127.0.0.1") as client:
-            for origin in ("http://127.0.0.1:8765", "http://localhost:5173"):
+            for origin in (
+                "http://tauri.localhost",
+                "https://tauri.localhost",
+                "tauri://localhost",
+                "http://localhost:5173",
+                "https://127.0.0.1:8765",
+                "http://[::1]:8765",
+            ):
+                with self.subTest(origin=origin):
+                    preflight = client.options(
+                        "/api/status",
+                        headers={
+                            "origin": origin,
+                            "access-control-request-method": "GET",
+                        },
+                    )
+                    self.assertEqual(preflight.status_code, 200)
+                    self.assertEqual(
+                        preflight.headers.get("access-control-allow-origin"),
+                        origin,
+                    )
+
+                    response = client.get("/api/status", headers={"origin": origin})
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(
+                        response.headers.get("access-control-allow-origin"),
+                        origin,
+                    )
+
+    def test_cors_rejects_lookalike_and_opaque_origins(self) -> None:
+        app = self.main.create_app()
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            for origin in (
+                "http://tauri.localhost.evil.example",
+                "http://localhost:",
+                "http://localhost:65536",
+                "null",
+                "file://localhost",
+            ):
+                with self.subTest(origin=origin):
+                    response = client.options(
+                        "/api/status",
+                        headers={
+                            "origin": origin,
+                            "access-control-request-method": "GET",
+                        },
+                    )
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIsNone(
+                        response.headers.get("access-control-allow-origin")
+                    )
+
+    def test_event_websocket_allows_trusted_ui_origins(self) -> None:
+        app = self.main.create_app()
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            for origin in (
+                "http://127.0.0.1:8765",
+                "http://localhost:5173",
+                "http://tauri.localhost",
+                "https://tauri.localhost",
+                "tauri://localhost",
+            ):
                 with self.subTest(origin=origin):
                     with client.websocket_connect(
                         "/ws/events", headers={"origin": origin}
@@ -157,7 +218,7 @@ class BackendApiSmokeTests(unittest.TestCase):
         self.assertEqual(event["payload"]["text"], "included")
 
     def test_event_websocket_rejects_external_origin(self) -> None:
-        from server.routes.events import _is_allowed_origin
+        from server.origin_policy import is_allowed_ui_origin
         from starlette.websockets import WebSocketDisconnect
 
         for origin in (
@@ -171,7 +232,7 @@ class BackendApiSmokeTests(unittest.TestCase):
             "http://localhost/#fragment",
         ):
             with self.subTest(origin=origin):
-                self.assertFalse(_is_allowed_origin(origin))
+                self.assertFalse(is_allowed_ui_origin(origin))
 
         app = self.main.create_app()
         with TestClient(app, base_url="http://127.0.0.1") as client:

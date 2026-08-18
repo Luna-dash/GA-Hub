@@ -1,6 +1,8 @@
 export interface RuntimeConfig {
   apiOrigin: string
   wsOrigin: string
+  desktop: boolean
+  instanceToken: string
 }
 
 function normalizeOrigin(value: string | undefined, protocols: readonly string[]): string {
@@ -21,6 +23,15 @@ function websocketOriginFromHttp(origin: string): string {
   return url.origin
 }
 
+function normalizeInstanceToken(value: string | undefined): string {
+  const token = value?.trim() || ''
+  return token.length <= 256 ? token : ''
+}
+
+export function isTauriRuntime(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
 export function getRuntimeConfig(): RuntimeConfig {
   const injected = window.__GA_HUB_RUNTIME__
   const apiOrigin = normalizeOrigin(injected?.apiOrigin, ['http:', 'https:'])
@@ -28,7 +39,18 @@ export function getRuntimeConfig(): RuntimeConfig {
   return {
     apiOrigin,
     wsOrigin: explicitWsOrigin || websocketOriginFromHttp(apiOrigin),
+    desktop: injected?.desktop === true,
+    instanceToken: normalizeInstanceToken(injected?.instanceToken),
   }
+}
+
+export function desktopRuntimeConfigError(): string | null {
+  if (!isTauriRuntime()) return null
+  const runtime = getRuntimeConfig()
+  if (!runtime.desktop) return '桌面运行配置未注入'
+  if (!runtime.apiOrigin || !runtime.wsOrigin) return '桌面后端地址无效'
+  if (!runtime.instanceToken) return '桌面实例标识缺失'
+  return null
 }
 
 export function resolveApiUrl(path: string): string {

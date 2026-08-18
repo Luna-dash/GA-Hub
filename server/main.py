@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import _paths
+from .origin_policy import LOOPBACK_HTTP_ORIGIN_REGEX, TAURI_UI_ORIGINS
 from .routes import events as event_routes  # safe to import in setup mode
 from .schemas import AppStatusResp
 from .services.event_bus import bus
@@ -253,12 +254,13 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
-    # CORS: the SPA is served same-origin, so a wildcard policy only serves to
-    # let *arbitrary* external web pages script the local API. Restrict to
-    # localhost origins (covers the Vite dev server too).
+    # CORS: browser/server mode is same-origin, while Vite and packaged Tauri
+    # assets call the random-port sidecar cross-origin.  Keep both origin sets
+    # explicit so arbitrary external pages cannot script the local API.
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
+        allow_origins=list(TAURI_UI_ORIGINS),
+        allow_origin_regex=LOOPBACK_HTTP_ORIGIN_REGEX,
         allow_credentials=False,
         allow_methods=["*"], allow_headers=["*"],
     )

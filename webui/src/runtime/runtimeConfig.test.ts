@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  desktopRuntimeConfigError,
   getRuntimeConfig,
   resolveApiUrl,
   resolveWsUrl,
@@ -8,10 +9,13 @@ import {
 describe('runtimeConfig', () => {
   afterEach(() => {
     delete window.__GA_HUB_RUNTIME__
+    delete window.__TAURI_INTERNALS__
   })
 
   it('preserves relative API paths in the current same-origin runtime', () => {
-    expect(getRuntimeConfig()).toEqual({ apiOrigin: '', wsOrigin: '' })
+    expect(getRuntimeConfig()).toEqual({
+      apiOrigin: '', wsOrigin: '', desktop: false, instanceToken: '',
+    })
     expect(resolveApiUrl('/api/status?full=true')).toBe('/api/status?full=true')
 
     const expected = new URL('/ws/chat', window.location.href)
@@ -25,6 +29,8 @@ describe('runtimeConfig', () => {
     expect(getRuntimeConfig()).toEqual({
       apiOrigin: 'http://127.0.0.1:43123',
       wsOrigin: 'ws://127.0.0.1:43123',
+      desktop: false,
+      instanceToken: '',
     })
     expect(resolveApiUrl('/api/files/a%20b.png?download=1')).toBe(
       'http://127.0.0.1:43123/api/files/a%20b.png?download=1',
@@ -40,6 +46,30 @@ describe('runtimeConfig', () => {
       wsOrigin: 'not a URL',
     }
 
-    expect(getRuntimeConfig()).toEqual({ apiOrigin: '', wsOrigin: '' })
+    expect(getRuntimeConfig()).toEqual({
+      apiOrigin: '', wsOrigin: '', desktop: false, instanceToken: '',
+    })
+  })
+
+  it('accepts a complete desktop runtime identity', () => {
+    window.__TAURI_INTERNALS__ = {}
+    window.__GA_HUB_RUNTIME__ = {
+      apiOrigin: 'http://127.0.0.1:43123',
+      wsOrigin: 'ws://127.0.0.1:43123',
+      desktop: true,
+      instanceToken: 'instance-123',
+    }
+
+    expect(desktopRuntimeConfigError()).toBeNull()
+    expect(getRuntimeConfig()).toMatchObject({
+      desktop: true,
+      instanceToken: 'instance-123',
+    })
+  })
+
+  it('fails closed when Tauri starts without an injected runtime', () => {
+    window.__TAURI_INTERNALS__ = {}
+
+    expect(desktopRuntimeConfigError()).toBe('桌面运行配置未注入')
   })
 })

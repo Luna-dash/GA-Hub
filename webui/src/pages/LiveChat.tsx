@@ -505,7 +505,7 @@ export default function LiveChat() {
           setSession(created)
           setSessionError('')
           localStorage.setItem('gahub.currentSessionId', created.id)
-          window.history.replaceState(window.history.state, '', sessionChatHref(created.id))
+          nav(sessionChatHref(created.id), { replace: true })
           startChat(created.id)
         } finally {
           creatingSessionRef.current = false
@@ -599,7 +599,7 @@ export default function LiveChat() {
         sessionIdRef.current = sid
         setSession(created)
         localStorage.setItem('gahub.currentSessionId', sid)
-        window.history.replaceState(window.history.state, '', sessionChatHref(sid))
+        nav(sessionChatHref(sid), { replace: true })
         startChat(sid)
       }
       const fileMarkers = sourceAtts.map((a) => `[用户发送文件: ${a.path}]`).join('\n')

@@ -8,6 +8,7 @@ import time
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
+from ..origin_policy import is_allowed_ui_origin
 from ..schemas import (
     AgentTitleReq,
     BtwReq,
@@ -244,6 +245,11 @@ def _test_llm_sync(service: AgentService, client):
 #     rebuilds in-flight + recent state atomically.
 @router.websocket("/ws/chat")
 async def ws_chat(ws: WebSocket):
+    origin = ws.headers.get("origin")
+    if not is_allowed_ui_origin(origin):
+        log.warning("Rejected chat WebSocket from origin %r", origin)
+        await ws.close(code=1008, reason="Forbidden origin")
+        return
     source_filter = (ws.query_params.get("source") or "").strip()
     await ws.accept()
     s = svc()

@@ -3,11 +3,20 @@
 import { describe, expect, it } from 'vitest'
 import {
   collectChatPerformanceSample,
+  hasChatPerformanceQuery,
   publishChatPerformanceSample,
   type ChatPerformanceBuffer,
 } from './chatPerformance'
 
 describe('chat performance probe', () => {
+  it('recognizes the performance flag in browser and HashRouter URLs', () => {
+    expect(hasChatPerformanceQuery('?perf=1', '')).toBe(true)
+    expect(hasChatPerformanceQuery('', '#/chat?perf=1')).toBe(true)
+    expect(hasChatPerformanceQuery('', '#/chat?mode=debug&perf=1')).toBe(true)
+    expect(hasChatPerformanceQuery('', '#/chat?perf=0')).toBe(false)
+    expect(hasChatPerformanceQuery('', '#/chat/perf=1')).toBe(false)
+  })
+
   it('captures the rendered window instead of reporting all logical messages as DOM rows', () => {
     const root = document.createElement('div')
     root.innerHTML = `

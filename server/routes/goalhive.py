@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from ..origin_policy import is_allowed_ui_origin
 from ..services.goalhive_service import get_goalhive_service
 
 log = logging.getLogger(__name__)
@@ -23,6 +24,11 @@ async def ws_goalhive(ws: WebSocket):
         OUT: {"type": "snapshot", "messages": [...]}
              {"type": "update", "messages": [...]}
     """
+    origin = ws.headers.get("origin")
+    if not is_allowed_ui_origin(origin):
+        log.warning("Rejected GoalHive WebSocket from origin %r", origin)
+        await ws.close(code=1008, reason="Forbidden origin")
+        return
     await ws.accept()
     service = get_goalhive_service()
     

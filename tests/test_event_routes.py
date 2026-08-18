@@ -21,17 +21,17 @@ class _FakeBus:
 
 
 class _FakeWebSocket:
-    headers: dict[str, str] = {}
-
-    def __init__(self, query: str) -> None:
+    def __init__(self, query: str, origin: str | None = None) -> None:
+        self.headers = {} if origin is None else {"origin": origin}
         self.query_params = QueryParams(query)
         self.accepted = False
+        self.close_args = None
 
     async def accept(self) -> None:
         self.accepted = True
 
-    async def close(self, **_kwargs) -> None:
-        pass
+    async def close(self, **kwargs) -> None:
+        self.close_args = kwargs
 
     async def send_json(self, _payload) -> None:
         raise AssertionError("fake bus does not yield events")
@@ -47,3 +47,14 @@ def test_event_route_passes_all_repeated_prefixes_to_bus() -> None:
     assert websocket.accepted
     assert fake_bus.prefix == ("agent:", "wechat:")
     assert fake_bus.replay == 7
+
+
+def test_event_route_accepts_tauri_app_origin() -> None:
+    fake_bus = _FakeBus()
+    websocket = _FakeWebSocket("", origin="http://tauri.localhost")
+
+    with mock.patch.object(events, "bus", fake_bus):
+        asyncio.run(events.ws_events(websocket))
+
+    assert websocket.accepted
+    assert websocket.close_args is None

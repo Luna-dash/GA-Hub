@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from frontends import workspace_cmd
 
+from ..origin_policy import is_allowed_ui_origin
 from ..schemas import BtwReq, BtwResp, RewindReq, RewindResp
 from ..services.archive_messages import HistoryUnavailableError, read_archive_messages
 from ..services.event_bus import Event, bus
@@ -745,6 +746,15 @@ def _session_event_frame(session_id: str, event: Event) -> dict | None:
 
 @router.websocket("/ws/sessions/{session_id}")
 async def session_events(ws: WebSocket, session_id: str):
+    origin = ws.headers.get("origin")
+    if not is_allowed_ui_origin(origin):
+        log.warning(
+            "Rejected session WebSocket session_id=%s from origin %r",
+            session_id,
+            origin,
+        )
+        await ws.close(code=1008, reason="Forbidden origin")
+        return
     try:
         _session(session_id)
     except HTTPException:
