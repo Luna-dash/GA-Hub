@@ -16,7 +16,13 @@
 //     when the matching `started` event arrives.
 
 import { create } from 'zustand'
-import type { ChatEventCursor, ChatStreamSnapshot, ChatWSOut, SessionMessageProjection } from '@/api/types'
+import type {
+  ChatEventCursor,
+  ChatStreamSnapshot,
+  ChatWSOut,
+  ConversationMessage,
+  SessionMessageProjection,
+} from '@/api/types'
 import { api, ChatSocket } from '@/api/client'
 import type { PasteAttachment } from '@/components/ImagePasteInput'
 
@@ -81,6 +87,8 @@ interface ChatState {
   clearLocal: () => void
   /** Push a system / banner bubble (e.g. /new ack, LLM switched, restore notice). */
   pushSystem: (content: string) => void
+  /** Replace the visible transcript after a native conversation restore. */
+  restoreVisibleConversation: (messages: readonly ConversationMessage[], notice: string) => void
   /** Clear stale local streaming locks when the backend is already idle. */
   markIdle: () => void
 }
@@ -926,6 +934,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   }),
   pushSystem: (content) =>
     set((st) => ({ msgs: [...st.msgs, { role: 'assistant', content, source: 'system', timestamp: Date.now() }] })),
+  restoreVisibleConversation: (messages, notice) => set({
+    msgs: [
+      ...messages
+        .filter((message) => message.role === 'user' || message.role === 'assistant')
+        .map((message) => ({ role: message.role, content: message.content })),
+      { role: 'assistant', content: notice, source: 'system', timestamp: Date.now() },
+    ],
+    streaming: false,
+    historyRevision: null,
+    historyHasMore: false,
+    historyBefore: null,
+    olderHistoryStatus: 'idle',
+    olderHistoryError: null,
+  }),
   markIdle: () =>
     set((st) => ({
       msgs: st.msgs.map((m) => (m.streaming ? { ...m, streaming: false } : m)),

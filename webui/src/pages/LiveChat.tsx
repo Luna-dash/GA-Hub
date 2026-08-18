@@ -70,6 +70,7 @@ export default function LiveChat() {
   const rollbackWebui = useChatStore((s) => s.rollbackWebui)
   const clearLocal = useChatStore((s) => s.clearLocal)
   const pushSystem = useChatStore((s) => s.pushSystem)
+  const restoreVisibleConversation = useChatStore((s) => s.restoreVisibleConversation)
 
   const [session, setSession] = useState<HubSession | null>(null)
   const draftKey = session ? `liveChat:${session.id}` : 'liveChat:pending'
@@ -334,16 +335,10 @@ export default function LiveChat() {
   // Apply navigation-state restore once (e.g. coming from Conversations page).
   useEffect(() => {
     if (restoreState?.messages?.length) {
-      // Replay restored conversation as static bubbles + a banner notice.
-      // Wipe local view first to avoid stacking on top of an existing chat.
-      clearLocal()
-      for (const m of restoreState.messages) {
-        if (m.role !== 'user' && m.role !== 'assistant') continue
-        useChatStore.setState((st) => ({
-          msgs: [...st.msgs, { role: m.role as 'user' | 'assistant', content: m.content }],
-        }))
-      }
-      pushSystem(
+      // Replace the visible transcript atomically: large restored archives must
+      // not grow the message array one copy at a time.
+      restoreVisibleConversation(
+        restoreState.messages,
         `_↩ 已从「${restoreState.restoredTitle || ''}」恢复完整原生上下文（${restoreState.restoredLines ?? restoreState.messages.length} 条可视消息）。继续对话即可。_`,
       )
       // Drop the state so reload / back-nav doesn't re-inject.
@@ -765,6 +760,7 @@ export default function LiveChat() {
     try {
       await api.deleteSession(id)
       dropSessionView(id)
+      useDraftStore.getState().clearDraft(`liveChat:${id}`)
       const remaining = sessions.filter((item) => item.id !== id)
       queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], {
         total: remaining.length,

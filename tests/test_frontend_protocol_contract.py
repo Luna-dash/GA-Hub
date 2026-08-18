@@ -45,6 +45,18 @@ def test_live_chat_does_not_recreate_session_after_last_delete():
     assert "api.createSession" not in delete_block
 
 
+def test_live_chat_clears_only_the_deleted_session_draft_after_success():
+    source = _read("pages/LiveChat.tsx")
+    delete_start = source.index("  const deleteSession = useCallback")
+    delete_block = source[delete_start:source.index("  const handleRewind =", delete_start)]
+
+    delete_request = "await api.deleteSession(id)"
+    clear_draft = "useDraftStore.getState().clearDraft(`liveChat:${id}`)"
+    assert delete_request in delete_block
+    assert clear_draft in delete_block
+    assert delete_block.index(delete_request) < delete_block.index(clear_draft)
+
+
 def test_chat_store_session_socket_is_receive_only():
     source = _read("stores/chatStore.ts")
 

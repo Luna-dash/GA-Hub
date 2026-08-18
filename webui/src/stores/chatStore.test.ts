@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
-import type { SessionMessagesResponse } from '@/api/types'
+import type { ConversationMessage, SessionMessagesResponse } from '@/api/types'
 import { useChatStore } from './chatStore'
 
 function deferred<T>() {
@@ -103,6 +103,44 @@ describe('chatStore lifecycle', () => {
     expect(useChatStore.getState().msgs).toEqual([
       expect.objectContaining({ content: 'accepted', streamId: 'server-stream' }),
     ])
+  })
+
+  it('restores a filtered transcript and banner with one store notification', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_234)
+    useChatStore.setState({
+      msgs: [{ role: 'assistant', content: 'stale' }],
+      streaming: true,
+      historyRevision: 'old-revision',
+      historyHasMore: true,
+      historyBefore: 42,
+      olderHistoryStatus: 'error',
+      olderHistoryError: 'old error',
+    })
+    const listener = vi.fn()
+    const unsubscribe = useChatStore.subscribe(listener)
+    const restored = [
+      { role: 'assistant', content: 'answer first' },
+      { role: 'tool', content: 'must stay hidden' },
+      { role: 'user', content: 'question second' },
+    ] as unknown as ConversationMessage[]
+
+    useChatStore.getState().restoreVisibleConversation(restored, '_restored_')
+    unsubscribe()
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(useChatStore.getState()).toMatchObject({
+      msgs: [
+        { role: 'assistant', content: 'answer first' },
+        { role: 'user', content: 'question second' },
+        { role: 'assistant', content: '_restored_', source: 'system', timestamp: 1_234 },
+      ],
+      streaming: false,
+      historyRevision: null,
+      historyHasMore: false,
+      historyBefore: null,
+      olderHistoryStatus: 'idle',
+      olderHistoryError: null,
+    })
   })
 
   it('ignores stale history after switching sessions', async () => {
