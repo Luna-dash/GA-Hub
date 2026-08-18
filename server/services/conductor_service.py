@@ -12,6 +12,7 @@ Architecture differences from standalone conductor.py:
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import queue
 import re
@@ -48,6 +49,25 @@ PORT = None  # Not needed, integrated into main GA-Hub server
 
 SubagentModelPolicy = Literal["follow_main", "default", "locked"]
 SUBAGENT_MODEL_POLICIES = frozenset({"follow_main", "default", "locked"})
+
+
+def _accepts_keyword(callable_obj, name: str) -> bool:
+    """Return whether a callable can receive a named compatibility hook."""
+    try:
+        signature = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        return False
+    named = signature.parameters.get(name)
+    return (
+        named is not None
+        and named.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+    ) or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
 
 
 def _get_webui_port() -> int:
@@ -264,6 +284,22 @@ class HubConductorCallbacks(ConductorCallbacks):
     """Translate shared-core lifecycle events into GA-Hub EventBus events."""
     def __init__(self, service: "ConductorService"):
         self.service = service
+        self._snapshot_publish_lock = threading.Lock()
+        self._last_subagent_snapshot: list | None = None
+
+    def publish_subagent_snapshot(self) -> None:
+        """Publish changed pool state without allowing concurrent reordering."""
+        with self._snapshot_publish_lock:
+            try:
+                snapshot = self.service.pool.snapshot()
+                if snapshot == self._last_subagent_snapshot:
+                    return
+                push_subagent_cards(snapshot)
+                # Keep the old value when publishing fails so a later event retries.
+                self._last_subagent_snapshot = snapshot
+            except Exception:
+                # Observer failures must not change an already committed pool action.
+                log.exception("Failed to publish conductor subagent snapshot")
 
     def on_conductor_request_started(self, request_id: str):
         return self.service.usage_store.activate(request_id)
@@ -332,7 +368,8 @@ class HubConductorCallbacks(ConductorCallbacks):
                 )
 
     def on_subagent_output(self, agent_id: str, output: str, done: bool) -> None:
-        push_subagent_cards(self.service.pool.snapshot())
+        if not done:
+            self.publish_subagent_snapshot()
 
     def on_subagent_completed(self, agent_id: str, output: str) -> None:
         """The generation-aware monitor emits the single conductor wake-up."""
@@ -344,7 +381,34 @@ class HubConductorCallbacks(ConductorCallbacks):
         # increases queue pressure without adding information.
         if event == SubAgentEvent.RUNNING:
             return
-        bus.publish(f"conductor:subagent_{event.value}", {"id": agent_id, **payload})
+        try:
+            bus.publish(
+                f"conductor:subagent_{event.value}", {"id": agent_id, **payload}
+            )
+        except Exception:
+            log.exception("Failed to publish conductor subagent lifecycle event")
+        self.publish_subagent_snapshot()
+
+    def on_conductor_log_frame(self, frame: object) -> None:
+        """Bridge the shared core's private log frame to the Hub event bus."""
+        try:
+            if not isinstance(frame, dict) or frame.get("type") != "log":
+                return
+            item = frame.get("item")
+            if not isinstance(item, dict):
+                return
+            if not (
+                isinstance(item.get("id"), str)
+                and isinstance(item.get("ts"), int)
+                and isinstance(item.get("event"), str)
+                and isinstance(item.get("text"), str)
+                and (item.get("turn") is None or isinstance(item.get("turn"), int))
+            ):
+                return
+            bus.publish("conductor:log", {"item": dict(item)})
+        except Exception:
+            # Logging is an observer path and must not fail a conductor request.
+            log.exception("Failed to publish conductor log frame")
 
     def on_conductor_event(self, event_type: str, payload: dict) -> None:
         bus.publish(f"conductor:{event_type}", payload)
@@ -723,7 +787,14 @@ Current state: {summary}"""
         with self._shutdown_lock:
             if self._closed:
                 raise RuntimeError("Conductor service is closed")
-            started = self.conductor.start()
+            start = self.conductor.start
+            if _accepts_keyword(start, "log_broadcaster"):
+                started = start(
+                    log_broadcaster=self.callbacks.on_conductor_log_frame
+                )
+            else:
+                log.warning("GA conductor core lacks log_broadcaster support")
+                started = start()
         self.lifecycle_status()
         return started
 
@@ -782,6 +853,10 @@ Current state: {summary}"""
         )
         selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
         result = self.pool.input_subagent(sid, msg, llm=selected)
+        if "error" not in result:
+            # The shared core currently emits no lifecycle event for a plain
+            # input resume, so expose the committed running state immediately.
+            self.callbacks.publish_subagent_snapshot()
         result.setdefault("llm_index", selected)
         result.setdefault("model_policy", models["subagent_model_policy"])
         return result

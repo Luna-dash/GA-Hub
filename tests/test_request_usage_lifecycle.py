@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import queue
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -81,6 +81,150 @@ def test_subagent_stream_publishes_one_snapshot_without_per_chunk_metadata():
 
     snapshot.assert_called_once()
     publish.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        SubAgentEvent.SPAWNED,
+        SubAgentEvent.COMPLETED,
+        SubAgentEvent.REWORKED,
+        SubAgentEvent.ACCEPTED,
+        SubAgentEvent.CANCELLED,
+        SubAgentEvent.FAILED,
+        SubAgentEvent.KILLED,
+    ],
+)
+def test_subagent_state_transitions_publish_authoritative_snapshot(event):
+    items = [{"id": "sid", "status": "stopped"}]
+    service = object.__new__(ConductorService)
+    service.pool = SimpleNamespace(snapshot=lambda: items)
+    callbacks = HubConductorCallbacks(service)
+
+    with patch("server.services.conductor_service.push_subagent_cards") as snapshot:
+        with patch("server.services.conductor_service.bus.publish") as publish:
+            callbacks.on_subagent_event("sid", event, {"generation": 1})
+
+    publish.assert_called_once_with(
+        f"conductor:subagent_{event.value}",
+        {"id": "sid", "generation": 1},
+    )
+    snapshot.assert_called_once_with(items)
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (SubAgentEvent.SPAWNED, SubAgentEvent.STARTED),
+        (SubAgentEvent.COMPLETED, SubAgentEvent.PENDING_REVIEW),
+    ],
+)
+def test_identical_subagent_transitions_keep_typed_events_without_second_snapshot(
+    first, second
+):
+    service = object.__new__(ConductorService)
+    service.pool = SimpleNamespace(snapshot=lambda: [])
+    callbacks = HubConductorCallbacks(service)
+
+    with patch("server.services.conductor_service.push_subagent_cards") as snapshot:
+        with patch("server.services.conductor_service.bus.publish") as publish:
+            callbacks.on_subagent_event("sid", first, {})
+            callbacks.on_subagent_event("sid", second, {})
+
+    assert publish.call_args_list == [
+        call(f"conductor:subagent_{first.value}", {"id": "sid"}),
+        call(f"conductor:subagent_{second.value}", {"id": "sid"}),
+    ]
+    snapshot.assert_called_once_with([])
+
+
+def test_completed_output_defers_to_single_completed_snapshot():
+    items = [{"id": "sid", "status": "stopped", "review_status": "pending"}]
+    service = object.__new__(ConductorService)
+    service.pool = SimpleNamespace(snapshot=lambda: items)
+    callbacks = HubConductorCallbacks(service)
+
+    with patch("server.services.conductor_service.push_subagent_cards") as snapshot:
+        with patch("server.services.conductor_service.bus.publish"):
+            callbacks.on_subagent_output("sid", "done", True)
+            callbacks.on_subagent_event("sid", SubAgentEvent.COMPLETED, {})
+            callbacks.on_subagent_event("sid", SubAgentEvent.PENDING_REVIEW, {})
+
+    snapshot.assert_called_once_with(items)
+
+
+def test_conductor_log_frame_publishes_valid_item_only():
+    service = object.__new__(ConductorService)
+    callbacks = HubConductorCallbacks(service)
+    item = {
+        "id": "log-1",
+        "ts": 123,
+        "event": "user_msg",
+        "turn": 2,
+        "text": "Unicode 日志",
+    }
+
+    with patch("server.services.conductor_service.bus.publish") as publish:
+        callbacks.on_conductor_log_frame({"type": "log", "item": item})
+        callbacks.on_conductor_log_frame({"type": "other", "item": item})
+        callbacks.on_conductor_log_frame({"type": "log", "item": {"id": 1}})
+
+    publish.assert_called_once_with("conductor:log", {"item": item})
+
+
+def test_conductor_log_publish_failure_is_observer_only():
+    service = object.__new__(ConductorService)
+    callbacks = HubConductorCallbacks(service)
+    frame = {
+        "type": "log",
+        "item": {
+            "id": "log-1",
+            "ts": 123,
+            "event": "wake",
+            "turn": None,
+            "text": "done",
+        },
+    }
+
+    with patch(
+        "server.services.conductor_service.bus.publish",
+        side_effect=RuntimeError("closed loop"),
+    ):
+        callbacks.on_conductor_log_frame(frame)
+
+
+def test_subagent_snapshot_publish_failure_is_retried():
+    items = [{"id": "sid", "status": "running"}]
+    service = object.__new__(ConductorService)
+    service.pool = SimpleNamespace(snapshot=lambda: items)
+    callbacks = HubConductorCallbacks(service)
+
+    with patch(
+        "server.services.conductor_service.push_subagent_cards",
+        side_effect=[RuntimeError("temporary"), None],
+    ) as publish:
+        callbacks.publish_subagent_snapshot()
+        callbacks.publish_subagent_snapshot()
+
+    assert publish.call_count == 2
+
+
+def test_subagent_lifecycle_publish_failure_still_attempts_snapshot():
+    items = [{"id": "sid", "status": "stopped"}]
+    service = object.__new__(ConductorService)
+    service.pool = SimpleNamespace(snapshot=lambda: items)
+    callbacks = HubConductorCallbacks(service)
+
+    with patch(
+        "server.services.conductor_service.bus.publish",
+        side_effect=RuntimeError("temporary"),
+    ):
+        with patch(
+            "server.services.conductor_service.push_subagent_cards"
+        ) as snapshot:
+            callbacks.on_subagent_event("sid", SubAgentEvent.CANCELLED, {})
+
+    snapshot.assert_called_once_with(items)
 
 
 @pytest.mark.parametrize(

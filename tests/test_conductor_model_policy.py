@@ -6,7 +6,11 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from server.services.conductor_service import ConductorService, CoreSubagentPool
+from server.services.conductor_service import (
+    ConductorService,
+    CoreSubagentPool,
+    HubConductorCallbacks,
+)
 
 
 def _service(
@@ -23,6 +27,8 @@ def _service(
     service.pool = Mock()
     service.pool.start_subagent.return_value = {"id": "worker-1"}
     service.pool.input_subagent.return_value = {"id": "worker-1"}
+    service.pool.snapshot.return_value = []
+    service.callbacks = HubConductorCallbacks(service)
     return service
 
 
@@ -92,6 +98,34 @@ def test_resume_entrypoint_applies_same_locked_policy():
         "worker-1", "retry", llm=5
     )
     assert result["llm_index"] == 5
+
+
+def test_resume_entrypoint_publishes_committed_snapshot_only_on_success():
+    service = _service(worker=5, policy="locked")
+
+    with patch(
+        "server.services.conductor_service.push_subagent_cards"
+    ) as publish:
+        service.input_subagent("worker-1", "retry")
+        publish.assert_called_once_with([])
+
+        service.pool.input_subagent.return_value = {"error": "enqueue failed"}
+        service.input_subagent("worker-1", "retry again")
+
+    publish.assert_called_once_with([])
+
+
+def test_resume_success_survives_snapshot_observer_failure():
+    service = _service(worker=5, policy="locked")
+
+    with patch(
+        "server.services.conductor_service.push_subagent_cards",
+        side_effect=RuntimeError("event bus unavailable"),
+    ):
+        result = service.input_subagent("worker-1", "retry")
+
+    assert result["id"] == "worker-1"
+    service.pool.input_subagent.assert_called_once()
 
 
 def test_dispatch_result_uses_the_admitted_policy_snapshot():
