@@ -18,20 +18,14 @@ export default function Autonomous() {
   const { data: schData } = useQuery({
     queryKey: queryKeys.schedules,
     queryFn: api.schedules,
-    refetchInterval: 60_000,
-    refetchIntervalInBackground: false,
   })
   const { data: runData } = useQuery({
     queryKey: queryKeys.autonomous.runs,
     queryFn: () => api.runs(50),
-    refetchInterval: 60_000,
-    refetchIntervalInBackground: false,
   })
   const { data: rep } = useQuery({
     queryKey: queryKeys.autonomous.reports,
     queryFn: api.reports,
-    refetchInterval: 60_000,
-    refetchIntervalInBackground: false,
   })
 
   useHubEvent('autonomous:', (event) => {

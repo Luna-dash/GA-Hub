@@ -7,6 +7,7 @@ import type { EmailConfig, TaskRun, TaskSchedule, TaskScheduleType } from '@/api
 import { PageShell } from '@/components/PageShell'
 import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
+import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 
 export default function Tasks() {
@@ -14,14 +15,19 @@ export default function Tasks() {
   const { data: schData } = useQuery({
     queryKey: queryKeys.tasks.schedules,
     queryFn: api.taskSchedules,
-    refetchInterval: 60_000,
-    refetchIntervalInBackground: false,
   })
   const { data: runData } = useQuery({
     queryKey: queryKeys.tasks.runs,
     queryFn: () => api.taskRuns(80),
-    refetchInterval: 60_000,
-    refetchIntervalInBackground: false,
+  })
+
+  useHubEvent('task:', (event) => {
+    if (event.topic === 'task:upsert' || event.topic === 'task:delete') {
+      void qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
+    }
+    if (event.topic === 'task:fired' || event.topic === 'task:done' || event.topic === 'task:error') {
+      void qc.invalidateQueries({ queryKey: queryKeys.tasks.runs })
+    }
   })
   const [editor, setEditor] = useState<Partial<TaskSchedule> | null>(null)
 
