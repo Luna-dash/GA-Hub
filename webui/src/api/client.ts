@@ -9,8 +9,6 @@ import type {
   AutonomousRunListResponse,
   BtwResp,
   ChatRetryConfig,
-  ChatWSIn,
-  ChatWSOut,
   ConductorChatMessage,
   ConductorChatListResponse,
   ConductorLifecycleResponse,
@@ -95,7 +93,9 @@ import type {
   WxQRState,
 } from './types'
 import type { components as GeneratedApiComponents } from './generated/schema'
-import { resolveApiUrl, resolveWsUrl } from '@/runtime/runtimeConfig'
+import { resolveApiUrl } from '@/runtime/runtimeConfig'
+
+export { ChatSocket } from '@/runtime/chatSocket'
 
 export interface SessionMessagePageOptions {
   before?: number
@@ -538,53 +538,4 @@ export const api = {
     http<void>('DELETE', `/api/sessions/${encodeURIComponent(id)}/scheduled-chats/${encodeURIComponent(taskId)}`),
 
   conductorStop: () => http<ConductorLifecycleResponse>('POST', '/api/conductor/stop'),
-}
-
-// ── WebSocket helpers ──────────────────────────────────────
-export class ChatSocket {
-  ws?: WebSocket
-  private readonly path: string | (() => string)
-  private reconnectTimer?: number
-  private reconnectAttempts = 0
-  private explicitlyClosed = false
-  onMessage: (m: ChatWSOut) => void = () => {}
-  onState: (s: 'connecting' | 'open' | 'closed') => void = () => {}
-
-  constructor(path: string | (() => string) = '/ws/chat') {
-    this.path = path
-  }
-
-  open() {
-    this.explicitlyClosed = false
-    this.onState('connecting')
-    const path = typeof this.path === 'function' ? this.path() : this.path
-    const ws = new WebSocket(resolveWsUrl(path))
-    this.ws = ws
-    ws.onopen = () => {
-      this.reconnectAttempts = 0
-      this.onState('open')
-    }
-    ws.onmessage = (ev) => {
-      try { this.onMessage(JSON.parse(ev.data) as ChatWSOut) } catch {}
-    }
-    ws.onclose = () => {
-      this.onState('closed')
-      if (!this.explicitlyClosed) {
-        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000)
-        this.reconnectAttempts++
-        this.reconnectTimer = window.setTimeout(() => this.open(), delay)
-      }
-    }
-    ws.onerror = () => { try { ws.close() } catch {} }
-  }
-
-  send(msg: ChatWSIn) {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg))
-  }
-
-  close() {
-    this.explicitlyClosed = true
-    if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer)
-    this.ws?.close()
-  }
 }

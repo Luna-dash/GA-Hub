@@ -7,7 +7,7 @@ import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useDraftStore } from '@/stores/draftStore'
 import { useGoalHiveStore } from '@/stores/goalhiveStore'
-import { resolveWsUrl } from '@/runtime/runtimeConfig'
+import { GoalHiveSocket } from '@/runtime/goalHiveSocket'
 
 type GoalMode = 'goal' | 'hive'
 
@@ -54,7 +54,7 @@ export default function GoalHive() {
 
   // Independent WebSocket state from zustand
   const { messages: msgs, conn, setMessages, setConn } = useGoalHiveStore()
-  const wsRef = useRef<WebSocket | null>(null)
+  const wsRef = useRef<GoalHiveSocket | null>(null)
   const logRef = useRef<HTMLDivElement | null>(null)
   const targetRef = useRef<HTMLTextAreaElement | null>(null)
   const conditionRef = useRef<HTMLTextAreaElement | null>(null)
@@ -85,62 +85,15 @@ export default function GoalHive() {
 
   // Independent /ws/goalhive WebSocket connection
   useEffect(() => {
-    const url = resolveWsUrl('/ws/goalhive')
-    const ws = new WebSocket(url)
-    wsRef.current = ws
-
-    setConn('connecting')
-
-    ws.onopen = () => setConn('open')
-    ws.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data)
-        if (msg.type === 'snapshot' || msg.type === 'update') {
-          setMessages(msg.messages ?? [])
-        }
-      } catch {}
-    }
-    ws.onclose = () => {
-      setConn('closed')
-      // Auto-reconnect after 2s
-      setTimeout(() => {
-        if (wsRef.current === ws) {
-          const newWs = new WebSocket(url)
-          wsRef.current = newWs
-          bindWsHandlers(newWs)
-        }
-      }, 2000)
-    }
-    ws.onerror = () => ws.close()
-
-    function bindWsHandlers(socket: WebSocket) {
-      socket.onopen = () => setConn('open')
-      socket.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data)
-          if (msg.type === 'snapshot' || msg.type === 'update') {
-            setMessages(msg.messages ?? [])
-          }
-        } catch {}
-      }
-      socket.onclose = () => {
-        setConn('closed')
-        setTimeout(() => {
-          if (wsRef.current === socket) {
-            const newWs = new WebSocket(url)
-            wsRef.current = newWs
-            bindWsHandlers(newWs)
-          }
-        }, 2000)
-      }
-      socket.onerror = () => socket.close()
-    }
-
-    bindWsHandlers(ws)
+    const socket = new GoalHiveSocket()
+    socket.onState = setConn
+    socket.onMessages = setMessages
+    wsRef.current = socket
+    socket.open()
 
     return () => {
-      wsRef.current = null
-      ws.close()
+      if (wsRef.current === socket) wsRef.current = null
+      socket.close()
     }
   }, [setConn, setMessages])
 
@@ -164,25 +117,25 @@ export default function GoalHive() {
     const parts = [target.trim(), condition.trim()].filter(Boolean)
     const text = parts.join('\n')
     
-    wsRef.current.send(JSON.stringify({
+    const sent = wsRef.current.send({
       type: 'submit',
       text,
       mode,
       llm_index: effectiveLlmIndex,
       subagent_llm_index: effectiveSubagentLlmIndex,
-    }))
-    clearGoalDraft()
+    })
+    if (sent) clearGoalDraft()
   }
 
   const abort = () => {
     if (wsRef.current) {
-      wsRef.current.send(JSON.stringify({ type: 'abort' }))
+      wsRef.current.send({ type: 'abort' })
     }
   }
 
   const reset = () => {
     if (wsRef.current) {
-      wsRef.current.send(JSON.stringify({ type: 'reset' }))
+      wsRef.current.send({ type: 'reset' })
     }
   }
 
