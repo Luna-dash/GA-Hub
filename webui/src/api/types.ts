@@ -259,7 +259,14 @@ export type ChatWSOut = (
 export type EventBusEnvelope = Omit<ApiSchemas['EventBusEnvelope'], 'payload'> & {
   payload: Record<string, any>
 }
-export type BusEvent = EventBusEnvelope
+export type BusEvent = EventBusEnvelope & {
+  event_id?: number
+  epoch?: string
+}
+export type HubEventControl =
+  | { type: 'resync_required'; reason: string; epoch: string }
+  | { type: 'replay_done'; event_id: number; epoch: string }
+export type HubEventMessage = BusEvent | HubEventControl
 export type EventRecentResponse = Omit<ApiSchemas['EventRecentResp'], 'events'> & {
   events: EventBusEnvelope[]
 }

@@ -139,6 +139,8 @@ class EventBus:
         self._subs: list[tuple[tuple[str, ...], asyncio.Queue[Event]]] = []
         self._resumable_subs: dict[asyncio.Queue[Event], EventSubscription] = {}
         self._history: deque[Event] = deque(maxlen=history)
+        # Unrelated high-volume topics must not invalidate a filtered cursor.
+        self._evicted_topic_ids: dict[str, int] = {}
         self._queue_size = queue_size
         self._lock = asyncio.Lock()
         self._state_lock = threading.Lock()
@@ -170,6 +172,14 @@ class EventBus:
                 payload=safe_payload if isinstance(safe_payload, dict) else {"value": safe_payload},
                 event_id=event_id,
             )
+            if self._history.maxlen == 0:
+                self._evicted_topic_ids[evt.topic] = evt.event_id
+            elif (
+                self._history.maxlen is not None
+                and len(self._history) == self._history.maxlen
+            ):
+                evicted = self._history[0]
+                self._evicted_topic_ids[evicted.topic] = evicted.event_id
             self._history.append(evt)
             loop = self._loop
             if loop is None:
@@ -249,7 +259,7 @@ class EventBus:
 
     async def subscribe_after(
         self, prefix: EventPrefixFilter = "", *, after_event_id: int | None = None,
-        epoch: str | None = None,
+        epoch: str | None = None, replay: int = 0,
     ) -> EventSubscription:
         """Atomically subscribe and capture events through a fixed boundary."""
         prefixes = _normalize_prefixes(prefix)
@@ -258,24 +268,37 @@ class EventBus:
             with self._state_lock:
                 history = list(self._history)
                 boundary_id = self._next_event_id - 1
-                oldest_id = history[0].event_id if history else boundary_id + 1
                 resync_reason: str | None = None
                 if after_event_id is not None:
                     if epoch != self.epoch:
                         resync_reason = "server_restarted"
                     elif after_event_id > boundary_id:
                         resync_reason = "cursor_ahead"
-                    elif after_event_id < oldest_id - 1:
+                    elif any(
+                        event_id > after_event_id
+                        and _matches_topic(topic, prefixes)
+                        for topic, event_id in self._evicted_topic_ids.items()
+                    ):
                         resync_reason = "history_window_exceeded"
-                replay = [] if after_event_id is None or resync_reason else [
-                    e for e in history
-                    if e.event_id > after_event_id
-                    and e.event_id <= boundary_id
-                    and _matches_topic(e.topic, prefixes)
-                ]
+                if resync_reason is not None:
+                    replay_events: list[Event] = []
+                elif after_event_id is not None:
+                    replay_events = [
+                        e for e in history
+                        if e.event_id > after_event_id
+                        and e.event_id <= boundary_id
+                        and _matches_topic(e.topic, prefixes)
+                    ]
+                else:
+                    replay_count = max(0, replay)
+                    matching_history = [
+                        e for e in history
+                        if _matches_topic(e.topic, prefixes)
+                    ]
+                    replay_events = matching_history[-replay_count:] if replay_count else []
                 subscription = EventSubscription(
                     bus=self, prefixes=prefixes, queue=q, boundary_id=boundary_id,
-                    replay=replay, resync_reason=resync_reason,
+                    replay=replay_events, resync_reason=resync_reason,
                 )
                 self._subs.append((prefixes, q))
                 self._resumable_subs[q] = subscription

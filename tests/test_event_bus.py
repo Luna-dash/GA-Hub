@@ -246,6 +246,65 @@ class EventBusBehaviorTests(unittest.TestCase):
             ["session:runtime", "wechat:message_in"],
         )
 
+    def test_subscribe_after_initial_replay_is_filtered_and_bounded(self):
+        async def scenario():
+            bus = EventBus(history=10)
+            bus.publish("agent:first", {})
+            bus.publish("chat:next", {})
+            bus.publish("agent:second", {})
+
+            subscription = await bus.subscribe_after("agent:", replay=1)
+            try:
+                return subscription.boundary_id, [
+                    event.topic for event in subscription.replay
+                ]
+            finally:
+                await subscription.close()
+
+        boundary_id, replay = self._run(scenario())
+        self.assertEqual(boundary_id, 3)
+        self.assertEqual(replay, ["agent:second"])
+
+    def test_filtered_cursor_ignores_evicted_unmatched_topics(self):
+        async def scenario():
+            bus = EventBus(history=2)
+            bus.publish("agent:status", {})
+            cursor = bus._next_event_id - 1
+            for i in range(4):
+                bus.publish("chat:next", {"i": i})
+
+            subscription = await bus.subscribe_after(
+                "agent:", after_event_id=cursor, epoch=bus.epoch,
+            )
+            try:
+                return subscription.resync_reason, subscription.replay
+            finally:
+                await subscription.close()
+
+        resync_reason, replay = self._run(scenario())
+        self.assertIsNone(resync_reason)
+        self.assertEqual(replay, [])
+
+    def test_filtered_cursor_resyncs_when_matching_event_was_evicted(self):
+        async def scenario():
+            bus = EventBus(history=2)
+            bus.publish("agent:status", {})
+            bus.publish("chat:next", {})
+            bus.publish("chat:done", {})
+
+            subscription = await bus.subscribe_after(
+                "agent:", after_event_id=0, epoch=bus.epoch,
+            )
+            try:
+                return subscription.resync_reason
+            finally:
+                await subscription.close()
+
+        self.assertEqual(
+            self._run(scenario()),
+            "history_window_exceeded",
+        )
+
     def test_history_method_filters_and_limits(self):
         bus = EventBus(history=10)
         # No loop attached → publishes still record history (just don't fan out).
