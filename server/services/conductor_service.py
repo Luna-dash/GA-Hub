@@ -270,12 +270,46 @@ class HubConductorCallbacks(ConductorCallbacks):
     def on_conductor_request_started(self, request_id: str):
         return self.service.usage_store.activate(request_id)
 
+    def _publish_request_outcome(
+        self,
+        request_id: str,
+        *,
+        status: str,
+        phase: str,
+        error: str = "",
+    ) -> None:
+        payload = {
+            "request_id": request_id,
+            "status": status,
+            "phase": phase,
+        }
+        if error:
+            payload["error"] = error
+        latest = next(
+            (
+                item
+                for item in reversed(getattr(self.service, "chat_messages", ()))
+                if item.get("role") == "conductor"
+            ),
+            None,
+        )
+        if latest is not None:
+            payload["item"] = latest
+        bus.publish("conductor:request_outcome", payload)
+
     def on_conductor_request_finished(self, request_id: str, token) -> None:
         try:
             self.service.usage_store.complete(request_id)
         finally:
-            if token is not None:
-                self.service.usage_store.deactivate(token)
+            try:
+                if token is not None:
+                    self.service.usage_store.deactivate(token)
+            finally:
+                self._publish_request_outcome(
+                    request_id,
+                    status="ok",
+                    phase="finish",
+                )
 
     def on_conductor_request_outcome(
         self, request_id: str, token, outcome: RequestOutcome
@@ -288,8 +322,16 @@ class HubConductorCallbacks(ConductorCallbacks):
         try:
             self.service.usage_store.complete(request_id, attribution)
         finally:
-            if token is not None:
-                self.service.usage_store.deactivate(token)
+            try:
+                if token is not None:
+                    self.service.usage_store.deactivate(token)
+            finally:
+                self._publish_request_outcome(
+                    request_id,
+                    status=outcome.status,
+                    phase=outcome.phase,
+                    error=outcome.error or "",
+                )
 
     def on_subagent_output(self, agent_id: str, output: str, done: bool) -> None:
         push_subagent_cards(self.service.pool.snapshot())

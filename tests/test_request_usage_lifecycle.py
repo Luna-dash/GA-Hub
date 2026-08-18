@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import queue
+from unittest.mock import patch
 
 import pytest
 
@@ -22,7 +23,8 @@ def test_conductor_request_lifecycle_activates_records_and_completes():
 
     token = callbacks.on_conductor_request_started(request_id)
     service.usage_store.record({"input_tokens": 7, "output_tokens": 3}, "messages")
-    callbacks.on_conductor_request_finished(request_id, token)
+    with patch("server.services.conductor_service.bus.publish"):
+        callbacks.on_conductor_request_finished(request_id, token)
 
     row = service.usage_store.list()[0]
     assert row["request_id"] == request_id
@@ -31,6 +33,36 @@ def test_conductor_request_lifecycle_activates_records_and_completes():
     assert row["output"] == 3
     assert row["attribution"] == "OK"
     assert row["completed_at"] == 10.0
+
+
+def test_conductor_success_outcome_publishes_explicit_completion_event():
+    service = object.__new__(ConductorService)
+    service.chat_messages = [
+        {"id": "plan", "role": "conductor", "msg": "dispatching"},
+        {"id": "user", "role": "user", "msg": "question"},
+        {"id": "result", "role": "conductor", "msg": "finished result"},
+    ]
+    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
+    request_id = service.usage_store.begin("rid-complete")
+    callbacks = HubConductorCallbacks(service)
+    token = callbacks.on_conductor_request_started(request_id)
+
+    with patch("server.services.conductor_service.bus.publish") as publish:
+        callbacks.on_conductor_request_outcome(
+            request_id,
+            token,
+            RequestOutcome(status="ok", phase="finish"),
+        )
+
+    publish.assert_called_once_with(
+        "conductor:request_outcome",
+        {
+            "request_id": request_id,
+            "status": "ok",
+            "phase": "finish",
+            "item": service.chat_messages[-1],
+        },
+    )
 
 
 @pytest.mark.parametrize(

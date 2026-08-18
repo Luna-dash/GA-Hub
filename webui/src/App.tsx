@@ -7,12 +7,12 @@ import { ToastHost } from '@/components/ToastHost'
 import { CommandPalette } from '@/components/CommandPalette'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useAgentStore } from '@/stores/agentStore'
-import { useDocumentTitle } from '@/utils/useDocumentTitle'
-import { useDesktopNotifyEffects } from '@/utils/useDesktopNotifyEffects'
 import { hydrateNavPreferences } from '@/config/navigation'
 import { api } from '@/api/client'
 import { routeLoaders } from '@/routes/routeLoaders'
 import { hubEventClient } from '@/runtime/hubEventClient'
+import { queryKeys } from '@/queries/queryKeys'
+import { RuntimeEffects } from '@/runtime/RuntimeEffects'
 
 const routeFallback = (
   <div className="h-full flex items-center justify-center text-slate-500 text-sm">载入中…</div>
@@ -37,15 +37,9 @@ export default function App() {
   const start = useAgentStore((s) => s.start)
   const stop = useAgentStore((s) => s.stop)
 
-  // Reflect agent / chat state in the browser tab title.
-  useDocumentTitle()
-
-  // Fire OS notifications when streams finish / bot messages arrive (opt-in).
-  useDesktopNotifyEffects()
-
   // Probe setup status — if backend has no GA_ROOT, force the Settings page
   const { data: setup, isLoading, isError, error, refetch, failureCount } = useQuery({
-    queryKey: ['setup'],
+    queryKey: queryKeys.setup,
     queryFn: api.setupStatus,
     refetchInterval: (query) => {
       const configured = (query.state.data as { configured?: boolean } | undefined)?.configured
@@ -119,6 +113,7 @@ export default function App() {
 
   return (
     <div className="app-aurora flex h-screen w-screen overflow-hidden">
+      <RuntimeEffects />
       <SidebarNav />
       <main className="flex-1 min-w-0 bg-transparent">
         <ErrorBoundary>

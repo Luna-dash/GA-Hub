@@ -16,6 +16,7 @@
 //     when the matching `started` event arrives.
 
 import { create } from 'zustand'
+import { subscribeWithSelector } from 'zustand/middleware'
 import type {
   ChatEventCursor,
   ChatStreamSnapshot,
@@ -477,7 +478,7 @@ function prependUniqueHistory(older: ChatMsg[], current: ChatMsg[]): ChatMsg[] {
   })
 }
 
-export const useChatStore = create<ChatState>((set, get) => ({
+export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get) => ({
   msgs: [],
   conn: 'connecting',
   streaming: false,
@@ -953,4 +954,4 @@ export const useChatStore = create<ChatState>((set, get) => ({
       msgs: st.msgs.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
       streaming: false,
     })),
-}))
+})))
