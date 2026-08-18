@@ -35,6 +35,7 @@ from . import _paths
 from .origin_policy import LOOPBACK_HTTP_ORIGIN_REGEX, TAURI_UI_ORIGINS
 from .routes import events as event_routes  # safe to import in setup mode
 from .schemas import AppStatusResp
+from .services.app_services import AppServices
 from .services.event_bus import bus
 
 log = logging.getLogger(__name__)
@@ -53,7 +54,10 @@ async def _cancel_background_task(task: asyncio.Task[Any] | None) -> None:
         pass
 
 
-async def _delayed_feishu_autostart(delay_seconds: int = FEISHU_AUTO_START_DELAY_SECONDS) -> None:
+async def _delayed_feishu_autostart(
+    service: Any,
+    delay_seconds: int = FEISHU_AUTO_START_DELAY_SECONDS,
+) -> None:
     """Start the persistent Feishu gateway shortly after GA-Hub boots.
 
     The Feishu process can take over stdio and initialize GA resources, so keep it
@@ -62,9 +66,7 @@ async def _delayed_feishu_autostart(delay_seconds: int = FEISHU_AUTO_START_DELAY
     """
     await asyncio.sleep(max(0, delay_seconds))
     try:
-        from .services.feishu_service import FeishuService
-
-        result = await asyncio.to_thread(FeishuService.instance().start)
+        result = await asyncio.to_thread(service.start)
         log.info("feishu auto-start completed after %ss: %s", delay_seconds, result)
     except Exception as e:
         log.warning("feishu auto-start skipped after %ss: %s", delay_seconds, e)
@@ -240,19 +242,27 @@ def _mount_static(app: FastAPI) -> None:
 def create_app() -> FastAPI:
     setup_mode = _paths.GA_ROOT is None
     feishu_autostart_task: asyncio.Task[Any] | None = None
+    services = AppServices()
+
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
-        await _startup()
+        owner_loop = asyncio.get_running_loop()
         try:
+            await _startup()
             yield
         finally:
-            await _shutdown()
+            try:
+                await _shutdown()
+            finally:
+                services.clear()
+                bus.detach_loop(owner_loop)
 
     app = FastAPI(
         title="GenericAgent Admin API" + (" (setup mode)" if setup_mode else ""),
         version="0.3.4",
         lifespan=_lifespan,
     )
+    app.state.services = services
 
     # CORS: browser/server mode is same-origin, while Vite and packaged Tauri
     # assets call the random-port sidecar cross-origin.  Keep both origin sets
@@ -278,6 +288,8 @@ def create_app() -> FastAPI:
 
     async def _startup():
         nonlocal feishu_autostart_task
+        services.clear()
+        feishu_autostart_task = None
         bus.attach_loop(asyncio.get_running_loop())
         if setup_mode:
             log.warning(
@@ -319,9 +331,11 @@ def create_app() -> FastAPI:
             app.state.core_contract = None
 
         agent_svc = AgentService.instance()
+        services.agent = agent_svc
         agent_svc.start_run_thread()
 
         scheduler_host = SchedulerHost()
+        services.scheduler_host = scheduler_host
         scheduler_host.register(
             "scheduled_chats",
             lambda: session_routes.scheduled_chat_service(),
@@ -336,7 +350,6 @@ def create_app() -> FastAPI:
             "tasks",
             lambda: TaskScheduler.instance(agent_svc, scheduler_runtime=scheduler_host.runtime),
         )
-        app.state.scheduler_host = scheduler_host
         scheduler_host.start_all()
         log.info("scheduler host started %s", scheduler_host.status())
 
@@ -349,10 +362,11 @@ def create_app() -> FastAPI:
 
         try:
             fs = FeishuService.instance()
+            services.feishu = fs
             fs.start_log_watcher()
             log.info("feishu log watcher started")
             feishu_autostart_task = asyncio.create_task(
-                _delayed_feishu_autostart(), name="feishu-auto-start"
+                _delayed_feishu_autostart(fs), name="feishu-auto-start"
             )
             log.info("feishu auto-start scheduled in %s seconds", FEISHU_AUTO_START_DELAY_SECONDS)
         except Exception as e:
@@ -367,7 +381,7 @@ def create_app() -> FastAPI:
             except Exception:
                 log.exception("session runtime abort failed")
             await _cancel_background_task(feishu_autostart_task)
-            host = getattr(app.state, "scheduler_host", None)
+            host = services.scheduler_host
             if host is not None:
                 try:
                     host.shutdown_all()
@@ -386,15 +400,18 @@ def create_app() -> FastAPI:
             except Exception:
                 log.exception("goalhive shutdown failed")
             try:
-                from .services.feishu_service import FeishuService
-                FeishuService.instance().shutdown()
+                if services.feishu is not None:
+                    services.feishu.shutdown()
             except Exception:
                 log.exception("feishu shutdown failed")
             try:
-                from .services.agent_service import AgentService
-                agent_svc = AgentService.instance()
-                agent_svc._archive_snapshots_to_chat_history()
-                agent_svc.shutdown()
+                if services.agent is not None:
+                    services.agent._archive_snapshots_to_chat_history()
+            except Exception:
+                log.exception("agent snapshot archival failed")
+            try:
+                if services.agent is not None:
+                    services.agent.shutdown()
             except Exception:
                 log.exception("agent shutdown failed")
             try:
@@ -418,30 +435,21 @@ def create_app() -> FastAPI:
             out["mode"] = "setup"
             return out
 
-        from .services.agent_service import AgentService
-        out["agent"] = AgentService.instance().status().__dict__
-        try:
-            from .services.feishu_service import FeishuService
-            out["feishu"] = FeishuService.instance().status()
-        except Exception as e:
-            out["feishu"] = {"error": str(e)}
-        try:
-            from .services.autonomous_scheduler import AutonomousScheduler
-            out["autonomous"] = {
-                "schedule_count": len(AutonomousScheduler.instance().schedules),
-            }
-        except Exception:
-            pass
-        try:
-            from .services.task_scheduler import TaskScheduler
-            out["tasks"] = {
-                "schedule_count": len(TaskScheduler.instance().schedules),
-            }
-        except Exception:
-            pass
-        host = getattr(app.state, "scheduler_host", None)
+        if services.agent is not None:
+            out["agent"] = services.agent.status().__dict__
+        if services.feishu is not None:
+            try:
+                out["feishu"] = services.feishu.status()
+            except Exception:
+                log.exception("feishu status read failed")
+        host = services.scheduler_host
         if host is not None:
-            out["schedulers"] = host.status()
+            scheduler_status = host.status()
+            out["schedulers"] = scheduler_status
+            for source, target in (("autonomous", "autonomous"), ("tasks", "tasks")):
+                count = scheduler_status.get(source, {}).get("schedule_count")
+                if count is not None:
+                    out[target] = {"schedule_count": count}
         return out
 
     @app.get("/api/health")

@@ -82,6 +82,29 @@ class EventBusBehaviorTests(unittest.TestCase):
             loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()
 
+    def test_detach_ignores_stale_owner_and_prevents_closed_loop_publish(self):
+        bus = EventBus()
+        first = asyncio.new_event_loop()
+        second = asyncio.new_event_loop()
+        try:
+            bus.attach_loop(first)
+            bus.attach_loop(second)
+
+            self.assertFalse(bus.detach_loop(first))
+            self.assertIs(bus._loop, second)
+            self.assertTrue(bus.detach_loop(second))
+            second.close()
+
+            # Late producers still append history after shutdown, without
+            # trying to schedule onto the closed application loop.
+            bus.publish("chat:late", {"ok": True})
+            self.assertEqual(bus.history("chat:")[-1].topic, "chat:late")
+        finally:
+            if not first.is_closed():
+                first.close()
+            if not second.is_closed():
+                second.close()
+
     def test_publish_routes_by_prefix(self):
         async def scenario():
             bus = EventBus()

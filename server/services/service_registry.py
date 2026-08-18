@@ -89,7 +89,13 @@ class ServiceRegistry:
     @staticmethod
     def _agent() -> ServicePanelItem:
         from .agent_service import AgentService
-        status = AgentService.instance().status()
+        service = AgentService._instance
+        if service is None:
+            return ServicePanelItem(
+                "agent", "Agent", "stopped", "服务尚未初始化", "/chat",
+                health="attention", expected_running=True,
+            )
+        status = service.status()
         return ServicePanelItem(
             "agent", "Agent", "running" if status.is_running else "ready",
             "正在执行任务" if status.is_running else "等待任务", "/chat",
@@ -99,8 +105,20 @@ class ServiceRegistry:
 
     @staticmethod
     def _feishu() -> ServicePanelItem:
+        from .. import _paths
         from .feishu_service import FeishuService
-        status = FeishuService.instance().status()
+        service = FeishuService._instance
+        if service is None:
+            script = (
+                _paths.GA_ROOT / "frontends" / "fsapp.py"
+                if _paths.GA_ROOT is not None else None
+            )
+            exists = bool(script is not None and script.is_file())
+            return ServicePanelItem(
+                "feishu", "飞书 Bot", "ready" if exists else "stopped",
+                "已配置，当前未运行" if exists else "服务脚本未配置", "/feishu",
+            )
+        status = service.status()
         exists = bool(status.get("fsapp_exists"))
         return ServicePanelItem(
             "feishu", "飞书 Bot", "running" if status.get("running") else ("ready" if exists else "stopped"),

@@ -7,6 +7,8 @@ import time
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
+
 from server.services.agent_service import AgentService
 from server.services.autonomous_scheduler import AutonomousScheduler
 from server.services.feishu_service import FeishuService
@@ -182,3 +184,203 @@ def test_feishu_log_watcher_restarts_on_same_singleton() -> None:
         assert second_thread is not None and second_thread is not first_thread
         service.shutdown()
         assert not second_thread.is_alive()
+
+
+def test_delayed_feishu_autostart_uses_the_lifespan_owned_service() -> None:
+    import asyncio
+    from server.main import _delayed_feishu_autostart
+
+    service = mock.Mock()
+    service.start.return_value = {"started": True}
+
+    asyncio.run(_delayed_feishu_autostart(service, delay_seconds=0))
+
+    service.start.assert_called_once_with()
+
+
+def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
+    from fastapi.testclient import TestClient
+    from server import _paths, main
+    from server.routes import sessions as session_routes
+    from server.routes import tokens as token_routes
+    from server.services import core_contract
+
+    if _paths.GA_ROOT is None:
+        pytest.skip("normal-mode app lifecycle needs an importable GA core")
+
+    agent = mock.Mock()
+    agent.status.return_value = SimpleNamespace(
+        is_running=False,
+        llm_no=0,
+        llm_name="test",
+        llm_model="test-model",
+        last_reply_time=0,
+        queued_tasks=0,
+        history_lines=0,
+        current_title="",
+    )
+    feishu = mock.Mock()
+    feishu.status.return_value = {
+        "running": False,
+        "pid": None,
+        "returncode": None,
+        "external": False,
+        "fsapp_path": "D:/study/GA/frontends/fsapp.py",
+        "fsapp_exists": True,
+        "python": "python",
+        "log_file": "feishu.log",
+        "log_exists": False,
+        "last_check": None,
+        "last_check_ts": 0.0,
+    }
+    scheduler_status = {
+        "runtime": {"running": True},
+        "scheduled_chats": {"state": "running", "schedule_count": 0, "error": None},
+        "autonomous": {"state": "running", "schedule_count": 2, "error": None},
+        "tasks": {"state": "running", "schedule_count": 3, "error": None},
+    }
+    scheduler_host = mock.Mock()
+    scheduler_host.status.return_value = scheduler_status
+    agent_factory = mock.Mock(return_value=agent)
+    feishu_factory = mock.Mock(return_value=feishu)
+
+    with (
+        mock.patch.object(_paths, "GA_ROOT", _paths.GA_ROOT),
+        mock.patch("server.services.agent_service.AgentService.instance", agent_factory),
+        mock.patch("server.services.feishu_service.FeishuService.instance", feishu_factory),
+        mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
+        mock.patch("server.services.autonomous_scheduler.AutonomousScheduler.instance", side_effect=AssertionError("status constructed autonomous")) as autonomous_factory,
+        mock.patch("server.services.task_scheduler.TaskScheduler.instance", side_effect=AssertionError("status constructed tasks")) as task_factory,
+        mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
+        mock.patch.object(token_routes, "start_persistence"),
+        mock.patch.object(token_routes, "stop_persistence"),
+        mock.patch.object(session_routes, "stop_session_runtimes"),
+        mock.patch("server.services.conductor_service.shutdown_conductor_service", return_value=True),
+        mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
+    ):
+        app = main.create_app()
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            response = client.get("/api/status")
+
+    assert response.status_code == 200
+    assert response.json()["autonomous"] == {"schedule_count": 2}
+    assert response.json()["tasks"] == {"schedule_count": 3}
+    agent_factory.assert_called_once_with()
+    feishu_factory.assert_called_once_with()
+    autonomous_factory.assert_not_called()
+    task_factory.assert_not_called()
+    scheduler_host.shutdown_all.assert_called_once_with()
+    feishu.shutdown.assert_called_once_with()
+    agent._archive_snapshots_to_chat_history.assert_called_once_with()
+    agent.shutdown.assert_called_once_with()
+
+
+def test_agent_shutdown_still_runs_when_snapshot_archival_fails() -> None:
+    from fastapi.testclient import TestClient
+    from server import _paths, main
+    from server.routes import sessions as session_routes
+    from server.routes import tokens as token_routes
+    from server.services import core_contract
+
+    if _paths.GA_ROOT is None:
+        pytest.skip("normal-mode app lifecycle needs an importable GA core")
+
+    agent = mock.Mock()
+    agent._archive_snapshots_to_chat_history.side_effect = RuntimeError("archive boom")
+    scheduler_host = mock.Mock()
+    feishu = mock.Mock()
+
+    with (
+        mock.patch("server.services.agent_service.AgentService.instance", return_value=agent),
+        mock.patch("server.services.feishu_service.FeishuService.instance", return_value=feishu),
+        mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
+        mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
+        mock.patch.object(token_routes, "start_persistence"),
+        mock.patch.object(token_routes, "stop_persistence"),
+        mock.patch.object(session_routes, "stop_session_runtimes"),
+        mock.patch("server.services.conductor_service.shutdown_conductor_service", return_value=True),
+        mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
+    ):
+        app = main.create_app()
+        with TestClient(app, base_url="http://127.0.0.1"):
+            pass
+
+    agent._archive_snapshots_to_chat_history.assert_called_once_with()
+    agent.shutdown.assert_called_once_with()
+
+
+def test_reentered_lifespan_never_reaps_previous_round_services_twice() -> None:
+    from fastapi.testclient import TestClient
+    from server import _paths, main
+    from server.routes import sessions as session_routes
+    from server.routes import tokens as token_routes
+    from server.services import core_contract
+
+    if _paths.GA_ROOT is None:
+        pytest.skip("normal-mode app lifecycle needs an importable GA core")
+
+    agent = mock.Mock()
+    feishu = mock.Mock()
+    scheduler_host = mock.Mock()
+    agent_factory = mock.Mock(side_effect=[agent, RuntimeError("second startup boom")])
+
+    with (
+        mock.patch("server.services.agent_service.AgentService.instance", agent_factory),
+        mock.patch("server.services.feishu_service.FeishuService.instance", return_value=feishu),
+        mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
+        mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
+        mock.patch.object(token_routes, "start_persistence"),
+        mock.patch.object(token_routes, "stop_persistence"),
+        mock.patch.object(session_routes, "stop_session_runtimes"),
+        mock.patch("server.services.conductor_service.shutdown_conductor_service", return_value=True),
+        mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
+    ):
+        app = main.create_app()
+        with TestClient(app, base_url="http://127.0.0.1"):
+            pass
+        with pytest.raises(RuntimeError, match="second startup boom"):
+            with TestClient(app, base_url="http://127.0.0.1"):
+                pass
+
+    assert agent_factory.call_count == 2
+    scheduler_host.shutdown_all.assert_called_once_with()
+    feishu.shutdown.assert_called_once_with()
+    agent._archive_snapshots_to_chat_history.assert_called_once_with()
+    agent.shutdown.assert_called_once_with()
+
+
+def test_partial_startup_failure_reaps_already_owned_services() -> None:
+    from fastapi.testclient import TestClient
+    from server import _paths, main
+    from server.routes import sessions as session_routes
+    from server.routes import tokens as token_routes
+    from server.services import core_contract
+
+    if _paths.GA_ROOT is None:
+        pytest.skip("normal-mode app lifecycle needs an importable GA core")
+
+    agent = mock.Mock()
+    scheduler_host = mock.Mock()
+    scheduler_host.start_all.side_effect = RuntimeError("scheduler boom")
+    feishu_factory = mock.Mock(side_effect=AssertionError("startup must stop before Feishu"))
+
+    with (
+        mock.patch("server.services.agent_service.AgentService.instance", return_value=agent),
+        mock.patch("server.services.feishu_service.FeishuService.instance", feishu_factory),
+        mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
+        mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
+        mock.patch.object(token_routes, "start_persistence"),
+        mock.patch.object(token_routes, "stop_persistence"),
+        mock.patch.object(session_routes, "stop_session_runtimes"),
+        mock.patch("server.services.conductor_service.shutdown_conductor_service", return_value=True),
+        mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
+    ):
+        app = main.create_app()
+        with pytest.raises(RuntimeError, match="scheduler boom"):
+            with TestClient(app, base_url="http://127.0.0.1"):
+                pass
+
+    scheduler_host.shutdown_all.assert_called_once_with()
+    agent._archive_snapshots_to_chat_history.assert_called_once_with()
+    agent.shutdown.assert_called_once_with()
+    feishu_factory.assert_not_called()

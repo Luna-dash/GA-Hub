@@ -146,8 +146,17 @@ class EventBus:
         self._next_event_id = 1
 
     def attach_loop(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Bind to the asyncio loop running FastAPI. Must be called once at startup."""
-        self._loop = loop
+        """Bind producers to the asyncio loop currently owning the app lifespan."""
+        with self._state_lock:
+            self._loop = loop
+
+    def detach_loop(self, loop: asyncio.AbstractEventLoop) -> bool:
+        """Release ``loop`` without detaching a newer lifespan owner."""
+        with self._state_lock:
+            if self._loop is not loop:
+                return False
+            self._loop = None
+            return True
 
     # ── producers ────────────────────────────────────────────────
     def publish(self, topic: str, payload: dict | None = None) -> None:
@@ -162,9 +171,19 @@ class EventBus:
                 event_id=event_id,
             )
             self._history.append(evt)
-        if self._loop is None:
-            return
-        self._loop.call_soon_threadsafe(self._dispatch_async, evt)
+            loop = self._loop
+            if loop is None:
+                return
+            try:
+                loop.call_soon_threadsafe(self._dispatch_async, evt)
+            except RuntimeError:
+                # A loop may close unexpectedly between application teardown
+                # and a late producer publish. Keep history, but do not let the
+                # stale delivery target break that producer thread.
+                if not loop.is_closed():
+                    raise
+                if self._loop is loop:
+                    self._loop = None
 
     def _dispatch_async(self, evt: Event) -> None:
         for prefixes, q in list(self._subs):

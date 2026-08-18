@@ -157,3 +157,29 @@ def test_conductor_panel_uses_live_lifecycle_instead_of_cached_started() -> None
 
     assert (conductor.state, conductor.summary) == ("stopped", "当前未运行")
     lifecycle_status.assert_called_once_with()
+
+
+def test_agent_and_feishu_status_readers_never_construct_services(tmp_path) -> None:
+    from server import _paths
+    from server.services.agent_service import AgentService
+    from server.services.feishu_service import FeishuService
+
+    agent_factory = mock.Mock(side_effect=AssertionError("status must not construct Agent"))
+    feishu_factory = mock.Mock(side_effect=AssertionError("status must not construct Feishu"))
+
+    with (
+        mock.patch.object(_paths, "GA_ROOT", tmp_path),
+        mock.patch.object(AgentService, "_instance", None),
+        mock.patch.object(AgentService, "instance", agent_factory),
+        mock.patch.object(FeishuService, "_instance", None),
+        mock.patch.object(FeishuService, "instance", feishu_factory),
+    ):
+        agent = ServiceRegistry._agent()
+        feishu = ServiceRegistry._feishu()
+
+    assert (agent.state, agent.health, agent.summary) == (
+        "stopped", "attention", "服务尚未初始化",
+    )
+    assert (feishu.state, feishu.summary) == ("stopped", "服务脚本未配置")
+    agent_factory.assert_not_called()
+    feishu_factory.assert_not_called()
