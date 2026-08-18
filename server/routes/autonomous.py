@@ -27,18 +27,20 @@ def svc() -> AutonomousScheduler:
 
 @router.get("/api/autonomous/schedules", response_model=AutonomousScheduleListResp)
 async def list_schedules():
-    return {"schedules": svc().list()}
+    return {"schedules": await asyncio.to_thread(lambda: svc().list())}
 
 
 @router.post("/api/autonomous/schedules", response_model=AutonomousScheduleResp)
 async def upsert_schedule(req: ScheduleUpsert):
-    s = svc().upsert(req.model_dump())
+    payload = req.model_dump()
+    s = await asyncio.to_thread(lambda: svc().upsert(payload))
     return s.to_dict()
 
 
 @router.delete("/api/autonomous/schedules/{sid}", response_model=AutonomousMutationResp)
 async def delete_schedule(sid: str):
-    if not svc().delete(sid):
+    deleted = await asyncio.to_thread(lambda: svc().delete(sid))
+    if not deleted:
         raise HTTPException(404, "schedule not found")
     return {"ok": True}
 
@@ -49,19 +51,19 @@ async def delete_schedule(sid: str):
 )
 async def trigger_schedule(sid: str):
     try:
-        return svc().trigger_now(sid)
+        return await asyncio.to_thread(lambda: svc().trigger_now(sid))
     except KeyError:
         raise HTTPException(404, "schedule not found")
 
 
 @router.get("/api/autonomous/runs", response_model=AutonomousRunListResp)
 async def list_runs(limit: int = Query(default=100, ge=1, le=1000)):
-    return {"runs": await asyncio.to_thread(svc().list_runs, limit=limit)}
+    return {"runs": await asyncio.to_thread(lambda: svc().list_runs(limit=limit))}
 
 
 @router.get("/api/autonomous/reports", response_model=AutonomousReportListResp)
 async def list_reports():
-    return {"reports": svc().list_reports()}
+    return {"reports": await asyncio.to_thread(lambda: svc().list_reports())}
 
 
 @router.get(
@@ -70,7 +72,7 @@ async def list_reports():
 )
 async def read_report(name: str):
     try:
-        content = await asyncio.to_thread(svc().read_report, name)
+        content = await asyncio.to_thread(lambda: svc().read_report(name))
     except FileNotFoundError:
         raise HTTPException(404, "report not found")
     except ValueError:

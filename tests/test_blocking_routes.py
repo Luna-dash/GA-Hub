@@ -7,7 +7,7 @@ import time
 from types import SimpleNamespace
 from unittest import mock
 
-from server.routes import agent, conductor, mykey, sessions, tasks, wechat
+from server.routes import agent, autonomous, conductor, mykey, sessions, tasks, wechat
 
 
 async def _run_with_probe(awaitable):
@@ -92,6 +92,20 @@ def test_email_probe_runs_in_worker_thread() -> None:
         result = asyncio.run(_run_with_probe(tasks.test_email(request)))
 
     assert result == {"ok": True, "to": request.to}
+
+
+def test_autonomous_schedule_list_runs_in_worker_thread() -> None:
+    service = SimpleNamespace(list=lambda: _slow_result([{"id": "s1"}]))
+    with mock.patch.object(autonomous, "svc", return_value=service):
+        result = asyncio.run(_run_with_probe(autonomous.list_schedules()))
+    assert result == {"schedules": [{"id": "s1"}]}
+
+
+def test_task_schedule_list_runs_in_worker_thread() -> None:
+    service = SimpleNamespace(list=lambda: _slow_result([{"id": "t1"}]))
+    with mock.patch.object(tasks, "svc", return_value=service):
+        result = asyncio.run(_run_with_probe(tasks.list_schedules()))
+    assert result == {"schedules": [{"id": "t1"}]}
 
 
 def test_conductor_stop_runs_in_worker_thread() -> None:

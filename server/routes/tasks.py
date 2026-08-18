@@ -31,18 +31,20 @@ def svc() -> TaskScheduler:
 
 @router.get("/schedules", response_model=TaskScheduleListResp)
 async def list_schedules():
-    return {"schedules": svc().list()}
+    return {"schedules": await asyncio.to_thread(lambda: svc().list())}
 
 
 @router.post("/schedules", response_model=TaskScheduleResp)
 async def upsert_schedule(req: TaskScheduleUpsert):
-    s = svc().upsert(req.model_dump())
+    payload = req.model_dump()
+    s = await asyncio.to_thread(lambda: svc().upsert(payload))
     return s.to_dict()
 
 
 @router.delete("/schedules/{sid}", response_model=TaskMutationResp)
 async def delete_schedule(sid: str):
-    if not svc().delete(sid):
+    deleted = await asyncio.to_thread(lambda: svc().delete(sid))
+    if not deleted:
         raise HTTPException(404, "task schedule not found")
     return {"ok": True}
 
@@ -50,21 +52,21 @@ async def delete_schedule(sid: str):
 @router.post("/schedules/{sid}/trigger", response_model=TaskTriggerResp)
 async def trigger_schedule(sid: str):
     try:
-        return svc().trigger_now(sid)
+        return await asyncio.to_thread(lambda: svc().trigger_now(sid))
     except KeyError:
         raise HTTPException(404, "task schedule not found")
 
 
 @router.get("/runs", response_model=TaskRunListResp)
 async def list_runs(limit: int = Query(default=100, ge=1, le=1000)):
-    runs = await asyncio.to_thread(svc().list_runs, limit)
+    runs = await asyncio.to_thread(lambda: svc().list_runs(limit))
     return {"runs": runs}
 
 
 @router.get("/email-config", response_model=EmailConfigResp)
 async def get_email_config():
     try:
-        return email_service.load_config(public=True)
+        return await asyncio.to_thread(lambda: email_service.load_config(public=True))
     except EmailConfigFormatError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -72,7 +74,8 @@ async def get_email_config():
 @router.put("/email-config", response_model=EmailConfigResp)
 async def put_email_config(req: EmailConfigReq):
     try:
-        return email_service.save_config(req.model_dump())
+        payload = req.model_dump()
+        return await asyncio.to_thread(lambda: email_service.save_config(payload))
     except EmailConfigFormatError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
