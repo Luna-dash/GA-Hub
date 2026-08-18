@@ -306,6 +306,7 @@ def create_app() -> FastAPI:
         from .services.task_scheduler import TaskScheduler
         from .routes import sessions as session_routes
         from .services.feishu_service import FeishuService
+        session_routes.prepare_session_runtime_lifecycle()
 
         # P0: probe the GA core contract *before* AgentService wires itself to
         # it. Failure does NOT abort startup (per P0 spec: the service still
@@ -374,52 +375,73 @@ def create_app() -> FastAPI:
 
     async def _shutdown():
         if not setup_mode:
-            # Stop task producers before the services they can invoke.
+            session_routes = None
+            session_runtime_shutdown_ok = False
             try:
-                from .routes import sessions as session_routes
-                session_routes.stop_session_runtimes()
-            except Exception:
-                log.exception("session runtime abort failed")
-            await _cancel_background_task(feishu_autostart_task)
-            host = services.scheduler_host
-            if host is not None:
                 try:
-                    if host.shutdown_all() is False:
-                        log.warning("scheduler host shutdown exceeded its graceful deadline")
+                    from .routes import sessions as session_routes
+                    session_routes.begin_session_runtime_shutdown()
                 except Exception:
-                    log.exception("scheduler host shutdown failed")
-            try:
-                from .services.conductor_service import shutdown_conductor_service
-                if not shutdown_conductor_service():
-                    log.warning("conductor shutdown exceeded its graceful deadline")
-            except Exception:
-                log.exception("conductor shutdown failed")
-            try:
-                from .services.goalhive_service import shutdown_goalhive_service
-                if not shutdown_goalhive_service():
-                    log.warning("goalhive shutdown exceeded its graceful deadline")
-            except Exception:
-                log.exception("goalhive shutdown failed")
-            try:
-                if services.feishu is not None:
-                    services.feishu.shutdown()
-            except Exception:
-                log.exception("feishu shutdown failed")
-            try:
-                if services.agent is not None:
-                    services.agent._archive_snapshots_to_chat_history()
-            except Exception:
-                log.exception("agent snapshot archival failed")
-            try:
-                if services.agent is not None:
-                    services.agent.shutdown()
-            except Exception:
-                log.exception("agent shutdown failed")
-            try:
-                from .routes import tokens as token_routes
-                token_routes.stop_persistence()
-            except Exception:
-                log.exception("token usage final persistence failed")
+                    log.exception("session runtime admission gate failed")
+                # Stop task producers before the services they can invoke.
+                try:
+                    if session_routes is None:
+                        from .routes import sessions as session_routes
+                    shutdown_result = session_routes.stop_session_runtimes(
+                        keep_admission_closed=True
+                    )
+                    # ``None`` is the legacy return value and mocks return a
+                    # sentinel object; only an explicit False means teardown
+                    # missed its deadline and must keep admission closed.
+                    session_runtime_shutdown_ok = shutdown_result is not False
+                except Exception:
+                    log.exception("session runtime abort failed")
+                await _cancel_background_task(feishu_autostart_task)
+                host = services.scheduler_host
+                if host is not None:
+                    try:
+                        if host.shutdown_all() is False:
+                            log.warning("scheduler host shutdown exceeded its graceful deadline")
+                    except Exception:
+                        log.exception("scheduler host shutdown failed")
+                try:
+                    from .services.conductor_service import shutdown_conductor_service
+                    if not shutdown_conductor_service():
+                        log.warning("conductor shutdown exceeded its graceful deadline")
+                except Exception:
+                    log.exception("conductor shutdown failed")
+                try:
+                    from .services.goalhive_service import shutdown_goalhive_service
+                    if not shutdown_goalhive_service():
+                        log.warning("goalhive shutdown exceeded its graceful deadline")
+                except Exception:
+                    log.exception("goalhive shutdown failed")
+                try:
+                    if services.feishu is not None:
+                        services.feishu.shutdown()
+                except Exception:
+                    log.exception("feishu shutdown failed")
+                try:
+                    if services.agent is not None:
+                        services.agent._archive_snapshots_to_chat_history()
+                except Exception:
+                    log.exception("agent snapshot archival failed")
+                try:
+                    if services.agent is not None:
+                        services.agent.shutdown()
+                except Exception:
+                    log.exception("agent shutdown failed")
+                try:
+                    from .routes import tokens as token_routes
+                    token_routes.stop_persistence()
+                except Exception:
+                    log.exception("token usage final persistence failed")
+            finally:
+                if session_runtime_shutdown_ok and session_routes is not None:
+                    try:
+                        session_routes.finish_session_runtime_shutdown()
+                    except Exception:
+                        log.exception("session runtime admission gate cleanup failed")
 
     # ── always-available endpoints ──
     app.include_router(_setup_router())

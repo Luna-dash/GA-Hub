@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 import uuid
 
@@ -24,6 +25,7 @@ from ..services.session_coordinator import (
     RuntimeState,
     SessionControlBusyError,
     SessionCoordinator,
+    SessionCoordinatorStoppedError,
 )
 from ..services.session_metadata import SessionMetadataStore, SessionNotFoundError
 from ..services.project_runtime import activate_project, deactivate_project
@@ -34,6 +36,8 @@ router = APIRouter()
 log = logging.getLogger(__name__)
 _store = SessionMetadataStore()
 _coordinator: SessionCoordinator | None = None
+_coordinator_lifecycle_lock = threading.Lock()
+_coordinator_stopping = False
 _scheduled_chats: ScheduledChatService | None = None
 
 
@@ -87,17 +91,44 @@ def _session_run_capacity() -> int:
 
 
 def _get_coordinator() -> SessionCoordinator:
-    global _coordinator
-    if _coordinator is None:
-        capacity = _session_run_capacity()
-        kwargs = {"on_state_change": _publish_runtime_state}
-        if capacity != 1:
-            kwargs["capacity"] = capacity
-        _coordinator = SessionCoordinator(
-            SessionRuntimeFactory(_store),
-            **kwargs,
-        )
-    return _coordinator
+    global _coordinator, _coordinator_stopping
+    with _coordinator_lifecycle_lock:
+        if _coordinator_stopping:
+            raise SessionCoordinatorStoppedError(
+                "session runtime lifecycle is stopping"
+            )
+        if _coordinator is None:
+            capacity = _session_run_capacity()
+            kwargs = {"on_state_change": _publish_runtime_state}
+            if capacity != 1:
+                kwargs["capacity"] = capacity
+            _coordinator = SessionCoordinator(
+                SessionRuntimeFactory(_store),
+                **kwargs,
+            )
+        return _coordinator
+
+
+def prepare_session_runtime_lifecycle() -> None:
+    """Allow a fresh lifespan to construct runtimes after clean teardown."""
+    global _coordinator_stopping
+    with _coordinator_lifecycle_lock:
+        if _coordinator is None:
+            _coordinator_stopping = False
+
+
+def begin_session_runtime_shutdown() -> None:
+    """Close the route-level admission gate before stopping task producers."""
+    global _coordinator_stopping
+    with _coordinator_lifecycle_lock:
+        _coordinator_stopping = True
+
+
+def finish_session_runtime_shutdown() -> None:
+    """Reopen runtime admission after the owning app lifespan has torn down."""
+    global _coordinator_stopping
+    with _coordinator_lifecycle_lock:
+        _coordinator_stopping = False
 
 
 def _dispatch_scheduled_chat(task: ScheduledChat) -> None:
@@ -153,19 +184,36 @@ def stop_scheduled_chats() -> None:
         _scheduled_chats.shutdown()
 
 
-def stop_session_runtimes(timeout: float = 3.0) -> None:
-    """Ask active session runs to stop; errors retain their diagnostic state."""
-    if _coordinator is None:
-        return
-    for state in _coordinator.active_runs():
-        try:
-            _coordinator.abort(session_id=state.session_id, run_id=state.run_id or "")
-        except Exception:
-            log.exception(
-                "session runtime abort failed session_id=%s run_id=%s",
-                state.session_id,
-                state.run_id,
-            )
+def stop_session_runtimes(
+    timeout: float = 3.0, *, keep_admission_closed: bool = False
+) -> bool:
+    """Stop all session runtimes without letting teardown exceed ``timeout``."""
+    global _coordinator, _coordinator_stopping
+    begin_session_runtime_shutdown()
+    with _coordinator_lifecycle_lock:
+        coordinator = _coordinator
+    if coordinator is None:
+        if not keep_admission_closed:
+            with _coordinator_lifecycle_lock:
+                _coordinator_stopping = False
+        return True
+    try:
+        stopped = coordinator.shutdown(timeout=timeout)
+    except Exception:
+        log.exception("session runtime shutdown failed")
+        return False
+    if stopped:
+        with _coordinator_lifecycle_lock:
+            if _coordinator is coordinator:
+                # A fresh app lifespan must construct fresh AgentService
+                # runtimes; keeping this process-global coordinator would
+                # reuse stopped threads.
+                _coordinator = None
+            if not keep_admission_closed:
+                _coordinator_stopping = False
+    if not stopped:
+        log.warning("session runtime shutdown exceeded its graceful deadline")
+    return stopped
 
 
 class SessionCreate(BaseModel):

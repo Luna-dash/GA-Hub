@@ -273,6 +273,7 @@ def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
     feishu.shutdown.assert_called_once_with()
     agent._archive_snapshots_to_chat_history.assert_called_once_with()
     agent.shutdown.assert_called_once_with()
+    assert session_routes._coordinator_stopping is False
 
 
 def test_agent_shutdown_still_runs_when_snapshot_archival_fails() -> None:

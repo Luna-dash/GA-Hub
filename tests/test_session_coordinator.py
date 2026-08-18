@@ -570,3 +570,292 @@ def test_stale_watcher_cannot_clear_newer_run_for_same_session() -> None:
     # Explicitly emulate a delayed stale completion callback.
     coordinator._watch_completion(runtime, first_handle, "A", first.run_id)
     assert coordinator.runtime_state("A").run_id == second.run_id
+
+
+def test_shutdown_closes_idle_and_active_runtimes_before_releasing_coordinator() -> None:
+    from server.services.session_coordinator import (
+        SessionCoordinator,
+        SessionCoordinatorStoppedError,
+    )
+
+    class ManagedRuntime(FakeRuntime):
+        def __init__(self, session_id: str) -> None:
+            super().__init__(session_id)
+            self.shutdown_timeouts: list[float] = []
+
+        def shutdown(self, timeout: float = 5.0) -> bool:
+            self.shutdown_timeouts.append(timeout)
+            if self.handle is not None:
+                self.handle.finished = True
+            return True
+
+    runtimes: dict[str, ManagedRuntime] = {}
+
+    def factory(session_id: str) -> ManagedRuntime:
+        runtime = ManagedRuntime(session_id)
+        runtimes[session_id] = runtime
+        return runtime
+
+    coordinator = SessionCoordinator(factory, poll_interval=0.001)
+    idle = factory("idle")
+    coordinator._runtimes["idle"] = idle
+    coordinator.submit("active", session_id="active")
+
+    assert coordinator.shutdown(timeout=1.0) is True
+    assert idle.shutdown_timeouts
+    assert runtimes["active"].shutdown_timeouts
+    assert coordinator._runtimes == {}
+    assert coordinator.active_runs() == ()
+    with pytest.raises(SessionCoordinatorStoppedError):
+        coordinator.submit("late", session_id="late")
+
+
+def test_submit_starts_completion_watcher_before_shutdown_can_observe_it(
+    monkeypatch,
+) -> None:
+    from server.services.session_coordinator import SessionCoordinator
+
+    runtime = FakeRuntime("A")
+    coordinator = SessionCoordinator(lambda _session_id: runtime)
+    original_start = threading.Thread.start
+    watcher_started_under_lock: list[bool] = []
+
+    def observe_start(thread: threading.Thread) -> None:
+        if thread.name.startswith("session-run-"):
+            watcher_started_under_lock.append(coordinator._lock._is_owned())
+        original_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", observe_start)
+    coordinator.submit("run", session_id="A")
+
+    assert watcher_started_under_lock == [True]
+    assert runtime.handle is not None
+    runtime.handle.finished = True
+    _wait_until(lambda: coordinator.active_run() is None)
+
+
+def test_shutdown_timeout_retains_runtime_for_a_later_cleanup_attempt() -> None:
+    from server.services.session_coordinator import SessionCoordinator
+
+    class SlowRuntime(FakeRuntime):
+        def __init__(self, session_id: str) -> None:
+            super().__init__(session_id)
+            self.shutdown_calls = 0
+
+        def shutdown(self, timeout: float = 5.0) -> bool:
+            self.shutdown_calls += 1
+            return False
+
+    runtime = SlowRuntime("A")
+    coordinator = SessionCoordinator(lambda _session_id: runtime)
+    coordinator._runtimes["A"] = runtime
+
+    assert coordinator.shutdown(timeout=0.01) is False
+    assert coordinator._runtimes["A"] is runtime
+    assert runtime.shutdown_calls == 1
+
+
+def test_shutdown_retries_a_failed_abort_worker() -> None:
+    from server.services.session_coordinator import SessionCoordinator
+
+    class RetryRuntime(FakeRuntime):
+        def __init__(self, session_id: str) -> None:
+            super().__init__(session_id)
+            self.shutdown_calls = 0
+
+        def abort(self) -> None:
+            self.abort_calls += 1
+            if self.abort_calls == 1:
+                raise RuntimeError("temporary abort failure")
+            assert self.handle is not None
+            self.handle.finished = True
+
+        def shutdown(self, timeout: float = 5.0) -> bool:
+            self.shutdown_calls += 1
+            return bool(self.handle and self.handle.finished)
+
+    runtime = RetryRuntime("A")
+    coordinator = SessionCoordinator(
+        lambda _session_id: runtime,
+        poll_interval=0.001,
+    )
+    coordinator.submit("run", session_id="A")
+
+    assert coordinator.shutdown(timeout=0.02) is False
+    assert coordinator._runtimes["A"] is runtime
+    assert coordinator.shutdown(timeout=1.0) is True
+    assert runtime.abort_calls == 2
+    assert runtime.shutdown_calls == 2
+
+
+def test_shutdown_waits_for_inflight_btw_before_closing_runtime() -> None:
+    from server.services.session_coordinator import SessionCoordinator
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingBtwRuntime(FakeRuntime):
+        def __init__(self, session_id: str) -> None:
+            super().__init__(session_id)
+            self.shutdown_calls = 0
+
+        def btw(self, question: str) -> str:
+            started.set()
+            release.wait(1)
+            return super().btw(question)
+
+        def shutdown(self, timeout: float = 5.0) -> bool:
+            self.shutdown_calls += 1
+            if self.handle is not None:
+                self.handle.finished = True
+            return True
+
+    runtime = BlockingBtwRuntime("A")
+    coordinator = SessionCoordinator(lambda _session_id: runtime, poll_interval=0.001)
+    side_thread = threading.Thread(target=lambda: coordinator.side_question("A", "q"))
+    side_thread.start()
+    assert started.wait(1)
+
+    started_at = time.monotonic()
+    assert coordinator.shutdown(timeout=0.02) is False
+    assert time.monotonic() - started_at < 0.2
+    assert runtime.shutdown_calls == 0
+
+    release.set()
+    side_thread.join(timeout=1)
+    assert not side_thread.is_alive()
+    assert coordinator.shutdown(timeout=1.0) is True
+    assert runtime.shutdown_calls == 1
+
+
+def test_shutdown_deadline_is_bounded_when_coordinator_lock_is_held() -> None:
+    from server.services.session_coordinator import SessionCoordinator
+
+    runtime = FakeRuntime("A")
+    coordinator = SessionCoordinator(lambda _session_id: runtime)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_lock() -> None:
+        with coordinator._lock:
+            entered.set()
+            release.wait(1)
+
+    holder = threading.Thread(target=hold_lock)
+    holder.start()
+    assert entered.wait(1)
+    started_at = time.monotonic()
+    assert coordinator.shutdown(timeout=0.02) is False
+    assert time.monotonic() - started_at < 0.2
+    release.set()
+    holder.join(timeout=1)
+    assert not holder.is_alive()
+
+
+def test_shutdown_does_not_lose_an_abort_admission_failure(monkeypatch) -> None:
+    from server.services.session_coordinator import SessionCoordinator
+
+    class ManagedRuntime(FakeRuntime):
+        def shutdown(self, timeout: float = 5.0) -> bool:
+            if self.handle is not None:
+                self.handle.finished = True
+            return True
+
+    runtime = ManagedRuntime("A")
+    coordinator = SessionCoordinator(
+        lambda _session_id: runtime,
+        poll_interval=0.001,
+    )
+    coordinator.submit("run", session_id="A")
+    monkeypatch.setattr(
+        coordinator,
+        "_mark_shutdown_aborting",
+        lambda _state, _deadline: (None, False),
+    )
+
+    assert coordinator.shutdown(timeout=1.0) is False
+    assert coordinator._runtimes["A"] is runtime
+
+
+def test_concurrent_shutdown_calls_share_one_runtime_shutdown_worker() -> None:
+    from server.services.session_coordinator import SessionCoordinator
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingShutdownRuntime(FakeRuntime):
+        def __init__(self, session_id: str) -> None:
+            super().__init__(session_id)
+            self.shutdown_calls = 0
+
+        def shutdown(self, timeout: float = 5.0) -> bool:
+            self.shutdown_calls += 1
+            entered.set()
+            release.wait(5)
+            return True
+
+    runtime = BlockingShutdownRuntime("A")
+    coordinator = SessionCoordinator(lambda _session_id: runtime)
+    coordinator._runtimes["A"] = runtime
+    results: list[bool] = []
+    second_worker_attempt = threading.Event()
+    original_start_worker = coordinator._start_shutdown_worker
+    worker_attempts = 0
+
+    def observe_worker_attempt(registry, key, action):
+        nonlocal worker_attempts
+        worker_attempts += 1
+        if worker_attempts == 2:
+            second_worker_attempt.set()
+        return original_start_worker(registry, key, action)
+
+    coordinator._start_shutdown_worker = observe_worker_attempt  # type: ignore[method-assign]
+
+    first = threading.Thread(target=lambda: results.append(coordinator.shutdown(0.02)))
+    second = threading.Thread(target=lambda: results.append(coordinator.shutdown(0.3)))
+    first.start()
+    assert entered.wait(1)
+    second.start()
+    first.join(timeout=1)
+    assert not first.is_alive()
+    assert second_worker_attempt.wait(1)
+    assert runtime.shutdown_calls == 1
+    release.set()
+    second.join(timeout=1)
+    assert not second.is_alive()
+
+    assert runtime.shutdown_calls == 1
+    assert sorted(results) == [False, True]
+
+
+def test_shutdown_waits_for_completion_projection_callback() -> None:
+    from server.services.session_coordinator import SessionCoordinator
+
+    callback_started = threading.Event()
+    callback_release = threading.Event()
+
+    class ManagedRuntime(FakeRuntime):
+        def shutdown(self, timeout: float = 5.0) -> bool:
+            if self.handle is not None:
+                self.handle.finished = True
+            return True
+
+    def on_state_change(_state) -> None:
+        callback_started.set()
+        callback_release.wait(1)
+
+    runtime = ManagedRuntime("A")
+    coordinator = SessionCoordinator(
+        lambda _session_id: runtime,
+        poll_interval=0.001,
+        on_state_change=on_state_change,
+    )
+    coordinator.submit("run", session_id="A")
+    assert runtime.handle is not None
+    runtime.handle.finished = True
+    assert callback_started.wait(1)
+
+    assert coordinator.shutdown(timeout=0.02) is False
+    callback_release.set()
+    assert coordinator.shutdown(timeout=1.0) is True
+    assert coordinator._watchers == {}

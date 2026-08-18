@@ -10,6 +10,7 @@ import json
 import logging
 import threading
 from pathlib import Path
+from unittest import mock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -501,3 +502,20 @@ def test_sessions_router_is_wired_in_normal_mode(tmp_path: Path, monkeypatch) ->
     paths = {route.path for route in create_app().routes}
     assert "/api/sessions" in paths
     assert "/api/sessions/{session_id}" in paths
+
+
+def test_session_runtime_stop_releases_only_a_fully_stopped_coordinator(monkeypatch) -> None:
+    from server.routes import sessions
+
+    coordinator = mock.Mock()
+    coordinator.shutdown.side_effect = [False, True]
+    monkeypatch.setattr(sessions, "_coordinator", coordinator)
+
+    assert sessions.stop_session_runtimes(timeout=0.25) is False
+    assert sessions._coordinator is coordinator
+    assert sessions.stop_session_runtimes(timeout=0.5) is True
+    assert sessions._coordinator is None
+    assert coordinator.shutdown.call_args_list == [
+        mock.call(timeout=0.25),
+        mock.call(timeout=0.5),
+    ]
