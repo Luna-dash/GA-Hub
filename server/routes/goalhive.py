@@ -85,6 +85,8 @@ async def ws_goalhive(ws: WebSocket):
         update_task.cancel()
         try:
             await update_task
+        except asyncio.CancelledError:
+            pass
         except Exception:
             pass
 
