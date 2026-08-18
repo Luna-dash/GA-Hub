@@ -110,9 +110,10 @@ export default function Conductor() {
 
   // Extract store actions (stable references) to avoid socket churn
   const addChatMessage = useConductorStore((s) => s.addChatMessage)
-  const setSubagents = useConductorStore((s) => s.setSubagents)
-  const setChatMessages = useConductorStore((s) => s.setChatMessages)
-  const setLog = useConductorStore((s) => s.setLog)
+  const mergeChatMessages = useConductorStore((s) => s.mergeChatMessages)
+  const replaceSubagents = useConductorStore((s) => s.replaceSubagents)
+  const hydrateSubagents = useConductorStore((s) => s.hydrateSubagents)
+  const mergeLogItems = useConductorStore((s) => s.mergeLogItems)
   const addLogItem = useConductorStore((s) => s.addLogItem)
   const addApproval = useConductorStore((s) => s.addApproval)
   const chatMessages = useConductorStore((s) => s.chatMessages)
@@ -165,41 +166,45 @@ export default function Conductor() {
     subagentModelPolicy,
   }), [effectiveLlmIndex, selectedSubagentLlmIndex, subagentModelPolicy])
 
-  // Poll subagents
-  useQuery({
+  // Bootstrap snapshots also repair state after page remounts and hard resyncs.
+  const { data: subagentSnapshot } = useQuery({
     queryKey: queryKeys.conductor.subagents,
     queryFn: async () => {
+      const expectedRevision = useConductorStore.getState().subagentsRevision
       const res = await api.conductorSubagents()
-      setSubagents(res.items)
-      return res.items
+      return { items: res.items, expectedRevision }
     },
-    refetchInterval: 30_000,
-    refetchIntervalInBackground: false,
+    refetchOnMount: 'always',
   })
 
-  // Poll chat
-  useQuery({
+  const { data: chatSnapshot } = useQuery({
     queryKey: queryKeys.conductor.chat,
-    queryFn: async () => {
-      const res = await api.conductorChat(50)
-      setChatMessages(res.items)
-      return res.items
-    },
-    refetchInterval: 30_000,
-    refetchIntervalInBackground: false,
+    queryFn: async () => (await api.conductorChat(200)).items,
+    refetchOnMount: 'always',
   })
 
-  // Poll log
-  useQuery({
+  const { data: logSnapshot } = useQuery({
     queryKey: queryKeys.conductor.log,
-    queryFn: async () => {
-      const res = await api.conductorLog()
-      setLog(res.log)
-      return res.log
-    },
-    refetchInterval: 30_000,
-    refetchIntervalInBackground: false,
+    queryFn: async () => (await api.conductorLog()).log,
+    refetchOnMount: 'always',
   })
+
+  useEffect(() => {
+    if (subagentSnapshot) {
+      hydrateSubagents(
+        subagentSnapshot.items,
+        subagentSnapshot.expectedRevision,
+      )
+    }
+  }, [hydrateSubagents, subagentSnapshot])
+
+  useEffect(() => {
+    if (chatSnapshot) mergeChatMessages(chatSnapshot)
+  }, [chatSnapshot, mergeChatMessages])
+
+  useEffect(() => {
+    if (logSnapshot) mergeLogItems(logSnapshot)
+  }, [logSnapshot, mergeLogItems])
 
   useHubEvent('conductor:', (event) => {
     if (event.topic === 'conductor:chat' && event.payload.item) {
@@ -207,7 +212,7 @@ export default function Conductor() {
       addChatMessage(event.payload.item)
     }
     if (event.topic === 'conductor:subagents' && event.payload.items) {
-      setSubagents(event.payload.items)
+      replaceSubagents(event.payload.items)
     }
     if (event.topic === 'conductor:log' && event.payload.item) {
       shouldFollowLogRef.current = isNearScrollTop(logScrollRef.current)
@@ -264,7 +269,7 @@ export default function Conductor() {
     setUserMsg('')
 
     // Send and use returned item (with real id) for instant display.
-    // EventBus + 2s poll will dedupe by id, no duplicates.
+    // The EventBus and snapshot bootstrap merge by id, so this stays unique.
     try {
       const item = await api.conductorSendChat(msg, 'user', conductorModelSettings)
       shouldFollowChatRef.current = true

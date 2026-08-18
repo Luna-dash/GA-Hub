@@ -1,10 +1,10 @@
 // conductorStore — real-time conductor state via EventBus
 //
 // EventBus topics:
-//   conductor:chat_msg        { item: ConductorChatMessage }
-//   conductor:subagent_cards  { items: ConductorSubagent[] }
-//   conductor:log             { item: ConductorLogItem }
-//   conductor:approval        { item: ConductorApprovalItem }
+//   conductor:chat       { item: ConductorChatMessage }
+//   conductor:subagents  { items: ConductorSubagent[] }
+//   conductor:log        { item: ConductorLogItem }
+//   conductor:approval   { item: ConductorApprovalItem }
 
 import { create } from 'zustand'
 import type {
@@ -17,43 +17,83 @@ import type {
 interface ConductorState {
   chatMessages: ConductorChatMessage[]
   subagents: ConductorSubagent[]
+  subagentsRevision: number
   log: ConductorLogItem[]
   approvals: ConductorApprovalItem[]
   addChatMessage: (msg: ConductorChatMessage) => void
-  setChatMessages: (msgs: ConductorChatMessage[]) => void
-  setSubagents: (items: ConductorSubagent[]) => void
+  mergeChatMessages: (msgs: ConductorChatMessage[]) => void
+  replaceSubagents: (items: ConductorSubagent[]) => void
+  hydrateSubagents: (items: ConductorSubagent[], expectedRevision: number) => void
   addLogItem: (item: ConductorLogItem) => void
-  setLog: (items: ConductorLogItem[]) => void
+  mergeLogItems: (items: ConductorLogItem[]) => void
   addApproval: (item: ConductorApprovalItem) => void
   removeApproval: (id: string) => void
   clear: () => void
 }
 
+function mergeTimeline<T extends { id: string; ts: number }>(
+  current: T[], incoming: T[], limit: number,
+): T[] {
+  const byId = new Map(current.map((item) => [item.id, item]))
+  for (const item of incoming) {
+    // A live item already in the store is newer than a late HTTP snapshot.
+    if (!byId.has(item.id)) byId.set(item.id, item)
+  }
+  const merged = [...byId.values()]
+    .sort((left, right) => left.ts - right.ts)
+    .slice(-limit)
+  if (
+    merged.length === current.length
+    && merged.every((item, index) => item === current[index])
+  ) {
+    return current
+  }
+  return merged
+}
+
 export const useConductorStore = create<ConductorState>((set) => ({
   chatMessages: [],
   subagents: [],
+  subagentsRevision: 0,
   log: [],
   approvals: [],
 
   addChatMessage: (msg) =>
     set((state) => {
-      const exists = state.chatMessages.some((m) => m.id === msg.id)
-      if (exists) return state
-      return { chatMessages: [...state.chatMessages, msg] }
+      const chatMessages = mergeTimeline(state.chatMessages, [msg], 200)
+      return chatMessages === state.chatMessages ? state : { chatMessages }
     }),
 
-  setChatMessages: (msgs) => set({ chatMessages: msgs }),
+  mergeChatMessages: (msgs) =>
+    set((state) => {
+      const chatMessages = mergeTimeline(state.chatMessages, msgs, 200)
+      return chatMessages === state.chatMessages ? state : { chatMessages }
+    }),
 
-  setSubagents: (items) => set({ subagents: items }),
+  replaceSubagents: (items) => set((state) => ({
+    subagents: items,
+    subagentsRevision: state.subagentsRevision + 1,
+  })),
+
+  hydrateSubagents: (items, expectedRevision) => set((state) => {
+    if (state.subagentsRevision !== expectedRevision) return state
+    return {
+      subagents: items,
+      subagentsRevision: state.subagentsRevision + 1,
+    }
+  }),
 
   addLogItem: (item) =>
     set((state) => {
-      const exists = state.log.some((l) => l.id === item.id)
-      if (exists) return state
-      return { log: [...state.log, item] }
+      const log = mergeTimeline(state.log, [item], 50)
+      return log === state.log ? state : { log }
     }),
 
-  setLog: (items) => set({ log: items }),
+  mergeLogItems: (items) =>
+    set((state) => {
+      const log = mergeTimeline(state.log, items, 50)
+      return log === state.log ? state : { log }
+    }),
 
   addApproval: (item) =>
     set((state) => {
@@ -65,5 +105,11 @@ export const useConductorStore = create<ConductorState>((set) => ({
   removeApproval: (id) =>
     set((state) => ({ approvals: state.approvals.filter((a) => a.id !== id) })),
 
-  clear: () => set({ chatMessages: [], subagents: [], log: [], approvals: [] }),
+  clear: () => set((state) => ({
+    chatMessages: [],
+    subagents: [],
+    subagentsRevision: state.subagentsRevision + 1,
+    log: [],
+    approvals: [],
+  })),
 }))
