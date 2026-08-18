@@ -126,6 +126,7 @@ export class HttpTimeoutError extends Error {
 }
 
 export const DEFAULT_HTTP_TIMEOUT_MS = 30_000
+export const MYKEY_SYNC_HTTP_TIMEOUT_MS = 100_000
 
 type HttpOptions = RequestInit & {
   timeoutMs?: number
@@ -271,8 +272,12 @@ export const api = {
   testMyKeySession: (varName: string) =>
     http<MyKeySessionTestResult>('POST', `/api/mykey/sessions/${encodeURIComponent(varName)}/test`),
   openMyKeyFile: () => http<MyKeyOpenResponse>('POST', '/api/mykey/open'),
-  uploadMyKeySync: () => http<MyKeySyncResult>('POST', '/api/mykey/sync/upload'),
-  fetchMyKeySync: () => http<MyKeySyncResult>('POST', '/api/mykey/sync/fetch'),
+  uploadMyKeySync: () => http<MyKeySyncResult>(
+    'POST', '/api/mykey/sync/upload', undefined, { timeoutMs: MYKEY_SYNC_HTTP_TIMEOUT_MS },
+  ),
+  fetchMyKeySync: () => http<MyKeySyncResult>(
+    'POST', '/api/mykey/sync/fetch', undefined, { timeoutMs: MYKEY_SYNC_HTTP_TIMEOUT_MS },
+  ),
 
   // ── feishu ───────────────────────────────────────────
   fsStatus: () => http<FsStatus>('GET', '/api/feishu/status'),

@@ -394,6 +394,31 @@ def _sync_base_url() -> str:
     return os.environ.get("GA_MYKEY_SYNC_URL", "https://sector.lunadash.me").rstrip("/")
 
 
+def _mykey_sync_python() -> str:
+    """Return a real interpreter for GA's external sync script.
+
+    In a packaged desktop build ``sys.executable`` is the PyInstaller sidecar,
+    not Python.  Re-launching it with ``mykey_sync.py`` argv only starts the
+    sidecar argument parser and exits, so always use the interpreter selected
+    by the shared GA runtime configuration.
+    """
+    python = _paths.discover_user_python(_paths.GA_ROOT)
+    if python:
+        try:
+            is_frozen_launcher = (
+                bool(getattr(sys, "frozen", False))
+                and Path(python).resolve() == Path(sys.executable).resolve()
+            )
+        except OSError:
+            is_frozen_launcher = False
+        if not is_frozen_launcher:
+            return python
+    raise HTTPException(503, {
+        "error": "mykey_python_unavailable",
+        "message": "未找到可运行 mykey 同步脚本的 Python 解释器，请在设置中配置 Python 解释器",
+    })
+
+
 def _run_mykey_sync(args: list[str]) -> dict[str, Any]:
     """Run mykey_sync.py without passing secrets on argv.
 
@@ -403,12 +428,22 @@ def _run_mykey_sync(args: list[str]) -> dict[str, Any]:
     script = _mykey_sync_script()
     if _paths.GA_ROOT is None:
         raise HTTPException(503, "GA_ROOT 未配置")
-    cmd = [sys.executable, str(script), *args]
+    python = _mykey_sync_python()
+    cmd = [python, "-X", "utf8", str(script), *args]
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["GA_ROOT"] = str(_paths.GA_ROOT)
+    env["GA_PYTHON"] = python
     try:
         proc = subprocess.run(
             cmd,
             cwd=str(_paths.GA_ROOT),
+            env=env,
+            stdin=subprocess.DEVNULL,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=90,
             check=False,
@@ -421,6 +456,11 @@ def _run_mykey_sync(args: list[str]) -> dict[str, Any]:
             "stdout": e.stdout or "",
             "stderr": e.stderr or "",
         })
+    except OSError as e:
+        raise HTTPException(503, {
+            "error": "mykey_sync_start_failed",
+            "message": f"无法启动 mykey 同步 Python：{type(e).__name__}: {e}",
+        })
     except Exception as e:
         raise HTTPException(500, f"启动 mykey 同步失败: {type(e).__name__}: {e}")
 
@@ -430,9 +470,15 @@ def _run_mykey_sync(args: list[str]) -> dict[str, Any]:
         "stderr": proc.stderr,
     }
     if proc.returncode != 0:
+        message = f"mykey_sync.py 退出码 {proc.returncode}"
+        if "No module named 'cryptography'" in proc.stderr:
+            message = (
+                f"Python 解释器缺少 mykey 同步依赖 cryptography：{python}。"
+                "请为该解释器安装依赖，或在设置中选择已安装该依赖的 GA Python"
+            )
         raise HTTPException(500, {
             "error": "mykey_sync_failed",
-            "message": f"mykey_sync.py 退出码 {proc.returncode}",
+            "message": message,
             **result,
         })
     return result

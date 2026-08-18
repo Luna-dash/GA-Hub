@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, HttpTimeoutError } from './client'
+import {
+  api,
+  DEFAULT_HTTP_TIMEOUT_MS,
+  HttpTimeoutError,
+  MYKEY_SYNC_HTTP_TIMEOUT_MS,
+} from './client'
 
 function pendingFetch() {
   return vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
@@ -46,6 +51,20 @@ describe('api request failure handling', () => {
     const assertion = expect(request).rejects.toBeInstanceOf(HttpTimeoutError)
     await vi.advanceTimersByTimeAsync(25)
 
+    await assertion
+  })
+
+  it('allows mykey sync to outlive the normal request deadline', async () => {
+    vi.useFakeTimers()
+    const fetchMock = pendingFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const request = api.uploadMyKeySync()
+    const assertion = expect(request).rejects.toBeInstanceOf(HttpTimeoutError)
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_HTTP_TIMEOUT_MS)
+    expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(MYKEY_SYNC_HTTP_TIMEOUT_MS - DEFAULT_HTTP_TIMEOUT_MS)
     await assertion
   })
 

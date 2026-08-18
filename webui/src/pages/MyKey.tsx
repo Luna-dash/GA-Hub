@@ -26,6 +26,15 @@ import { toast } from '@/stores/toastStore'
 
 type Tab = 'structured' | 'raw'
 
+function syncFailureMessage(error: any): string {
+  const detail = error?.body?.detail
+  if (typeof detail === 'string') return detail
+  const message = typeof detail?.message === 'string' ? detail.message.trim() : ''
+  const stderr = typeof detail?.stderr === 'string' ? detail.stderr.trim() : ''
+  if (message && stderr && message !== stderr) return `${message}\n\n${stderr}`
+  return message || stderr || error?.message || String(error)
+}
+
 export default function MyKey() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('structured')
@@ -65,7 +74,7 @@ export default function MyKey() {
       const r = await api.uploadMyKeySync()
       toast.success((r.stdout || 'mykey 上传完成').trim().split('\n').slice(-1)[0])
     } catch (e: any) {
-      dialog.alert('上传 mykey 失败', e?.body?.detail?.stderr || e?.body?.detail?.message || e?.message || String(e))
+      dialog.alert('上传 mykey 失败', syncFailureMessage(e))
     } finally {
       setSyncBusy(null)
     }
@@ -90,7 +99,7 @@ export default function MyKey() {
       qc.invalidateQueries({ queryKey: ['llms'] })
       qc.invalidateQueries({ queryKey: ['status'] })
     } catch (e: any) {
-      dialog.alert('下载 mykey 失败', e?.body?.detail?.stderr || e?.body?.detail?.message || e?.message || String(e))
+      dialog.alert('下载 mykey 失败', syncFailureMessage(e))
     } finally {
       setSyncBusy(null)
     }
