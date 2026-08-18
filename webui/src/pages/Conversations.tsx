@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { ConversationSummary } from '@/api/types'
@@ -37,6 +37,8 @@ type Round = {
 export default function Conversations() {
   const qc = useQueryClient()
   const nav = useNavigate()
+  const { id: routeConversationId } = useParams<{ id?: string }>()
+  const active = routeConversationId || null
   const [restoring, setRestoring] = useState<string | null>(null)
   const [q, setQ] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
@@ -55,7 +57,6 @@ export default function Conversations() {
     queryFn: () => api.conversations(debouncedQ || undefined, page * limit, limit),
   })
 
-  const [active, setActive] = useState<string | null>(null)
   const { data: detail } = useQuery({
     queryKey: conversationKeys.detail(active || ''),
     queryFn: () => api.conversation(active!),
@@ -117,7 +118,7 @@ export default function Conversations() {
     if (!ok) return
     try {
       await api.deleteConversation(id)
-      if (active === id) setActive(null)
+      if (active === id) nav('/conversations', { replace: true })
       await removeConversationFromCache(qc, id)
       toast.success('会话文件已删除')
     } catch (e: any) {
@@ -189,7 +190,7 @@ export default function Conversations() {
                   index={page * limit + index + 1}
                   collapsed={collapsed}
                   active={active === c.id}
-                  onClick={() => setActive(c.id)}
+                  onClick={() => nav(`/conversations/${encodeURIComponent(c.id)}`)}
                 />
               ))}
               {total > limit && (

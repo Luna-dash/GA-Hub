@@ -119,11 +119,17 @@ class BackendApiSmokeTests(unittest.TestCase):
         with TestClient(app, base_url="http://127.0.0.1") as client:
             root = client.get("/")
             deep_link = client.get("/chat")
+            conversation_deep_link = client.get("/conversations/session-1")
 
             self.assertEqual(root.status_code, 200)
-            self.assertEqual(deep_link.status_code, 200)
-            self.assertIn("text/html", deep_link.headers["content-type"])
-            self.assertEqual(deep_link.headers.get("cache-control"), "no-store, must-revalidate")
+            for response in (deep_link, conversation_deep_link):
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("text/html", response.headers["content-type"])
+                self.assertEqual(
+                    response.headers.get("cache-control"),
+                    "no-store, must-revalidate",
+                )
+            self.assertEqual(conversation_deep_link.text, deep_link.text)
 
             match = re.search(r'<script[^>]+src="(/assets/[^"]+\.js)"', deep_link.text)
             self.assertIsNotNone(match, "built index must reference a hashed JavaScript entry")

@@ -9,12 +9,12 @@ import {
 } from './chatPerformance'
 
 describe('chat performance probe', () => {
-  it('recognizes the performance flag in browser and HashRouter URLs', () => {
-    expect(hasChatPerformanceQuery('?perf=1', '')).toBe(true)
-    expect(hasChatPerformanceQuery('', '#/chat?perf=1')).toBe(true)
-    expect(hasChatPerformanceQuery('', '#/chat?mode=debug&perf=1')).toBe(true)
-    expect(hasChatPerformanceQuery('', '#/chat?perf=0')).toBe(false)
-    expect(hasChatPerformanceQuery('', '#/chat/perf=1')).toBe(false)
+  it('recognizes the performance flag in standard route queries', () => {
+    expect(hasChatPerformanceQuery('?perf=1')).toBe(true)
+    expect(hasChatPerformanceQuery('?mode=debug&perf=1')).toBe(true)
+    expect(hasChatPerformanceQuery('?perf=0')).toBe(false)
+    expect(hasChatPerformanceQuery('')).toBe(false)
+    expect(hasChatPerformanceQuery('?next=%23%2Fchat%3Fperf%3D1')).toBe(false)
   })
 
   it('captures the rendered window instead of reporting all logical messages as DOM rows', () => {

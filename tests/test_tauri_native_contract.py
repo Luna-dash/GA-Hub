@@ -179,11 +179,20 @@ def test_local_app_router_gate_and_csp_contract() -> None:
     main = _read("webui/src/main.tsx")
     gate = _read("webui/src/runtime/DesktopRuntimeGate.tsx")
     live_chat = _read("webui/src/pages/LiveChat.tsx")
+    conversations = _read("webui/src/pages/Conversations.tsx")
     index = _read("webui/index.html")
     config = json.loads(_read("src-tauri/tauri.conf.json"))
 
-    assert "BrowserRouter, HashRouter" in main
-    assert "getRuntimeConfig().desktop ? HashRouter : BrowserRouter" in main
+    assert "import { BrowserRouter } from 'react-router-dom'" in main
+    assert "HashRouter" not in main
+    assert "getRuntimeConfig" not in main
+    assert "<BrowserRouter>" in main
+    assert "</BrowserRouter>" in main
+    assert "useParams<{ id?: string }>()" in conversations
+    assert "const active = routeConversationId || null" in conversations
+    assert "[active, setActive]" not in conversations
+    assert "nav(`/conversations/${encodeURIComponent(c.id)}`)" in conversations
+    assert "if (active === id) nav('/conversations', { replace: true })" in conversations
     assert "<DesktopRuntimeGate>" in main
     assert main.index("<DesktopRuntimeGate>") < main.index("<QueryClientProvider")
     assert "queryDesktopBackendReadiness" in gate

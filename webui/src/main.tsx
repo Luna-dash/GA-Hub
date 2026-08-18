@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter, HashRouter } from 'react-router-dom'
+import { BrowserRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import './styles/index.css'
@@ -8,7 +8,6 @@ import 'katex/dist/katex.min.css'
 import { applyTheme, loadInitialTheme } from './stores/themeStore'
 import { installExternalLinkInterceptor } from './utils/openExternal'
 import { DesktopRuntimeGate } from './runtime/DesktopRuntimeGate'
-import { getRuntimeConfig } from './runtime/runtimeConfig'
 
 // Apply the saved theme synchronously *before* React mounts so the first
 // paint matches user preference (no flash of dark on light-preferring
@@ -43,17 +42,13 @@ const qc = new QueryClient({
 // Prevents WebView2 from navigating away from the SPA with no back UI.
 installExternalLinkInterceptor()
 
-// Keep browser/server mode on clean URLs. Packaged local assets use a hash so
-// client-side routes never replace the underlying bundled-asset URL.
-const AppRouter = getRuntimeConfig().desktop ? HashRouter : BrowserRouter
-
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <DesktopRuntimeGate>
       <QueryClientProvider client={qc}>
-        <AppRouter>
+        <BrowserRouter>
           <App />
-        </AppRouter>
+        </BrowserRouter>
       </QueryClientProvider>
     </DesktopRuntimeGate>
   </React.StrictMode>,

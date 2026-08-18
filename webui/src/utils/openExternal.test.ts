@@ -10,6 +10,7 @@ describe('desktop link classification', () => {
     window.__GA_HUB_RUNTIME__ = { apiOrigin: 'http://127.0.0.1:43123' }
 
     expect(isAppInternalUrl('/chat')).toBe(true)
+    expect(isAppInternalUrl('/conversations/session-1')).toBe(true)
     expect(isAppInternalUrl('http://127.0.0.1:43123/api/files/report.pdf')).toBe(false)
     expect(isAppInternalUrl('https://example.com/docs')).toBe(false)
   })

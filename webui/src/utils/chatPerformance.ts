@@ -26,23 +26,15 @@ declare global {
 
 const MAX_SAMPLES = 80
 
-export function hasChatPerformanceQuery(search: string, hash: string): boolean {
-  if (new URLSearchParams(search).get('perf') === '1') return true
-
-  // HashRouter keeps the route query inside location.hash, for example
-  // `#/chat?perf=1`, leaving location.search empty in packaged Tauri builds.
-  const queryStart = hash.indexOf('?')
-  if (queryStart < 0) return false
-  const queryEnd = hash.indexOf('#', queryStart)
-  const query = hash.slice(queryStart + 1, queryEnd < 0 ? undefined : queryEnd)
-  return new URLSearchParams(query).get('perf') === '1'
+export function hasChatPerformanceQuery(search: string): boolean {
+  return new URLSearchParams(search).get('perf') === '1'
 }
 
 export function isChatPerformanceEnabled(): boolean {
   if (import.meta.env.DEV) return true
   try {
     return window.localStorage.getItem('gahub.chatPerformance') === '1'
-      || hasChatPerformanceQuery(window.location.search, window.location.hash)
+      || hasChatPerformanceQuery(window.location.search)
   } catch {
     return false
   }
