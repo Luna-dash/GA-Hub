@@ -37,6 +37,30 @@ def test_user_chat_message_starts_usage_request_and_returns_request_id():
     )
 
 
+def test_conductor_plan_and_report_do_not_recursively_admit_user_tasks():
+    service = object.__new__(ConductorService)
+    service.chat_messages = []
+    service._started = True
+    service.configure_models = Mock()
+    service.ensure_started = Mock()
+    service.notify = Mock(return_value=True)
+    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
+
+    with patch("server.services.conductor_service.bus.publish"):
+        user_item = service.add_chat_message("calculate", role="user")
+        plan_item = service.add_chat_message("dispatching", role="conductor")
+        report_item = service.add_chat_message("result: 323", role="conductor")
+
+    assert user_item["request_id"]
+    assert "request_id" not in plan_item
+    assert "request_id" not in report_item
+    assert len(service.usage_store.list()) == 1
+    service.configure_models.assert_called_once()
+    service.ensure_started.assert_called_once_with()
+    service.notify.assert_called_once()
+    assert service.notify.call_args.args[0]["type"] == "user_message"
+
+
 def _service_for_admission_test():
     service = object.__new__(ConductorService)
     service.chat_messages = []

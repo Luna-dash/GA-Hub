@@ -93,7 +93,12 @@ def test_start_route_returns_live_lifecycle_and_remains_idempotent(monkeypatch):
 
     result = asyncio.run(conductor_routes.start_conductor())
 
-    assert result == {"ok": True, **RUNNING}
+    assert result == {
+        "ok": True,
+        **RUNNING,
+        "subagents": {"running": 2, "stopped": 3},
+        "chat_count": 1,
+    }
     assert service.start_calls == [(None, None, None)]
 
 
@@ -107,7 +112,12 @@ def test_start_route_forwards_main_and_subagent_models(monkeypatch):
         )
     )
 
-    assert result == {"ok": True, **RUNNING}
+    assert result == {
+        "ok": True,
+        **RUNNING,
+        "subagents": {"running": 2, "stopped": 3},
+        "chat_count": 1,
+    }
     assert service.start_calls == [(2, 5, None)]
 
 
@@ -221,7 +231,12 @@ def test_stop_route_delegates_and_returns_live_lifecycle(monkeypatch):
 
     result = asyncio.run(conductor_routes.stop_conductor())
 
-    assert result == {"ok": True, **STOPPED}
+    assert result == {
+        "ok": True,
+        **STOPPED,
+        "subagents": {"running": 2, "stopped": 3},
+        "chat_count": 1,
+    }
     assert service.stop_calls == 1
 
 

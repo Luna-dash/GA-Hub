@@ -64,6 +64,8 @@ def main():
     logging.getLogger(__name__).info("backend log file: %s", log_path)
     host, port = _read_config()
     _ensure_single_instance(port)
+    from server.runtime_endpoint import configure_runtime_endpoint
+    configure_runtime_endpoint(host, port)
 
     try:
         import uvicorn  # noqa

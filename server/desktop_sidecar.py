@@ -173,12 +173,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.ga_root:
         os.environ["GA_ROOT"] = str(args.ga_root.resolve())
 
-    # Import only after isolation paths have been applied.
+    # Resolve and publish the listener before importing the app. Services such
+    # as Conductor run outside request scope and need this exact random port to
+    # call back into the owning Hub instance.
+    port = args.port or _available_port(args.host)
+    from server.runtime_endpoint import configure_runtime_endpoint
+    configure_runtime_endpoint(args.host, port)
+
+    # Import only after isolation paths and the runtime endpoint are applied.
     import uvicorn
     from fastapi.routing import APIRoute
     from server.main import app
 
-    port = args.port or _available_port(args.host)
     token = args.instance_token or secrets.token_urlsafe(24)
 
     async def desktop_ready() -> dict[str, object]:

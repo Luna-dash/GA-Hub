@@ -13,6 +13,7 @@ Architecture differences from standalone conductor.py:
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 import queue
 import re
@@ -40,6 +41,7 @@ from .conductor_ext_contract import ConductorContractExt  # noqa: E402
 from .conductor_ext_timeout import OutputBudget, TimeoutMonitor  # noqa: E402
 from .event_bus import bus  # noqa: E402
 from .request_usage import RequestUsageStore  # noqa: E402
+from ..runtime_endpoint import runtime_http_origin  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -70,14 +72,22 @@ def _accepts_keyword(callable_obj, name: str) -> bool:
     )
 
 
-def _get_webui_port() -> int:
-    """Read the actual webui port (used by conductor prompt)."""
+def _configured_webui_endpoint() -> tuple[str, int]:
+    """Return the legacy server-mode fallback when no launcher injected one."""
+    host, port = HOST, 8765
     try:
         import mykey  # type: ignore
-        port = int(getattr(mykey, "webui_port", 8765) or 8765)
-        return port
+        host = str(getattr(mykey, "webui_host", host) or host)
+        port = int(getattr(mykey, "webui_port", port) or port)
     except Exception:
-        return 8765
+        pass
+    return host, port
+
+
+def _get_hub_api_base() -> str:
+    """Return this process's Hub Conductor API, never the standalone GA pool."""
+    host, port = _configured_webui_endpoint()
+    return f"{runtime_http_origin(host, port)}/api/conductor"
 
 
 def _get_preferred_llm() -> Optional[int]:
@@ -164,6 +174,65 @@ def clean_log_text(s: str) -> str:
     return s.strip()
 
 
+def _prompt_event_payload(events: list[dict]) -> str:
+    """Serialize the current wake-up data without dumping unbounded agent output."""
+    max_events = 16
+    max_payload_chars = 32_000
+    valid_events = [event for event in events if isinstance(event, dict)]
+    prompt_events = []
+    text_limit = 16_000 if len(valid_events) == 1 else 1_000
+    for event in valid_events[:max_events]:
+        item = {}
+        for key in ("type", "request_id", "id", "generation"):
+            value = event.get(key)
+            if isinstance(value, str):
+                item[key] = value[:256]
+            elif isinstance(value, (int, bool)):
+                item[key] = value
+        msg = event.get("msg")
+        if isinstance(msg, str):
+            item["msg"] = (
+                msg
+                if len(msg) <= text_limit
+                else msg[:text_limit] + "\n[message truncated; use GET chat for the rest]"
+            )
+        reply = event.get("reply")
+        if isinstance(reply, str):
+            item["reply"] = (
+                reply
+                if len(reply) <= text_limit
+                else "[earlier output truncated]\n" + reply[-text_limit:]
+            )
+        prompt_events.append(item)
+    if len(valid_events) > max_events:
+        prompt_events.append({
+            "type": "events_omitted",
+            "count": len(valid_events) - max_events,
+            "instruction": "Use GET /api/conductor/subagent to inspect the rest.",
+        })
+
+    payload = json.dumps(prompt_events, ensure_ascii=False, separators=(",", ":"))
+    while len(payload) > max_payload_chars:
+        text_items = [
+            (item, key)
+            for item in prompt_events
+            for key in ("msg", "reply")
+            if isinstance(item.get(key), str) and item[key]
+        ]
+        if not text_items:
+            break
+        item, key = max(text_items, key=lambda pair: len(pair[0][pair[1]]))
+        value = item[key]
+        if len(value) <= 128:
+            item.pop(key)
+        elif key == "reply":
+            item[key] = "[earlier output truncated]\n" + value[-(len(value) // 2):]
+        else:
+            item[key] = value[:len(value) // 2] + "\n[message truncated]"
+        payload = json.dumps(prompt_events, ensure_ascii=False, separators=(",", ":"))
+    return payload
+
+
 def push_subagent_cards(snapshot: list):
     """Publish subagent pool snapshot to event bus."""
     bus.publish("conductor:subagents", {"items": snapshot})
@@ -243,9 +312,11 @@ READMES = {
     "api": """Conductor API (integrated into GA-Hub)
 
 POST /api/conductor/chat
-  body: {"msg": "...", "role": "user", "llm_index": 1,
+  用户页面提交任务: {"msg": "...", "role": "user", "llm_index": 1,
          "subagent_llm_index": 5, "subagent_model_policy": "default"}
-  添加用户消息、更新页面模型配置，并确保 Conductor 已启动。
+  Conductor 写入计划/报告: {"msg": "...", "role": "conductor"}
+  role=user 会创建新的用户任务并唤醒 Conductor；Supervisor 自己写消息时
+  必须使用 role=conductor，不能把计划或报告作为用户任务重新入队。
 
 POST /api/conductor/subagent
   body: {"prompt": "...", "llm_index": 3}
@@ -270,13 +341,13 @@ GET  /api/conductor/subagent/{id}?max_len=N
     "usermsg": """用户消息流程：
 1. 结合记忆、上下文和用户偏好判断真实需求；不清楚时用精简checklist一次性问用户。
 2. 判断是新任务还是延续现有任务；优先复用已有stopped subagent（用input追加）。
-3. 分派前必须POST /api/conductor/chat告知用户：改写后的prompt + 分派方案。
+3. 分派前必须POST /api/conductor/chat并使用 role=conductor 告知用户：改写后的prompt + 分派方案。
 4. 派发时可用 llm_index 指定本次子代理模型；locked 策略下页面锁定值优先。
 5. 执行分派，完成即停。危险操作必须改成先让subagent出方案；验收后请用户确认。""",
     "subagent": """subagent完成流程：
 1. 读subagent输出；若最后一条不足以判断，GET /api/conductor/subagent/{id}?max_len=3000 补足信息。
 2. 预测用户是否满意；不满意就reply/keyinfo要求返工、修改、优化，继续监督。
-3. 预计用户满意后，POST /api/conductor/chat给简洁交付报告。""",
+3. 预计用户满意后，POST /api/conductor/chat并使用 role=conductor 给简洁交付报告。""",
 }
 
 
@@ -749,20 +820,48 @@ class ConductorService:
 
     def _build_prompt(self, events: list) -> str:
         running, stopped = self.pool.counts()
-        unread = sum(1 for m in self.chat_messages if m.get("role") == "user" and not m.get("read"))
-        if unread:
-            for m in self.chat_messages:
-                if m.get("role") == "user" and not m.get("read"):
-                    m["read"] = True
+        user_events = [e for e in events if e.get("type") == "user_message"]
+        request_ids = {
+            e.get("request_id") for e in user_events if e.get("request_id")
+        }
+        unread_candidates = [
+            message for message in self.chat_messages
+            if message.get("role") == "user" and not message.get("read")
+        ]
+        if request_ids:
+            unread_messages = [
+                message for message in unread_candidates
+                if message.get("request_id") in request_ids
+            ]
+        else:
+            unread_messages = []
+            remaining = list(unread_candidates)
+            for event in user_events:
+                event_msg = event.get("msg")
+                match = next(
+                    (
+                        message for message in remaining
+                        if event_msg is not None and message.get("msg") == event_msg
+                    ),
+                    None,
+                )
+                if match is not None:
+                    unread_messages.append(match)
+                    remaining.remove(match)
+        unread = len(unread_messages)
+        if unread_messages:
+            for message in unread_messages:
+                message["read"] = True
             bus.publish("conductor:chat_read", {})
         done_count = sum(1 for e in events if e.get("type") == "subagent_done")
+        event_payload = _prompt_event_payload(events)
         summary = (
             f"subagents: {running} running, {stopped} stopped | "
             f"{unread} unread user messages, {done_count} completed events"
         )
-        base = f"http://{HOST}:{_get_webui_port()}/api/conductor"
+        base = _get_hub_api_base()
         models = self.model_policy_snapshot()
-        return f"""You are the Conductor supervisor. Delegate independent work to subagents and report concise results to the user.
+        prompt = f"""You are the Conductor supervisor. Delegate independent work to subagents and report concise results to the user.
 API base: {base}. Use GET /api/conductor/readme for the complete contract.
 
 Subagent model routing:
@@ -775,12 +874,15 @@ Subagent model routing:
 
 Operating rules:
 - Reuse a suitable stopped subagent when continuing the same task.
-- Before dispatching, explain the rewritten prompt and delegation plan through POST /api/conductor/chat.
+- For every chat message you write, POST /api/conductor/chat with JSON {{"msg": "...", "role": "conductor"}}. Never use role=user; that role is reserved for real user input and would recursively enqueue your own message as a new task.
+- Before dispatching, use that conductor-role chat call to explain the rewritten prompt and delegation plan.
 - Preserve Unicode task text exactly. Send self-API requests as UTF-8 JSON (prefer Python requests with json=); never round-trip prompts through a shell code page.
+- The API base above is authoritative. Never scan alternate ports, call the standalone GA Conductor, or edit GA-Hub to repair the control plane. If it is unreachable, report that error and stop the turn.
 - Use subagent input/keyinfo/abort actions as needed, then verify results before reporting completion.
 - Do not perform destructive work without first obtaining a plan and user confirmation.
 
 Current state: {summary}"""
+        return f"{prompt}\n\nAuthoritative wake events (act on these directly):\n<wake_events>{event_payload}</wake_events>"
 
     def ensure_started(self) -> bool:
         self._ensure_shutdown_state()

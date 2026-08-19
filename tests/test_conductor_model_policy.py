@@ -1,6 +1,8 @@
 """Conductor-owned subagent model routing policy tests."""
 from __future__ import annotations
 
+import json
+import os
 import queue
 import threading
 from types import SimpleNamespace
@@ -10,6 +12,7 @@ from server.services.conductor_service import (
     ConductorService,
     CoreSubagentPool,
     HubConductorCallbacks,
+    READMES,
 )
 
 
@@ -163,15 +166,140 @@ def test_default_and_locked_policies_require_a_worker_model():
 def test_conductor_prompt_has_no_replacement_question_marks():
     service = _service(main=1)
     service.pool.counts.return_value = (1, 2)
-    service.chat_messages = [{"role": "user", "read": False}]
+    service.chat_messages = [{
+        "role": "user",
+        "read": False,
+        "request_id": "req-1",
+        "msg": "检查中文路径 D:\\项目并计算 17*19 🚀",
+    }]
     service.callbacks = SimpleNamespace()
 
-    prompt = service._build_prompt([{"type": "user_message"}])
+    with patch.dict(
+        os.environ,
+        {
+            "GA_HUB_RUNTIME_HOST": "127.0.0.1",
+            "GA_HUB_RUNTIME_PORT": "35204",
+        },
+    ):
+        prompt = service._build_prompt([
+            {
+                "type": "user_message",
+                "request_id": "req-1",
+                "msg": "检查中文路径 D:\\项目并计算 17*19 🚀",
+            }
+        ])
 
     assert "You are the Conductor supervisor" in prompt
-    assert "API base:" in prompt
+    assert "API base: http://127.0.0.1:35204/api/conductor" in prompt
+    assert "Never scan alternate ports" in prompt
+    assert '"role": "conductor"' in prompt
+    assert "Never use role=user" in prompt
     assert "Preserve Unicode task text exactly" in prompt
+    assert '"type":"user_message"' in prompt
+    wake_events = json.loads(
+        prompt.split("<wake_events>", 1)[1].split("</wake_events>", 1)[0]
+    )
+    assert wake_events[0]["msg"] == "检查中文路径 D:\\项目并计算 17*19 🚀"
     assert "??" not in prompt
+
+
+def test_conductor_readme_reserves_user_role_for_real_user_input():
+    api_docs = READMES["api"]
+    user_flow = READMES["usermsg"]
+    completion_flow = READMES["subagent"]
+
+    assert '"role": "conductor"' in api_docs
+    assert "role=user" in api_docs
+    assert "role=conductor" in user_flow
+    assert "role=conductor" in completion_flow
+
+
+def test_conductor_prompt_only_marks_the_current_request_as_read():
+    service = _service(main=1)
+    service.pool.counts.return_value = (0, 1)
+    current = {
+        "role": "user",
+        "read": False,
+        "request_id": "req-current",
+    }
+    queued = {
+        "role": "user",
+        "read": False,
+        "request_id": "req-queued",
+    }
+    service.chat_messages = [current, queued]
+
+    prompt = service._build_prompt([
+        {
+            "type": "user_message",
+            "request_id": "req-current",
+            "msg": "current task",
+        }
+    ])
+
+    assert current["read"] is True
+    assert queued["read"] is False
+    assert '"msg":"current task"' in prompt
+    assert "1 unread user messages" in prompt
+
+
+def test_conductor_prompt_without_request_id_marks_only_one_matching_message():
+    service = _service(main=1)
+    service.pool.counts.return_value = (0, 0)
+    matching = {"role": "user", "read": False, "msg": "current task"}
+    queued = {"role": "user", "read": False, "msg": "queued task"}
+    service.chat_messages = [matching, queued]
+
+    service._build_prompt([{"type": "user_message", "msg": "current task"}])
+
+    assert matching["read"] is True
+    assert queued["read"] is False
+
+
+def test_conductor_prompt_includes_completed_subagent_result():
+    service = _service(main=1)
+    service.pool.counts.return_value = (0, 1)
+    service.chat_messages = []
+
+    prompt = service._build_prompt([
+        {
+            "type": "subagent_done",
+            "id": "worker-1",
+            "generation": 1,
+            "reply": "323",
+        }
+    ])
+
+    assert '"type":"subagent_done"' in prompt
+    assert '"id":"worker-1"' in prompt
+    assert '"reply":"323"' in prompt
+    assert "1 completed events" in prompt
+
+
+def test_conductor_prompt_bounds_large_completion_batches():
+    service = _service(main=1)
+    service.pool.counts.return_value = (0, 100)
+    service.chat_messages = []
+    events = [
+        {
+            "type": "subagent_done",
+            "id": f"worker-{index}",
+            "generation": 1,
+            "reply": "\\" * 16_000,
+        }
+        for index in range(100)
+    ]
+
+    prompt = service._build_prompt(events)
+    payload_text = prompt.split("<wake_events>", 1)[1].split(
+        "</wake_events>", 1
+    )[0]
+    payload = json.loads(payload_text)
+
+    assert len(payload_text) <= 32_000
+    assert payload[-1]["type"] == "events_omitted"
+    assert payload[-1]["count"] == 84
+    assert "100 completed events" in prompt
 
 
 def test_core_pool_put_task_preserves_unicode_prompt():

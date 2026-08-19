@@ -15,6 +15,12 @@ from unittest.mock import Mock, patch
 from urllib.request import urlopen
 
 from server import desktop_sidecar
+from server.runtime_endpoint import (
+    RUNTIME_HOST_ENV,
+    RUNTIME_PORT_ENV,
+    configure_runtime_endpoint,
+    runtime_http_origin,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SIDECAR_SOURCE = ROOT / "server" / "desktop_sidecar.py"
@@ -34,6 +40,29 @@ def _current_packaged_sidecar_is_staged() -> bool:
 
 
 class OwnerStdinReaderTests(unittest.TestCase):
+    def test_runtime_endpoint_tracks_random_listener_and_formats_ipv6(self) -> None:
+        with patch.dict(
+            os.environ,
+            {RUNTIME_HOST_ENV: "stale-host", RUNTIME_PORT_ENV: "8765"},
+        ):
+            configure_runtime_endpoint("::1", 35204)
+            self.assertEqual(os.environ[RUNTIME_HOST_ENV], "::1")
+            self.assertEqual(os.environ[RUNTIME_PORT_ENV], "35204")
+            self.assertEqual(
+                runtime_http_origin("127.0.0.1", 8765),
+                "http://[::1]:35204",
+            )
+
+    def test_runtime_endpoint_falls_back_from_invalid_inherited_port(self) -> None:
+        with patch.dict(
+            os.environ,
+            {RUNTIME_HOST_ENV: "127.0.0.1", RUNTIME_PORT_ENV: "not-a-port"},
+        ):
+            self.assertEqual(
+                runtime_http_origin("127.0.0.1", 9123),
+                "http://127.0.0.1:9123",
+            )
+
     def test_waiting_for_owner_does_not_lock_buffered_stdin(self) -> None:
         read_fd, write_fd = os.pipe()
         raw = os.fdopen(read_fd, "rb", buffering=0)

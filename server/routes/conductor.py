@@ -48,6 +48,15 @@ def svc() -> ConductorService:
     return ConductorService.instance()
 
 
+def _status_payload(service: ConductorService) -> dict:
+    running, stopped = service.pool.counts()
+    return {
+        **service.lifecycle_status(),
+        "subagents": {"running": running, "stopped": stopped},
+        "chat_count": len(service.chat_messages),
+    }
+
+
 # ── readme / docs ────────────────────────────────────────────────────────────
 @router.get("/api/conductor/readme")
 async def get_readme() -> ConductorTextResp:
@@ -178,13 +187,7 @@ async def get_conductor_log() -> ConductorLogResp:
 @router.get("/api/conductor/status")
 async def get_status() -> ConductorStatusResp:
     service = svc()
-    running, stopped = service.pool.counts()
-    lifecycle = service.lifecycle_status()
-    return {
-        **lifecycle,
-        "subagents": {"running": running, "stopped": stopped},
-        "chat_count": len(service.chat_messages),
-    }
+    return _status_payload(service)
 
 
 @router.post("/api/conductor/start")
@@ -200,8 +203,8 @@ async def start_conductor(body: ConductorStartReq | None = None) -> ConductorLif
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    lifecycle = service.lifecycle_status()
-    return {"ok": started or lifecycle["started"], **lifecycle}
+    status = _status_payload(service)
+    return {"ok": started or status["started"], **status}
 
 
 @router.post("/api/conductor/stop")
@@ -209,4 +212,4 @@ async def stop_conductor() -> ConductorLifecycleResp:
     """Stop the conductor supervisor."""
     service = svc()
     stopped = await asyncio.to_thread(service.stop)
-    return {"ok": stopped, **service.lifecycle_status()}
+    return {"ok": stopped, **_status_payload(service)}

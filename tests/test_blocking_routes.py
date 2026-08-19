@@ -119,12 +119,19 @@ def test_conductor_stop_runs_in_worker_thread() -> None:
     service = SimpleNamespace(
         stop=lambda: _slow_result(True),
         lifecycle_status=lambda: stopped,
+        pool=SimpleNamespace(counts=lambda: (0, 0)),
+        chat_messages=[],
     )
 
     with mock.patch.object(conductor, "svc", return_value=service):
         result = asyncio.run(_run_with_probe(conductor.stop_conductor()))
 
-    assert result == {"ok": True, **stopped}
+    assert result == {
+        "ok": True,
+        **stopped,
+        "subagents": {"running": 0, "stopped": 0},
+        "chat_count": 0,
+    }
 
 
 def test_session_restore_runs_in_worker_thread() -> None:
