@@ -879,6 +879,8 @@ Operating rules:
 - Preserve Unicode task text exactly. Send self-API requests as UTF-8 JSON (prefer Python requests with json=); never round-trip prompts through a shell code page.
 - The API base above is authoritative. Never scan alternate ports, call the standalone GA Conductor, or edit GA-Hub to repair the control plane. If it is unreachable, report that error and stop the turn.
 - Use subagent input/keyinfo/abort actions as needed, then verify results before reporting completion.
+- When a task creates or changes files, the final conductor report MUST list every deliverable with an absolute path in the form [FILE:absolute/path]. Verify each path exists before reporting it; do not report only that a file was generated.
+- The Conductor service is long-lived. Finish the current turn after the final report, but do not call /api/conductor/stop unless the user explicitly asks to stop the service.
 - Do not perform destructive work without first obtaining a plan and user confirmation.
 
 Current state: {summary}"""

@@ -72,3 +72,11 @@ def test_chat_store_session_socket_is_receive_only():
 
     assert "new ChatSocket(() => sessionSocketPath(sessionId))" in source
     assert ".send(" not in source
+
+
+def test_conductor_keeps_completed_workers_visible_and_renders_file_paths():
+    source = _read("pages/Conductor.tsx")
+
+    assert "subagents.filter((sub) => sub.status !== 'running').slice(-4)" in source
+    assert "? subagents.find((s) => s.id === selectedSubagent)" in source
+    assert "<MarkdownView mode=\"plain\" cache>" in source

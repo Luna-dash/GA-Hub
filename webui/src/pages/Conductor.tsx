@@ -5,6 +5,7 @@ import { api, type ConductorSubagentModelPolicy } from '@/api/client'
 import { useConductorStore } from '@/stores/conductorStore'
 import type { ConductorApprovalItem, ConductorLogItem, ConductorSubagent } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
+import { MarkdownView } from '@/components/MarkdownView'
 import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useHubEvent } from '@/hooks/useHubEvent'
@@ -312,18 +313,26 @@ export default function Conductor() {
   }
 
   const selectedDetail = selectedSubagent
-    ? subagents.find((s) => s.id === selectedSubagent && s.status === 'running')
+    ? subagents.find((s) => s.id === selectedSubagent)
     : null
   const activeSubagents = useMemo(
     () => subagents.filter((sub) => sub.status === 'running'),
     [subagents]
   )
+  const recentSubagents = useMemo(
+    () => subagents.filter((sub) => sub.status !== 'running').slice(-4),
+    [subagents]
+  )
+  const visibleSubagents = useMemo(
+    () => [...activeSubagents, ...recentSubagents],
+    [activeSubagents, recentSubagents]
+  )
 
   useEffect(() => {
-    if (selectedSubagent && !activeSubagents.some((sub) => sub.id === selectedSubagent)) {
+    if (selectedSubagent && !visibleSubagents.some((sub) => sub.id === selectedSubagent)) {
       setSelectedSubagent(null)
     }
-  }, [activeSubagents, selectedSubagent])
+  }, [selectedSubagent, visibleSubagents])
 
   const conductorStateLabel = status?.started ? '运行中' : '未运行'
 
@@ -381,14 +390,16 @@ export default function Conductor() {
       }
       middleArea={
         <div className="flex items-center gap-3">
-          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8A7A63]">subagent</span>
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8A7A63]">
+            {activeSubagents.length > 0 ? 'subagent' : '最近完成'}
+          </span>
           <div className="flex min-w-0 justify-start gap-1.5 overflow-x-auto pb-0.5">
-            {activeSubagents.length === 0 ? (
+            {visibleSubagents.length === 0 ? (
               <span className="rounded border border-line bg-bg-card/70 px-2 py-1 text-xs text-[#7B6D5A]">
-                暂无运行子代理
+                暂无子代理记录
               </span>
             ) : (
-              activeSubagents.map((sub, index) => (
+              visibleSubagents.map((sub, index) => (
                 <SubagentChip
                   key={sub.id}
                   sub={sub}
@@ -431,7 +442,9 @@ export default function Conductor() {
                   >
                     {msg.role === 'user' ? '' : 'Conductor'}
                   </span>
-                  <pre className="flex-1 whitespace-pre-wrap font-sans leading-relaxed">{msg.msg}</pre>
+                  <MarkdownView mode="plain" cache>
+                    {msg.msg}
+                  </MarkdownView>
                 </div>
               ))}
               <div ref={chatEndRef} />
@@ -481,9 +494,11 @@ export default function Conductor() {
                   </div>
                   <div>
                     <div className="mb-1 text-xs text-[#665741]">Reply ({selectedDetail.reply.length} chars)</div>
-                    <pre className="max-h-64 overflow-y-auto rounded border border-line bg-bg-soft p-2 text-xs whitespace-pre-wrap text-[#2C2418]">
-                      {selectedDetail.reply || '(无回复)'}
-                    </pre>
+                    <div className="max-h-64 overflow-y-auto rounded border border-line bg-bg-soft p-2 text-xs text-[#2C2418]">
+                      <MarkdownView mode="plain" cache>
+                        {selectedDetail.reply || '(无回复)'}
+                      </MarkdownView>
+                    </div>
                   </div>
                 </div>
               </>

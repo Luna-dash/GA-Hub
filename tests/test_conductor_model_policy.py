@@ -194,6 +194,8 @@ def test_conductor_prompt_has_no_replacement_question_marks():
     assert "Never scan alternate ports" in prompt
     assert '"role": "conductor"' in prompt
     assert "Never use role=user" in prompt
+    assert "[FILE:absolute/path]" in prompt
+    assert "long-lived" in prompt
     assert "Preserve Unicode task text exactly" in prompt
     assert '"type":"user_message"' in prompt
     wake_events = json.loads(
