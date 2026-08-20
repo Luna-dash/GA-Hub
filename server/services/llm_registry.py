@@ -1,7 +1,10 @@
 """Stable assignment-name registry for GA's positional LLM list."""
 from __future__ import annotations
 
+import os
+import sys
 import threading
+import weakref
 from typing import Any
 from contextlib import contextmanager
 
@@ -24,6 +27,24 @@ class LlmRegistry:
     """
 
     _lock = threading.RLock()
+    _agent_versions: "weakref.WeakKeyDictionary[Any, tuple[str, int] | None]" = weakref.WeakKeyDictionary()
+
+    @staticmethod
+    def _mykey_version() -> tuple[str, int] | None:
+        llmcore = sys.modules.get("llmcore")
+        path = getattr(llmcore, "_mykey_path", None) if llmcore is not None else None
+        if not path:
+            return None
+        try:
+            return os.fspath(path), os.stat(path).st_mtime_ns
+        except OSError:
+            return None
+
+    @classmethod
+    def mark_agent_current(cls, agent: Any) -> None:
+        """Record the MyKey revision from which this agent built its clients."""
+        with cls._lock:
+            cls._agent_versions[agent] = cls._mykey_version()
 
     @classmethod
     @contextmanager
@@ -36,7 +57,15 @@ class LlmRegistry:
     def reload_and_snapshot(cls, agent: Any) -> list[tuple[str, int]]:
         with cls._lock:
             try:
+                current_version = cls._mykey_version()
+                if agent in cls._agent_versions and cls._agent_versions[agent] != current_version:
+                    # GA's reload flag is process-global. Another agent may already
+                    # have consumed it, so force this stale agent to rebuild once.
+                    llmcore = sys.modules.get("llmcore")
+                    if llmcore is not None:
+                        llmcore._mykey_mtime = None
                 agent.load_llm_sessions()
+                cls._agent_versions[agent] = cls._mykey_version()
             except Exception as exc:
                 raise LlmRegistryError(f"failed to reload LLM sessions: {exc}") from exc
             return cls.snapshot(agent)

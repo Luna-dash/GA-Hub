@@ -212,6 +212,7 @@ class AgentService:
         # Patch /continue and /new before instantiating
         install_continue(GeneraticAgent)
         self.agent = agent if agent is not None else GeneraticAgent()
+        LlmRegistry.mark_agent_current(self.agent)
         self.session_id = session_id
         self._manage_global_preference = manage_global_preference
         # Default to incremental output for WS streaming
