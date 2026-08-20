@@ -236,14 +236,14 @@ function extractCodeLang(node: any): string {
 //   2. absolute paths such as /a/b/c.ext or C:\a\b\c.ext
 //   3. relative paths with a directory and extension, such as temp/a.png
 const PATH_RE =
-  /\[FILE:([^\]\s]+)\]|((?:(?:[A-Za-z]:[\\/])|\/)[\w.\\/\-+@]+\.[A-Za-z0-9]{1,8})|((?:[\w.\-+@]+[\\/])+[\w.\-+@]+\.[A-Za-z0-9]{1,8})/g
+  /\[FILE:\s*([^\]\r\n]*?\S)\s*\]|((?:(?:[A-Za-z]:[\\/])|\/)[\w.\\/\-+@]+\.[A-Za-z0-9]{1,8})|((?:[\w.\-+@]+[\\/])+[\w.\-+@]+\.[A-Za-z0-9]{1,8})/g
 
 /** Return the underlying path only when the complete string is a path marker/path. */
 function matchWholePath(text: string): string | null {
   PATH_RE.lastIndex = 0
   const match = PATH_RE.exec(text)
   const path = match && match.index === 0 && match[0].length === text.length
-    ? (match[1] || match[2] || match[3] || match[0])
+    ? (match[1] || match[2] || match[3] || match[0]).trim()
     : null
   PATH_RE.lastIndex = 0
   return path
@@ -274,7 +274,7 @@ function linkifyString(s: string): ReactNode {
   let idx = 0
   while ((m = PATH_RE.exec(s)) !== null) {
     if (m.index > last) out.push(s.slice(last, m.index))
-    const path = m[1] || m[2] || m[3] || m[0]
+    const path = (m[1] || m[2] || m[3] || m[0]).trim()
     out.push(
       <PathLink key={`p-${idx++}-${m.index}`} path={path} display={m[1] ? path : m[0]} />,
     )

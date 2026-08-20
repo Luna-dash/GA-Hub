@@ -11,8 +11,13 @@
 //   • Fold / tool-trace segments render MarkdownView mode=plain (no math/hljs).
 //   • Hover-revealed "复制" button on assistant messages.
 
-import { memo, useEffect, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
+import {
+  parseAssistantTranscript,
+  type AssistantTranscript,
+  type AssistantTranscriptTurn,
+} from '@/utils/assistantTranscript'
 import { foldTurns } from '@/utils/foldTurns'
 import { useCopy } from '@/utils/clipboard'
 import { CHAT_FONT_SCALE_EVENT, getChatFontScale } from '@/utils/chatAppearance'
@@ -34,8 +39,6 @@ interface Props {
   onRewind?: (sid: string) => void
   /** Compact mode: hide role labels and reduce padding (for FeishuBot) */
   compact?: boolean
-  /** Delay Markdown parsing for exceptionally large archived replies. */
-  deferLongContent?: boolean
 }
 
 const LONG_HISTORY_THRESHOLD = 60_000
@@ -79,10 +82,10 @@ function formatDuration(milliseconds: number): string {
     : `${minutes}:${String(rest).padStart(2, '0')}`
 }
 
-export const MessageBubble = memo(function MessageBubble({ role, content, streaming, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact, deferLongContent }: Props) {
+export const MessageBubble = memo(function MessageBubble({ role, content, streaming, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact }: Props) {
   const [fontScale, setFontScale] = useState(getChatFontScale)
   const [clock, setClock] = useState(Date.now)
-  const [longContentExpanded, setLongContentExpanded] = useState(false)
+  const [longFinalExpanded, setLongFinalExpanded] = useState(false)
 
   useEffect(() => {
     const sync = (event: Event) => setFontScale((event as CustomEvent<number>).detail || getChatFontScale())
@@ -101,6 +104,19 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
   const isUser = role === 'user'
   const isSystem = role === 'system'
   const timeLabel = formatMessageTime(timestamp)
+  const shouldProjectTranscript = Boolean(
+    role === 'assistant'
+    && !compact
+    && !streaming,
+  )
+  const historyTranscript = useMemo(
+    () => shouldProjectTranscript ? parseAssistantTranscript(content) : null,
+    [content, shouldProjectTranscript],
+  )
+  const useHistoryProjection = Boolean(
+    historyTranscript
+    && (content.length > LONG_HISTORY_THRESHOLD || historyTranscript.turns.length > 0),
+  )
 
   if (isUser) {
     const cleaned = cleanUserContent(content)
@@ -133,15 +149,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
     )
   }
 
-  const isLongHistory = Boolean(
-    deferLongContent
-    && !streaming
-    && content.length > LONG_HISTORY_THRESHOLD,
-  )
-  const renderedContent = isLongHistory && !longContentExpanded
-    ? `${content.slice(0, LONG_HISTORY_PREVIEW_CHARS)}…`
-    : content
-  const segs = foldTurns(renderedContent)
+  const segs = useHistoryProjection ? [] : foldTurns(content)
   return (
     <div className="flex justify-start group/msg">
       <div className="max-w-full min-w-0 flex flex-col items-start gap-1.5">
@@ -170,13 +178,21 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
             <CopyChip text={content} />
           </div>
           <div className="min-w-0 max-w-full" style={messageFontStyle}>
-            {segs.map((seg, i) =>
+            {useHistoryProjection && historyTranscript ? (
+              <HistoryTranscriptReply
+                transcript={historyTranscript}
+                rawContent={content}
+                finalExpanded={longFinalExpanded}
+                onExpandFinal={() => setLongFinalExpanded(true)}
+              />
+            ) : segs.map((seg, i) =>
               seg.type === 'fold' ? (
-                <details key={i} className="turn-fold">
-                  <summary>{seg.title || '中间步骤'}</summary>
-                  {/* Intermediate turns are mostly tool dumps — no math / hljs. */}
-                  <div><MarkdownView mode="plain" cache={!streaming}>{seg.content}</MarkdownView></div>
-                </details>
+                <LazyMarkdownFold
+                  key={i}
+                  title={seg.title || '中间步骤'}
+                  content={seg.content}
+                  cache={!streaming}
+                />
               ) : (
                 <div key={i} className={clsx(streaming && i === segs.length - 1 && 'cursor-blink')}>
                   {/* Final segment: auto-detect tool-only tails vs real prose. */}
@@ -185,15 +201,6 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
               ),
             )}
           </div>
-          {isLongHistory && !longContentExpanded && (
-            <button
-              type="button"
-              onClick={() => setLongContentExpanded(true)}
-              className="mt-3 rounded-md border border-line bg-bg-soft px-3 py-1.5 text-xs text-[#665741] transition-colors hover:bg-bg-card hover:text-[#2C2418]"
-            >
-              历史回复较长，展开完整内容
-            </button>
-          )}
         </div>
         {(timeLabel || startedAt) && (
           <span className={clsx("shrink-0 whitespace-nowrap px-0.5 text-[10px] leading-4 tabular-nums", isSystem ? "text-[#8A6B3E]" : "text-[#8A7B65]")}>
@@ -206,6 +213,112 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
     </div>
   )
 })
+
+function HistoryTranscriptReply({
+  transcript,
+  rawContent,
+  finalExpanded,
+  onExpandFinal,
+}: {
+  transcript: AssistantTranscript
+  rawContent: string
+  finalExpanded: boolean
+  onExpandFinal: () => void
+}) {
+  const lastSummary = transcript.turns.filter((turn) => turn.summary).at(-1)?.summary || ''
+  const finalBody = transcript.finalBody || lastSummary
+  const finalDeferred = finalBody.length > LONG_HISTORY_THRESHOLD && !finalExpanded
+  const visibleFinal = finalDeferred
+    ? `${finalBody.slice(0, LONG_HISTORY_PREVIEW_CHARS)}…`
+    : finalBody
+  const processTurns = transcript.turns.length > 0
+    ? transcript.turns
+    : finalBody
+      ? []
+      : [{ turn: 1, summary: '原始执行记录', content: rawContent }]
+
+  return (
+    <>
+      {processTurns.length > 0 && <LazyProcessFold turns={processTurns} />}
+      {visibleFinal ? (
+        <MarkdownView mode="auto" cache>{visibleFinal}</MarkdownView>
+      ) : (
+        <p className="text-sm leading-6 text-[#665741]">该条历史回复未包含可提取的最终回答。</p>
+      )}
+      {finalDeferred && (
+        <button
+          type="button"
+          onClick={onExpandFinal}
+          className="mt-3 rounded-md border border-line bg-bg-soft px-3 py-1.5 text-xs text-[#665741] transition-colors hover:bg-bg-card hover:text-[#2C2418]"
+        >
+          最终回答较长，展开完整内容
+        </button>
+      )}
+    </>
+  )
+}
+
+function LazyProcessFold({ turns }: { turns: AssistantTranscriptTurn[] }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mb-3 border-b border-line/70 pb-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full items-center gap-2 rounded-md border border-line bg-bg-soft px-3 py-2 text-left text-xs font-medium text-[#665741] transition-colors hover:bg-bg-card hover:text-[#2C2418]"
+      >
+        <span aria-hidden="true" className={clsx('inline-block transition-transform', open && 'rotate-90')}>›</span>
+        <span>{open ? '收起执行过程' : '查看执行过程'}</span>
+        <span className="ml-auto shrink-0 tabular-nums text-[#8A7B65]">共 {turns.length} 个 Turn</span>
+      </button>
+      {open && (
+        <div className="mt-1 divide-y divide-line/70 border-t border-line/70">
+          {turns.map((turn, index) => (
+            <LazyTranscriptTurn key={`${turn.turn}:${index}`} turn={turn} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LazyTranscriptTurn({ turn }: { turn: AssistantTranscriptTurn }) {
+  const [open, setOpen] = useState(false)
+  const title = turn.summary || '执行记录'
+  if (!turn.content.trim()) {
+    return (
+      <div className="flex min-w-0 gap-2 py-2 text-xs leading-5 text-[#665741]">
+        <span className="shrink-0 font-medium text-[#8A7B65]">Turn {turn.turn}</span>
+        <span className="min-w-0 break-words">{title}</span>
+      </div>
+    )
+  }
+  return (
+    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="flex cursor-pointer list-none items-start gap-2 py-2 text-xs leading-5 text-[#665741] hover:text-[#2C2418] [&::-webkit-details-marker]:hidden">
+        <span aria-hidden="true" className={clsx('mt-0.5 inline-block transition-transform', open && 'rotate-90')}>›</span>
+        <span className="shrink-0 font-medium text-[#8A7B65]">Turn {turn.turn}</span>
+        <span className="min-w-0 break-words">{title}</span>
+      </summary>
+      {open && (
+        <div className="pb-3 pl-5">
+          <MarkdownView mode="plain" cache>{turn.content}</MarkdownView>
+        </div>
+      )}
+    </details>
+  )
+}
+
+function LazyMarkdownFold({ title, content, cache }: { title: string; content: string; cache: boolean }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <details className="turn-fold" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>{title}</summary>
+      {open && <div><MarkdownView mode="plain" cache={cache}>{content}</MarkdownView></div>}
+    </details>
+  )
+}
 
 function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
   return (

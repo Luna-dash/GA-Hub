@@ -88,20 +88,167 @@ describe('MessageBubble render isolation', () => {
     expect(card?.classList.contains('max-w-full')).toBe(true)
   })
 
-  it('defers full Markdown parsing for a very large archived reply', () => {
+  it('defers full Markdown parsing when the extracted final answer is very large', () => {
     const content = 'x'.repeat(70_000)
     act(() => root.render(
-      <MessageBubble role="assistant" content={content} deferLongContent streaming={false} />,
+      <MessageBubble role="assistant" content={content} streaming={false} />,
     ))
 
     expect(markdownRender.mock.calls.at(-1)?.[0].children).toHaveLength(20_001)
-    expect(host.textContent).toContain('历史回复较长，展开完整内容')
+    expect(host.textContent).toContain('最终回答较长，展开完整内容')
 
     const expandButton = Array.from(host.querySelectorAll('button'))
-      .find(button => button.textContent?.includes('历史回复较长'))
+      .find(button => button.textContent?.includes('最终回答较长'))
     expect(expandButton).toBeDefined()
     act(() => expandButton!.click())
 
     expect(markdownRender.mock.calls.at(-1)?.[0].children).toBe(content)
+  })
+
+  it('shows the final answer beyond a long tool trace and lazily renders raw turns', () => {
+    const rawOutput = `RAW_TOOL_OUTPUT_${'x'.repeat(65_000)}`
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>读取并检查项目文件</summary>',
+      '🛠️ code_run({"script":"inspect"})',
+      '`````',
+      rawOutput,
+      '`````',
+      '**LLM Running (Turn 2) ...**',
+      '<summary>整理结论</summary>',
+      '## 可读的最终回答',
+      '',
+      '问题已经定位并处理。',
+      '[Info] Final response to user.',
+    ].join('\n')
+
+    act(() => root.render(
+      <MessageBubble role="assistant" content={content} streaming={false} />,
+    ))
+
+    expect(markdownRender).toHaveBeenCalledTimes(1)
+    expect(markdownRender.mock.calls[0][0].children).toBe('## 可读的最终回答\n\n问题已经定位并处理。')
+    expect(host.textContent).toContain('可读的最终回答')
+    expect(host.textContent).toContain('查看执行过程')
+    expect(host.textContent).toContain('共 2 个 Turn')
+    expect(host.textContent).not.toContain('读取并检查项目文件')
+    expect(host.textContent).not.toContain('整理结论')
+    expect(host.textContent).not.toContain('RAW_TOOL_OUTPUT_')
+
+    const processButton = host.querySelector('button[aria-expanded="false"]') as HTMLButtonElement
+    expect(processButton).toBeDefined()
+    expect(processButton.parentElement?.nextElementSibling?.textContent).toContain('可读的最终回答')
+    expect(markdownRender).toHaveBeenCalledTimes(1)
+    act(() => processButton.click())
+
+    expect(host.textContent).toContain('读取并检查项目文件')
+    expect(host.textContent).toContain('整理结论')
+    expect(processButton.getAttribute('aria-expanded')).toBe('true')
+    expect(markdownRender).toHaveBeenCalledTimes(1)
+
+    const firstTurn = host.querySelector('details') as HTMLDetailsElement
+    act(() => {
+      firstTurn.open = true
+      firstTurn.dispatchEvent(new Event('toggle', { bubbles: true }))
+    })
+
+    expect(markdownRender).toHaveBeenCalledTimes(2)
+    expect(markdownRender.mock.calls[1][0].children).toContain('RAW_TOOL_OUTPUT_')
+  })
+
+  it('uses the readable history projection for a multi-turn reply below the size limit', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>检查登录状态</summary>',
+      '🛠️ code_run({"script":"inspect"})',
+      '`````',
+      'raw login state',
+      '`````',
+      '**LLM Running (Turn 2) ...**',
+      '<summary>给出处理建议</summary>',
+      '请先启用设备代码授权，然后重新登录。',
+    ].join('\n')
+
+    act(() => root.render(
+      <MessageBubble role="assistant" content={content} streaming={false} />,
+    ))
+
+    expect(markdownRender).toHaveBeenCalledTimes(1)
+    expect(markdownRender.mock.calls[0][0].children).toBe('请先启用设备代码授权，然后重新登录。')
+    expect(host.textContent).toContain('查看执行过程')
+    expect(host.textContent).toContain('共 2 个 Turn')
+    expect(host.textContent).not.toContain('raw login state')
+  })
+
+  it('keeps a discoverable process button for a simple single-turn archived answer', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>直接回答</summary>',
+      '这是简短回答。',
+    ].join('\n')
+
+    act(() => root.render(
+      <MessageBubble role="assistant" content={content} streaming={false} />,
+    ))
+
+    expect(markdownRender).toHaveBeenCalledTimes(1)
+    expect(markdownRender.mock.calls[0][0].children).toBe('这是简短回答。')
+    expect(host.textContent).toContain('查看执行过程')
+    expect(host.textContent).toContain('共 1 个 Turn')
+  })
+
+  it('shows an archived ask_user call as the final user-facing question', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>需要用户确认</summary>',
+      '🛠️ Tool: `ask_user`  📥 args:',
+      '````text',
+      '{"question":"请选择下一步。","candidates":["继续","暂停"]}',
+      '````',
+    ].join('\n')
+
+    act(() => root.render(
+      <MessageBubble role="assistant" content={content} streaming={false} />,
+    ))
+
+    expect(markdownRender).toHaveBeenCalledTimes(1)
+    expect(markdownRender.mock.calls[0][0].children).toContain('请选择下一步。')
+    expect(markdownRender.mock.calls[0][0].children).toContain('- 继续')
+    expect(host.textContent).toContain('查看执行过程')
+    expect(host.textContent).toContain('共 1 个 Turn')
+    expect(host.textContent).not.toContain('🛠️ Tool:')
+  })
+
+  it('keeps the process entry for a just-completed live reply and lazily renders its raw turn', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>中间步骤</summary>',
+      'hidden tool trace',
+      '**LLM Running (Turn 2) ...**',
+      'visible answer',
+    ].join('\n')
+
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+
+    expect(markdownRender).toHaveBeenCalledTimes(1)
+    expect(markdownRender.mock.calls[0][0].children).toContain('visible answer')
+    expect(host.textContent).toContain('查看执行过程')
+    expect(host.textContent).toContain('共 2 个 Turn')
+    expect(host.textContent).not.toContain('中间步骤')
+
+    const processButton = host.querySelector('button[aria-expanded="false"]') as HTMLButtonElement
+    act(() => processButton.click())
+
+    expect(host.textContent).toContain('中间步骤')
+    expect(markdownRender).toHaveBeenCalledTimes(1)
+
+    const folded = host.querySelector('details') as HTMLDetailsElement
+    act(() => {
+      folded.open = true
+      folded.dispatchEvent(new Event('toggle', { bubbles: true }))
+    })
+
+    expect(markdownRender).toHaveBeenCalledTimes(2)
+    expect(markdownRender.mock.calls[1][0].children).toContain('hidden tool trace')
   })
 })

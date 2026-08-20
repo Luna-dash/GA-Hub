@@ -224,7 +224,6 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
             attachments={message.attachments}
             streamId={role === 'assistant' ? message.streamId : undefined}
             onRewind={role === 'assistant' ? onRewind : undefined}
-            deferLongContent={message.source === 'history'}
           />
         </div>
       )
