@@ -54,6 +54,7 @@ describe('HubEventClient', () => {
     const url = new URL(socket.url)
     expect(url.searchParams.getAll('prefix')).toEqual(CONTROL_EVENT_PREFIXES)
     expect(url.searchParams.getAll('prefix')).not.toContain('chat:')
+    expect(url.searchParams.getAll('prefix')).not.toContain('feishu:')
     expect(url.searchParams.get('cursor')).toBe('1')
     expect(url.searchParams.get('replay')).toBe('0')
     expect(url.searchParams.has('after_event_id')).toBe(false)

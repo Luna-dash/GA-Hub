@@ -83,6 +83,7 @@ def test_wechat_is_hidden_until_it_has_really_connected(tmp_path) -> None:
     assert item is not None
     assert item.state == "stopped"
     assert item.summary == "已连接过，当前未运行"
+    assert item.href == "/dashboard"
 
 
 def test_wechat_running_instance_is_visible_without_persisted_files(tmp_path) -> None:
@@ -104,6 +105,7 @@ def test_wechat_running_instance_is_visible_without_persisted_files(tmp_path) ->
     assert item is not None
     assert item.state == "running"
     assert item.summary == "消息轮询中"
+    assert item.href == "/dashboard"
 
 
 def test_conductor_and_goalhive_share_inactive_semantics_before_use() -> None:
@@ -181,5 +183,6 @@ def test_agent_and_feishu_status_readers_never_construct_services(tmp_path) -> N
         "stopped", "attention", "服务尚未初始化",
     )
     assert (feishu.state, feishu.summary) == ("stopped", "服务脚本未配置")
+    assert feishu.href == "/dashboard"
     agent_factory.assert_not_called()
     feishu_factory.assert_not_called()

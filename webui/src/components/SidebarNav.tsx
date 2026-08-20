@@ -35,13 +35,6 @@ function NavIcon({ name }: { name: NavIconName }) {
           <path {...common} d="M8.4 9.5h7.2M8.4 12.2h4.8" />
         </>
       )}
-      {name === 'feishu' && (
-        <>
-          <path {...common} d="M4.4 12.1 19.2 5.2l-4.1 14.1-3.6-5.1z" />
-          <path {...common} d="M19.2 5.2 11.5 14.2" />
-          <path {...common} d="M4.4 12.1l7.1 2.1" />
-        </>
-      )}
       {name === 'conversations' && (
         <>
           <path {...common} d="M4.8 6.2h10.8v6.9H9.3l-3.4 2.8v-2.8H4.8z" />

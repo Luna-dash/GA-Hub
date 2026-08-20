@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/preferences", tags=["preferences"])
 _LOCK = threading.RLock()
 _STORE = UiPreferencesStore()
 _ALLOWED_NAV_IDS = {
-    "dashboard", "chat", "feishu", "conversations", "memory", "conductor",
+    "dashboard", "chat", "conversations", "memory", "conductor",
     "goal-hive", "mykey", "tasks", "autonomous", "tokens",
 }
 

@@ -7,9 +7,9 @@ import { PageShell } from '@/components/PageShell'
 import { MarkdownView } from '@/components/MarkdownView'
 import { ConversationIndexRail } from '@/components/ConversationIndexRail'
 import { VirtualMessageList } from '@/components/VirtualMessageList'
+import { parseAssistantTranscript, stripAssistantTranscriptTags } from '@/utils/assistantTranscript'
 import { previewText } from '@/utils/foldTurns'
 import { saveTextExport } from '@/utils/desktop'
-import { looksLikeToolTrace, stripWrapperFences } from '@/utils/toolTrace'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import {
@@ -529,7 +529,7 @@ function buildRounds(messages: Msg[]): Round[] {
         turnSummaries: [],
         conclusion: '（该 round 暂无 Agent 结论）',
         detail: '（暂无最终正文）',
-        preview: previewText(stripTags(m.content || ''), 240) || '（空）',
+        preview: previewText(stripAssistantTranscriptTags(m.content || ''), 240) || '（空）',
       }
       rounds.push(current)
       continue
@@ -538,15 +538,21 @@ function buildRounds(messages: Msg[]): Round[] {
     const box = ensureCurrent()
     if (role === 'assistant') {
       box.assistants.push(m)
-      const turnSummaries = extractTurnSummaries(m.content || '')
-      const detail = extractFinalBody(m.content || '')
+      const transcript = parseAssistantTranscript(m.content || '')
+      const turnSummaries = transcript.turns
+        .filter((turn) => turn.summary)
+        .map(({ turn, summary }) => ({ turn, summary }))
+      const detail = transcript.finalBody
       if (detail && detail !== '（暂无最终正文）') box.detail = detail
       if (turnSummaries.length) {
         box.turnSummaries.push(...turnSummaries)
         const lastSummary = turnSummaries[turnSummaries.length - 1].summary
         box.conclusion = lastSummary
       } else {
-        const fallback = extractConclusion(m.content || '')
+        const fallback = previewText(
+          detail || stripAssistantTranscriptTags(m.content || ''),
+          180,
+        )
         if (fallback && fallback !== '（暂无结论）') {
           box.turnSummaries.push({ turn: box.turnSummaries.length + 1, summary: fallback })
           box.conclusion = fallback
@@ -560,134 +566,6 @@ function buildRounds(messages: Msg[]): Round[] {
   }
 
   return rounds
-}
-
-function normalizeSummaryText(s: string): string {
-  return (s || '')
-    .split('\n')
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .join(' 路 ')
-}
-
-function stripFinalMarker(s: string): string {
-  const marker = '[Info] Final response to user.'
-  const idx = (s || '').lastIndexOf(marker)
-  return idx >= 0 ? s.slice(0, idx) : (s || '')
-}
-
-function extractTurnSummaries(text: string): { turn: number; summary: string }[] {
-  const source = stripFinalMarker(text)
-  const re = /\*\*LLM Running \(Turn (\d+)\) \.{3}\*\*/g
-  const matches = [...source.matchAll(re)]
-  const turns: { turn: number; summary: string }[] = []
-
-  for (let i = 0; i < matches.length; i += 1) {
-    const m = matches[i]
-    const turn = Number(m[1])
-    const start = (m.index ?? 0) + m[0].length
-    const end = i + 1 < matches.length ? (matches[i + 1].index ?? source.length) : source.length
-    const seg = source.slice(start, end)
-    const sm = seg.match(/<summary>\s*([\s\S]*?)\s*<\/summary>/)
-    const summary = normalizeSummaryText(sm?.[1] || '')
-    if (summary) turns.push({ turn, summary })
-  }
-
-  if (!turns.length) {
-    const cleaned = source.replace(/`{3,}[\s\S]*?`{3,}/g, ' ')
-    return [...cleaned.matchAll(/<summary>\s*([\s\S]*?)\s*<\/summary>/g)]
-      .map((m, idx) => ({ turn: idx + 1, summary: normalizeSummaryText(m[1] || '') }))
-      .filter((x) => x.summary)
-  }
-
-  return turns
-}
-
-function extractTurnSummary(text: string): string {
-  return extractTurnSummaries(text).map((x) => x.summary).at(-1) || ''
-}
-
-function extractConclusion(text: string): string {
-  const last = extractTurnSummary(text)
-  if (last) return last
-  return previewText(stripTags(text), 180) || ''
-}
-
-function stripTraceMeta(s: string): string {
-  return (s || '')
-    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
-    .replace(/<summary>[\s\S]*?<\/summary>\s*/gi, '')
-    .trim()
-}
-
-function extractTurnCandidate(seg: string): string {
-  const withoutMeta = stripTraceMeta(seg).replace(/\n?\s*`{5,}\s*$/g, '').trim()
-  if (!withoutMeta) return ''
-
-  const toolStarts = [
-    ...withoutMeta.matchAll(/^\s*🛠️\s*Tool:/gim),
-    ...withoutMeta.matchAll(/^\s*🛠️\s*[a-zA-Z_][\w.]*\(/gm),
-  ]
-
-  if (!toolStarts.length) {
-    const cleaned = stripWrapperFences(withoutMeta)
-    return looksLikeToolTrace(cleaned) ? '' : cleaned
-  }
-
-  const lastToolStart = Math.max(...toolStarts.map((m) => m.index ?? -1))
-  const tail = withoutMeta.slice(lastToolStart)
-  let best = ''
-
-  for (const m of tail.matchAll(/^\s*`{5,}\s*$/gm)) {
-    const suffix = tail
-      .slice((m.index ?? 0) + m[0].length)
-      .replace(/^\s*`{5,}\s*$/gm, '')
-      .replace(/\n?\s*`{5,}\s*$/g, '')
-      .trim()
-    if (!suffix) continue
-    const cleaned = stripWrapperFences(suffix)
-    if (!looksLikeToolTrace(cleaned)) best = cleaned
-  }
-
-  return best
-}
-
-function extractFinalBody(text: string): string {
-  const source = stripFinalMarker(text)
-  const re = /(?:\*\*)?LLM Running \(Turn \d+\) \.{3}(?:\*\*)?/g
-  const matches = [...source.matchAll(re)]
-
-  if (!matches.length) {
-    return extractTurnCandidate(source) || '（暂无最终正文）'
-  }
-
-  for (let i = matches.length - 1; i >= 0; i -= 1) {
-    const start = (matches[i].index ?? 0) + matches[i][0].length
-    const end = i + 1 < matches.length ? (matches[i + 1].index ?? source.length) : source.length
-    const candidate = extractTurnCandidate(source.slice(start, end))
-    if (candidate) return candidate
-  }
-
-  return '（暂无最终正文）'
-}
-
-function stripTags(s: string): string {
-  return (s || '')
-    .replace(/<summary>[\s\S]*?<\/summary>/g, ' ')
-    .replace(/<thinking>[\s\S]*?<\/thinking>/g, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\*\*LLM Running \(Turn \d+\) \.{3}\*\*/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function cleanSummary(s: string): string {
-  return stripTags(s)
-    .replace(/\r/g, '')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-    .slice(0, 500)
 }
 
 function conversationDisplayTitle(detail: { title?: string; messages?: Msg[] }): string {

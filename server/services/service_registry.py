@@ -116,13 +116,13 @@ class ServiceRegistry:
             exists = bool(script is not None and script.is_file())
             return ServicePanelItem(
                 "feishu", "飞书 Bot", "ready" if exists else "stopped",
-                "已配置，当前未运行" if exists else "服务脚本未配置", "/feishu",
+                "已配置，当前未运行" if exists else "服务脚本未配置", "/dashboard",
             )
         status = service.status()
         exists = bool(status.get("fsapp_exists"))
         return ServicePanelItem(
             "feishu", "飞书 Bot", "running" if status.get("running") else ("ready" if exists else "stopped"),
-            "Bot 进程运行中" if status.get("running") else ("已配置，当前未运行" if exists else "服务脚本未配置"), "/feishu",
+            "Bot 进程运行中" if status.get("running") else ("已配置，当前未运行" if exists else "服务脚本未配置"), "/dashboard",
             {"PID": status.get("pid") or "—", "模式": "外部" if status.get("external") else "内建"},
         )
 
@@ -140,7 +140,7 @@ class ServiceRegistry:
             if not persisted:
                 return None
             return ServicePanelItem(
-                "wechat", "微信 Bot", "stopped", "已连接过，当前未运行", "/feishu",
+                "wechat", "微信 Bot", "stopped", "已连接过，当前未运行", "/dashboard",
             )
 
         status = svc.status()
@@ -153,7 +153,7 @@ class ServiceRegistry:
         active = bool(status.get("polling"))
         return ServicePanelItem(
             "wechat", "微信 Bot", "running" if active else "stopped",
-            "消息轮询中" if active else "已连接过，当前未运行", "/feishu",
+            "消息轮询中" if active else "已连接过，当前未运行", "/dashboard",
             {"联系人": status.get("contacts", 0), "日志": status.get("log_count", 0)},
         )
 

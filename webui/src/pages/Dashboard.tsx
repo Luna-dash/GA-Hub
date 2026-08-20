@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '@/api/client'
@@ -78,9 +79,9 @@ export default function Dashboard() {
           <SectionTitle title="当前活动" hint="此刻正在执行、监听或调度的模块" />
           {active.length > 0 ? (
             <div className="flex flex-wrap gap-2">{active.map((service) => (
-              <Link key={service.id} to={service.href} className="rounded-lg border border-sky-500/20 bg-sky-500/5 px-3 py-2 hover:bg-sky-500/10 transition-colors">
+              <ServiceSurface key={service.id} service={service} className="rounded-lg border border-sky-500/20 bg-sky-500/5 px-3 py-2">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse mr-2 align-middle" /><span className="text-sm text-slate-200">{service.name}</span><span className="ml-2 text-xs text-slate-500">{service.summary}</span>
-              </Link>
+              </ServiceSurface>
             ))}</div>
           ) : <p className="rounded-lg border border-border/70 bg-bg-panel/40 px-3 py-3 text-xs text-slate-500">当前没有后台活动；这不影响待命模块接收任务。</p>}
         </section>
@@ -116,7 +117,8 @@ function SectionTitle({ title, hint, link }: { title: string; hint: string; link
 }
 
 function ActionRow({ service }: { service: ServicePanelItem }) {
-  return <Link to={service.href} className="flex items-center justify-between gap-4 rounded-lg border border-amber-500/25 bg-amber-500/5 px-4 py-3 hover:bg-amber-500/10 transition-colors"><div className="min-w-0"><div className="text-sm text-amber-200">{service.name}</div><p className="text-xs text-amber-300/70 truncate">{service.error || service.summary}</p></div><span className="text-xs text-amber-300 shrink-0">前往查看 →</span></Link>
+  const statusOnly = service.href === '/dashboard'
+  return <ServiceSurface service={service} className="flex items-center justify-between gap-4 rounded-lg border border-amber-500/25 bg-amber-500/5 px-4 py-3"><div className="min-w-0"><div className="text-sm text-amber-200">{service.name}</div><p className="text-xs text-amber-300/70 truncate">{service.error || service.summary}</p></div>{!statusOnly && <span className="text-xs text-amber-300 shrink-0">前往查看 →</span>}</ServiceSurface>
 }
 
 function ServiceRow({ service }: { service: ServicePanelItem }) {
@@ -124,12 +126,17 @@ function ServiceRow({ service }: { service: ServicePanelItem }) {
   const needsAttention = service.health !== 'healthy'
   const dot = needsAttention ? 'bg-amber-400' : service.activity === 'active' ? 'bg-sky-400' : service.activity === 'standby' ? 'bg-emerald-400' : 'bg-slate-600'
   return (
-    <Link to={service.href} className={`rounded-lg border bg-bg-panel px-3 py-3 hover:bg-bg-hover transition-colors min-w-0 ${needsAttention ? 'border-amber-500/25' : 'border-border'}`}>
+    <ServiceSurface service={service} className={`rounded-lg border bg-bg-panel px-3 py-3 min-w-0 ${needsAttention ? 'border-amber-500/25' : 'border-border'}`}>
       <div className="flex items-center justify-between gap-3"><span className="flex items-center min-w-0"><span className={`h-2 w-2 rounded-full shrink-0 mr-2 ${dot}`} /><b className="text-sm font-medium text-slate-200 truncate">{service.name}</b></span><span className={`text-[11px] shrink-0 ${needsAttention ? 'text-amber-300' : 'text-slate-500'}`}>{serviceActivityLabel(service)}</span></div>
       <p className="mt-1 text-xs text-slate-500 truncate" title={service.error || service.summary}>{service.error || service.summary}</p>
       {metrics.length > 0 && <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">{metrics.map(([key, value]) => <span key={key} className="text-[10px] text-slate-600">{key} <b className="font-mono font-normal text-slate-400">{value === true ? '是' : String(value)}</b></span>)}</div>}
-    </Link>
+    </ServiceSurface>
   )
+}
+
+function ServiceSurface({ service, className, children }: { service: ServicePanelItem; className: string; children: ReactNode }) {
+  if (service.href === '/dashboard') return <div className={className}>{children}</div>
+  return <Link to={service.href} className={`${className} hover:bg-bg-hover transition-colors`}>{children}</Link>
 }
 
 function TokenFact({ label, value, suffix = '' }: { label: string; value: number; suffix?: string }) {

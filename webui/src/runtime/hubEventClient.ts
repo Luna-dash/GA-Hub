@@ -5,7 +5,6 @@ export const CONTROL_EVENT_PREFIXES = [
   'agent:',
   'session:',
   'wechat:',
-  'feishu:',
   'conductor:',
   'autonomous:',
   'task:',

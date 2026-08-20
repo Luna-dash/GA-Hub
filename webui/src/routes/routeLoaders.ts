@@ -1,7 +1,6 @@
 export const routeLoaders = {
   dashboard: () => import('@/pages/Dashboard'),
   chat: () => import('@/pages/LiveChat'),
-  feishu: () => import('@/pages/FeishuBot'),
   conversations: () => import('@/pages/Conversations'),
   memory: () => import('@/pages/Memory'),
   goalHive: () => import('@/pages/GoalHive'),
@@ -16,7 +15,6 @@ export const routeLoaders = {
 const loadersByPath: Record<string, () => Promise<unknown>> = {
   '/dashboard': routeLoaders.dashboard,
   '/chat': routeLoaders.chat,
-  '/feishu': routeLoaders.feishu,
   '/conversations': routeLoaders.conversations,
   '/memory': routeLoaders.memory,
   '/goal-hive': routeLoaders.goalHive,

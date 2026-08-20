@@ -1,7 +1,7 @@
 import { api } from '@/api/client'
 
 export type NavIconName =
-  | 'dashboard' | 'chat' | 'feishu' | 'conversations' | 'memory'
+  | 'dashboard' | 'chat' | 'conversations' | 'memory'
   | 'conductor' | 'goalHive' | 'mykey' | 'tasks' | 'autonomous' | 'tokens' | 'settings'
 
 export interface NavItem { id: string; to: string; label: string; icon: NavIconName }
@@ -12,7 +12,6 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'chat', to: '/chat', label: '实时聊天', icon: 'chat' },
   { id: 'conductor', to: '/conductor', label: '指挥模式', icon: 'conductor' },
   { id: 'goal-hive', to: '/goal-hive', label: 'Goal模式', icon: 'goalHive' },
-  { id: 'feishu', to: '/feishu', label: '飞书BOT', icon: 'feishu' },
   { id: 'conversations', to: '/conversations', label: '历史对话', icon: 'conversations' },
   { id: 'memory', to: '/memory', label: '记忆体系', icon: 'memory' },
   { id: 'mykey', to: '/mykey', label: 'LLM管理', icon: 'mykey' },
@@ -76,7 +75,13 @@ export async function hydrateNavPreferences(): Promise<NavPreference[]> {
   try {
     const remote = await api.navigationPreferences()
     if (localRevision !== revisionAtStart) return getNavPreferences()
-    if (remote.configured) return applyNavPreferences(remote.preferences)
+    if (remote.configured) {
+      const normalized = applyNavPreferences(remote.preferences)
+      if (JSON.stringify(normalized) !== JSON.stringify(remote.preferences)) {
+        queueServerSave(normalized)
+      }
+      return normalized
+    }
     const local = getNavPreferences()
     queueServerSave(local)
     return local

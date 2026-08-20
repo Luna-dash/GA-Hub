@@ -13,7 +13,6 @@ NAV = [
     {"id": "tokens", "visible": True},
     {"id": "dashboard", "visible": True},
     {"id": "chat", "visible": False},
-    {"id": "feishu", "visible": True},
     {"id": "conversations", "visible": True},
     {"id": "memory", "visible": True},
     {"id": "conductor", "visible": True},

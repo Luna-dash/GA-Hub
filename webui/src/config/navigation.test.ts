@@ -45,6 +45,22 @@ describe('navigation preference persistence', () => {
     expect(apiMock.saveNavigationPreferences).not.toHaveBeenCalled()
   })
 
+  it('drops the retired Feishu page from saved navigation preferences', async () => {
+    const current = defaultNavPreferences()
+    const legacy = [
+      ...current.slice(0, 2),
+      { id: 'feishu', visible: true },
+      ...current.slice(2),
+    ]
+    apiMock.navigationPreferences.mockResolvedValue({ configured: true, preferences: legacy })
+
+    await expect(hydrateNavPreferences()).resolves.toEqual(current)
+    await flushQueue()
+
+    expect(getNavPreferences()).toEqual(current)
+    expect(apiMock.saveNavigationPreferences).toHaveBeenCalledWith(current)
+  })
+
   it('migrates existing local preferences when the server has no copy yet', async () => {
     const local = setNavPreferences(customized())
     await flushQueue()
