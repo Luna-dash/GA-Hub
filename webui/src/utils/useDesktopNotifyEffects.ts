@@ -2,7 +2,7 @@
 // for three events:
 //   1. An assistant stream just finished (chatStore.streaming flipped false)
 //   2. A new wechat message arrived in the bus event stream
-//   3. A Conductor assistant result arrived, even while its page is unmounted
+//   3. A fully reviewed Conductor workflow completed, even while its page is unmounted
 //
 // Throttling + visibility checks live inside notify() itself; this module
 // only translates state transitions into notify() calls.
@@ -39,8 +39,7 @@ export function useDesktopNotifyEffects() {
       lastWxAnnounced = event.ts
     })
 
-    const unsubscribeConductor = hubEventClient.subscribe('conductor:request_outcome', (event) => {
-      if (event.payload?.status !== 'ok') return
+    const unsubscribeConductor = hubEventClient.subscribe('conductor:workflow_completed', (event) => {
       const item = event.payload?.item
       const preview = String(item?.msg || '任务已完成').replace(/\s+/g, ' ').slice(0, 140)
       notify('Conductor 任务完成', { body: preview, tag: 'conductor-task-done' })

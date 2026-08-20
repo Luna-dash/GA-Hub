@@ -452,6 +452,10 @@ class EmailTestResp(BaseModel):
 class ConductorChatIn(BaseModel):
     msg: str
     role: Literal["conductor", "system", "user"] = "conductor"
+    # Supervisor messages keep the originating workflow explicit across HTTP
+    # calls. ``final`` is only valid for the accepted delivery report.
+    request_id: str | None = None
+    final: bool = False
     # Page-scoped override. None means fallback to persisted/global preference.
     llm_index: int | None = Field(default=None, ge=0)
     subagent_llm_index: int | None = Field(default=None, ge=0)
@@ -460,6 +464,7 @@ class ConductorChatIn(BaseModel):
 
 class ConductorStartSubagent(BaseModel):
     prompt: str
+    request_id: str | None = None
     # Explicit per-dispatch request from the Conductor or approval UI.
     llm_index: int | None = Field(default=None, ge=0)
     # Optional page configuration; omitted fields preserve service state.
@@ -476,8 +481,12 @@ class ConductorStartReq(BaseModel):
 
 
 class ConductorSubagentAction(BaseModel):
-    action: Literal["keyinfo", "input", "reply", "append", "message", "msg", "abort", "stop"]
+    action: Literal[
+        "keyinfo", "input", "reply", "append", "message", "msg",
+        "accept", "rework", "abort", "stop",
+    ]
     msg: str = ""
+    request_id: str | None = None
     # Used when input/reply resumes a stopped subagent.
     llm_index: int | None = Field(default=None, ge=0)
     conductor_llm_index: int | None = Field(default=None, ge=0)
@@ -501,6 +510,8 @@ class ConductorChatMessage(BaseModel):
     role: str
     msg: str
     ts: int
+    request_id: str | None = None
+    kind: Literal["final", "error"] | None = None
 
 
 class ConductorChatListResp(BaseModel):
@@ -516,10 +527,43 @@ class ConductorSubagent(BaseModel):
     status: str
     created_at: int
     updated_at: int
+    review_status: str = "none"
+    review_note: str = ""
+    attempt: int = 1
+    completed_at: int | None = None
+    accepted_at: int | None = None
+    generation: int = 0
+    request_id: str | None = None
 
 
 class ConductorSubagentListResp(BaseModel):
     items: list[ConductorSubagent]
+
+
+class ConductorWorkflowWorker(BaseModel):
+    generation: int = 0
+    state: Literal[
+        "running", "pending", "accepted", "failed", "cancelled", "killed"
+    ]
+
+
+class ConductorWorkflow(BaseModel):
+    request_id: str
+    status: Literal[
+        "admitted", "supervising", "reworking", "awaiting_review",
+        "completed", "failed", "cancelled", "killed",
+    ]
+    subagents: dict[str, ConductorWorkflowWorker]
+    created_at: float
+    completed_at: float | None = None
+    item: ConductorChatMessage | None = None
+    phase: str | None = None
+    error: str | None = None
+    failed_agent_id: str | None = None
+
+
+class ConductorWorkflowListResp(BaseModel):
+    items: list[ConductorWorkflow]
 
 
 class ConductorSubagentInstructionResp(BaseModel):

@@ -39,6 +39,7 @@ from frontends.conductor_core import (
 
 from .conductor_ext_contract import ConductorContractExt  # noqa: E402
 from .conductor_ext_timeout import OutputBudget, TimeoutMonitor  # noqa: E402
+from .conductor_workflow import WorkflowTracker  # noqa: E402
 from .event_bus import bus  # noqa: E402
 from .request_usage import RequestUsageStore  # noqa: E402
 from ..runtime_endpoint import runtime_http_origin  # noqa: E402
@@ -243,6 +244,7 @@ def add_chat(
     role: str,
     chat_messages: list,
     request_id: str | None = None,
+    kind: str | None = None,
 ) -> dict:
     """Add message to chat history and publish to event bus."""
     item = {
@@ -254,6 +256,8 @@ def add_chat(
     }
     if request_id:
         item["request_id"] = request_id
+    if kind:
+        item["kind"] = kind
     chat_messages.append(item)
     if len(chat_messages) > 200:
         del chat_messages[:-200]
@@ -298,12 +302,17 @@ def monitor_display_queue(
             accepted = display(done, done=True)
             if trigger_when_done and accepted:
                 # Notify conductor that subagent finished
-                ConductorService.instance().notify({
+                service = ConductorService.instance()
+                event = {
                     "type": "subagent_done",
                     "id": agent_id,
                     "reply": done,
                     "generation": generation,
-                })
+                }
+                request_id = service.workflow_tracker.request_for_subagent(agent_id)
+                if request_id:
+                    event["request_id"] = request_id
+                service.notify(event)
             break
 
 
@@ -314,12 +323,13 @@ READMES = {
 POST /api/conductor/chat
   用户页面提交任务: {"msg": "...", "role": "user", "llm_index": 1,
          "subagent_llm_index": 5, "subagent_model_policy": "default"}
-  Conductor 写入计划/报告: {"msg": "...", "role": "conductor"}
+  Conductor 写入计划: {"msg": "...", "role": "conductor", "request_id": "..."}
+  Conductor 最终报告: {"msg": "...", "role": "conductor", "request_id": "...", "final": true}
   role=user 会创建新的用户任务并唤醒 Conductor；Supervisor 自己写消息时
   必须使用 role=conductor，不能把计划或报告作为用户任务重新入队。
 
 POST /api/conductor/subagent
-  body: {"prompt": "...", "llm_index": 3}
+  body: {"prompt": "...", "request_id": "...", "llm_index": 3}
   启动一个子代理；llm_index 是 Conductor 对本次派单的显式模型请求。
   解析优先级：页面锁定 > 本次显式请求 > 默认子代理模型 > 主模型 > 全局首选。
   prompt 是 UTF-8 JSON 文本；必须原样保留中文、emoji 和路径。调用本机 API
@@ -333,6 +343,8 @@ POST /api/conductor/subagent
 POST /api/conductor/approval       body: {"prompt": "...", "source": "..."}
 POST /api/conductor/subagent/{id}  body: {"action": "keyinfo", "msg": "..."}
 POST /api/conductor/subagent/{id}  body: {"action": "input", "msg": "...", "llm_index": 3}
+POST /api/conductor/subagent/{id}  body: {"action": "accept", "request_id": "..."}
+POST /api/conductor/subagent/{id}  body: {"action": "rework", "msg": "...", "request_id": "..."}
 POST /api/conductor/subagent/{id}  body: {"action": "stop"}
 GET  /api/conductor/chat?last=N
 GET  /api/conductor/subagent
@@ -341,13 +353,16 @@ GET  /api/conductor/subagent/{id}?max_len=N
     "usermsg": """用户消息流程：
 1. 结合记忆、上下文和用户偏好判断真实需求；不清楚时用精简checklist一次性问用户。
 2. 判断是新任务还是延续现有任务；优先复用已有stopped subagent（用input追加）。
-3. 分派前必须POST /api/conductor/chat并使用 role=conductor 告知用户：改写后的prompt + 分派方案。
-4. 派发时可用 llm_index 指定本次子代理模型；locked 策略下页面锁定值优先。
-5. 执行分派，完成即停。危险操作必须改成先让subagent出方案；验收后请用户确认。""",
+3. 从 wake_events 读取 request_id；计划、派发、验收/返工和最终报告必须原样回传。
+4. 分派前必须POST /api/conductor/chat并使用 role=conductor 告知用户：改写后的prompt + 分派方案。
+5. 派发后立即结束本轮；不要轮询运行中的子代理，完成事件会自动唤醒你。
+6. 派发时可用 llm_index 指定本次子代理模型；locked 策略下页面锁定值优先。
+7. 危险操作必须改成先让subagent出方案；验收后请用户确认。""",
     "subagent": """subagent完成流程：
 1. 读subagent输出；若最后一条不足以判断，GET /api/conductor/subagent/{id}?max_len=3000 补足信息。
-2. 预测用户是否满意；不满意就reply/keyinfo要求返工、修改、优化，继续监督。
-3. 预计用户满意后，POST /api/conductor/chat并使用 role=conductor 给简洁交付报告。""",
+2. 不满意时调用 rework 并立即结束本轮，等待下一次完成事件；不要轮询。
+3. 满意时必须先调用 accept。所有关联子代理 accepted 后，再用 role=conductor 提交 final=true 的简洁交付报告。
+4. accept/rework/final 均必须携带完成事件中的 request_id。""",
 }
 
 
@@ -362,7 +377,7 @@ class HubConductorCallbacks(ConductorCallbacks):
         """Publish changed pool state without allowing concurrent reordering."""
         with self._snapshot_publish_lock:
             try:
-                snapshot = self.service.pool.snapshot()
+                snapshot = self.service.get_subagent_snapshot()
                 if snapshot == self._last_subagent_snapshot:
                     return
                 push_subagent_cards(snapshot)
@@ -395,6 +410,8 @@ class HubConductorCallbacks(ConductorCallbacks):
                 item
                 for item in reversed(getattr(self.service, "chat_messages", ()))
                 if item.get("role") == "conductor"
+                and item.get("request_id") == request_id
+                and item.get("kind") == ("final" if status == "ok" else "error")
             ),
             None,
         )
@@ -404,28 +421,48 @@ class HubConductorCallbacks(ConductorCallbacks):
 
     def on_conductor_request_finished(self, request_id: str, token) -> None:
         try:
-            self.service.usage_store.complete(request_id)
+            if token is not None:
+                self.service.usage_store.deactivate(token)
         finally:
-            try:
-                if token is not None:
-                    self.service.usage_store.deactivate(token)
-            finally:
-                self._publish_request_outcome(
-                    request_id,
-                    status="ok",
-                    phase="finish",
-                )
+            self._publish_request_outcome(
+                request_id,
+                status="ok",
+                phase="finish",
+            )
+
+    def on_conductor_request_yielded(
+        self, request_id: str, token, outcome: RequestOutcome
+    ) -> None:
+        """Close only this supervisor turn; the workflow remains active."""
+        try:
+            if token is not None:
+                self.service.usage_store.deactivate(token)
+        finally:
+            self._publish_request_outcome(
+                request_id,
+                status="yielded",
+                phase=outcome.phase,
+            )
 
     def on_conductor_request_outcome(
         self, request_id: str, token, outcome: RequestOutcome
     ) -> None:
-        attribution = (
-            "OK"
-            if outcome.status == "ok"
-            else f"FAILED_{outcome.phase.upper()}"
-        )
         try:
-            self.service.usage_store.complete(request_id, attribution)
+            if outcome.status != "ok":
+                tracker = self.service._ensure_workflow_tracker()
+                transition = tracker.fail_supervisor(
+                    request_id,
+                    phase=outcome.phase,
+                    error=outcome.error or "",
+                )
+                if transition is not None:
+                    self.service._publish_workflow_transition(transition)
+                elif tracker.snapshot(request_id) is None:
+                    # Compatibility for focused adapters that only installed
+                    # the older usage lifecycle without workflow admission.
+                    self.service.usage_store.complete(
+                        request_id, f"FAILED_{outcome.phase.upper()}"
+                    )
         finally:
             try:
                 if token is not None:
@@ -452,12 +489,44 @@ class HubConductorCallbacks(ConductorCallbacks):
         # increases queue pressure without adding information.
         if event == SubAgentEvent.RUNNING:
             return
+        event_payload = dict(payload)
+        tracker = self.service._ensure_workflow_tracker()
+        generation = event_payload.get("generation")
+        if generation is None:
+            getter = getattr(self.service.pool, "get", None)
+            state = getter(agent_id) if callable(getter) else None
+            generation = getattr(state, "active_generation", None) if state else None
+            if generation is not None:
+                event_payload["generation"] = generation
+        request_id = (
+            self.service._current_dispatch_request_id()
+            or tracker.request_for_subagent(agent_id)
+        )
+        workflow_transition = None
+        try:
+            request_id, workflow_transition = tracker.record_subagent_event(
+                agent_id,
+                event.value,
+                generation=generation,
+                request_id=request_id,
+                error=str(event_payload.get("error") or ""),
+            )
+        except ValueError:
+            log.exception("Failed to associate conductor subagent event")
+        if request_id:
+            event_payload["request_id"] = request_id
         try:
             bus.publish(
-                f"conductor:subagent_{event.value}", {"id": agent_id, **payload}
+                f"conductor:subagent_{event.value}",
+                {"id": agent_id, **event_payload},
             )
         except Exception:
             log.exception("Failed to publish conductor subagent lifecycle event")
+        if workflow_transition is not None:
+            try:
+                self.service._publish_workflow_transition(workflow_transition)
+            except Exception:
+                log.exception("Failed to publish conductor workflow event")
         self.publish_subagent_snapshot()
 
     def on_conductor_log_frame(self, frame: object) -> None:
@@ -482,6 +551,26 @@ class HubConductorCallbacks(ConductorCallbacks):
             log.exception("Failed to publish conductor log frame")
 
     def on_conductor_event(self, event_type: str, payload: dict) -> None:
+        if event_type == "error":
+            detail = str(payload.get("error") or "unknown error").strip()
+            self.service._ensure_workflow_tracker()
+            with self.service._chat_lock:
+                latest = next(
+                    (
+                        item
+                        for item in reversed(self.service.chat_messages)
+                        if item.get("kind") == "error"
+                    ),
+                    None,
+                )
+                if latest is None or detail not in latest.get("msg", ""):
+                    latest = add_chat(
+                        f"Conductor reply failed: {detail}",
+                        "error",
+                        self.service.chat_messages,
+                        kind="error",
+                    )
+            payload = {**payload, "item": latest}
         bus.publish(f"conductor:{event_type}", payload)
 
 
@@ -535,7 +624,10 @@ class ConductorService:
         self._shutdown_monitor_stopped = False
         self._closed = False
         self.chat_messages: list = []
+        self._chat_lock = threading.RLock()
         self.usage_store = RequestUsageStore()
+        self.workflow_tracker = WorkflowTracker()
+        self._dispatch_context = threading.local()
         try:
             import cost_tracker
             cost_tracker.set_usage_sink(self.usage_store.record)
@@ -715,6 +807,75 @@ class ConductorService:
             if self._closed:
                 raise RuntimeError("Conductor service is closed")
 
+    def _ensure_workflow_tracker(self) -> WorkflowTracker:
+        """Backfill workflow state for focused tests and legacy adapters."""
+        tracker = getattr(self, "workflow_tracker", None)
+        if tracker is None:
+            tracker = WorkflowTracker()
+            self.workflow_tracker = tracker
+        if not hasattr(self, "_dispatch_context"):
+            self._dispatch_context = threading.local()
+        if not hasattr(self, "_chat_lock"):
+            self._chat_lock = threading.RLock()
+        if not hasattr(self, "chat_messages"):
+            self.chat_messages = []
+        return tracker
+
+    def _current_dispatch_request_id(self) -> str | None:
+        self._ensure_workflow_tracker()
+        return getattr(self._dispatch_context, "request_id", None)
+
+    def _set_dispatch_request_id(self, request_id: str | None) -> str | None:
+        self._ensure_workflow_tracker()
+        previous = getattr(self._dispatch_context, "request_id", None)
+        self._dispatch_context.request_id = request_id
+        return previous
+
+    def _publish_workflow_transition(
+        self, transition: tuple[str, dict]
+    ) -> None:
+        """Commit usage attribution before publishing one terminal workflow event."""
+        topic, payload = transition
+        request_id = payload["request_id"]
+        if topic == "conductor:workflow_completed":
+            self.usage_store.complete(request_id, "OK")
+        elif topic == "conductor:workflow_failed":
+            phase = str(payload.get("phase") or "subagent").upper()
+            self.usage_store.complete(request_id, f"FAILED_{phase}")
+            item = self._record_workflow_failure_message(
+                request_id,
+                phase=str(payload.get("phase") or "subagent"),
+                error=str(payload.get("error") or ""),
+            )
+            payload.setdefault("item", item)
+        bus.publish(topic, payload)
+
+    def _record_workflow_failure_message(
+        self, request_id: str, *, phase: str, error: str
+    ) -> dict:
+        """Persist one visible failure report per request, even across retries."""
+        self._ensure_workflow_tracker()
+        with self._chat_lock:
+            existing = next(
+                (
+                    item
+                    for item in reversed(self.chat_messages)
+                    if item.get("request_id") == request_id
+                    and item.get("kind") == "error"
+                ),
+                None,
+            )
+            if existing is not None:
+                return existing
+            detail = error.strip() or "unknown error"
+            return add_chat(
+                f"Conductor workflow failed during {phase}: {detail}",
+                "conductor",
+                self.chat_messages,
+                request_id=request_id,
+                kind="error",
+            )
+
     @staticmethod
     def _normalize_model_index(value: Optional[int], label: str) -> Optional[int]:
         if value is None:
@@ -862,23 +1023,27 @@ class ConductorService:
         base = _get_hub_api_base()
         models = self.model_policy_snapshot()
         prompt = f"""You are the Conductor supervisor. Delegate independent work to subagents and report concise results to the user.
-API base: {base}. Use GET /api/conductor/readme for the complete contract.
+API base: {base}. The rules below are complete for this wake; do not spend a turn fetching readme unless an API call reports a contract error.
 
 Subagent model routing:
 - Current policy: {models['subagent_model_policy']}
 - Conductor model index: {models['llm_index']}
 - Default/locked subagent model index: {models['subagent_llm_index']}
 - To request a model for one dispatch, POST /api/conductor/subagent with
-  {{"prompt": "...", "llm_index": N}}. The locked policy overrides N;
+  {{"prompt": "...", "request_id": "<wake request_id>", "llm_index": N}}.
+  The locked policy overrides N;
   otherwise an explicit N overrides the configured default.
 
 Operating rules:
 - Reuse a suitable stopped subagent when continuing the same task.
-- For every chat message you write, POST /api/conductor/chat with JSON {{"msg": "...", "role": "conductor"}}. Never use role=user; that role is reserved for real user input and would recursively enqueue your own message as a new task.
+- Copy request_id exactly from wake_events into every plan, dispatch, review action, and final report for that workflow. Never infer it from another message or worker.
+- For every chat message you write, POST /api/conductor/chat with JSON {{"msg": "...", "role": "conductor", "request_id": "..."}}. Never use role=user; that role is reserved for real user input and would recursively enqueue your own message as a new task.
 - Before dispatching, use that conductor-role chat call to explain the rewritten prompt and delegation plan.
+- After dispatching, end the current turn immediately. Do not poll a running worker and do not send input to it; its completion event will wake you.
 - Preserve Unicode task text exactly. Send self-API requests as UTF-8 JSON (prefer Python requests with json=); never round-trip prompts through a shell code page.
 - The API base above is authoritative. Never scan alternate ports, call the standalone GA Conductor, or edit GA-Hub to repair the control plane. If it is unreachable, report that error and stop the turn.
-- Use subagent input/keyinfo/abort actions as needed, then verify results before reporting completion.
+- On a subagent_done event, inspect the supplied output once. POST action=rework with a concrete reason when it is insufficient, then end the turn and wait for the next event. POST action=accept when it is sufficient.
+- Report completion only after every worker for the request is accepted. The final chat call must include {{"role": "conductor", "request_id": "...", "final": true}}; this is the only signal that completes the workflow.
 - When a task creates or changes files, the final conductor report MUST list every deliverable with an absolute path in the form [FILE:absolute/path]. Verify each path exists before reporting it; do not report only that a file was generated.
 - The Conductor service is long-lived. Finish the current turn after the final report, but do not call /api/conductor/stop unless the user explicitly asks to stop the service.
 - Do not perform destructive work without first obtaining a plan and user confirmation.
@@ -921,19 +1086,38 @@ Current state: {summary}"""
         prompt: str,
         llm_index: Optional[int] = None,
         *,
+        request_id: str | None = None,
         conductor_llm_index: Optional[int] = None,
         subagent_llm_index: Optional[int] = None,
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
     ) -> dict:
         """Dispatch through the single Hub model-policy boundary."""
         self._assert_open()
+        tracker = self._ensure_workflow_tracker()
+        if request_id is not None and not tracker.has_request(request_id):
+            raise ValueError(f"unknown conductor request_id: {request_id}")
         models = self.configure_models(
             llm_index=conductor_llm_index,
             subagent_llm_index=subagent_llm_index,
             subagent_model_policy=subagent_model_policy,
         )
         selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
-        result = self.pool.start_subagent(prompt, llm_index=selected)
+        previous = self._set_dispatch_request_id(request_id)
+        try:
+            result = self.pool.start_subagent(prompt, llm_index=selected)
+        finally:
+            self._set_dispatch_request_id(previous)
+        sid = result.get("id")
+        if request_id and sid and "error" not in result:
+            state = self.pool.get(sid)
+            generation = int(getattr(state, "active_generation", 0))
+            completed = tracker.bind_subagent(request_id, sid, generation)
+            if completed is not None:
+                self._publish_workflow_transition(
+                    ("conductor:workflow_completed", completed)
+                )
+            self._request_supervisor_yield(request_id, reason="subagent_dispatched")
+            result.setdefault("request_id", request_id)
         result.setdefault("llm_index", selected)
         result.setdefault("model_policy", models["subagent_model_policy"])
         return result
@@ -944,22 +1128,106 @@ Current state: {summary}"""
         msg: str,
         llm_index: Optional[int] = None,
         *,
+        request_id: str | None = None,
         conductor_llm_index: Optional[int] = None,
         subagent_llm_index: Optional[int] = None,
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
     ) -> dict:
         """Resume a stopped worker through the same model-policy boundary."""
         self._assert_open()
+        tracker = self._ensure_workflow_tracker()
+        if request_id is not None and not tracker.has_request(request_id):
+            raise ValueError(f"unknown conductor request_id: {request_id}")
         models = self.configure_models(
             llm_index=conductor_llm_index,
             subagent_llm_index=subagent_llm_index,
             subagent_model_policy=subagent_model_policy,
         )
         selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
-        result = self.pool.input_subagent(sid, msg, llm=selected)
+        previous = self._set_dispatch_request_id(request_id)
+        try:
+            result = self.pool.input_subagent(sid, msg, llm=selected)
+        finally:
+            self._set_dispatch_request_id(previous)
         if "error" not in result:
+            owner = request_id or tracker.request_for_subagent(sid)
+            if owner:
+                state = self.pool.get(sid)
+                generation = int(getattr(state, "active_generation", 0))
+                tracker.bind_subagent(owner, sid, generation)
+                result.setdefault("request_id", owner)
+                self._request_supervisor_yield(owner, reason="subagent_resumed")
             # The shared core currently emits no lifecycle event for a plain
             # input resume, so expose the committed running state immediately.
+            self.callbacks.publish_subagent_snapshot()
+        result.setdefault("llm_index", selected)
+        result.setdefault("model_policy", models["subagent_model_policy"])
+        return result
+
+    def accept_subagent(
+        self, sid: str, msg: str = "", *, request_id: str | None = None
+    ) -> dict:
+        """Accept a pending worker and advance its request-scoped workflow."""
+        self._assert_open()
+        tracker = self._ensure_workflow_tracker()
+        if request_id is not None and not tracker.has_request(request_id):
+            raise ValueError(f"unknown conductor request_id: {request_id}")
+        previous = self._set_dispatch_request_id(request_id)
+        try:
+            result = self.pool.accept_subagent(sid, msg)
+        finally:
+            self._set_dispatch_request_id(previous)
+        if "error" not in result:
+            state = self.pool.get(sid)
+            generation = int(getattr(state, "active_generation", 0))
+            owner, transition = tracker.record_subagent_event(
+                sid,
+                "accepted",
+                generation=generation,
+                request_id=request_id,
+            )
+            if owner:
+                result.setdefault("request_id", owner)
+            if transition is not None:
+                self._publish_workflow_transition(transition)
+            self.callbacks.publish_subagent_snapshot()
+        return result
+
+    def rework_subagent(
+        self,
+        sid: str,
+        msg: str,
+        llm_index: Optional[int] = None,
+        *,
+        request_id: str | None = None,
+        conductor_llm_index: Optional[int] = None,
+        subagent_llm_index: Optional[int] = None,
+        subagent_model_policy: Optional[SubagentModelPolicy] = None,
+    ) -> dict:
+        """Rework a pending worker through the model-policy boundary."""
+        self._assert_open()
+        tracker = self._ensure_workflow_tracker()
+        if request_id is not None and not tracker.has_request(request_id):
+            raise ValueError(f"unknown conductor request_id: {request_id}")
+        models = self.configure_models(
+            llm_index=conductor_llm_index,
+            subagent_llm_index=subagent_llm_index,
+            subagent_model_policy=subagent_model_policy,
+        )
+        selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
+        previous = self._set_dispatch_request_id(request_id)
+        try:
+            result = self.pool.rework_subagent(sid, msg, llm=selected)
+        finally:
+            self._set_dispatch_request_id(previous)
+        if "error" not in result:
+            owner = request_id or tracker.request_for_subagent(sid)
+            if owner:
+                state = self.pool.get(sid)
+                generation = int(getattr(state, "active_generation", 0))
+                tracker.bind_subagent(owner, sid, generation)
+                result.setdefault("request_id", owner)
+                self._request_supervisor_yield(owner, reason="subagent_reworked")
             self.callbacks.publish_subagent_snapshot()
         result.setdefault("llm_index", selected)
         result.setdefault("model_policy", models["subagent_model_policy"])
@@ -969,6 +1237,27 @@ Current state: {summary}"""
         stopped = self.conductor.stop(timeout=timeout)
         self.lifecycle_status()
         return stopped
+
+    def _request_supervisor_yield(
+        self, request_id: str | None, *, reason: str
+    ) -> bool:
+        """Ask the shared core to end the active supervisor turn cooperatively."""
+        if not request_id:
+            return False
+        request_yield = getattr(getattr(self, "conductor", None), "request_yield", None)
+        if not callable(request_yield):
+            return False
+        try:
+            yielded = bool(request_yield(request_id, reason=reason))
+        except Exception:
+            log.exception("conductor supervisor yield request failed")
+            return False
+        if yielded:
+            bus.publish(
+                "conductor:request_yield_requested",
+                {"request_id": request_id, "reason": reason},
+            )
+        return yielded
 
     def lifecycle_status(self) -> dict[str, bool]:
         """Return the shared core's live lifecycle state."""
@@ -982,28 +1271,65 @@ Current state: {summary}"""
     def get_chat_messages(self, last: int = 20) -> list:
         return self.chat_messages[-last:]
 
+    def get_subagent_snapshot(self) -> list[dict]:
+        """Add Hub workflow metadata absent from older GA core snapshots."""
+        tracker = self._ensure_workflow_tracker()
+        snapshot = self.pool.snapshot()
+        get_state = getattr(self.pool, "get", None)
+        if not callable(get_state):
+            return snapshot
+        enriched = []
+        for source in snapshot:
+            item = dict(source)
+            state = get_state(item.get("id"))
+            generation = getattr(state, "active_generation", None)
+            if generation is not None:
+                item["generation"] = generation
+            request_id = tracker.request_for_subagent(str(item.get("id") or ""))
+            if request_id:
+                item["request_id"] = request_id
+            enriched.append(item)
+        return enriched
+
+    def get_workflow_snapshot(self, limit: int = 20) -> list[dict]:
+        """Expose the Hub-owned workflow projection for page reloads."""
+        return self._ensure_workflow_tracker().snapshots(limit=limit)
+
     def add_chat_message(
         self,
         msg: str,
         role: str = "conductor",
+        request_id: str | None = None,
+        kind: str | None = None,
         llm_index: Optional[int] = None,
         subagent_llm_index: Optional[int] = None,
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
     ) -> dict:
         self._assert_open()
-        request_id = self.usage_store.begin() if role == "user" else None
+        tracker = self._ensure_workflow_tracker()
+        if kind is not None and role != "conductor":
+            raise ValueError("kind is only valid for conductor messages")
+        if kind == "final" and not request_id:
+            raise ValueError("request_id is required for a final conductor message")
+        if role != "user" and request_id and not tracker.has_request(request_id):
+            raise ValueError(f"unknown conductor request_id: {request_id}")
+        if kind == "final" and request_id:
+            tracker.assert_ready_for_final(request_id)
+        admitted_request_id = self.usage_store.begin() if role == "user" else request_id
         try:
             item = add_chat(
                 msg,
                 role,
                 self.chat_messages,
-                request_id=request_id,
+                request_id=admitted_request_id,
+                kind=kind,
             )
         except Exception:
-            if request_id:
-                self.usage_store.complete(request_id, "FAILED_ADMISSION")
+            if role == "user" and admitted_request_id:
+                self.usage_store.complete(admitted_request_id, "FAILED_ADMISSION")
             raise
-        if request_id:
+        if role == "user" and admitted_request_id:
+            tracker.admit(admitted_request_id)
             try:
                 self.configure_models(
                     llm_index=llm_index,
@@ -1012,19 +1338,33 @@ Current state: {summary}"""
                 )
                 self.ensure_started()
             except Exception:
-                self.usage_store.complete(request_id, "FAILED_START")
+                transition = tracker.fail_supervisor(
+                    admitted_request_id, phase="start", error="conductor start failed"
+                )
+                if transition is not None:
+                    self._publish_workflow_transition(transition)
                 raise
             try:
                 accepted = self.notify({
                     "type": "user_message",
                     "msg": msg,
-                    "request_id": request_id,
+                    "request_id": admitted_request_id,
                 })
                 if not accepted:
                     raise RuntimeError("conductor stopped before event admission")
             except Exception:
-                self.usage_store.complete(request_id, "FAILED_ADMISSION")
+                transition = tracker.fail_supervisor(
+                    admitted_request_id,
+                    phase="admission",
+                    error="conductor event admission failed",
+                )
+                if transition is not None:
+                    self._publish_workflow_transition(transition)
                 raise
+        elif role == "conductor" and kind == "final" and admitted_request_id:
+            transition = tracker.record_final(admitted_request_id, item)
+            if transition is not None:
+                self._publish_workflow_transition(transition)
         return item
 
     def get_readmes(self) -> dict:

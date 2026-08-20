@@ -18,6 +18,10 @@ function subagent(id: string, status: string): ConductorSubagent {
     reply: '',
     created_at: 1,
     updated_at: 1,
+    review_status: 'none',
+    review_note: '',
+    attempt: 1,
+    generation: 1,
   }
 }
 

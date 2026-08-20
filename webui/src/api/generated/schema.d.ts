@@ -956,6 +956,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/conductor/workflow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Workflows */
+        get: operations["list_workflows_api_conductor_workflow_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/conductor/subagent/{sid}": {
         parameters: {
             query?: never;
@@ -2254,6 +2271,13 @@ export interface components {
              * @enum {string}
              */
             role: "conductor" | "system" | "user";
+            /** Request Id */
+            request_id?: string | null;
+            /**
+             * Final
+             * @default false
+             */
+            final: boolean;
             /** Llm Index */
             llm_index?: number | null;
             /** Subagent Llm Index */
@@ -2276,6 +2300,10 @@ export interface components {
             msg: string;
             /** Ts */
             ts: number;
+            /** Request Id */
+            request_id?: string | null;
+            /** Kind */
+            kind?: ("final" | "error") | null;
         } & {
             [key: string]: unknown;
         };
@@ -2333,6 +2361,8 @@ export interface components {
         ConductorStartSubagent: {
             /** Prompt */
             prompt: string;
+            /** Request Id */
+            request_id?: string | null;
             /** Llm Index */
             llm_index?: number | null;
             /** Conductor Llm Index */
@@ -2372,6 +2402,32 @@ export interface components {
             created_at: number;
             /** Updated At */
             updated_at: number;
+            /**
+             * Review Status
+             * @default none
+             */
+            review_status: string;
+            /**
+             * Review Note
+             * @default
+             */
+            review_note: string;
+            /**
+             * Attempt
+             * @default 1
+             */
+            attempt: number;
+            /** Completed At */
+            completed_at?: number | null;
+            /** Accepted At */
+            accepted_at?: number | null;
+            /**
+             * Generation
+             * @default 0
+             */
+            generation: number;
+            /** Request Id */
+            request_id?: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -2381,12 +2437,14 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "keyinfo" | "input" | "reply" | "append" | "message" | "msg" | "abort" | "stop";
+            action: "keyinfo" | "input" | "reply" | "append" | "message" | "msg" | "accept" | "rework" | "abort" | "stop";
             /**
              * Msg
              * @default
              */
             msg: string;
+            /** Request Id */
+            request_id?: string | null;
             /** Llm Index */
             llm_index?: number | null;
             /** Conductor Llm Index */
@@ -2432,6 +2490,49 @@ export interface components {
         ConductorTextResp: {
             /** Content */
             content: string;
+        };
+        /** ConductorWorkflow */
+        ConductorWorkflow: {
+            /** Request Id */
+            request_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "admitted" | "supervising" | "reworking" | "awaiting_review" | "completed" | "failed" | "cancelled" | "killed";
+            /** Subagents */
+            subagents: {
+                [key: string]: components["schemas"]["ConductorWorkflowWorker"];
+            };
+            /** Created At */
+            created_at: number;
+            /** Completed At */
+            completed_at?: number | null;
+            item?: components["schemas"]["ConductorChatMessage"] | null;
+            /** Phase */
+            phase?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Failed Agent Id */
+            failed_agent_id?: string | null;
+        };
+        /** ConductorWorkflowListResp */
+        ConductorWorkflowListResp: {
+            /** Items */
+            items: components["schemas"]["ConductorWorkflow"][];
+        };
+        /** ConductorWorkflowWorker */
+        ConductorWorkflowWorker: {
+            /**
+             * Generation
+             * @default 0
+             */
+            generation: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "running" | "pending" | "accepted" | "failed" | "cancelled" | "killed";
         };
         /** ConversationDetailResp */
         ConversationDetailResp: {
@@ -5404,6 +5505,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConductorSubagentInstructionResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_workflows_api_conductor_workflow_get: {
+        parameters: {
+            query?: {
+                last?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConductorWorkflowListResp"];
                 };
             };
             /** @description Validation Error */

@@ -42,6 +42,8 @@ const modeConfigs: Record<GoalMode, ModeConfig> = {
 
 export default function GoalHive() {
   const [mode, setMode] = useState<GoalMode>('goal')
+  const [subagentSettingsOpen, setSubagentSettingsOpen] = useState(false)
+  const [draftSubagentLlmKey, setDraftSubagentLlmKey] = useState<string | null>(null)
   const targetDraftKey = `goalHive:${mode}:target`
   const conditionDraftKey = `goalHive:${mode}:condition`
   const target = useDraftStore((state) => state.texts[targetDraftKey] ?? '')
@@ -59,6 +61,8 @@ export default function GoalHive() {
   const logRef = useRef<HTMLDivElement | null>(null)
   const targetRef = useRef<HTMLTextAreaElement | null>(null)
   const conditionRef = useRef<HTMLTextAreaElement | null>(null)
+  const subagentSettingsButtonRef = useRef<HTMLButtonElement | null>(null)
+  const subagentSettingsDialogRef = useRef<HTMLDivElement | null>(null)
 
   // Conductor and Goal/Hive share durable key-based model preferences.
   const { data: llmsData } = useQuery({
@@ -74,6 +78,50 @@ export default function GoalHive() {
     selectMainLlm,
     selectSubagentLlm,
   } = useSharedModelSelection(llms)
+
+  const openSubagentSettings = () => {
+    setDraftSubagentLlmKey(subagentLlmKey)
+    setSubagentSettingsOpen(true)
+  }
+
+  const closeSubagentSettings = () => {
+    setSubagentSettingsOpen(false)
+    requestAnimationFrame(() => subagentSettingsButtonRef.current?.focus())
+  }
+
+  const saveSubagentSettings = () => {
+    selectSubagentLlm(draftSubagentLlmKey)
+    closeSubagentSettings()
+  }
+
+  useEffect(() => {
+    if (!subagentSettingsOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeSubagentSettings()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = Array.from(
+        subagentSettingsDialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), select:not([disabled])',
+        ) ?? [],
+      )
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [subagentSettingsOpen])
 
   const config = modeConfigs[mode]
   const streaming = msgs.some((m) => m.streaming)
@@ -149,54 +197,58 @@ export default function GoalHive() {
         </span>
       }
       actions={
-        <div className="flex items-center gap-2">
+        <div className="flex h-9 items-center gap-2 whitespace-nowrap">
           <span className="text-xs text-[#7B6D5A]">主模型</span>
           <MainModelSelect
             llms={llms}
             value={mainLlmKey}
             onChange={selectMainLlm}
-            className="max-w-[260px]"
+            className="w-[240px] max-w-[32vw]"
             title="选择 Goal / Hive 使用的主模型"
             aria-label="Goal / Hive 主模型"
           />
-          <span className="text-xs text-[#7B6D5A]">子代理模型</span>
-          <SubagentModelSelect
-            llms={llms}
-            value={subagentLlmKey}
-            onChange={selectSubagentLlm}
+          <button
+            ref={subagentSettingsButtonRef}
+            type="button"
             disabled={mode !== 'hive'}
-            className="max-w-[260px]"
+            className="ga-btn"
             title={mode === 'hive' ? '选择 Hive 子代理使用的模型' : 'Goal 模式不启动子代理'}
-            aria-label="Goal / Hive 子代理模型"
-          />
-          <div className="inline-flex rounded-xl border border-line bg-bg-soft p-1">
-            {(['goal', 'hive'] as GoalMode[]).map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setMode(item)}
-              className={clsx(
-                'px-4 py-1 rounded-lg text-sm transition',
-                mode === item ? 'bg-accent text-white shadow-sm' : 'text-[#665741] hover:text-[#2C2418]',
-              )}
-            >
-              {item.toUpperCase()}
-            </button>
-          ))}
-          </div>
+            aria-haspopup="dialog"
+            aria-expanded={subagentSettingsOpen}
+            onClick={openSubagentSettings}
+          >
+            子代理设置
+          </button>
           <button onClick={abort} disabled={!streaming} className="ga-btn-danger">停止</button>
         </div>
       }
     >
-      <div className="grid grid-cols-1 xl:grid-cols-[420px_minmax(0,1fr)] gap-6 h-full min-h-0 p-6">
-        <section className="rounded-2xl border border-line bg-bg-card p-5 shadow-sm overflow-auto">
-          <div className="space-y-2 mb-5">
+      <div className="grid h-full min-h-0 grid-cols-1 gap-3 p-3 md:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)] lg:gap-5 lg:p-5">
+        <section className="overflow-auto rounded-2xl border border-line bg-bg-card p-4 shadow-sm lg:p-5">
+          <div className="mb-4 inline-flex rounded-xl border border-line bg-bg-soft p-1" role="group" aria-label="Goal Hive 模式">
+            {(['goal', 'hive'] as GoalMode[]).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setMode(item)}
+                aria-pressed={mode === item}
+                className={clsx(
+                  'rounded-lg px-4 py-1 text-sm transition',
+                  mode === item ? 'bg-accent text-white shadow-sm' : 'text-[#665741] hover:text-[#2C2418]',
+                )}
+              >
+                {item.toUpperCase()}
+              </button>
+            ))}
+          </div>
+
+          <div className="mb-4 space-y-2 lg:mb-5">
             <div className="text-sm text-accent font-medium">{config.title}</div>
-            <h2 className="text-2xl font-semibold text-[#2C2418]">{config.subtitle}</h2>
+            <h2 className="text-lg font-semibold text-[#2C2418]">{config.subtitle}</h2>
             <p className="text-sm text-[#665741] leading-6">启动输出会留在本页面的独立日志区，不跳转、不混入普通聊天页。</p>
           </div>
 
-          <div className="flex flex-wrap gap-2 mb-5">
+          <div className="mb-4 flex flex-wrap gap-2 lg:mb-5">
             {config.chips.map((chip) => (
               <span key={chip} className="text-xs px-2.5 py-1 rounded-full border border-line bg-bg-soft text-[#665741]">
                 {chip}
@@ -204,7 +256,7 @@ export default function GoalHive() {
             ))}
           </div>
 
-          <form onSubmit={submit} className="space-y-4">
+          <form onSubmit={submit} className="space-y-3 lg:space-y-4">
             <label className="block space-y-2">
               <span className="text-sm font-medium text-[#2C2418]">目标</span>
               <textarea
@@ -276,6 +328,54 @@ export default function GoalHive() {
           </div>
         </section>
       </div>
+
+      {subagentSettingsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeSubagentSettings()
+          }}
+        >
+          <div
+            ref={subagentSettingsDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="goal-hive-subagent-settings-title"
+            className="w-full max-w-md rounded-xl border border-line bg-bg-card shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-line/70 px-5 py-4">
+              <h2 id="goal-hive-subagent-settings-title" className="text-base font-semibold text-[#2C2418]">子代理设置</h2>
+              <button
+                type="button"
+                onClick={closeSubagentSettings}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none text-[#7B6D5A] hover:bg-bg-soft hover:text-[#2C2418]"
+                aria-label="关闭子代理设置"
+                title="关闭"
+              >
+                ×
+              </button>
+            </div>
+            <div className="px-5 py-5">
+              <label className="block text-sm font-medium text-[#2C2418]">
+                默认模型
+                <SubagentModelSelect
+                  llms={llms}
+                  value={draftSubagentLlmKey}
+                  onChange={setDraftSubagentLlmKey}
+                  className="mt-2 w-full"
+                  aria-label="Hive 子代理默认模型"
+                  autoFocus
+                />
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-line/70 px-5 py-4">
+              <button type="button" className="ga-btn" onClick={closeSubagentSettings}>取消</button>
+              <button type="button" className="ga-btn ga-btn-primary" onClick={saveSubagentSettings}>保存</button>
+            </div>
+          </div>
+        </div>
+      )}
     </PageShell>
   )
 }

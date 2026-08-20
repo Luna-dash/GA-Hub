@@ -27,6 +27,7 @@ from ..schemas import (
     ConductorSubagentInstructionResp,
     ConductorSubagentListResp,
     ConductorTextResp,
+    ConductorWorkflowListResp,
 )
 from ..services.conductor_service import ConductorService, clean_log_text, short_id
 from ..services.event_bus import bus
@@ -80,11 +81,17 @@ async def get_chat(last: int = Query(default=20, ge=1, le=200)) -> ConductorChat
 
 @router.post("/api/conductor/chat")
 async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
+    workflow = {}
+    if body.request_id is not None:
+        workflow["request_id"] = body.request_id
+    if body.final:
+        workflow["kind"] = "final"
     try:
         return await asyncio.to_thread(
             svc().add_chat_message,
             body.msg,
             role=body.role,
+            **workflow,
             llm_index=body.llm_index,
             subagent_llm_index=body.subagent_llm_index,
             subagent_model_policy=body.subagent_model_policy,
@@ -96,14 +103,22 @@ async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
 # ── subagents ────────────────────────────────────────────────────────────────
 @router.get("/api/conductor/subagent")
 async def list_subagents() -> ConductorSubagentListResp:
-    return {"items": svc().pool.snapshot()}
+    return {"items": svc().get_subagent_snapshot()}
+
+
+@router.get("/api/conductor/workflow")
+async def list_workflows(
+    last: int = Query(default=20, ge=1, le=100),
+) -> ConductorWorkflowListResp:
+    return {"items": svc().get_workflow_snapshot(limit=last)}
 
 
 @router.get("/api/conductor/subagent/{sid}")
 async def get_subagent(
     sid: str, max_len: int = Query(default=5000, ge=1, le=1_000_000)
 ) -> ConductorSubagent:
-    s = svc().pool.get(sid)
+    service = svc()
+    s = service.pool.get(sid)
     if not s:
         raise HTTPException(404, "subagent not found")
     cleaned = clean_log_text(s.reply or "")
@@ -114,15 +129,24 @@ async def get_subagent(
         "reply": cleaned[-max_len:] if len(cleaned) > max_len else cleaned,
         "created_at": s.created_at,
         "updated_at": s.updated_at,
+        "review_status": getattr(s, "review_status", "none"),
+        "review_note": getattr(s, "review_note", ""),
+        "attempt": getattr(s, "attempt", 1),
+        "completed_at": getattr(s, "completed_at", None),
+        "accepted_at": getattr(s, "accepted_at", None),
+        "generation": getattr(s, "active_generation", 0),
+        "request_id": service.workflow_tracker.request_for_subagent(s.id),
     }
 
 
 @router.post("/api/conductor/subagent")
 async def start_subagent(body: ConductorStartSubagent) -> ConductorSubagentInstructionResp:
+    workflow = {"request_id": body.request_id} if body.request_id is not None else {}
     try:
         result = await asyncio.to_thread(
             svc().start_subagent,
             body.prompt,
+            **workflow,
             llm_index=body.llm_index,
             conductor_llm_index=body.conductor_llm_index,
             subagent_llm_index=body.subagent_llm_index,
@@ -148,12 +172,45 @@ async def subagent_action(
         result = pool.keyinfo_subagent(sid, body.msg)
         result["instruction"] = INSTR_KEYINFO
         return result
+    if action == "accept":
+        try:
+            result = await asyncio.to_thread(
+                service.accept_subagent,
+                sid,
+                body.msg,
+                request_id=body.request_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if "error" in result:
+            raise HTTPException(409, result["error"])
+        return result
+    if action == "rework":
+        try:
+            result = await asyncio.to_thread(
+                service.rework_subagent,
+                sid,
+                body.msg,
+                request_id=body.request_id,
+                llm_index=body.llm_index,
+                conductor_llm_index=body.conductor_llm_index,
+                subagent_llm_index=body.subagent_llm_index,
+                subagent_model_policy=body.subagent_model_policy,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if "error" in result:
+            raise HTTPException(409, result["error"])
+        result["instruction"] = INSTR_DISPATCHED
+        return result
     if action in ("input", "reply", "append", "message", "msg"):
+        workflow = {"request_id": body.request_id} if body.request_id is not None else {}
         try:
             result = await asyncio.to_thread(
                 service.input_subagent,
                 sid,
                 body.msg,
+                **workflow,
                 llm_index=body.llm_index,
                 conductor_llm_index=body.conductor_llm_index,
                 subagent_llm_index=body.subagent_llm_index,

@@ -74,9 +74,13 @@ def test_chat_store_session_socket_is_receive_only():
     assert ".send(" not in source
 
 
-def test_conductor_keeps_completed_workers_visible_and_renders_file_paths():
+def test_conductor_renders_request_scoped_semantic_worker_progress():
     source = _read("pages/Conductor.tsx")
 
-    assert "subagents.filter((sub) => sub.status !== 'running').slice(-4)" in source
-    assert "? subagents.find((s) => s.id === selectedSubagent)" in source
+    assert "sub.request_id === currentWorkflow.request_id" in source
+    assert "sub.review_status === 'accepted'" in source
+    assert "label: '正在验收'" in source
+    assert "label: '返工中'" in source
+    assert "T{item.turn}" not in source
+    assert "api.conductorLog()" not in source
     assert "<MarkdownView mode=\"plain\" cache>" in source

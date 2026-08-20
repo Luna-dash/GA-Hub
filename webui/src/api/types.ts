@@ -285,9 +285,12 @@ export type ConductorSubagentListResponse = ApiSchemas['ConductorSubagentListRes
 export type ConductorSubagentInstructionResponse = ApiSchemas['ConductorSubagentInstructionResp']
 export type ConductorSubagentActionResponse = ApiSchemas['ConductorSubagentActionResp']
 export type ConductorLifecycleResponse = ApiSchemas['ConductorLifecycleResp']
+export type ConductorWorkflow = ApiSchemas['ConductorWorkflow']
+export type ConductorWorkflowListResponse = ApiSchemas['ConductorWorkflowListResp']
 
 export interface TokenThreadStats {
   thread: string
+  title: string
   requests: number
   input: number
   output: number
@@ -298,7 +301,7 @@ export interface TokenThreadStats {
   elapsed_seconds: number
 }
 
-export interface TokenTotals extends Omit<TokenThreadStats, 'thread' | 'elapsed_seconds'> {}
+export interface TokenTotals extends Omit<TokenThreadStats, 'thread' | 'title' | 'elapsed_seconds'> {}
 export interface TokenWeekStats extends TokenTotals { week_start: string; week_end: string }
 export interface TokenDayStats extends TokenTotals { date: string }
 export interface TokenStatsResponse {

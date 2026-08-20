@@ -68,13 +68,12 @@ describe('useDesktopNotifyEffects', () => {
   })
 
   it('notifies from a global Conductor event without page store state', () => {
-    act(() => mocks.handlers.get('conductor:request_outcome')?.({
-      topic: 'conductor:request_outcome',
+    act(() => mocks.handlers.get('conductor:workflow_completed')?.({
+      topic: 'conductor:workflow_completed',
       ts: Date.now() / 1000,
       payload: {
         request_id: 'request-1',
-        status: 'ok',
-        phase: 'finish',
+        status: 'completed',
         item: { role: 'conductor', msg: 'background result' },
       },
     }))
@@ -85,7 +84,7 @@ describe('useDesktopNotifyEffects', () => {
     })
   })
 
-  it('does not report a failed Conductor outcome as completion', () => {
+  it('does not subscribe to per-turn Conductor outcomes as workflow completion', () => {
     act(() => mocks.handlers.get('conductor:request_outcome')?.({
       topic: 'conductor:request_outcome',
       ts: Date.now() / 1000,

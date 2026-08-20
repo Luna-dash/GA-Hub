@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
 
 from server.routes import conductor as conductor_routes
 from server.services.conductor_service import ConductorService
@@ -223,6 +226,52 @@ def test_resume_route_uses_service_policy_boundary(monkeypatch):
             "subagent_model_policy": "locked",
         },
     )]
+
+
+def test_accept_route_forwards_request_and_returns_committed_review(monkeypatch):
+    service = FakeService(STOPPED)
+    service.accept_subagent = Mock(return_value={
+        "id": "worker-1",
+        "status": "stopped",
+        "review_status": "accepted",
+        "request_id": "request-1",
+    })
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    result = asyncio.run(conductor_routes.subagent_action(
+        "worker-1",
+        conductor_routes.ConductorSubagentAction(
+            action="accept",
+            msg="verified",
+            request_id="request-1",
+        ),
+    ))
+
+    assert result["review_status"] == "accepted"
+    service.accept_subagent.assert_called_once_with(
+        "worker-1", "verified", request_id="request-1"
+    )
+
+
+def test_rework_state_conflict_returns_http_409(monkeypatch):
+    service = FakeService(STOPPED)
+    service.rework_subagent = Mock(return_value={
+        "id": "worker-1",
+        "error": "only a stopped pending subagent can be reworked",
+    })
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    with pytest.raises(conductor_routes.HTTPException) as raised:
+        asyncio.run(conductor_routes.subagent_action(
+            "worker-1",
+            conductor_routes.ConductorSubagentAction(
+                action="rework",
+                msg="add evidence",
+                request_id="request-1",
+            ),
+        ))
+
+    assert raised.value.status_code == 409
 
 
 def test_stop_route_delegates_and_returns_live_lifecycle(monkeypatch):

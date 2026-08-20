@@ -14,6 +14,7 @@ from server.services.conductor_service import (
     HubConductorCallbacks,
     READMES,
 )
+from server.services.conductor_workflow import WorkflowTracker
 
 
 def _service(
@@ -90,6 +91,24 @@ def test_dispatch_entrypoint_applies_same_locked_policy():
     service.pool.start_subagent.assert_called_once_with(prompt, llm_index=5)
     assert result["llm_index"] == 5
     assert result["model_policy"] == "locked"
+
+
+def test_dispatch_requests_a_cooperative_supervisor_yield_for_active_workflow():
+    service = _service(worker=5, policy="locked")
+    service.workflow_tracker = WorkflowTracker(clock=lambda: 10.0)
+    service.workflow_tracker.admit("request-1")
+    service.pool.get.return_value = SimpleNamespace(active_generation=1)
+    service.conductor = Mock()
+
+    result = service.start_subagent(
+        "inspect",
+        request_id="request-1",
+    )
+
+    assert result["request_id"] == "request-1"
+    service.conductor.request_yield.assert_called_once_with(
+        "request-1", reason="subagent_dispatched"
+    )
 
 
 def test_resume_entrypoint_applies_same_locked_policy():

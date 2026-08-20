@@ -1963,6 +1963,48 @@
         }
       }
     },
+    "/api/conductor/workflow": {
+      "get": {
+        "summary": "List Workflows",
+        "operationId": "list_workflows_api_conductor_workflow_get",
+        "parameters": [
+          {
+            "name": "last",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Last"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorWorkflowListResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/conductor/subagent/{sid}": {
       "get": {
         "summary": "Get Subagent",
@@ -4990,6 +5032,22 @@
             "title": "Role",
             "default": "conductor"
           },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "final": {
+            "type": "boolean",
+            "title": "Final",
+            "default": false
+          },
           "llm_index": {
             "anyOf": [
               {
@@ -5070,6 +5128,32 @@
           "ts": {
             "type": "integer",
             "title": "Ts"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "final",
+                  "error"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
           }
         },
         "additionalProperties": true,
@@ -5250,6 +5334,17 @@
             "type": "string",
             "title": "Prompt"
           },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
           "llm_index": {
             "anyOf": [
               {
@@ -5376,6 +5471,59 @@
           "updated_at": {
             "type": "integer",
             "title": "Updated At"
+          },
+          "review_status": {
+            "type": "string",
+            "title": "Review Status",
+            "default": "none"
+          },
+          "review_note": {
+            "type": "string",
+            "title": "Review Note",
+            "default": ""
+          },
+          "attempt": {
+            "type": "integer",
+            "title": "Attempt",
+            "default": 1
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "accepted_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted At"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation",
+            "default": 0
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
           }
         },
         "additionalProperties": true,
@@ -5401,6 +5549,8 @@
               "append",
               "message",
               "msg",
+              "accept",
+              "rework",
               "abort",
               "stop"
             ],
@@ -5410,6 +5560,17 @@
             "type": "string",
             "title": "Msg",
             "default": ""
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
           },
           "llm_index": {
             "anyOf": [
@@ -5585,6 +5746,143 @@
           "content"
         ],
         "title": "ConductorTextResp"
+      },
+      "ConductorWorkflow": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "admitted",
+              "supervising",
+              "reworking",
+              "awaiting_review",
+              "completed",
+              "failed",
+              "cancelled",
+              "killed"
+            ],
+            "title": "Status"
+          },
+          "subagents": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ConductorWorkflowWorker"
+            },
+            "type": "object",
+            "title": "Subagents"
+          },
+          "created_at": {
+            "type": "number",
+            "title": "Created At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "item": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConductorChatMessage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "failed_agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed Agent Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "status",
+          "subagents",
+          "created_at"
+        ],
+        "title": "ConductorWorkflow"
+      },
+      "ConductorWorkflowListResp": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConductorWorkflow"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "ConductorWorkflowListResp"
+      },
+      "ConductorWorkflowWorker": {
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "title": "Generation",
+            "default": 0
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "running",
+              "pending",
+              "accepted",
+              "failed",
+              "cancelled",
+              "killed"
+            ],
+            "title": "State"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "title": "ConductorWorkflowWorker"
       },
       "ConversationDetailResp": {
         "properties": {
