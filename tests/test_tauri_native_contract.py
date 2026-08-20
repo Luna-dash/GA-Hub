@@ -175,6 +175,21 @@ def test_tauri_startup_is_local_first_and_release_cwd_is_portable() -> None:
     assert "command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED)" in rust
 
 
+def test_tauri_single_instance_reveals_an_offscreen_window() -> None:
+    rust = _read("src-tauri/src/main.rs")
+
+    assert "fn main_window_is_offscreen" in rust
+    assert "window.available_monitors()" in rust
+    assert "fn reveal_main_window" in rust
+    assert "window.is_minimized()" in rust
+    assert "window.unminimize()" in rust
+    assert "window.center()" in rust
+    assert "reveal_main_window(&window)" in rust
+    assert ".center()" in rust.split("WebviewWindowBuilder::new", 1)[1].split(
+        ".build()?", 1
+    )[0]
+
+
 def test_local_app_router_gate_and_csp_contract() -> None:
     main = _read("webui/src/main.tsx")
     gate = _read("webui/src/runtime/DesktopRuntimeGate.tsx")

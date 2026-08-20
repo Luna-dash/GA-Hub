@@ -13,7 +13,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{
+    Manager, RunEvent, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+};
 use url::Url;
 use uuid::Uuid;
 
@@ -933,6 +935,54 @@ fn spawn_background_shutdown(handle: tauri::AppHandle, exit: ExitCoordinator) {
     });
 }
 
+fn main_window_is_offscreen<R: Runtime>(window: &WebviewWindow<R>) -> bool {
+    let Ok(position) = window.outer_position() else {
+        return false;
+    };
+    let Ok(size) = window.outer_size() else {
+        return false;
+    };
+    let Ok(monitors) = window.available_monitors() else {
+        return false;
+    };
+    if monitors.is_empty() {
+        return false;
+    }
+
+    let left = i64::from(position.x);
+    let top = i64::from(position.y);
+    let right = left + i64::from(size.width);
+    let bottom = top + i64::from(size.height);
+
+    monitors.iter().all(|monitor| {
+        let monitor_position = monitor.position();
+        let monitor_size = monitor.size();
+        let monitor_left = i64::from(monitor_position.x);
+        let monitor_top = i64::from(monitor_position.y);
+        let monitor_right = monitor_left + i64::from(monitor_size.width);
+        let monitor_bottom = monitor_top + i64::from(monitor_size.height);
+        right <= monitor_left
+            || left >= monitor_right
+            || bottom <= monitor_top
+            || top >= monitor_bottom
+    })
+}
+
+fn reveal_main_window<R: Runtime>(window: &WebviewWindow<R>) {
+    let minimized = window.is_minimized().unwrap_or(false);
+    let offscreen = main_window_is_offscreen(window);
+    if minimized {
+        let _ = window.unminimize();
+    }
+    if !window.is_visible().unwrap_or(false) {
+        let _ = window.show();
+    }
+    if offscreen {
+        let _ = window.center();
+    }
+    let _ = window.set_focus();
+}
+
 fn main() {
     let exit = ExitCoordinator::new();
     let exit_setup = exit.clone();
@@ -946,8 +996,7 @@ fn main() {
                 return;
             }
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
+                reveal_main_window(&window);
             }
         }))
         .manage(OwnedSidecar::new())
@@ -969,6 +1018,7 @@ fn main() {
                 .title("GA-Hub")
                 .inner_size(1320.0, 860.0)
                 .min_inner_size(960.0, 600.0)
+                .center()
                 .resizable(true)
                 .build()?;
 
