@@ -17,7 +17,7 @@ from server.services.conductor_service import (
 from server.services.request_usage import RequestUsageStore
 
 
-def test_conductor_request_lifecycle_activates_records_and_completes():
+def test_conductor_turn_lifecycle_activates_records_without_completing_workflow():
     service = object.__new__(ConductorService)
     service.usage_store = RequestUsageStore(clock=lambda: 10.0)
     request_id = service.usage_store.begin("rid-1")
@@ -33,11 +33,39 @@ def test_conductor_request_lifecycle_activates_records_and_completes():
     assert row["requests"] == 1
     assert row["input"] == 7
     assert row["output"] == 3
-    assert row["attribution"] == "OK"
-    assert row["completed_at"] == 10.0
+    assert row["attribution"] == "PENDING"
+    assert row["completed_at"] is None
 
 
-def test_conductor_success_outcome_publishes_explicit_completion_event():
+def test_cooperative_yield_publishes_a_nonterminal_turn_outcome():
+    service = object.__new__(ConductorService)
+    service.chat_messages = []
+    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
+    request_id = service.usage_store.begin("rid-yield")
+    callbacks = HubConductorCallbacks(service)
+    token = callbacks.on_conductor_request_started(request_id)
+
+    with patch("server.services.conductor_service.bus.publish") as publish:
+        callbacks.on_conductor_request_yielded(
+            request_id,
+            token,
+            RequestOutcome(status="yielded", phase="yield"),
+        )
+
+    publish.assert_called_once_with(
+        "conductor:request_outcome",
+        {
+            "request_id": request_id,
+            "status": "yielded",
+            "phase": "yield",
+        },
+    )
+    row = service.usage_store.list()[0]
+    assert row["attribution"] == "PENDING"
+    assert row["completed_at"] is None
+
+
+def test_conductor_success_outcome_publishes_turn_event_without_completion_item():
     service = object.__new__(ConductorService)
     service.chat_messages = [
         {"id": "plan", "role": "conductor", "msg": "dispatching"},
@@ -62,9 +90,11 @@ def test_conductor_success_outcome_publishes_explicit_completion_event():
             "request_id": request_id,
             "status": "ok",
             "phase": "finish",
-            "item": service.chat_messages[-1],
         },
     )
+    row = service.usage_store.list()[0]
+    assert row["attribution"] == "PENDING"
+    assert row["completed_at"] is None
 
 
 def test_subagent_stream_publishes_one_snapshot_without_per_chunk_metadata():
@@ -308,25 +338,26 @@ def test_usage_normalization_tolerates_non_mapping_details():
     assert row["cache_read"] == 0
 
 
-def test_request_finish_deactivates_context_when_complete_fails():
-    class FailingStore:
+def test_request_finish_deactivates_context_without_completing_usage():
+    class TrackingStore:
         def __init__(self):
             self.deactivated = []
+            self.completed = []
 
-        def complete(self, _request_id, _attribution="OK"):
-            raise RuntimeError("complete failed")
+        def complete(self, request_id, attribution="OK"):
+            self.completed.append((request_id, attribution))
 
         def deactivate(self, token):
             self.deactivated.append(token)
 
     service = object.__new__(ConductorService)
-    service.usage_store = FailingStore()
+    service.usage_store = TrackingStore()
     callbacks = HubConductorCallbacks(service)
 
-    with pytest.raises(RuntimeError, match="complete failed"):
-        callbacks.on_conductor_request_finished("rid-1", "token-1")
+    callbacks.on_conductor_request_finished("rid-1", "token-1")
 
     assert service.usage_store.deactivated == ["token-1"]
+    assert service.usage_store.completed == []
 
 
 @pytest.mark.parametrize("phase", ["prompt", "dispatch", "drain"])

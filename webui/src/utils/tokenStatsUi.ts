@@ -1,7 +1,9 @@
-import type { TokenHistoryPoint, TokenThreadStats, TokenWeekStats } from '@/api/types'
+import type { TokenDayStats, TokenHistoryPoint, TokenThreadStats, TokenWeekStats } from '@/api/types'
 
-export const SESSION_PAGE_SIZE = 8
+export const TOP_SESSION_COUNT = 6
 export const WEEK_PREVIEW_SIZE = 6
+
+export type DailyUsageRange = 'week' | '30d'
 
 export function compactTokens(value: number) {
   const number = Number.isFinite(value) ? value : 0
@@ -37,26 +39,53 @@ export function dailyUsage(points: TokenHistoryPoint[]) {
   return [...grouped.entries()].map(([date, value]) => ({ date, ...value })).sort((a, b) => a.date.localeCompare(b.date))
 }
 
-export function readableThreadName(thread: string, index: number) {
-  const cleaned = thread
-    .replace(/^thread[-_: ]*/i, '')
-    .replace(/^session[-_: ]*/i, '')
-    .replace(/[_-]+/g, ' ')
-    .trim()
-  if (!cleaned || /^[0-9a-f]{16,}$/i.test(cleaned)) return `会话 ${index + 1}`
-  return cleaned.length > 42 ? `${cleaned.slice(0, 39)}…` : cleaned
+function parseDate(value: string) {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(year, month - 1, day, 12)
 }
 
-export function filterThreads(rows: TokenThreadStats[], query: string) {
-  const needle = query.trim().toLocaleLowerCase()
-  const sorted = [...rows].sort((a, b) => b.total - a.total)
-  return needle ? sorted.filter((row, index) => `${readableThreadName(row.thread, index)} ${row.thread}`.toLocaleLowerCase().includes(needle)) : sorted
+function dateKey(value: Date) {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
 }
 
-export function pageItems<T>(rows: T[], page: number, pageSize = SESSION_PAGE_SIZE) {
-  const pages = Math.max(1, Math.ceil(rows.length / pageSize))
-  const safePage = Math.min(Math.max(1, page), pages)
-  return { items: rows.slice((safePage - 1) * pageSize, safePage * pageSize), page: safePage, pages }
+const emptyDay = (date: string): TokenDayStats => ({
+  date,
+  requests: 0,
+  input: 0,
+  output: 0,
+  cache_create: 0,
+  cache_read: 0,
+  total: 0,
+  cache_hit_rate: 0,
+})
+
+export function usageRangeDays(
+  rows: TokenDayStats[],
+  range: DailyUsageRange,
+  currentWeek: Pick<TokenWeekStats, 'week_start' | 'week_end'>,
+  timestamp: number,
+) {
+  const byDate = new Map(rows.map(row => [row.date, row]))
+  const end = range === 'week' ? parseDate(currentWeek.week_end) : new Date(timestamp * 1000)
+  const start = range === 'week' ? parseDate(currentWeek.week_start) : new Date(end)
+  if (range === '30d') start.setDate(end.getDate() - 29)
+
+  const result: TokenDayStats[] = []
+  const date = new Date(start)
+  while (date <= end) {
+    const key = dateKey(date)
+    result.push(byDate.get(key) ?? emptyDay(key))
+    date.setDate(date.getDate() + 1)
+  }
+  return result
+}
+
+export function topSessions(rows: TokenThreadStats[], count = TOP_SESSION_COUNT) {
+  return [...rows].sort((a, b) => b.total - a.total).slice(0, count)
+}
+
+export function sessionTitle(row: TokenThreadStats) {
+  return row.title.trim() || '未命名会话'
 }
 
 export function visibleWeeks(rows: TokenWeekStats[], expanded: boolean) {

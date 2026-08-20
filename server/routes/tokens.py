@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from .. import _paths
+from ..services.session_metadata import SessionMetadataStore
 from ..services.token_usage_store import TokenUsageStore
 
 router = APIRouter(prefix="/api/tokens", tags=["tokens"])
@@ -19,6 +20,7 @@ log = logging.getLogger(__name__)
 _HISTORY_FILE = _paths.ADMIN_DATA / "token_history.json"
 _USAGE_FILE = _paths.ADMIN_DATA / "token_usage.json"
 _STORE = TokenUsageStore(usage_path=_USAGE_FILE, history_path=_HISTORY_FILE)
+_SESSION_METADATA = SessionMetadataStore()
 _HISTORY_LOCK = threading.Lock()
 _SESSION_ID = uuid.uuid4().hex
 _TOTAL_KEYS = ("requests", "input", "output", "cache_create", "cache_read", "total")
@@ -27,6 +29,7 @@ _PERSIST_INTERVAL = 15
 _PERSIST_STOP = threading.Event()
 _PERSIST_THREAD: threading.Thread | None = None
 _MAX_AGE = 30 * 24 * 3600
+_CURSOR_LIMIT = 32
 
 try:
     import cost_tracker
@@ -82,7 +85,38 @@ def _read_usage() -> dict[str, Any]:
     data = _STORE.read_usage()
     if data is not None:
         return data
-    return {"version": 4, "days": {}, "weeks": {}, "all_time": {}, "session": {}, "sessions": {}}
+    return {"version": 5, "days": {}, "weeks": {}, "all_time": {}, "session": {}, "sessions": {}}
+
+
+def _process_cursor(data: dict[str, Any], cursors_key: str, legacy_key: str) -> dict[str, int]:
+    cursors = data.get(cursors_key) if isinstance(data.get(cursors_key), dict) else {}
+    current = cursors.get(_SESSION_ID)
+    if isinstance(current, dict):
+        return _normalise_totals(current.get("totals"))
+    legacy = data.get(legacy_key) if isinstance(data.get(legacy_key), dict) else {}
+    if legacy.get("id") == _SESSION_ID:
+        return _normalise_totals(legacy.get("totals"))
+    return _normalise_totals({})
+
+
+def _remember_process_cursor(
+    data: dict[str, Any],
+    cursors_key: str,
+    totals: dict[str, int],
+    timestamp: int,
+) -> None:
+    cursors = data.setdefault(cursors_key, {})
+    if not isinstance(cursors, dict):
+        cursors = {}
+        data[cursors_key] = cursors
+    cursors[_SESSION_ID] = {"totals": totals, "updated_at": timestamp}
+    if len(cursors) > _CURSOR_LIMIT:
+        newest = sorted(
+            cursors.items(),
+            key=lambda item: int(item[1].get("updated_at") or 0) if isinstance(item[1], dict) else 0,
+            reverse=True,
+        )[:_CURSOR_LIMIT]
+        data[cursors_key] = dict(newest)
 
 
 def _history_daily_totals() -> dict[str, dict[str, int]]:
@@ -135,20 +169,49 @@ def _write_usage(data: dict[str, Any]) -> None:
     _STORE.write_usage(data)
 
 
+def _session_title(metadata: dict[str, Any]) -> str:
+    title = str(metadata.get("title") or "").strip()
+    if title:
+        return title[:200]
+    archive_path = metadata.get("archive_path")
+    if archive_path:
+        try:
+            from .conversations import _first_user_preview
+
+            preview = _first_user_preview(str(archive_path)).strip()
+            if preview:
+                return preview[:200]
+        except Exception:
+            log.debug("could not derive token session title", exc_info=True)
+    return "未命名会话"
+
+
 def _session_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
     source = data.get("sessions") if isinstance(data.get("sessions"), dict) else {}
+    try:
+        metadata_rows = _SESSION_METADATA.list()
+    except (OSError, ValueError):
+        log.warning("could not read session titles for token statistics", exc_info=True)
+        metadata_rows = []
+    metadata_by_id = {
+        str(row.get("id")): row
+        for row in metadata_rows
+        if isinstance(row, dict) and row.get("id")
+    }
     rows = []
     for session_id, value in source.items():
-        if not isinstance(value, dict):
+        metadata = metadata_by_id.get(str(session_id))
+        if not isinstance(value, dict) or metadata is None:
             continue
         totals = _with_rate(_normalise_totals(value.get("totals")))
         rows.append({
             "thread": str(session_id),
+            "title": _session_title(metadata),
             **totals,
             "elapsed_seconds": 0.0,
             "updated_at": int(value.get("updated_at") or 0),
         })
-    rows.sort(key=lambda row: (row["updated_at"], row["total"]), reverse=True)
+    rows.sort(key=lambda row: (row["total"], row["updated_at"]), reverse=True)
     return rows
 
 
@@ -163,10 +226,9 @@ def record_session_usage(session_id: str | None, current: dict[str, Any] | None 
         return _normalise_totals({})
     snapshot = current or _stats().get("totals", {})
     now = int(time.time())
-    with _HISTORY_LOCK:
+    with _HISTORY_LOCK, _STORE.transaction():
         data = _read_usage()
-        cursor = data.get("allocation_cursor") if isinstance(data.get("allocation_cursor"), dict) else {}
-        previous = _normalise_totals(cursor.get("totals")) if cursor.get("id") == _SESSION_ID else _normalise_totals({})
+        previous = _process_cursor(data, "allocation_cursors", "allocation_cursor")
         totals = _normalise_totals(snapshot)
         delta = {key: totals[key] - previous[key] if totals[key] >= previous[key] else totals[key] for key in _TOTAL_KEYS}
         sessions = data.setdefault("sessions", {})
@@ -176,10 +238,32 @@ def record_session_usage(session_id: str | None, current: dict[str, Any] | None 
             "totals": {key: accumulated[key] + delta[key] for key in _TOTAL_KEYS},
             "updated_at": now,
         }
-        data["allocation_cursor"] = {"id": _SESSION_ID, "totals": totals, "updated_at": now}
-        data["version"] = 4
+        _remember_process_cursor(data, "allocation_cursors", totals, now)
+        data["version"] = 5
         _write_usage(data)
         return delta
+
+
+def _weeks_from_days(days_source: dict[str, Any]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, int]] = {}
+    for day_key, value in days_source.items():
+        try:
+            day = datetime.strptime(str(day_key), "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            continue
+        week_start = (day - timedelta(days=day.weekday())).isoformat()
+        current = _normalise_totals(grouped.get(week_start))
+        totals = _normalise_totals(value)
+        grouped[week_start] = {key: current[key] + totals[key] for key in _TOTAL_KEYS}
+    rows = []
+    for week_start in sorted(grouped):
+        start_date = datetime.strptime(week_start, "%Y-%m-%d").date()
+        rows.append({
+            "week_start": week_start,
+            "week_end": (start_date + timedelta(days=6)).isoformat(),
+            **_with_rate(grouped[week_start]),
+        })
+    return rows
 
 
 def _weekly_response(data: dict[str, Any], timestamp: int) -> dict[str, Any]:
@@ -188,15 +272,7 @@ def _weekly_response(data: dict[str, Any], timestamp: int) -> dict[str, Any]:
         {"date": date, **_with_rate(_normalise_totals(days_source[date]))}
         for date in sorted(days_source)
     ]
-    rows = []
-    weeks = data.get("weeks") if isinstance(data.get("weeks"), dict) else {}
-    for week_start in sorted(weeks):
-        start_date = datetime.strptime(week_start, "%Y-%m-%d").date()
-        rows.append({
-            "week_start": week_start,
-            "week_end": (start_date + timedelta(days=6)).isoformat(),
-            **_with_rate(_normalise_totals(weeks[week_start])),
-        })
+    rows = _weeks_from_days(days_source)
     current_start, current_end = _week_dates(timestamp)
     current = next((row for row in rows if row["week_start"] == current_start), None)
     if current is None:
@@ -204,7 +280,8 @@ def _weekly_response(data: dict[str, Any], timestamp: int) -> dict[str, Any]:
     all_time_source = data.get("all_time")
     if not isinstance(all_time_source, dict):
         migrated = _normalise_totals({})
-        for week in weeks.values():
+        legacy_weeks = data.get("weeks") if isinstance(data.get("weeks"), dict) else {}
+        for week in legacy_weeks.values():
             totals = _normalise_totals(week)
             migrated = {key: migrated[key] + totals[key] for key in _TOTAL_KEYS}
         all_time_source = migrated
@@ -218,35 +295,30 @@ def _weekly_response(data: dict[str, Any], timestamp: int) -> dict[str, Any]:
 
 
 def _persist_snapshot(snap: dict[str, Any]) -> dict[str, Any]:
-    """Merge this process's cumulative snapshot into durable weekly and all-time totals."""
+    """Merge one process's cumulative snapshot into the durable daily ledger."""
     timestamp = int(snap.get("timestamp") or time.time())
     current = _normalise_totals(snap.get("totals"))
-    with _HISTORY_LOCK:
+    with _HISTORY_LOCK, _STORE.transaction():
         data = _read_usage()
         _migrate_history_days(data)
-        weeks = data.setdefault("weeks", {})
         days = data.setdefault("days", {})
-        session = data.get("session") if isinstance(data.get("session"), dict) else {}
-        previous = _normalise_totals(session.get("totals")) if session.get("id") == _SESSION_ID else _normalise_totals({})
+        previous = _process_cursor(data, "process_cursors", "session")
         delta = {key: current[key] - previous[key] if current[key] >= previous[key] else current[key] for key in _TOTAL_KEYS}
         day_key = datetime.fromtimestamp(timestamp).date().isoformat()
         day = _normalise_totals(days.get(day_key))
         days[day_key] = {key: day[key] + delta[key] for key in _TOTAL_KEYS}
-        week_start, _ = _week_dates(timestamp)
-        week = _normalise_totals(weeks.get(week_start))
-        weeks[week_start] = {key: week[key] + delta[key] for key in _TOTAL_KEYS}
         all_time_source = data.get("all_time")
         if not isinstance(all_time_source, dict):
             all_time = _normalise_totals({})
-            for totals in weeks.values():
+            legacy_weeks = data.get("weeks") if isinstance(data.get("weeks"), dict) else {}
+            for totals in legacy_weeks.values():
                 values = _normalise_totals(totals)
                 all_time = {key: all_time[key] + values[key] for key in _TOTAL_KEYS}
-            all_time = {key: all_time[key] - delta[key] for key in _TOTAL_KEYS}
         else:
             all_time = _normalise_totals(all_time_source)
         data["all_time"] = {key: all_time[key] + delta[key] for key in _TOTAL_KEYS}
-        data["session"] = {"id": _SESSION_ID, "totals": current, "updated_at": timestamp}
-        data["version"] = 3
+        _remember_process_cursor(data, "process_cursors", current, timestamp)
+        data["version"] = 5
         try:
             _write_usage(data)
         except OSError:
@@ -293,7 +365,7 @@ def _read_history() -> list[dict[str, Any]]:
 
 
 def _sample(snap: dict[str, Any]) -> list[dict[str, Any]]:
-    with _HISTORY_LOCK:
+    with _HISTORY_LOCK, _STORE.transaction():
         history = _read_history()
         now = int(snap["timestamp"])
         history = [item for item in history if isinstance(item, dict) and int(item.get("timestamp", 0)) >= now - _MAX_AGE]

@@ -62,10 +62,23 @@ class TokenPersistenceTests(unittest.TestCase):
         self.assertEqual(restarted["all_time"]["total"], 165)
 
         persisted = json.loads(self.usage.read_text("utf-8"))
-        self.assertEqual(persisted["version"], 3)
+        self.assertGreaterEqual(persisted["version"], 3)
         self.assertEqual(persisted["days"]["2026-07-06"]["total"], 165)
-        self.assertEqual(persisted["weeks"]["2026-07-06"]["total"], 165)
         self.assertEqual(persisted["all_time"]["total"], 165)
+
+    def test_persistence_cursor_is_kept_per_process_when_processes_interleave(self) -> None:
+        monday = int(datetime(2026, 7, 6, 9, 0).timestamp())
+
+        with mock.patch.object(tokens, "_SESSION_ID", "process-a"):
+            tokens._persist_snapshot(snap(100, monday))
+        with mock.patch.object(tokens, "_SESSION_ID", "process-b"):
+            tokens._persist_snapshot(snap(25, monday + 60))
+        with mock.patch.object(tokens, "_SESSION_ID", "process-a"):
+            result = tokens._persist_snapshot(snap(140, monday + 120))
+
+        self.assertEqual(result["days"][0]["total"], 165)
+        self.assertEqual(result["current_week"]["total"], 165)
+        self.assertEqual(result["all_time"]["total"], 165)
 
     def test_daily_totals_use_durable_deltas_across_day_boundary(self) -> None:
         monday = int(datetime(2026, 7, 6, 23, 59).timestamp())
@@ -77,7 +90,7 @@ class TokenPersistenceTests(unittest.TestCase):
             [("2026-07-06", 100), ("2026-07-07", 40)],
         )
 
-    def test_legacy_week_data_is_migrated_to_independent_all_time_total(self) -> None:
+    def test_legacy_week_data_preserves_all_time_while_days_start_independently(self) -> None:
         monday = int(datetime(2026, 7, 13, 9, 0).timestamp())
         legacy = {
             "version": 1,
@@ -92,9 +105,10 @@ class TokenPersistenceTests(unittest.TestCase):
         result = tokens._persist_snapshot(snap(5, monday))
 
         self.assertEqual(result["all_time"]["total"], 105)
+        self.assertEqual(result["current_week"]["total"], 5)
         persisted = json.loads(self.usage.read_text("utf-8"))
         self.assertEqual(persisted["all_time"]["total"], 105)
-        self.assertEqual(persisted["weeks"]["2026-07-13"]["total"], 25)
+        self.assertEqual(persisted["days"]["2026-07-13"]["total"], 5)
 
     def test_usage_is_grouped_into_monday_to_sunday_natural_weeks(self) -> None:
         sunday = int(datetime(2026, 7, 12, 23, 59).timestamp())
@@ -139,10 +153,18 @@ class TokenPersistenceTests(unittest.TestCase):
         stored = json.loads(self.usage.read_text("utf-8"))
         self.assertEqual(stored["sessions"]["chat-a"]["totals"]["input"], 120)
         self.assertEqual(stored["sessions"]["chat-b"]["totals"]["input"], 60)
-        rows = {
-            row["thread"]: row
-            for row in tokens._weekly_response(stored, int(datetime.now().timestamp()))["threads"]
-        }
+        metadata = mock.Mock()
+        metadata.list.return_value = [
+            {"id": "chat-a", "title": "会话 A"},
+            {"id": "chat-b", "title": "会话 B"},
+        ]
+        with mock.patch.object(tokens, "_SESSION_METADATA", metadata):
+            rows = {
+                row["thread"]: row
+                for row in tokens._weekly_response(
+                    stored, int(datetime.now().timestamp())
+                )["threads"]
+            }
         self.assertEqual(rows["chat-a"]["total"], 140)
         self.assertEqual(rows["chat-b"]["total"], 75)
 
@@ -166,7 +188,88 @@ class TokenPersistenceTests(unittest.TestCase):
         stored = json.loads(self.usage.read_text("utf-8"))
         self.assertEqual(stored["sessions"]["chat-old"]["totals"], old_totals)
         self.assertEqual(stored["sessions"]["chat-new"]["totals"], fresh_totals)
-        self.assertEqual(stored["allocation_cursor"]["id"], "new-process")
+
+    def test_allocation_cursor_is_kept_per_process_when_processes_interleave(self) -> None:
+        first_a = {**ZERO, "requests": 1, "input": 100, "total": 100}
+        first_b = {**ZERO, "requests": 1, "input": 25, "total": 25}
+        second_a = {**ZERO, "requests": 2, "input": 140, "total": 140}
+
+        with mock.patch.object(tokens, "_SESSION_ID", "process-a"):
+            tokens.record_session_usage("chat-a", first_a)
+        with mock.patch.object(tokens, "_SESSION_ID", "process-b"):
+            tokens.record_session_usage("chat-b", first_b)
+        with mock.patch.object(tokens, "_SESSION_ID", "process-a"):
+            delta = tokens.record_session_usage("chat-a", second_a)
+
+        stored = json.loads(self.usage.read_text("utf-8"))
+        self.assertEqual(delta["total"], 40)
+        self.assertEqual(stored["sessions"]["chat-a"]["totals"]["total"], 140)
+        self.assertEqual(stored["sessions"]["chat-b"]["totals"]["total"], 25)
+
+    def test_week_rows_are_derived_from_days_and_match_daily_totals(self) -> None:
+        day_one = {**ZERO, "requests": 1, "input": 100, "output": 20, "total": 120}
+        day_two = {**ZERO, "requests": 2, "input": 40, "output": 10, "total": 50}
+        next_week = {**ZERO, "requests": 1, "input": 10, "output": 5, "total": 15}
+        data = {
+            "days": {
+                "2026-07-06": day_one,
+                "2026-07-07": day_two,
+                "2026-07-13": next_week,
+            },
+            # A stale legacy cache must not disagree with the daily ledger.
+            "weeks": {"2026-07-06": {**ZERO, "input": 999, "total": 999}},
+            "all_time": {**ZERO, "input": 150, "output": 35, "total": 185},
+            "sessions": {},
+        }
+
+        response = tokens._weekly_response(
+            data, int(datetime(2026, 7, 13, 12, 0).timestamp())
+        )
+
+        self.assertEqual(
+            [(row["week_start"], row["total"]) for row in response["weeks"]],
+            [("2026-07-06", 170), ("2026-07-13", 15)],
+        )
+        for key in tokens._TOTAL_KEYS:
+            self.assertEqual(
+                sum(row[key] for row in response["weeks"]),
+                sum(row[key] for row in response["days"]),
+            )
+        self.assertEqual(response["current_week"]["total"], 15)
+
+    def test_session_rows_use_titles_filter_orphans_and_sort_by_total(self) -> None:
+        def entry(total: int, updated_at: int) -> dict:
+            return {
+                "totals": {**ZERO, "input": total, "total": total},
+                "updated_at": updated_at,
+            }
+
+        data = {
+            "sessions": {
+                "session-light": entry(100, 999),
+                "session-heavy": entry(500, 1),
+                "session-medium": entry(300, 500),
+                "session-orphan": entry(10_000, 1000),
+            }
+        }
+        metadata = mock.Mock()
+        metadata.list.return_value = [
+            {"id": "session-light", "title": "轻量讨论"},
+            {"id": "session-heavy", "title": "架构优化方案"},
+            {"id": "session-medium", "title": "历史会话性能"},
+        ]
+
+        with mock.patch.object(tokens, "_SESSION_METADATA", metadata):
+            rows = tokens._session_rows(data)
+
+        self.assertEqual(
+            [(row["thread"], row["title"], row["total"]) for row in rows],
+            [
+                ("session-heavy", "架构优化方案", 500),
+                ("session-medium", "历史会话性能", 300),
+                ("session-light", "轻量讨论", 100),
+            ],
+        )
 
     def test_background_persistence_is_singleton_and_flushes_on_stop(self) -> None:
         tokens.stop_persistence()

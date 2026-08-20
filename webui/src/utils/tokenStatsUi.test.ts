@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { TokenThreadStats, TokenWeekStats } from '@/api/types'
-import { compactTokens, dailyUsage, filterThreads, pageItems, readableThreadName, visibleWeeks } from './tokenStatsUi'
+import type { TokenDayStats, TokenThreadStats, TokenWeekStats } from '@/api/types'
+import { compactTokens, dailyUsage, sessionTitle, topSessions, usageRangeDays, visibleWeeks } from './tokenStatsUi'
 
 describe('compactTokens', () => {
   it('uses deterministic k, m, and b token units', () => {
@@ -14,6 +14,7 @@ describe('compactTokens', () => {
 
 const thread = (name: string, total: number): TokenThreadStats => ({
   thread: name,
+  title: name,
   requests: 1,
   input: Math.floor(total * 0.6),
   output: Math.floor(total * 0.2),
@@ -49,16 +50,37 @@ describe('token stats presentation', () => {
     expect(rows[0]).not.toHaveProperty('cacheCreation')
   })
 
-  it('sorts and filters session usage, then clamps pagination', () => {
-    const rows = [thread('research_room', 200), thread('chat-main', 900), thread('quiet', 20)]
-    expect(filterThreads(rows, '').map((item) => item.thread)).toEqual(['chat-main', 'research_room', 'quiet'])
-    expect(filterThreads(rows, 'research')).toHaveLength(1)
-    expect(pageItems(rows, 99, 2)).toMatchObject({ page: 2, pages: 2, items: [rows[2]] })
+  it('keeps only the six sessions with the highest total usage', () => {
+    const rows = Array.from({ length: 8 }, (_, index) => thread(`会话 ${index + 1}`, (index + 1) * 100))
+    expect(topSessions(rows).map((item) => item.total)).toEqual([800, 700, 600, 500, 400, 300])
   })
 
-  it('makes opaque tracker identifiers readable while preserving useful names', () => {
-    expect(readableThreadName('session-research_room', 0)).toBe('research room')
-    expect(readableThreadName('8c47f7319833a00481dfb6aa', 2)).toBe('会话 3')
+  it('uses the persisted session title and handles an empty title', () => {
+    expect(sessionTitle(thread('需求分析', 100))).toBe('需求分析')
+    expect(sessionTitle({ ...thread('ignored', 100), title: '   ' })).toBe('未命名会话')
+  })
+
+  it('uses the exact natural-week boundaries returned by the server', () => {
+    const rows: TokenDayStats[] = [
+      { date: '2026-07-13', requests: 1, input: 10, output: 2, cache_create: 0, cache_read: 3, total: 15, cache_hit_rate: 20 },
+      { date: '2026-07-15', requests: 2, input: 20, output: 4, cache_create: 0, cache_read: 6, total: 30, cache_hit_rate: 20 },
+      { date: '2026-07-20', requests: 3, input: 30, output: 6, cache_create: 0, cache_read: 9, total: 45, cache_hit_rate: 20 },
+    ]
+    const currentWeek = { week_start: '2026-07-13', week_end: '2026-07-19' }
+    const shown = usageRangeDays(rows, 'week', currentWeek, new Date(2026, 6, 15, 12).getTime() / 1000)
+    expect(shown).toHaveLength(7)
+    expect(shown.map(row => row.date)).toEqual([
+      '2026-07-13', '2026-07-14', '2026-07-15', '2026-07-16', '2026-07-17', '2026-07-18', '2026-07-19',
+    ])
+    expect(shown.reduce((sum, row) => sum + row.total, 0)).toBe(45)
+  })
+
+  it('builds a rolling 30-day range ending at the response timestamp', () => {
+    const end = new Date(2026, 6, 15, 12)
+    const shown = usageRangeDays([], '30d', { week_start: '2026-07-13', week_end: '2026-07-19' }, end.getTime() / 1000)
+    expect(shown).toHaveLength(30)
+    expect(shown[0].date).toBe('2026-06-16')
+    expect(shown.at(-1)?.date).toBe('2026-07-15')
   })
 
   it('shows the six newest weeks first until explicitly expanded', () => {
