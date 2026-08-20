@@ -178,6 +178,34 @@ describe('SessionRail', () => {
     ])
   })
 
+  it('keeps a newly created unstarted session above sessions with older activity', () => {
+    const newSession: HubSession = {
+      id: 'dddddddd-4444-4444-8444-444444444444',
+      title: '',
+      llm_key: null,
+      llm_index: null,
+      archive_path: null,
+      created_at: '2026-08-05T12:00:00Z',
+      updated_at: '2026-08-05T12:00:00Z',
+    }
+    localStorage.setItem('gahub.sessionRailRecentActivity', JSON.stringify([sessions[0].id, sessions[1].id]))
+
+    act(() => root.render(
+      <SessionRail
+        sessions={[...sessions, newSession]}
+        runtimes={{
+          ...runtimes,
+          [newSession.id]: { session_id: newSession.id, status: 'idle', run_id: null, stream_id: null },
+        }}
+        currentId={newSession.id}
+        onSelect={vi.fn()}
+      />,
+    ))
+
+    const firstCard = host.querySelector('[data-activity]')
+    expect(firstCard?.textContent).toContain('未命名会话 · dddddddd')
+  })
+
   it('shows an unseen completed run immediately and persists acknowledgement on selection', () => {
     const onSelect = vi.fn()
     const completedRuntimes = {
@@ -202,7 +230,7 @@ describe('SessionRail', () => {
     })
   })
 
-  it('starts collapsed and returns to the collapsed state when the active session changes', () => {
+  it('starts collapsed and keeps the user-selected expansion state when the active session changes', () => {
     act(() => root.render(
       <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,
     ))
@@ -216,7 +244,10 @@ describe('SessionRail', () => {
     act(() => root.render(
       <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[1].id} onSelect={vi.fn()} />,
     ))
-    expect(host.querySelector('[aria-label="展开会话管理"]')).not.toBeNull()
+    expect(host.querySelector('[aria-label="折叠会话管理"]')).not.toBeNull()
+    expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('false')
+
+    act(() => (host.querySelector('[aria-label="折叠会话管理"]') as HTMLButtonElement).click())
     expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('true')
   })
 })

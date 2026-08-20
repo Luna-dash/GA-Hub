@@ -65,6 +65,12 @@ function sessionTitle(session: HubSession) {
   return session.title.trim() || `未命名会话 · ${session.id.slice(0, 8)}`
 }
 
+function isUnstartedSession(session: HubSession) {
+  return !session.title.trim()
+    && !session.archive_path
+    && session.created_at === session.updated_at
+}
+
 function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreate, onRename, onDelete, creating }: SessionRailProps) {
   const [collapsed, setCollapsed] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -78,12 +84,6 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
   )
   const [recentActivity, setRecentActivity] = useState<string[]>(() => readJson<string[]>(RECENT_KEY, []))
   const previousActivity = useRef<Record<string, ReturnType<typeof sessionActivity>>>({})
-
-  // Session switches reuse the LiveChat route/component. Always return the
-  // rail to its compact state instead of carrying expansion across sessions.
-  useEffect(() => {
-    setCollapsed(true)
-  }, [currentId])
 
   useEffect(() => {
     const nextTerminal = { ...terminalState }
@@ -138,6 +138,10 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
   const orderedSessions = useMemo(() => {
     const rank = new Map(recentActivity.map((id, index) => [id, index]))
     return [...sessions].sort((a, b) => {
+      const aUnstarted = isUnstartedSession(a)
+      const bUnstarted = isUnstartedSession(b)
+      if (aUnstarted !== bUnstarted) return aUnstarted ? -1 : 1
+      if (aUnstarted && bUnstarted) return b.created_at.localeCompare(a.created_at)
       const ar = rank.get(a.id) ?? Number.MAX_SAFE_INTEGER
       const br = rank.get(b.id) ?? Number.MAX_SAFE_INTEGER
       if (ar !== br) return ar - br
