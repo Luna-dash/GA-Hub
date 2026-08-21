@@ -122,9 +122,19 @@ class SessionMetadataStore:
                     if "project_path" in changes:
                         value = changes["project_path"]
                         row["project_path"] = value.strip() if isinstance(value, str) and value.strip() else None
-                    row["updated_at"] = _now()
                     self._write(data)
                     return dict(row)
+        raise SessionNotFoundError(session_id)
+
+    def touch(self, session_id: str) -> None:
+        """Bump updated_at to mark real message activity (submit/btw/rewind)."""
+        with self._lock:
+            data = self._read()
+            for row in data["sessions"]:
+                if row["id"] == session_id:
+                    row["updated_at"] = _now()
+                    self._write(data)
+                    return
         raise SessionNotFoundError(session_id)
 
     def bind_archive(self, session_id: str, archive_path: str | Path) -> dict[str, Any]:
@@ -168,7 +178,6 @@ class SessionMetadataStore:
                 current = row.get("archive_path")
                 if current and str(Path(current).resolve()) == path:
                     row["title"] = title.strip()
-                    row["updated_at"] = timestamp
                     self._write(data)
                     return dict(row)
             for row in data["sessions"]:
@@ -180,7 +189,6 @@ class SessionMetadataStore:
                         )
                     row["archive_path"] = path
                     row["title"] = title.strip()
-                    row["updated_at"] = timestamp
                     self._write(data)
                     return dict(row)
             row = {

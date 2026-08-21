@@ -46,7 +46,7 @@ const activityRail = {
   unknown: 'bg-amber-600/65 shadow-[0_0_0_3px_rgba(217,119,6,0.11)] group-hover:bg-amber-600/80',
 }
 
-const RECENT_KEY = 'gahub.sessionRailRecentActivity'
+try { localStorage.removeItem('gahub.sessionRailRecentActivity') } catch { /* legacy cleanup */ }
 const TERMINAL_KEY = 'gahub.sessionRailTerminalState'
 const SEEN_COMPLETED_KEY = 'gahub.sessionRailSeenCompletedRuns'
 type TerminalState = 'completed' | 'error'
@@ -66,9 +66,7 @@ function sessionTitle(session: HubSession) {
 }
 
 function isUnstartedSession(session: HubSession) {
-  return !session.title.trim()
-    && !session.archive_path
-    && session.created_at === session.updated_at
+  return !session.title.trim() && !session.archive_path
 }
 
 function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreate, onRename, onDelete, creating }: SessionRailProps) {
@@ -82,26 +80,17 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
   const [seenCompletedRuns, setSeenCompletedRuns] = useState<Record<string, string>>(
     () => readJson<Record<string, string>>(SEEN_COMPLETED_KEY, {}),
   )
-  const [recentActivity, setRecentActivity] = useState<string[]>(() => readJson<string[]>(RECENT_KEY, []))
   const previousActivity = useRef<Record<string, ReturnType<typeof sessionActivity>>>({})
 
   useEffect(() => {
     const nextTerminal = { ...terminalState }
-    const nextRecent = [...recentActivity]
     const nextPrevious = { ...previousActivity.current }
     let terminalChanged = false
-    let recentChanged = false
 
     sessions.forEach((session) => {
       const activity = sessionActivity(runtimes[session.id])
       const previous = nextPrevious[session.id]
       if (activity === 'active') {
-        if (nextRecent[0] !== session.id) {
-          const existingIndex = nextRecent.indexOf(session.id)
-          if (existingIndex >= 0) nextRecent.splice(existingIndex, 1)
-          nextRecent.unshift(session.id)
-          recentChanged = true
-        }
         if (nextTerminal[session.id]) {
           delete nextTerminal[session.id]
           terminalChanged = true
@@ -129,25 +118,22 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
       setTerminalState(nextTerminal)
       localStorage.setItem(TERMINAL_KEY, JSON.stringify(nextTerminal))
     }
-    if (recentChanged) {
-      setRecentActivity(nextRecent)
-      localStorage.setItem(RECENT_KEY, JSON.stringify(nextRecent.slice(0, 50)))
-    }
-  }, [runtimes, sessions, recentActivity, seenCompletedRuns, terminalState])
+  }, [runtimes, sessions, seenCompletedRuns, terminalState])
 
   const orderedSessions = useMemo(() => {
-    const rank = new Map(recentActivity.map((id, index) => [id, index]))
+    const weight = (session: HubSession) => {
+      if (isUnstartedSession(session)) return 0
+      if (sessionActivity(runtimes[session.id]) === 'active') return 1
+      return 2
+    }
     return [...sessions].sort((a, b) => {
-      const aUnstarted = isUnstartedSession(a)
-      const bUnstarted = isUnstartedSession(b)
-      if (aUnstarted !== bUnstarted) return aUnstarted ? -1 : 1
-      if (aUnstarted && bUnstarted) return b.created_at.localeCompare(a.created_at)
-      const ar = rank.get(a.id) ?? Number.MAX_SAFE_INTEGER
-      const br = rank.get(b.id) ?? Number.MAX_SAFE_INTEGER
-      if (ar !== br) return ar - br
+      const aw = weight(a)
+      const bw = weight(b)
+      if (aw !== bw) return aw - bw
+      if (aw === 0) return b.created_at.localeCompare(a.created_at)
       return b.updated_at.localeCompare(a.updated_at)
     })
-  }, [recentActivity, sessions])
+  }, [runtimes, sessions])
 
   const displayState = (session: HubSession): 'active' | 'completed' | 'idle' | 'error' => {
     const activity = sessionActivity(runtimes[session.id])

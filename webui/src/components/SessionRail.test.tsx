@@ -164,18 +164,20 @@ describe('SessionRail', () => {
     })
   })
 
-  it('keeps the previous recent sessions when a newly active session is promoted', () => {
-    localStorage.setItem('gahub.sessionRailRecentActivity', JSON.stringify([sessions[1].id, sessions[2].id]))
+  it('ignores legacy recent-activity ranks and orders by unstarted, running, then recency', () => {
+    localStorage.setItem('gahub.sessionRailRecentActivity', JSON.stringify([sessions[2].id, sessions[1].id]))
 
     act(() => root.render(
       <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,
     ))
 
-    expect(JSON.parse(localStorage.getItem('gahub.sessionRailRecentActivity') || '[]')).toEqual([
-      sessions[0].id,
-      sessions[1].id,
-      sessions[2].id,
+    const cards = Array.from(host.querySelectorAll('[data-activity]'))
+    expect(cards.map((card) => card.textContent)).toEqual([
+      expect.stringContaining('未命名会话 · bbbbbbbb'),
+      expect.stringContaining('研究任务'),
+      expect.stringContaining('未命名会话 · cccccccc'),
     ])
+    expect(localStorage.getItem('gahub.sessionRailRecentActivity')).not.toBeNull()
   })
 
   it('keeps a newly created unstarted session above sessions with older activity', () => {

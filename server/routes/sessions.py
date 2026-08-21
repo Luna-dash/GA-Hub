@@ -148,6 +148,7 @@ def _dispatch_scheduled_chat(task: ScheduledChat) -> None:
         source="scheduled",
         llm_key=llm_key,
     )
+    _store.touch(task.session_id)
 
 
 class LlmUnconfirmedError(RuntimeError):
@@ -630,6 +631,7 @@ async def submit_run(session_id: str, req: RunSubmit) -> SessionRuntimeResp:
             "restore_failed",
             "会话运行环境恢复失败，请稍后重试。",
         )
+    _store.touch(session_id)
     return SessionRuntimePayload.from_state(state)
 
 
@@ -644,6 +646,7 @@ async def session_btw(session_id: str, req: BtwReq):
         content = await asyncio.to_thread(
             _get_coordinator().side_question, session_id, question
         )
+        _store.touch(session_id)
         return BtwResp(ok=True, content=content)
     except SessionControlBusyError as exc:
         raise _api_error(
@@ -670,7 +673,7 @@ async def session_rewind(session_id: str, req: RewindReq):
     if not req.sid and req.n is None:
         raise _api_error(400, "invalid_rewind", "必须提供 sid 或 n。")
     try:
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             _get_coordinator().rewind,
             session_id,
             sid=req.sid,
@@ -695,6 +698,8 @@ async def session_rewind(session_id: str, req: RewindReq):
         raise _api_error(400, "invalid_rewind", str(exc))
     except RuntimeError as exc:
         raise _api_error(409, "rewind_unavailable", str(exc))
+    _store.touch(session_id)
+    return result
 
 
 @router.get("/api/sessions/{session_id}/scheduled-chats")
