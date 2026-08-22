@@ -100,7 +100,7 @@ export function ImagePasteInput({
   }, [text])
 
   // Auto-focus on mount + every time we re-enable. Mount focus matters
-  // when the user navigates to /chat — pywebview/WKWebView may not have
+  // when the user navigates to /chat — the WebView may not have
   // promoted the window to key yet, so we also retry once a frame later.
   // The disabled→false trigger covers the case where the agent finishes
   // streaming: the textarea unlocks, and we want the cursor back so the

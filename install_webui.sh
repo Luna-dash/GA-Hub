@@ -64,7 +64,7 @@ cat <<EOF
 ${GREEN}✓ 安装完成${NC}
 
 启动方式：
-  • 双击：     start.command
-  • 命令行：   $PY launch_webui.pyw
-  • 或纯后端：  $PY -m server.run         （浏览器打开 http://127.0.0.1:8765）
+  • 双击：     start.command        （macOS 浏览器模式）
+  • 纯后端：    $PY -m server.run   （浏览器打开 http://127.0.0.1:8765）
+  • 桌面版：    Windows 下运行 build_all.bat 构建 Tauri 壳
 EOF

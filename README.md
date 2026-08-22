@@ -25,20 +25,25 @@
 
 ## 一键安装与启动
 
-### macOS / Linux
-
-```bash
-cd GA-Hub
-./install_webui.sh    # 一次性装依赖 + 构建前端
-./start.command       # 启动；之后双击 start.command 即可
-```
+桌面入口是 **Tauri 单栈**（pywebview 启动器已退役）。
 
 ### Windows
 
 ```cmd
-install_webui.bat
-start.bat
+install_webui.bat      :: 一次性装依赖 + 构建前端
+build_all.bat          :: 一键交付构建：前端 → sidecar → Tauri 壳 → 产物守卫
+start.bat              :: 启动桌面版（未构建时给出指引）
 ```
+
+### macOS / Linux（浏览器模式）
+
+```bash
+cd GA-Hub
+./install_webui.sh     # 一次性装依赖 + 构建前端
+./start.command        # 启动后端；浏览器打开 http://127.0.0.1:8765
+```
+
+任何平台都可以跳过桌面壳，直接用浏览器模式：`python -m server.run`。
 
 ## 首次启动
 
@@ -94,9 +99,11 @@ start.bat
 或者改 `mykey.py` 里 `webui_port=...`（如果 GA 配了的话），
 或者设环境变量启动：`WEBUI_PORT=9000 ./start.command`。
 
-**Q: 启动卡在"正在打开文件夹选择器…"？**
-这是 pywebview 在等你选目录。请看你的 dock/任务栏，找到 macOS 的 Finder
-对话框选择 GenericAgent 目录即可。
+**Q: 启动后提示"Desktop app not built yet"？**
+桌面版需要先构建一次：运行 `build_all.bat`（Windows）。之后 `start.bat` 会直接启动它。
+
+**Q: 浏览器模式下保存 GA 目录后要重启？**
+浏览器模式请手动重启后端（Ctrl+C 后重新执行启动命令）。Tauri 桌面版在设置页保存后会出现「重启后端」按钮，点击即原地重启，无需关窗。
 
 ## 开发模式（前端热更新）
 
@@ -160,22 +167,27 @@ abort 超时会保守地继续占用活动槽并提示重启服务，避免旧 w
 GA-Hub/                              # 本项目 — 完全独立
 ├── pyproject.toml
 ├── README.md
-├── install_webui.sh / .bat          # 一键装依赖 + 构建
-├── start.command / start.bat        # 双击启动
-├── launch_webui.pyw                 # 启动入口（pywebview 原生窗口）
+├── install_webui.sh / .bat          # 一键装依赖 + 构建前端
+├── build_all.bat / .command         # 一键交付构建（前端→sidecar→Tauri→产物守卫）
+├── start.bat / start.command        # 双击启动（Tauri 桌面版 / 浏览器模式）
+├── scripts/
+│   └── build_all.py                 # 交付构建链核心逻辑
 ├── server/                          # FastAPI 后端
 │   ├── _paths.py                    # 路径发现 + 配置（关键）
 │   ├── main.py                      # 应用装配（setup mode / normal mode）
-│   ├── run.py                       # CLI 入口
-│   ├── routes/                      # 业务路由（agent / wechat / conv / memory / autonomous / setup / ...）
-│   └── services/                    # 业务服务（agent / wechat / autonomous / event_bus）
-└── webui/                           # Vite + React + TS 前端
-    ├── src/
-    │   ├── api/                     # client + 类型
-    │   ├── components/              # ImagePasteInput / MessageBubble / ...
-    │   ├── pages/                   # Settings + 8 个业务页
-    │   └── ...
-    └── dist/                        # 构建产物（自动被后端挂载）
+│   ├── run.py                       # CLI 入口（浏览器模式）
+│   ├── desktop_sidecar.py           # Tauri sidecar 入口（生命周期协议）
+│   ├── routes/                      # 业务路由（agent / sessions / conductor / ...）
+│   └── services/                    # 业务服务（agent / event_bus / scheduler / ...）
+├── webui/                           # Vite + React + TS 前端
+│   ├── src/
+│   │   ├── api/                     # client + 类型
+│   │   ├── components/              # ImagePasteInput / MessageBubble / ...
+│   │   ├── pages/                   # Settings + 8 个业务页
+│   │   └── ...
+│   └── dist/                        # 构建产物（自动被后端挂载）
+└── src-tauri/                       # Tauri 2 桌面壳（唯一桌面入口）
+    └── src/main.rs                  # sidecar 生命周期 + 无缝重启
 ```
 
 ## License

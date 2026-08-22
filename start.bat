@@ -1,36 +1,21 @@
 @echo off
 :: Launch the production Tauri shell on Windows.
-:: If this is a source checkout without a production artifact, start the
-:: pywebview/WebUI recovery entry instead of exiting silently.
+:: The pywebview launcher has been retired — Tauri is the only desktop entry.
+:: Without a built artifact, run build_all.bat once (or use browser mode:
+::   python -m server.run  →  http://127.0.0.1:8765 ).
 
 setlocal
 cd /d "%~dp0"
 
-set "TAURI_APP=src-tauri\target\release\ga-hub-desktop.exe"
-if exist "%TAURI_APP%" (
-  start "" "%TAURI_APP%"
-  exit /b 0
-)
-
+:: Canonical artifact — build_all.bat is the only supported way to produce it.
 set "TAURI_APP=src-tauri\target\x86_64-pc-windows-msvc\release\ga-hub-desktop.exe"
 if exist "%TAURI_APP%" (
   start "" "%TAURI_APP%"
   exit /b 0
 )
 
-:: Explorer/hidden-VBS launches may not have the conda environment on PATH.
-set "LAUNCHER=%~dp0launch_webui.pyw"
-set "GA_PYTHONW=D:\APP\anaconda3\envs\ga\pythonw.exe"
-if exist "%GA_PYTHONW%" (
-  start "GA-Hub" /b "%GA_PYTHONW%" "%LAUNCHER%"
-  exit /b 0
-)
-
-where pythonw.exe >nul 2>&1
-if not errorlevel 1 (
-  start "GA-Hub" /b pythonw.exe "%LAUNCHER%"
-  exit /b 0
-)
-
-echo GA-Hub launcher unavailable: neither Tauri nor pythonw was found.
+echo [GA-Hub] Desktop app not built yet.
+echo   1. Run build_all.bat once to produce it, or
+echo   2. Browser mode: python -m server.run  then open http://127.0.0.1:8765
+pause
 exit /b 1

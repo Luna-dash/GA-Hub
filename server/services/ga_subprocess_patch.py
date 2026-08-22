@@ -56,8 +56,8 @@ def _patch_ga_subprocess() -> None:
     In a PyInstaller-frozen ``.app`` build, ``sys.executable`` points at
     the bundle's Mach-O launcher, not Python. The launcher inherits the
     GUI ``Info.plist`` so each spawn shows up as a fresh Dock icon, and
-    ``-X``/``-u`` aren't understood — argv just gets fed back into
-    ``launch_webui.pyw:main`` which fails to run the user's code. Fix:
+    ``-X``/``-u`` aren't understood — argv just gets fed back into the
+    legacy GUI launcher entry, which fails to run the user's code. Fix:
     rewrite ``argv[0]`` to a real ``python3`` interpreter discovered by
     ``_paths.discover_user_python()``. We don't touch the helper-app
     path because user code routinely imports user-pip-installed packages

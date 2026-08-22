@@ -547,7 +547,7 @@ export default function LiveChat() {
           { confirmText: '选择目录' },
         )
         if (!proceed) return
-        if (!(isTauriDesktop() || window.pywebview?.api?.select_directory)) {
+        if (!isTauriDesktop()) {
           await dialog.alert('无法选择目录', '目录选择需要使用 GA-Hub 桌面窗口，请在桌面版中重试。')
           return
         }

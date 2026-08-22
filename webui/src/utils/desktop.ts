@@ -1,6 +1,6 @@
 /**
- * Desktop integration helpers. Tauri is the production shell; pywebview is
- * retained only as the documented source-checkout recovery path.
+ * Desktop integration helpers. Tauri is the production shell and the only
+ * desktop entry; plain browser mode falls back to standard web behavior.
  */
 import { openUrl } from '@tauri-apps/plugin-opener'
 
@@ -23,9 +23,13 @@ export function isTauriDesktop(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
-/** True in either supported desktop shell; used for affordance messaging. */
-export function isDesktopShell(): boolean {
-  return isTauriDesktop() || Boolean(window.pywebview?.api)
+/**
+ * Ask the Tauri shell to stop and respawn the Python sidecar in place.
+ * Port/instance-token stay identical, so the SPA can simply re-poll and reload.
+ */
+export async function restartDesktopBackend(): Promise<void> {
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('restart_backend')
 }
 
 /** Open an http(s) URL with the OS handler without leaving the WebView. */
@@ -34,35 +38,19 @@ export async function openExternalUrl(url: string): Promise<void> {
     await openUrl(url)
     return
   }
-
-  const bridge = window.pywebview?.api
-  if (typeof bridge?.open_url === 'function') {
-    await bridge.open_url(url)
-    return
-  }
-
   fallbackOpen(url)
 }
 
-/** Select a directory through the current desktop shell. */
+/** Select a directory through the desktop shell's native dialog. */
 export async function selectDirectory(): Promise<DesktopDirectorySelection> {
-  if (isTauriDesktop()) {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const selected = await open({ directory: true, multiple: false })
-    if (selected === null) return { ok: false, cancelled: true }
-    return { ok: true, path: selected }
-  }
-
-  const bridge = window.pywebview?.api
-  if (typeof bridge?.select_directory === 'function') {
-    const result = await bridge.select_directory()
-    return normalizeDesktopResult(result)
-  }
-
-  return { ok: false, error: 'not-desktop' }
+  if (!isTauriDesktop()) return { ok: false, error: 'not-desktop' }
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const selected = await open({ directory: true, multiple: false })
+  if (selected === null) return { ok: false, cancelled: true }
+  return { ok: true, path: selected }
 }
 
-/** Save text through the current desktop shell, with a browser fallback. */
+/** Save text through the desktop shell's native save dialog. */
 export async function saveTextExport(
   filename: string,
   content: string,
@@ -82,28 +70,8 @@ export async function saveTextExport(
     return { ok: true, path: target }
   }
 
-  const bridge = window.pywebview?.api
-  if (typeof bridge?.save_export === 'function') {
-    const result = await bridge.save_export(filename, content)
-    return normalizeDesktopResult(result)
-  }
-
   fallbackDownload(filename, content)
   return { ok: true }
-}
-
-function normalizeDesktopResult(result: unknown): DesktopExportResult {
-  if (typeof result !== 'object' || result === null) {
-    return { ok: false, error: 'invalid-desktop-result' }
-  }
-
-  const value = result as Partial<DesktopExportResult>
-  return {
-    ok: Boolean(value.ok),
-    path: typeof value.path === 'string' ? value.path : undefined,
-    cancelled: Boolean(value.cancelled),
-    error: typeof value.error === 'string' ? value.error : undefined,
-  }
 }
 
 function fallbackOpen(url: string): void {

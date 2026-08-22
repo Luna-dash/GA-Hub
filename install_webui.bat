@@ -61,7 +61,8 @@ if not exist "webui\dist\index.html" (
 echo.
 echo ===========================================
 echo  Done. To start:  double-click start.bat
-echo                  or run: %PY% launch_webui.pyw
+echo                  (desktop build: build_all.bat)
+echo  Browser mode :  %PY% -m server.run
 echo ===========================================
 echo.
 pause

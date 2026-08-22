@@ -3,8 +3,8 @@
 // staring at).
 //
 // Desktop shells need host support for notifications. Tauri uses its native
-// notification plugin; the pywebview recovery path and server contexts use
-// the backend notifier below. See ``server/services/notify_service.py``.
+// notification plugin; server/browser contexts use the backend notifier
+// below. See ``server/services/notify_service.py``.
 //
 // The OPT-IN flag still lives in localStorage — the toggle on the Settings
 // page just flips that bit; there's no permission state to track.

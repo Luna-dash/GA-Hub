@@ -39,8 +39,3 @@ def test_release_versions_match_pyproject() -> None:
 
     main_source = (ROOT / "server/main.py").read_text(encoding="utf-8")
     assert re.search(rf"FastAPI\(.*?version=[\"']{re.escape(version)}[\"']", main_source, re.DOTALL)
-
-    spec_source = (ROOT / "build/admin.spec").read_text(encoding="utf-8")
-    bundle_versions = re.findall(r'"CFBundle(?:ShortVersionString|Version)": "([^"]+)"', spec_source)
-    assert bundle_versions
-    assert set(bundle_versions) == {version}

@@ -577,7 +577,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     //   throttling, each one triggers set() → React re-render →
     //   ReactMarkdown re-parses the entire (growing) bubble. Past ~50 KB
     //   the WKWebView renderer falls behind its GPU watchdog, the WebKit
-    //   process is killed, pywebview reload-recovers the URL, the new tab
+    //   process is killed, the desktop shell reload-recovers the URL, the new tab
     //   reconnects → snapshot replays the same in-flight stream → crashes
     //   again. From the user's POV the connection-status badge cycles
     //   "连接中…/断开" and 停止/LLM-切换 buttons are unclickable because

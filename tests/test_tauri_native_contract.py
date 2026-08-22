@@ -48,8 +48,9 @@ def test_frontend_uses_one_desktop_capability_facade() -> None:
     desktop = _read("webui/src/utils/desktop.ts")
 
     assert "from '@tauri-apps/plugin-opener'" in desktop
-    assert "window.pywebview?.api" in desktop
-    assert "source-checkout recovery path" in desktop
+    # pywebview is retired — the facade must not carry bridge branches.
+    assert "pywebview" not in desktop
+    assert "restartDesktopBackend" in desktop
 
     for page in (
         "webui/src/pages/Conversations.tsx",
@@ -143,7 +144,12 @@ def test_tauri_startup_is_local_first_and_release_cwd_is_portable() -> None:
     assert "fn run_sidecar_supervisor" in rust
     assert "fn spawn_background_supervisor" in rust
     assert "fn desktop_backend_ready" in rust
-    assert "desktop_backend_ready\n        ])" in rust
+    # In-place restart: identity survives, only Ready/Failed may claim.
+    assert "fn restart_backend" in rust
+    assert "struct SidecarIdentity" in rust
+    assert "fn try_begin_restart" in rust
+    assert "fn restartable" in rust
+    assert "desktop_backend_ready,\n            restart_backend\n        ])" in rust
     assert "fn wait_http_ready(" in rust
     assert "child.try_wait()" in rust
     assert "sidecar exited before readiness" in rust
@@ -213,6 +219,13 @@ def test_local_app_router_gate_and_csp_contract() -> None:
     assert "queryDesktopBackendReadiness" in gate
     assert "phase: 'starting'" in gate
     assert "phase: 'failed'" in gate
+
+    # 启动加载层：墨点聚字动画（gahub-loader.js）取代 CSS 转圈。
+    # loader 必须经外链脚本接入（CSP script-src 'self' 禁内联），
+    # gate 在就绪/失败时负责调隐藏协议，starting 态不再自绘转圈。
+    assert "/gahub-loader.js" in index
+    assert "__GA_HUB_HIDE_LOADING__" in gate
+    assert "animate-spin" not in gate
 
     # Hash routing owns the desktop URL. Feature pages must not mutate the
     # underlying Tauri asset path behind React Router's back.

@@ -21,7 +21,8 @@ import {
   setNavPreferences,
   type NavPreference,
 } from '@/config/navigation'
-import { isDesktopShell, selectDirectory } from '@/utils/desktop'
+import { isTauriDesktop, restartDesktopBackend, selectDirectory } from '@/utils/desktop'
+import { waitForBackendReady } from '@/utils/backendRestart'
 import { queryKeys } from '@/queries/queryKeys'
 export default function Settings({ initialMode = 'settings' }: { initialMode?: 'settings' | 'setup' }) {
   const qc = useQueryClient()
@@ -34,6 +35,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [saveErr, setSaveErr] = useState<string | null>(null)
+  const [restarting, setRestarting] = useState(false)
 
   useEffect(() => {
     if (!setup) return
@@ -78,7 +80,9 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
     setSaveMsg(null); setSaveErr(null); setSaving(true)
     try {
       const r = await api.setupSave(input.trim(), pythonInput.trim())
-      setSaveMsg(`✓ 已保存：${r.ga_root}\n请重启后端（关闭并重开窗口）以加载新配置。`)
+      setSaveMsg(isTauriDesktop()
+        ? `✓ 已保存：${r.ga_root}\n点击「重启后端」立即生效。`
+        : `✓ 已保存：${r.ga_root}\n请重启后端以加载新配置（浏览器模式：Ctrl+C 后重新执行 python -m server.run）。`)
       await Promise.all([
         qc.invalidateQueries({ queryKey: queryKeys.setup }),
         qc.invalidateQueries({ queryKey: queryKeys.servicePanel }),
@@ -88,6 +92,20 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
       setSaveErr(msg)
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Desktop only: the Tauri shell owns the sidecar, so it can stop and
+  // respawn it in place (same port/token), then we reload into normal mode.
+  const restartBackend = async () => {
+    setRestarting(true); setSaveErr(null)
+    try {
+      await restartDesktopBackend()
+      await waitForBackendReady()
+      window.location.reload()
+    } catch (e: any) {
+      toast.error('重启后端失败：' + (e?.message || String(e)))
+      setRestarting(false)
     }
   }
 
@@ -135,7 +153,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
               placeholder="/path/to/GenericAgent"
               className="flex-1 bg-bg-soft border border-line rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"
             />
-            {isDesktopShell() && (
+            {isTauriDesktop() && (
               <button
                 type="button"
                 onClick={pickGaRoot}
@@ -172,12 +190,19 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
             </div>
           </div>
 
-          <div className="mt-4 flex items-center gap-2">
+          <div className="mt-4 flex items-center gap-2 flex-wrap">
             <button
               onClick={save}
               disabled={saving || !input.trim()}
               className="px-4 py-2 rounded-lg bg-accent text-white text-sm disabled:opacity-40"
             >{saving ? '保存中…' : '保存配置'}</button>
+            {isTauriDesktop() && saveMsg && !saving && (
+              <button
+                onClick={restartBackend}
+                disabled={restarting}
+                className="px-4 py-2 rounded-lg border border-accent text-accent text-sm hover:bg-accent/10 disabled:opacity-40"
+              >{restarting ? '重启中…' : '重启后端'}</button>
+            )}
             {saveMsg && <span className="text-sm text-emerald-400 whitespace-pre-line">{saveMsg}</span>}
             {saveErr && <span className="text-sm text-rose-400 whitespace-pre-line">{saveErr}</span>}
           </div>
@@ -212,7 +237,9 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
 
         {inSetup && setup?.configured && (
           <div className="rounded-xl border border-amber-700/60 bg-amber-900/20 p-4 text-sm text-amber-200">
-            ✓ 配置已保存。请关闭本窗口后重新双击 start.command（或 start.bat）以进入正常模式。
+            {isTauriDesktop()
+              ? '✓ 配置已保存。点击上方「重启后端」即可进入正常模式。'
+              : '✓ 配置已保存。请重启后端（Ctrl+C 后重新执行 python -m server.run）以进入正常模式。'}
           </div>
         )}
 

@@ -38,7 +38,7 @@ const qc = new QueryClient({
   },
 })
 
-// External http(s) links → OS default browser (pywebview js_api.open_url).
+// External http(s) links → OS default browser (Tauri opener plugin).
 // Prevents WebView2 from navigating away from the SPA with no back UI.
 installExternalLinkInterceptor()
 

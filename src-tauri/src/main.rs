@@ -548,7 +548,40 @@ impl OwnedSidecar {
             .unwrap_or_else(|e| e.into_inner())
             .readiness()
     }
+
+    /// Discard the finished lifecycle so a fresh supervisor can spawn again.
+    /// Only valid right after `finish_shutdown`.
+    fn reset(&self) {
+        let mut lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        *lifecycle = SidecarLifecycle::new();
+    }
+
+    /// Claim the current owner for a user-requested restart.
+    ///
+    /// Only Ready and Failed phases are restartable: Spawning/Running still
+    /// have a live supervisor thread that owns the next transition, and
+    /// Stopping/Stopped belong to shutdown coordination. The claim mirrors
+    /// `begin_shutdown`, so the regular close path stays mutually exclusive
+    /// with an in-flight restart.
+    fn try_begin_restart(&self) -> Result<ShutdownClaim<OwnedProcess>, String> {
+        let mut lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        if !restartable(&lifecycle.phase) {
+            return Err("backend is still starting up; retry once it is ready".to_string());
+        }
+        Ok(lifecycle.begin_shutdown())
+    }
 }
+
+/// Whether a user-requested restart may claim this phase.
+fn restartable(phase: &SidecarPhase) -> bool {
+    matches!(phase, SidecarPhase::Ready | SidecarPhase::Failed(_))
+}
+
+/// Port/token pair the shell allocated for the owning sidecar. Kept in managed
+/// state so `restart_backend` can respawn with the identical identity — the
+/// frontend's injected runtime config therefore survives a restart untouched.
+#[derive(Default)]
+struct SidecarIdentity(Mutex<Option<(u16, String)>>);
 
 #[tauri::command]
 fn save_text_export(target: String, contents: String) -> Result<(), String> {
@@ -558,6 +591,58 @@ fn save_text_export(target: String, contents: String) -> Result<(), String> {
 #[tauri::command]
 fn desktop_backend_ready(sidecar: tauri::State<'_, OwnedSidecar>) -> Result<bool, String> {
     sidecar.ready()
+}
+
+/// Stop the owning sidecar and respawn it with the identical port/token.
+///
+/// The claim/stop/respawn runs on a worker thread because the graceful stop
+/// can block for several seconds. The frontend keeps polling `/api/setup`
+/// meanwhile and reloads once the new process answers.
+#[tauri::command]
+fn restart_backend(
+    sidecar: tauri::State<'_, OwnedSidecar>,
+    identity: tauri::State<'_, SidecarIdentity>,
+    exit: tauri::State<'_, ExitCoordinator>,
+) -> Result<(), String> {
+    if !exit.is_running() {
+        return Err("application is shutting down".to_string());
+    }
+    let (port, token) = identity
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or_else(|| "sidecar identity unavailable".to_string())?;
+    let claim = sidecar.try_begin_restart()?;
+    let worker_sidecar = sidecar.inner().clone();
+    let worker_exit = exit.inner().clone();
+    let spawn_result = std::thread::Builder::new()
+        .name("backend-restart".to_string())
+        .spawn(move || {
+            if let ShutdownClaim::Owner(Some(mut process)) = claim {
+                stop_owned_process(&mut process);
+            }
+            worker_sidecar.finish_shutdown();
+            worker_sidecar.reset();
+            if let Err(error) =
+                spawn_background_supervisor(worker_sidecar.clone(), port, token, worker_exit.clone())
+            {
+                eprintln!("backend restart respawn failed: {error}");
+                let _ = worker_sidecar.set_failed(
+                    format!("GA-Hub desktop restart: {error}"),
+                    &worker_exit,
+                );
+            }
+        });
+    if let Err(error) = spawn_result {
+        // Roll the claim back into a coherent, diagnosable state instead of
+        // leaving the lifecycle stuck in Stopping forever.
+        sidecar.finish_shutdown();
+        sidecar.reset();
+        let _ = sidecar.set_failed(format!("GA-Hub desktop restart: {error}"), exit.inner());
+        return Err(format!("cannot spawn restart worker: {error}"));
+    }
+    Ok(())
 }
 
 #[cfg(debug_assertions)]
@@ -987,6 +1072,7 @@ fn main() {
     let exit = ExitCoordinator::new();
     let exit_setup = exit.clone();
     let exit_single_instance = exit.clone();
+    let exit_state = exit.clone();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -1000,9 +1086,12 @@ fn main() {
             }
         }))
         .manage(OwnedSidecar::new())
+        .manage(SidecarIdentity::default())
+        .manage(exit_state)
         .invoke_handler(tauri::generate_handler![
             save_text_export,
-            desktop_backend_ready
+            desktop_backend_ready,
+            restart_backend
         ])
         .setup(move |app| {
             // The existing frontend contract reads this identity synchronously
@@ -1010,6 +1099,14 @@ fn main() {
             // are intentionally the only sidecar preparation left in setup.
             let (port, token) =
                 allocate_sidecar_identity().map_err(|e| format!("GA-Hub desktop startup: {e}"))?;
+            // Persist the identity so restart_backend can respawn with the
+            // exact same port/token — the SPA's injected runtime config and
+            // WebSocket cursors stay valid across a restart.
+            {
+                let identity = app.state::<SidecarIdentity>();
+                *identity.0.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some((port, token.clone()));
+            }
             let owned = app.state::<OwnedSidecar>().inner().clone();
             let runtime_script = runtime_initialization_script(port, &token);
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -1146,6 +1243,40 @@ mod tests {
         let mut failed = SidecarLifecycle::<()>::new();
         assert!(failed.mark_failed("failed".to_string()));
         assert_eq!(failed.readiness(), Err("failed".to_string()));
+    }
+
+    #[test]
+    fn restart_is_rejected_outside_ready_and_failed_phases() {
+        assert!(restartable(&SidecarPhase::Ready));
+        assert!(restartable(&SidecarPhase::Failed("boom".to_string())));
+        for phase in [
+            SidecarPhase::Spawning,
+            SidecarPhase::Running,
+            SidecarPhase::Stopping,
+            SidecarPhase::Stopped,
+        ] {
+            assert!(!restartable(&phase), "phase {phase:?} must not be restartable");
+        }
+    }
+
+    #[test]
+    fn restart_claim_follows_the_shutdown_exclusion_path_then_resets() {
+        let mut lifecycle = SidecarLifecycle::<()>::new();
+        // Spawning: a live supervisor owns the transition — not restartable.
+        assert!(!restartable(&lifecycle.phase));
+        lifecycle.commit_spawn(()).unwrap();
+        assert!(lifecycle.mark_ready());
+
+        // Ready → claim → stop → Stopped → fresh lifecycle for respawn.
+        assert!(restartable(&lifecycle.phase));
+        let ShutdownClaim::Owner(Some(())) = lifecycle.begin_shutdown() else {
+            panic!("ready lifecycle must yield its owned process");
+        };
+        assert_eq!(lifecycle.phase, SidecarPhase::Stopping);
+        lifecycle.finish_shutdown();
+        assert_eq!(lifecycle.phase, SidecarPhase::Stopped);
+        lifecycle = SidecarLifecycle::new();
+        assert_eq!(lifecycle.readiness(), Ok(false));
     }
 
     #[test]

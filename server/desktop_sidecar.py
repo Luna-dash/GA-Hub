@@ -1,7 +1,8 @@
 """Tauri-owned FastAPI sidecar with a machine-readable lifecycle protocol.
 
-This is deliberately separate from ``server.run``: pywebview keeps its existing
-launcher and port behaviour, while Tauri owns exactly the process it starts.
+This is deliberately separate from ``server.run``: ``server.run`` keeps the
+browser-mode launcher and fixed-port behaviour, while Tauri owns exactly the
+process it starts.
 """
 from __future__ import annotations
 
