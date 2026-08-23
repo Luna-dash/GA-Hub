@@ -137,16 +137,17 @@ class GahubProcessManager:
                     "refusing to respawn the frozen sidecar as the gahub_app "
                     "interpreter; set gahub_python in config"
                 )
-            cmd = [self.python_exe, "-u", script, "--host", "127.0.0.1",
-                   "--port", str(self.port)]
-            if self.token:
-                cmd += ["--token", self.token]
-            log.info("Spawning gahub_app: %s", " ".join(cmd))
             log_path = os.path.join(
                 os.environ.get("GAHUB_TEMP_DIR") or tempfile.gettempdir(),
                 "gahub_app.log",
             )
             log_file = open(log_path, "ab")
+            self._probe_interpreter(log_file)
+            cmd = [self.python_exe, "-u", script, "--host", "127.0.0.1",
+                   "--port", str(self.port)]
+            if self.token:
+                cmd += ["--token", self.token]
+            log.info("Spawning gahub_app: %s", " ".join(cmd))
             self._proc = subprocess.Popen(
                 cmd, cwd=self.ga_root,
                 stdout=log_file, stderr=subprocess.STDOUT,
@@ -171,6 +172,38 @@ class GahubProcessManager:
         raise GahubProcessError(
             f"gahub_app did not become healthy within {startup_timeout}s ({detail})"
         )
+
+    def _probe_interpreter(self, log_file) -> None:
+        """Prove the interpreter can run a trivial child before the real spawn.
+
+        From the frozen sidecar, security software can hang unsigned-exe
+        children (alive, zero output). A failed probe names that condition
+        directly instead of a 60s health timeout.
+        """
+        import subprocess as _sp
+        log_file.write(
+            f"\n[probe] python={self.python_exe} frozen={bool(getattr(sys, 'frozen', False))} "
+            f"PATH_head={os.environ.get('PATH', '')[:120]}\n".encode("utf-8", "replace")
+        )
+        log_file.flush()
+        try:
+            proc = _sp.Popen(
+                [self.python_exe, "-u", "-c", "print('PROBE_OK', flush=True)"],
+                stdout=_sp.PIPE, stderr=_sp.STDOUT,
+                **hidden_process_kwargs(),
+            )
+            out, _ = proc.communicate(timeout=10)
+        except Exception as exc:
+            raise GahubProcessError(
+                f"interpreter probe failed to run {self.python_exe}: {exc}"
+            ) from exc
+        if proc.returncode != 0 or b"PROBE_OK" not in (out or b""):
+            raise GahubProcessError(
+                f"interpreter probe unhealthy (rc={proc.returncode}, "
+                f"out={out!r}): security software may be blocking children of "
+                "this unsigned exe; add an exclusion or start gahub_app as a "
+                "scheduled task"
+            )
 
     def stop(self, timeout: float = 5.0) -> bool:
         with self._lock:
