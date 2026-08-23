@@ -32,6 +32,25 @@ DEFAULT_PORT = 18770
 NO_PROXY_KWARGS = {"proxies": {"http": None, "https": None}}
 
 
+def _clean_child_env() -> dict:
+    """Strip PyInstaller's _MEI temp dirs from PATH for spawned children.
+
+    The frozen sidecar prepends its extraction dir (bundled runtime DLLs) to
+    PATH; a spawned conda/venv python then resolves incompatible DLLs from
+    there and hangs before producing any output. Children get a PATH without
+    _MEI entries and no PyInstaller bookkeeping variables.
+    """
+    env = dict(os.environ)
+    path = env.get("PATH", "")
+    kept = [item for item in path.split(os.pathsep)
+            if item and "_MEI" not in item]
+    env["PATH"] = os.pathsep.join(kept)
+    for key in list(env):
+        if key.startswith("_PYI") or key.upper().startswith("PYINSTALLER"):
+            env.pop(key, None)
+    return env
+
+
 class GahubProcessError(RuntimeError):
     """The gahub_app subprocess could not be started or became unhealthy."""
 
@@ -151,7 +170,7 @@ class GahubProcessManager:
             self._proc = subprocess.Popen(
                 cmd, cwd=self.ga_root,
                 stdout=log_file, stderr=subprocess.STDOUT,
-                **hidden_process_kwargs(),
+                env=_clean_child_env(), **hidden_process_kwargs(),
             )
             deadline = time.monotonic() + startup_timeout
             while time.monotonic() < deadline:
@@ -190,7 +209,7 @@ class GahubProcessManager:
             proc = _sp.Popen(
                 [self.python_exe, "-u", "-c", "print('PROBE_OK', flush=True)"],
                 stdout=_sp.PIPE, stderr=_sp.STDOUT,
-                **hidden_process_kwargs(),
+                env=env, **hidden_process_kwargs(),
             )
             out, _ = proc.communicate(timeout=10)
         except Exception as exc:
