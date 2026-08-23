@@ -1,54 +1,40 @@
 """ConductorService — multi-agent orchestration with supervisor pattern.
 
-Manages one conductor (supervisor) agent that delegates to a pool of
-subagents. The conductor monitors user messages, subagent completion
-events, and dispatches/reviews/reports work.
+GA-Hub product layer for the Conductor: chat admission, request-scoped
+workflows, model policies, and the EventBus surface consumed by routes and
+the webui. The engine itself now lives in the GA repo's
+``frontends/gahub_app.py``; this service talks to it over HTTP (spawned and
+supervised by ``conductor_client.GahubProcessManager``) and relays its SSE
+event stream onto the EventBus. No GA Python symbols are imported here.
 
-Architecture differences from standalone conductor.py:
-- Uses EventBus instead of custom WS broadcast
-- Singleton pattern aligned with other GA-Hub services
-- No IM poller (rely on wechat_service/feishu_service)
-- Subagents are independent GenericAgent instances (don't touch AgentService singleton)
+Architecture notes:
+- The supervisor's self-API is gahub_app itself; conductor-role chat and
+  dispatch/review actions arrive as SSE events mirrored into hub state.
+- The workflow tracker, usage store, and model policy validation remain
+  hub-owned; gahub_app executes dispatches and auto-yields the supervisor
+  turn on dispatch/resume/rework.
 """
 from __future__ import annotations
 
 import inspect
 import json
 import logging
-import queue
 import re
 import threading
 import time
 import uuid
-from typing import Dict, Literal, Optional
+from types import SimpleNamespace
+from typing import Any, Dict, Literal, Optional
 
 from .. import _paths
 
-if _paths.GA_ROOT is None:
-    raise RuntimeError("ConductorService imported before GA_ROOT is configured")
-
-from agentmain import GenericAgent  # noqa: E402
-from frontends.conductor_core import (
-    Conductor as CoreConductor,
-    ConductorCallbacks,
-    PoolRuntime,
-    RequestOutcome,
-    SubAgentEvent,
-    SubagentPool as CoreSubagentPool,
-)
-
-from .conductor_ext_contract import ConductorContractExt  # noqa: E402
-from .conductor_ext_timeout import OutputBudget, TimeoutMonitor  # noqa: E402
-from .conductor_workflow import WorkflowTracker  # noqa: E402
-from .event_bus import bus  # noqa: E402
-from .request_usage import RequestUsageStore  # noqa: E402
-from ..runtime_endpoint import runtime_http_origin  # noqa: E402
+from .conductor_client import GaConductorClient, GahubProcessManager
+from .conductor_ext_timeout import TimeoutMonitor
+from .conductor_workflow import WorkflowTracker
+from .event_bus import bus
+from .request_usage import RequestUsageStore
 
 log = logging.getLogger(__name__)
-
-# Constants
-HOST = "127.0.0.1"
-PORT = None  # Not needed, integrated into main GA-Hub server
 
 SubagentModelPolicy = Literal["follow_main", "default", "locked"]
 SUBAGENT_MODEL_POLICIES = frozenset({"follow_main", "default", "locked"})
@@ -73,24 +59,6 @@ def _accepts_keyword(callable_obj, name: str) -> bool:
     )
 
 
-def _configured_webui_endpoint() -> tuple[str, int]:
-    """Return the legacy server-mode fallback when no launcher injected one."""
-    host, port = HOST, 8765
-    try:
-        import mykey  # type: ignore
-        host = str(getattr(mykey, "webui_host", host) or host)
-        port = int(getattr(mykey, "webui_port", port) or port)
-    except Exception:
-        pass
-    return host, port
-
-
-def _get_hub_api_base() -> str:
-    """Return this process's Hub Conductor API, never the standalone GA pool."""
-    host, port = _configured_webui_endpoint()
-    return f"{runtime_http_origin(host, port)}/api/conductor"
-
-
 def _get_preferred_llm() -> Optional[int]:
     """Read user's preferred LLM index from config."""
     try:
@@ -102,34 +70,6 @@ def _get_preferred_llm() -> Optional[int]:
         log.debug("Failed to read preferred_llm_no: %s", e)
     return None
 
-
-def _resolve_llm_index(llm_index: Optional[int] = None) -> Optional[int]:
-    """Page-scoped LLM wins; persisted/global preference is fallback."""
-    if llm_index is not None:
-        try:
-            return int(llm_index)
-        except Exception:
-            return None
-    return _get_preferred_llm()
-
-
-def _apply_llm_selection(agent: GenericAgent, llm_index: Optional[int], label: str) -> bool:
-    selected = _resolve_llm_index(llm_index)
-    if selected is None:
-        return False
-    try:
-        agent.load_llm_sessions()
-        clients = getattr(agent, "llmclients", []) or []
-        if 0 <= selected < len(clients):
-            agent.next_llm(selected)
-            source = "page" if llm_index is not None else "preferred_llm_no"
-            log.info("%s selected LLM %s via %s", label, selected, source)
-            return True
-        else:
-            log.warning("%s requested invalid LLM index %s (available=%s)", label, selected, len(clients))
-    except Exception as e:
-        log.warning("Failed to set LLM for %s: %s", label, e)
-    return False
 
 _TURN_SPLIT_RE = re.compile(r'\**LLM Running \(Turn \d+\) \.\.\.\**')
 _SUMMARY_RE = re.compile(r'<summary>(.*?)</summary>\s*', re.DOTALL)
@@ -143,25 +83,6 @@ def short_id() -> str:
     return uuid.uuid4().hex[:8]
 
 
-def extract_last_summary(full: str) -> str:
-    """Extract the latest <summary> content for in-progress display."""
-    matches = _SUMMARY_RE.findall(full or "")
-    if not matches:
-        return ""
-    s = matches[-1].strip()
-    return s[-1000:] if len(s) > 1000 else s
-
-
-def extract_last_text_reply(full: str) -> str:
-    """Extract only the last turn's text reply (like stapp.py fold_turns logic)."""
-    parts = _TURN_SPLIT_RE.split(full)
-    last = parts[-1] if parts else full
-    last = _SUMMARY_RE.sub('', last)
-    last = re.sub(r'\[(Status|Info)\][^\n]*\n?', '', last)
-    last = last.strip()
-    return last[-3000:] if len(last) > 3000 else last
-
-
 def clean_log_text(s: str) -> str:
     if not s:
         return s
@@ -173,70 +94,6 @@ def clean_log_text(s: str) -> str:
     s = re.sub(r'^\s*`{4,5}\s*$\n?', '', s, flags=re.MULTILINE)
     s = re.sub(r'\n{3,}', '\n\n', s)
     return s.strip()
-
-
-def _prompt_event_payload(events: list[dict]) -> str:
-    """Serialize the current wake-up data without dumping unbounded agent output."""
-    max_events = 16
-    max_payload_chars = 32_000
-    valid_events = [event for event in events if isinstance(event, dict)]
-    prompt_events = []
-    text_limit = 16_000 if len(valid_events) == 1 else 1_000
-    for event in valid_events[:max_events]:
-        item = {}
-        for key in ("type", "request_id", "id", "generation"):
-            value = event.get(key)
-            if isinstance(value, str):
-                item[key] = value[:256]
-            elif isinstance(value, (int, bool)):
-                item[key] = value
-        msg = event.get("msg")
-        if isinstance(msg, str):
-            item["msg"] = (
-                msg
-                if len(msg) <= text_limit
-                else msg[:text_limit] + "\n[message truncated; use GET chat for the rest]"
-            )
-        reply = event.get("reply")
-        if isinstance(reply, str):
-            item["reply"] = (
-                reply
-                if len(reply) <= text_limit
-                else "[earlier output truncated]\n" + reply[-text_limit:]
-            )
-        prompt_events.append(item)
-    if len(valid_events) > max_events:
-        prompt_events.append({
-            "type": "events_omitted",
-            "count": len(valid_events) - max_events,
-            "instruction": "Use GET /api/conductor/subagent to inspect the rest.",
-        })
-
-    payload = json.dumps(prompt_events, ensure_ascii=False, separators=(",", ":"))
-    while len(payload) > max_payload_chars:
-        text_items = [
-            (item, key)
-            for item in prompt_events
-            for key in ("msg", "reply")
-            if isinstance(item.get(key), str) and item[key]
-        ]
-        if not text_items:
-            break
-        item, key = max(text_items, key=lambda pair: len(pair[0][pair[1]]))
-        value = item[key]
-        if len(value) <= 128:
-            item.pop(key)
-        elif key == "reply":
-            item[key] = "[earlier output truncated]\n" + value[-(len(value) // 2):]
-        else:
-            item[key] = value[:len(value) // 2] + "\n[message truncated]"
-        payload = json.dumps(prompt_events, ensure_ascii=False, separators=(",", ":"))
-    return payload
-
-
-def push_subagent_cards(snapshot: list):
-    """Publish subagent pool snapshot to event bus."""
-    bus.publish("conductor:subagents", {"items": snapshot})
 
 
 def add_chat(
@@ -265,56 +122,14 @@ def add_chat(
     return item
 
 
-def start_agent_runner(agent: GenericAgent, name: str) -> threading.Thread:
-    t = threading.Thread(target=agent.run, name=name, daemon=True)
-    t.start()
-    return t
+def push_subagent_cards(snapshot: list):
+    """Publish subagent pool snapshot to event bus."""
+    bus.publish("conductor:subagents", {"items": snapshot})
 
 
-def monitor_display_queue(
-    agent_id: str,
-    dq: queue.Queue,
-    pool: SubagentPool,
-    trigger_when_done: bool,
-    *,
-    generation: int | None = None,
-):
-    """Monitor subagent display queue and update pool state."""
-    budget = OutputBudget(agent_id, publish=bus.publish)
-
-    def display(output: str, done: bool) -> bool:
-        if generation is None:
-            result = pool.on_display(agent_id, output, done=done)
-        else:
-            result = pool.on_display(
-                agent_id, output, done=done, generation=generation
-            )
-        # Legacy pools returned None after accepting an update.
-        return result is not False
-
-    while True:
-        item = dq.get()
-        if "next" in item:
-            output = budget.append(item.get("next") or "")
-            display(output, done=False)
-        if "done" in item:
-            done = budget.finish(item.get("done") or budget.output)
-            accepted = display(done, done=True)
-            if trigger_when_done and accepted:
-                # Notify conductor that subagent finished
-                service = ConductorService.instance()
-                event = {
-                    "type": "subagent_done",
-                    "id": agent_id,
-                    "reply": done,
-                    "generation": generation,
-                }
-                request_id = service.workflow_tracker.request_for_subagent(agent_id)
-                if request_id:
-                    event["request_id"] = request_id
-                service.notify(event)
-            break
-
+def _event_name(event: Any) -> str:
+    """Coerce a subagent event (enum or SSE string) to its stable value."""
+    return getattr(event, "value", None) or str(event)
 
 
 READMES = {
@@ -366,8 +181,69 @@ GET  /api/conductor/subagent/{id}?max_len=N
 }
 
 
-class HubConductorCallbacks(ConductorCallbacks):
-    """Translate shared-core lifecycle events into GA-Hub EventBus events."""
+# ===== SSE-fed mirror of the GA-side subagent pool ======================
+
+class _MirrorState:
+    """Attribute-access view over one snapshot item (SubAgentState-shaped)."""
+
+    def __init__(self, data: dict):
+        self.__dict__.update(data)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"_MirrorState({self.__dict__!r})"
+
+
+class PoolMirror:
+    """Snapshot-fed stand-in for the in-process subagent pool.
+
+    Provides the attribute surface the routes and TimeoutMonitor used on
+    the GA core pool (``lock``/``subagents``/``counts``/``get``/``snapshot``);
+    keyinfo/abort actions round-trip to gahub_app over HTTP.
+    """
+
+    def __init__(self, client: GaConductorClient):
+        self.client = client
+        self.lock = threading.Lock()
+        self.subagents: Dict[str, _MirrorState] = {}
+        self._items: list[dict] = []
+
+    def update(self, items: list) -> None:
+        with self.lock:
+            self._items = [dict(item) for item in items if isinstance(item, dict)]
+            self.subagents = {
+                item["id"]: _MirrorState(item)
+                for item in self._items if item.get("id")
+            }
+
+    def counts(self) -> tuple[int, int]:
+        with self.lock:
+            items = list(self._items)
+        running = sum(1 for item in items if item.get("status") == "running")
+        return running, max(0, len(items) - running)
+
+    def get(self, sid: str) -> Optional[_MirrorState]:
+        with self.lock:
+            return self.subagents.get(sid)
+
+    def snapshot(self) -> list[dict]:
+        with self.lock:
+            return [dict(item) for item in self._items]
+
+    def keyinfo_subagent(self, sid: str, msg: str) -> dict:
+        return self.client.subagent_action(sid, "keyinfo", msg)
+
+    def abort_subagent(self, sid: str) -> dict:
+        return self.client.subagent_action(sid, "abort")
+
+
+class HubConductorCallbacks:
+    """Translate gahub_app SSE lifecycle events into GA-Hub EventBus events.
+
+    Method shapes intentionally mirror the former in-process callbacks so
+    focused tests can drive them directly; outcomes are namespace objects
+    with ``status``/``phase``/``error`` attributes.
+    """
+
     def __init__(self, service: "ConductorService"):
         self.service = service
         self._snapshot_publish_lock = threading.Lock()
@@ -387,7 +263,9 @@ class HubConductorCallbacks(ConductorCallbacks):
                 # Observer failures must not change an already committed pool action.
                 log.exception("Failed to publish conductor subagent snapshot")
 
+    # request lifecycle ------------------------------------------------------
     def on_conductor_request_started(self, request_id: str):
+        self.service.usage_store.begin(request_id)
         return self.service.usage_store.activate(request_id)
 
     def _publish_request_outcome(
@@ -419,146 +297,131 @@ class HubConductorCallbacks(ConductorCallbacks):
             payload["item"] = latest
         bus.publish("conductor:request_outcome", payload)
 
-    def on_conductor_request_finished(self, request_id: str, token) -> None:
+    def on_conductor_request_finished(self, request_id: str, token=None) -> None:
         try:
             if token is not None:
                 self.service.usage_store.deactivate(token)
-        finally:
             self._publish_request_outcome(
                 request_id,
                 status="ok",
                 phase="finish",
             )
+        except Exception:
+            log.exception("request finished handling failed")
 
-    def on_conductor_request_yielded(
-        self, request_id: str, token, outcome: RequestOutcome
-    ) -> None:
+    def on_conductor_request_yielded(self, request_id: str, token=None,
+                                     outcome=None) -> None:
         """Close only this supervisor turn; the workflow remains active."""
         try:
             if token is not None:
                 self.service.usage_store.deactivate(token)
-        finally:
             self._publish_request_outcome(
                 request_id,
                 status="yielded",
-                phase=outcome.phase,
+                phase=getattr(outcome, "phase", "yield") or "yield",
             )
+        except Exception:
+            log.exception("request yielded handling failed")
 
-    def on_conductor_request_outcome(
-        self, request_id: str, token, outcome: RequestOutcome
-    ) -> None:
+    def on_conductor_request_outcome(self, request_id: str, token=None,
+                                     outcome=None) -> None:
+        status = getattr(outcome, "status", "failed") or "failed"
+        phase = getattr(outcome, "phase", "finish") or "finish"
+        error = getattr(outcome, "error", "") or ""
         try:
-            if outcome.status != "ok":
+            if token is not None:
+                self.service.usage_store.deactivate(token)
+            if status != "ok":
                 tracker = self.service._ensure_workflow_tracker()
                 transition = tracker.fail_supervisor(
                     request_id,
-                    phase=outcome.phase,
-                    error=outcome.error or "",
+                    phase=phase,
+                    error=error,
                 )
                 if transition is not None:
                     self.service._publish_workflow_transition(transition)
                 elif tracker.snapshot(request_id) is None:
-                    # Compatibility for focused adapters that only installed
-                    # the older usage lifecycle without workflow admission.
                     self.service.usage_store.complete(
-                        request_id, f"FAILED_{outcome.phase.upper()}"
+                        request_id, f"FAILED_{phase.upper()}"
                     )
-        finally:
-            try:
-                if token is not None:
-                    self.service.usage_store.deactivate(token)
-            finally:
-                self._publish_request_outcome(
-                    request_id,
-                    status=outcome.status,
-                    phase=outcome.phase,
-                    error=outcome.error or "",
-                )
+            self._publish_request_outcome(
+                request_id, status=status, phase=phase, error=error
+            )
+        except Exception:
+            log.exception("request outcome handling failed")
 
-    def on_subagent_output(self, agent_id: str, output: str, done: bool) -> None:
+    # subagent lifecycle ------------------------------------------------------
+    def on_subagent_event(self, agent_id: str, event, payload) -> None:
+        name = _event_name(event)
+        if name == "running":
+            return
+        if not isinstance(payload, dict):
+            payload = dict(getattr(payload, "__dict__", {}) or {})
+        service = self.service
+        tracker = service._ensure_workflow_tracker()
+        getter = getattr(getattr(service, "pool", None), "get", None)
+        state = getter(agent_id) if callable(getter) else None
+        if state is not None and "generation" not in payload:
+            payload["generation"] = int(getattr(state, "active_generation", 0) or 0)
+        if not payload.get("request_id"):
+            request_id = tracker.request_for_subagent(agent_id)
+            if request_id:
+                payload["request_id"] = request_id
+        owner, transition = tracker.record_subagent_event(
+            agent_id,
+            name,
+            generation=int(payload.get("generation", 0) or 0),
+            request_id=payload.get("request_id"),
+        )
+        try:
+            bus.publish(f"conductor:subagent_{name}", {"id": agent_id, **payload})
+            if transition is not None:
+                service._publish_workflow_transition(transition)
+        except Exception:
+            # Observer failures must not block the authoritative snapshot push.
+            log.exception("subagent event publish failed for %s", name)
+        self.publish_subagent_snapshot()
+
+    def on_subagent_output(self, agent_id: str, output, done) -> None:
+        """Legacy stream hook; snapshots now arrive via SSE subagents events."""
         if not done:
             self.publish_subagent_snapshot()
 
-    def on_subagent_completed(self, agent_id: str, output: str) -> None:
-        """The generation-aware monitor emits the single conductor wake-up."""
-        pass
-
-    def on_subagent_event(self, agent_id: str, event: SubAgentEvent, payload: dict) -> None:
-        # RUNNING is emitted for every output chunk; the snapshot above is the
-        # authoritative UI update, so a second per-chunk lifecycle frame only
-        # increases queue pressure without adding information.
-        if event == SubAgentEvent.RUNNING:
-            return
-        event_payload = dict(payload)
-        tracker = self.service._ensure_workflow_tracker()
-        generation = event_payload.get("generation")
-        if generation is None:
-            getter = getattr(self.service.pool, "get", None)
-            state = getter(agent_id) if callable(getter) else None
-            generation = getattr(state, "active_generation", None) if state else None
-            if generation is not None:
-                event_payload["generation"] = generation
-        request_id = (
-            self.service._current_dispatch_request_id()
-            or tracker.request_for_subagent(agent_id)
-        )
-        workflow_transition = None
-        try:
-            request_id, workflow_transition = tracker.record_subagent_event(
-                agent_id,
-                event.value,
-                generation=generation,
-                request_id=request_id,
-                error=str(event_payload.get("error") or ""),
-            )
-        except ValueError:
-            log.exception("Failed to associate conductor subagent event")
-        if request_id:
-            event_payload["request_id"] = request_id
-        try:
-            bus.publish(
-                f"conductor:subagent_{event.value}",
-                {"id": agent_id, **event_payload},
-            )
-        except Exception:
-            log.exception("Failed to publish conductor subagent lifecycle event")
-        if workflow_transition is not None:
-            try:
-                self.service._publish_workflow_transition(workflow_transition)
-            except Exception:
-                log.exception("Failed to publish conductor workflow event")
-        self.publish_subagent_snapshot()
-
     def on_conductor_log_frame(self, frame: object) -> None:
-        """Bridge the shared core's private log frame to the Hub event bus."""
+        """Bridge gahub_app log frames to the Hub event bus.
+
+        Accepts either the SSE item directly or the legacy ``{"type": "log",
+        "item": ...}`` frame shape; items must keep the stable field types.
+        """
         try:
-            if not isinstance(frame, dict) or frame.get("type") != "log":
-                return
-            item = frame.get("item")
-            if not isinstance(item, dict):
+            if isinstance(frame, dict) and frame.get("type") == "log":
+                frame = frame.get("item")
+            if not isinstance(frame, dict):
                 return
             if not (
-                isinstance(item.get("id"), str)
-                and isinstance(item.get("ts"), int)
-                and isinstance(item.get("event"), str)
-                and isinstance(item.get("text"), str)
-                and (item.get("turn") is None or isinstance(item.get("turn"), int))
+                isinstance(frame.get("id"), str)
+                and isinstance(frame.get("ts"), int)
+                and isinstance(frame.get("event"), str)
+                and isinstance(frame.get("text"), str)
+                and (frame.get("turn") is None or isinstance(frame.get("turn"), int))
             ):
                 return
-            bus.publish("conductor:log", {"item": dict(item)})
+            bus.publish("conductor:log", {"item": dict(frame)})
         except Exception:
             # Logging is an observer path and must not fail a conductor request.
             log.exception("Failed to publish conductor log frame")
 
-    def on_conductor_event(self, event_type: str, payload: dict) -> None:
-        if event_type == "error":
-            detail = str(payload.get("error") or "unknown error").strip()
-            self.service._ensure_workflow_tracker()
-            with self.service._chat_lock:
+    def on_conductor_event(self, event_type: str, payload) -> None:
+        try:
+            payload = dict(payload or {})
+            if event_type == "error":
+                detail = str(payload.get("error", "")).strip()
+                if not detail:
+                    return
                 latest = next(
                     (
                         item
-                        for item in reversed(self.service.chat_messages)
+                        for item in reversed(getattr(self.service, "chat_messages", ()))
                         if item.get("kind") == "error"
                     ),
                     None,
@@ -570,51 +433,22 @@ class HubConductorCallbacks(ConductorCallbacks):
                         self.service.chat_messages,
                         kind="error",
                     )
-            payload = {**payload, "item": latest}
-        bus.publish(f"conductor:{event_type}", payload)
-
-
-def _new_agent(llm_index: Optional[int] = None, label: str = "Conductor agent") -> GenericAgent:
-    agent = GenericAgent()
-    agent.inc_out = True
-    _apply_llm_selection(agent, llm_index, label)
-    return agent
-
-
-def _configure_subagent(agent: GenericAgent, llm_index=None) -> bool:
-    agent.verbose = False
-    agent.no_print = True
-    return _apply_llm_selection(agent, llm_index, "Subagent")
-
-
-def _monitor_core_display(
-    agent_id: str,
-    dq: queue.Queue,
-    trigger_when_done: bool,
-    pool,
-    *,
-    generation: int | None = None,
-):
-    """Runtime bridge: retain Hub display behavior while core owns orchestration."""
-    monitor_display_queue(
-        agent_id,
-        dq,
-        pool,
-        trigger_when_done,
-        generation=generation,
-    )
+                payload = {**payload, "item": latest}
+            bus.publish(f"conductor:{event_type}", payload)
+        except Exception:
+            log.exception("conductor event handling failed")
 
 
 class ConductorService:
-    """Singleton GA-Hub adapter around the shared GA conductor core."""
+    """Singleton GA-Hub product layer around the gahub_app engine."""
     _instance: Optional["ConductorService"] = None
     _lock = threading.Lock()
 
     def __init__(self):
         # Application shutdown is a terminal lifecycle separate from the
         # user-facing ``stop`` route.  Keep the singleton alive while a close
-        # is in progress (or after a timeout) so a late request cannot create a
-        # second core/monitor pair beside the one still being reaped.
+        # is in progress (or after a timeout) so a late request cannot create
+        # a second engine/session pair beside the one still being reaped.
         self._shutdown_lock = threading.RLock()
         self._shutdown_in_progress = False
         self._shutdown_complete = False
@@ -628,41 +462,21 @@ class ConductorService:
         self.usage_store = RequestUsageStore()
         self.workflow_tracker = WorkflowTracker()
         self._dispatch_context = threading.local()
-        try:
-            import cost_tracker
-            cost_tracker.set_usage_sink(self.usage_store.record)
-            cost_tracker.install()
-        except Exception:
-            # The shared GA core remains usable without the optional tracker.
-            log.debug("Direct usage attribution sink unavailable", exc_info=True)
         self._started = False
         self._conductor_llm_index = None
         self._subagent_llm_index = None
         self._subagent_model_policy: SubagentModelPolicy = "follow_main"
         self._model_lock = threading.RLock()
         self.callbacks = HubConductorCallbacks(self)
-        # The pool is constructed first because the monitor bridge needs it.
-        runtime = PoolRuntime(
-            agent_factory=GenericAgent,
-            on_display_fn=lambda sid, dq, done, generation=None: _monitor_core_display(
-                sid, dq, done, self.pool, generation=generation
-            ),
-            # The service resolves one immutable dispatch snapshot before
-            # entering the GA core.  The injected selector only applies that
-            # resolved index, so a concurrent policy update cannot re-route an
-            # already admitted dispatch.
-            llm_selector=_configure_subagent,
-        )
-        self.pool = CoreSubagentPool(runtime=runtime, callbacks=self.callbacks)
-        self.contract_ext = ConductorContractExt(self.pool, publish=bus.publish)
+        self._process_manager = GahubProcessManager()
+        self.client = GaConductorClient(self._process_manager)
+        self.pool = PoolMirror(self.client)
         self.timeout_monitor = TimeoutMonitor(self.pool, publish=bus.publish)
         self.timeout_monitor.start()
-        self.conductor = CoreConductor(
-            pool=self.pool,
-            prompt_builder=self._build_prompt,
-            agent_factory=lambda: _new_agent(self._conductor_llm_index),
-            callbacks=self.callbacks,
-        )
+        self._relay_stop = threading.Event()
+        self._relay_thread: Optional[threading.Thread] = None
+        self._relayed_chat_ids: set[str] = set()
+        self._lifecycle_cache: dict = {}
 
     @classmethod
     def instance(cls) -> "ConductorService":
@@ -673,14 +487,7 @@ class ConductorService:
         return cls._instance
 
     def _ensure_shutdown_state(self) -> None:
-        """Backfill lifecycle fields for legacy ``object.__new__`` tests.
-
-        A few integrations construct a service shell without invoking
-        ``__init__`` to exercise one method in isolation.  Keeping this small
-        compatibility shim avoids making those callers know about the new
-        terminal-close state while normal instances initialize everything
-        eagerly above.
-        """
+        """Backfill lifecycle fields for legacy ``object.__new__`` tests."""
         if not hasattr(self, "_shutdown_lock"):
             self._shutdown_lock = threading.RLock()
         if not hasattr(self, "_shutdown_in_progress"):
@@ -699,25 +506,15 @@ class ConductorService:
 
     @staticmethod
     def _stop_result(result: object) -> bool:
-        """Interpret old best-effort stop helpers compatibly.
-
-        The shared core and the timeout monitor return ``bool``.  Treating a
-        legacy ``None`` return as success preserves compatibility with simple
-        test doubles and older adapters; an explicit ``False`` remains a
-        failed/retryable close.
-        """
+        """Treat legacy best-effort ``None`` stop helpers as success."""
         return result is not False
 
     def shutdown(self, timeout: float = 2.0) -> bool:
-        """Terminally close the core and monitor under one shared deadline.
-
-        Exactly one caller owns cleanup for an attempt.  Concurrent callers
-        wait on that attempt's event for their own remaining budget and never
-        run a second ``stop`` pair concurrently.  A timeout or exception keeps
-        the singleton closed but retryable; only a complete core+monitor reap
-        is cached as successful.
-        """
+        """Terminally close the engine session and monitor under one deadline."""
         self._ensure_shutdown_state()
+        relay_stop = getattr(self, "_relay_stop", None)
+        if relay_stop is not None:
+            relay_stop.set()
         deadline = time.monotonic() + max(0.0, float(timeout))
 
         with self._shutdown_lock:
@@ -726,7 +523,6 @@ class ConductorService:
             if self._shutdown_in_progress:
                 event = self._shutdown_event
                 remaining = max(0.0, deadline - time.monotonic())
-                # Do not hold the lifecycle lock while waiting for the owner.
                 owner = False
             else:
                 self._shutdown_in_progress = True
@@ -743,28 +539,24 @@ class ConductorService:
         core_ok = self._shutdown_core_stopped
         monitor_ok = self._shutdown_monitor_stopped
         try:
-            conductor = getattr(self, "conductor", None)
             if not core_ok:
-                if conductor is None:
-                    core_ok = True
-                else:
+                try:
+                    result = self.client.stop(
+                        timeout=max(0.0, deadline - time.monotonic())
+                    )
+                    core_ok = bool(result.get("stopped", True)) if result else True
+                except Exception:
+                    core_ok = False
+                    log.exception("gahub_app engine shutdown failed")
+                finally:
                     try:
-                        stop = getattr(conductor, "stop", None)
-                        core_ok = (
-                            True
-                            if not callable(stop)
-                            else self._stop_result(
-                                stop(timeout=max(0.0, deadline - time.monotonic()))
-                            )
-                        )
+                        self._process_manager.stop(timeout=2.0)
                     except Exception:
-                        core_ok = False
-                        log.exception("conductor core shutdown failed")
+                        log.exception("gahub_app process stop failed")
                 self._shutdown_core_stopped = core_ok
 
-            # Always attempt the monitor, even when the core raised or used up
-            # the whole deadline.  Passing the remaining budget (including
-            # zero) keeps the two components within one atomic time envelope.
+            # Always attempt the monitor, even when the engine raised or used
+            # up the whole deadline; one atomic time envelope for both.
             monitor = getattr(self, "timeout_monitor", None)
             if not monitor_ok:
                 if monitor is None:
@@ -820,16 +612,6 @@ class ConductorService:
         if not hasattr(self, "chat_messages"):
             self.chat_messages = []
         return tracker
-
-    def _current_dispatch_request_id(self) -> str | None:
-        self._ensure_workflow_tracker()
-        return getattr(self._dispatch_context, "request_id", None)
-
-    def _set_dispatch_request_id(self, request_id: str | None) -> str | None:
-        self._ensure_workflow_tracker()
-        previous = getattr(self._dispatch_context, "request_id", None)
-        self._dispatch_context.request_id = request_id
-        return previous
 
     def _publish_workflow_transition(
         self, transition: tuple[str, dict]
@@ -900,7 +682,8 @@ class ConductorService:
         ``follow_main`` clears the default worker model. Supplying a worker
         model without a policy keeps backward compatibility by establishing a
         default-model policy when the service was still following the main
-        model.
+        model. The committed snapshot is best-effort pushed to gahub_app so
+        its dispatch resolution and supervisor prompt stay in sync.
         """
         main_index = self._normalize_model_index(llm_index, "llm_index")
         worker_index = self._normalize_model_index(
@@ -938,7 +721,26 @@ class ConductorService:
             self._conductor_llm_index = next_main
             self._subagent_llm_index = next_worker
             self._subagent_model_policy = next_policy
-            return self.model_policy_snapshot()
+            snapshot = self.model_policy_snapshot()
+
+        self._push_models_to_engine(snapshot)
+        return snapshot
+
+    def _push_models_to_engine(self, snapshot: Optional[dict] = None) -> None:
+        """Best-effort sync of the policy snapshot to gahub_app."""
+        client = getattr(self, "client", None)
+        if client is None:
+            return
+        snapshot = snapshot or self.model_policy_snapshot()
+        try:
+            client.push_models(
+                conductor_llm_index=snapshot["llm_index"],
+                subagent_llm_index=snapshot["subagent_llm_index"],
+                subagent_model_policy=snapshot["subagent_model_policy"],
+                preferred_llm_index=_get_preferred_llm(),
+            )
+        except Exception as exc:
+            log.debug("Model policy push to gahub_app deferred: %s", exc)
 
     def model_policy_snapshot(self) -> dict:
         with self._model_lock:
@@ -979,93 +781,32 @@ class ConductorService:
             return main_index
         return _get_preferred_llm()
 
-    def _build_prompt(self, events: list) -> str:
-        running, stopped = self.pool.counts()
-        user_events = [e for e in events if e.get("type") == "user_message"]
-        request_ids = {
-            e.get("request_id") for e in user_events if e.get("request_id")
-        }
-        unread_candidates = [
-            message for message in self.chat_messages
-            if message.get("role") == "user" and not message.get("read")
-        ]
-        if request_ids:
-            unread_messages = [
-                message for message in unread_candidates
-                if message.get("request_id") in request_ids
-            ]
-        else:
-            unread_messages = []
-            remaining = list(unread_candidates)
-            for event in user_events:
-                event_msg = event.get("msg")
-                match = next(
-                    (
-                        message for message in remaining
-                        if event_msg is not None and message.get("msg") == event_msg
-                    ),
-                    None,
-                )
-                if match is not None:
-                    unread_messages.append(match)
-                    remaining.remove(match)
-        unread = len(unread_messages)
-        if unread_messages:
-            for message in unread_messages:
-                message["read"] = True
-            bus.publish("conductor:chat_read", {})
-        done_count = sum(1 for e in events if e.get("type") == "subagent_done")
-        event_payload = _prompt_event_payload(events)
-        summary = (
-            f"subagents: {running} running, {stopped} stopped | "
-            f"{unread} unread user messages, {done_count} completed events"
+    # ===== engine session (gahub_app over HTTP) =====
+
+    def _ensure_relay(self) -> None:
+        thread = self._relay_thread
+        if thread is not None and thread.is_alive():
+            return
+        self._relay_stop.clear()
+        self._relay_thread = threading.Thread(
+            target=self.client.stream_events,
+            args=(self._on_sse_event, self._relay_stop.is_set),
+            name="conductor-sse-relay",
+            daemon=True,
         )
-        base = _get_hub_api_base()
-        models = self.model_policy_snapshot()
-        prompt = f"""You are the Conductor supervisor. Delegate independent work to subagents and report concise results to the user.
-API base: {base}. The rules below are complete for this wake; do not spend a turn fetching readme unless an API call reports a contract error.
-
-Subagent model routing:
-- Current policy: {models['subagent_model_policy']}
-- Conductor model index: {models['llm_index']}
-- Default/locked subagent model index: {models['subagent_llm_index']}
-- To request a model for one dispatch, POST /api/conductor/subagent with
-  {{"prompt": "...", "request_id": "<wake request_id>", "llm_index": N}}.
-  The locked policy overrides N;
-  otherwise an explicit N overrides the configured default.
-
-Operating rules:
-- Reuse a suitable stopped subagent when continuing the same task.
-- Copy request_id exactly from wake_events into every plan, dispatch, review action, and final report for that workflow. Never infer it from another message or worker.
-- For every chat message you write, POST /api/conductor/chat with JSON {{"msg": "...", "role": "conductor", "request_id": "..."}}. Never use role=user; that role is reserved for real user input and would recursively enqueue your own message as a new task.
-- Before dispatching, use that conductor-role chat call to explain the rewritten prompt and delegation plan.
-- After dispatching, end the current turn immediately. Do not poll a running worker and do not send input to it; its completion event will wake you.
-- Preserve Unicode task text exactly. Send self-API requests as UTF-8 JSON (prefer Python requests with json=); never round-trip prompts through a shell code page.
-- The API base above is authoritative. Never scan alternate ports, call the standalone GA Conductor, or edit GA-Hub to repair the control plane. If it is unreachable, report that error and stop the turn.
-- On a subagent_done event, inspect the supplied output once. POST action=rework with a concrete reason when it is insufficient, then end the turn and wait for the next event. POST action=accept when it is sufficient.
-- Report completion only after every worker for the request is accepted. The final chat call must include {{"role": "conductor", "request_id": "...", "final": true}}; this is the only signal that completes the workflow.
-- When a task creates or changes files, the final conductor report MUST list every deliverable with an absolute path in the form [FILE:absolute/path]. Verify each path exists before reporting it; do not report only that a file was generated.
-- The Conductor service is long-lived. Finish the current turn after the final report, but do not call /api/conductor/stop unless the user explicitly asks to stop the service.
-- Do not perform destructive work without first obtaining a plan and user confirmation.
-
-Current state: {summary}"""
-        return f"{prompt}\n\nAuthoritative wake events (act on these directly):\n<wake_events>{event_payload}</wake_events>"
+        self._relay_thread.start()
 
     def ensure_started(self) -> bool:
         self._ensure_shutdown_state()
         with self._shutdown_lock:
             if self._closed:
                 raise RuntimeError("Conductor service is closed")
-            start = self.conductor.start
-            if _accepts_keyword(start, "log_broadcaster"):
-                started = start(
-                    log_broadcaster=self.callbacks.on_conductor_log_frame
-                )
-            else:
-                log.warning("GA conductor core lacks log_broadcaster support")
-                started = start()
+        self._ensure_relay()
+        status = self.client.status()
+        if not status.get("started"):
+            self.client.start(llm_index=self._conductor_llm_index)
         self.lifecycle_status()
-        return started
+        return True
 
     def start(
         self,
@@ -1080,6 +821,142 @@ Current state: {summary}"""
             subagent_model_policy=subagent_model_policy,
         )
         return self.ensure_started()
+
+    def stop(self, timeout: float = 5.0) -> bool:
+        try:
+            result = self.client.stop(timeout=timeout)
+            stopped = bool(result.get("stopped"))
+        except Exception:
+            log.exception("gahub_app stop failed")
+            stopped = False
+        self.lifecycle_status()
+        return stopped
+
+    def lifecycle_status(self) -> dict:
+        try:
+            status = self.client.status()
+        except Exception:
+            status = dict(self._lifecycle_cache or {})
+            status.setdefault("started", False)
+            status.setdefault("stopping", False)
+            status.setdefault("admission_open", True)
+            status.setdefault("loop_alive", False)
+            status.setdefault("agent_alive", False)
+        self._started = bool(status.get("started"))
+        self._lifecycle_cache = status
+        return status
+
+    def notify(self, event: dict) -> bool:
+        """Admit a user message into the gahub_app conductor inbox."""
+        if event.get("type") != "user_message":
+            return False
+        self.client.post_chat(
+            event.get("msg", ""), "user", event.get("request_id")
+        )
+        return True
+
+    def get_conductor_log(self) -> list:
+        try:
+            return self.client.get_log()
+        except Exception:
+            log.debug("gahub_app log unavailable", exc_info=True)
+            return []
+
+    # ===== SSE relay dispatch =====
+
+    def _on_sse_event(self, event: dict) -> None:
+        kind = event.get("event")
+        try:
+            if kind == "hello":
+                self.pool.update(event.get("subagents") or [])
+                for item in (event.get("chat") or [])[-20:]:
+                    self._on_remote_chat(item)
+            elif kind == "request_started":
+                self.usage_store.begin(event.get("request_id"))
+            elif kind == "request_outcome":
+                outcome = SimpleNamespace(
+                    status=event.get("status"),
+                    phase=event.get("phase"),
+                    error=event.get("error", ""),
+                )
+                rid = event.get("request_id")
+                if event.get("status") == "ok":
+                    self.callbacks.on_conductor_request_finished(rid)
+                elif event.get("status") == "yielded":
+                    self.callbacks.on_conductor_request_yielded(rid, outcome=outcome)
+                else:
+                    self.callbacks.on_conductor_request_outcome(rid, outcome=outcome)
+            elif kind == "subagents":
+                self.pool.update(event.get("items") or [])
+                self.callbacks.publish_subagent_snapshot()
+            elif isinstance(kind, str) and kind.startswith("subagent_"):
+                payload = {k: v for k, v in event.items() if k != "event"}
+                self.callbacks.on_subagent_event(
+                    event.get("id", ""), kind[len("subagent_"):], payload
+                )
+            elif kind == "chat":
+                self._on_remote_chat(event.get("item") or {})
+            elif kind == "chat_read":
+                bus.publish("conductor:chat_read", {})
+            elif kind == "log":
+                self.callbacks.on_conductor_log_frame(event.get("item") or {})
+            elif kind == "usage":
+                self._apply_usage_delta(event)
+            elif kind == "request_yield_requested":
+                bus.publish("conductor:request_yield_requested", {
+                    "request_id": event.get("request_id"),
+                    "reason": event.get("reason", ""),
+                })
+            elif kind == "error":
+                payload = {k: v for k, v in event.items() if k != "event"}
+                self.callbacks.on_conductor_event("error", payload)
+        except Exception:
+            log.exception("SSE relay handler failed for %s", kind)
+
+    def _apply_usage_delta(self, event: dict) -> None:
+        rid = event.get("request_id")
+        if not rid:
+            return
+        if event.get("kind") == "usage":
+            self.usage_store.apply_delta(
+                rid,
+                requests=1,
+                input=int(event.get("input", 0) or 0),
+                cache_create=int(event.get("cache_create", 0) or 0),
+                cache_read=int(event.get("cache_read", 0) or 0),
+            )
+        else:
+            self.usage_store.apply_delta(
+                rid, output=int(event.get("tokens", 0) or 0)
+            )
+
+    def _on_remote_chat(self, item: dict) -> None:
+        """Mirror conductor-role chat from gahub_app into the hub chat log."""
+        if not item or item.get("id") in self._relayed_chat_ids:
+            return
+        self._relayed_chat_ids.add(item.get("id"))
+        if len(self._relayed_chat_ids) > 500:
+            self._relayed_chat_ids = set(list(self._relayed_chat_ids)[-250:])
+        role = item.get("role") or "conductor"
+        final = bool(item.get("final"))
+        hub_item = add_chat(
+            item.get("msg", ""), role, self.chat_messages,
+            request_id=item.get("request_id"),
+            kind=("final" if final else None),
+        )
+        if role == "conductor" and final and item.get("request_id"):
+            tracker = self._ensure_workflow_tracker()
+            try:
+                transition = tracker.record_final(item["request_id"], hub_item)
+                if transition is not None:
+                    self._publish_workflow_transition(transition)
+            except Exception:
+                log.exception(
+                    "Conductor final message rejected by workflow: %s",
+                    item.get("request_id"),
+                )
+
+    # ===== dispatch / review through the engine =====
 
     def start_subagent(
         self,
@@ -1102,21 +979,16 @@ Current state: {summary}"""
             subagent_model_policy=subagent_model_policy,
         )
         selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
-        previous = self._set_dispatch_request_id(request_id)
-        try:
-            result = self.pool.start_subagent(prompt, llm_index=selected)
-        finally:
-            self._set_dispatch_request_id(previous)
+        result = self.client.start_subagent(prompt, request_id, selected)
         sid = result.get("id")
         if request_id and sid and "error" not in result:
-            state = self.pool.get(sid)
-            generation = int(getattr(state, "active_generation", 0))
+            generation = int(result.get("active_generation", 0) or 0)
             completed = tracker.bind_subagent(request_id, sid, generation)
             if completed is not None:
                 self._publish_workflow_transition(
                     ("conductor:workflow_completed", completed)
                 )
-            self._request_supervisor_yield(request_id, reason="subagent_dispatched")
+            # gahub_app auto-yields the supervisor turn on dispatch.
             result.setdefault("request_id", request_id)
         result.setdefault("llm_index", selected)
         result.setdefault("model_policy", models["subagent_model_policy"])
@@ -1144,22 +1016,16 @@ Current state: {summary}"""
             subagent_model_policy=subagent_model_policy,
         )
         selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
-        previous = self._set_dispatch_request_id(request_id)
-        try:
-            result = self.pool.input_subagent(sid, msg, llm=selected)
-        finally:
-            self._set_dispatch_request_id(previous)
+        result = self.client.subagent_action(
+            sid, "input", msg, request_id=request_id, llm_index=selected
+        )
         if "error" not in result:
             owner = request_id or tracker.request_for_subagent(sid)
             if owner:
-                state = self.pool.get(sid)
-                generation = int(getattr(state, "active_generation", 0))
+                generation = int(result.get("active_generation", 0) or 0)
                 tracker.bind_subagent(owner, sid, generation)
                 result.setdefault("request_id", owner)
-                self._request_supervisor_yield(owner, reason="subagent_resumed")
-            # The shared core currently emits no lifecycle event for a plain
-            # input resume, so expose the committed running state immediately.
-            self.callbacks.publish_subagent_snapshot()
+            # gahub_app auto-yields the supervisor turn on resume.
         result.setdefault("llm_index", selected)
         result.setdefault("model_policy", models["subagent_model_policy"])
         return result
@@ -1172,14 +1038,9 @@ Current state: {summary}"""
         tracker = self._ensure_workflow_tracker()
         if request_id is not None and not tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")
-        previous = self._set_dispatch_request_id(request_id)
-        try:
-            result = self.pool.accept_subagent(sid, msg)
-        finally:
-            self._set_dispatch_request_id(previous)
+        result = self.client.subagent_action(sid, "accept", msg, request_id=request_id)
         if "error" not in result:
-            state = self.pool.get(sid)
-            generation = int(getattr(state, "active_generation", 0))
+            generation = int(result.get("active_generation", 0) or 0)
             owner, transition = tracker.record_subagent_event(
                 sid,
                 "accepted",
@@ -1190,7 +1051,6 @@ Current state: {summary}"""
                 result.setdefault("request_id", owner)
             if transition is not None:
                 self._publish_workflow_transition(transition)
-            self.callbacks.publish_subagent_snapshot()
         return result
 
     def rework_subagent(
@@ -1215,81 +1075,25 @@ Current state: {summary}"""
             subagent_model_policy=subagent_model_policy,
         )
         selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
-        previous = self._set_dispatch_request_id(request_id)
-        try:
-            result = self.pool.rework_subagent(sid, msg, llm=selected)
-        finally:
-            self._set_dispatch_request_id(previous)
+        result = self.client.subagent_action(
+            sid, "rework", msg, request_id=request_id, llm_index=selected
+        )
         if "error" not in result:
             owner = request_id or tracker.request_for_subagent(sid)
             if owner:
-                state = self.pool.get(sid)
-                generation = int(getattr(state, "active_generation", 0))
+                generation = int(result.get("active_generation", 0) or 0)
                 tracker.bind_subagent(owner, sid, generation)
                 result.setdefault("request_id", owner)
-                self._request_supervisor_yield(owner, reason="subagent_reworked")
-            self.callbacks.publish_subagent_snapshot()
+            # gahub_app auto-yields the supervisor turn on rework.
         result.setdefault("llm_index", selected)
         result.setdefault("model_policy", models["subagent_model_policy"])
         return result
 
-    def stop(self, timeout: float = 5.0) -> bool:
-        stopped = self.conductor.stop(timeout=timeout)
-        self.lifecycle_status()
-        return stopped
-
-    def _request_supervisor_yield(
-        self, request_id: str | None, *, reason: str
-    ) -> bool:
-        """Ask the shared core to end the active supervisor turn cooperatively."""
-        if not request_id:
-            return False
-        request_yield = getattr(getattr(self, "conductor", None), "request_yield", None)
-        if not callable(request_yield):
-            return False
-        try:
-            yielded = bool(request_yield(request_id, reason=reason))
-        except Exception:
-            log.exception("conductor supervisor yield request failed")
-            return False
-        if yielded:
-            bus.publish(
-                "conductor:request_yield_requested",
-                {"request_id": request_id, "reason": reason},
-            )
-        return yielded
-
-    def lifecycle_status(self) -> dict[str, bool]:
-        """Return the shared core's live lifecycle state."""
-        status = self.conductor.lifecycle_snapshot()
-        self._started = status["started"]
-        return status
-
-    def notify(self, event: dict) -> bool:
-        return self.conductor.notify(event)
-
-    def get_chat_messages(self, last: int = 20) -> list:
-        return self.chat_messages[-last:]
+    # ===== snapshots & chat product surface =====
 
     def get_subagent_snapshot(self) -> list[dict]:
-        """Add Hub workflow metadata absent from older GA core snapshots."""
-        tracker = self._ensure_workflow_tracker()
-        snapshot = self.pool.snapshot()
-        get_state = getattr(self.pool, "get", None)
-        if not callable(get_state):
-            return snapshot
-        enriched = []
-        for source in snapshot:
-            item = dict(source)
-            state = get_state(item.get("id"))
-            generation = getattr(state, "active_generation", None)
-            if generation is not None:
-                item["generation"] = generation
-            request_id = tracker.request_for_subagent(str(item.get("id") or ""))
-            if request_id:
-                item["request_id"] = request_id
-            enriched.append(item)
-        return enriched
+        """Pool snapshot (gahub_app enriches generation/request attribution)."""
+        return self.pool.snapshot()
 
     def get_workflow_snapshot(self, limit: int = 20) -> list[dict]:
         """Expose the Hub-owned workflow projection for page reloads."""
@@ -1373,18 +1177,9 @@ Current state: {summary}"""
     def get_readme(self, topic: str) -> Optional[str]:
         return READMES.get(topic)
 
-    def get_conductor_log(self) -> list:
-        return self.conductor.log
-
 
 def shutdown_conductor_service(timeout: float = 2.0) -> bool:
-    """Close the existing singleton without constructing one at app exit.
-
-    Unlike restartable service registries, the terminally closed instance is
-    intentionally retained.  This prevents a late request during ASGI
-    teardown from installing a second core while a timed-out first owner is
-    still finishing, and it lets a later shutdown call reap that same owner.
-    """
+    """Close the existing singleton without constructing one at app exit."""
     with ConductorService._lock:
         service = ConductorService._instance
     if service is None:

@@ -230,54 +230,13 @@ def test_generic_conductor_error_is_persisted_once_as_chat():
     ) == 2
 
 
-def test_monitor_completion_wake_inherits_the_bound_request(monkeypatch):
-    service = SimpleNamespace(
-        workflow_tracker=SimpleNamespace(
-            request_for_subagent=Mock(return_value="request-1")
-        ),
-        notify=Mock(return_value=True),
-    )
-    monkeypatch.setattr(
-        ConductorService,
-        "instance",
-        classmethod(lambda _cls: service),
-    )
-
-    # The detailed queue bridge is covered elsewhere; this assertion protects
-    # the workflow attribution field that the GA core does not add itself.
-    from server.services.conductor_service import monitor_display_queue
-    import queue
-
-    display_queue = queue.Queue()
-    display_queue.put({"done": "finished"})
-    pool = SimpleNamespace(on_display=Mock(return_value=True))
-    with patch("server.services.conductor_service.OutputBudget") as budget_cls:
-        budget_cls.return_value.finish.return_value = "finished"
-        monitor_display_queue(
-            "worker-1",
-            display_queue,
-            pool,
-            True,
-            generation=3,
-        )
-
-    service.notify.assert_called_once_with({
-        "type": "subagent_done",
-        "id": "worker-1",
-        "reply": "finished",
-        "generation": 3,
-        "request_id": "request-1",
-    })
-
-
 def test_hub_snapshot_exposes_the_core_active_generation():
+    # gahub_app enriches its SSE snapshots with generation/request_id; the
+    # hub mirror passes them straight through.
     service = object.__new__(ConductorService)
-    service.workflow_tracker = WorkflowTracker()
-    service.workflow_tracker.admit("request-1")
-    service.workflow_tracker.bind_subagent("request-1", "worker-1", 3)
     service.pool = SimpleNamespace(
-        snapshot=lambda: [{"id": "worker-1", "status": "stopped"}],
-        get=lambda _sid: SimpleNamespace(active_generation=3),
+        snapshot=lambda: [{"id": "worker-1", "status": "stopped",
+                           "generation": 3, "request_id": "request-1"}],
     )
 
     assert service.get_subagent_snapshot() == [{

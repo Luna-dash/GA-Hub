@@ -121,6 +121,29 @@ class RequestUsageStore:
                 self._rows[request_id].completed_at = self._clock()
                 self._rows[request_id].attribution = attribution
 
+    def apply_delta(
+        self,
+        request_id: str,
+        *,
+        requests: int = 0,
+        input: int = 0,
+        output: int = 0,
+        cache_create: int = 0,
+        cache_read: int = 0,
+    ) -> None:
+        """Ingest one SSE usage delta from gahub_app (already normalized)."""
+        if not request_id:
+            return
+        with self._lock:
+            row = self._rows.get(request_id)
+            if not row:
+                return
+            row.requests += max(0, int(requests))
+            row.input += max(0, int(input))
+            row.output += max(0, int(output))
+            row.cache_create += max(0, int(cache_create))
+            row.cache_read += max(0, int(cache_read))
+
     def list(self, limit: int = 100) -> list[dict[str, Any]]:
         with self._lock:
             rows = sorted(self._rows.values(), key=lambda x: x.started_at, reverse=True)[:limit]

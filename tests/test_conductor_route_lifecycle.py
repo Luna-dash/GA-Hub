@@ -292,9 +292,8 @@ def test_stop_route_delegates_and_returns_live_lifecycle(monkeypatch):
 def test_service_lifecycle_status_refreshes_compatibility_cache():
     service = ConductorService.__new__(ConductorService)
     service._started = True
-    service.conductor = SimpleNamespace(
-        lifecycle_snapshot=lambda: dict(STOPPED)
-    )
+    service._lifecycle_cache = {}
+    service.client = SimpleNamespace(status=lambda: dict(STOPPED))
 
     assert service.lifecycle_status() == STOPPED
     assert service._started is False

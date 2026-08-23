@@ -156,51 +156,6 @@ class _FakePool:
         return []
 
 
-def test_display_bridge_reconciles_stream_chunks_with_full_done(monkeypatch):
-    dq = queue.Queue()
-    dq.put({"next": "hel"})
-    dq.put({"next": "lo"})
-    dq.put({"done": "hello"})
-    pool = _FakePool()
-    monkeypatch.setattr(conductor_service, "push_subagent_cards", lambda _cards: None)
-
-    conductor_service.monitor_display_queue("agent-3", dq, pool, trigger_when_done=False)
-
-    assert pool.displays == [
-        ("agent-3", "hel", False),
-        ("agent-3", "hello", False),
-        ("agent-3", "hello", True),
-    ]
-
-
-def test_display_bridge_keeps_bounded_output_when_done_is_full(monkeypatch):
-    dq = queue.Queue()
-    dq.put({"next": "abc"})
-    dq.put({"next": "def"})
-    dq.put({"done": "abcdef"})
-    pool = _FakePool()
-    monkeypatch.setattr(conductor_service, "push_subagent_cards", lambda _cards: None)
-    monkeypatch.setattr(
-        conductor_service,
-        "OutputBudget",
-        lambda agent_id, publish=None: OutputBudget(
-            agent_id,
-            max_tokens=5,
-            max_lines=10,
-            token_counter=len,
-            publish=publish,
-        ),
-    )
-
-    conductor_service.monitor_display_queue("agent-4", dq, pool, trigger_when_done=False)
-
-    bounded = pool.displays[-1][1]
-    assert pool.displays[-1] == ("agent-4", bounded, True)
-    assert bounded.startswith("abcde")
-    assert "output truncated" in bounded
-    assert "abcdef" not in bounded
-
-
 def test_conductor_service_shutdown_stops_timeout_monitor_twice_safely():
     monitor = TimeoutMonitor(FakeCore(), check_interval=1.0)
     service = object.__new__(conductor_service.ConductorService)

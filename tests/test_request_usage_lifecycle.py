@@ -7,13 +7,18 @@ from unittest.mock import call, patch
 
 import pytest
 
+from types import SimpleNamespace
+
 from server.services.conductor_service import (
     ConductorService,
-    CoreConductor,
     HubConductorCallbacks,
-    RequestOutcome,
-    SubAgentEvent,
 )
+
+
+def RequestOutcome(**kw):
+    return SimpleNamespace(status=kw.get("status"), phase=kw.get("phase"),
+                           error=kw.get("error", ""))
+
 from server.services.request_usage import RequestUsageStore
 
 
@@ -106,7 +111,7 @@ def test_subagent_stream_publishes_one_snapshot_without_per_chunk_metadata():
         with patch("server.services.conductor_service.bus.publish") as publish:
             callbacks.on_subagent_output("sid", "partial", False)
             callbacks.on_subagent_event(
-                "sid", SubAgentEvent.RUNNING, {"output_len": 7}
+                "sid", "running", {"output_len": 7}
             )
 
     snapshot.assert_called_once()
@@ -116,13 +121,13 @@ def test_subagent_stream_publishes_one_snapshot_without_per_chunk_metadata():
 @pytest.mark.parametrize(
     "event",
     [
-        SubAgentEvent.SPAWNED,
-        SubAgentEvent.COMPLETED,
-        SubAgentEvent.REWORKED,
-        SubAgentEvent.ACCEPTED,
-        SubAgentEvent.CANCELLED,
-        SubAgentEvent.FAILED,
-        SubAgentEvent.KILLED,
+        "spawned",
+        "completed",
+        "reworked",
+        "accepted",
+        "cancelled",
+        "failed",
+        "killed",
     ],
 )
 def test_subagent_state_transitions_publish_authoritative_snapshot(event):
@@ -136,7 +141,7 @@ def test_subagent_state_transitions_publish_authoritative_snapshot(event):
             callbacks.on_subagent_event("sid", event, {"generation": 1})
 
     publish.assert_called_once_with(
-        f"conductor:subagent_{event.value}",
+        f"conductor:subagent_{event}",
         {"id": "sid", "generation": 1},
     )
     snapshot.assert_called_once_with(items)
@@ -145,8 +150,8 @@ def test_subagent_state_transitions_publish_authoritative_snapshot(event):
 @pytest.mark.parametrize(
     ("first", "second"),
     [
-        (SubAgentEvent.SPAWNED, SubAgentEvent.STARTED),
-        (SubAgentEvent.COMPLETED, SubAgentEvent.PENDING_REVIEW),
+        ("spawned", "started"),
+        ("completed", "pending_review"),
     ],
 )
 def test_identical_subagent_transitions_keep_typed_events_without_second_snapshot(
@@ -162,8 +167,8 @@ def test_identical_subagent_transitions_keep_typed_events_without_second_snapsho
             callbacks.on_subagent_event("sid", second, {})
 
     assert publish.call_args_list == [
-        call(f"conductor:subagent_{first.value}", {"id": "sid"}),
-        call(f"conductor:subagent_{second.value}", {"id": "sid"}),
+        call(f"conductor:subagent_{first}", {"id": "sid"}),
+        call(f"conductor:subagent_{second}", {"id": "sid"}),
     ]
     snapshot.assert_called_once_with([])
 
@@ -177,8 +182,8 @@ def test_completed_output_defers_to_single_completed_snapshot():
     with patch("server.services.conductor_service.push_subagent_cards") as snapshot:
         with patch("server.services.conductor_service.bus.publish"):
             callbacks.on_subagent_output("sid", "done", True)
-            callbacks.on_subagent_event("sid", SubAgentEvent.COMPLETED, {})
-            callbacks.on_subagent_event("sid", SubAgentEvent.PENDING_REVIEW, {})
+            callbacks.on_subagent_event("sid", "completed", {})
+            callbacks.on_subagent_event("sid", "pending_review", {})
 
     snapshot.assert_called_once_with(items)
 
@@ -252,7 +257,7 @@ def test_subagent_lifecycle_publish_failure_still_attempts_snapshot():
         with patch(
             "server.services.conductor_service.push_subagent_cards"
         ) as snapshot:
-            callbacks.on_subagent_event("sid", SubAgentEvent.CANCELLED, {})
+            callbacks.on_subagent_event("sid", "cancelled", {})
 
     snapshot.assert_called_once_with(items)
 
@@ -404,46 +409,3 @@ def test_interleaved_request_contexts_do_not_cross_attribute_usage():
     assert rows[rid2]["requests"] == 1
     assert rows[rid2]["output"] == 2
 
-
-@pytest.mark.parametrize("phase", ["prompt", "dispatch", "drain"])
-def test_core_failure_phase_flows_into_hub_attribution(phase):
-    class PhaseAgent:
-        def put_task(self, _prompt, source=None, request_id=None):
-            if phase == "dispatch":
-                raise RuntimeError("dispatch failed")
-            result = queue.Queue()
-            result.put({"done": True})
-            return result
-
-    def prompt_builder(_events):
-        if phase == "prompt":
-            raise RuntimeError("prompt failed")
-        return "prompt"
-
-    service = object.__new__(ConductorService)
-    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
-    request_id = service.usage_store.begin(f"rid-core-{phase}")
-    callbacks = HubConductorCallbacks(service)
-    core = CoreConductor(
-        pool=object(),
-        prompt_builder=prompt_builder,
-        agent_factory=PhaseAgent,
-        callbacks=callbacks,
-    )
-    core.agent = PhaseAgent()
-    if phase == "drain":
-        core._drain = lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError("drain failed")
-        )
-
-    with pytest.raises(RuntimeError, match=f"{phase} failed"):
-        core._process_batch([
-            {
-                "type": "user_message",
-                "request_id": request_id,
-                "msg": "hello",
-            }
-        ])
-
-    row = service.usage_store.list()[0]
-    assert row["attribution"] == f"FAILED_{phase.upper()}"

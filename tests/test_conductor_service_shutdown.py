@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from types import SimpleNamespace
 from unittest import mock
 
 from server.services import conductor_service
@@ -24,7 +25,11 @@ class _StopRecorder:
 def _service(core: object | None, monitor: object | None):
     service = object.__new__(conductor_service.ConductorService)
     if core is not None:
-        service.conductor = core
+        # The engine stop now goes through the HTTP client; record like a core.
+        service.client = SimpleNamespace(
+            stop=lambda timeout: {"stopped": bool(core.stop(timeout=timeout))}
+        )
+        service._process_manager = SimpleNamespace(stop=lambda timeout: True)
     if monitor is not None:
         service.timeout_monitor = monitor
     return service
@@ -184,76 +189,3 @@ def test_closed_service_cannot_restart_core() -> None:
     core.start.assert_not_called()
 
 
-def test_ensure_started_passes_log_bridge_to_current_core() -> None:
-    class Core:
-        def __init__(self) -> None:
-            self.broadcaster = None
-
-        def start(self, log_broadcaster=None) -> bool:
-            self.broadcaster = log_broadcaster
-            return True
-
-    core = Core()
-    service = _service(core, None)
-    service.callbacks = conductor_service.HubConductorCallbacks(service)
-    service.lifecycle_status = mock.Mock(return_value={"started": True})
-
-    assert service.ensure_started() is True
-    assert core.broadcaster == service.callbacks.on_conductor_log_frame
-    service.lifecycle_status.assert_called_once_with()
-
-
-def test_ensure_started_calls_legacy_core_once_without_keyword() -> None:
-    class LegacyCore:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def start(self) -> bool:
-            self.calls += 1
-            return True
-
-    core = LegacyCore()
-    service = _service(core, None)
-    service.callbacks = conductor_service.HubConductorCallbacks(service)
-    service.lifecycle_status = mock.Mock(return_value={"started": True})
-
-    assert service.ensure_started() is True
-    assert core.calls == 1
-    service.lifecycle_status.assert_called_once_with()
-
-
-def test_ensure_started_does_not_keyword_call_positional_only_hook() -> None:
-    class PositionalOnlyCore:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def start(self, log_broadcaster=None, /) -> bool:
-            self.calls += 1
-            assert log_broadcaster is None
-            return True
-
-    core = PositionalOnlyCore()
-    service = _service(core, None)
-    service.callbacks = conductor_service.HubConductorCallbacks(service)
-    service.lifecycle_status = mock.Mock(return_value={"started": True})
-
-    assert service.ensure_started() is True
-    assert core.calls == 1
-
-
-def test_ensure_started_does_not_keyword_call_named_varargs() -> None:
-    class VarargsCore:
-        def __init__(self) -> None:
-            self.args = None
-
-        def start(self, *log_broadcaster) -> bool:
-            self.args = log_broadcaster
-            return True
-
-    core = VarargsCore()
-    service = _service(core, None)
-    service.callbacks = conductor_service.HubConductorCallbacks(service)
-    service.lifecycle_status = mock.Mock(return_value={"started": True})
-
-    assert service.ensure_started() is True
-    assert core.args == ()
