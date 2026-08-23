@@ -27,6 +27,9 @@ from ..process_utils import hidden_process_kwargs
 log = logging.getLogger(__name__)
 
 DEFAULT_PORT = 18770
+# Never route loopback traffic through HTTP_PROXY: the desktop sidecar's
+# environment may lack NO_PROXY, which blackholes every health check.
+NO_PROXY_KWARGS = {"proxies": {"http": None, "https": None}}
 
 
 class GahubProcessError(RuntimeError):
@@ -102,7 +105,7 @@ class GahubProcessManager:
     def is_healthy(self, timeout: float = 1.0) -> bool:
         try:
             resp = requests.get(f"{self.base_url()}/health", timeout=timeout,
-                                headers=self._headers())
+                                headers=self._headers(), **NO_PROXY_KWARGS)
             return resp.status_code == 200
         except requests.RequestException:
             return False
@@ -110,7 +113,7 @@ class GahubProcessManager:
     def _headers(self) -> dict:
         return {"X-GAHub-Token": self.token} if self.token else {}
 
-    def ensure_running(self, startup_timeout: float = 25.0) -> None:
+    def ensure_running(self, startup_timeout: float = 60.0) -> None:
         """Spawn gahub_app when unhealthy and wait for /health."""
         if self.is_healthy():
             return
@@ -127,7 +130,14 @@ class GahubProcessManager:
                 raise GahubProcessError(
                     "gahub_app is not running and subprocess spawning is disabled"
                 )
-            cmd = [self.python_exe, script, "--host", "127.0.0.1",
+            if getattr(sys, "frozen", False) and os.path.abspath(
+                self.python_exe
+            ) == os.path.abspath(sys.executable):
+                raise GahubProcessError(
+                    "refusing to respawn the frozen sidecar as the gahub_app "
+                    "interpreter; set gahub_python in config"
+                )
+            cmd = [self.python_exe, "-u", script, "--host", "127.0.0.1",
                    "--port", str(self.port)]
             if self.token:
                 cmd += ["--token", self.token]
@@ -151,7 +161,16 @@ class GahubProcessManager:
                         f"gahub_app exited with code {self._proc.returncode} during startup"
                     )
                 time.sleep(0.25)
-        raise GahubProcessError(f"gahub_app did not become healthy within {startup_timeout}s")
+        detail = f"python={self.python_exe} poll={self._proc.poll() if self._proc else 'n/a'}"
+        try:
+            with open(log_path, "rb") as f:
+                tail = f.read()[-400:].decode("utf-8", "replace").replace("\n", " | ")
+            detail += f" log_tail={tail}"
+        except Exception:
+            pass
+        raise GahubProcessError(
+            f"gahub_app did not become healthy within {startup_timeout}s ({detail})"
+        )
 
     def stop(self, timeout: float = 5.0) -> bool:
         with self._lock:
@@ -189,6 +208,7 @@ class GaConductorClient:
             resp = requests.request(
                 method, self._url(path), json=json_body, params=params,
                 headers=self.pm._headers(), timeout=timeout or self.timeout,
+                **NO_PROXY_KWARGS,
             )
         except requests.RequestException as exc:
             raise GahubProcessError(f"gahub_app request failed ({path}): {exc}") from exc
@@ -277,6 +297,7 @@ class GaConductorClient:
                 resp = requests.get(
                     self._url("/events"), stream=True,
                     headers=self.pm._headers(), timeout=(5.0, idle_reconnect_after),
+                    **NO_PROXY_KWARGS,
                 )
                 with resp:
                     if resp.status_code != 200:
