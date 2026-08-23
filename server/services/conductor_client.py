@@ -22,6 +22,7 @@ from typing import Callable, Optional
 import requests
 
 from .. import _paths
+from ..process_utils import hidden_process_kwargs
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +58,25 @@ def _config_str(key: str) -> Optional[str]:
     return os.environ.get(f"GAHUB_{key.upper()}") or None
 
 
+def _resolve_python_exe(ga_root: Optional[str]) -> str:
+    """Find a real interpreter for gahub_app.py.
+
+    In the frozen sidecar ``sys.executable`` is the bundle launcher, not a
+    Python; reuse the project's discovery chain (config python_path, GA
+    virtualenvs, PATH) instead of relaunching ourselves.
+    """
+    explicit = _config_str("gahub_python")
+    if explicit and os.path.isfile(explicit):
+        return explicit
+    try:
+        discovered = _paths.discover_user_python(ga_root)
+        if discovered:
+            return discovered
+    except Exception:
+        log.debug("user python discovery failed", exc_info=True)
+    return sys.executable
+
+
 class GahubProcessManager:
     """Supervise the GA-side gahub_app.py subprocess (sidecar pattern)."""
 
@@ -71,7 +91,7 @@ class GahubProcessManager:
         self.ga_root = ga_root or _paths.GA_ROOT
         self.port = port if port is not None else _config_int("gahub_port", DEFAULT_PORT)
         self.token = token if token is not None else _config_str("gahub_token")
-        self.python_exe = python_exe or sys.executable
+        self.python_exe = python_exe or _resolve_python_exe(self.ga_root)
         self.spawn_enabled = spawn_enabled
         self._proc: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
@@ -120,6 +140,7 @@ class GahubProcessManager:
             self._proc = subprocess.Popen(
                 cmd, cwd=self.ga_root,
                 stdout=log_file, stderr=subprocess.STDOUT,
+                **hidden_process_kwargs(),
             )
             deadline = time.monotonic() + startup_timeout
             while time.monotonic() < deadline:
