@@ -857,13 +857,29 @@ class ConductorService:
         self._lifecycle_cache = status
         return status
 
+    def _remember_relayed(self, ga_id) -> None:
+        if not ga_id:
+            return
+        if not hasattr(self, "_relayed_chat_ids"):
+            self._relayed_chat_ids = set()
+        self._relayed_chat_ids.add(ga_id)
+        if len(self._relayed_chat_ids) > 500:
+            self._relayed_chat_ids = set(list(self._relayed_chat_ids)[-250:])
+
     def notify(self, event: dict) -> bool:
-        """Admit a user message into the gahub_app conductor inbox."""
+        """Admit a user message into the gahub_app conductor inbox.
+
+        The engine's own chat store echoes every message back over SSE;
+        remembering the returned engine-side id here lets _on_remote_chat
+        recognize our own relay instead of duplicating it in the UI.
+        """
         if event.get("type") != "user_message":
             return False
-        self.client.post_chat(
+        item = self.client.post_chat(
             event.get("msg", ""), "user", event.get("request_id")
         )
+        if isinstance(item, dict):
+            self._remember_relayed(item.get("id"))
         return True
 
     def get_conductor_log(self) -> list:
@@ -945,9 +961,7 @@ class ConductorService:
         """Mirror conductor-role chat from gahub_app into the hub chat log."""
         if not item or item.get("id") in self._relayed_chat_ids:
             return
-        self._relayed_chat_ids.add(item.get("id"))
-        if len(self._relayed_chat_ids) > 500:
-            self._relayed_chat_ids = set(list(self._relayed_chat_ids)[-250:])
+        self._remember_relayed(item.get("id"))
         role = item.get("role") or "conductor"
         final = bool(item.get("final"))
         hub_item = add_chat(

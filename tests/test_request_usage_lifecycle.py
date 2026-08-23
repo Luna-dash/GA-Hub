@@ -409,3 +409,30 @@ def test_interleaved_request_contexts_do_not_cross_attribute_usage():
     assert rows[rid2]["requests"] == 1
     assert rows[rid2]["output"] == 2
 
+
+
+def test_relayed_user_chat_is_not_duplicated_by_the_sse_echo():
+    from unittest.mock import Mock
+    from server.services.conductor_service import HubConductorCallbacks
+
+    service = object.__new__(ConductorService)
+    service.chat_messages = []
+    service.client = Mock()
+    service.client.post_chat.return_value = {"id": "ga-echo-1", "role": "user",
+                                             "msg": "hello", "final": False}
+
+    assert service.notify({"type": "user_message", "msg": "hello",
+                           "request_id": "r1"}) is True
+    assert len(service.chat_messages) == 0          # notify itself stores nothing
+    assert "ga-echo-1" in service._relayed_chat_ids
+
+    callbacks = HubConductorCallbacks(service)
+    with patch("server.services.conductor_service.bus.publish"):
+        service._on_remote_chat({"id": "ga-echo-1", "role": "user",
+                                 "msg": "hello", "final": False})
+    assert service.chat_messages == []              # SSE echo recognized and skipped
+
+    with patch("server.services.conductor_service.bus.publish"):
+        service._on_remote_chat({"id": "ga-new-1", "role": "conductor",
+                                 "msg": "plan", "final": False})
+    assert [m["msg"] for m in service.chat_messages] == ["plan"]  # remote passes through
