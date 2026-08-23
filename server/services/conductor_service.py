@@ -801,6 +801,17 @@ class ConductorService:
         with self._shutdown_lock:
             if self._closed:
                 raise RuntimeError("Conductor service is closed")
+        # The SSE relay spawns gahub_app asynchronously; a first message raced
+        # that cold start and failed on connection refused. Wait for the
+        # process here (idempotent, shared lock with the relay's spawn).
+        manager = getattr(self, "_process_manager", None)
+        if manager is not None:
+            try:
+                manager.ensure_running()
+            except Exception as exc:
+                raise RuntimeError(
+                    f"gahub_app unavailable (see %TEMP%\gahub_app.log): {exc}"
+                ) from exc
         self._ensure_relay()
         status = self.client.status()
         if not status.get("started"):
@@ -1141,9 +1152,11 @@ class ConductorService:
                     subagent_model_policy=subagent_model_policy,
                 )
                 self.ensure_started()
-            except Exception:
+            except Exception as exc:
                 transition = tracker.fail_supervisor(
-                    admitted_request_id, phase="start", error="conductor start failed"
+                    admitted_request_id,
+                    phase="start",
+                    error=f"conductor start failed: {str(exc)[:200]}",
                 )
                 if transition is not None:
                     self._publish_workflow_transition(transition)
