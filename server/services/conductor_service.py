@@ -897,7 +897,7 @@ class ConductorService:
             if kind == "hello":
                 self.pool.update(event.get("subagents") or [])
                 for item in (event.get("chat") or [])[-20:]:
-                    self._on_remote_chat(item)
+                    self._on_remote_chat(item, from_hello=True)
             elif kind == "request_started":
                 self.usage_store.begin(event.get("request_id"))
             elif kind == "request_outcome":
@@ -957,9 +957,18 @@ class ConductorService:
                 rid, output=int(event.get("tokens", 0) or 0)
             )
 
-    def _on_remote_chat(self, item: dict) -> None:
-        """Mirror conductor-role chat from gahub_app into the hub chat log."""
+    def _on_remote_chat(self, item: dict, *, from_hello: bool = False) -> None:
+        """Mirror engine-side chat into the hub log.
+
+        ``role=user`` entries only arrive here as echoes of messages the hub
+        itself relayed (the engine broadcasts before our post_chat response
+        returns, so the id race cannot be fully closed) or inside the hello
+        snapshot after a hub restart. Live echoes of user messages are always
+        skipped; the hello path keeps them to restore history.
+        """
         if not item or item.get("id") in self._relayed_chat_ids:
+            return
+        if item.get("role") == "user" and not from_hello:
             return
         self._remember_relayed(item.get("id"))
         role = item.get("role") or "conductor"

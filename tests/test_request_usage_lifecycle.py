@@ -436,3 +436,21 @@ def test_relayed_user_chat_is_not_duplicated_by_the_sse_echo():
         service._on_remote_chat({"id": "ga-new-1", "role": "conductor",
                                  "msg": "plan", "final": False})
     assert [m["msg"] for m in service.chat_messages] == ["plan"]  # remote passes through
+
+
+def test_live_user_echo_is_skipped_even_before_the_id_is_recorded():
+    # The engine broadcasts the SSE echo before post_chat returns; a user
+    # echo arriving ahead of the id bookkeeping must still not duplicate.
+    service = object.__new__(ConductorService)
+    service.chat_messages = []
+    service._relayed_chat_ids = set()
+    with patch("server.services.conductor_service.bus.publish"):
+        service._on_remote_chat({"id": "ga-racy-1", "role": "user",
+                                 "msg": "racy", "final": False})
+    assert service.chat_messages == []
+    # hello (restart history restore) still admits user entries
+    with patch("server.services.conductor_service.bus.publish"):
+        service._on_remote_chat({"id": "ga-old-1", "role": "user",
+                                 "msg": "history", "final": False},
+                                from_hello=True)
+    assert [m["msg"] for m in service.chat_messages] == ["history"]
