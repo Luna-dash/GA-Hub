@@ -175,10 +175,19 @@ class ChatRetryConfigTests(unittest.TestCase):
                  mock.patch.object(_paths, "CONFIG_FILE", config_file):
                 saved = chat_retry.save_chat_retry_config({"enabled": False, "max_attempts": 3})
 
-            self.assertEqual(saved.to_dict(), {"enabled": False, "max_attempts": 3})
+            self.assertEqual(
+                saved.to_dict(),
+                {
+                    "enabled": False,
+                    "max_attempts": 3,
+                    "backoff_base_seconds": chat_retry.DEFAULT_BACKOFF_BASE_SECONDS,
+                    "backoff_factor": chat_retry.DEFAULT_BACKOFF_FACTOR,
+                    "backoff_max_seconds": chat_retry.DEFAULT_BACKOFF_MAX_SECONDS,
+                },
+            )
             config = json.loads(config_file.read_text("utf-8"))
             self.assertEqual(config["ga_root"], "/tmp/ga")
-            self.assertEqual(config[chat_retry.CONFIG_KEY], {"enabled": False, "max_attempts": 3})
+            self.assertEqual(config[chat_retry.CONFIG_KEY], saved.to_dict())
 
 
 class AgentServiceWebToolPatchTests(unittest.TestCase):

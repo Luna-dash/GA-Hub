@@ -35,7 +35,7 @@ if _paths.GA_ROOT is None:
 from agentmain import GeneraticAgent  # noqa: E402  (resolved via _paths sys.path)
 from frontends.continue_cmd import install as install_continue, reset_conversation  # noqa: E402
 
-from .chat_retry import ChatRetryConfig, classify_recoverable_error, load_chat_retry_config  # noqa: E402
+from .chat_retry import ChatRetryConfig, classify_recoverable_error, compute_backoff_delay, load_chat_retry_config  # noqa: E402
 from .chat_stream_projection import ChatSnapshot, ChatStreamProjection  # noqa: E402
 from .event_bus import bus  # noqa: E402
 from .llm_preference_store import LlmPreferenceStore  # noqa: E402
@@ -723,7 +723,6 @@ class AgentService:
                         "run_id": h.run_id,
                     })
                     bus.publish("agent:done", {"stream_id": h.stream_id, "len": len(content)})
-                    self._record_session_usage(h.session_id)
                     try:
                         handled_recoverable_error = self._maybe_retry_recoverable_error(h, snap, content)
                         if not handled_recoverable_error:
@@ -765,7 +764,6 @@ class AgentService:
                 "session_id": h.session_id,
                 "run_id": h.run_id,
             })
-            self._record_session_usage(h.session_id)
         finally:
             lock = getattr(self, "_lock", None)
             streams = getattr(self, "_streams", None)
@@ -790,16 +788,6 @@ class AgentService:
                 except _q.Empty:
                     # A concurrent consumer freed the slot between operations.
                     continue
-
-    @staticmethod
-    def _record_session_usage(session_id: str) -> None:
-        try:
-            # Lazy import avoids coupling lightweight AgentService tests to
-            # FastAPI route initialisation.
-            from ..routes.tokens import record_session_usage
-            record_session_usage(session_id)
-        except Exception:
-            log.exception("could not assign token usage to session %s", session_id)
 
     def _maybe_retry_recoverable_error(self, h: StreamHandle, snap: ChatSnapshot, content: str) -> bool:
         if snap.source not in ("user", "webui", "chat_error_retry", "auto_continue", "scheduled_task", "autonomous", "reflect"):
@@ -829,6 +817,45 @@ class AgentService:
             return True
         next_count = h.error_retry_count + 1
         prompt = _ERROR_RETRY_PROMPT_TEMPLATE.format(label=match.label)
+        delay_seconds = compute_backoff_delay(h.error_retry_count, cfg)
+        if delay_seconds > 0:
+            # The stream is already terminal here, so the coordinator has
+            # released its session slot; waiting on this fanout thread does
+            # not hold any admission capacity. Back off before resubmitting
+            # so transient upstream failures are spaced out exponentially.
+            bus.publish("chat:retry_scheduled", {
+                "stream_id": h.stream_id,
+                "source": snap.source,
+                "logical_id": h.logical_id,
+                "attempt": next_count,
+                "max_attempts": cfg.max_attempts,
+                "delay_seconds": delay_seconds,
+                "reason": match.to_dict(),
+            })
+            log.info(
+                "backing off %.1fs before recoverable chat error retry for %s (%d/%d, %s)",
+                delay_seconds,
+                h.stream_id,
+                next_count,
+                cfg.max_attempts,
+                match.label,
+            )
+            if not self._wait_for_error_retry_slot(h, snap, delay_seconds):
+                return False
+            if snap.aborted:
+                return False
+            # Policy may have changed while waiting; honor the freshest one.
+            cfg = self._load_chat_retry_config()
+            if not cfg.enabled or cfg.max_attempts <= 0:
+                return False
+            if h.error_retry_count >= cfg.max_attempts:
+                return False
+            if not self._error_retry_still_alone(h):
+                log.info(
+                    "skipping recoverable chat error retry for %s: newer stream active",
+                    h.stream_id,
+                )
+                return False
         log.info(
             "retrying recoverable chat error for %s (%d/%d, %s)",
             h.stream_id,
@@ -856,6 +883,41 @@ class AgentService:
             session_id=h.session_id,
             run_id=h.run_id,
         )
+        return True
+
+    def _wait_for_error_retry_slot(self, h: StreamHandle, snap: ChatSnapshot, delay_seconds: float) -> bool:
+        """Wait out the error-retry backoff, abortably.
+
+        Returns True once ``delay_seconds`` elapsed; False when the user
+        aborted this snapshot or the service fanout is shutting down.
+        """
+        stop_event = getattr(self, "_fanout_stop_event", None)
+        deadline = time.monotonic() + max(0.0, float(delay_seconds))
+        while True:
+            if getattr(snap, "aborted", False):
+                return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+            step = min(0.25, remaining)
+            if stop_event is not None and stop_event.wait(step):
+                return False
+
+    def _error_retry_still_alone(self, h: StreamHandle) -> bool:
+        """True when no newer live stream took over during the backoff wait."""
+        lock = getattr(self, "_lock", None)
+        streams = getattr(self, "_streams", None)
+        if lock is None or streams is None:
+            return True
+        with lock:
+            for other_id, other in list(streams.items()):
+                if other_id == h.stream_id or other is h:
+                    continue
+                if getattr(other, "finished", True):
+                    continue
+                other_session = getattr(other, "session_id", None)
+                if other_session in (None, h.session_id):
+                    return False
         return True
 
     def _load_chat_retry_config(self) -> ChatRetryConfig:
