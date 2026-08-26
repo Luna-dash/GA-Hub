@@ -348,7 +348,7 @@ function ChatAppearancePanel() {
 function ChatRetryPanel() {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: queryKeys.agent.chatRetryConfig, queryFn: api.chatRetryConfig })
-  const [cfg, setCfg] = useState<ChatRetryConfig>({ enabled: true, max_attempts: 2 })
+  const [cfg, setCfg] = useState<ChatRetryConfig>({ enabled: true, max_attempts: 2, backoff_base_seconds: 2, backoff_factor: 2, backoff_max_seconds: 60 })
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -363,6 +363,9 @@ function ChatRetryPanel() {
       const saved = await api.saveChatRetryConfig({
         enabled: !!cfg.enabled,
         max_attempts: Math.max(0, Math.min(5, Math.floor(Number(cfg.max_attempts) || 0))),
+        backoff_base_seconds: Math.max(0, Math.min(600, Number(cfg.backoff_base_seconds) || 0)),
+        backoff_factor: Math.max(1, Math.min(10, Number(cfg.backoff_factor) || 2)),
+        backoff_max_seconds: Math.max(0, Math.min(600, Number(cfg.backoff_max_seconds) || 0)),
       })
       setCfg(saved)
       await qc.invalidateQueries({ queryKey: queryKeys.agent.chatRetryConfig })
@@ -404,6 +407,21 @@ function ChatRetryPanel() {
             disabled={isLoading || saving || !cfg.enabled}
             className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50"
           />
+        </label>
+
+        <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+          重试基础间隔（秒）
+          <input type="number" min={0} max={600} step="1" value={cfg.backoff_base_seconds ?? 2} onChange={(e) => setCfg({ ...cfg, backoff_base_seconds: Number(e.target.value) })} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
+        </label>
+
+        <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+          退避倍率
+          <input type="number" min={1} max={10} step="0.5" value={cfg.backoff_factor ?? 2} onChange={(e) => setCfg({ ...cfg, backoff_factor: Number(e.target.value) })} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
+        </label>
+
+        <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+          单次最长等待（秒）
+          <input type="number" min={0} max={600} step="1" value={cfg.backoff_max_seconds ?? 60} onChange={(e) => setCfg({ ...cfg, backoff_max_seconds: Number(e.target.value) })} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
 
         <button

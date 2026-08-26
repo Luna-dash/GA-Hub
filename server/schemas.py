@@ -115,6 +115,9 @@ class LLMSwitch(BaseModel):
 class ChatRetryConfigReq(BaseModel):
     enabled: bool = True
     max_attempts: int = Field(default=2, ge=0, le=5)
+    backoff_base_seconds: float = Field(default=2.0, ge=0.0, le=600.0)
+    backoff_factor: float = Field(default=2.0, ge=1.0, le=10.0)
+    backoff_max_seconds: float = Field(default=60.0, ge=0.0, le=600.0)
 
 
 # ── rewind ───────────────────────────────────────────────────────

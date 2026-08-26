@@ -105,6 +105,12 @@ export type SessionMessagesResponse = Omit<
 export interface ChatRetryConfig {
   enabled: boolean
   max_attempts: number
+  /** Seconds before the first automatic retry attempt. */
+  backoff_base_seconds?: number
+  /** Multiplier applied per subsequent attempt (>= 1). */
+  backoff_factor?: number
+  /** Upper bound for any single computed backoff delay. */
+  backoff_max_seconds?: number
 }
 
 // ── WeChat ────────────────────────────────────────────────
@@ -246,6 +252,7 @@ export type ChatWSOut = (
   | { type: 'heartbeat'; stream_id: string }
   | { type: 'next'; stream_id: string; content: string; source?: string; logical_id?: string; retry_attempt?: number; retry_max?: number; retry_of?: string; retry_reason?: string }
   | { type: 'done'; stream_id: string; content: string; source?: string; logical_id?: string; retry_attempt?: number; retry_max?: number; retry_of?: string; retry_reason?: string }
+  | { type: 'retry_scheduled'; stream_id: string; source?: string; logical_id?: string; attempt: number; max_attempts: number; delay_seconds?: number; reason?: ChatRetryReason; retry_reason?: string }
   | { type: 'retry'; stream_id: string; source?: string; logical_id?: string; attempt: number; max_attempts: number; reason?: ChatRetryReason; retry_reason?: string }
   | { type: 'retry_exhausted'; stream_id: string; source?: string; logical_id?: string; attempt: number; max_attempts: number; reason?: ChatRetryReason; retry_reason?: string }
   | { type: 'aborted' }

@@ -440,6 +440,17 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
       now,
     )
   }
+  if (evt.type === 'retry_scheduled') {
+    if (isHiddenSource(evt.source)) return prev
+    const reason = evt.reason?.label || evt.retry_reason || '可恢复错误'
+    const secs = Math.max(1, Math.round(evt.delay_seconds ?? 0))
+    return upsertRetryNotice(
+      prev,
+      evt.logical_id || evt.stream_id || '',
+      `_检测到 ${reason}，约 ${secs}s 后自动重试（${evt.attempt}/${evt.max_attempts}）。_`,
+      now,
+    )
+  }
   if (evt.type === 'error') {
     const noticeId = `${evt.stream_id}:error:${evt.code}`
     const stopped = prev.map((m) =>

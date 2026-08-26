@@ -499,6 +499,31 @@ describe('chat_error_retry notice bubble reuse', () => {
     expect(list[0].content).toContain('timeout')
   })
 
+  it('shows one countdown bubble for retry_scheduled and rewrites it when the retry starts', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
+      session_id: 'session-sched',
+      archive_bound: true,
+      revision: 'c1',
+      items: [],
+    })
+    useChatStore.getState().start('session-sched')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+
+    const sock = FakeWebSocket.instances.at(-1)!
+    sock.emit({ type: 'retry_scheduled', stream_id: 'turn-9', source: 'user', logical_id: 'turn-9', attempt: 1, max_attempts: 3, delay_seconds: 4, retry_reason: 'timeout' } as never)
+    let list = notices()
+    expect(list).toHaveLength(1)
+    expect(list[0].streamId).toBe('turn-9:retry-notice')
+    expect(list[0].content).toContain('约 4s')
+    expect(list[0].content).toContain('（1/3）')
+
+    sock.emit({ type: 'retry', stream_id: 'turn-9', source: 'user', logical_id: 'turn-9', attempt: 1, max_attempts: 3, retry_reason: 'timeout' } as never)
+    sock.emit({ type: 'started', stream_id: 'r-a9', source: 'chat_error_retry', logical_id: 'turn-9', retry_attempt: 1, retry_max: 3, retry_reason: 'timeout' } as never)
+    list = notices()
+    expect(list).toHaveLength(1)
+    expect(list[0].content).not.toContain('约 4s')
+  })
+
   it('merges same-turn retry streams from a snapshot into a single bubble', async () => {
     vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
       session_id: 'session-snap',
