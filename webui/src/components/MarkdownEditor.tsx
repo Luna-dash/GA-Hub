@@ -41,7 +41,7 @@ export function MarkdownEditor({ value, onChange, height, readOnly }: Props) {
             value={v}
             readOnly={readOnly}
             onChange={(e) => { setV(e.target.value); onChange(e.target.value) }}
-            className="w-full h-full p-4 bg-bg-card outline-none font-mono text-sm leading-6 resize-none"
+            className="block w-full h-full p-4 bg-bg-card outline-none font-mono text-sm leading-6 resize-none"
             spellCheck={false}
           />
         )}

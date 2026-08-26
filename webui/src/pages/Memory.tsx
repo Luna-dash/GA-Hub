@@ -86,7 +86,7 @@ function SopList() {
   useEffect(() => { if (cur) { setV(cur.content); setDirty(false) } }, [cur])
 
   return (
-    <div className="h-full grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)] gap-4 p-6">
+    <div className="h-full grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] gap-4 p-6">
       <div className="rounded-lg border border-line bg-bg-card overflow-hidden flex flex-col h-full">
         <div className="px-3 py-2 border-b border-line space-y-2">
           <div className="text-xs text-slate-400">SOP 文档</div>
@@ -97,7 +97,7 @@ function SopList() {
             className="w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-accent"
           />
         </div>
-        <ul className="flex-1 overflow-y-auto">
+        <ul className="flex-1 min-h-0 overflow-y-auto">
           {visible.map((s) => (
             <li key={s.name}>
               <button
@@ -115,7 +115,7 @@ function SopList() {
         </ul>
       </div>
 
-      <div className="h-full overflow-y-auto">
+      <div className="h-full min-h-0">
         {!active && <div className="text-slate-500 text-sm">选择左侧文档</div>}
         {active && (
           <Editor
@@ -138,10 +138,10 @@ function SkillList() {
   const { data: cur } = useQuery({ queryKey: queryKeys.skills.detail(active), queryFn: () => api.skill(active!), enabled: !!active })
 
   return (
-    <div className="h-full grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)] gap-4 p-6">
+    <div className="h-full grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] gap-4 p-6">
       <div className="rounded-lg border border-line bg-bg-card overflow-hidden flex flex-col h-full">
         <div className="px-3 py-2 border-b border-line text-xs text-slate-400">Skill 脚本</div>
-        <ul className="flex-1 overflow-y-auto">
+        <ul className="flex-1 min-h-0 overflow-y-auto">
           {skills.map((s) => (
             <li key={s.path}>
               <button
