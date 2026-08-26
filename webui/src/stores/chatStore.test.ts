@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import type { ConversationMessage, SessionMessagesResponse } from '@/api/types'
-import { useChatStore } from './chatStore'
+import { noticeKeys, useChatStore } from './chatStore'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -554,11 +554,11 @@ describe('pushSystem stable bubbles', () => {
   it('reuses one bubble per stableKey while plain pushes keep appending', () => {
     useChatStore.setState({ msgs: [] })
     const { pushSystem } = useChatStore.getState()
-    pushSystem('_已切换到 [1] gpt-x_', 'llm-switch')
-    pushSystem('_已切换到 [2] claude-y_', 'llm-switch')
+    pushSystem('_已切换到 [1] gpt-x_', noticeKeys.llmSwitch)
+    pushSystem('_已切换到 [2] claude-y_', noticeKeys.llmSwitch)
     pushSystem('_一次性提示，不合并_')
-    pushSystem('_切换项目失败：boom_', 'project-switch-fail')
-    pushSystem('_再次切换项目失败：bam_', 'project-switch-fail')
+    pushSystem('_切换项目失败：boom_', noticeKeys.projectSwitchFail)
+    pushSystem('_再次切换项目失败：bam_', noticeKeys.projectSwitchFail)
 
     const msgs = useChatStore.getState().msgs
     expect(msgs).toHaveLength(3)

@@ -86,9 +86,12 @@ interface ChatState {
 
   /** Wipe local view (used by /new). Doesn't talk to the server. */
   clearLocal: () => void
-  /** Push a system / banner bubble (e.g. /new ack, LLM switched, restore notice). */
-  /** With `stableKey`, repeated pushes reuse one bubble (id `sys:<key>`) instead of appending. */
-  pushSystem: (content: string, stableKey?: string) => void
+  /**
+   * Push a system / banner bubble (e.g. /new ack, LLM switched, restore notice).
+   * With a key from {@link noticeKeys}, repeated pushes reuse one bubble
+   * (id `sys:<key>`) instead of appending.
+   */
+  pushSystem: (content: string, stableKey?: NoticeKey) => void
   /** Replace the visible transcript after a native conversation restore. */
   restoreVisibleConversation: (messages: readonly ConversationMessage[], notice: string) => void
   /** Clear stale local streaming locks when the backend is already idle. */
@@ -114,6 +117,25 @@ function epochMilliseconds(value?: number): number | null {
 }
 
 const RETRY_NOTICE_ID_SUFFIX = ':retry-notice'
+
+/**
+ * Reusable ("stable") system-notice bubbles: one key rewrites one bubble in
+ * place (streamId `sys:<key>`) instead of appending, so repeating an action
+ * never spams duplicates. Register every new key here to keep the full set
+ * enumerable and call sites type-checked.
+ */
+export const noticeKeys = {
+  llmSwitch: 'llm-switch',
+  llmSwitchFail: 'llm-switch-fail',
+  projectSwitchFail: 'project-switch-fail',
+  sendBlocked: 'send-blocked',
+  sessionCreateFail: 'session-create-fail',
+  rollback: 'rollback',
+  rollbackBlocked: 'rollback-blocked',
+  stopNone: 'stop-none',
+} as const
+
+export type NoticeKey = (typeof noticeKeys)[keyof typeof noticeKeys]
 
 /**
  * Insert-or-update the single reusable retry-notice bubble of one logical

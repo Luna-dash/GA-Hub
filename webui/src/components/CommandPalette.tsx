@@ -16,7 +16,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { api } from '@/api/client'
-import { useChatStore } from '@/stores/chatStore'
+import { noticeKeys, useChatStore } from '@/stores/chatStore'
 import { dialog } from '@/stores/dialogStore'
 import { conversationKeys } from '@/queries/conversations'
 import { queryKeys } from '@/queries/queryKeys'
@@ -156,7 +156,7 @@ export function CommandPalette() {
       label: '停止 Agent',
       run: async () => {
         if (!sessionId) {
-          pushSystem('_当前没有可停止的会话_', 'stop-none')
+          pushSystem('_当前没有可停止的会话_', noticeKeys.stopNone)
           return
         }
         await api.abortSession(sessionId)
@@ -173,7 +173,7 @@ export function CommandPalette() {
           await api.switchLLM(l.index)
           qc.invalidateQueries({ queryKey: queryKeys.llms })
           qc.invalidateQueries({ queryKey: queryKeys.servicePanel })
-          pushSystem(`_已切换到 [${l.index}] ${l.name}_`, 'llm-switch')
+          pushSystem(`_已切换到 [${l.index}] ${l.name}_`, noticeKeys.llmSwitch)
         },
       })
     }
