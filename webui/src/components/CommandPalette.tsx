@@ -156,7 +156,7 @@ export function CommandPalette() {
       label: '停止 Agent',
       run: async () => {
         if (!sessionId) {
-          pushSystem('_当前没有可停止的会话_')
+          pushSystem('_当前没有可停止的会话_', 'stop-none')
           return
         }
         await api.abortSession(sessionId)

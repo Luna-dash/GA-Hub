@@ -317,12 +317,12 @@ export default function LiveChat() {
         .then((created) => {
           if (created) useDraftStore.getState().clearDraftIfMatch(commandKey, commandText, commandAtts)
         })
-        .catch((e: any) => pushSystem(`_新建会话失败：${e?.body?.detail || e?.message || String(e)}。命令已保留，可直接重试。_`))
+        .catch((e: any) => pushSystem(`_新建会话失败：${e?.body?.detail || e?.message || String(e)}。命令已保留，可直接重试。_`, 'session-create-fail'))
       return
     }
     if (streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair || creatingSessionRef.current) return
     if (session && !selectedLlmKey) {
-      pushSystem('_当前没有可用模型，请先在设置中配置模型。草稿已保留。_')
+      pushSystem('_当前没有可用模型，请先在设置中配置模型。草稿已保留。_', 'send-blocked')
       return
     }
 
@@ -381,20 +381,20 @@ export default function LiveChat() {
         const conflict = capacityConflictFromError(e)
         if (conflict) {
           if (conflict.reason === 'session_active') {
-            pushSystem(`_当前会话仍有任务运行中（或正在停止中），请等待结束后重试。草稿已保留，可直接重试。_`)
+            pushSystem(`_当前会话仍有任务运行中（或正在停止中），请等待结束后重试。草稿已保留，可直接重试。_`, 'send-blocked')
           } else {
             const usage = conflict.activeCount != null && conflict.capacity != null
               ? `（${conflict.activeCount}/${conflict.capacity}）`
               : ''
-            pushSystem(`_会话运行容量已满${usage}，请先在左侧会话栏选择一个运行中的会话并停止任务。草稿已保留，可直接重试。_`)
+            pushSystem(`_会话运行容量已满${usage}，请先在左侧会话栏选择一个运行中的会话并停止任务。草稿已保留，可直接重试。_`, 'send-blocked')
           }
         } else {
           const code = e?.body?.detail?.code
-          pushSystem(`_发送失败：${e?.body?.detail?.detail || code || e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`)
+          pushSystem(`_发送失败：${e?.body?.detail?.detail || code || e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`, 'send-blocked')
         }
       }
     })().catch((e: any) => {
-      pushSystem(`_创建会话失败：${e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`)
+      pushSystem(`_创建会话失败：${e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`, 'session-create-fail')
     })
   }
 
@@ -644,7 +644,7 @@ export default function LiveChat() {
   // every completed assistant bubble receives a new prop and rebuilds Markdown.
   const handleRewind = useCallback(async (sid: string) => {
     if (streaming || sessionRunning) {
-      pushSystem('_当前回复还在进行中。请先停止后再回退。_')
+      pushSystem('_当前回复还在进行中。请先停止后再回退。_', 'rollback-blocked')
       return
     }
     const targetSessionId = sessionIdRef.current
@@ -654,7 +654,7 @@ export default function LiveChat() {
     const currentMessages = useChatStore.getState().msgs
     const turnCount = rewindTurnCountFromAssistant(currentMessages, sid)
     if (!targetSessionId || turnCount == null) {
-      pushSystem('_无法确定该回复对应的会话轮次，请刷新历史后重试。_')
+      pushSystem('_无法确定该回复对应的会话轮次，请刷新历史后重试。_', 'rollback-blocked')
       return
     }
     const ok = await dialog.confirm(
@@ -667,7 +667,7 @@ export default function LiveChat() {
       const r = await api.rewindSession(targetSessionId, { n: turnCount })
       if (sessionIdRef.current !== targetSessionId) return
       useChatStore.getState().retryHistory()
-      pushSystem(`_已回退 ${turnCount} 轮（保留 ${r.kept} 轮）。_`)
+      pushSystem(`_已回退 ${turnCount} 轮（保留 ${r.kept} 轮）。_`, 'rollback')
     } catch (e: any) {
       if (sessionIdRef.current === targetSessionId) {
         await dialog.alert('回退失败', errorMessageFromError(e, '会话回退失败，请稍后重试。'))
@@ -688,14 +688,14 @@ export default function LiveChat() {
           if (created) useDraftStore.getState().clearDraftIfMatch(commandKey, commandText, commandAtts)
         })
         .catch((error: any) => {
-          pushSystem(`_新建会话失败：${error?.body?.detail || error?.message || String(error)}。命令已保留，可直接重试。_`)
+          pushSystem(`_新建会话失败：${error?.body?.detail || error?.message || String(error)}。命令已保留，可直接重试。_`, 'session-create-fail')
         })
       return
     }
     useDraftStore.getState().setText(draft.draftKey, '')
     const streamId = findLatestRewindStreamId(useChatStore.getState().msgs)
     if (!streamId) {
-      pushSystem('_当前没有可回退的已完成回复。_')
+      pushSystem('_当前没有可回退的已完成回复。_', 'rollback-blocked')
       return
     }
     void handleRewind(streamId)
