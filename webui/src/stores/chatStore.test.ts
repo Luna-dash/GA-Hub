@@ -442,3 +442,109 @@ describe('chatStore lifecycle', () => {
     expect(useChatStore.getState().sessionViews['session-a']).toBeUndefined()
   })
 })
+
+
+describe('chat_error_retry notice bubble reuse', () => {
+  beforeEach(() => {
+    FakeWebSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    useChatStore.setState({
+      msgs: [],
+      conn: 'connecting',
+      streaming: false,
+      hydrating: true,
+      historyStatus: 'idle',
+      historyError: null,
+      historyRevision: null,
+      historyHasMore: false,
+      historyBefore: null,
+      olderHistoryStatus: 'idle',
+      olderHistoryError: null,
+      sock: null,
+      sessionId: null,
+      sessionViews: {},
+    })
+  })
+
+  afterEach(() => {
+    useChatStore.getState().stop()
+    vi.unstubAllGlobals()
+  })
+
+  function notices() {
+    return useChatStore.getState().msgs.filter((m) => m.source === 'chat_error_retry_notice')
+  }
+
+  it('reuses one bubble across multiple live retries instead of appending', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
+      session_id: 'session-retry',
+      archive_bound: true,
+      revision: 'r1',
+      items: [],
+    })
+    useChatStore.getState().start('session-retry')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+
+    const sock = FakeWebSocket.instances.at(-1)!
+    sock.emit({ type: 'started', stream_id: 'r-a1', source: 'chat_error_retry', logical_id: 'turn-1', retry_attempt: 1, retry_max: 3, retry_reason: 'timeout' } as never)
+    sock.emit({ type: 'done', stream_id: 'r-a1', source: 'chat_error_retry', logical_id: 'turn-1', retry_attempt: 1, retry_max: 3, content: '' } as never)
+    sock.emit({ type: 'retry', stream_id: 'turn-1', source: 'chat_error_retry', logical_id: 'turn-1', attempt: 2, max_attempts: 3, retry_reason: 'timeout' } as never)
+    sock.emit({ type: 'started', stream_id: 'r-a2', source: 'chat_error_retry', logical_id: 'turn-1', retry_attempt: 2, retry_max: 3, retry_reason: 'timeout' } as never)
+    sock.emit({ type: 'retry_exhausted', stream_id: 'turn-1', source: 'chat_error_retry', logical_id: 'turn-1', max_attempts: 3, retry_reason: 'timeout' } as never)
+
+    const list = notices()
+    expect(list).toHaveLength(1)
+    expect(list[0].streamId).toBe('turn-1:retry-notice')
+    expect(list[0].content).toContain('上限（3/3）')
+    expect(list[0].content).toContain('timeout')
+  })
+
+  it('merges same-turn retry streams from a snapshot into a single bubble', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
+      session_id: 'session-snap',
+      archive_bound: true,
+      revision: 's1',
+      items: [],
+    })
+    useChatStore.getState().start('session-snap')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+
+    FakeWebSocket.instances.at(-1)!.emit({
+      type: 'snapshot',
+      streams: [
+        { stream_id: 'q1', source: 'webui', query: 'hello', content: 'world', done: true, started_at: 1_000, finished_at: 2_000 },
+        { stream_id: 'sr-a1', source: 'chat_error_retry', query: '', content: '', done: true, started_at: 3_000, finished_at: 4_000, logical_id: 'turn-9', retry_attempt: 1, retry_max: 3, retry_reason: 'connection' },
+        { stream_id: 'sr-a2', source: 'chat_error_retry', query: '', content: '', done: false, started_at: 5_000, finished_at: 0, logical_id: 'turn-9', retry_attempt: 2, retry_max: 3, retry_reason: 'connection' },
+      ],
+    } as never)
+
+    // Snapshot application is deferred past the next paint in the store.
+    await vi.waitFor(() => expect(notices()).toHaveLength(1))
+    const list = notices()
+    expect(list).toHaveLength(1)
+    expect(list[0].streamId).toBe('turn-9:retry-notice')
+    expect(list[0].content).toContain('进行中（2/3 · connection）')
+    // The ongoing retry stream itself still renders its own content bubble.
+    expect(
+      useChatStore.getState().msgs.some((m) => m.streamId === 'sr-a2' && m.streaming),
+    ).toBe(true)
+  })
+
+  it('keeps separate bubbles for different logical turns', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
+      session_id: 'session-two',
+      archive_bound: true,
+      revision: 't1',
+      items: [],
+    })
+    useChatStore.getState().start('session-two')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+
+    const sock = FakeWebSocket.instances.at(-1)!
+    sock.emit({ type: 'retry', stream_id: 't-a', source: 'chat_error_retry', logical_id: 'turn-a', attempt: 1, max_attempts: 3, retry_reason: 'server' } as never)
+    sock.emit({ type: 'retry', stream_id: 't-b', source: 'chat_error_retry', logical_id: 'turn-b', attempt: 1, max_attempts: 3, retry_reason: 'ssl' } as never)
+
+    const list = notices()
+    expect(list.map((m) => m.streamId)).toEqual(['turn-a:retry-notice', 'turn-b:retry-notice'])
+  })
+})
