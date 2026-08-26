@@ -252,7 +252,7 @@ export default function LiveChat() {
       })
       .catch((e: any) => {
         if (sessionIdRef.current === sid && llmChangeSeqRef.current === changeSeq) {
-          pushSystem(`_保存会话模型失败:${e?.body?.detail || e?.message || String(e)}_`)
+          pushSystem(`_保存会话模型失败:${e?.body?.detail || e?.message || String(e)}_`, 'llm-switch-fail')
         }
       })
       .finally(() => {
@@ -280,11 +280,11 @@ export default function LiveChat() {
           ? { ...cached, items: cached.items.map((item) => item.id === sid ? updated : item) }
           : cached
       ))
-      pushSystem(`_已切换模型:${llms.find((item) => item.key === updated.llm_key)?.name || updated.llm_key}_`)
+      pushSystem(`_已切换模型:${llms.find((item) => item.key === updated.llm_key)?.name || updated.llm_key}_`, 'llm-switch')
     } catch (e: any) {
       if (sessionIdRef.current === sid && llmChangeSeqRef.current === changeSeq) {
         setSession((current) => current ? { ...current, llm_key: previousKey } : current)
-        pushSystem(`_切换模型失败:${e?.body?.detail || e?.message || String(e)}_`)
+        pushSystem(`_切换模型失败:${e?.body?.detail || e?.message || String(e)}_`, 'llm-switch-fail')
       }
     } finally {
       if (llmChangeSeqRef.current === changeSeq) setLlmSaving(false)
@@ -572,7 +572,7 @@ export default function LiveChat() {
       }))
       if (sessionIdRef.current === sid) setSession(updated)
     } catch (error: unknown) {
-      pushSystem(`_切换项目失败：${errorMessageFromError(error)}_`)
+      pushSystem(`_切换项目失败：${errorMessageFromError(error)}_`, 'project-switch-fail')
     } finally {
       if (projectChangeSeqRef.current === changeSeq) setProjectSaving(false)
     }

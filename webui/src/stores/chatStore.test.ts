@@ -548,3 +548,23 @@ describe('chat_error_retry notice bubble reuse', () => {
     expect(list.map((m) => m.streamId)).toEqual(['turn-a:retry-notice', 'turn-b:retry-notice'])
   })
 })
+
+
+describe('pushSystem stable bubbles', () => {
+  it('reuses one bubble per stableKey while plain pushes keep appending', () => {
+    useChatStore.setState({ msgs: [] })
+    const { pushSystem } = useChatStore.getState()
+    pushSystem('_已切换到 [1] gpt-x_', 'llm-switch')
+    pushSystem('_已切换到 [2] claude-y_', 'llm-switch')
+    pushSystem('_一次性提示，不合并_')
+    pushSystem('_切换项目失败：boom_', 'project-switch-fail')
+    pushSystem('_再次切换项目失败：bam_', 'project-switch-fail')
+
+    const msgs = useChatStore.getState().msgs
+    expect(msgs).toHaveLength(3)
+    expect(msgs.map((m) => m.streamId)).toEqual(['sys:llm-switch', undefined, 'sys:project-switch-fail'])
+    expect(msgs[0].content).toBe('_已切换到 [2] claude-y_')
+    expect(msgs[0].source).toBe('system')
+    expect(msgs[2].content).toBe('_再次切换项目失败：bam_')
+  })
+})

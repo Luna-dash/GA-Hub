@@ -87,7 +87,8 @@ interface ChatState {
   /** Wipe local view (used by /new). Doesn't talk to the server. */
   clearLocal: () => void
   /** Push a system / banner bubble (e.g. /new ack, LLM switched, restore notice). */
-  pushSystem: (content: string) => void
+  /** With `stableKey`, repeated pushes reuse one bubble (id `sys:<key>`) instead of appending. */
+  pushSystem: (content: string, stableKey?: string) => void
   /** Replace the visible transcript after a native conversation restore. */
   restoreVisibleConversation: (messages: readonly ConversationMessage[], notice: string) => void
   /** Clear stale local streaming locks when the backend is already idle. */
@@ -960,8 +961,21 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     olderHistoryStatus: 'idle',
     olderHistoryError: null,
   }),
-  pushSystem: (content) =>
-    set((st) => ({ msgs: [...st.msgs, { role: 'assistant', content, source: 'system', timestamp: Date.now() }] })),
+  pushSystem: (content, stableKey) =>
+    set((st) => {
+      if (!stableKey) {
+        return { msgs: [...st.msgs, { role: 'assistant', content, source: 'system', timestamp: Date.now() }] }
+      }
+      // Reusable notice: same category of action rewrites one bubble in place.
+      const streamId = `sys:${stableKey}`
+      const idx = st.msgs.findIndex((m) => m.streamId === streamId)
+      if (idx === -1) {
+        return { msgs: [...st.msgs, { role: 'assistant', content, streamId, source: 'system', timestamp: Date.now() }] }
+      }
+      const next = st.msgs.slice()
+      next[idx] = { ...next[idx], content, timestamp: Date.now() }
+      return { msgs: next }
+    }),
   restoreVisibleConversation: (messages, notice) => set({
     msgs: [
       ...messages

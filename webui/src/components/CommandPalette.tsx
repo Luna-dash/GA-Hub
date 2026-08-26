@@ -173,7 +173,7 @@ export function CommandPalette() {
           await api.switchLLM(l.index)
           qc.invalidateQueries({ queryKey: queryKeys.llms })
           qc.invalidateQueries({ queryKey: queryKeys.servicePanel })
-          pushSystem(`_已切换到 [${l.index}] ${l.name}_`)
+          pushSystem(`_已切换到 [${l.index}] ${l.name}_`, 'llm-switch')
         },
       })
     }
