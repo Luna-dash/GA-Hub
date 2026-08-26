@@ -78,6 +78,9 @@ function SopList() {
   const { data } = useQuery({ queryKey: queryKeys.memory.sops, queryFn: api.sops })
   const sops = data?.sops ?? []
   const [active, setActive] = useState<string | null>(null)
+  const [q, setQ] = usePageState('memory.sopQuery', '')
+  const needle = q.trim().toLowerCase()
+  const visible = needle ? sops.filter((s) => s.name.toLowerCase().includes(needle)) : sops
   const { data: cur } = useQuery({ queryKey: queryKeys.memory.sop(active), queryFn: () => api.sop(active!), enabled: !!active })
   const [v, setV] = useState(''); const [dirty, setDirty] = useState(false)
   useEffect(() => { if (cur) { setV(cur.content); setDirty(false) } }, [cur])
@@ -85,9 +88,17 @@ function SopList() {
   return (
     <div className="h-full grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)] gap-4 p-6">
       <div className="rounded-lg border border-line bg-bg-card overflow-hidden flex flex-col h-full">
-        <div className="px-3 py-2 border-b border-line text-xs text-slate-400">SOP 文档</div>
+        <div className="px-3 py-2 border-b border-line space-y-2">
+          <div className="text-xs text-slate-400">SOP 文档</div>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="键入首几个字母过滤…"
+            className="w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-accent"
+          />
+        </div>
         <ul className="flex-1 overflow-y-auto">
-          {sops.map((s) => (
+          {visible.map((s) => (
             <li key={s.name}>
               <button
                 onClick={() => setActive(s.name)}
@@ -98,7 +109,9 @@ function SopList() {
               </button>
             </li>
           ))}
-          {sops.length === 0 && <li className="p-3 text-slate-500 text-sm">无</li>}
+          {visible.length === 0 && (
+            <li className="p-3 text-slate-500 text-sm">{sops.length === 0 ? '无' : '无匹配 SOP'}</li>
+          )}
         </ul>
       </div>
 
