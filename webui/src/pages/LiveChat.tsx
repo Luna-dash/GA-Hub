@@ -782,6 +782,7 @@ export default function LiveChat() {
           onDelete={deleteSession}
         />
         <LiveChatTranscript
+          key={session?.id ?? 'transcript-empty'}
           ref={transcriptRef}
           sessionId={session?.id ?? null}
           sessionError={sessionError}
