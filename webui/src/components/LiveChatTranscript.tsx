@@ -216,7 +216,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         >
           <MessageBubble
             role={role}
-            content={tag ? `${tag}\n\n${message.content}` : message.content}
+            content={tag ? `${tag} ${message.content}` : message.content}
             streaming={message.streaming}
             timestamp={message.timestamp}
             startedAt={message.startedAt}
