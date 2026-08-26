@@ -7,6 +7,7 @@ this module so adding future recoverable errors is localized.
 from __future__ import annotations
 
 import math
+import random
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -16,8 +17,15 @@ from .. import _paths
 
 CONFIG_KEY = "chat_error_retry"
 DEFAULT_ENABLED = True
-DEFAULT_MAX_ATTEMPTS = 2
+DEFAULT_MAX_ATTEMPTS = 3
 MAX_CONFIG_ATTEMPTS = 5
+# Scheduled/autonomous chats fire unattended (nobody watching), so they get a
+# deeper retry budget than interactive chats. The chain keeps this identity
+# across retries via StreamHandle.error_retry_origin.
+DEFAULT_SCHEDULED_MAX_ATTEMPTS = 6
+MAX_SCHEDULED_CONFIG_ATTEMPTS = 10
+SCHEDULED_RETRY_SOURCES = frozenset({"scheduled", "scheduled_task", "autonomous"})
+_BACKOFF_JITTER_RANGE = (0.85, 1.15)
 DEFAULT_BACKOFF_BASE_SECONDS = 2.0
 DEFAULT_BACKOFF_FACTOR = 2.0
 DEFAULT_BACKOFF_MAX_SECONDS = 60.0
@@ -30,6 +38,7 @@ _FINAL_MARKER_WINDOW_CHARS = 500
 class ChatRetryConfig:
     enabled: bool = DEFAULT_ENABLED
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
+    scheduled_max_attempts: int = DEFAULT_SCHEDULED_MAX_ATTEMPTS
     backoff_base_seconds: float = DEFAULT_BACKOFF_BASE_SECONDS
     backoff_factor: float = DEFAULT_BACKOFF_FACTOR
     backoff_max_seconds: float = DEFAULT_BACKOFF_MAX_SECONDS
@@ -38,6 +47,7 @@ class ChatRetryConfig:
         return {
             "enabled": bool(self.enabled),
             "max_attempts": int(self.max_attempts),
+            "scheduled_max_attempts": int(self.scheduled_max_attempts),
             "backoff_base_seconds": float(self.backoff_base_seconds),
             "backoff_factor": float(self.backoff_factor),
             "backoff_max_seconds": float(self.backoff_max_seconds),
@@ -49,12 +59,14 @@ class RecoverableErrorMatch:
     code: str
     label: str
     marker: str
+    delay_scale: float = 1.0
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "code": self.code,
             "label": self.label,
             "marker": self.marker,
+            "delay_scale": float(self.delay_scale),
         }
 
 
@@ -63,6 +75,9 @@ class RecoverableErrorPattern:
     code: str
     label: str
     pattern: re.Pattern[str]
+    # Multiplier applied on top of the global backoff curve: fast-families
+    # (sse/json) retry quickly, environment-level failures wait longer.
+    delay_scale: float = 1.0
 
 
 _EXC_ERROR_PREFIX = r"!!!\s*Error:\s*(?:requests\.)?(?:exceptions\.)?"
@@ -71,18 +86,22 @@ _RECOVERABLE_ERROR_PATTERNS = (
     RecoverableErrorPattern(
         code="rate_limit",
         label="RateLimitError",
+        # HTTP 429 bodies fold into this family: quota windows are long, so
+        # these retries get the deepest backoff multiplier.
         pattern=re.compile(
-            r"!!!\s*Error:\s*[^\r\n]*rate[\s_-]?limit[^\r\n]*\s*\Z",
+            r"!!!\s*Error:\s*(?:[^\r\n]*rate[\s_-]?limit[^\r\n]*|HTTP\s+429\b[^\r\n]*)\s*\Z",
             re.IGNORECASE,
         ),
+        delay_scale=8.0,
     ),
     RecoverableErrorPattern(
         code="http_retryable",
         label="HTTPError",
         pattern=re.compile(
-            r"!!!\s*Error:\s*HTTP\s+(?:408|409|425|429|500|502|503|504|52[0-7]|529)\b[^\r\n]*\s*\Z",
+            r"!!!\s*Error:\s*HTTP\s+(?:408|409|425|500|502|503|504|52[0-7]|529)\b[^\r\n]*\s*\Z",
             re.IGNORECASE,
         ),
+        delay_scale=2.0,
     ),
     RecoverableErrorPattern(
         code="sse_error",
@@ -99,6 +118,7 @@ _RECOVERABLE_ERROR_PATTERNS = (
             _EXC_ERROR_PREFIX + r"(?:Read|Connect|Write)?Timeout\b[^\r\n]*\s*\Z",
             re.IGNORECASE,
         ),
+        delay_scale=1.5,
     ),
     RecoverableErrorPattern(
         code="connection_error",
@@ -107,6 +127,7 @@ _RECOVERABLE_ERROR_PATTERNS = (
             _EXC_ERROR_PREFIX + r"(?:ConnectionError|ProtocolError|ChunkedEncodingError)\b[^\r\n]*\s*\Z",
             re.IGNORECASE,
         ),
+        delay_scale=2.5,
     ),
     RecoverableErrorPattern(
         code="json_decode_error",
@@ -123,6 +144,7 @@ _RECOVERABLE_ERROR_PATTERNS = (
             _EXC_ERROR_PREFIX + r"SSLError\b[^\r\n]*\s*\Z",
             re.IGNORECASE,
         ),
+        delay_scale=3.0,
     ),
 )
 
@@ -159,6 +181,15 @@ def normalize_chat_retry_config(payload: Mapping[str, Any] | None) -> ChatRetryC
     except (TypeError, ValueError):
         max_attempts = DEFAULT_MAX_ATTEMPTS
     max_attempts = max(0, min(MAX_CONFIG_ATTEMPTS, max_attempts))
+    try:
+        scheduled_max_attempts = int(
+            raw.get("scheduled_max_attempts", DEFAULT_SCHEDULED_MAX_ATTEMPTS)
+        )
+    except (TypeError, ValueError):
+        scheduled_max_attempts = DEFAULT_SCHEDULED_MAX_ATTEMPTS
+    scheduled_max_attempts = max(
+        0, min(MAX_SCHEDULED_CONFIG_ATTEMPTS, scheduled_max_attempts)
+    )
     backoff_base = _coerce_finite_float(raw.get("backoff_base_seconds"), DEFAULT_BACKOFF_BASE_SECONDS)
     backoff_base = max(0.0, min(MAX_CONFIG_BACKOFF_SECONDS, backoff_base))
     backoff_factor = _coerce_finite_float(raw.get("backoff_factor"), DEFAULT_BACKOFF_FACTOR)
@@ -169,17 +200,27 @@ def normalize_chat_retry_config(payload: Mapping[str, Any] | None) -> ChatRetryC
     return ChatRetryConfig(
         enabled=enabled,
         max_attempts=max_attempts,
+        scheduled_max_attempts=scheduled_max_attempts,
         backoff_base_seconds=backoff_base,
         backoff_factor=backoff_factor,
         backoff_max_seconds=backoff_max,
     )
 
 
-def compute_backoff_delay(attempt_index: int, cfg: ChatRetryConfig) -> float:
+def compute_backoff_delay(
+    attempt_index: int,
+    cfg: ChatRetryConfig,
+    delay_scale: float = 1.0,
+    *,
+    jitter: bool = False,
+) -> float:
     """Exponential backoff before retry ``attempt_index`` (0-based).
 
-    ``delay = base * factor ** attempt_index``, clamped to
-    ``backoff_max_seconds``. Never negative.
+    ``delay = base * factor ** attempt_index * delay_scale``, clamped to
+    ``backoff_max_seconds``. ``delay_scale`` lifts whole error families
+    (e.g. rate limits) above the base curve. With ``jitter=True`` a uniform
+    ±15% wobble is applied so simultaneous retries do not sync up.
+    Never negative.
     """
     base = max(0.0, float(cfg.backoff_base_seconds))
     factor = max(1.0, float(cfg.backoff_factor))
@@ -189,6 +230,13 @@ def compute_backoff_delay(attempt_index: int, cfg: ChatRetryConfig) -> float:
         delay = base * (factor ** index)
     except OverflowError:
         delay = cap
+    if jitter:
+        lo, hi = _BACKOFF_JITTER_RANGE
+        delay *= random.uniform(lo, hi)
+    try:
+        delay *= float(delay_scale)
+    except (TypeError, ValueError):
+        pass
     if delay > cap:
         delay = cap
     return max(0.0, delay)
@@ -220,5 +268,6 @@ def classify_recoverable_error(content: str) -> RecoverableErrorMatch | None:
                 code=spec.code,
                 label=spec.label,
                 marker=match.group(0),
+                delay_scale=spec.delay_scale,
             )
     return None

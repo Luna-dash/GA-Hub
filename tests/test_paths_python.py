@@ -180,6 +180,7 @@ class ChatRetryConfigTests(unittest.TestCase):
                 {
                     "enabled": False,
                     "max_attempts": 3,
+                    "scheduled_max_attempts": chat_retry.DEFAULT_SCHEDULED_MAX_ATTEMPTS,
                     "backoff_base_seconds": chat_retry.DEFAULT_BACKOFF_BASE_SECONDS,
                     "backoff_factor": chat_retry.DEFAULT_BACKOFF_FACTOR,
                     "backoff_max_seconds": chat_retry.DEFAULT_BACKOFF_MAX_SECONDS,

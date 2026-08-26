@@ -22,7 +22,7 @@ import {
   type NavPreference,
 } from '@/config/navigation'
 import { isTauriDesktop, restartDesktopBackend, selectDirectory } from '@/utils/desktop'
-import { waitForBackendReady } from '@/utils/backendRestart'
+import { waitForDesktopRestart } from '@/utils/backendRestart'
 import { queryKeys } from '@/queries/queryKeys'
 export default function Settings({ initialMode = 'settings' }: { initialMode?: 'settings' | 'setup' }) {
   const qc = useQueryClient()
@@ -101,7 +101,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
     setRestarting(true); setSaveErr(null)
     try {
       await restartDesktopBackend()
-      await waitForBackendReady()
+      await waitForDesktopRestart()
       window.location.reload()
     } catch (e: any) {
       toast.error('重启后端失败：' + (e?.message || String(e)))
@@ -348,7 +348,7 @@ function ChatAppearancePanel() {
 function ChatRetryPanel() {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: queryKeys.agent.chatRetryConfig, queryFn: api.chatRetryConfig })
-  const [cfg, setCfg] = useState<ChatRetryConfig>({ enabled: true, max_attempts: 2, backoff_base_seconds: 2, backoff_factor: 2, backoff_max_seconds: 60 })
+  const [cfg, setCfg] = useState<ChatRetryConfig>({ enabled: true, max_attempts: 2, scheduled_max_attempts: 6, backoff_base_seconds: 2, backoff_factor: 2, backoff_max_seconds: 60 })
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -363,6 +363,7 @@ function ChatRetryPanel() {
       const saved = await api.saveChatRetryConfig({
         enabled: !!cfg.enabled,
         max_attempts: Math.max(0, Math.min(5, Math.floor(Number(cfg.max_attempts) || 0))),
+        scheduled_max_attempts: Math.max(0, Math.min(10, Math.floor(Number(cfg.scheduled_max_attempts ?? 6) || 0))),
         backoff_base_seconds: Math.max(0, Math.min(600, Number(cfg.backoff_base_seconds) || 0)),
         backoff_factor: Math.max(1, Math.min(10, Number(cfg.backoff_factor) || 2)),
         backoff_max_seconds: Math.max(0, Math.min(600, Number(cfg.backoff_max_seconds) || 0)),
@@ -396,7 +397,7 @@ function ChatRetryPanel() {
           <span>{cfg.enabled ? '已开启' : '已关闭'}</span>
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="定时任务/自主会话等无人值守来源的重试预算（按原始触发来源判定）">
           <span className="text-slate-500">最大重试次数</span>
           <input
             type="number"
@@ -404,6 +405,19 @@ function ChatRetryPanel() {
             max={5}
             value={cfg.max_attempts}
             onChange={(e) => setCfg({ ...cfg, max_attempts: Number(e.target.value) })}
+            disabled={isLoading || saving || !cfg.enabled}
+            className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50"
+          />
+        </label>
+
+        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="定时任务/自主会话等无人值守来源的重试预算（按原始触发来源判定）">
+          <span className="text-slate-500">定时任务最大重试次数</span>
+          <input
+            type="number"
+            min={0}
+            max={10}
+            value={cfg.scheduled_max_attempts ?? 6}
+            onChange={(e) => setCfg({ ...cfg, scheduled_max_attempts: Number(e.target.value) })}
             disabled={isLoading || saving || !cfg.enabled}
             className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50"
           />

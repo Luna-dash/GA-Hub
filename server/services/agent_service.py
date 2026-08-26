@@ -35,7 +35,7 @@ if _paths.GA_ROOT is None:
 from agentmain import GeneraticAgent  # noqa: E402  (resolved via _paths sys.path)
 from frontends.continue_cmd import install as install_continue, reset_conversation  # noqa: E402
 
-from .chat_retry import ChatRetryConfig, classify_recoverable_error, compute_backoff_delay, load_chat_retry_config  # noqa: E402
+from .chat_retry import SCHEDULED_RETRY_SOURCES, ChatRetryConfig, classify_recoverable_error, compute_backoff_delay, load_chat_retry_config  # noqa: E402
 from .chat_stream_projection import ChatSnapshot, ChatStreamProjection  # noqa: E402
 from .event_bus import bus  # noqa: E402
 from .llm_preference_store import LlmPreferenceStore  # noqa: E402
@@ -167,6 +167,7 @@ class StreamHandle:
     logical_id: str = ""
     auto_continue_count: int = 0
     error_retry_count: int = 0
+    error_retry_origin: str = ""
     session_id: str = ""
     run_id: str = ""
 
@@ -261,9 +262,15 @@ class AgentService:
     def start_run_thread(self) -> None:
         if self._run_thread and self._run_thread.is_alive():
             return
-        self._run_thread = threading.Thread(target=self.agent.run, daemon=True, name="agent-run")
+        # GA's official cost tracker keys usage by the agent thread name.
+        # Use the same stable per-session convention as desktop_bridge.
+        self._run_thread = threading.Thread(
+            target=self.agent.run,
+            daemon=True,
+            name=f"GA-{self.session_id}",
+        )
         self._run_thread.start()
-        log.info("agent run thread started")
+        log.info("agent run thread started for session %s", self.session_id)
 
     def shutdown(self, timeout: float = 5.0) -> bool:
         """Stop the GA run loop and fanout workers before releasing singleton."""
@@ -307,6 +314,17 @@ class AgentService:
             self._run_thread = None
             if type(self)._instance is self:
                 type(self)._instance = None
+            # Release the archive lock only after the run loop truly stopped:
+            # GA's lock liveness is heartbeat-based, so an unreleased lock keeps
+            # "occupying" its session for 30s after this process exits and the
+            # next launch's first restore would be refused. Imported lazily so
+            # stubbed continue_cmd test doubles keep working.
+            try:
+                from frontends.continue_cmd import release_current
+
+                release_current(self.agent)
+            except Exception:
+                log.debug("archive lock release on shutdown failed", exc_info=True)
         return stopped
 
     def status(self) -> AgentStatus:
@@ -515,6 +533,7 @@ class AgentService:
         logical_id: str | None = None,
         auto_continue_count: int = 0,
         error_retry_count: int = 0,
+        error_retry_origin: str = "",
         retry_of: str = "",
         retry_reason: str = "",
         retry_max: int = 0,
@@ -556,6 +575,7 @@ class AgentService:
             logical_id=logical_id,
             auto_continue_count=auto_continue_count,
             error_retry_count=error_retry_count,
+            error_retry_origin=str(error_retry_origin or ""),
             session_id=effective_session_id,
             run_id=run_id,
         )
@@ -790,20 +810,29 @@ class AgentService:
                     continue
 
     def _maybe_retry_recoverable_error(self, h: StreamHandle, snap: ChatSnapshot, content: str) -> bool:
-        if snap.source not in ("user", "webui", "chat_error_retry", "auto_continue", "scheduled_task", "autonomous", "reflect"):
+        if snap.source not in ("user", "webui", "chat_error_retry", "auto_continue", "scheduled_task", "scheduled", "autonomous", "reflect"):
             return False
         match = classify_recoverable_error(content)
         if match is None:
             return False
         cfg = self._load_chat_retry_config()
-        if not cfg.enabled or cfg.max_attempts <= 0:
+        # Scheduled/autonomous chats run unattended and get a deeper budget;
+        # the original trigger source rides along on the handle so retries
+        # (which re-source as "chat_error_retry") keep that identity.
+        origin = h.error_retry_origin or snap.source
+        eff_max = (
+            cfg.scheduled_max_attempts
+            if origin in SCHEDULED_RETRY_SOURCES
+            else cfg.max_attempts
+        )
+        if not cfg.enabled or eff_max <= 0:
             return False
-        if h.error_retry_count >= cfg.max_attempts:
+        if h.error_retry_count >= eff_max:
             log.info(
                 "recoverable chat error retry exhausted for %s (%s/%s, %s)",
                 h.stream_id,
                 h.error_retry_count,
-                cfg.max_attempts,
+                eff_max,
                 match.label,
             )
             bus.publish("chat:retry_exhausted", {
@@ -811,13 +840,13 @@ class AgentService:
                 "source": snap.source,
                 "logical_id": h.logical_id,
                 "attempt": h.error_retry_count,
-                "max_attempts": cfg.max_attempts,
+                "max_attempts": eff_max,
                 "reason": match.to_dict(),
             })
             return True
         next_count = h.error_retry_count + 1
         prompt = _ERROR_RETRY_PROMPT_TEMPLATE.format(label=match.label)
-        delay_seconds = compute_backoff_delay(h.error_retry_count, cfg)
+        delay_seconds = compute_backoff_delay(h.error_retry_count, cfg, match.delay_scale, jitter=True)
         if delay_seconds > 0:
             # The stream is already terminal here, so the coordinator has
             # released its session slot; waiting on this fanout thread does
@@ -828,7 +857,7 @@ class AgentService:
                 "source": snap.source,
                 "logical_id": h.logical_id,
                 "attempt": next_count,
-                "max_attempts": cfg.max_attempts,
+                "max_attempts": eff_max,
                 "delay_seconds": delay_seconds,
                 "reason": match.to_dict(),
             })
@@ -837,7 +866,7 @@ class AgentService:
                 delay_seconds,
                 h.stream_id,
                 next_count,
-                cfg.max_attempts,
+                eff_max,
                 match.label,
             )
             if not self._wait_for_error_retry_slot(h, snap, delay_seconds):
@@ -846,9 +875,14 @@ class AgentService:
                 return False
             # Policy may have changed while waiting; honor the freshest one.
             cfg = self._load_chat_retry_config()
-            if not cfg.enabled or cfg.max_attempts <= 0:
+            eff_max = (
+                cfg.scheduled_max_attempts
+                if origin in SCHEDULED_RETRY_SOURCES
+                else cfg.max_attempts
+            )
+            if not cfg.enabled or eff_max <= 0:
                 return False
-            if h.error_retry_count >= cfg.max_attempts:
+            if h.error_retry_count >= eff_max:
                 return False
             if not self._error_retry_still_alone(h):
                 log.info(
@@ -860,7 +894,7 @@ class AgentService:
             "retrying recoverable chat error for %s (%d/%d, %s)",
             h.stream_id,
             next_count,
-            cfg.max_attempts,
+            eff_max,
             match.label,
         )
         bus.publish("chat:retry", {
@@ -868,7 +902,7 @@ class AgentService:
             "source": snap.source,
             "logical_id": h.logical_id,
             "attempt": next_count,
-            "max_attempts": cfg.max_attempts,
+            "max_attempts": eff_max,
             "reason": match.to_dict(),
         })
         self.submit(
@@ -877,9 +911,10 @@ class AgentService:
             logical_id=h.logical_id,
             auto_continue_count=h.auto_continue_count,
             error_retry_count=next_count,
+            error_retry_origin=origin,
             retry_of=h.stream_id,
             retry_reason=match.label,
-            retry_max=cfg.max_attempts,
+            retry_max=eff_max,
             session_id=h.session_id,
             run_id=h.run_id,
         )

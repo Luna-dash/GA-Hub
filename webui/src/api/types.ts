@@ -105,6 +105,8 @@ export type SessionMessagesResponse = Omit<
 export interface ChatRetryConfig {
   enabled: boolean
   max_attempts: number
+  /** Retry budget for unattended sources (scheduled / autonomous chats). */
+  scheduled_max_attempts?: number
   /** Seconds before the first automatic retry attempt. */
   backoff_base_seconds?: number
   /** Multiplier applied per subsequent attempt (>= 1). */
