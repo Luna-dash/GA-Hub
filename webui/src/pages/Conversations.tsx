@@ -201,8 +201,8 @@ export default function Conversations() {
               ))}
               {total > limit && (
                 <div className={collapsed
-                  ? 'flex flex-col items-center gap-1 border-t border-line/60 py-2 text-xs text-slate-400'
-                  : 'p-3 flex items-center justify-between text-xs text-slate-400'}
+                  ? 'sticky bottom-0 z-10 flex flex-col items-center gap-1 border-t border-line/60 bg-bg-soft py-2 text-xs text-slate-400'
+                  : 'sticky bottom-0 z-10 p-3 flex items-center justify-between border-t border-line/60 bg-bg-soft text-xs text-slate-400'}
                 >
                   <button
                     aria-label="上一页"
