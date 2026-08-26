@@ -119,6 +119,8 @@ class ChatRetryConfigReq(BaseModel):
     backoff_base_seconds: float = Field(default=2.0, ge=0.0, le=600.0)
     backoff_factor: float = Field(default=2.0, ge=1.0, le=10.0)
     backoff_max_seconds: float = Field(default=60.0, ge=0.0, le=600.0)
+    scheduled_backoff_base_seconds: float = Field(default=5.0, ge=0.0, le=600.0)
+    scheduled_backoff_max_seconds: float = Field(default=600.0, ge=0.0, le=600.0)
 
 
 # ── rewind ───────────────────────────────────────────────────────

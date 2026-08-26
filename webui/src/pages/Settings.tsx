@@ -348,7 +348,7 @@ function ChatAppearancePanel() {
 function ChatRetryPanel() {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: queryKeys.agent.chatRetryConfig, queryFn: api.chatRetryConfig })
-  const [cfg, setCfg] = useState<ChatRetryConfig>({ enabled: true, max_attempts: 2, scheduled_max_attempts: 6, backoff_base_seconds: 2, backoff_factor: 2, backoff_max_seconds: 60 })
+  const [cfg, setCfg] = useState<ChatRetryConfig>({ enabled: true, max_attempts: 2, scheduled_max_attempts: 6, backoff_base_seconds: 2, backoff_factor: 2, backoff_max_seconds: 60, scheduled_backoff_base_seconds: 5, scheduled_backoff_max_seconds: 600 })
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -367,6 +367,8 @@ function ChatRetryPanel() {
         backoff_base_seconds: Math.max(0, Math.min(600, Number(cfg.backoff_base_seconds) || 0)),
         backoff_factor: Math.max(1, Math.min(10, Number(cfg.backoff_factor) || 2)),
         backoff_max_seconds: Math.max(0, Math.min(600, Number(cfg.backoff_max_seconds) || 0)),
+        scheduled_backoff_base_seconds: Math.max(0, Math.min(600, Number(cfg.scheduled_backoff_base_seconds) || 0)),
+        scheduled_backoff_max_seconds: Math.max(0, Math.min(600, Number(cfg.scheduled_backoff_max_seconds ?? 600) || 600)),
       })
       setCfg(saved)
       await qc.invalidateQueries({ queryKey: queryKeys.agent.chatRetryConfig })
@@ -436,6 +438,16 @@ function ChatRetryPanel() {
         <label className="inline-flex items-center gap-2 text-sm text-slate-300">
           单次最长等待（秒）
           <input type="number" min={0} max={600} step="1" value={cfg.backoff_max_seconds ?? 60} onChange={(e) => setCfg({ ...cfg, backoff_max_seconds: Number(e.target.value) })} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
+        </label>
+
+        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="定时任务/自主会话等无人值守来源使用独立的退避曲线（起步更稳）">
+          定时基础间隔（秒）
+          <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_base_seconds ?? 5} onChange={(e) => setCfg({ ...cfg, scheduled_backoff_base_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
+        </label>
+
+        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="定时任务单次等待上限，默认 10 分钟">
+          定时单次最长等待（秒）
+          <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_max_seconds ?? 600} onChange={(e) => setCfg({ ...cfg, scheduled_backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
 
         <button

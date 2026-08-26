@@ -132,8 +132,8 @@ class ClassifyRecoverableErrorTests(unittest.TestCase):
             "x\n!!!Error: requests.exceptions.ReadTimeout: timed out": 1.5,
             "x\n!!!Error: ConnectionError: remote end closed": 2.5,
             "x\n!!!Error: json.JSONDecodeError: Expecting value": 1.0,
-            "x\n!!!Error: SSLError: handshake failed": 3.0,
-            "x\n!!!Error: SSE stream ended before done": 1.0,
+            "x\n!!!Error: SSLError: handshake failed": 4.0,
+            "x\n!!!Error: SSE stream ended before done": 4.0,
         }
         for text, scale in cases.items():
             m = self.cr.classify_recoverable_error(text)
@@ -205,6 +205,22 @@ class ComputeBackoffDelayTests(unittest.TestCase):
         # A deep scale lifts the raw exponential past the cap -> still clamped.
         self.assertAlmostEqual(self.cr.compute_backoff_delay(3, cfg, 8.0), 60.0)
 
+    def test_scheduled_curve_uses_own_base_and_cap(self):
+        cfg = self._cfg()  # interactive curve: 2s base / 60s cap
+        self.assertAlmostEqual(self.cr.compute_backoff_delay(3, cfg), 16.0)
+        self.assertAlmostEqual(self.cr.compute_backoff_delay(30, cfg), 60.0)
+        # Scheduled sources ramp from their own 5s base toward a 10 min cap.
+        self.assertAlmostEqual(self.cr.compute_backoff_delay(0, cfg, scheduled=True), 5.0)
+        self.assertAlmostEqual(self.cr.compute_backoff_delay(3, cfg, scheduled=True), 40.0)
+        self.assertAlmostEqual(self.cr.compute_backoff_delay(30, cfg, scheduled=True), 600.0)
+        # Family scales still multiply under the scheduled curve.
+        self.assertAlmostEqual(self.cr.compute_backoff_delay(2, cfg, 4.0, scheduled=True), 80.0)
+        # A custom low scheduled ceiling is honored independently.
+        cfg2 = self.cr.ChatRetryConfig(
+            scheduled_backoff_base_seconds=5.0, scheduled_backoff_max_seconds=45.0
+        )
+        self.assertAlmostEqual(self.cr.compute_backoff_delay(30, cfg2, scheduled=True), 45.0)
+
     def test_jitter_stays_within_band_and_respects_cap(self):
         cfg = self._cfg()
         for _ in range(30):
@@ -228,6 +244,12 @@ class NormalizeConfigTests(unittest.TestCase):
         self.assertEqual(c.backoff_base_seconds, self.cr.DEFAULT_BACKOFF_BASE_SECONDS)
         self.assertEqual(c.backoff_factor, self.cr.DEFAULT_BACKOFF_FACTOR)
         self.assertEqual(c.backoff_max_seconds, self.cr.DEFAULT_BACKOFF_MAX_SECONDS)
+        self.assertEqual(
+            c.scheduled_backoff_base_seconds, self.cr.DEFAULT_SCHEDULED_BACKOFF_BASE_SECONDS
+        )
+        self.assertEqual(
+            c.scheduled_backoff_max_seconds, self.cr.DEFAULT_SCHEDULED_BACKOFF_MAX_SECONDS
+        )
         self.assertTrue(c.enabled)
         self.assertEqual(c.max_attempts, self.cr.DEFAULT_MAX_ATTEMPTS)
         self.assertEqual(c.scheduled_max_attempts, self.cr.DEFAULT_SCHEDULED_MAX_ATTEMPTS)
@@ -238,6 +260,8 @@ class NormalizeConfigTests(unittest.TestCase):
             "max_attempts": 99,          # clamped to MAX_CONFIG_ATTEMPTS
             "scheduled_max_attempts": 99,  # clamped to MAX_SCHEDULED_CONFIG_ATTEMPTS
             "backoff_base_seconds": 9999,  # clamped to 600
+            "scheduled_backoff_base_seconds": 9999,  # clamped to 600
+            "scheduled_backoff_max_seconds": -5,  # floored to 0, then >= base
             "backoff_factor": 0.5,       # floored to 1.0
             "backoff_max_seconds": 0.1,  # raised to >= base
             "legacy_key": "ignored",
@@ -247,6 +271,8 @@ class NormalizeConfigTests(unittest.TestCase):
         self.assertEqual(c.backoff_base_seconds, self.cr.MAX_CONFIG_BACKOFF_SECONDS)
         self.assertEqual(c.backoff_factor, 1.0)
         self.assertGreaterEqual(c.backoff_max_seconds, c.backoff_base_seconds)
+        self.assertEqual(c.scheduled_backoff_base_seconds, self.cr.MAX_CONFIG_BACKOFF_SECONDS)
+        self.assertEqual(c.scheduled_backoff_max_seconds, self.cr.MAX_CONFIG_BACKOFF_SECONDS)
 
     def test_garbage_values_fall_back_to_defaults(self):
         c = self.cr.normalize_chat_retry_config({
@@ -254,6 +280,8 @@ class NormalizeConfigTests(unittest.TestCase):
             "max_attempts": "many",
             "scheduled_max_attempts": "lots",
             "backoff_base_seconds": "soon",
+            "scheduled_backoff_base_seconds": "later",
+            "scheduled_backoff_max_seconds": None,
             "backoff_factor": float("inf"),
             "backoff_max_seconds": None,
         })
@@ -262,6 +290,12 @@ class NormalizeConfigTests(unittest.TestCase):
         self.assertEqual(c.backoff_base_seconds, self.cr.DEFAULT_BACKOFF_BASE_SECONDS)
         self.assertEqual(c.backoff_factor, self.cr.DEFAULT_BACKOFF_FACTOR)
         self.assertEqual(c.backoff_max_seconds, self.cr.DEFAULT_BACKOFF_MAX_SECONDS)
+        self.assertEqual(
+            c.scheduled_backoff_base_seconds, self.cr.DEFAULT_SCHEDULED_BACKOFF_BASE_SECONDS
+        )
+        self.assertEqual(
+            c.scheduled_backoff_max_seconds, self.cr.DEFAULT_SCHEDULED_BACKOFF_MAX_SECONDS
+        )
 
 
 class MaybeRetryBackoffTests(unittest.TestCase):
@@ -334,7 +368,9 @@ class MaybeRetryBackoffTests(unittest.TestCase):
         from server.services.chat_retry import ChatRetryConfig
         cfg = ChatRetryConfig(enabled=True, max_attempts=2, scheduled_max_attempts=6,
                               backoff_base_seconds=0.01, backoff_factor=2.0,
-                              backoff_max_seconds=60.0)
+                              backoff_max_seconds=60.0,
+                              scheduled_backoff_base_seconds=0.01,
+                              scheduled_backoff_max_seconds=60.0)
         # Third attempt of an unattended chain: plain budget (2) is already
         # spent, but the scheduled budget (6) keeps it alive.
         h = _make_handle(error_retry_count=2, error_retry_origin="scheduled_task")
@@ -353,7 +389,9 @@ class MaybeRetryBackoffTests(unittest.TestCase):
         from server.services.chat_retry import ChatRetryConfig
         cfg = ChatRetryConfig(enabled=True, max_attempts=2, scheduled_max_attempts=6,
                               backoff_base_seconds=0.01, backoff_factor=2.0,
-                              backoff_max_seconds=60.0)
+                              backoff_max_seconds=60.0,
+                              scheduled_backoff_base_seconds=0.01,
+                              scheduled_backoff_max_seconds=60.0)
         # Fifth attempt of a scheduled chain: the surface source has become
         # "chat_error_retry", but the recorded origin preserves the deeper
         # budget across resubmits.
@@ -378,7 +416,9 @@ class MaybeRetryBackoffTests(unittest.TestCase):
         from server.services.chat_retry import ChatRetryConfig
         cfg = ChatRetryConfig(enabled=True, max_attempts=2, scheduled_max_attempts=6,
                               backoff_base_seconds=0.01, backoff_factor=2.0,
-                              backoff_max_seconds=60.0)
+                              backoff_max_seconds=60.0,
+                              scheduled_backoff_base_seconds=0.01,
+                              scheduled_backoff_max_seconds=60.0)
         h = _make_handle(error_retry_count=6, error_retry_origin="scheduled")
         snap = _make_snap(source="chat_error_retry")
         rv, bus, submit, _svc, _h, _snp = self._run(cfg=cfg, handle=h, snap=snap)

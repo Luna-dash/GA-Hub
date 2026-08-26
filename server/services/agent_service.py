@@ -820,11 +820,8 @@ class AgentService:
         # the original trigger source rides along on the handle so retries
         # (which re-source as "chat_error_retry") keep that identity.
         origin = h.error_retry_origin or snap.source
-        eff_max = (
-            cfg.scheduled_max_attempts
-            if origin in SCHEDULED_RETRY_SOURCES
-            else cfg.max_attempts
-        )
+        is_scheduled = origin in SCHEDULED_RETRY_SOURCES
+        eff_max = cfg.scheduled_max_attempts if is_scheduled else cfg.max_attempts
         if not cfg.enabled or eff_max <= 0:
             return False
         if h.error_retry_count >= eff_max:
@@ -846,7 +843,9 @@ class AgentService:
             return True
         next_count = h.error_retry_count + 1
         prompt = _ERROR_RETRY_PROMPT_TEMPLATE.format(label=match.label)
-        delay_seconds = compute_backoff_delay(h.error_retry_count, cfg, match.delay_scale, jitter=True)
+        delay_seconds = compute_backoff_delay(
+            h.error_retry_count, cfg, match.delay_scale, jitter=True, scheduled=is_scheduled
+        )
         if delay_seconds > 0:
             # The stream is already terminal here, so the coordinator has
             # released its session slot; waiting on this fanout thread does
@@ -875,11 +874,7 @@ class AgentService:
                 return False
             # Policy may have changed while waiting; honor the freshest one.
             cfg = self._load_chat_retry_config()
-            eff_max = (
-                cfg.scheduled_max_attempts
-                if origin in SCHEDULED_RETRY_SOURCES
-                else cfg.max_attempts
-            )
+            eff_max = cfg.scheduled_max_attempts if is_scheduled else cfg.max_attempts
             if not cfg.enabled or eff_max <= 0:
                 return False
             if h.error_retry_count >= eff_max:

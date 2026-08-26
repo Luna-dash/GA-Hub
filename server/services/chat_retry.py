@@ -31,6 +31,11 @@ DEFAULT_BACKOFF_FACTOR = 2.0
 DEFAULT_BACKOFF_MAX_SECONDS = 60.0
 MAX_CONFIG_BACKOFF_SECONDS = 600.0
 MAX_CONFIG_BACKOFF_FACTOR = 10.0
+# Unattended scheduled chats also ride a longer backoff curve: later ramp-up
+# (5s base) and a much higher per-wait ceiling (10 min) because nobody is
+# watching progress between attempts.
+DEFAULT_SCHEDULED_BACKOFF_BASE_SECONDS = 5.0
+DEFAULT_SCHEDULED_BACKOFF_MAX_SECONDS = 600.0
 _FINAL_MARKER_WINDOW_CHARS = 500
 
 
@@ -42,6 +47,8 @@ class ChatRetryConfig:
     backoff_base_seconds: float = DEFAULT_BACKOFF_BASE_SECONDS
     backoff_factor: float = DEFAULT_BACKOFF_FACTOR
     backoff_max_seconds: float = DEFAULT_BACKOFF_MAX_SECONDS
+    scheduled_backoff_base_seconds: float = DEFAULT_SCHEDULED_BACKOFF_BASE_SECONDS
+    scheduled_backoff_max_seconds: float = DEFAULT_SCHEDULED_BACKOFF_MAX_SECONDS
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -51,6 +58,8 @@ class ChatRetryConfig:
             "backoff_base_seconds": float(self.backoff_base_seconds),
             "backoff_factor": float(self.backoff_factor),
             "backoff_max_seconds": float(self.backoff_max_seconds),
+            "scheduled_backoff_base_seconds": float(self.scheduled_backoff_base_seconds),
+            "scheduled_backoff_max_seconds": float(self.scheduled_backoff_max_seconds),
         }
 
 
@@ -110,6 +119,9 @@ _RECOVERABLE_ERROR_PATTERNS = (
             r"!!!\s*Error:\s*SSE\b[^\r\n]*\s*\Z",
             re.IGNORECASE,
         ),
+        # Stream drops usually heal fast, but unattended runs tolerate a
+        # longer pause; aligned with ssl_error at 4x.
+        delay_scale=4.0,
     ),
     RecoverableErrorPattern(
         code="timeout",
@@ -144,7 +156,7 @@ _RECOVERABLE_ERROR_PATTERNS = (
             _EXC_ERROR_PREFIX + r"SSLError\b[^\r\n]*\s*\Z",
             re.IGNORECASE,
         ),
-        delay_scale=3.0,
+        delay_scale=4.0,
     ),
 )
 
@@ -197,6 +209,15 @@ def normalize_chat_retry_config(payload: Mapping[str, Any] | None) -> ChatRetryC
     backoff_max = _coerce_finite_float(raw.get("backoff_max_seconds"), DEFAULT_BACKOFF_MAX_SECONDS)
     backoff_max = max(0.0, min(MAX_CONFIG_BACKOFF_SECONDS, backoff_max))
     backoff_max = max(backoff_max, backoff_base)
+    sched_base = _coerce_finite_float(
+        raw.get("scheduled_backoff_base_seconds"), DEFAULT_SCHEDULED_BACKOFF_BASE_SECONDS
+    )
+    sched_base = max(0.0, min(MAX_CONFIG_BACKOFF_SECONDS, sched_base))
+    sched_backoff_max = _coerce_finite_float(
+        raw.get("scheduled_backoff_max_seconds"), DEFAULT_SCHEDULED_BACKOFF_MAX_SECONDS
+    )
+    sched_backoff_max = max(0.0, min(MAX_CONFIG_BACKOFF_SECONDS, sched_backoff_max))
+    sched_backoff_max = max(sched_backoff_max, sched_base)
     return ChatRetryConfig(
         enabled=enabled,
         max_attempts=max_attempts,
@@ -204,6 +225,8 @@ def normalize_chat_retry_config(payload: Mapping[str, Any] | None) -> ChatRetryC
         backoff_base_seconds=backoff_base,
         backoff_factor=backoff_factor,
         backoff_max_seconds=backoff_max,
+        scheduled_backoff_base_seconds=sched_base,
+        scheduled_backoff_max_seconds=sched_backoff_max,
     )
 
 
@@ -213,18 +236,24 @@ def compute_backoff_delay(
     delay_scale: float = 1.0,
     *,
     jitter: bool = False,
+    scheduled: bool = False,
 ) -> float:
     """Exponential backoff before retry ``attempt_index`` (0-based).
 
-    ``delay = base * factor ** attempt_index * delay_scale``, clamped to
-    ``backoff_max_seconds``. ``delay_scale`` lifts whole error families
-    (e.g. rate limits) above the base curve. With ``jitter=True`` a uniform
-    ±15% wobble is applied so simultaneous retries do not sync up.
+    ``delay = base * factor ** attempt_index * delay_scale``, clamped to the
+    applicable cap (``backoff_max_seconds``, or its ``scheduled_*``
+    counterpart when ``scheduled=True``). ``delay_scale`` lifts whole error
+    families (e.g. rate limits) above the base curve. With ``jitter=True`` a
+    uniform ±15% wobble is applied so simultaneous retries do not sync up.
     Never negative.
     """
-    base = max(0.0, float(cfg.backoff_base_seconds))
+    if scheduled:
+        base = max(0.0, float(cfg.scheduled_backoff_base_seconds))
+        cap = max(0.0, float(cfg.scheduled_backoff_max_seconds))
+    else:
+        base = max(0.0, float(cfg.backoff_base_seconds))
+        cap = max(0.0, float(cfg.backoff_max_seconds))
     factor = max(1.0, float(cfg.backoff_factor))
-    cap = max(0.0, float(cfg.backoff_max_seconds))
     index = max(0, int(attempt_index))
     try:
         delay = base * (factor ** index)

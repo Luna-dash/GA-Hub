@@ -113,6 +113,10 @@ export interface ChatRetryConfig {
   backoff_factor?: number
   /** Upper bound for any single computed backoff delay. */
   backoff_max_seconds?: number
+  /** Backoff base for unattended scheduled sources (slower ramp, default 5s). */
+  scheduled_backoff_base_seconds?: number
+  /** Per-wait ceiling for unattended scheduled sources (default 10 min). */
+  scheduled_backoff_max_seconds?: number
 }
 
 // ── WeChat ────────────────────────────────────────────────

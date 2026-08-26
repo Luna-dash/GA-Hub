@@ -184,6 +184,8 @@ class ChatRetryConfigTests(unittest.TestCase):
                     "backoff_base_seconds": chat_retry.DEFAULT_BACKOFF_BASE_SECONDS,
                     "backoff_factor": chat_retry.DEFAULT_BACKOFF_FACTOR,
                     "backoff_max_seconds": chat_retry.DEFAULT_BACKOFF_MAX_SECONDS,
+                    "scheduled_backoff_base_seconds": chat_retry.DEFAULT_SCHEDULED_BACKOFF_BASE_SECONDS,
+                    "scheduled_backoff_max_seconds": chat_retry.DEFAULT_SCHEDULED_BACKOFF_MAX_SECONDS,
                 },
             )
             config = json.loads(config_file.read_text("utf-8"))
