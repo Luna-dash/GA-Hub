@@ -9,6 +9,7 @@ import { useDraftStore } from '@/stores/draftStore'
 import { useGoalHiveStore } from '@/stores/goalhiveStore'
 import { GoalHiveSocket } from '@/runtime/goalHiveSocket'
 import { queryKeys } from '@/queries/queryKeys'
+import { usePageState } from '@/utils/pageState'
 
 type GoalMode = 'goal' | 'hive'
 
@@ -41,7 +42,7 @@ const modeConfigs: Record<GoalMode, ModeConfig> = {
 }
 
 export default function GoalHive() {
-  const [mode, setMode] = useState<GoalMode>('goal')
+  const [mode, setMode] = usePageState<GoalMode>('goalhive.mode', 'goal')
   const [subagentSettingsOpen, setSubagentSettingsOpen] = useState(false)
   const [draftSubagentLlmKey, setDraftSubagentLlmKey] = useState<string | null>(null)
   const targetDraftKey = `goalHive:${mode}:target`

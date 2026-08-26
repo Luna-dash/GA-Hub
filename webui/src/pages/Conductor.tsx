@@ -14,6 +14,7 @@ import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
+import { usePageState } from '@/utils/pageState'
 
 const scrollMemory: { chatTop: number | null } = {
   chatTop: null,
@@ -102,7 +103,7 @@ function isNearScrollBottom(el: HTMLDivElement | null): boolean {
 
 export default function Conductor() {
   const qc = useQueryClient()
-  const [userMsg, setUserMsg] = useState('')
+  const [userMsg, setUserMsg] = usePageState('conductor.userMsg', '')
   const [subagentModelLocked, setSubagentModelLocked] = useState(readSubagentModelLock)
   const [subagentSettingsOpen, setSubagentSettingsOpen] = useState(false)
   const [draftSubagentLlmKey, setDraftSubagentLlmKey] = useState<string | null>(null)

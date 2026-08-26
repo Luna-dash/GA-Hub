@@ -6,11 +6,12 @@ import { MarkdownEditor } from '@/components/MarkdownEditor'
 import { toast } from '@/stores/toastStore'
 import { PageShell } from '@/components/PageShell'
 import { queryKeys } from '@/queries/queryKeys'
+import { usePageState } from '@/utils/pageState'
 
 type Tab = 'sop' | 'skill' | 'insight' | 'global'
 
 export default function Memory() {
-  const [tab, setTab] = useState<Tab>('sop')
+  const [tab, setTab] = usePageState<Tab>('memory.tab', 'sop')
   return (
     <PageShell
       title="记忆体系"

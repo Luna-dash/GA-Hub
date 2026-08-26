@@ -17,6 +17,7 @@ import {
   conversationKeys,
   removeConversationFromCache,
 } from '@/queries/conversations'
+import { usePageState } from '@/utils/pageState'
 
 type ViewMode = 'round' | 'flat'
 type Msg = { role?: string; content?: string; [key: string]: any }
@@ -41,11 +42,11 @@ export default function Conversations() {
   const { id: routeConversationId } = useParams<{ id?: string }>()
   const active = routeConversationId || null
   const [restoring, setRestoring] = useState<string | null>(null)
-  const [q, setQ] = useState('')
+  const [q, setQ] = usePageState('conversations.q', '')
   const [debouncedQ, setDebouncedQ] = useState('')
-  const [page, setPage] = useState(0)
-  const [viewMode, setViewMode] = useState<ViewMode>('round')
-  const [openConclusion, setOpenConclusion] = useState<Record<string, boolean>>({})
+  const [page, setPage] = usePageState('conversations.page', 0)
+  const [viewMode, setViewMode] = usePageState<ViewMode>('conversations.viewMode', 'round')
+  const [openConclusion, setOpenConclusion] = usePageState<Record<string, boolean>>('conversations.openConclusion', {})
   const detailScrollRef = useRef<HTMLDivElement>(null)
   const limit = 50
 

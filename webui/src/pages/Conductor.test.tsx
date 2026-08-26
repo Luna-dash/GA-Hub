@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useConductorStore } from '@/stores/conductorStore'
 import Conductor from './Conductor'
+import { resetPageState } from '@/utils/pageState'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -96,6 +97,7 @@ describe('Conductor chat scroll restoration', () => {
   let animationFrames: FrameRequestCallback[]
 
   beforeEach(() => {
+    resetPageState()
     vi.clearAllMocks()
     localStorage.clear()
     useConductorStore.getState().clear()

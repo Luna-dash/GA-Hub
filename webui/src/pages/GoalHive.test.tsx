@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDraftStore } from '@/stores/draftStore'
 import { useGoalHiveStore } from '@/stores/goalhiveStore'
 import GoalHive from './GoalHive'
+import { resetPageState } from '@/utils/pageState'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -99,6 +100,7 @@ describe('Goal Hive compact subagent settings', () => {
   let animationFrames: FrameRequestCallback[]
 
   beforeEach(() => {
+    resetPageState()
     vi.clearAllMocks()
     mocks.llms.mockResolvedValue({ llms: [] })
     useDraftStore.setState({ texts: {}, attachments: {} })

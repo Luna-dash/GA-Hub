@@ -24,6 +24,7 @@ import { RawView } from '@/components/MyKeyRawView'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { queryKeys } from '@/queries/queryKeys'
+import { usePageState } from '@/utils/pageState'
 
 type Tab = 'structured' | 'raw'
 
@@ -38,7 +39,7 @@ function syncFailureMessage(error: any): string {
 
 export default function MyKey() {
   const qc = useQueryClient()
-  const [tab, setTab] = useState<Tab>('structured')
+  const [tab, setTab] = usePageState<Tab>('mykey.tab', 'structured')
   const [syncBusy, setSyncBusy] = useState<'upload' | 'fetch' | null>(null)
   const { data, isLoading, refetch } = useQuery({ queryKey: queryKeys.mykey.data, queryFn: api.mykey })
 

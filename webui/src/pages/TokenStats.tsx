@@ -5,6 +5,7 @@ import { PageShell } from '@/components/PageShell'
 import type { TokenDayStats, TokenStatsResponse, TokenThreadStats, TokenTotals } from '@/api/types'
 import { compactTokens, sessionTitle, topSessions, usageRangeDays, visibleWeeks, type DailyUsageRange } from '@/utils/tokenStatsUi'
 import { queryKeys } from '@/queries/queryKeys'
+import { usePageState } from '@/utils/pageState'
 
 const exactNf = new Intl.NumberFormat('zh-CN')
 const fmt = compactTokens
@@ -78,7 +79,7 @@ function UsageTrend({ rows, range, setRange, currentWeek, timestamp }: { rows: T
 }
 
 function WeeklyTable({ data }: { data: TokenStatsResponse }) {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = usePageState('tokenStats.weeklyTableExpanded', false)
   const rows = visibleWeeks(data.weeks, expanded)
   return <section className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
     <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3"><div><h2 className="text-sm font-semibold text-slate-700">周期统计</h2><p className="mt-0.5 text-[11px] text-slate-400">共 {data.weeks.length} 周</p></div>{data.weeks.length > 6 && <button type="button" onClick={() => setExpanded(value => !value)} className="rounded-lg px-2.5 py-1.5 text-xs text-accent hover:bg-accent/5">{expanded ? '收起' : `查看全部 ${data.weeks.length} 周`}</button>}</div>
@@ -112,7 +113,7 @@ function SessionUsage({ rows }: { rows: TokenThreadStats[] }) {
 }
 
 export default function TokenStats() {
-  const [range, setRange] = useState<DailyUsageRange>('week')
+  const [range, setRange] = usePageState<DailyUsageRange>('tokenStats.range', 'week')
   const stats = useQuery({
     queryKey: queryKeys.tokenStats,
     queryFn: api.tokenStats,

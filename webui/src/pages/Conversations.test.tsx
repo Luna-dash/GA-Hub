@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Conversations from './Conversations'
+import { resetPageState } from '@/utils/pageState'
 
 const apiMock = vi.hoisted(() => ({
   conversations: vi.fn(),
@@ -77,6 +78,7 @@ describe('conversation route selection', () => {
   let client: QueryClient
 
   beforeEach(() => {
+    resetPageState()
     apiMock.conversations.mockReset().mockResolvedValue({
       total: 1,
       offset: 0,
