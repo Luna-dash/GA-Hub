@@ -32,7 +32,6 @@ from .conductor_client import GaConductorClient, GahubProcessManager
 from .conductor_ext_timeout import TimeoutMonitor
 from .conductor_workflow import WorkflowTracker
 from .event_bus import bus
-from .request_usage import RequestUsageStore
 
 log = logging.getLogger(__name__)
 
@@ -264,10 +263,6 @@ class HubConductorCallbacks:
                 log.exception("Failed to publish conductor subagent snapshot")
 
     # request lifecycle ------------------------------------------------------
-    def on_conductor_request_started(self, request_id: str):
-        self.service.usage_store.begin(request_id)
-        return self.service.usage_store.activate(request_id)
-
     def _publish_request_outcome(
         self,
         request_id: str,
@@ -297,10 +292,8 @@ class HubConductorCallbacks:
             payload["item"] = latest
         bus.publish("conductor:request_outcome", payload)
 
-    def on_conductor_request_finished(self, request_id: str, token=None) -> None:
+    def on_conductor_request_finished(self, request_id: str) -> None:
         try:
-            if token is not None:
-                self.service.usage_store.deactivate(token)
             self._publish_request_outcome(
                 request_id,
                 status="ok",
@@ -309,12 +302,10 @@ class HubConductorCallbacks:
         except Exception:
             log.exception("request finished handling failed")
 
-    def on_conductor_request_yielded(self, request_id: str, token=None,
+    def on_conductor_request_yielded(self, request_id: str,
                                      outcome=None) -> None:
         """Close only this supervisor turn; the workflow remains active."""
         try:
-            if token is not None:
-                self.service.usage_store.deactivate(token)
             self._publish_request_outcome(
                 request_id,
                 status="yielded",
@@ -323,14 +314,12 @@ class HubConductorCallbacks:
         except Exception:
             log.exception("request yielded handling failed")
 
-    def on_conductor_request_outcome(self, request_id: str, token=None,
+    def on_conductor_request_outcome(self, request_id: str,
                                      outcome=None) -> None:
         status = getattr(outcome, "status", "failed") or "failed"
         phase = getattr(outcome, "phase", "finish") or "finish"
         error = getattr(outcome, "error", "") or ""
         try:
-            if token is not None:
-                self.service.usage_store.deactivate(token)
             if status != "ok":
                 tracker = self.service._ensure_workflow_tracker()
                 transition = tracker.fail_supervisor(
@@ -340,10 +329,6 @@ class HubConductorCallbacks:
                 )
                 if transition is not None:
                     self.service._publish_workflow_transition(transition)
-                elif tracker.snapshot(request_id) is None:
-                    self.service.usage_store.complete(
-                        request_id, f"FAILED_{phase.upper()}"
-                    )
             self._publish_request_outcome(
                 request_id, status=status, phase=phase, error=error
             )
@@ -459,7 +444,6 @@ class ConductorService:
         self._closed = False
         self.chat_messages: list = []
         self._chat_lock = threading.RLock()
-        self.usage_store = RequestUsageStore()
         self.workflow_tracker = WorkflowTracker()
         self._dispatch_context = threading.local()
         self._started = False
@@ -542,7 +526,10 @@ class ConductorService:
             if not core_ok:
                 try:
                     result = self.client.stop(
-                        timeout=max(0.0, deadline - time.monotonic())
+                        timeout=min(
+                            float(timeout),
+                            max(0.0, deadline - time.monotonic()),
+                        )
                     )
                     core_ok = bool(result.get("stopped", True)) if result else True
                 except Exception:
@@ -568,7 +555,12 @@ class ConductorService:
                             True
                             if not callable(stop)
                             else self._stop_result(
-                                stop(timeout=max(0.0, deadline - time.monotonic()))
+                                stop(
+                                    timeout=min(
+                                        float(timeout),
+                                        max(0.0, deadline - time.monotonic()),
+                                    )
+                                )
                             )
                         )
                     except Exception:
@@ -616,14 +608,10 @@ class ConductorService:
     def _publish_workflow_transition(
         self, transition: tuple[str, dict]
     ) -> None:
-        """Commit usage attribution before publishing one terminal workflow event."""
+        """Publish one terminal workflow event and its visible failure report."""
         topic, payload = transition
         request_id = payload["request_id"]
-        if topic == "conductor:workflow_completed":
-            self.usage_store.complete(request_id, "OK")
-        elif topic == "conductor:workflow_failed":
-            phase = str(payload.get("phase") or "subagent").upper()
-            self.usage_store.complete(request_id, f"FAILED_{phase}")
+        if topic == "conductor:workflow_failed":
             item = self._record_workflow_failure_message(
                 request_id,
                 phase=str(payload.get("phase") or "subagent"),
@@ -810,7 +798,7 @@ class ConductorService:
                 manager.ensure_running()
             except Exception as exc:
                 raise RuntimeError(
-                    f"gahub_app unavailable (see %TEMP%\gahub_app.log): {exc}"
+                    rf"gahub_app unavailable (see %TEMP%\gahub_app.log): {exc}"
                 ) from exc
         self._ensure_relay()
         status = self.client.status()
@@ -889,6 +877,20 @@ class ConductorService:
             log.debug("gahub_app log unavailable", exc_info=True)
             return []
 
+    def get_chat_messages(self, last: int = 20) -> list:
+        """Bootstrap chat history for the conductor page (GET /chat proxy).
+
+        The live feed arrives over SSE, so a transport failure here must not
+        break the page — degrade to an empty list and let the stream fill in,
+        mirroring ``get_conductor_log``.
+        """
+        try:
+            return self.client.get_chat(last=last)
+        except Exception:
+            log.debug("gahub_app chat unavailable", exc_info=True)
+            return []
+
+
     # ===== SSE relay dispatch =====
 
     def _on_sse_event(self, event: dict) -> None:
@@ -898,8 +900,6 @@ class ConductorService:
                 self.pool.update(event.get("subagents") or [])
                 for item in (event.get("chat") or [])[-20:]:
                     self._on_remote_chat(item, from_hello=True)
-            elif kind == "request_started":
-                self.usage_store.begin(event.get("request_id"))
             elif kind == "request_outcome":
                 outcome = SimpleNamespace(
                     status=event.get("status"),
@@ -927,8 +927,6 @@ class ConductorService:
                 bus.publish("conductor:chat_read", {})
             elif kind == "log":
                 self.callbacks.on_conductor_log_frame(event.get("item") or {})
-            elif kind == "usage":
-                self._apply_usage_delta(event)
             elif kind == "request_yield_requested":
                 bus.publish("conductor:request_yield_requested", {
                     "request_id": event.get("request_id"),
@@ -939,23 +937,6 @@ class ConductorService:
                 self.callbacks.on_conductor_event("error", payload)
         except Exception:
             log.exception("SSE relay handler failed for %s", kind)
-
-    def _apply_usage_delta(self, event: dict) -> None:
-        rid = event.get("request_id")
-        if not rid:
-            return
-        if event.get("kind") == "usage":
-            self.usage_store.apply_delta(
-                rid,
-                requests=1,
-                input=int(event.get("input", 0) or 0),
-                cache_create=int(event.get("cache_create", 0) or 0),
-                cache_read=int(event.get("cache_read", 0) or 0),
-            )
-        else:
-            self.usage_store.apply_delta(
-                rid, output=int(event.get("tokens", 0) or 0)
-            )
 
     def _on_remote_chat(self, item: dict, *, from_hello: bool = False) -> None:
         """Mirror engine-side chat into the hub log.
@@ -984,6 +965,18 @@ class ConductorService:
                 transition = tracker.record_final(item["request_id"], hub_item)
                 if transition is not None:
                     self._publish_workflow_transition(transition)
+            except ValueError:
+                # Expected after a hub restart: the engine replays chat
+                # history whose request_ids this tracker never admitted (and
+                # a second hub instance relays finals it does not own). The
+                # chat line itself is already mirrored above; only the
+                # workflow transition is meaningless here. Degrade to a
+                # warning instead of a traceback storm.
+                log.info(
+                    "ignoring replayed conductor final for untracked "
+                    "request_id %s",
+                    item.get("request_id"),
+                )
             except Exception:
                 log.exception(
                     "Conductor final message rejected by workflow: %s",
@@ -1153,7 +1146,7 @@ class ConductorService:
             raise ValueError(f"unknown conductor request_id: {request_id}")
         if kind == "final" and request_id:
             tracker.assert_ready_for_final(request_id)
-        admitted_request_id = self.usage_store.begin() if role == "user" else request_id
+        admitted_request_id = uuid.uuid4().hex if role == "user" else request_id
         try:
             item = add_chat(
                 msg,
@@ -1163,8 +1156,6 @@ class ConductorService:
                 kind=kind,
             )
         except Exception:
-            if role == "user" and admitted_request_id:
-                self.usage_store.complete(admitted_request_id, "FAILED_ADMISSION")
             raise
         if role == "user" and admitted_request_id:
             tracker.admit(admitted_request_id)

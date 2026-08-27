@@ -7,7 +7,6 @@ import pytest
 
 from server.services.conductor_service import ConductorService, HubConductorCallbacks
 from server.services.conductor_workflow import WorkflowTracker
-from server.services.request_usage import RequestUsageStore
 
 
 def test_final_report_without_a_dispatched_worker_does_not_complete():
@@ -139,11 +138,9 @@ def test_tracker_lists_recent_workflows_in_creation_order():
     ]
 
 
-def test_terminal_workflow_transition_completes_usage_before_publication():
+def test_terminal_workflow_transition_publishes_completion():
     service = object.__new__(ConductorService)
     service.chat_messages = []
-    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
-    service.usage_store.begin("request-1")
 
     payload = {
         "request_id": "request-1",
@@ -155,16 +152,12 @@ def test_terminal_workflow_transition_completes_usage_before_publication():
             ("conductor:workflow_completed", payload)
         )
 
-    row = service.usage_store.list()[0]
-    assert row["attribution"] == "OK"
-    assert row["completed_at"] == 10.0
     publish.assert_called_once_with("conductor:workflow_completed", payload)
 
 
 def test_service_rejects_a_final_report_before_acceptance_without_persisting_it():
     service = object.__new__(ConductorService)
     service.chat_messages = []
-    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
     service.workflow_tracker = WorkflowTracker(clock=lambda: 10.0)
     service.workflow_tracker.admit("request-1")
     service.workflow_tracker.bind_subagent("request-1", "worker-1", 1)
@@ -183,8 +176,6 @@ def test_service_rejects_a_final_report_before_acceptance_without_persisting_it(
 def test_service_final_report_publishes_the_single_workflow_completion():
     service = object.__new__(ConductorService)
     service.chat_messages = []
-    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
-    service.usage_store.begin("request-1")
     service.workflow_tracker = WorkflowTracker(clock=lambda: 10.0)
     service.workflow_tracker.admit("request-1")
     service.workflow_tracker.bind_subagent("request-1", "worker-1", 1)
@@ -203,8 +194,6 @@ def test_service_final_report_publishes_the_single_workflow_completion():
     assert item["kind"] == "final"
     topics = [call.args[0] for call in publish.call_args_list]
     assert topics == ["conductor:chat", "conductor:workflow_completed"]
-    row = service.usage_store.list()[0]
-    assert row["attribution"] == "OK"
 
 
 def test_generic_conductor_error_is_persisted_once_as_chat():

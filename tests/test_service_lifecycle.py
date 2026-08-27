@@ -202,7 +202,6 @@ def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
     from fastapi.testclient import TestClient
     from server import _paths, main
     from server.routes import sessions as session_routes
-    from server.routes import tokens as token_routes
     from server.services import core_contract
 
     if _paths.GA_ROOT is None:
@@ -252,8 +251,6 @@ def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
         mock.patch("server.services.autonomous_scheduler.AutonomousScheduler.instance", side_effect=AssertionError("status constructed autonomous")) as autonomous_factory,
         mock.patch("server.services.task_scheduler.TaskScheduler.instance", side_effect=AssertionError("status constructed tasks")) as task_factory,
         mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
-        mock.patch.object(token_routes, "start_persistence"),
-        mock.patch.object(token_routes, "stop_persistence"),
         mock.patch.object(session_routes, "stop_session_runtimes"),
         mock.patch("server.services.conductor_service.shutdown_conductor_service", return_value=True),
         mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
@@ -280,7 +277,6 @@ def test_agent_shutdown_still_runs_when_snapshot_archival_fails() -> None:
     from fastapi.testclient import TestClient
     from server import _paths, main
     from server.routes import sessions as session_routes
-    from server.routes import tokens as token_routes
     from server.services import core_contract
 
     if _paths.GA_ROOT is None:
@@ -296,8 +292,6 @@ def test_agent_shutdown_still_runs_when_snapshot_archival_fails() -> None:
         mock.patch("server.services.feishu_service.FeishuService.instance", return_value=feishu),
         mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
         mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
-        mock.patch.object(token_routes, "start_persistence"),
-        mock.patch.object(token_routes, "stop_persistence"),
         mock.patch.object(session_routes, "stop_session_runtimes"),
         mock.patch("server.services.conductor_service.shutdown_conductor_service", return_value=True),
         mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
@@ -314,7 +308,6 @@ def test_reentered_lifespan_never_reaps_previous_round_services_twice() -> None:
     from fastapi.testclient import TestClient
     from server import _paths, main
     from server.routes import sessions as session_routes
-    from server.routes import tokens as token_routes
     from server.services import core_contract
 
     if _paths.GA_ROOT is None:
@@ -330,8 +323,6 @@ def test_reentered_lifespan_never_reaps_previous_round_services_twice() -> None:
         mock.patch("server.services.feishu_service.FeishuService.instance", return_value=feishu),
         mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
         mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
-        mock.patch.object(token_routes, "start_persistence"),
-        mock.patch.object(token_routes, "stop_persistence"),
         mock.patch.object(session_routes, "stop_session_runtimes"),
         mock.patch("server.services.conductor_service.shutdown_conductor_service", return_value=True),
         mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
@@ -354,7 +345,6 @@ def test_partial_startup_failure_reaps_already_owned_services() -> None:
     from fastapi.testclient import TestClient
     from server import _paths, main
     from server.routes import sessions as session_routes
-    from server.routes import tokens as token_routes
     from server.services import core_contract
 
     if _paths.GA_ROOT is None:
@@ -370,8 +360,6 @@ def test_partial_startup_failure_reaps_already_owned_services() -> None:
         mock.patch("server.services.feishu_service.FeishuService.instance", feishu_factory),
         mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
         mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
-        mock.patch.object(token_routes, "start_persistence"),
-        mock.patch.object(token_routes, "stop_persistence"),
         mock.patch.object(session_routes, "stop_session_runtimes"),
         mock.patch("server.services.conductor_service.shutdown_conductor_service", return_value=True),
         mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),

@@ -177,7 +177,7 @@ describe('SessionRail', () => {
       expect.stringContaining('研究任务'),
       expect.stringContaining('未命名会话 · cccccccc'),
     ])
-    expect(localStorage.getItem('gahub.sessionRailRecentActivity')).not.toBeNull()
+    expect(localStorage.getItem('gahub.sessionRailRecentActivity')).toBeNull()
   })
 
   it('keeps a newly created unstarted session above sessions with older activity', () => {

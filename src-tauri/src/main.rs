@@ -566,7 +566,7 @@ impl OwnedSidecar {
     fn try_begin_restart(&self) -> Result<ShutdownClaim<OwnedProcess>, String> {
         let mut lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
         if !restartable(&lifecycle.phase) {
-            return Err("backend is still starting up; retry once it is ready".to_string());
+            return Err("后端还在启动中，请稍候再试".to_string());
         }
         Ok(lifecycle.begin_shutdown())
     }
@@ -596,8 +596,8 @@ fn desktop_backend_ready(sidecar: tauri::State<'_, OwnedSidecar>) -> Result<bool
 /// Stop the owning sidecar and respawn it with the identical port/token.
 ///
 /// The claim/stop/respawn runs on a worker thread because the graceful stop
-/// can block for several seconds. The frontend keeps polling `/api/setup`
-/// meanwhile and reloads once the new process answers.
+/// can block for several seconds. The frontend keeps polling
+/// `desktop_backend_ready` meanwhile and reloads once the new process is live.
 #[tauri::command]
 fn restart_backend(
     sidecar: tauri::State<'_, OwnedSidecar>,
@@ -605,14 +605,14 @@ fn restart_backend(
     exit: tauri::State<'_, ExitCoordinator>,
 ) -> Result<(), String> {
     if !exit.is_running() {
-        return Err("application is shutting down".to_string());
+        return Err("应用正在关闭，无法重启后端".to_string());
     }
     let (port, token) = identity
         .0
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone()
-        .ok_or_else(|| "sidecar identity unavailable".to_string())?;
+        .ok_or_else(|| "后端运行信息缺失，请重启应用后再试".to_string())?;
     let claim = sidecar.try_begin_restart()?;
     let worker_sidecar = sidecar.inner().clone();
     let worker_exit = exit.inner().clone();
@@ -640,7 +640,7 @@ fn restart_backend(
         sidecar.finish_shutdown();
         sidecar.reset();
         let _ = sidecar.set_failed(format!("GA-Hub desktop restart: {error}"), exit.inner());
-        return Err(format!("cannot spawn restart worker: {error}"));
+        return Err(format!("无法创建重启任务：{error}"));
     }
     Ok(())
 }

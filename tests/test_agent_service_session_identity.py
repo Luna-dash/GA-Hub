@@ -161,7 +161,6 @@ def test_unconsumed_stream_queue_is_bounded_and_preserves_terminal_item() -> Non
             return q
 
     with mock.patch.object(svc_mod, "install_continue"), \
-         mock.patch.object(svc_mod.AgentService, "_record_session_usage"), \
          mock.patch.object(svc_mod.bus, "publish"):
         service = svc_mod.AgentService(
             agent=VerboseAgent(),
@@ -193,7 +192,6 @@ def test_unconsumed_stream_queue_is_bounded_and_preserves_terminal_item() -> Non
 
 def test_many_completed_submissions_do_not_accumulate_stream_handles() -> None:
     with mock.patch.object(svc_mod, "install_continue"), \
-         mock.patch.object(svc_mod.AgentService, "_record_session_usage"), \
          mock.patch.object(svc_mod.bus, "publish"):
         service = svc_mod.AgentService(
             agent=FakeAgent(),

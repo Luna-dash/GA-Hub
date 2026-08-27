@@ -162,6 +162,26 @@ class SessionMetadataStore:
                     return dict(row)
         return None
 
+    def rotate_archive(self, session_id: str, archive_path: str | Path) -> dict[str, Any]:
+        """Rebind a session to a replacement native archive (L2 recovery).
+
+        Unlike ``bind_archive`` this intentionally overwrites an existing
+        binding: it exists solely for the restore-recovery path, where the
+        previously bound file proved unreadable and has already been backed
+        up by the caller. The caller owns the old file's fate; this only
+        swaps the pointer atomically under the store lock.
+        """
+        path = str(Path(archive_path).resolve())
+        with self._lock:
+            data = self._read()
+            for row in data["sessions"]:
+                if row["id"] == session_id:
+                    row["archive_path"] = path
+                    row["updated_at"] = _now()
+                    self._write(data)
+                    return dict(row)
+        raise SessionNotFoundError(session_id)
+
     def upsert_archive(
         self,
         stable_id: str,

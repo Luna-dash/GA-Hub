@@ -355,13 +355,6 @@ def create_app() -> FastAPI:
         log.info("scheduler host started %s", scheduler_host.status())
 
         try:
-            from .routes import tokens as token_routes
-            token_routes.start_persistence()
-            log.info("token usage persistence started")
-        except Exception as e:
-            log.warning("token usage persistence init skipped: %s", e)
-
-        try:
             fs = FeishuService.instance()
             services.feishu = fs
             fs.start_log_watcher()
@@ -431,11 +424,6 @@ def create_app() -> FastAPI:
                         services.agent.shutdown()
                 except Exception:
                     log.exception("agent shutdown failed")
-                try:
-                    from .routes import tokens as token_routes
-                    token_routes.stop_persistence()
-                except Exception:
-                    log.exception("token usage final persistence failed")
             finally:
                 if session_runtime_shutdown_ok and session_routes is not None:
                     try:

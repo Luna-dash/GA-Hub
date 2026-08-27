@@ -117,7 +117,17 @@
     hidden = true
     var wait = Math.max(0, MIN_DISPLAY_MS - (performance.now() - startedAt))
     setTimeout(function () {
-      if (bursting || !running) return
+      if (bursting) return
+      if (!running) {
+        // 静态降级（reduced-motion / 无 Canvas）或渲染循环已停：
+        // 没有粒子可爆发，直接淡出并移除遮罩，否则启动画面永不消失。
+        root.style.pointerEvents = 'none'
+        root.style.opacity = '0'
+        setTimeout(function () {
+          if (root.parentNode) root.parentNode.removeChild(root)
+        }, FADE_MS + 80)
+        return
+      }
       bursting = true
       snapshotted = false
       burstStart = performance.now()

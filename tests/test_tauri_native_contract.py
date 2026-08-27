@@ -213,7 +213,11 @@ def test_local_app_router_gate_and_csp_contract() -> None:
     assert "const active = routeConversationId || null" in conversations
     assert "[active, setActive]" not in conversations
     assert "nav(`/conversations/${encodeURIComponent(c.id)}`)" in conversations
-    assert "if (active === id) nav('/conversations', { replace: true })" in conversations
+    # e2cb11b 把删除守卫重排为块级：导航回列表的同时清除 lastActive 回退，
+    # 避免一次性回退效应重新选中已删除的会话。契约关注语义而非排版。
+    assert "if (active === id) {" in conversations
+    assert "nav('/conversations', { replace: true })" in conversations
+    assert "lastActiveRef.current = null" in conversations
     assert "<DesktopRuntimeGate>" in main
     assert main.index("<DesktopRuntimeGate>") < main.index("<QueryClientProvider")
     assert "queryDesktopBackendReadiness" in gate

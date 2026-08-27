@@ -1,13 +1,22 @@
 """Runtime construction binds Hub metadata to GA's native log identity."""
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import types
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 from server.services.session_metadata import SessionMetadataStore
-from server.services.session_runtime_factory import RuntimeRestoreError, SessionRuntimeFactory
+from server.services.session_runtime_factory import (
+    RuntimeRestoreError,
+    SessionRuntimeFactory,
+    _pid_alive,
+    _takeover_stale_lock,
+)
 
 
 @dataclass
@@ -177,3 +186,196 @@ def test_rewind_store_failure_releases_archive_lock_and_never_starts(tmp_path: P
         "bind_rewind",
         ("release", str(tmp_path / "model_responses_failure.txt")),
     ]
+
+
+def test_dead_process_lock_is_taken_over_and_restore_retried(tmp_path: Path) -> None:
+    """重启后首次续接：死进程残留锁被清除，立即重试并成功。"""
+    store = SessionMetadataStore(tmp_path / "metadata")
+    row = store.create(title="stale lock")
+    archive = tmp_path / "model_responses_dead.txt"
+    archive.write_text("native archive", encoding="utf-8")
+    store.bind_archive(row["id"], archive)
+    calls: list[object] = []
+
+    def make_service(*, session_id: str, manage_global_preference: bool) -> FakeService:
+        return FakeService(tmp_path / "unused.txt", calls)
+
+    def restore(agent: FakeAgent, path: str, **kwargs: object):
+        calls.append(("restore", path))
+        if len(calls) == 1:
+            return "❌ 会话已被占用，无法原地接管", False
+        agent.log_path = path
+        return "✅ 已恢复", True
+
+    def takeover(path: str) -> bool:
+        calls.append(("takeover", path))
+        return True
+
+    factory = SessionRuntimeFactory(
+        store,
+        service_factory=make_service,
+        continue_inplace=restore,
+        takeover_stale_lock=takeover,
+    )
+    runtime = factory(row["id"])
+
+    assert runtime.started is True
+    assert calls == [
+        ("restore", str(archive.resolve())),
+        ("takeover", str(archive.resolve())),
+        ("restore", str(archive.resolve())),
+        "bind_rewind",
+        "start",
+    ]
+
+
+def test_live_lock_holder_keeps_restore_failure(tmp_path: Path) -> None:
+    """持锁进程仍活着（或探测不了）时不接管，维持原有报错。"""
+    store = SessionMetadataStore(tmp_path / "metadata")
+    row = store.create(title="live lock")
+    archive = tmp_path / "model_responses_live.txt"
+    store.bind_archive(row["id"], archive)
+    calls: list[object] = []
+
+    def make_service(*, session_id: str, manage_global_preference: bool) -> FakeService:
+        return FakeService(tmp_path / "unused.txt", calls)
+
+    def restore(agent: FakeAgent, path: str, **kwargs: object):
+        calls.append("restore")
+        return "❌ 会话已被占用，无法原地接管", False
+
+    factory = SessionRuntimeFactory(
+        store,
+        service_factory=make_service,
+        continue_inplace=restore,
+        takeover_stale_lock=lambda path: False,
+    )
+
+    with pytest.raises(RuntimeRestoreError, match="已被占用"):
+        factory(row["id"])
+    assert calls == ["restore"]
+
+
+def test_takeover_stale_lock_removes_only_dead_holder_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import server.services.session_runtime_factory as srf
+
+    archive = tmp_path / "model_responses_x.txt"
+    archive.write_text("native archive", encoding="utf-8")
+    lock_file = tmp_path / "dead.lock"
+    lock_file.write_text(json.dumps({"pid": 4242}), encoding="utf-8")
+
+    fake_module = types.SimpleNamespace(
+        session_occupant=lambda path: {"pid": 4242},
+        _lock_path=lambda path: str(lock_file),
+    )
+    monkeypatch.setitem(sys.modules, "frontends.continue_cmd", fake_module)
+    monkeypatch.setattr(srf, "_pid_alive", lambda pid: pid == 4242)
+
+    assert srf._takeover_stale_lock(str(archive)) is False
+    assert lock_file.exists()
+
+    monkeypatch.setattr(srf, "_pid_alive", lambda pid: False)
+    assert srf._takeover_stale_lock(str(archive)) is True
+    assert not lock_file.exists()
+
+    fake_module.session_occupant = lambda path: None
+    assert srf._takeover_stale_lock(str(archive)) is False
+
+
+def test_pid_alive_reports_own_process_and_dead_process() -> None:
+    import os
+
+    assert _pid_alive(0) is False
+    assert _pid_alive(-1) is False
+    assert _pid_alive(os.getpid()) is True  # 自身 pid 必然活着
+
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    # 竞态说明：等待退出后立即探测；pid 恰好在这一瞬间被复用时可能误报
+    # 存活，方向保守（不接管），不影响正确性。
+    assert _pid_alive(dead.pid) is False
+
+
+def test_unreadable_archive_is_rotated_and_session_recovers(tmp_path: Path) -> None:
+    """L2：prompt-only 等内容级损坏不再永久卡死，轮换新日志照常打开。"""
+    store = SessionMetadataStore(tmp_path / "metadata")
+    row = store.create(title="prompt-only")
+    archive = tmp_path / "model_responses_464437.txt"
+    archive.write_text(
+        '=== Prompt === 2026-08-22 21:11:27\n{"role": "user"}\n',  # 无 Response
+        encoding="utf-8",
+    )
+    store.bind_archive(row["id"], archive)
+    calls: list[object] = []
+    rotated_log = tmp_path / "model_responses_rotated.txt"
+
+    def make_service(*, session_id: str, manage_global_preference: bool) -> FakeService:
+        return FakeService(tmp_path / "unused.txt", calls)
+
+    def restore(agent: FakeAgent, path: str, **kwargs: object):
+        calls.append(("restore", path))
+        agent.log_path = path
+        return f"❌ {Path(path).name} 为空或格式不符", False
+
+    def fresh(agent: FakeAgent) -> None:
+        calls.append("fresh")
+        agent.log_path = str(rotated_log)
+
+    factory = SessionRuntimeFactory(
+        store,
+        service_factory=make_service,
+        continue_inplace=restore,
+        takeover_stale_lock=lambda path: False,
+        begin_fresh_session=fresh,
+    )
+    runtime = factory(row["id"])
+
+    assert runtime.started is True
+    assert ("restore", str(archive.resolve())) in calls
+    assert "fresh" in calls
+    bound = store.get(row["id"])
+    assert bound["archive_path"] == str(rotated_log.resolve())
+    # 原档案被改名备份，数据不丢
+    assert not archive.exists()
+    backups = list(tmp_path.glob("model_responses_464437.txt.broken-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8").startswith("=== Prompt ===")
+
+
+def test_busy_lock_refusal_still_raises_without_rotation(tmp_path: Path) -> None:
+    """L3：真并发占用（持有者活着）必须继续报错，绝不轮换他人会话。"""
+    store = SessionMetadataStore(tmp_path / "metadata")
+    row = store.create(title="busy")
+    archive = tmp_path / "model_responses_busy.txt"
+    archive.write_text("native archive", encoding="utf-8")
+    store.bind_archive(row["id"], archive)
+    calls: list[object] = []
+
+    def make_service(*, session_id: str, manage_global_preference: bool) -> FakeService:
+        return FakeService(tmp_path / "unused.txt", calls)
+
+    def restore(agent: FakeAgent, path: str, **kwargs: object):
+        calls.append("restore")
+        return "❌ 会话已被占用，无法原地接管", False
+
+    def fresh(agent: FakeAgent) -> None:
+        raise AssertionError("busy refusal must never rotate the archive")
+
+    factory = SessionRuntimeFactory(
+        store,
+        service_factory=make_service,
+        continue_inplace=restore,
+        takeover_stale_lock=lambda path: False,
+        begin_fresh_session=fresh,
+    )
+
+    with pytest.raises(RuntimeRestoreError, match="已被占用"):
+        factory(row["id"])
+    assert calls == ["restore"]
+
+
+def test_pid_alive_treats_missing_windows_pid_as_dead() -> None:
+    # 远超 Windows pid 空间的值必然 OpenProcess 失败且非 ACCESS_DENIED → 死
+    assert _pid_alive(2**28) is False

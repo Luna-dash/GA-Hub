@@ -145,7 +145,7 @@ keyinfo 只补充上下文，不创建新执行；abort/stop 只终止执行，�
 
 - tests/test_conductor_model_policy.py
 - tests/test_conductor_route_lifecycle.py
-- tests/test_request_usage_wiring.py
+- tests/test_conductor_admission.py
 - webui/src/api/client.test.ts
 - webui/src/hooks/useSharedModelSelection.test.tsx
 

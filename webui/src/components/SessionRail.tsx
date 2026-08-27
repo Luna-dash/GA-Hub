@@ -26,7 +26,7 @@ const activityDot = {
 const activityCard = {
   active: 'border-emerald-400/60 bg-emerald-50/80 text-emerald-950 shadow-[inset_3px_0_0_rgba(16,185,129,0.65)] hover:bg-emerald-50',
   completed: 'border-sky-400/60 bg-sky-50/80 text-sky-950 shadow-[inset_3px_0_0_rgba(14,165,233,0.65)] hover:bg-sky-50',
-  idle: 'border-transparent text-[#665741] hover:border-line hover:bg-bg-card',
+  idle: 'border-line/60 text-[#665741] hover:border-line hover:bg-bg-card',
   error: 'border-rose-400/60 bg-rose-50/80 text-rose-950 shadow-[inset_3px_0_0_rgba(244,63,94,0.65)] hover:bg-rose-50',
   unknown: 'border-amber-400/55 bg-amber-50/70 text-amber-950 hover:bg-amber-50',
 }
@@ -47,7 +47,7 @@ const activityRail = {
   unknown: 'bg-amber-600/65 shadow-[0_0_0_3px_rgba(217,119,6,0.11)] group-hover:bg-amber-600/80',
 }
 
-try { localStorage.removeItem('gahub.sessionRailRecentActivity') } catch { /* legacy cleanup */ }
+const LEGACY_RECENT_KEY = 'gahub.sessionRailRecentActivity'
 const TERMINAL_KEY = 'gahub.sessionRailTerminalState'
 const SEEN_COMPLETED_KEY = 'gahub.sessionRailSeenCompletedRuns'
 type TerminalState = 'completed' | 'error'
@@ -82,6 +82,10 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
     () => readJson<Record<string, string>>(SEEN_COMPLETED_KEY, {}),
   )
   const previousActivity = useRef<Record<string, ReturnType<typeof sessionActivity>>>({})
+
+  useEffect(() => {
+    try { localStorage.removeItem(LEGACY_RECENT_KEY) } catch { /* legacy cleanup */ }
+  }, [])
 
   useEffect(() => {
     const nextTerminal = { ...terminalState }
@@ -249,21 +253,20 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
             : 'translate-x-0 translate-y-0 opacity-100',
         )}
       >
-        <div className="mb-2 flex items-center justify-between gap-2 px-1">
-          <span className="text-[11px] font-semibold tracking-wider text-[#86775F]">会话工作区</span>
-          {onCreate && (
-            <button
-              type="button"
-              onClick={() => { void onCreate() }}
-              disabled={creating}
-              aria-label="新建会话"
-              className="rounded-lg border border-accent/35 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition hover:bg-accent/20 disabled:opacity-50"
-              title="新建会话"
-            >
-              {creating ? '创建中…' : '＋ 新建'}
-            </button>
-          )}
-        </div>
+        {onCreate && (
+          <button
+            type="button"
+            onClick={() => { void onCreate() }}
+            disabled={creating}
+            aria-label="新建会话"
+            data-testid="create-session-row"
+            className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl border border-accent/45 bg-accent/15 px-3 py-2.5 text-sm font-semibold text-accent transition hover:border-accent/70 hover:bg-accent/25 active:scale-[0.99] disabled:opacity-50"
+            title="新建会话"
+          >
+            <span aria-hidden="true" className="text-base leading-none">＋</span>
+            <span>{creating ? '创建中…' : '新会话'}</span>
+          </button>
+        )}
         <div className="flex gap-2 md:flex-col">
           {orderedSessions.map((session) => {
             const runtime = runtimes[session.id]

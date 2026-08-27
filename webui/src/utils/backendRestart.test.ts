@@ -1,36 +1,56 @@
 import { describe, expect, it, vi } from 'vitest'
-import { waitForBackendReady } from './backendRestart'
+import { waitForDesktopRestart } from './backendRestart'
 
 const noDelay = () => Promise.resolve()
 
-describe('waitForBackendReady', () => {
-  it('resolves as soon as the backend reports configured', async () => {
-    const fetchStatus = vi.fn().mockResolvedValue({ configured: true })
-    await expect(waitForBackendReady({ delay: noDelay, fetchStatus })).resolves.toBeUndefined()
-    expect(fetchStatus).toHaveBeenCalledOnce()
+describe('waitForDesktopRestart', () => {
+  it('resolves as soon as the sidecar lifecycle reports ready', async () => {
+    const fetchReady = vi.fn().mockResolvedValue(true)
+    await expect(waitForDesktopRestart({ delay: noDelay, fetchReady })).resolves.toBeUndefined()
+    expect(fetchReady).toHaveBeenCalledOnce()
   })
 
-  it('keeps polling through transport failures while the sidecar restarts', async () => {
-    const fetchStatus = vi
+  it('keeps polling through ready=false while the sidecar stops and respawns', async () => {
+    const fetchReady = vi
       .fn()
-      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
-      .mockResolvedValueOnce({ configured: false })
-      .mockResolvedValue({ configured: true })
-    await expect(waitable()).resolves.toBeUndefined()
-    async function waitable() {
-      await waitForBackendReady({ delay: noDelay, fetchStatus })
-    }
-    expect(fetchStatus).toHaveBeenCalledTimes(3)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true)
+    await expect(waitForDesktopRestart({ delay: noDelay, fetchReady })).resolves.toBeUndefined()
+    expect(fetchReady).toHaveBeenCalledTimes(3)
   })
 
-  it('throws once the deadline passes without a configured backend', async () => {
-    const fetchStatus = vi.fn().mockResolvedValue({ configured: false })
+  it('surfaces a terminal respawn failure instead of polling on', async () => {
+    const fetchReady = vi.fn().mockRejectedValue(new Error('GA-Hub desktop restart: boom'))
+    await expect(waitForDesktopRestart({ delay: noDelay, fetchReady })).rejects.toThrow('boom')
+    expect(fetchReady).toHaveBeenCalledOnce()
+  })
+
+  it('throws once the deadline passes without a ready sidecar', async () => {
+    const fetchReady = vi.fn().mockResolvedValue(false)
     await expect(
-      waitForBackendReady({
+      waitForDesktopRestart({
         delay: noDelay,
-        fetchStatus,
+        fetchReady,
         timeoutMs: 0,
       }),
     ).rejects.toThrow('超时')
+    expect(fetchReady).toHaveBeenCalledOnce()
+  })
+
+  it('reports the configured deadline in the timeout message', async () => {
+    const nowSpy = vi
+      .spyOn(Date, 'now')
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(2_000)
+      .mockReturnValue(10_000)
+    const fetchReady = vi.fn().mockResolvedValue(false)
+    try {
+      await expect(
+        waitForDesktopRestart({ delay: noDelay, fetchReady, timeoutMs: 5_000 }),
+      ).rejects.toThrow('超时（5s）')
+    } finally {
+      nowSpy.mockRestore()
+    }
   })
 })

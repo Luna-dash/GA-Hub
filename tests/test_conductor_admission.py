@@ -1,21 +1,19 @@
-"""Request-level usage wiring tests for the Conductor service."""
+"""Request admission wiring tests for the Conductor service."""
 from __future__ import annotations
 
 import pytest
 from unittest.mock import Mock, patch
 
 from server.services.conductor_service import ConductorService
-from server.services.request_usage import RequestUsageStore
 
 
-def test_user_chat_message_starts_usage_request_and_returns_request_id():
+def test_user_chat_message_is_admitted_with_a_request_id():
     service = object.__new__(ConductorService)
     service.chat_messages = []
     service._started = True
     service.configure_models = Mock()
     service.ensure_started = Mock()
     service.notify = Mock(return_value=True)
-    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
 
     with patch("server.services.conductor_service.bus.publish"):
         item = service.add_chat_message("hello", role="user")
@@ -23,9 +21,6 @@ def test_user_chat_message_starts_usage_request_and_returns_request_id():
     request_id = item["request_id"]
     assert request_id
     assert request_id != item["id"]
-    row = service.usage_store.list()[0]
-    assert row["request_id"] == request_id
-    assert row["attribution"] == "PENDING"
     service.configure_models.assert_called_once_with(
         llm_index=None,
         subagent_llm_index=None,
@@ -44,7 +39,6 @@ def test_conductor_plan_and_report_do_not_recursively_admit_user_tasks():
     service.configure_models = Mock()
     service.ensure_started = Mock()
     service.notify = Mock(return_value=True)
-    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
 
     with patch("server.services.conductor_service.bus.publish"):
         user_item = service.add_chat_message("calculate", role="user")
@@ -54,7 +48,6 @@ def test_conductor_plan_and_report_do_not_recursively_admit_user_tasks():
     assert user_item["request_id"]
     assert "request_id" not in plan_item
     assert "request_id" not in report_item
-    assert len(service.usage_store.list()) == 1
     service.configure_models.assert_called_once()
     service.ensure_started.assert_called_once_with()
     service.notify.assert_called_once()
@@ -68,7 +61,6 @@ def _service_for_admission_test():
     service.configure_models = Mock()
     service.ensure_started = Mock()
     service.notify = Mock(return_value=True)
-    service.usage_store = RequestUsageStore(clock=lambda: 10.0)
     return service
 
 
@@ -85,7 +77,7 @@ def test_user_admission_starts_conductor_before_notify():
     assert order == ["configure", "start", "notify"]
 
 
-def test_add_chat_failure_completes_request_as_failed_admission():
+def test_add_chat_failure_is_propagated_without_starting_conductor():
     service = _service_for_admission_test()
 
     with patch(
@@ -94,12 +86,9 @@ def test_add_chat_failure_completes_request_as_failed_admission():
     ), pytest.raises(RuntimeError, match="chat failed"):
         service.add_chat_message("hello", role="user")
 
-    row = service.usage_store.list()[0]
-    assert row["attribution"] == "FAILED_ADMISSION"
-    assert row["completed_at"] == 10.0
 
 
-def test_start_failure_completes_request_as_failed_start():
+def test_start_failure_is_propagated_before_notify():
     service = _service_for_admission_test()
     service.ensure_started.side_effect = RuntimeError("start failed")
 
@@ -108,13 +97,10 @@ def test_start_failure_completes_request_as_failed_start():
     ):
         service.add_chat_message("hello", role="user")
 
-    row = service.usage_store.list()[0]
-    assert row["attribution"] == "FAILED_START"
-    assert row["completed_at"] == 10.0
     service.notify.assert_not_called()
 
 
-def test_notify_failure_completes_request_as_failed_admission():
+def test_notify_failure_is_propagated_after_start():
     service = _service_for_admission_test()
     service.notify.side_effect = RuntimeError("notify failed")
 
@@ -123,13 +109,10 @@ def test_notify_failure_completes_request_as_failed_admission():
     ):
         service.add_chat_message("hello", role="user")
 
-    row = service.usage_store.list()[0]
-    assert row["attribution"] == "FAILED_ADMISSION"
-    assert row["completed_at"] == 10.0
     service.ensure_started.assert_called_once_with()
 
 
-def test_notify_false_completes_request_as_failed_admission():
+def test_notify_false_raises_stopped_before_admission():
     service = _service_for_admission_test()
     service.notify.return_value = False
 
@@ -137,7 +120,3 @@ def test_notify_false_completes_request_as_failed_admission():
         RuntimeError, match="stopped before event admission"
     ):
         service.add_chat_message("hello", role="user")
-
-    row = service.usage_store.list()[0]
-    assert row["attribution"] == "FAILED_ADMISSION"
-    assert row["completed_at"] == 10.0

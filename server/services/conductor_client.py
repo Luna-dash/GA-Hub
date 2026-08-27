@@ -209,7 +209,7 @@ class GahubProcessManager:
             proc = _sp.Popen(
                 [self.python_exe, "-u", "-c", "print('PROBE_OK', flush=True)"],
                 stdout=_sp.PIPE, stderr=_sp.STDOUT,
-                env=env, **hidden_process_kwargs(),
+                env=_clean_child_env(), **hidden_process_kwargs(),
             )
             out, _ = proc.communicate(timeout=10)
         except Exception as exc:
@@ -334,9 +334,6 @@ class GaConductorClient:
     # -- observability -----------------------------------------------------------
     def get_log(self, last: int = 50) -> list[dict]:
         return self._request("GET", "/log", params={"last": last}).get("items", [])
-
-    def get_request_usage(self, request_id: str) -> dict:
-        return self._request("GET", f"/requests/{request_id}/usage")
 
     # -- SSE ----------------------------------------------------------------------
     def stream_events(self, on_event: Callable[[dict], None],
