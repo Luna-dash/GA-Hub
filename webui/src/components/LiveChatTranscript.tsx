@@ -383,8 +383,18 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
               </div>
             )}
 
-            {turnCount > 0 && (
+            {/* 底部导航组：仅在离开底部时渲染，保证 上节/下节 在可见期间
+                屏幕位置恒定（底部按钮置于其上方，不随 stuckBottom 翻转挤动），
+                到达最底后整组隐藏，避免角落误触。 */}
+            {turnCount > 0 && !stuckBottom && (
               <div className="mt-auto flex shrink-0 flex-col gap-1.5 text-xs text-[#2C2418]">
+                <button
+                  onClick={jumpToBottom}
+                  className="min-h-9 rounded-lg border border-line bg-bg-soft/95 px-1 py-1 leading-tight shadow-md backdrop-blur hover:bg-bg-card"
+                  title={unread > 0 ? `${unread} 条新消息，跳到最新` : '跳到最新消息'}
+                >
+                  ↓ {unread > 0 ? unread : '底部'}
+                </button>
                 <button
                   onClick={() => jumpToTurn(-1)}
                   disabled={activeTurn <= 0}
@@ -401,15 +411,6 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
                 >
                   ↓ 下节
                 </button>
-                {!stuckBottom && (
-                  <button
-                    onClick={jumpToBottom}
-                    className="min-h-9 rounded-lg border border-line bg-bg-soft/95 px-1 py-1 leading-tight shadow-md backdrop-blur hover:bg-bg-card"
-                    title={unread > 0 ? `${unread} 条新消息，跳到最新` : '跳到最新消息'}
-                  >
-                    ↓ {unread > 0 ? unread : '底部'}
-                  </button>
-                )}
               </div>
             )}
           </aside>
