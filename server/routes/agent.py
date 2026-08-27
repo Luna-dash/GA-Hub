@@ -186,10 +186,15 @@ def _test_llm_sync(service: AgentService, client):
 
     saved_history = list(getattr(backend, "history", []))
     saved_tools = getattr(backend, "tools", None)
+    # Silence the archive logger: a bare ping must not leave a
+    # model_responses_{pid}.txt file behind (it would surface as a new
+    # entry in the 历史对话 page). llmcore treats log_path=False as "off".
+    saved_log = getattr(client, "log_path", None)
     try:
         # Best-effort reset to neutral; not every backend has these.
         if hasattr(backend, "history"): backend.history = []
         if hasattr(backend, "tools"): backend.tools = None
+        if hasattr(client, "log_path"): client.log_path = False
 
         start = time.time()
         # client.chat is a generator — exhaust it. We do this in a thread
@@ -228,6 +233,7 @@ def _test_llm_sync(service: AgentService, client):
         try:
             if hasattr(backend, "history"): backend.history = saved_history
             if hasattr(backend, "tools"): backend.tools = saved_tools
+            if hasattr(client, "log_path"): client.log_path = saved_log
         except Exception:
             pass
 

@@ -296,11 +296,16 @@ def _test_session_sync(var: str) -> MyKeySessionTestResp:
 
     saved_history = list(getattr(backend, "history", []))
     saved_tools = getattr(backend, "tools", None)
+    # Silence the archive logger: a ping must not append to / create
+    # model_responses_{pid}.txt (that file *is* the 历史对话 session list).
+    saved_log = getattr(client, "log_path", None)
     try:
         if hasattr(backend, "history"):
             backend.history = []
         if hasattr(backend, "tools"):
             backend.tools = None
+        if hasattr(client, "log_path"):
+            client.log_path = False
 
         messages = [
             {"role": "system", "content": "Reply with exactly: pong"},
@@ -335,6 +340,8 @@ def _test_session_sync(var: str) -> MyKeySessionTestResp:
                 backend.history = saved_history
             if hasattr(backend, "tools"):
                 backend.tools = saved_tools
+            if hasattr(client, "log_path"):
+                client.log_path = saved_log
         except Exception:
             pass
 
