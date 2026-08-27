@@ -33,7 +33,7 @@ def test_coordinator_abort_timeout_publishes_identified_error_event(
     monkeypatch.setattr(sessions, "SessionRuntimeFactory", lambda store: object())
 
     sessions._get_coordinator()
-    assert captured["capacity"] == 3
+    assert captured["capacity"] == 5
     captured["callback"](RuntimeState(
         "session-a", "error", "run-a", "stream-a", "abort_timeout"
     ))

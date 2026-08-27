@@ -492,11 +492,29 @@ def test_capacity_three_admits_three_sessions_and_rejects_fourth() -> None:
     assert error.value.active_count == 3
 
 
-@pytest.mark.parametrize("capacity", [0, 4])
+def test_capacity_five_admits_five_sessions_and_rejects_sixth() -> None:
+    from server.services.session_coordinator import AgentBusyError, SessionCoordinator
+
+    coordinator = SessionCoordinator(
+        lambda session_id: FakeRuntime(session_id),
+        capacity=5,
+        poll_interval=0.001,
+    )
+    for session_id in ("A", "B", "C", "D", "E"):
+        coordinator.submit(session_id.lower(), session_id=session_id)
+
+    assert {state.session_id for state in coordinator.active_runs()} == {"A", "B", "C", "D", "E"}
+    with pytest.raises(AgentBusyError) as error:
+        coordinator.submit("f", session_id="F")
+    assert error.value.capacity == 5
+    assert error.value.active_count == 5
+
+
+@pytest.mark.parametrize("capacity", [0, 6])
 def test_capacity_outside_supported_range_is_rejected(capacity: int) -> None:
     from server.services.session_coordinator import SessionCoordinator
 
-    with pytest.raises(ValueError, match="between 1 and 3"):
+    with pytest.raises(ValueError, match="between 1 and 5"):
         SessionCoordinator(lambda session_id: FakeRuntime(session_id), capacity=capacity)
 
 

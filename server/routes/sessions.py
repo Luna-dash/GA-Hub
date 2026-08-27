@@ -77,16 +77,16 @@ def _publish_runtime_state(state: RuntimeState) -> None:
 
 
 def _session_run_capacity() -> int:
-    """Return the bounded session-run capacity; three sessions may run concurrently by default."""
-    raw = os.environ.get("GAHUB_SESSION_RUN_CAPACITY", "3").strip()
+    """Return the bounded session-run capacity; five sessions may run concurrently by default."""
+    raw = os.environ.get("GAHUB_SESSION_RUN_CAPACITY", "5").strip()
     try:
         capacity = int(raw)
     except ValueError:
-        log.warning("invalid GAHUB_SESSION_RUN_CAPACITY=%r; using 3", raw)
-        return 3
-    if capacity not in {1, 2, 3}:
-        log.warning("unsupported GAHUB_SESSION_RUN_CAPACITY=%r; using 3", raw)
-        return 3
+        log.warning("invalid GAHUB_SESSION_RUN_CAPACITY=%r; using 5", raw)
+        return 5
+    if capacity not in {1, 2, 3, 4, 5}:
+        log.warning("unsupported GAHUB_SESSION_RUN_CAPACITY=%r; using 5", raw)
+        return 5
     return capacity
 
 
