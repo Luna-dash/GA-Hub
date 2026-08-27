@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import { sessionActivity, sessionStatusLabel } from '@/utils/sessionUi'
+import { usePageState } from '@/utils/pageState'
 
 interface SessionRailProps {
   sessions: HubSession[]
@@ -70,7 +71,7 @@ function isUnstartedSession(session: HubSession) {
 }
 
 function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreate, onRename, onDelete, creating }: SessionRailProps) {
-  const [collapsed, setCollapsed] = useState(true)
+  const [collapsed, setCollapsed] = usePageState('liveChat.sessionRailCollapsed', true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [titleDraft, setTitleDraft] = useState('')
   const [savingId, setSavingId] = useState<string | null>(null)

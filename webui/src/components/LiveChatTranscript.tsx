@@ -10,6 +10,7 @@ import {
 } from 'react'
 import type { ScheduledChat } from '@/api/types'
 import { useChatStore, type ChatMsg } from '@/stores/chatStore'
+import { readPageState, writePageState } from '@/utils/pageState'
 import { createRafScheduler } from '@/utils/rafScheduler'
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { useChatPerformanceProbe } from '@/utils/useChatPerformanceProbe'
@@ -68,6 +69,46 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     const navigationTargetRef = useRef<number | null>(null)
     const prependingHistoryRef = useRef(false)
     const virtualListRef = useRef<VirtualMessageListHandle>(null)
+
+    // Reading-position persistence across route switches. The anchor is the
+    // first visible message key, so restores survive estimate-vs-measured
+    // height drift after remount.
+    const scrollPositionsRef = useRef<Record<string, SavedScrollPosition>>(
+      readPageState('liveChat.scrollPositions', {}),
+    )
+    const restoredSessionsRef = useRef<Set<string>>(new Set())
+    const capturePosition = useCallback(() => {
+      const el = scrollRef.current
+      if (!sessionId || !el || msgs.length === 0) return
+      const index = virtualListRef.current?.getFirstVisibleIndex(48) ?? 0
+      const message = msgs[index]
+      if (!message) return
+      scrollPositionsRef.current[sessionId] = {
+        key: chatMessageKey(message),
+        stuck: el.scrollHeight - el.scrollTop - el.clientHeight < 80,
+      }
+      writePageState('liveChat.scrollPositions', trimScrollPositions(scrollPositionsRef.current))
+    }, [msgs, sessionId])
+    const capturePositionRef = useRef(capturePosition)
+    capturePositionRef.current = capturePosition
+
+    // Suppress bottom-pinning during hydration when the user left this
+    // session mid-read, so the restore below is not fought by pinning.
+    useEffect(() => {
+      if (!sessionId) return
+      const saved = scrollPositionsRef.current[sessionId]
+      if (saved && !saved.stuck) setStuckBottom(false)
+    }, [sessionId])
+
+    // Persist the reading position when leaving a session (unmount or
+    // in-place switch) and allow restoring it again on return.
+    useEffect(() => {
+      if (!sessionId) return
+      return () => {
+        capturePositionRef.current()
+        restoredSessionsRef.current.delete(sessionId)
+      }
+    }, [sessionId])
     const turnCount = useMemo(
       () => msgs.reduce((count, message) => count + (message.role === 'user' ? 1 : 0), 0),
       [msgs],
@@ -122,6 +163,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         }
       }
       setActiveTurn((previous) => previous === current ? previous : current)
+      capturePosition()
     }
 
     useEffect(() => {
@@ -158,6 +200,23 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         setUnread((count) => count + 1)
       }
     }, [msgs, stuckBottom])
+
+    // One-shot reading-position restore per hydrated session mount. Anchored
+    // to the saved first-visible message key; falls back to default pinning.
+    useEffect(() => {
+      if (!sessionId || hydrating || msgs.length === 0) return
+      if (restoredSessionsRef.current.has(sessionId)) return
+      restoredSessionsRef.current.add(sessionId)
+      const saved = scrollPositionsRef.current[sessionId]
+      if (!saved || saved.stuck || !saved.key) return
+      const index = msgs.findIndex((message) => chatMessageKey(message) === saved.key)
+      if (index < 0) {
+        setStuckBottom(true)
+        return
+      }
+      virtualListRef.current?.scrollToIndex(index, { behavior: 'auto', align: 'start' })
+      setStuckBottom(false)
+    }, [sessionId, hydrating, msgs])
 
     const handleLoadOlderHistory = useCallback(async () => {
       const el = scrollRef.current
@@ -379,6 +438,20 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     )
   },
 )
+
+interface SavedScrollPosition {
+  key: string
+  stuck: boolean
+}
+
+function trimScrollPositions(
+  positions: Record<string, SavedScrollPosition>,
+  limit = 40,
+): Record<string, SavedScrollPosition> {
+  const entries = Object.entries(positions)
+  if (entries.length <= limit) return positions
+  return Object.fromEntries(entries.slice(entries.length - limit))
+}
 
 function chatMessageKey(message: ChatMsg): string {
   const identity = message.streamId || message.pendingWebuiId

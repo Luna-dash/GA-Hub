@@ -77,7 +77,7 @@ function SopList() {
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: queryKeys.memory.sops, queryFn: api.sops })
   const sops = data?.sops ?? []
-  const [active, setActive] = useState<string | null>(null)
+  const [active, setActive] = usePageState<string | null>('memory.sopActive', null)
   const [q, setQ] = usePageState('memory.sopQuery', '')
   const needle = q.trim().toLowerCase()
   const visible = needle ? sops.filter((s) => s.name.toLowerCase().includes(needle)) : sops
@@ -134,7 +134,7 @@ function SopList() {
 function SkillList() {
   const { data } = useQuery({ queryKey: queryKeys.skills.list(), queryFn: () => api.skills() })
   const skills = data?.skills ?? []
-  const [active, setActive] = useState<string | null>(null)
+  const [active, setActive] = usePageState<string | null>('memory.skillActive', null)
   const { data: cur } = useQuery({ queryKey: queryKeys.skills.detail(active), queryFn: () => api.skill(active!), enabled: !!active })
 
   return (

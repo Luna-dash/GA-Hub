@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
+import { readPageState, usePageState, writePageState } from '@/utils/pageState'
 import type { ConversationSummary } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { MarkdownView } from '@/components/MarkdownView'
@@ -17,7 +18,6 @@ import {
   conversationKeys,
   removeConversationFromCache,
 } from '@/queries/conversations'
-import { usePageState } from '@/utils/pageState'
 
 type ViewMode = 'round' | 'flat'
 type Msg = { role?: string; content?: string; [key: string]: any }
@@ -41,6 +41,9 @@ export default function Conversations() {
   const nav = useNavigate()
   const { id: routeConversationId } = useParams<{ id?: string }>()
   const active = routeConversationId || null
+  // Remember the last opened conversation so returning to this page via the
+  // plain /conversations route restores the selection instead of an empty pane.
+  const lastActiveRef = useRef<string | null>(readPageState('conversations.lastActive', null))
   const [restoring, setRestoring] = useState<string | null>(null)
   const [q, setQ] = usePageState('conversations.q', '')
   const [debouncedQ, setDebouncedQ] = useState('')
@@ -77,12 +80,48 @@ export default function Conversations() {
       setPage(Math.max(0, Math.ceil(total / limit) - 1))
     }
   }, [total, page, limit])
+
   useEffect(() => {
-    // A deep-link change reuses the same page component. Reset the shared
-    // viewport so measurements and the reader position start at the new
-    // conversation header instead of an arbitrary offset from the old one.
-    if (detailScrollRef.current) detailScrollRef.current.scrollTop = 0
-  }, [active, viewMode])
+    if (!active) return
+    lastActiveRef.current = active
+    writePageState('conversations.lastActive', active)
+  }, [active])
+
+  useEffect(() => {
+    // One-shot on entering the page without a selection: fall back to the
+    // last opened conversation. Skipped after deletion via lastActiveRef=null.
+    if (active || lastActiveRef.current === null) return
+    nav(`/conversations/${encodeURIComponent(lastActiveRef.current)}`, { replace: true })
+  }, [])
+  const detailScrollPositionsRef = useRef<Record<string, number>>(
+    readPageState('conversations.detailScroll', {}),
+  )
+
+  useEffect(() => {
+    // A deep-link change reuses the same page component. Restore the saved
+    // reader position for the target conversation (or its header when none)
+    // after the detail pane lays out, instead of an arbitrary old offset.
+    if (!active) return
+    const saved = detailScrollPositionsRef.current[active] ?? 0
+    const frame = requestAnimationFrame(() => {
+      if (detailScrollRef.current) detailScrollRef.current.scrollTop = saved
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [active, viewMode, detail])
+
+  useEffect(() => {
+    const el = detailScrollRef.current
+    if (!el || !active) return
+    const capture = () => {
+      detailScrollPositionsRef.current[active] = el.scrollTop
+      writePageState('conversations.detailScroll', trimDetailScrollPositions(detailScrollPositionsRef.current))
+    }
+    el.addEventListener('scroll', capture, { passive: true })
+    return () => {
+      el.removeEventListener('scroll', capture)
+      capture()
+    }
+  }, [active])
   const rounds = useMemo(() => buildRounds((detail?.messages || []) as Msg[]), [detail])
 
   const handleExport = async (id: string, fmt: 'md' | 'json') => {
@@ -127,7 +166,11 @@ export default function Conversations() {
     if (!ok) return
     try {
       await api.deleteConversation(id)
-      if (active === id) nav('/conversations', { replace: true })
+      if (active === id) {
+        nav('/conversations', { replace: true })
+        lastActiveRef.current = null
+        writePageState('conversations.lastActive', null)
+      }
       await removeConversationFromCache(qc, id)
       toast.success('会话文件已删除')
     } catch (e: any) {
@@ -619,4 +662,13 @@ function ConvRow({ c, index, collapsed, active, onClick }: {
       <div className="text-[10px] text-slate-600 mt-0.5">{c.message_count} 条消息</div>
     </button>
   )
+}
+
+function trimDetailScrollPositions(
+  positions: Record<string, number>,
+  limit = 60,
+): Record<string, number> {
+  const entries = Object.entries(positions)
+  if (entries.length <= limit) return positions
+  return Object.fromEntries(entries.slice(entries.length - limit))
 }
