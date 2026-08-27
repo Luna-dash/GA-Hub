@@ -4992,7 +4992,49 @@
             "maximum": 5.0,
             "minimum": 0.0,
             "title": "Max Attempts",
-            "default": 2
+            "default": 3
+          },
+          "scheduled_max_attempts": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Scheduled Max Attempts",
+            "default": 6
+          },
+          "backoff_base_seconds": {
+            "type": "number",
+            "maximum": 600.0,
+            "minimum": 0.0,
+            "title": "Backoff Base Seconds",
+            "default": 2.0
+          },
+          "backoff_factor": {
+            "type": "number",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Backoff Factor",
+            "default": 2.0
+          },
+          "backoff_max_seconds": {
+            "type": "number",
+            "maximum": 600.0,
+            "minimum": 0.0,
+            "title": "Backoff Max Seconds",
+            "default": 60.0
+          },
+          "scheduled_backoff_base_seconds": {
+            "type": "number",
+            "maximum": 600.0,
+            "minimum": 0.0,
+            "title": "Scheduled Backoff Base Seconds",
+            "default": 5.0
+          },
+          "scheduled_backoff_max_seconds": {
+            "type": "number",
+            "maximum": 600.0,
+            "minimum": 0.0,
+            "title": "Scheduled Backoff Max Seconds",
+            "default": 600.0
           }
         },
         "type": "object",
