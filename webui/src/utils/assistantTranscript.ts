@@ -9,6 +9,8 @@ export interface AssistantTranscriptTurn {
 export interface AssistantTranscript {
   turns: AssistantTranscriptTurn[]
   finalBody: string
+  /** Index of the turn whose ask_user call became the visible final body. */
+  finalTurnIndex: number | null
 }
 
 const FINAL_MARKER_RE = /\n*(?:`{3,5}[^\r\n]*\r?\n?)?\[Info\]\s*Final response to user\.\s*(?:\r?\n?`{3,5})?\s*$/i
@@ -182,7 +184,7 @@ export function parseAssistantTranscript(text: string): AssistantTranscript {
   const matches = [...safe.matchAll(turnMarkerRe())]
 
   if (!matches.length) {
-    return { turns: [], finalBody: extractTurnCandidate(source) }
+    return { turns: [], finalBody: extractTurnCandidate(source), finalTurnIndex: null }
   }
 
   const turns = matches.map((match, index) => {
@@ -197,12 +199,16 @@ export function parseAssistantTranscript(text: string): AssistantTranscript {
   })
 
   let finalBody = ''
+  let finalTurnIndex: number | null = null
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     finalBody = extractTurnCandidate(turns[index].content)
-    if (finalBody) break
+    if (finalBody) {
+      finalTurnIndex = extractAskUserCandidate(turns[index].content) ? index : null
+      break
+    }
   }
 
-  return { turns, finalBody }
+  return { turns, finalBody, finalTurnIndex }
 }
 
 export function stripAssistantTranscriptTags(text: string): string {

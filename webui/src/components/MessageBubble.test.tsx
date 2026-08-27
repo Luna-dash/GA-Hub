@@ -214,8 +214,8 @@ describe('MessageBubble render isolation', () => {
     expect(markdownRender).toHaveBeenCalledTimes(1)
     expect(markdownRender.mock.calls[0][0].children).toContain('请选择下一步。')
     expect(markdownRender.mock.calls[0][0].children).toContain('- 继续')
-    expect(host.textContent).toContain('查看执行过程')
-    expect(host.textContent).toContain('共 1 个 Turn')
+    expect(host.textContent).not.toContain('查看执行过程')
+    expect(host.textContent).not.toContain('共 1 个 Turn')
     expect(host.textContent).not.toContain('🛠️ Tool:')
   })
 

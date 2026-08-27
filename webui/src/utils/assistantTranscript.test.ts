@@ -33,6 +33,7 @@ describe('assistant transcript projection', () => {
     expect(transcript.turns[0].summary).toBe('读取配置 · 定位入口')
     expect(transcript.turns[1].summary).toBe('分析完成')
     expect(transcript.finalBody).toBe('## 最终回答\n\n这里是面向用户的结论。')
+    expect(transcript.finalTurnIndex).toBeNull()
     expect(transcript.finalBody).not.toContain('raw tool output')
   })
 
@@ -93,6 +94,26 @@ describe('assistant transcript projection', () => {
       '- 已启用设备代码授权',
       '- 设置里找不到该开关',
     ].join('\n'))
+    expect(transcript.finalTurnIndex).toBe(0)
+  })
+
+  it('marks the final ask_user turn without hiding earlier execution turns', () => {
+    const content = [
+      'LLM Running (Turn 1) ...',
+      '<summary>先做检查</summary>',
+      '检查完成',
+      'LLM Running (Turn 2) ...',
+      '<summary>等待用户确认</summary>',
+      '🛠️ Tool: `ask_user`  📥 args:',
+      '````text',
+      JSON.stringify({ question: '是否继续？', candidates: ['继续', '暂停'] }),
+      '````',
+    ].join('\n')
+
+    const transcript = parseAssistantTranscript(content)
+
+    expect(transcript.finalTurnIndex).toBe(1)
+    expect(transcript.finalBody).toContain('是否继续？')
   })
 
   it('strips only the trailing final-response protocol marker', () => {

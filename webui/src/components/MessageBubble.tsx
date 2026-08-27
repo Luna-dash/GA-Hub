@@ -231,15 +231,17 @@ function HistoryTranscriptReply({
   const visibleFinal = finalDeferred
     ? `${finalBody.slice(0, LONG_HISTORY_PREVIEW_CHARS)}…`
     : finalBody
-  const processTurns = transcript.turns.length > 0
-    ? transcript.turns
+  const processTurns = transcript.turns
+    .filter((_, index) => index !== transcript.finalTurnIndex)
+  const visibleProcessTurns = processTurns.length > 0
+    ? processTurns
     : finalBody
       ? []
       : [{ turn: 1, summary: '原始执行记录', content: rawContent }]
 
   return (
     <>
-      {processTurns.length > 0 && <LazyProcessFold turns={processTurns} />}
+      {visibleProcessTurns.length > 0 && <LazyProcessFold turns={visibleProcessTurns} />}
       {visibleFinal ? (
         <MarkdownView mode="auto" cache>{visibleFinal}</MarkdownView>
       ) : (
