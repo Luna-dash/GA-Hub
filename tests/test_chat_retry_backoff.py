@@ -202,6 +202,30 @@ class ClassifyRecoverableErrorTests(unittest.TestCase):
             "sse_error",
         )
 
+    def test_status_belongs_to_final_error_marker(self):
+        # Earlier markers in the accumulated stream must not override the
+        # terminal error that is actually being classified.
+        self.assertEqual(
+            self._code(
+                "x\n!!!Error: HTTP 403 Forbidden\n"
+                "wrapped response\n!!!Error: HTTP 503 Service Unavailable"
+            ),
+            "http_retryable",
+        )
+        self.assertIsNone(
+            self._code(
+                "x\n!!!Error: HTTP 503 Service Unavailable\n"
+                'wrapped response\n!!!Error: HTTP 403: {"error":{"message":"rate limited"}}'
+            )
+        )
+        self.assertEqual(
+            self._code(
+                "x\n!!!Error: HTTP 403 Forbidden\n"
+                "wrapped response\n!!!Error: Upstream request failed"
+            ),
+            "upstream_failure",
+        )
+
     def test_stale_midtext_error_ignored_tail_anchor(self):
         # Patterns anchor at the very end (\Z): an error followed by more
         # normal output must not trigger a retry.

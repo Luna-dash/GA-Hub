@@ -101,6 +101,7 @@ _RETRYABLE_HTTP_STATUSES = frozenset(
     (408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529)
 )
 _HTTP_STATUS_TAIL_RE = re.compile(r"!!!\s*Error:\s*HTTP\s+(\d{3})\b", re.IGNORECASE)
+_ERROR_MARKER_RE = re.compile(r"!!!\s*Error:", re.IGNORECASE)
 
 _RECOVERABLE_ERROR_PATTERNS = (
     RecoverableErrorPattern(
@@ -316,13 +317,23 @@ def classify_recoverable_error(content: str) -> RecoverableErrorMatch | None:
     final_text = (content or "").rstrip()[-_FINAL_MARKER_WINDOW_CHARS:]
     if not final_text:
         return None
-    status_match = _HTTP_STATUS_TAIL_RE.search(final_text)
+
+    # A stream can contain more than one terminal-looking marker when an
+    # upstream error is wrapped or appended during fanout.  Classification
+    # must be based on the last marker, not on an earlier HTTP status in the
+    # same bounded window.
+    marker_matches = list(_ERROR_MARKER_RE.finditer(final_text))
+    if not marker_matches:
+        return None
+    error_text = final_text[marker_matches[-1].start():]
+
+    status_match = _HTTP_STATUS_TAIL_RE.match(error_text)
     if status_match and int(status_match.group(1)) not in _RETRYABLE_HTTP_STATUSES:
-        # Explicit non-whitelisted HTTP status ⇒ fatal; body keywords
+        # Explicit non-whitelisted HTTP status => fatal; body keywords
         # ("rate limit", "retry later", ...) never rescue such a tail.
         return None
     for spec in _RECOVERABLE_ERROR_PATTERNS:
-        match = spec.pattern.search(final_text)
+        match = spec.pattern.search(error_text)
         if match:
             return RecoverableErrorMatch(
                 code=spec.code,
