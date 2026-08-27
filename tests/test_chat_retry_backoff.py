@@ -84,6 +84,13 @@ def _make_snap(**overrides):
 
 _HTTP_503_TAIL = "partial answer...\n!!!Error: HTTP 503 Service Unavailable"
 _HTTP_401_TAIL = "partial answer...\n!!!Error: HTTP 401 Unauthorized"
+_UPSTREAM_FAIL_TAIL = "partial answer...\n!!!Error: Upstream request failed"
+_HTTP_403_RATELIMIT_BODY_TAIL = (
+    'partial answer...\n!!!Error: HTTP 403: {"error":{"message":"rate limited"}}'
+)
+_HTTP_501_KEYWORD_BODY_TAIL = (
+    'partial answer...\n!!!Error: HTTP 501 Not Implemented: {"error":"rate limited"}'
+)
 
 
 class ClassifyRecoverableErrorTests(unittest.TestCase):
@@ -107,6 +114,31 @@ class ClassifyRecoverableErrorTests(unittest.TestCase):
         self.assertIsNone(self._code(_HTTP_401_TAIL))
         self.assertIsNone(self._code("x\n!!!Error: HTTP 404 Not Found"))
         self.assertIsNone(self._code("x\n!!!Error: HTTP 422 Unprocessable Entity"))
+
+    def test_bare_upstream_failure_matches(self):
+        self.assertEqual(self._code(_UPSTREAM_FAIL_TAIL), "upstream_failure")
+        self.assertEqual(self._code("x\n!!!Error: upstream failure"), "upstream_failure")
+        self.assertEqual(
+            self._code("x\n!!!Error: Upstream request fault at gateway"),
+            "upstream_failure",
+        )
+
+    def test_status_bearing_tail_not_rescued_by_body_keywords(self):
+        # Status codes are decisive: a non-whitelisted status stays fatal even
+        # when its body happens to mention "rate limit" / "retry later".
+        self.assertIsNone(self._code(_HTTP_403_RATELIMIT_BODY_TAIL))
+        self.assertIsNone(self._code(_HTTP_501_KEYWORD_BODY_TAIL))
+
+    def test_whitelisted_status_with_keyword_body_still_retries(self):
+        self.assertEqual(self._code(_HTTP_503_TAIL), "http_retryable")
+
+    def test_rate_limit_family_without_status_prefix_intact(self):
+        # Regression guard for the lookahead: free-text rate limits that do
+        # NOT open with ``HTTP <code>`` must still classify as before.
+        self.assertEqual(
+            self._code("x\n!!!Error: RateLimitError: 429 too many requests"),
+            "rate_limit",
+        )
 
     def test_rate_limit_matches_any_phrasing(self):
         self.assertEqual(

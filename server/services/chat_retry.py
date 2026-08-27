@@ -91,12 +91,24 @@ class RecoverableErrorPattern:
 
 _EXC_ERROR_PREFIX = r"!!!\s*Error:\s*(?:requests\.)?(?:exceptions\.)?"
 
+# Status codes are decisive. Any tail opening with ``!!!Error: HTTP <code>``
+# may only retry when <code> is in this set; every other status — regardless
+# of keywords inside its body (a 403 that mentions "rate limit", a 528 saying
+# "retry later") — is fatal and never reaches the keyword families below.
+# Superset of the http_retryable regex below because 429 folds into the
+# rate_limit family instead.
+_RETRYABLE_HTTP_STATUSES = frozenset(
+    (408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529)
+)
+_HTTP_STATUS_TAIL_RE = re.compile(r"!!!\s*Error:\s*HTTP\s+(\d{3})\b", re.IGNORECASE)
+
 _RECOVERABLE_ERROR_PATTERNS = (
     RecoverableErrorPattern(
         code="rate_limit",
         label="RateLimitError",
         # HTTP 429 bodies fold into this family: quota windows are long, so
-        # these retries get the deepest backoff multiplier.
+        # these retries get the deepest backoff multiplier. Status-bearing
+        # tails were already screened by _RETRYABLE_HTTP_STATUSES above.
         pattern=re.compile(
             r"!!!\s*Error:\s*(?:[^\r\n]*rate[\s_-]?limit[^\r\n]*|HTTP\s+429\b[^\r\n]*)\s*\Z",
             re.IGNORECASE,
@@ -108,6 +120,20 @@ _RECOVERABLE_ERROR_PATTERNS = (
         label="HTTPError",
         pattern=re.compile(
             r"!!!\s*Error:\s*HTTP\s+(?:408|409|425|500|502|503|504|52[0-7]|529)\b[^\r\n]*\s*\Z",
+            re.IGNORECASE,
+        ),
+        delay_scale=2.0,
+    ),
+    RecoverableErrorPattern(
+        code="upstream_failure",
+        label="UpstreamFailure",
+        # Gateways sometimes wrap upstream blowups in an HTTP 200 SSE stream
+        # whose error-event message is bare free text like "Upstream request
+        # failed" — no status code, no exception class — so none of the
+        # status/keyword families above can fire. This last-mile family lets
+        # such turns re-drive instead of ending fatal.
+        pattern=re.compile(
+            r"!!!\s*Error:\s*upstream[\s_-]*(?:request)?[\s_-]*(?:fail(?:ed|ure)?|fault)[^\r\n]*\s*\Z",
             re.IGNORECASE,
         ),
         delay_scale=2.0,
@@ -289,6 +315,11 @@ def classify_recoverable_error(content: str) -> RecoverableErrorMatch | None:
     """Return the recoverable stream error near the final output, if any."""
     final_text = (content or "").rstrip()[-_FINAL_MARKER_WINDOW_CHARS:]
     if not final_text:
+        return None
+    status_match = _HTTP_STATUS_TAIL_RE.search(final_text)
+    if status_match and int(status_match.group(1)) not in _RETRYABLE_HTTP_STATUSES:
+        # Explicit non-whitelisted HTTP status ⇒ fatal; body keywords
+        # ("rate limit", "retry later", ...) never rescue such a tail.
         return None
     for spec in _RECOVERABLE_ERROR_PATTERNS:
         match = spec.pattern.search(final_text)
