@@ -10,6 +10,11 @@ import { usePageState } from '@/utils/pageState'
 
 type Tab = 'sop' | 'skill' | 'insight' | 'global'
 
+export function filterSops<T extends { name: string }>(sops: T[], query: string): T[] {
+  const needle = query.trim().toLowerCase()
+  return needle ? sops.filter((s) => s.name.toLowerCase().startsWith(needle)) : sops
+}
+
 export default function Memory() {
   const [tab, setTab] = usePageState<Tab>('memory.tab', 'sop')
   return (
@@ -79,8 +84,7 @@ function SopList() {
   const sops = data?.sops ?? []
   const [active, setActive] = usePageState<string | null>('memory.sopActive', null)
   const [q, setQ] = usePageState('memory.sopQuery', '')
-  const needle = q.trim().toLowerCase()
-  const visible = needle ? sops.filter((s) => s.name.toLowerCase().includes(needle)) : sops
+  const visible = filterSops(sops, q)
   const { data: cur } = useQuery({ queryKey: queryKeys.memory.sop(active), queryFn: () => api.sop(active!), enabled: !!active })
   const [v, setV] = useState(''); const [dirty, setDirty] = useState(false)
   useEffect(() => { if (cur) { setV(cur.content); setDirty(false) } }, [cur])
