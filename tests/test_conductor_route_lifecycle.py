@@ -399,3 +399,26 @@ def test_keyinfo_engine_conflict_maps_to_409(monkeypatch):
 
     assert raised.value.status_code == 409
     assert "only a running subagent" in str(raised.value.detail)
+
+
+def test_abort_engine_unreachable_maps_to_503(monkeypatch):
+    """abort/stop must go through the engine mapping too: stopping a worker
+    while the engine is being respawned reads as 503, never a blind 500."""
+    service = FakeService(STOPPED)
+    service.pool = SimpleNamespace(
+        counts=lambda: (0, 1),
+        get=lambda _sid: SimpleNamespace(),
+        abort_subagent=Mock(side_effect=GahubProcessError(
+            "gahub_app /subagent/abc request failed: connection refused",
+        )),
+    )
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    with pytest.raises(conductor_routes.HTTPException) as raised:
+        asyncio.run(conductor_routes.subagent_action(
+            "abc",
+            conductor_routes.ConductorSubagentAction(action="stop"),
+        ))
+
+    assert raised.value.status_code == 503
+    assert "respawned on demand" in str(raised.value.detail)

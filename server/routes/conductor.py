@@ -242,7 +242,7 @@ async def subagent_action(
         result["instruction"] = INSTR_DISPATCHED
         return result
     if action in ("abort", "stop"):
-        return await asyncio.to_thread(pool.abort_subagent, sid)
+        return await _dispatch_through_engine(pool.abort_subagent, sid)
     raise HTTPException(400, f"unknown action: {body.action}")
 
 
