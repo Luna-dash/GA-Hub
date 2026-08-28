@@ -80,6 +80,28 @@ def test_explicit_follow_main_clears_default_worker_model():
     assert service.resolve_subagent_model() == 1
 
 
+def test_follow_main_switch_pushes_explicit_engine_clear():
+    """D5: the engine treats null as keep, so clearing the hub default must
+    send the explicit clear flag or the stale worker model survives there."""
+    service = _service(worker=5, policy="locked")
+
+    service.configure_models(subagent_model_policy="follow_main")
+
+    _, kwargs = service.client.push_models.call_args
+    assert kwargs["clear_subagent_llm"] is True
+    assert kwargs["subagent_llm_index"] is None
+
+
+def test_worker_model_push_keeps_legacy_semantics_without_clear():
+    service = _service(worker=5, policy="default")
+
+    service.configure_models(llm_index=2)
+
+    _, kwargs = service.client.push_models.call_args
+    assert kwargs["clear_subagent_llm"] is False
+    assert kwargs["subagent_llm_index"] == 5
+
+
 def test_dispatch_entrypoint_applies_same_locked_policy():
     service = _service(worker=5, policy="locked")
     prompt = "检查中文路径 D:\\项目\\资料 🚀"

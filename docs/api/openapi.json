@@ -5140,6 +5140,17 @@
               }
             ],
             "title": "Kind"
+          },
+          "final": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final"
           }
         },
         "additionalProperties": true,

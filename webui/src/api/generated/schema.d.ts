@@ -2307,6 +2307,8 @@ export interface components {
             request_id?: string | null;
             /** Kind */
             kind?: ("final" | "error") | null;
+            /** Final */
+            final?: boolean | null;
         } & {
             [key: string]: unknown;
         };

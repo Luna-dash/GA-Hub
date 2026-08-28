@@ -60,7 +60,7 @@ def _service_for_admission_test():
     service._started = False
     service.configure_models = Mock()
     service.ensure_started = Mock()
-    service.notify = Mock(return_value=True)
+    service.notify = Mock(return_value={"id": "engine-1", "role": "user"})
     return service
 
 
@@ -69,7 +69,9 @@ def test_user_admission_starts_conductor_before_notify():
     order = []
     service.configure_models.side_effect = lambda **_kwargs: order.append("configure")
     service.ensure_started.side_effect = lambda: order.append("start")
-    service.notify.side_effect = lambda _event: order.append("notify") or True
+    service.notify.side_effect = (
+        lambda _event: order.append("notify") or {"id": "engine-1"}
+    )
 
     with patch("server.services.conductor_service.bus.publish"):
         service.add_chat_message("hello", role="user")
@@ -114,9 +116,29 @@ def test_notify_failure_is_propagated_after_start():
 
 def test_notify_false_raises_stopped_before_admission():
     service = _service_for_admission_test()
-    service.notify.return_value = False
+    service.notify.return_value = None
 
     with patch("server.services.conductor_service.bus.publish"), pytest.raises(
         RuntimeError, match="stopped before event admission"
     ):
         service.add_chat_message("hello", role="user")
+
+
+def test_user_chat_adopts_engine_id_and_publishes_once():
+    """D4: the engine id is the authoritative chat identity — the POST
+    response and the live event must both carry it, exactly once."""
+    service = _service_for_admission_test()
+    service.notify = Mock(return_value={
+        "id": "engine-9", "role": "user", "msg": "hello", "final": False,
+    })
+    published = []
+
+    with patch("server.services.conductor_service.bus.publish",
+               side_effect=lambda topic, payload: published.append((topic, payload))):
+        item = service.add_chat_message("hello", role="user")
+
+    assert item["id"] == "engine-9"
+    chat_events = [payload for topic, payload in published
+                   if topic == "conductor:chat"]
+    assert chat_events == [{"item": item}]
+    assert service.chat_messages[-1]["id"] == "engine-9"

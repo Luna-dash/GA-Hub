@@ -513,6 +513,9 @@ class ConductorChatMessage(BaseModel):
     ts: int
     request_id: str | None = None
     kind: Literal["final", "error"] | None = None
+    # Engine-authoritative final marker (D4); mirrors the gahub_app chat
+    # item so hydrated history and live events share one shape.
+    final: bool | None = None
 
 
 class ConductorChatListResp(BaseModel):

@@ -101,14 +101,21 @@ def add_chat(
     chat_messages: list,
     request_id: str | None = None,
     kind: str | None = None,
+    item_id: str | None = None,
 ) -> dict:
-    """Add message to chat history and publish to event bus."""
+    """Add message to the local mirror. Returns the stored item.
+
+    Callers publish the ``conductor:chat`` bus event themselves: the engine
+    id is the authoritative identity (D4), so a relayed message is mirrored
+    under its engine id and only published once that id is known.
+    """
     item = {
-        "id": short_id(),
+        "id": item_id or short_id(),
         "role": role,
         "msg": msg,
         "ts": now_ms(),
-        "read": role != "user"
+        "read": role != "user",
+        "final": kind == "final",
     }
     if request_id:
         item["request_id"] = request_id
@@ -117,7 +124,6 @@ def add_chat(
     chat_messages.append(item)
     if len(chat_messages) > 200:
         del chat_messages[:-200]
-    bus.publish("conductor:chat", {"item": item})
     return item
 
 
@@ -420,6 +426,7 @@ class HubConductorCallbacks:
                         self.service.chat_messages,
                         kind="error",
                     )
+                    bus.publish("conductor:chat", {"item": latest})
                 payload = {**payload, "item": latest}
             bus.publish(f"conductor:{event_type}", payload)
         except Exception:
@@ -640,13 +647,15 @@ class ConductorService:
             if existing is not None:
                 return existing
             detail = error.strip() or "unknown error"
-            return add_chat(
+            item = add_chat(
                 f"Conductor workflow failed during {phase}: {detail}",
                 "conductor",
                 self.chat_messages,
                 request_id=request_id,
                 kind="error",
             )
+            bus.publish("conductor:chat", {"item": item})
+            return item
 
     @staticmethod
     def _normalize_model_index(value: Optional[int], label: str) -> Optional[int]:
@@ -722,12 +731,20 @@ class ConductorService:
         if client is None:
             return
         snapshot = snapshot or self.model_policy_snapshot()
+        # follow_main clears the local default worker model; the engine needs
+        # the explicit clear signal or its "null = keep" semantics leave the
+        # previous value as a residual that resurfaces under "default".
+        clear_worker = (
+            snapshot["subagent_model_policy"] == "follow_main"
+            and snapshot["subagent_llm_index"] is None
+        )
         try:
             client.push_models(
                 conductor_llm_index=snapshot["llm_index"],
                 subagent_llm_index=snapshot["subagent_llm_index"],
                 subagent_model_policy=snapshot["subagent_model_policy"],
                 preferred_llm_index=_get_preferred_llm(),
+                clear_subagent_llm=clear_worker,
             )
         except Exception as exc:
             log.debug("Model policy push to gahub_app deferred: %s", exc)
@@ -856,21 +873,23 @@ class ConductorService:
         if len(self._relayed_chat_ids) > 500:
             self._relayed_chat_ids = set(list(self._relayed_chat_ids)[-250:])
 
-    def notify(self, event: dict) -> bool:
+    def notify(self, event: dict) -> Optional[dict]:
         """Admit a user message into the gahub_app conductor inbox.
 
-        The engine's own chat store echoes every message back over SSE;
-        remembering the returned engine-side id here lets _on_remote_chat
-        recognize our own relay instead of duplicating it in the UI.
+        Returns the engine-side chat item (its id is the authoritative chat
+        identity, D4) or ``None`` when the conductor is stopping. Remembering
+        the engine id here also lets ``_on_remote_chat`` recognize our own
+        relay instead of duplicating it in the UI.
         """
         if event.get("type") != "user_message":
-            return False
+            return None
         item = self.client.post_chat(
             event.get("msg", ""), "user", event.get("request_id")
         )
         if isinstance(item, dict):
             self._remember_relayed(item.get("id"))
-        return True
+            return item
+        return None
 
     def get_conductor_log(self) -> list:
         try:
@@ -956,11 +975,16 @@ class ConductorService:
         self._remember_relayed(item.get("id"))
         role = item.get("role") or "conductor"
         final = bool(item.get("final"))
+        # D4: the engine id is the authoritative chat identity — the mirror
+        # keeps it verbatim so live events and the engine-proxy hydration
+        # dedupe against each other instead of duplicating messages.
         hub_item = add_chat(
             item.get("msg", ""), role, self.chat_messages,
             request_id=item.get("request_id"),
             kind=("final" if final else None),
+            item_id=item.get("id"),
         )
+        bus.publish("conductor:chat", {"item": hub_item})
         if role == "conductor" and final and item.get("request_id"):
             tracker = self._ensure_workflow_tracker()
             try:
@@ -1149,16 +1173,13 @@ class ConductorService:
         if kind == "final" and request_id:
             tracker.assert_ready_for_final(request_id)
         admitted_request_id = uuid.uuid4().hex if role == "user" else request_id
-        try:
-            item = add_chat(
-                msg,
-                role,
-                self.chat_messages,
-                request_id=admitted_request_id,
-                kind=kind,
-            )
-        except Exception:
-            raise
+        item = add_chat(
+            msg,
+            role,
+            self.chat_messages,
+            request_id=admitted_request_id,
+            kind=kind,
+        )
         if role == "user" and admitted_request_id:
             tracker.admit(admitted_request_id)
             try:
@@ -1178,13 +1199,21 @@ class ConductorService:
                     self._publish_workflow_transition(transition)
                 raise
             try:
-                accepted = self.notify({
+                engine_item = self.notify({
                     "type": "user_message",
                     "msg": msg,
                     "request_id": admitted_request_id,
                 })
-                if not accepted:
+                if engine_item is None:
                     raise RuntimeError("conductor stopped before event admission")
+                engine_id = (
+                    engine_item.get("id")
+                    if isinstance(engine_item, dict) else None
+                )
+                if engine_id and engine_id != item["id"]:
+                    # D4: adopt the engine id as the authoritative identity so
+                    # the page's optimistic add and the later hydration merge.
+                    item["id"] = engine_id
             except Exception:
                 transition = tracker.fail_supervisor(
                     admitted_request_id,
@@ -1194,10 +1223,14 @@ class ConductorService:
                 if transition is not None:
                     self._publish_workflow_transition(transition)
                 raise
+            bus.publish("conductor:chat", {"item": item})
         elif role == "conductor" and kind == "final" and admitted_request_id:
+            bus.publish("conductor:chat", {"item": item})
             transition = tracker.record_final(admitted_request_id, item)
             if transition is not None:
                 self._publish_workflow_transition(transition)
+        else:
+            bus.publish("conductor:chat", {"item": item})
         return item
 
     def get_readmes(self) -> dict:

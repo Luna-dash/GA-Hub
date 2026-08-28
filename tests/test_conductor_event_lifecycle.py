@@ -271,8 +271,10 @@ def test_relayed_user_chat_is_not_duplicated_by_the_sse_echo():
     service.client.post_chat.return_value = {"id": "ga-echo-1", "role": "user",
                                              "msg": "hello", "final": False}
 
-    assert service.notify({"type": "user_message", "msg": "hello",
-                           "request_id": "r1"}) is True
+    engine_item = service.notify({"type": "user_message", "msg": "hello",
+                                  "request_id": "r1"})
+    assert engine_item == {"id": "ga-echo-1", "role": "user",
+                           "msg": "hello", "final": False}
     assert len(service.chat_messages) == 0          # notify itself stores nothing
     assert "ga-echo-1" in service._relayed_chat_ids
 
@@ -286,6 +288,8 @@ def test_relayed_user_chat_is_not_duplicated_by_the_sse_echo():
         service._on_remote_chat({"id": "ga-new-1", "role": "conductor",
                                  "msg": "plan", "final": False})
     assert [m["msg"] for m in service.chat_messages] == ["plan"]  # remote passes through
+    # D4: the mirror keeps the engine id verbatim so hydration dedupes.
+    assert [m["id"] for m in service.chat_messages] == ["ga-new-1"]
 
 
 def test_live_user_echo_is_skipped_even_before_the_id_is_recorded():
