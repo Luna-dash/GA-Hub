@@ -130,12 +130,20 @@ export function SidebarNav() {
     >
       <div className="ga-sidebar-brand-row border-b border-white/10 flex items-center">
         <div className="ga-brand-mark min-w-0" aria-label="GA Hub">
-          <div className="ga-brand-core">
-            <div className="ga-brand-orb" aria-hidden="true">
-              <span className="ga-brand-ga">GA</span>
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            aria-label={collapsed ? '展开导航栏' : '折叠导航栏'}
+            title={collapsed ? '展开导航栏' : '折叠导航栏'}
+            className="ga-brand-toggle"
+          >
+            <div className="ga-brand-core">
+              <div className="ga-brand-orb" aria-hidden="true">
+                <span className="ga-brand-ga">GA</span>
+              </div>
+              {!collapsed && <span className="ga-brand-hub">HUB</span>}
             </div>
-            {!collapsed && <span className="ga-brand-hub">HUB</span>}
-          </div>
+          </button>
           {!collapsed && (
             <NavLink
               to="/settings"
@@ -215,8 +223,8 @@ export function SidebarNav() {
         <button
           type="button"
           onClick={toggleCollapsed}
-          aria-label={collapsed ? '展开导航栏' : '折叠导航栏'}
-          title={collapsed ? '展开导航栏' : '折叠导航栏'}
+          aria-label="折叠/展开导航栏"
+          title="折叠/展开导航栏"
           className={clsx(
             'flex items-center rounded-xl border border-white/10 bg-white/6 text-xs text-[#EFE5CA]/90 hover:bg-white/10 hover:border-white/20 transition',
             collapsed ? 'h-8 w-8 justify-center' : 'w-full justify-between px-2.5 py-1.5',

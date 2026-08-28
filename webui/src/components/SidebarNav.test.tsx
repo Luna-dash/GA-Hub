@@ -40,10 +40,10 @@ describe('SidebarNav', () => {
     expect(aside.getAttribute('data-collapsed')).toBe('false')
     expect(host.textContent).toContain('实时聊天')
     expect(host.querySelector('[aria-label="系统设置"]')).not.toBeNull()
-    expect(host.querySelector('[aria-label="折叠导航栏"]')).not.toBeNull()
+    expect(host.querySelector('[aria-label="折叠/展开导航栏"]')).not.toBeNull()
 
     act(() => {
-      ;(host.querySelector('[aria-label="折叠导航栏"]') as HTMLButtonElement).click()
+      ;(host.querySelector('[aria-label="折叠/展开导航栏"]') as HTMLButtonElement).click()
     })
 
     expect(aside.getAttribute('data-collapsed')).toBe('true')
@@ -62,7 +62,7 @@ describe('SidebarNav', () => {
     expect(host.textContent).not.toContain('命令面板')
 
     act(() => {
-      ;(host.querySelector('[aria-label="展开导航栏"]') as HTMLButtonElement).click()
+      ;(host.querySelector('[aria-label="折叠/展开导航栏"]') as HTMLButtonElement).click()
     })
 
     expect(aside.getAttribute('data-collapsed')).toBe('false')
@@ -82,11 +82,28 @@ describe('SidebarNav', () => {
     expect(host.querySelectorAll('[aria-label="系统设置"]').length).toBe(1)
 
     act(() => {
-      ;(host.querySelector('[aria-label="展开导航栏"]') as HTMLButtonElement).click()
+      ;(host.querySelector('[aria-label="折叠/展开导航栏"]') as HTMLButtonElement).click()
     })
 
     expect(aside.getAttribute('data-collapsed')).toBe('false')
     expect(host.textContent).toContain('实时聊天')
+    expect(localStorage.getItem('gahub.sidebar.collapsed')).toBe('0')
+  })
+
+  it('toggles collapse from the GA logo button', async () => {
+    await renderNav()
+    const aside = host.querySelector('aside') as HTMLElement
+    const logo = host.querySelector('.ga-brand-toggle') as HTMLButtonElement
+    expect(logo).not.toBeNull()
+    expect(logo.getAttribute('aria-label')).toBe('折叠导航栏')
+
+    act(() => logo.click())
+    expect(aside.getAttribute('data-collapsed')).toBe('true')
+    expect(localStorage.getItem('gahub.sidebar.collapsed')).toBe('1')
+    expect(logo.getAttribute('aria-label')).toBe('展开导航栏')
+
+    act(() => logo.click())
+    expect(aside.getAttribute('data-collapsed')).toBe('false')
     expect(localStorage.getItem('gahub.sidebar.collapsed')).toBe('0')
   })
 })

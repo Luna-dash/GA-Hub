@@ -908,6 +908,28 @@ html.dark .ga-panel {
   padding-left: 0;
   padding-right: 0;
 }
+.ga-brand-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  width: 100%;
+  padding: 0.25rem;
+  margin: -0.25rem;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  border-radius: 0.6rem;
+  transition: background 0.18s ease;
+}
+.ga-brand-toggle:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.ga-brand-toggle:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 1px;
+}
 
 /* ─── Global polish (additive, theme-consistent) ───────────────
    纯增量：选区配色、键盘焦点环、原生控件配色、减动效偏好。
