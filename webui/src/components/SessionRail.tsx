@@ -239,7 +239,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
       data-collapsed={collapsed ? 'true' : 'false'}
       className={clsx(
         'relative z-20 shrink-0 transition-[width,height] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-        collapsed ? 'h-0 w-full md:h-auto md:w-0' : 'h-32 w-full md:h-auto md:w-64',
+        collapsed ? 'h-0 w-full md:h-auto md:w-0' : 'h-32 w-full md:h-auto md:w-[200px]',
       )}
     >
       <aside
@@ -306,7 +306,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                     title={`${sessionTitle(session)} · ${sessionStatusLabel(runtime)}`}
                     className="block w-full px-3 py-2 text-left"
                   >
-                    <span className="flex items-center gap-2 pr-14">
+                    <span className="flex items-center gap-2 pr-8">
                       <span aria-hidden="true" title={sessionStatusLabel(runtime)} className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
                       <span className="min-w-0 flex-1 truncate text-sm font-medium" title={sessionTitle(session)}>{sessionTitle(session)}</span>
                       {session.project_name && (
@@ -323,16 +323,6 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                 )}
                 {!editing && (
                   <div className="absolute right-2 top-2 flex items-center gap-0.5">
-                    <button
-                      type="button"
-                      onClick={() => { setConfirmDeleteId(null); beginRename(session) }}
-                      disabled={savingId === session.id || deletingId === session.id}
-                      aria-label={`重命名 ${sessionTitle(session)}`}
-                      title="重命名会话"
-                      className="rounded p-1 text-xs opacity-50 transition hover:bg-white/70 hover:opacity-100 focus:opacity-100 disabled:opacity-30"
-                    >
-                      ✎
-                    </button>
                     {onDelete && (
                       <button
                         type="button"

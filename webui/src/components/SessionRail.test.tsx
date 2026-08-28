@@ -112,8 +112,8 @@ describe('SessionRail', () => {
     await act(async () => { create.click() })
     expect(onCreate).toHaveBeenCalledOnce()
 
-    const rename = host.querySelector('[aria-label="重命名 研究任务"]') as HTMLButtonElement
-    act(() => rename.click())
+    const renameCard = host.querySelector('[aria-current="page"]') as HTMLButtonElement
+    act(() => { renameCard.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
     const input = host.querySelector('input[aria-label="重命名 研究任务"]') as HTMLInputElement
     act(() => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
