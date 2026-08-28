@@ -895,6 +895,20 @@ html.dark .ga-panel {
   white-space: nowrap;
 }
 
+/* Collapsed sidebar (icon rail) */
+.ga-sidebar[data-collapsed='true'] .ga-sidebar-brand-row {
+  padding: 0.72rem 0;
+  justify-content: center;
+}
+.ga-sidebar[data-collapsed='true'] .ga-brand-core {
+  gap: 0;
+}
+.ga-sidebar-item-collapsed {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
 /* ─── Global polish (additive, theme-consistent) ───────────────
    纯增量：选区配色、键盘焦点环、原生控件配色、减动效偏好。
    不覆盖既有组件样式，仅补齐缺失的全局一致性细节。 */

@@ -100,7 +100,14 @@ function NavIcon({ name }: { name: NavIconName }) {
 }
 export function SidebarNav() {
   const [items, setItems] = useState<NavItem[]>(() => getVisibleNavItems())
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('gahub.sidebar.collapsed') === '1')
   const openCommandPalette = () => window.dispatchEvent(new Event('gahub:command-palette'))
+  const toggleCollapsed = () => {
+    setCollapsed((current) => {
+      localStorage.setItem('gahub.sidebar.collapsed', current ? '0' : '1')
+      return !current
+    })
+  }
 
   useEffect(() => {
     const refresh = () => setItems(getVisibleNavItems(getNavPreferences()))
@@ -113,27 +120,36 @@ export function SidebarNav() {
   }, [])
 
   return (
-    <aside className="ga-sidebar w-[9.5rem] shrink-0 flex flex-col shadow-[6px_0_14px_rgba(21,27,18,0.18)]">
+    <aside
+      data-collapsed={collapsed ? 'true' : 'false'}
+      className={clsx(
+        'ga-sidebar shrink-0 flex flex-col shadow-[6px_0_14px_rgba(21,27,18,0.18)]',
+        'transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+        collapsed ? 'w-14' : 'w-[9.5rem]',
+      )}
+    >
       <div className="ga-sidebar-brand-row border-b border-white/10 flex items-center">
         <div className="ga-brand-mark min-w-0" aria-label="GA Hub">
           <div className="ga-brand-core">
             <div className="ga-brand-orb" aria-hidden="true">
               <span className="ga-brand-ga">GA</span>
             </div>
-            <span className="ga-brand-hub">HUB</span>
+            {!collapsed && <span className="ga-brand-hub">HUB</span>}
           </div>
-          <NavLink
-            to="/settings"
-            onMouseEnter={() => preloadRoute('/settings')}
-            onFocus={() => preloadRoute('/settings')}
-            className={({ isActive }) =>
-              clsx('ga-brand-settings', isActive && 'active')
-            }
-            aria-label="系统设置"
-            title="系统设置"
-          >
-            <NavIcon name="settings" />
-          </NavLink>
+          {!collapsed && (
+            <NavLink
+              to="/settings"
+              onMouseEnter={() => preloadRoute('/settings')}
+              onFocus={() => preloadRoute('/settings')}
+              className={({ isActive }) =>
+                clsx('ga-brand-settings', isActive && 'active')
+              }
+              aria-label="系统设置"
+              title="系统设置"
+            >
+              <NavIcon name="settings" />
+            </NavLink>
+          )}
         </div>
       </div>
 
@@ -142,27 +158,72 @@ export function SidebarNav() {
           <NavLink
             key={it.to}
             to={it.to}
+            title={it.label}
             onMouseEnter={() => preloadRoute(it.to)}
             onFocus={() => preloadRoute(it.to)}
             className={({ isActive }) =>
-              clsx('ga-sidebar-item', isActive && 'active')
+              clsx('ga-sidebar-item', collapsed && 'ga-sidebar-item-collapsed', isActive && 'active')
             }
           >
             <span className="ga-nav-icon" aria-hidden="true"><NavIcon name={it.icon} /></span>
-            <span className="ga-nav-label">{it.label}</span>
-            <span className="ga-nav-chev" aria-hidden="true">›</span>
+            {!collapsed && (
+              <>
+                <span className="ga-nav-label">{it.label}</span>
+                <span className="ga-nav-chev" aria-hidden="true">›</span>
+              </>
+            )}
           </NavLink>
         ))}
       </nav>
 
-      <div className="px-2.5 pb-2.5 pt-1.5">
+      <div className={clsx('flex flex-col gap-1.5 pb-2.5 pt-1.5', collapsed ? 'items-center px-1.5' : 'px-2.5')}>
+        {collapsed ? (
+          <>
+            <button
+              type="button"
+              onClick={openCommandPalette}
+              aria-label="命令面板 (Ctrl K)"
+              title="命令面板 (Ctrl K)"
+              className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/6 text-[#EFE5CA] hover:bg-white/10 hover:border-white/20 transition"
+            >
+              <svg className="ga-nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="2.15" strokeLinecap="round">
+                <circle cx="11" cy="11" r="5.5" />
+                <path d="M15.2 15.2 20 20" />
+              </svg>
+            </button>
+            <NavLink
+              to="/settings"
+              onMouseEnter={() => preloadRoute('/settings')}
+              onFocus={() => preloadRoute('/settings')}
+              className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/6 text-[#EFE5CA] hover:bg-white/10 hover:border-white/20 transition"
+              aria-label="系统设置"
+              title="系统设置"
+            >
+              <NavIcon name="settings" />
+            </NavLink>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={openCommandPalette}
+            className="w-full rounded-xl border border-white/10 bg-white/6 px-2.5 py-1.5 text-left text-xs text-[#EFE5CA] hover:bg-white/10 hover:border-white/20 transition flex items-center justify-between gap-2"
+          >
+            <span>命令面板</span>
+            <kbd className="px-1.5 py-0.5 rounded-md border border-white/12 bg-black/16 font-mono text-[11px] text-[#EFE5CA]/80">Ctrl K</kbd>
+          </button>
+        )}
         <button
           type="button"
-          onClick={openCommandPalette}
-          className="w-full rounded-xl border border-white/10 bg-white/6 px-2.5 py-1.5 text-left text-xs text-[#EFE5CA] hover:bg-white/10 hover:border-white/20 transition flex items-center justify-between gap-2"
+          onClick={toggleCollapsed}
+          aria-label={collapsed ? '展开导航栏' : '折叠导航栏'}
+          title={collapsed ? '展开导航栏' : '折叠导航栏'}
+          className={clsx(
+            'flex items-center rounded-xl border border-white/10 bg-white/6 text-xs text-[#EFE5CA]/90 hover:bg-white/10 hover:border-white/20 transition',
+            collapsed ? 'h-8 w-8 justify-center' : 'w-full justify-between px-2.5 py-1.5',
+          )}
         >
-          <span>命令面板</span>
-          <kbd className="px-1.5 py-0.5 rounded-md border border-white/12 bg-black/16 font-mono text-[11px] text-[#EFE5CA]/80">Ctrl K</kbd>
+          <span aria-hidden="true">{collapsed ? '»' : '«'}</span>
+          {!collapsed && <span>折叠</span>}
         </button>
       </div>
     </aside>
