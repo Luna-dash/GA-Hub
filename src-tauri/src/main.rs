@@ -3,7 +3,7 @@
 use std::{
     env, fs,
     io::{Read, Write},
-    net::{TcpListener, TcpStream},
+    net::{Shutdown, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -869,6 +869,149 @@ fn spawn_background_supervisor(
         .map_err(|error| format!("sidecar supervisor thread failed: {error}"))
 }
 
+// ── Browser debug bridge ────────────────────────────────────────────────────
+// The desktop sidecar binds a random loopback port, which makes browser
+// debugging awkward. The shell therefore also binds a FIXED loopback port
+// (default 8765) and forwards raw TCP to the sidecar port. HTTP and WebSocket
+// are both plain TCP streams at this layer, so byte-level forwarding needs no
+// protocol awareness. The bridge is purely additive: a bind failure only
+// disables it, and the port's occupant is never attached to or terminated.
+
+const DEBUG_BRIDGE_DEFAULT_PORT: u16 = 8765;
+const BRIDGE_CONNECT_ATTEMPTS: u32 = 10;
+const BRIDGE_CONNECT_DELAY: Duration = Duration::from_millis(200);
+const BRIDGE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Resolve the debug bridge port from `GA_HUB_BRIDGE_PORT`:
+/// unset/empty → default, "0" → disabled, valid → that port, garbage → disabled.
+fn parse_debug_bridge_port(value: Option<String>) -> Option<u16> {
+    let Some(raw) = value else {
+        return Some(DEBUG_BRIDGE_DEFAULT_PORT);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Some(DEBUG_BRIDGE_DEFAULT_PORT);
+    }
+    if trimmed == "0" {
+        return None;
+    }
+    match trimmed.parse::<u16>() {
+        Ok(port) if port >= 1 => Some(port),
+        _ => {
+            eprintln!(
+                "GA_HUB_BRIDGE_PORT={trimmed:?} is not a valid port; \
+                 the browser debug bridge stays disabled"
+            );
+            None
+        }
+    }
+}
+
+fn configured_debug_bridge_port() -> Option<u16> {
+    parse_debug_bridge_port(env::var("GA_HUB_BRIDGE_PORT").ok())
+}
+
+fn spawn_debug_bridge(exit: ExitCoordinator, sidecar_port: u16, bridge_port: u16) {
+    let spawned = thread::Builder::new()
+        .name("debug-bridge".to_string())
+        .spawn(move || run_debug_bridge(exit, sidecar_port, bridge_port));
+    if let Err(error) = spawned {
+        eprintln!("debug bridge thread failed to start: {error}");
+    }
+}
+
+fn run_debug_bridge(exit: ExitCoordinator, sidecar_port: u16, bridge_port: u16) {
+    match TcpListener::bind(("127.0.0.1", bridge_port)) {
+        Ok(listener) => run_debug_bridge_on(listener, sidecar_port, exit),
+        Err(error) => eprintln!(
+            "browser debug bridge disabled: 127.0.0.1:{bridge_port} is unavailable ({error}); \
+             its current occupant was left untouched"
+        ),
+    }
+}
+
+fn run_debug_bridge_on(listener: TcpListener, sidecar_port: u16, exit: ExitCoordinator) {
+    let _ = listener.set_nonblocking(true);
+    while exit.is_running() {
+        match listener.accept() {
+            Ok((client, _)) => {
+                if !exit.is_running() {
+                    drop(client);
+                    break;
+                }
+                let spawned = thread::Builder::new()
+                    .name("debug-bridge-conn".to_string())
+                    .spawn(move || handle_bridge_client(client, sidecar_port));
+                if let Err(error) = spawned {
+                    eprintln!("debug bridge connection thread failed: {error}");
+                }
+            }
+            Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(BRIDGE_POLL_INTERVAL);
+            }
+            Err(error) => {
+                eprintln!("debug bridge accept failed: {error}");
+                thread::sleep(BRIDGE_POLL_INTERVAL);
+            }
+        }
+    }
+}
+
+fn handle_bridge_client(client: TcpStream, sidecar_port: u16) {
+    let _ = client.set_nodelay(true);
+    // The sidecar port is stable across restart_backend, but the process may
+    // be between spawns; retry briefly, then just drop the connection.
+    let Some(upstream) =
+        connect_with_retry(sidecar_port, BRIDGE_CONNECT_ATTEMPTS, BRIDGE_CONNECT_DELAY)
+    else {
+        return;
+    };
+    forward_between(client, upstream);
+}
+
+fn connect_with_retry(port: u16, attempts: u32, delay: Duration) -> Option<TcpStream> {
+    for _ in 0..attempts {
+        match TcpStream::connect(("127.0.0.1", port)) {
+            Ok(stream) => {
+                let _ = stream.set_nodelay(true);
+                return Some(stream);
+            }
+            Err(_) => thread::sleep(delay),
+        }
+    }
+    None
+}
+
+/// Full-duplex raw forwarding between two established streams. When either
+/// direction ends, the peer's write half is shut down so the other pump sees
+/// EOF and both halves finish promptly.
+fn forward_between(client: TcpStream, upstream: TcpStream) {
+    let Ok(client_read) = client.try_clone() else {
+        return;
+    };
+    let Ok(upstream_read) = upstream.try_clone() else {
+        return;
+    };
+    let client_to_sidecar = thread::spawn(move || pump(client_read, upstream));
+    pump(upstream_read, client);
+    let _ = client_to_sidecar.join();
+}
+
+fn pump(mut from: TcpStream, mut to: TcpStream) {
+    let mut buffer = [0u8; 16 * 1024];
+    loop {
+        match from.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(size) => {
+                if to.write_all(&buffer[..size]).is_err() {
+                    break;
+                }
+            }
+        }
+    }
+    let _ = to.shutdown(Shutdown::Write);
+}
+
 fn runtime_config_json(port: u16, token: &str) -> String {
     serde_json::json!({
         "apiOrigin": format!("http://127.0.0.1:{port}"),
@@ -1107,6 +1250,14 @@ fn main() {
                 *identity.0.lock().unwrap_or_else(|e| e.into_inner()) =
                     Some((port, token.clone()));
             }
+            // Fixed-port browser debug bridge (default 127.0.0.1:8765 → the
+            // sidecar's random port). Additive only: a bind failure disables
+            // the bridge without blocking desktop startup, and the port's
+            // occupant is never touched. The target port survives
+            // restart_backend, so no bridge reconfiguration is needed.
+            if let Some(bridge_port) = configured_debug_bridge_port() {
+                spawn_debug_bridge(exit_setup.clone(), port, bridge_port);
+            }
             let owned = app.state::<OwnedSidecar>().inner().clone();
             let runtime_script = runtime_initialization_script(port, &token);
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -1165,6 +1316,62 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_bridge_port_parsing_covers_disable_and_garbage() {
+        assert_eq!(parse_debug_bridge_port(None), Some(8765));
+        assert_eq!(parse_debug_bridge_port(Some(String::new())), Some(8765));
+        assert_eq!(parse_debug_bridge_port(Some(" 8765 ".into())), Some(8765));
+        assert_eq!(parse_debug_bridge_port(Some("9000".into())), Some(9000));
+        assert_eq!(parse_debug_bridge_port(Some("0".into())), None);
+        assert_eq!(parse_debug_bridge_port(Some("abc".into())), None);
+        assert_eq!(parse_debug_bridge_port(Some("99999".into())), None);
+    }
+
+    #[test]
+    fn connect_with_retry_reports_failure_without_hanging() {
+        // Loopback port 1 is not served by this test environment; a single
+        // 1 ms attempt keeps the test fast while proving the give-up path.
+        assert!(connect_with_retry(1, 1, Duration::from_millis(1)).is_none());
+    }
+
+    #[test]
+    fn debug_bridge_forwards_bytes_between_browser_and_sidecar() {
+        // Minimal fake sidecar: accept one connection and echo everything.
+        let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream_port = upstream.local_addr().unwrap().port();
+        let fake_sidecar = thread::spawn(move || {
+            let (mut socket, _) = upstream.accept().unwrap();
+            let mut buffer = [0u8; 2048];
+            let size = socket.read(&mut buffer).unwrap();
+            let _ = socket.write_all(&buffer[..size]);
+        });
+
+        let exit = ExitCoordinator::new();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let bridge_port = listener.local_addr().unwrap().port();
+        let bridge_exit = exit.clone();
+        let bridge_thread = thread::spawn(move || {
+            run_debug_bridge_on(listener, upstream_port, bridge_exit)
+        });
+        thread::sleep(Duration::from_millis(150));
+
+        let mut client = TcpStream::connect(("127.0.0.1", bridge_port)).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let request = b"GET /api/desktop/ready HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        client.write_all(request).unwrap();
+
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).unwrap();
+        assert_eq!(response, request.to_vec());
+
+        drop(client);
+        exit.request_exit();
+        bridge_thread.join().unwrap();
+        fake_sidecar.join().unwrap();
+    }
 
     #[test]
     fn readiness_response_requires_an_exact_json_token() {
