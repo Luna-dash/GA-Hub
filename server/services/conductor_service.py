@@ -70,6 +70,40 @@ def _get_preferred_llm() -> Optional[int]:
     return None
 
 
+CONDUCTOR_EFFORT_LEVELS = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max"})
+_CONDUCTOR_EFFORT_CLEAR = frozenset({"", "off", "clear", "unset"})
+
+
+def _normalize_conductor_effort(value: Optional[str]) -> Optional[str]:
+    """None keeps the current setting; '' / off clears; otherwise a level."""
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in _CONDUCTOR_EFFORT_CLEAR:
+        return ""
+    if text not in CONDUCTOR_EFFORT_LEVELS:
+        raise ValueError(
+            "conductor_reasoning_effort must be none|minimal|low|medium|"
+            "high|xhigh|max (or '' to clear)"
+        )
+    return text
+
+
+def _get_configured_conductor_effort() -> Optional[str]:
+    """Config-file default for the supervisor reasoning effort (F2)."""
+    try:
+        raw = _paths.load_config().get("conductor_reasoning_effort")
+    except Exception as e:
+        log.debug("Failed to read conductor_reasoning_effort: %s", e)
+        return None
+    try:
+        return _normalize_conductor_effort(raw) or None
+    except ValueError:
+        log.warning("Ignoring invalid conductor_reasoning_effort in config: %r", raw)
+        return None
+
+
 _TURN_SPLIT_RE = re.compile(r'\**LLM Running \(Turn \d+\) \.\.\.\**')
 _SUMMARY_RE = re.compile(r'<summary>(.*?)</summary>\s*', re.DOTALL)
 
@@ -142,11 +176,15 @@ READMES = {
 
 POST /api/conductor/chat
   用户提交任务的唯一页面入口: {"msg": "...", "role": "user", "llm_index": 1,
-         "subagent_llm_index": 5, "subagent_model_policy": "default"}
+         "subagent_llm_index": 5, "subagent_model_policy": "default",
+         "conductor_reasoning_effort": "high"}
   Conductor 写入计划: {"msg": "...", "role": "conductor", "request_id": "..."}
   Conductor 最终报告: {"msg": "...", "role": "conductor", "request_id": "...", "final": true}
   role=user 会创建新的用户任务并唤醒 Conductor；Supervisor 自己写消息时
   必须使用 role=conductor，不能把计划或报告作为用户任务重新入队。
+  conductor_reasoning_effort 仅作用于 Supervisor（子代理不受影响）：
+  可选 none|minimal|low|medium|high|xhigh|max；"" 清除覆盖恢复模型默认；
+  Claude 渠道忽略 none/minimal，xhigh/max 等价 max。
 
 POST /api/conductor/subagent   (supervisor 专用；页面不做手动派单)
   body: {"prompt": "...", "request_id": "...", "llm_index": 3}
@@ -459,6 +497,7 @@ class ConductorService:
         self._conductor_llm_index = None
         self._subagent_llm_index = None
         self._subagent_model_policy: SubagentModelPolicy = "follow_main"
+        self._conductor_reasoning_effort = _get_configured_conductor_effort()
         self._model_lock = threading.RLock()
         self.callbacks = HubConductorCallbacks(self)
         self._process_manager = GahubProcessManager()
@@ -674,6 +713,7 @@ class ConductorService:
         llm_index: Optional[int] = None,
         subagent_llm_index: Optional[int] = None,
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
+        conductor_reasoning_effort: Optional[str] = None,
     ) -> dict:
         """Update model routing without changing the conductor lifecycle.
 
@@ -681,8 +721,10 @@ class ConductorService:
         ``follow_main`` clears the default worker model. Supplying a worker
         model without a policy keeps backward compatibility by establishing a
         default-model policy when the service was still following the main
-        model. The committed snapshot is best-effort pushed to gahub_app so
-        its dispatch resolution and supervisor prompt stay in sync.
+        model. ``conductor_reasoning_effort`` accepts none|minimal|low|
+        medium|high|xhigh|max, or ''/off to clear the supervisor-only
+        override. The committed snapshot is best-effort pushed to gahub_app
+        so its dispatch resolution and supervisor prompt stay in sync.
         """
         main_index = self._normalize_model_index(llm_index, "llm_index")
         worker_index = self._normalize_model_index(
@@ -695,6 +737,7 @@ class ConductorService:
             raise ValueError(
                 "subagent_model_policy must be follow_main, default, or locked"
             )
+        next_effort = _normalize_conductor_effort(conductor_reasoning_effort)
 
         with self._model_lock:
             next_main = (
@@ -720,6 +763,8 @@ class ConductorService:
             self._conductor_llm_index = next_main
             self._subagent_llm_index = next_worker
             self._subagent_model_policy = next_policy
+            if next_effort is not None:
+                self._conductor_reasoning_effort = next_effort or None
             snapshot = self.model_policy_snapshot()
 
         self._push_models_to_engine(snapshot)
@@ -745,6 +790,10 @@ class ConductorService:
                 subagent_model_policy=snapshot["subagent_model_policy"],
                 preferred_llm_index=_get_preferred_llm(),
                 clear_subagent_llm=clear_worker,
+                # Hub is authoritative: always mirror the exact override
+                # state ("" = engine applies no supervisor override).
+                conductor_reasoning_effort=snapshot.get(
+                    "conductor_reasoning_effort") or "",
             )
         except Exception as exc:
             log.debug("Model policy push to gahub_app deferred: %s", exc)
@@ -755,6 +804,8 @@ class ConductorService:
                 "llm_index": self._conductor_llm_index,
                 "subagent_llm_index": self._subagent_llm_index,
                 "subagent_model_policy": self._subagent_model_policy,
+                "conductor_reasoning_effort": getattr(
+                    self, "_conductor_reasoning_effort", None),
             }
 
     def resolve_subagent_model(
@@ -822,7 +873,13 @@ class ConductorService:
         self._ensure_relay()
         status = self.client.status()
         if not status.get("started"):
-            self.client.start(llm_index=self._conductor_llm_index)
+            self.client.start(
+                llm_index=self._conductor_llm_index,
+                # Cold-start race: the first push_models is always deferred
+                # (engine not yet spawned), so the effort rides /start too.
+                conductor_reasoning_effort=getattr(
+                    self, "_conductor_reasoning_effort", None),
+            )
         self.lifecycle_status()
         return True
 
@@ -1161,6 +1218,7 @@ class ConductorService:
         llm_index: Optional[int] = None,
         subagent_llm_index: Optional[int] = None,
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
+        conductor_reasoning_effort: Optional[str] = None,
     ) -> dict:
         self._assert_open()
         tracker = self._ensure_workflow_tracker()
@@ -1187,6 +1245,7 @@ class ConductorService:
                     llm_index=llm_index,
                     subagent_llm_index=subagent_llm_index,
                     subagent_model_policy=subagent_model_policy,
+                    conductor_reasoning_effort=conductor_reasoning_effort,
                 )
                 self.ensure_started()
             except Exception as exc:

@@ -22,6 +22,7 @@ def _service(
     service._conductor_llm_index = main
     service._subagent_llm_index = worker
     service._subagent_model_policy = policy
+    service._conductor_reasoning_effort = None
     service._model_lock = threading.RLock()
     service.pool = Mock()
     service.pool.snapshot.return_value = []
@@ -68,6 +69,7 @@ def test_omitted_configuration_does_not_reset_existing_default():
         "llm_index": 2,
         "subagent_llm_index": 5,
         "subagent_model_policy": "default",
+        "conductor_reasoning_effort": None,
     }
 
 
@@ -183,3 +185,71 @@ def test_conductor_readme_reserves_user_role_for_real_user_input():
     assert "role=user" in api_docs
     assert "role=conductor" in user_flow
     assert "role=conductor" in completion_flow
+
+
+# ===== F2: supervisor-only reasoning effort =====
+
+def test_conductor_effort_configures_snapshot_and_push():
+    service = _service(worker=5, policy="default")
+
+    snapshot = service.configure_models(conductor_reasoning_effort="low")
+
+    assert snapshot["conductor_reasoning_effort"] == "low"
+    _, kwargs = service.client.push_models.call_args
+    assert kwargs["conductor_reasoning_effort"] == "low"
+
+
+def test_conductor_effort_omitted_keeps_current():
+    service = _service(worker=5, policy="default")
+    service.configure_models(conductor_reasoning_effort="high")
+
+    service.configure_models(llm_index=2)
+
+    assert service.model_policy_snapshot()["conductor_reasoning_effort"] == "high"
+
+
+def test_conductor_effort_clear_and_validation():
+    service = _service(worker=5, policy="default")
+    service.configure_models(conductor_reasoning_effort="high")
+
+    service.configure_models(conductor_reasoning_effort="off")
+    assert service.model_policy_snapshot()["conductor_reasoning_effort"] is None
+
+    try:
+        service.configure_models(conductor_reasoning_effort="turbo")
+    except ValueError as exc:
+        assert "conductor_reasoning_effort" in str(exc)
+    else:
+        raise AssertionError("turbo should be rejected")
+
+
+def test_conductor_effort_config_default(monkeypatch):
+    from server.services import conductor_service as cs
+
+    monkeypatch.setattr(cs._paths, "load_config",
+                        lambda: {"conductor_reasoning_effort": "high"})
+    assert cs._get_configured_conductor_effort() == "high"
+
+    monkeypatch.setattr(cs._paths, "load_config",
+                        lambda: {"conductor_reasoning_effort": "bogus"})
+    assert cs._get_configured_conductor_effort() is None
+
+    monkeypatch.setattr(cs._paths, "load_config", lambda: {})
+    assert cs._get_configured_conductor_effort() is None
+
+
+def test_conductor_effort_cold_start_rides_engine_start():
+    service = _service(worker=5, policy="default")
+    service._conductor_reasoning_effort = "medium"
+    service._started = False
+    service._relay_thread = None
+    service._relay_stop = threading.Event()
+    service._process_manager = Mock()
+    service._lifecycle_cache = {}
+    service.client.status.return_value = {"started": False}
+    service.client.start.return_value = {"started": True}
+
+    service.ensure_started()
+
+    service.client.start.assert_called_once_with(
+        llm_index=1, conductor_reasoning_effort="medium")

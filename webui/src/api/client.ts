@@ -138,10 +138,21 @@ type NavigationPreferences = ApiComponents['schemas']['NavPreferencesResp']
 type SessionList = ApiComponents['schemas']['SessionListResp']
 type AbortSource = 'timeout' | 'external' | null
 export type ConductorSubagentModelPolicy = 'follow_main' | 'default' | 'locked'
+export type ConductorReasoningEffort =
+  | ''
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
 export interface ConductorModelSettings {
   llmIndex?: number | null
   subagentLlmIndex?: number | null
   subagentModelPolicy?: ConductorSubagentModelPolicy
+  /** Supervisor-only reasoning effort override (F2); '' clears it. */
+  conductorReasoningEffort?: ConductorReasoningEffort | null
 }
 
 function requestAbortContext(externalSignal: AbortSignal | null | undefined, timeoutMs: number) {
@@ -433,6 +444,7 @@ export const api = {
       llm_index: models.llmIndex,
       subagent_llm_index: models.subagentLlmIndex,
       subagent_model_policy: models.subagentModelPolicy,
+      conductor_reasoning_effort: models.conductorReasoningEffort,
     }),
   conductorSubagents: () => http<ConductorSubagentListResponse>('GET', '/api/conductor/subagent'),
   conductorWorkflows: () => http<ConductorWorkflowListResponse>('GET', '/api/conductor/workflow'),

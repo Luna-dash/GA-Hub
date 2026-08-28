@@ -2287,6 +2287,8 @@ export interface components {
             subagent_llm_index?: number | null;
             /** Subagent Model Policy */
             subagent_model_policy?: ("follow_main" | "default" | "locked") | null;
+            /** Conductor Reasoning Effort */
+            conductor_reasoning_effort?: ("" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max") | null;
         };
         /** ConductorChatListResp */
         ConductorChatListResp: {

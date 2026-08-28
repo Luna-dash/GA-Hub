@@ -166,6 +166,7 @@ def test_chat_route_forwards_model_policy(monkeypatch):
             "llm_index": 1,
             "subagent_llm_index": 5,
             "subagent_model_policy": "default",
+            "conductor_reasoning_effort": None,
         },
     )]
 

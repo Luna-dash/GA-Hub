@@ -25,6 +25,7 @@ def test_user_chat_message_is_admitted_with_a_request_id():
         llm_index=None,
         subagent_llm_index=None,
         subagent_model_policy=None,
+        conductor_reasoning_effort=None,
     )
     service.ensure_started.assert_called_once_with()
     service.notify.assert_called_once_with(

@@ -455,6 +455,11 @@ class EmailTestResp(BaseModel):
 
 
 # ── conductor ──────────────────────────────────────────────────────────────────
+ConductorEffort = Literal[
+    "", "none", "minimal", "low", "medium", "high", "xhigh", "max"
+]
+
+
 class ConductorChatIn(BaseModel):
     msg: str
     role: Literal["conductor", "system", "user"] = "conductor"
@@ -466,6 +471,9 @@ class ConductorChatIn(BaseModel):
     llm_index: int | None = Field(default=None, ge=0)
     subagent_llm_index: int | None = Field(default=None, ge=0)
     subagent_model_policy: Literal["follow_main", "default", "locked"] | None = None
+    # Supervisor-only reasoning effort override (F2); "" clears back to the
+    # configured default. Workers are never affected.
+    conductor_reasoning_effort: ConductorEffort | None = None
 
 
 class ConductorStartSubagent(BaseModel):

@@ -5073,6 +5073,27 @@
               }
             ],
             "title": "Subagent Model Policy"
+          },
+          "conductor_reasoning_effort": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "",
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conductor Reasoning Effort"
           }
         },
         "type": "object",
