@@ -4,14 +4,12 @@
 //   conductor:chat       { item: ConductorChatMessage }
 //   conductor:subagents  { items: ConductorSubagent[] }
 //   conductor:log        { item: ConductorLogItem }
-//   conductor:approval   { item: ConductorApprovalItem }
 
 import { create } from 'zustand'
 import type {
   ConductorChatMessage,
   ConductorSubagent,
   ConductorLogItem,
-  ConductorApprovalItem,
 } from '@/api/types'
 
 interface ConductorState {
@@ -20,7 +18,6 @@ interface ConductorState {
   subagentsRevision: number
   generation: number
   log: ConductorLogItem[]
-  approvals: ConductorApprovalItem[]
   addChatMessage: (msg: ConductorChatMessage) => void
   mergeChatMessages: (msgs: ConductorChatMessage[]) => void
   hydrateChatMessages: (msgs: ConductorChatMessage[], generation: number) => void
@@ -29,8 +26,6 @@ interface ConductorState {
   addLogItem: (item: ConductorLogItem) => void
   mergeLogItems: (items: ConductorLogItem[]) => void
   hydrateLogItems: (items: ConductorLogItem[], generation: number) => void
-  addApproval: (item: ConductorApprovalItem) => void
-  removeApproval: (id: string) => void
   clear: () => void
 }
 
@@ -60,7 +55,6 @@ export const useConductorStore = create<ConductorState>((set) => ({
   subagentsRevision: 0,
   generation: 0,
   log: [],
-  approvals: [],
 
   addChatMessage: (msg) =>
     set((state) => {
@@ -113,22 +107,11 @@ export const useConductorStore = create<ConductorState>((set) => ({
       return log === state.log ? state : { log }
     }),
 
-  addApproval: (item) =>
-    set((state) => {
-      const exists = state.approvals.some((a) => a.id === item.id)
-      if (exists) return state
-      return { approvals: [...state.approvals, item] }
-    }),
-
-  removeApproval: (id) =>
-    set((state) => ({ approvals: state.approvals.filter((a) => a.id !== id) })),
-
   clear: () => set((state) => ({
     chatMessages: [],
     subagents: [],
     subagentsRevision: state.subagentsRevision + 1,
     generation: state.generation + 1,
     log: [],
-    approvals: [],
   })),
 }))

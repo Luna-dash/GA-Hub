@@ -471,7 +471,7 @@ class ConductorChatIn(BaseModel):
 class ConductorStartSubagent(BaseModel):
     prompt: str
     request_id: str | None = None
-    # Explicit per-dispatch request from the Conductor or approval UI.
+    # Explicit per-dispatch request from the Conductor supervisor.
     llm_index: int | None = Field(default=None, ge=0)
     # Optional page configuration; omitted fields preserve service state.
     conductor_llm_index: int | None = Field(default=None, ge=0)
@@ -498,11 +498,6 @@ class ConductorSubagentAction(BaseModel):
     conductor_llm_index: int | None = Field(default=None, ge=0)
     subagent_llm_index: int | None = Field(default=None, ge=0)
     subagent_model_policy: Literal["follow_main", "default", "locked"] | None = None
-
-
-class ConductorApproval(BaseModel):
-    prompt: str
-    source: str = ""
 
 
 class ConductorTextResp(BaseModel):
@@ -585,10 +580,6 @@ class ConductorSubagentActionResp(BaseModel):
     id: str | None = None
     status: str | None = None
     error: str | None = None
-
-
-class ConductorMutationResp(BaseModel):
-    ok: bool
 
 
 class ConductorLogItem(BaseModel):

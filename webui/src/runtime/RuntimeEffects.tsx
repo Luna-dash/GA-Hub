@@ -11,7 +11,6 @@ export function RuntimeEffects() {
   const addChatMessage = useConductorStore((state) => state.addChatMessage)
   const replaceSubagents = useConductorStore((state) => state.replaceSubagents)
   const addLogItem = useConductorStore((state) => state.addLogItem)
-  const addApproval = useConductorStore((state) => state.addApproval)
   const clearConductor = useConductorStore((state) => state.clear)
   useDocumentTitle()
   useDesktopNotifyEffects()
@@ -29,10 +28,7 @@ export function RuntimeEffects() {
     if (event.topic === 'conductor:log' && event.payload.item) {
       addLogItem(event.payload.item)
     }
-    if (event.topic === 'conductor:approval' && event.payload.item) {
-      addApproval(event.payload.item)
-    }
-  }), [addApproval, addChatMessage, addLogItem, replaceSubagents])
+  }), [addChatMessage, addLogItem, replaceSubagents])
 
   useEffect(() => hubEventClient.subscribeControl((control) => {
     if (control.type === 'resync_required') {

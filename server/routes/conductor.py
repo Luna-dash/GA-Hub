@@ -11,13 +11,11 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 
 from ..schemas import (
-    ConductorApproval,
     ConductorChatIn,
     ConductorChatListResp,
     ConductorChatMessage,
     ConductorLifecycleResp,
     ConductorLogResp,
-    ConductorMutationResp,
     ConductorStartReq,
     ConductorStartSubagent,
     ConductorStatusResp,
@@ -30,8 +28,7 @@ from ..schemas import (
     ConductorWorkflowListResp,
 )
 from ..services import conductor_client as conductor_client_module
-from ..services.conductor_service import ConductorService, clean_log_text, short_id
-from ..services.event_bus import bus
+from ..services.conductor_service import ConductorService, clean_log_text
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -247,16 +244,6 @@ async def subagent_action(
     if action in ("abort", "stop"):
         return await asyncio.to_thread(pool.abort_subagent, sid)
     raise HTTPException(400, f"unknown action: {body.action}")
-
-
-# ── approval ─────────────────────────────────────────────────────────────────
-@router.post("/api/conductor/approval")
-async def post_approval(body: ConductorApproval) -> ConductorMutationResp:
-    bus.publish(
-        "conductor:approval",
-        {"item": {"id": short_id(), "prompt": body.prompt, "source": body.source}},
-    )
-    return {"ok": True}
 
 
 # ── status / log ─────────────────────────────────────────────────────────────

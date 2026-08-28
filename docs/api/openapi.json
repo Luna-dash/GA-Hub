@@ -2103,44 +2103,6 @@
         }
       }
     },
-    "/api/conductor/approval": {
-      "post": {
-        "summary": "Post Approval",
-        "operationId": "post_approval_api_conductor_approval_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConductorApproval"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConductorMutationResp"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/conductor/log": {
       "get": {
         "summary": "Get Conductor Log",
@@ -5040,24 +5002,6 @@
         "type": "object",
         "title": "ChatRetryConfigReq"
       },
-      "ConductorApproval": {
-        "properties": {
-          "prompt": {
-            "type": "string",
-            "title": "Prompt"
-          },
-          "source": {
-            "type": "string",
-            "title": "Source",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "required": [
-          "prompt"
-        ],
-        "title": "ConductorApproval"
-      },
       "ConductorChatIn": {
         "properties": {
           "msg": {
@@ -5310,19 +5254,6 @@
           "log"
         ],
         "title": "ConductorLogResp"
-      },
-      "ConductorMutationResp": {
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "title": "Ok"
-          }
-        },
-        "type": "object",
-        "required": [
-          "ok"
-        ],
-        "title": "ConductorMutationResp"
       },
       "ConductorStartReq": {
         "properties": {

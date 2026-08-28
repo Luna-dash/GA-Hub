@@ -14,7 +14,6 @@ import type {
   ConductorLifecycleResponse,
   ConductorLogItem,
   ConductorLogResponse,
-  ConductorMutationResponse,
   ConductorStatus,
   ConductorSubagentActionResponse,
   ConductorSubagentListResponse,
@@ -453,8 +452,6 @@ export const api = {
       subagent_llm_index: models.subagentLlmIndex,
       subagent_model_policy: models.subagentModelPolicy,
     }),
-  conductorApproval: (prompt: string, source: string) =>
-    http<ConductorMutationResponse>('POST', '/api/conductor/approval', { prompt, source }),
   tokenStats: () => http<TokenStatsResponse>('GET', '/api/tokens/stats'),
   tokenHistory: (hours = 24) => http<TokenHistoryResponse>('GET', `/api/tokens/history?hours=${hours}`),
   servicePanel: () => http<ServicePanelResponse>('GET', '/api/services/panel'),

@@ -293,7 +293,6 @@ export type ConductorStatus = ApiSchemas['ConductorStatusResp']
 export type ConductorTextResponse = ApiSchemas['ConductorTextResp']
 export type ConductorChatListResponse = ApiSchemas['ConductorChatListResp']
 export type ConductorLogResponse = ApiSchemas['ConductorLogResp']
-export type ConductorMutationResponse = ApiSchemas['ConductorMutationResp']
 export type ConductorSubagentListResponse = ApiSchemas['ConductorSubagentListResp']
 export type ConductorSubagentInstructionResponse = ApiSchemas['ConductorSubagentInstructionResp']
 export type ConductorSubagentActionResponse = ApiSchemas['ConductorSubagentActionResp']
@@ -338,10 +337,4 @@ export type ServicePanelItem = Omit<ApiSchemas['ServicePanelItem'], 'metrics'> &
 }
 export type ServicePanelResponse = Omit<ApiSchemas['ServicePanelResp'], 'services'> & {
   services: ServicePanelItem[]
-}
-
-export interface ConductorApprovalItem {
-  id: string
-  prompt: string
-  source: string
 }

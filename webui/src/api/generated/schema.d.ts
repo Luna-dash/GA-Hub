@@ -991,23 +991,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/conductor/approval": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Post Approval */
-        post: operations["post_approval_api_conductor_approval_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/conductor/log": {
         parameters: {
             query?: never;
@@ -2281,16 +2264,6 @@ export interface components {
              */
             scheduled_backoff_max_seconds: number;
         };
-        /** ConductorApproval */
-        ConductorApproval: {
-            /** Prompt */
-            prompt: string;
-            /**
-             * Source
-             * @default
-             */
-            source: string;
-        };
         /** ConductorChatIn */
         ConductorChatIn: {
             /** Msg */
@@ -2372,11 +2345,6 @@ export interface components {
         ConductorLogResp: {
             /** Log */
             log: components["schemas"]["ConductorLogItem"][];
-        };
-        /** ConductorMutationResp */
-        ConductorMutationResp: {
-            /** Ok */
-            ok: boolean;
         };
         /** ConductorStartReq */
         ConductorStartReq: {
@@ -5634,39 +5602,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConductorSubagentActionResp"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_approval_api_conductor_approval_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ConductorApproval"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConductorMutationResp"];
                 };
             };
             /** @description Validation Error */

@@ -4,7 +4,6 @@ import clsx from 'clsx'
 import { api, type ConductorSubagentModelPolicy } from '@/api/client'
 import { useConductorStore } from '@/stores/conductorStore'
 import type {
-  ConductorApprovalItem,
   ConductorSubagent,
   ConductorWorkflow,
 } from '@/api/types'
@@ -122,7 +121,6 @@ export default function Conductor() {
   const hydrateChatMessages = useConductorStore((s) => s.hydrateChatMessages)
   const chatMessages = useConductorStore((s) => s.chatMessages)
   const subagents = useConductorStore((s) => s.subagents)
-  const approvals = useConductorStore((s) => s.approvals)
 
   // Poll status
   const { data: status } = useQuery({
@@ -324,47 +322,12 @@ export default function Conductor() {
     qc.invalidateQueries({ queryKey: queryKeys.conductor.status })
   }
 
-  const removeApproval = useConductorStore((s) => s.removeApproval)
-
   useLayoutEffect(() => {
     const el = chatInputRef.current
     if (!el) return
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }, [userMsg])
-
-  // Approval flow: the Conductor pattern keeps task ownership with the
-  // supervisor. Approving re-injects the plan as a user chat task (the
-  // supervisor rewrites it into a dispatch manifest); the page never
-  // dispatches workers directly.
-  const approveTask = async (item: ConductorApprovalItem) => {
-    if (effectiveLlmIndex === null) return
-    shouldFollowChatRef.current = true
-    try {
-      const chatItem = await api.conductorSendChat(
-        `请按以下已确认的方案执行：\n${item.prompt}`,
-        'user',
-        conductorModelSettings,
-      )
-      addChatMessage({
-        id: chatItem.id,
-        role: chatItem.role as 'user' | 'assistant',
-        msg: chatItem.msg,
-        ts: chatItem.ts,
-        request_id: chatItem.request_id,
-        kind: chatItem.kind,
-      })
-      removeApproval(item.id)
-      void qc.invalidateQueries({ queryKey: queryKeys.conductor.workflows })
-    } catch (err) {
-      console.error('approveTask failed', err)
-      // Keep the card so the plan can be resubmitted after a failure.
-    }
-  }
-
-  const rejectTask = (item: ConductorApprovalItem) => {
-    removeApproval(item.id)
-  }
 
   const workflows = workflowSnapshot?.items ?? []
   const currentWorkflow = useMemo(() => {
@@ -540,36 +503,6 @@ export default function Conductor() {
             </aside>
           </div>
           </div>
-
-      {/* Approval floating cards */}
-      {approvals.length > 0 && (
-        <div className="fixed bottom-6 right-6 z-30 w-96 space-y-2">
-          {approvals.map((item) => (
-            <div key={item.id} className="rounded-lg border border-accent/45 bg-bg-card p-4 shadow-[0_6px_18px_rgba(45,34,22,0.16)]">
-              <div className="mb-2 text-sm font-semibold text-[#2C2418]">待批准任务</div>
-              <div className="mb-1 text-xs text-[#665741]">来源: {item.source}</div>
-              <pre className="mb-3 max-h-32 overflow-y-auto rounded border border-line bg-bg-soft p-2 text-xs whitespace-pre-wrap text-[#2C2418]">
-                {item.prompt}
-              </pre>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => approveTask(item)}
-                  disabled={effectiveLlmIndex === null}
-                  className="flex-1 rounded bg-accent px-3 py-1.5 text-sm text-white hover:bg-accent/90 disabled:opacity-50"
-                >
-                  批准
-                </button>
-                <button
-                  onClick={() => rejectTask(item)}
-                  className="flex-1 rounded border border-line bg-bg-card/80 px-3 py-1.5 text-sm text-[#9E3328] hover:border-[#E1B5A9] hover:bg-[#FFF2EF]"
-                >
-                  拒绝
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
 
       {subagentSettingsOpen && (
         <div

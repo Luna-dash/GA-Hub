@@ -157,7 +157,6 @@ POST /api/conductor/subagent   (supervisor 专用；页面不做手动派单)
   default      未显式指定时用页面默认模型；允许本次派单覆盖。
   locked       始终使用页面锁定模型；忽略本次派单的其他模型。
 
-POST /api/conductor/approval       body: {"prompt": "...", "source": "..."}
 POST /api/conductor/subagent/{id}  body: {"action": "keyinfo", "msg": "..."}
 POST /api/conductor/subagent/{id}  body: {"action": "input", "msg": "...", "llm_index": 3}
 POST /api/conductor/subagent/{id}  body: {"action": "accept", "request_id": "..."}
