@@ -17,7 +17,6 @@ import type {
   ConductorMutationResponse,
   ConductorStatus,
   ConductorSubagentActionResponse,
-  ConductorSubagentInstructionResponse,
   ConductorSubagentListResponse,
   ConductorTextResponse,
   ConductorWorkflowListResponse,
@@ -439,18 +438,6 @@ export const api = {
   conductorSubagents: () => http<ConductorSubagentListResponse>('GET', '/api/conductor/subagent'),
   conductorWorkflows: () => http<ConductorWorkflowListResponse>('GET', '/api/conductor/workflow'),
   conductorSubagent: (sid: string, max_len = 5000) => http<ConductorSubagent>('GET', `/api/conductor/subagent/${sid}?max_len=${max_len}`),
-  conductorStartSubagent: (
-    prompt: string,
-    llm_index?: number | null,
-    models: ConductorModelSettings = {},
-  ) =>
-    http<ConductorSubagentInstructionResponse>('POST', '/api/conductor/subagent', {
-      prompt,
-      llm_index,
-      conductor_llm_index: models.llmIndex,
-      subagent_llm_index: models.subagentLlmIndex,
-      subagent_model_policy: models.subagentModelPolicy,
-    }),
   conductorSubagentAction: (
     sid: string,
     action: 'keyinfo' | 'input' | 'reply' | 'append' | 'message' | 'msg' | 'accept' | 'rework' | 'abort' | 'stop',

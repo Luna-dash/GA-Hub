@@ -333,15 +333,33 @@ export default function Conductor() {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }, [userMsg])
 
+  // Approval flow: the Conductor pattern keeps task ownership with the
+  // supervisor. Approving re-injects the plan as a user chat task (the
+  // supervisor rewrites it into a dispatch manifest); the page never
+  // dispatches workers directly.
   const approveTask = async (item: ConductorApprovalItem) => {
-    if (effectiveSubagentLlmIndex === null) return
-    await api.conductorStartSubagent(
-      item.prompt,
-      effectiveSubagentLlmIndex,
-      conductorModelSettings,
-    )
-    removeApproval(item.id)
-    qc.invalidateQueries({ queryKey: queryKeys.conductor.subagents })
+    if (effectiveLlmIndex === null) return
+    shouldFollowChatRef.current = true
+    try {
+      const chatItem = await api.conductorSendChat(
+        `请按以下已确认的方案执行：\n${item.prompt}`,
+        'user',
+        conductorModelSettings,
+      )
+      addChatMessage({
+        id: chatItem.id,
+        role: chatItem.role as 'user' | 'assistant',
+        msg: chatItem.msg,
+        ts: chatItem.ts,
+        request_id: chatItem.request_id,
+        kind: chatItem.kind,
+      })
+      removeApproval(item.id)
+      void qc.invalidateQueries({ queryKey: queryKeys.conductor.workflows })
+    } catch (err) {
+      console.error('approveTask failed', err)
+      // Keep the card so the plan can be resubmitted after a failure.
+    }
   }
 
   const rejectTask = (item: ConductorApprovalItem) => {
@@ -536,7 +554,7 @@ export default function Conductor() {
               <div className="flex gap-2">
                 <button
                   onClick={() => approveTask(item)}
-                  disabled={effectiveSubagentLlmIndex === null}
+                  disabled={effectiveLlmIndex === null}
                   className="flex-1 rounded bg-accent px-3 py-1.5 text-sm text-white hover:bg-accent/90 disabled:opacity-50"
                 >
                   批准

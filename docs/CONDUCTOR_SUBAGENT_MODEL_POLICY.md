@@ -105,11 +105,15 @@ ConductorService 将两个职责拆开：
 
 ## 8. 统一派发入口
 
+> 2026-08-28 更新：引擎抽取至 GA 仓库后，gahub_app 对该端点强制 Contract B
+> （goal / deliverables / done_when 为 supervisor 的改写产物，外部不可构造）。
+> 因此"页面审批派单"入口已移除，页面唯一派单方式是聊天（role=user）；
+> 下表中的 subagent 派发端点为 supervisor 专用。
+
 GA-Hub 中会创建或恢复执行的入口全部经过 ConductorService：
 
-- POST /api/conductor/subagent → ConductorService.start_subagent(...)
+- POST /api/conductor/subagent → ConductorService.start_subagent(...)（supervisor 专用）
 - POST /api/conductor/subagent/{sid} 的 input/reply/append/message/msg → ConductorService.input_subagent(...)
-- 页面审批派单 → 同一个 POST /api/conductor/subagent
 - Conductor 主 LLM 自主派单 → 同一个 POST /api/conductor/subagent
 
 keyinfo 只补充上下文，不创建新执行；abort/stop 只终止执行，因此不参与模型解析。

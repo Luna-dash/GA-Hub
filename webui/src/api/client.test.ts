@@ -200,13 +200,10 @@ describe('api request failure handling', () => {
     }))
   })
 
-  it('sends Conductor model policy on chat and approval dispatches', async () => {
+  it('sends Conductor model policy on chat dispatches', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         id: 'chat-1', role: 'user', msg: 'plan', ts: 1,
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        id: 'worker-1', status: 'running', instruction: 'ok',
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -216,9 +213,7 @@ describe('api request failure handling', () => {
       subagentModelPolicy: 'locked' as const,
     }
     const chatMessage = '请规划中文任务 🚀'
-    const workerPrompt = '检查 D:\\项目\\资料，保留 emoji 🧪'
     await api.conductorSendChat(chatMessage, 'user', models)
-    await api.conductorStartSubagent(workerPrompt, 3, models)
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/conductor/chat', expect.objectContaining({
       method: 'POST',
@@ -226,16 +221,6 @@ describe('api request failure handling', () => {
         msg: chatMessage,
         role: 'user',
         llm_index: 1,
-        subagent_llm_index: 5,
-        subagent_model_policy: 'locked',
-      }),
-    }))
-    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/conductor/subagent', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({
-        prompt: workerPrompt,
-        llm_index: 3,
-        conductor_llm_index: 1,
         subagent_llm_index: 5,
         subagent_model_policy: 'locked',
       }),

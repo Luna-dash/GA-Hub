@@ -135,19 +135,22 @@ READMES = {
     "api": """Conductor API (integrated into GA-Hub)
 
 POST /api/conductor/chat
-  用户页面提交任务: {"msg": "...", "role": "user", "llm_index": 1,
+  用户提交任务的唯一页面入口: {"msg": "...", "role": "user", "llm_index": 1,
          "subagent_llm_index": 5, "subagent_model_policy": "default"}
   Conductor 写入计划: {"msg": "...", "role": "conductor", "request_id": "..."}
   Conductor 最终报告: {"msg": "...", "role": "conductor", "request_id": "...", "final": true}
   role=user 会创建新的用户任务并唤醒 Conductor；Supervisor 自己写消息时
   必须使用 role=conductor，不能把计划或报告作为用户任务重新入队。
 
-POST /api/conductor/subagent
+POST /api/conductor/subagent   (supervisor 专用；页面不做手动派单)
   body: {"prompt": "...", "request_id": "...", "llm_index": 3}
   启动一个子代理；llm_index 是 Conductor 对本次派单的显式模型请求。
   解析优先级：页面锁定 > 本次显式请求 > 默认子代理模型 > 主模型 > 全局首选。
-  prompt 是 UTF-8 JSON 文本；必须原样保留中文、emoji 和路径。调用本机 API
-  时直接使用 requests 的 json= 参数，不要让任务文字经过 shell 代码页转换。
+  派单必须携带完整任务清单（goal / deliverables / done_when），这是
+  Conductor 对用户任务的改写产物；页面与外部脚本不经 Conductor 直接派单
+  会被引擎以 422 拒绝。prompt 是 UTF-8 JSON 文本；必须原样保留中文、emoji
+  和路径。调用本机 API 时直接使用 requests 的 json= 参数，不要让任务文字
+  经过 shell 代码页转换。
 
 模型策略：
   follow_main  未显式指定时跟随 Conductor 主模型。
