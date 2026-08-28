@@ -7,6 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from server.routes import conductor as conductor_routes
+from server.services.conductor_client import GahubProcessError
 from server.services.conductor_service import ConductorService
 
 
@@ -297,3 +298,104 @@ def test_service_lifecycle_status_refreshes_compatibility_cache():
 
     assert service.lifecycle_status() == STOPPED
     assert service._started is False
+
+
+# ── engine error mapping (D2) ─────────────────────────────────────────────────
+
+def test_engine_4xx_contract_rejection_passes_through(monkeypatch):
+    """Engine Contract-B 422 must surface as 422 with the readable message,
+    not a blind hub 500."""
+    service = Mock()
+    service.start_subagent = Mock(side_effect=GahubProcessError(
+        'gahub_app /subagent -> 422: goal', status_code=422, detail=[
+            {"type": "missing", "loc": ["body", "goal"], "msg": "Field required"},
+        ],
+    ))
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    with pytest.raises(conductor_routes.HTTPException) as raised:
+        asyncio.run(conductor_routes.start_subagent(
+            conductor_routes.ConductorStartSubagent(prompt="test"),
+        ))
+
+    assert raised.value.status_code == 422
+    assert "Field required" in str(raised.value.detail)
+
+
+def test_engine_terminal_state_conflict_passes_through(monkeypatch):
+    """Engine 409 domain conflicts (accepted terminal / keyinfo budget /
+    rework gate) keep their status code and message."""
+    service = Mock()
+    service.input_subagent = Mock(side_effect=GahubProcessError(
+        "gahub_app /subagent/abc -> 409: accepted_subagent_is_terminal",
+        status_code=409,
+        detail="accepted_subagent_is_terminal",
+    ))
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    with pytest.raises(conductor_routes.HTTPException) as raised:
+        asyncio.run(conductor_routes.subagent_action(
+            "abc",
+            conductor_routes.ConductorSubagentAction(action="input", msg="x"),
+        ))
+
+    assert raised.value.status_code == 409
+    assert "accepted_subagent_is_terminal" in str(raised.value.detail)
+
+
+def test_engine_unreachable_maps_to_503(monkeypatch):
+    """Transport-level failures (no HTTP status) mean the engine is down."""
+    service = Mock()
+    service.start_subagent = Mock(side_effect=GahubProcessError(
+        "gahub_app /subagent request failed: connection refused",
+    ))
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    with pytest.raises(conductor_routes.HTTPException) as raised:
+        asyncio.run(conductor_routes.start_subagent(
+            conductor_routes.ConductorStartSubagent(prompt="test"),
+        ))
+
+    assert raised.value.status_code == 503
+
+
+def test_engine_5xx_maps_to_502(monkeypatch):
+    """An upstream engine crash must read as 502, never a hub-internal 500."""
+    service = Mock()
+    service.start_subagent = Mock(side_effect=GahubProcessError(
+        "gahub_app /subagent -> 500: boom", status_code=500, detail="boom",
+    ))
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    with pytest.raises(conductor_routes.HTTPException) as raised:
+        asyncio.run(conductor_routes.start_subagent(
+            conductor_routes.ConductorStartSubagent(prompt="test"),
+        ))
+
+    assert raised.value.status_code == 502
+
+
+def test_keyinfo_engine_conflict_maps_to_409(monkeypatch):
+    """keyinfo must go through the engine mapping too: the engine's
+    one-intervention-per-attempt budget conflict surfaces as 409."""
+    service = FakeService(STOPPED)
+    service.pool = SimpleNamespace(
+        counts=lambda: (0, 1),
+        get=lambda _sid: SimpleNamespace(),
+        keyinfo_subagent=Mock(side_effect=GahubProcessError(
+            "gahub_app /subagent/abc -> 409: only a running subagent can "
+            "receive keyinfo",
+            status_code=409,
+            detail="only a running subagent can receive keyinfo",
+        )),
+    )
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    with pytest.raises(conductor_routes.HTTPException) as raised:
+        asyncio.run(conductor_routes.subagent_action(
+            "abc",
+            conductor_routes.ConductorSubagentAction(action="keyinfo", msg="x"),
+        ))
+
+    assert raised.value.status_code == 409
+    assert "only a running subagent" in str(raised.value.detail)

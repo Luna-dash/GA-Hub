@@ -54,6 +54,15 @@ def _clean_child_env() -> dict:
 class GahubProcessError(RuntimeError):
     """The gahub_app subprocess could not be started or became unhealthy."""
 
+    def __init__(self, message: str, *, status_code: Optional[int] = None,
+                 detail: Any = None):
+        super().__init__(message)
+        # HTTP status returned by the engine, when the failure is an engine
+        # response rather than a transport/startup failure.
+        self.status_code = status_code
+        # Parsed engine error body (JSON detail payload or plain text).
+        self.detail = detail
+
 
 def _config_int(key: str, default: int) -> int:
     try:
@@ -265,12 +274,18 @@ class GaConductorClient:
         except requests.RequestException as exc:
             raise GahubProcessError(f"gahub_app request failed ({path}): {exc}") from exc
         if resp.status_code >= 400:
-            detail = ""
+            detail: Any = ""
             try:
-                detail = resp.json().get("error", "") or resp.text[:200]
+                detail = resp.json().get("error", "") or resp.json().get(
+                    "detail", ""
+                ) or resp.text[:200]
             except Exception:
                 detail = resp.text[:200]
-            raise GahubProcessError(f"gahub_app {path} -> {resp.status_code}: {detail}")
+            raise GahubProcessError(
+                f"gahub_app {path} -> {resp.status_code}: {detail}",
+                status_code=resp.status_code,
+                detail=detail,
+            )
         return resp.json() if resp.content else {}
 
     # -- lifecycle ------------------------------------------------------------

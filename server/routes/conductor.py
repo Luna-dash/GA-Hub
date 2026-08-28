@@ -29,6 +29,7 @@ from ..schemas import (
     ConductorTextResp,
     ConductorWorkflowListResp,
 )
+from ..services import conductor_client as conductor_client_module
 from ..services.conductor_service import ConductorService, clean_log_text, short_id
 from ..services.event_bus import bus
 
@@ -47,6 +48,44 @@ INSTR_KEYINFO = (
 
 def svc() -> ConductorService:
     return ConductorService.instance()
+
+
+def _engine_http_error(exc: "conductor_client_module.GahubProcessError") -> HTTPException:
+    """Map an engine HTTP failure onto a hub status instead of a blind 500.
+
+    - Engine 4xx are domain rejections (contract, terminal states, budgets):
+      pass the status through so callers see the real cause.
+    - Unreachable/unhealthy engines degrade to 503 with recovery hints.
+    - Engine 5xx stay upstream failures: 502, never a hub-internal error.
+    """
+    status = exc.status_code
+    if status is not None and 400 <= status < 500:
+        detail = exc.detail
+        if isinstance(detail, list):
+            # FastAPI validation payload: keep only the human-readable msgs.
+            detail = "; ".join(
+                str(item.get("msg", ""))
+                for item in detail
+                if isinstance(item, dict) and item.get("msg")
+            ) or detail
+        return HTTPException(status, str(detail) or str(exc))
+    if status is None:
+        return HTTPException(
+            503,
+            "gahub_app engine unreachable — it will be respawned on demand "
+            "(see %TEMP%\\gahub_app.log)",
+        )
+    return HTTPException(502, f"gahub_app engine error: {exc}")
+
+
+async def _dispatch_through_engine(func, /, *args, **kwargs):
+    """Run one engine-forwarding service call with engine-aware mapping."""
+    try:
+        return await asyncio.to_thread(func, *args, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except conductor_client_module.GahubProcessError as exc:
+        raise _engine_http_error(exc) from exc
 
 
 def _status_payload(service: ConductorService) -> dict:
@@ -86,18 +125,15 @@ async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
         workflow["request_id"] = body.request_id
     if body.final:
         workflow["kind"] = "final"
-    try:
-        return await asyncio.to_thread(
-            svc().add_chat_message,
-            body.msg,
-            role=body.role,
-            **workflow,
-            llm_index=body.llm_index,
-            subagent_llm_index=body.subagent_llm_index,
-            subagent_model_policy=body.subagent_model_policy,
-        )
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
+    return await _dispatch_through_engine(
+        svc().add_chat_message,
+        body.msg,
+        role=body.role,
+        **workflow,
+        llm_index=body.llm_index,
+        subagent_llm_index=body.subagent_llm_index,
+        subagent_model_policy=body.subagent_model_policy,
+    )
 
 
 # ── subagents ────────────────────────────────────────────────────────────────
@@ -142,18 +178,15 @@ async def get_subagent(
 @router.post("/api/conductor/subagent")
 async def start_subagent(body: ConductorStartSubagent) -> ConductorSubagentInstructionResp:
     workflow = {"request_id": body.request_id} if body.request_id is not None else {}
-    try:
-        result = await asyncio.to_thread(
-            svc().start_subagent,
-            body.prompt,
-            **workflow,
-            llm_index=body.llm_index,
-            conductor_llm_index=body.conductor_llm_index,
-            subagent_llm_index=body.subagent_llm_index,
-            subagent_model_policy=body.subagent_model_policy,
-        )
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
+    result = await _dispatch_through_engine(
+        svc().start_subagent,
+        body.prompt,
+        **workflow,
+        llm_index=body.llm_index,
+        conductor_llm_index=body.conductor_llm_index,
+        subagent_llm_index=body.subagent_llm_index,
+        subagent_model_policy=body.subagent_model_policy,
+    )
     result["instruction"] = INSTR_DISPATCHED
     return result
 
@@ -169,55 +202,46 @@ async def subagent_action(
         raise HTTPException(404, "subagent not found")
     action = body.action.lower().strip()
     if action == "keyinfo":
-        result = pool.keyinfo_subagent(sid, body.msg)
+        result = await _dispatch_through_engine(pool.keyinfo_subagent, sid, body.msg)
         result["instruction"] = INSTR_KEYINFO
         return result
     if action == "accept":
-        try:
-            result = await asyncio.to_thread(
-                service.accept_subagent,
-                sid,
-                body.msg,
-                request_id=body.request_id,
-            )
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+        result = await _dispatch_through_engine(
+            service.accept_subagent,
+            sid,
+            body.msg,
+            request_id=body.request_id,
+        )
         if "error" in result:
             raise HTTPException(409, result["error"])
         return result
     if action == "rework":
-        try:
-            result = await asyncio.to_thread(
-                service.rework_subagent,
-                sid,
-                body.msg,
-                request_id=body.request_id,
-                llm_index=body.llm_index,
-                conductor_llm_index=body.conductor_llm_index,
-                subagent_llm_index=body.subagent_llm_index,
-                subagent_model_policy=body.subagent_model_policy,
-            )
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+        result = await _dispatch_through_engine(
+            service.rework_subagent,
+            sid,
+            body.msg,
+            request_id=body.request_id,
+            llm_index=body.llm_index,
+            conductor_llm_index=body.conductor_llm_index,
+            subagent_llm_index=body.subagent_llm_index,
+            subagent_model_policy=body.subagent_model_policy,
+        )
         if "error" in result:
             raise HTTPException(409, result["error"])
         result["instruction"] = INSTR_DISPATCHED
         return result
     if action in ("input", "reply", "append", "message", "msg"):
         workflow = {"request_id": body.request_id} if body.request_id is not None else {}
-        try:
-            result = await asyncio.to_thread(
-                service.input_subagent,
-                sid,
-                body.msg,
-                **workflow,
-                llm_index=body.llm_index,
-                conductor_llm_index=body.conductor_llm_index,
-                subagent_llm_index=body.subagent_llm_index,
-                subagent_model_policy=body.subagent_model_policy,
-            )
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+        result = await _dispatch_through_engine(
+            service.input_subagent,
+            sid,
+            body.msg,
+            **workflow,
+            llm_index=body.llm_index,
+            conductor_llm_index=body.conductor_llm_index,
+            subagent_llm_index=body.subagent_llm_index,
+            subagent_model_policy=body.subagent_model_policy,
+        )
         result["instruction"] = INSTR_DISPATCHED
         return result
     if action in ("abort", "stop"):
