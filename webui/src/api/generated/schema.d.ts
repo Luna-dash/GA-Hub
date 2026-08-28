@@ -2247,9 +2247,39 @@ export interface components {
             enabled: boolean;
             /**
              * Max Attempts
-             * @default 2
+             * @default 3
              */
             max_attempts: number;
+            /**
+             * Scheduled Max Attempts
+             * @default 6
+             */
+            scheduled_max_attempts: number;
+            /**
+             * Backoff Base Seconds
+             * @default 2
+             */
+            backoff_base_seconds: number;
+            /**
+             * Backoff Factor
+             * @default 2
+             */
+            backoff_factor: number;
+            /**
+             * Backoff Max Seconds
+             * @default 60
+             */
+            backoff_max_seconds: number;
+            /**
+             * Scheduled Backoff Base Seconds
+             * @default 5
+             */
+            scheduled_backoff_base_seconds: number;
+            /**
+             * Scheduled Backoff Max Seconds
+             * @default 600
+             */
+            scheduled_backoff_max_seconds: number;
         };
         /** ConductorApproval */
         ConductorApproval: {
