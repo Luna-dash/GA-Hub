@@ -303,17 +303,15 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                     onClick={() => selectSession(session.id)}
                     onDoubleClick={() => beginRename(session)}
                     aria-current={current ? 'page' : undefined}
-                    className="block w-full px-3 pb-1 pt-2.5 text-left"
+                    title={`${sessionTitle(session)} · ${sessionStatusLabel(runtime)}`}
+                    className="block w-full px-3 py-2 text-left"
                   >
                     <span className="flex items-center gap-2 pr-14">
-                      <span className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
+                      <span aria-hidden="true" title={sessionStatusLabel(runtime)} className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
                       <span className="min-w-0 flex-1 truncate text-sm font-medium" title={sessionTitle(session)}>{sessionTitle(session)}</span>
-                    </span>
-                    <span className="flex items-center gap-1.5 pt-1 pl-4 text-[10px] opacity-70">
-                      <span>{sessionStatusLabel(runtime)}</span>
                       {session.project_name && (
                         <span
-                          className="max-w-24 truncate rounded bg-accent/10 px-1.5 py-0.5 text-accent"
+                          className="max-w-20 shrink-0 truncate rounded bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent"
                           title={session.project_path || session.project_name}
                           aria-label={`项目：${session.project_name}`}
                         >

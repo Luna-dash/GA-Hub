@@ -72,7 +72,7 @@ describe('SessionRail', () => {
     const current = host.querySelector('[aria-current="page"]') as HTMLButtonElement
     expect(current.textContent).toContain('研究任务')
     expect(current.textContent).toContain('alpha')
-    expect(current.textContent).toContain('运行中')
+    expect(current.title).toContain('运行中')
     expect(host.textContent).toContain('未命名会话 · bbbbbbbb')
     expect(host.textContent).toContain('未命名会话 · cccccccc')
     expect(host.textContent).not.toContain('已隐藏')
