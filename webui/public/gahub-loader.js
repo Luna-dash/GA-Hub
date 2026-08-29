@@ -1,16 +1,21 @@
 /**
- * GA-Hub 启动加载动画 —— 「墨旋 · 吸纳与释放」（候选 F）
+ * GA-Hub 启动加载动画 —— 「银河开机 · 四旋臂演化」（依据 temp/galaxy_boot_animation_preview.html 方案）
  *
- * 编排（无刚性整体旋转，杜绝眩晕；全部为差速缠绕的“流动”感）：
- *   第一幕 · 星散成印 (0~1.05s)：聚成「枢纽之印」。
- *   第二幕 · 漩涡缩小 (1.05~3.15s)：印章差速缠绕收拢——内圈缠得多、
- *             外圈缠得少，整体如墨涡吸入，缩至中心浓旋。
- *   待命态 · 墨涡缓旋：就绪前维持极慢的涡旋流动。
- *   就绪幕 · 星系散开：反向解旋（逆转缠绕方向），粒子沿弧形臂向外
- *             扩大飞散、渐隐——如星系旋臂展开，交接 GA-Hub 主界面。
+ * 编排（星系旋转匹配开机等待时间：稳态自转段无固定时长，持续到后端就绪信号）：
+ *   第一幕 · 极速凝聚 (0~0.75s)：全屏弥漫星尘向四旋臂银河汇聚成型。
+ *   稳态幕 · 银河自转 (0.75s ~ 就绪)：双段差速持续旋转；缠绕紧度 b 与镜头
+ *             缩放以饱和曲线无限趋近终值——等待多久都保持自然演化不僵住。
+ *   就绪幕 · 反向解旋扩散 (0.8s)：快照当前极坐标，逆向解开缠绕 + 径向膨胀
+ *             + 弧臂切向扫掠，渐隐交接 GA-Hub 主界面。
  *
- * 低消耗设计：粒子 ≤900；位置由时间参数确定性重算（爆发幕一次性快照）；
- * 无连线层；dpr ≤1.5；visibilitychange 暂停；reduced-motion 静态降级。
+ * 结构设计（方案要点）：
+ *   - 4 条主旋臂 90° 均匀对称，高斯正态（Box-Muller）法向羽化，无人工硬边界；
+ *   - 三层明亮核球（深空弥散辉光 / 致密高亮核 / 超白核心）+ 十字耀斑；
+ *   - 色彩：核心金白 → 旋臂冰蓝/天青 → 紫粉 H-II 星团点缀；
+ *   - 就绪交接继承原 gahub-loader 协议（__GA_HUB_HIDE_LOADING__）。
+ *
+ * 低消耗设计：位置由时间参数确定性重算；爆发幕一次性快照；dpr ≤2；
+ * visibilitychange 暂停；reduced-motion 静态降级；AUTO_HIDE 15s 兜底。
  */
 (function () {
   'use strict'
@@ -18,59 +23,38 @@
   var IS_TAURI = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
   if (!IS_TAURI || typeof document === 'undefined') return
 
-  var MIN_DISPLAY_MS = 3700      // 成印 + 漩涡收缩 + 一段缓旋
+  var MIN_DISPLAY_MS = 3200      // 凝聚 + 至少一段可观的自转
   var FADE_MS = 560
-  var BURST_MS = 1700            // 星系散开时长
-  var AUTO_HIDE_MS = 15000
-  var T_CONV = 1050              // 第一幕
-  var T_VORTEX = 2100            // 第二幕：漩涡缩小
-  var HOLD_OMEGA = 0.16          // 待命缓旋角速度 rad/s
+  var BURST_MS = 800             // 反向解旋扩散时长
+  var AUTO_HIDE_MS = 15000       // 就绪信号缺失时的兜底
+  var T_CONVERGE = 750           // 第一幕：极速凝聚
 
-  function cssVar(name, fallback) {
-    try {
-      var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-      return v || fallback
-    } catch (e) { return fallback }
-  }
-
-  var C = {
-    bg: cssVar('--c-bg', '#DED6C5'),
-    inkStrong: cssVar('--c-text', '#2C2418'),
-    inkMuted: cssVar('--c-text-muted', '#665741'),
-    accent: cssVar('--c-accent', '#8A6438'),
-    faint: cssVar('--c-text-faint', '#86775F'),
-  }
-
-  /* ── 样式注入 ─────────────────────────────────────────────────── */
+  /* ── 样式注入（深空主题） ─────────────────────────────────────── */
   var style = document.createElement('style')
   style.textContent =
     '#ga-hub-boot{position:fixed;inset:0;z-index:9999;overflow:hidden;' +
     'transition:opacity ' + FADE_MS + 'ms cubic-bezier(0.4,0,0.2,1);' +
-    'background-color:' + C.bg + ';' +
-    'background-image:linear-gradient(180deg,rgba(255,255,255,0.10),rgba(55,42,25,0.035)),' +
-    'radial-gradient(rgba(80,60,35,0.045) 0.8px,transparent 0.9px);' +
-    'background-size:auto,4px 4px;}' +
-    '#ga-hub-boot .boot-grain{position:absolute;inset:0;pointer-events:none;opacity:0.22;' +
-    'mix-blend-mode:multiply;' +
-    "background-image:url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.72' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.36  0 0 0 0 0.28  0 0 0 0 0.18  0 0 0 0.65 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>\")," +
-    "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='640' height='10'><rect width='100%25' height='1' y='3' fill='rgba(95,72,42,0.045)'/><rect width='100%25' height='1' y='8' fill='rgba(255,255,255,0.10)'/></svg>\");" +
-    'background-size:220px 220px,640px 10px;background-repeat:repeat,repeat;}' +
+    'background:#02040a;' +
+    'background-image:radial-gradient(circle at center,#090e21 0%,#030611 70%,#010206 100%);}' +
     '#ga-hub-boot canvas{position:absolute;inset:0;display:block;width:100%;height:100%;}' +
+    '#ga-hub-boot .boot-vignette{position:absolute;inset:0;pointer-events:none;' +
+    'background:radial-gradient(circle at center,transparent 30%,rgba(1,2,6,0.85) 100%);' +
+    'box-shadow:inset 0 0 120px rgba(0,0,0,0.95);}' +
     '#ga-hub-boot .boot-word{position:absolute;top:50%;left:50%;transform:translate(-50%,-58%);' +
-    'font:700 clamp(40px,9vw,120px)/1 Inter,"PingFang SC","Noto Sans SC","Segoe UI",system-ui,sans-serif;' +
-    'letter-spacing:0.06em;color:' + C.inkStrong + ';display:none;}' +
-    '#ga-hub-boot .boot-caption{position:absolute;left:0;right:0;bottom:11%;text-align:center;' +
-    'font:400 13px Inter,"PingFang SC","Noto Sans SC",system-ui,sans-serif;' +
-    'letter-spacing:0.22em;color:' + C.faint + ';opacity:0;' +
-    'animation:ga-boot-caption-in 0.9s ease 1.25s forwards;}'
+    'font:700 clamp(40px,9vw,120px)/1 Inter,"Segoe UI",system-ui,sans-serif;' +
+    'letter-spacing:0.14em;color:#f8fafc;display:none;}' +
+    '#ga-hub-boot .boot-caption{position:absolute;left:0;right:0;bottom:9%;text-align:center;' +
+    'font:400 12px Inter,"Segoe UI",system-ui,sans-serif;letter-spacing:0.26em;' +
+    'color:#64748b;opacity:0;animation:ga-boot-caption-in 0.9s ease 0.9s forwards;}' +
+    '@keyframes ga-boot-caption-in{to{opacity:1}}'
   document.head.appendChild(style)
 
   var root = document.createElement('div')
   root.id = 'ga-hub-boot'
   root.setAttribute('aria-hidden', 'true')
   root.innerHTML =
-    '<div class="boot-grain"></div>' +
     '<canvas></canvas>' +
+    '<div class="boot-vignette"></div>' +
     '<div class="boot-word">GA·HUB</div>' +
     '<div class="boot-caption">正在唤醒本地服务</div>'
   ;(document.body || document.documentElement).appendChild(root)
@@ -96,7 +80,7 @@
     }
   }
 
-  /* ── 隐藏协议 ─────────────────────────────────────────────────── */
+  /* ── 隐藏协议（与旧版完全一致） ───────────────────────────────── */
   var hidden = false
   var startedAt = performance.now()
   var rafId = 0
@@ -119,8 +103,7 @@
     setTimeout(function () {
       if (bursting) return
       if (!running) {
-        // 静态降级（reduced-motion / 无 Canvas）或渲染循环已停：
-        // 没有粒子可爆发，直接淡出并移除遮罩，否则启动画面永不消失。
+        // 静态降级（reduced-motion / 无 Canvas）或渲染循环已停：直接淡出移除。
         root.style.pointerEvents = 'none'
         root.style.opacity = '0'
         setTimeout(function () {
@@ -145,214 +128,236 @@
 
   if (!ctx || reducedMotion) { useStaticFallback(); return }
 
-  /* ── 几何与粒子 ──────────────────────────────────────────────── */
-  function hexToRgb(hex) {
-    var m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim())
-    if (!m) return { r: 44, g: 36, b: 24 }
-    var n = parseInt(m[1], 16)
-    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 }
-  }
-
-  /* 四色墨：墨黑 / 松绿（侧栏同源）/ 秋金 / 印泥朱红 */
-  var INKS = {
-    black: { rgb: hexToRgb(C.inkStrong), r: 1.42, amp: 0.10 },
-    green: { rgb: hexToRgb('#12382B'), r: 1.34, amp: 0.12 },
-    gold: { rgb: hexToRgb('#9C7A2E'), r: 1.62, amp: 0.16 },
-    red: { rgb: hexToRgb('#A23B2A'), r: 1.54, amp: 0.14 },
-  }
-
-  function pickInk(i) {
-    var r = Math.random()
-    if (r < 0.52) return INKS.black
-    if (r < 0.74) return INKS.green
-    if (r < 0.92) return INKS.gold
-    return INKS.red
-  }
-
-  function particleBudget() {
-    var f = (W * H) / (1280 * 800)
-    return Math.round(Math.max(520, Math.min(900, 780 * f)))
-  }
-
-  function buildSealTargets(count) {
-    var m = Math.min(W, H)
-    var rHub = m * 0.085
-    var rOut = m * 0.205
-    var rOrb = rOut + m * 0.028
-    var pts = []
-    var i, a, r
-    for (i = 0; i < 46; i++) {
-      a = (i / 46) * Math.PI * 2
-      pts.push({ x: cx + Math.cos(a) * rHub, y: cy + Math.sin(a) * rHub })
-    }
-    for (var s = 0; s < 8; s++) {
-      a = (s / 8) * Math.PI * 2 - Math.PI / 2 + 0.18
-      for (i = 0; i < 13; i++) {
-        r = rHub * 1.25 + (rOut - rHub * 1.25) * (i / 12)
-        pts.push({
-          x: cx + Math.cos(a) * r + (Math.random() - 0.5) * 3,
-          y: cy + Math.sin(a) * r + (Math.random() - 0.5) * 3,
-        })
-      }
-    }
-    for (i = 0; i < 96; i++) {
-      a = (i / 96) * Math.PI * 2
-      r = rOrb + (i % 2 ? m * 0.007 : 0)
-      pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r })
-    }
-    for (i = 0; i < 6; i++) {
-      a = (i / 6) * Math.PI * 2 + 0.31
-      r = rOrb + m * 0.022
-      pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, star: true })
-    }
-    while (pts.length < count) {
-      a = Math.random() * Math.PI * 2
-      r = rOrb * (1.04 + Math.random() * 0.38)
-      pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, dust: true })
-    }
-    return pts.slice(0, count)
-  }
-
-  function buildParticles() {
-    var count = particleBudget()
-    var seal = buildSealTargets(count)
-    var ringR = Math.max(W, H) * (0.48 + Math.random() * 0.1)
-    var m = Math.min(W, H)
-    var rRef = m * 0.16           // 缠绕量参考半径（内多外少的基准）
-    particles = new Array(count)
-    for (var i = 0; i < count; i++) {
-      var ang = Math.random() * Math.PI * 2
-      var rr = ringR * (0.72 + Math.random() * 0.5)
-      // 轨道星以金为主、偶发朱红；其余按四色配比
-      var ink = seal[i].star
-        ? (Math.random() < 0.22 ? INKS.red : INKS.gold)
-        : pickInk(i)
-      var szMul = seal[i].star ? 1.85 : (seal[i].dust ? 0.72 : 1)
-      // 尺寸随机：多数中小，少数大墨点（对数偏移）
-      var sj = Math.random()
-      var sizeJitter = sj < 0.06
-        ? 1.9 + Math.random() * 0.8          // ~6% 大墨 blot
-        : 0.62 + Math.pow(Math.random(), 1.4) * 0.95
-      // 印章极坐标（相对中心）
-      var dx = seal[i].x - cx, dy = seal[i].y - cy
-      var pr = Math.sqrt(dx * dx + dy * dy) || 1
-      var pa = Math.atan2(dy, dx)
-      // 差速缠绕量：内圈最多 ~1.7 圈，外圈 ~0.45 圈
-      var wind = 2 * Math.PI * (0.45 + 1.25 * Math.pow(rRef / pr, 0.75))
-      if (wind > 2 * Math.PI * 1.75) wind = 2 * Math.PI * 1.75
-      particles[i] = {
-        ox: cx + Math.cos(ang) * rr,
-        oy: cy + Math.sin(ang) * rr,
-        pr: pr, pa: pa,
-        wind: wind,
-        shrink: 0.24 + Math.random() * 0.10,   // 收缩后剩余半径比例 24~34%
-        d1: Math.random() * 0.36 * T_CONV,
-        u1: T_CONV * (0.8 + Math.random() * 0.4),
-        dv: Math.random() * 0.30 * T_VORTEX,   // 漩涡错峰
-        uv: T_VORTEX * (0.62 + Math.random() * 0.26),
-        phi: Math.random() * Math.PI * 2,
-        r: ink.r * szMul * sizeJitter,
-        ink: ink,
-        // 爆发快照（首次爆发帧填写）
-        br: 0, ba: 0,
-        outR: m * (0.42 + Math.random() * 0.42),
-        tanK: 0.85 + Math.random() * 0.5,      // 星系弧臂切向强度
-        unbias: 0.9 + Math.random() * 0.25,    // 反向解旋圈数个体差
-      }
-    }
-  }
-
-  /* 缓动 */
-  function easeOutQuint(p) { return 1 - Math.pow(1 - p, 5) }
+  /* ── 缓动与工具 ──────────────────────────────────────────────── */
   function easeInOutCubic(p) { return p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2 }
   function easeOutCubic(p) { return 1 - Math.pow(1 - p, 3) }
-  function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v }
+  function easeOutQuint(p) { return 1 - Math.pow(1 - p, 5) }
+  function clamp(v, min, max) { return Math.min(Math.max(v, min), max) }
+  function gaussianRandom() {
+    var u = 0, v = 0
+    while (u === 0) u = Math.random()
+    while (v === 0) v = Math.random()
+    return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v)
+  }
+  /* 饱和曲线：稳态幕时长不定，缠绕/缩放无限趋近终值而不僵死 */
+  function saturate(tMs, tau) { return 1 - Math.exp(-tMs / tau) }
 
-  /* 待命期追加的缓旋角（全局一致，个体经 diffFactor 差速化） */
-  function holdExtra(t) {
-    var tau = t - T_CONV - T_VORTEX
-    return tau > 0 ? HOLD_OMEGA * tau : 0
+  /* ── 四旋臂银河粒子构建 ──────────────────────────────────────── */
+  function particleBudget() {
+    var f = (W * H) / (1280 * 800)
+    return Math.round(clamp(3200 * f, 2400, 3600))
   }
 
-  var tmp = { x: 0, y: 0, a: 0 }
+  function buildGalaxy() {
+    var count = particleBudget()
+    particles = new Array(count)
+    var maxR = Math.min(W, H) * 0.46
+    var rRef = Math.min(W, H) * 0.22
 
-  /* 待命/加载期的确定性位置 */
-  function calmPos(p, t, out) {
-    var k1 = easeOutQuint(clamp01((t - p.d1) / p.u1))
-    var a = clamp01(k1 * 1.7)
-    var tauV = t - T_CONV - p.dv
-    var kl = tauV <= 0 ? 0 : easeInOutCubic(clamp01(tauV / p.uv))
-    var kgDone = t - T_CONV >= T_VORTEX
-    // 半径：印章半径 → 收缩半径（就绪待命期带轻微呼吸）
-    var rNow = p.pr * (1 - (1 - p.shrink) * kl)
-    if (kl >= 1) rNow *= 1 + 0.035 * Math.sin(t * 0.0019 + p.phi)
-    // 角度：印章角 − 差速缠绕（顺时针吸入）− 待命缓旋（差速化）
-    var diffFactor = Math.pow((p.pr * p.shrink + 14) / (p.pr + 14), 0.6)
-    var angWound = p.pa - p.wind * kl -
-      (kgDone ? holdExtra(t) * (0.45 + 0.55 * diffFactor) : 0)
-    var x = cx + Math.cos(angWound) * rNow
-    var y = cy + Math.sin(angWound) * rNow
-    // 第一幕尚在飞行时从起点混入
-    if (k1 < 1) {
-      x = p.ox + (x - p.ox) * k1
-      y = p.oy + (y - p.oy) * k1
+    for (var i = 0; i < count; i++) {
+      // 初始弥漫全屏位置（t=0）
+      var spreadAng = Math.random() * Math.PI * 2
+      var spreadDist = Math.pow(Math.random(), 0.55) * Math.max(W, H) * 0.72
+      var initX = cx + Math.cos(spreadAng) * spreadDist + (Math.random() - 0.5) * 80
+      var initY = cy + Math.sin(spreadAng) * spreadDist + (Math.random() - 0.5) * 80
+
+      // 4 条主旋臂：严格 4 等分，每臂相位 90°
+      var armIdx = i % 4
+      var armBaseAngle = armIdx * (Math.PI / 2)
+
+      // 半径分布（近核 0.05 → 远端 1.0）
+      var normDist = 0.05 + Math.pow(Math.random(), 1.15) * 0.95
+      var targetR = normDist * maxR
+
+      // 高斯物理展宽：旋臂法向的物理扩散（中段最宽，两端自然收束）
+      var sigmaPx = Math.min(W, H) * (0.024 + 0.038 * Math.sin(normDist * Math.PI))
+      var lateralOffset = gaussianRandom() * sigmaPx
+
+      // 色彩：核心致密暖白恒星、旋臂冰蓝/天青、紫粉 H-II 星团与暗尘埃
+      var colorPick = Math.random()
+      var color, size, glow = false
+      if (normDist < 0.22) {
+        color = colorPick < 0.65 ? '#fff6e0' : (colorPick < 0.88 ? '#fef4c0' : '#a5c8e8')
+        size = 0.5 + Math.random() * 0.8
+      } else {
+        if (colorPick < 0.52) {
+          color = '#60a5fa'; size = 0.45 + Math.random() * 0.75
+        } else if (colorPick < 0.76) {
+          color = '#93c5fd'; size = 0.55 + Math.random() * 0.9
+          glow = Math.random() < 0.22
+        } else if (colorPick < 0.88) {
+          color = '#c084fc'; size = 0.65 + Math.random() * 1.0
+          glow = true
+        } else {
+          color = '#38bdf8'; size = 0.4 + Math.random() * 0.65
+        }
+      }
+
+      // 扩散参数（反向解旋圈数：内圈多外圈少，封顶防散架）
+      var wind = 2 * Math.PI * (0.65 + 1.35 * Math.pow(rRef / Math.max(targetR, 12), 0.7))
+      if (wind > 2 * Math.PI * 2.2) wind = 2 * Math.PI * 2.2
+
+      particles[i] = {
+        initX: initX, initY: initY,
+        targetR: targetR, normDist: normDist,
+        armBaseAngle: armBaseAngle,
+        lateralOffset: lateralOffset,
+        currentR: targetR, currentTheta: armBaseAngle,
+        color: color, size: size, glow: glow,
+        alpha: normDist < 0.22 ? (0.36 + Math.random() * 0.42) : (0.45 + Math.random() * 0.55),
+        phi: Math.random() * Math.PI * 2,
+        snapR: 0, snapTheta: 0,
+        wind: wind,
+        unbias: 0.85 + Math.random() * 0.35,
+        outR: Math.min(W, H) * (0.52 + Math.random() * 0.48),
+        tanK: 0.9 + Math.random() * 0.6,
+      }
     }
-    out.x = x; out.y = y; out.a = a
   }
 
   /* ── 渲染循环 ────────────────────────────────────────────────── */
-  function drawDot(x, y, r, ink, a) {
-    ctx.globalAlpha = a < 0 ? 0 : a > 1 ? 1 : a
-    ctx.fillStyle = 'rgb(' + ink.rgb.r + ',' + ink.rgb.g + ',' + ink.rgb.b + ')'
-    ctx.beginPath()
-    ctx.arc(x, y, r, 0, 6.283185)
-    ctx.fill()
+  function drawCore(coreIntensity) {
+    ctx.save()
+    ctx.globalCompositeOperation = 'screen'
+    // A. 外围深空弥散辉光（柔）
+    var rOuter = Math.min(W, H) * (0.28 + 0.05 * Math.sin(performance.now() * 0.003))
+    var g1 = ctx.createRadialGradient(cx, cy, 0, cx, cy, rOuter)
+    g1.addColorStop(0, 'rgba(147,197,253,' + (0.38 * coreIntensity) + ')')
+    g1.addColorStop(0.25, 'rgba(96,165,250,' + (0.24 * coreIntensity) + ')')
+    g1.addColorStop(0.65, 'rgba(59,130,246,' + (0.08 * coreIntensity) + ')')
+    g1.addColorStop(1, 'rgba(59,130,246,0)')
+    ctx.fillStyle = g1
+    ctx.beginPath(); ctx.arc(cx, cy, rOuter, 0, 6.283185); ctx.fill()
+    // B. 中层核球（暖白，峰值压到 0.5，过渡带加宽）
+    var rMid = Math.min(W, H) * 0.09
+    var g2 = ctx.createRadialGradient(cx, cy, 0, cx, cy, rMid)
+    g2.addColorStop(0, 'rgba(255,244,214,' + (0.5 * coreIntensity) + ')')
+    g2.addColorStop(0.35, 'rgba(254,232,160,' + (0.4 * coreIntensity) + ')')
+    g2.addColorStop(0.7, 'rgba(147,197,253,' + (0.2 * coreIntensity) + ')')
+    g2.addColorStop(1, 'rgba(147,197,253,0)')
+    ctx.fillStyle = g2
+    ctx.beginPath(); ctx.arc(cx, cy, rMid, 0, 6.283185); ctx.fill()
+    // C. 中心亮核（暖奶油白，峰值 0.5，平滑双段衰减）
+    var rCore = Math.min(W, H) * 0.026
+    var g3 = ctx.createRadialGradient(cx, cy, 0, cx, cy, rCore)
+    g3.addColorStop(0, 'rgba(255,248,228,' + (0.5 * coreIntensity) + ')')
+    g3.addColorStop(0.55, 'rgba(255,240,200,' + (0.35 * coreIntensity) + ')')
+    g3.addColorStop(1, 'rgba(254,232,160,0)')
+    ctx.fillStyle = g3
+    ctx.beginPath(); ctx.arc(cx, cy, rCore, 0, 6.283185); ctx.fill()
+    // D. 十字耀斑微光（减半：0.28，更短更细）
+    var flareLen = Math.min(W, H) * 0.11 * coreIntensity
+    var fa = 0.28 * coreIntensity
+    var gx = ctx.createLinearGradient(cx - flareLen, cy, cx + flareLen, cy)
+    gx.addColorStop(0, 'rgba(255,244,214,0)')
+    gx.addColorStop(0.5, 'rgba(255,244,214,' + fa + ')')
+    gx.addColorStop(1, 'rgba(255,244,214,0)')
+    ctx.fillStyle = gx
+    ctx.fillRect(cx - flareLen, cy - 0.8, flareLen * 2, 1.6)
+    var gy = ctx.createLinearGradient(cx, cy - flareLen, cx, cy + flareLen)
+    gy.addColorStop(0, 'rgba(255,244,214,0)')
+    gy.addColorStop(0.5, 'rgba(255,244,214,' + fa + ')')
+    gy.addColorStop(1, 'rgba(255,244,214,0)')
+    ctx.fillStyle = gy
+    ctx.fillRect(cx - 0.8, cy - flareLen, 1.6, flareLen * 2)
+    ctx.restore()
   }
 
   function frame(now) {
     if (!running) return
     var t = now - startedAt
-    ctx.clearRect(0, 0, W, H)
-    var burstK = bursting ? clamp01((now - burstStart) / BURST_MS) : 0
+    var burstK = bursting ? clamp((now - burstStart) / BURST_MS, 0, 1) : 0
 
+    ctx.clearRect(0, 0, W, H)
+
+    var convergeK = clamp(t / T_CONVERGE, 0, 1)
+    var easeConverge = easeOutCubic(convergeK)
+    var holdT = Math.max(0, t - T_CONVERGE)
+
+    // 镜头缩放 0.82 → 1.08（饱和趋近），爆发时再前推
+    var zoom = 0.82 + 0.26 * saturate(t, 1900)
+    if (bursting) zoom += easeOutQuint(burstK) * 0.35
+
+    // 缠绕紧度 b：1.8 → 4.2（饱和趋近，等待期间持续缓慢演化）
+    var currentTightness = 1.8 + 2.4 * saturate(t, 1500)
+
+    // 全局逆时针自转（持续到扩散开始）
+    var globalRotation = -(t * 0.001) * 1.35
+
+    // 核心强度
+    var coreIntensity = (0.35 + 0.65 * easeConverge) * (1 - (bursting ? burstK * 0.85 : 0))
+
+    // 爆发快照（首帧记录当前极坐标）
     if (bursting && !snapshotted) {
-      // 快照当前极坐标，作为反向解旋的起点
       for (var si = 0; si < particles.length; si++) {
         var sp = particles[si]
-        calmPos(sp, t, tmp)
-        var rdx = tmp.x - cx, rdy = tmp.y - cy
-        sp.br = Math.sqrt(rdx * rdx + rdy * rdy) || 1
-        sp.ba = Math.atan2(rdy, rdx)
+        sp.snapR = sp.currentR
+        sp.snapTheta = sp.currentTheta
       }
       snapshotted = true
     }
 
+    drawCore(coreIntensity)
+
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+
     for (var i = 0; i < particles.length; i++) {
       var p = particles[i]
-      var x, y, a
+      var px, py, finalAlpha = p.alpha
+
       if (!bursting) {
-        calmPos(p, t, tmp)
-        x = tmp.x; y = tmp.y; a = tmp.a
-        if (t > T_CONV) {
-          a = 0.86 + p.ink.amp * Math.sin(t * 0.0024 + p.phi)
-        }
+        // 第一/二幕：凝聚 + 逆时针自转 + 对数螺线逐渐紧密缠绕
+        var spineAngle = p.armBaseAngle + currentTightness * Math.log(p.normDist + 0.15) + globalRotation
+        var spineR = p.targetR * zoom
+        var spineX = cx + Math.cos(spineAngle) * spineR
+        var spineY = cy + Math.sin(spineAngle) * spineR
+        var normalAngle = spineAngle + Math.PI / 2
+        var targetX = spineX + Math.cos(normalAngle) * (p.lateralOffset * zoom)
+        var targetY = spineY + Math.sin(normalAngle) * (p.lateralOffset * zoom)
+
+        p.currentR = Math.sqrt(Math.pow(targetX - cx, 2) + Math.pow(targetY - cy, 2)) / zoom
+        p.currentTheta = Math.atan2(targetY - cy, targetX - cx)
+
+        var startX = p.initX + Math.sin(t * 0.002 + i) * 10
+        var startY = p.initY + Math.cos(t * 0.0018 + i) * 10
+        px = startX + (targetX - startX) * easeConverge
+        py = startY + (targetY - startY) * easeConverge
+
+        finalAlpha = p.alpha * (0.35 + 0.65 * easeConverge) *
+          (0.85 + 0.15 * Math.sin(t * 0.003 + p.phi))
       } else {
-        // 反向解旋 + 星系式扩大
+        // 就绪幕：反向解旋 + 径向扩散 + 切向弧臂拖尾
         var g = easeInOutCubic(burstK)
         var gu = easeOutCubic(burstK)
-        var ang = p.ba + p.wind * 0.55 * p.unbias * gu   // 正号 = 反向解旋
-        var rr2 = p.br + (p.outR + 60 - p.br) * g
-        x = cx + Math.cos(ang) * rr2
-        y = cy + Math.sin(ang) * rr2
-        // 切向拖尾偏移制造弧臂感：位置沿切向前推一点
-        var tx = -Math.sin(ang), ty = Math.cos(ang)
-        x += tx * p.tanK * 26 * gu
-        y += ty * p.tanK * 26 * gu
-        a = (0.86 + p.ink.amp * Math.sin(now * 0.0024 + p.phi)) *
-            (burstK < 0.5 ? 1 : Math.pow(1 - (burstK - 0.5) / 0.5, 1.2))
+        var unwrapAngle = p.snapTheta - p.wind * 0.55 * p.unbias * gu
+        var radialDist = p.snapR + (p.outR + 60 - p.snapR) * g
+        px = cx + Math.cos(unwrapAngle) * (radialDist * zoom)
+        py = cy + Math.sin(unwrapAngle) * (radialDist * zoom)
+        var tx = -Math.sin(unwrapAngle), ty = Math.cos(unwrapAngle)
+        px += tx * p.tanK * 32 * gu
+        py += ty * p.tanK * 32 * gu
+        var fadeK = burstK < 0.4 ? 1 : Math.pow(1 - (burstK - 0.4) / 0.6, 1.2)
+        finalAlpha = p.alpha * fadeK
       }
-      drawDot(x, y, p.r, p.ink, a)
+
+      if (finalAlpha > 0.02) {
+        ctx.globalAlpha = clamp(finalAlpha, 0, 1)
+        ctx.fillStyle = p.color
+        ctx.beginPath()
+        ctx.arc(px, py, p.size, 0, 6.283185)
+        ctx.fill()
+
+        if (p.glow && easeConverge > 0.5 && !bursting) {
+          ctx.globalAlpha = clamp(finalAlpha * 0.3, 0, 1)
+          ctx.beginPath()
+          ctx.arc(px, py, p.size * 2.4, 0, 6.283185)
+          ctx.fill()
+        }
+      }
     }
+
+    ctx.restore()
     rafId = requestAnimationFrame(frame)
   }
 
@@ -362,14 +367,14 @@
     clearTimeout(resizeTimer)
     resizeTimer = setTimeout(function () {
       resizeCanvas()
-      buildParticles()
+      buildGalaxy()
     }, 180)
   }
 
   function resizeCanvas() {
     W = window.innerWidth
     H = window.innerHeight
-    var dpr = Math.min(window.devicePixelRatio || 1, 1.5)
+    var dpr = Math.min(window.devicePixelRatio || 1, 2)
     canvas.width = Math.floor(W * dpr)
     canvas.height = Math.floor(H * dpr)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -378,7 +383,7 @@
   }
 
   resizeCanvas()
-  buildParticles()
+  buildGalaxy()
   running = true
   rafId = requestAnimationFrame(frame)
 
