@@ -438,19 +438,6 @@ html.dark .text-slate-600 { color: #6E5A38; }
 }
 /* dark class 已与 light 同色，无需 aurora override */
 
-/* Paper card surface */
-.ga-panel {
-  background: var(--c-bg-card);
-  border: 1px solid var(--c-line);
-  border-radius: 8px;
-  box-shadow: 0 2px 7px rgba(45, 34, 22, 0.12);
-}
-html.dark .ga-panel {
-  background: var(--c-bg-card);
-  border-color: var(--c-line);
-  box-shadow: 0 2px 7px rgba(45, 34, 22, 0.12);
-}
-
 /* Sidebar (深橄榄稳定视觉重心) — opt-in via .ga-sidebar */
 .ga-sidebar {
   background: linear-gradient(180deg, #0B261D 0%, #12382B 100%);
@@ -757,17 +744,6 @@ html.dark .ga-panel {
   color: #FFE6B8;
 }
 
-/* Accent button helper */
-.btn-accent {
-  background: linear-gradient(180deg, #C9874A, #B8793E);
-  color: #FFF6DD;
-  border: 1px solid #A06530;
-  border-radius: 5px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.20), 0 1px 4px rgba(80,55,30,0.16);
-}
-.btn-accent:hover { filter: brightness(1.04); }
-.btn-accent:active { filter: brightness(0.96); }
-
 /* Sidebar brand row and mark */
 .ga-sidebar-brand-row {
   /* 恒定行高：折叠/展开两态下 logo 垂直中心点完全一致，切换零抖动 */
@@ -787,17 +763,6 @@ html.dark .ga-panel {
   display: flex;
   align-items: center;
   gap: 0.62rem;
-}
-.ga-brand-stack {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  min-width: 0;
-}
-.ga-brand-topline {
-  display: flex;
-  align-items: center;
-  gap: 0.46rem;
 }
 .ga-brand-orb {
   position: relative;
@@ -855,13 +820,6 @@ html.dark .ga-panel {
 .ga-brand-orb::after {
   transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-.ga-brand-text {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  line-height: 1;
-  min-width: 0;
-}
 .ga-brand-hub {
   font-size: 1.14rem;
   font-weight: 600;
@@ -896,14 +854,6 @@ html.dark .ga-panel {
   background: transparent;
   border-color: transparent;
   box-shadow: none;
-}
-.ga-brand-sub {
-  margin-top: 0.28rem;
-  font-size: 0.58rem;
-  letter-spacing: 0.16em;
-  color: rgba(216, 207, 184, 0.52);
-  text-transform: uppercase;
-  white-space: nowrap;
 }
 
 /* Collapsed sidebar (icon rail) — 折叠态有自己的设计语言，不沿用展开态 */

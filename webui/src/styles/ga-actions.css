@@ -17,10 +17,6 @@
     @apply disabled:bg-[#C5BFB8] disabled:text-[#8A7F74] disabled:border disabled:border-[#A99572] disabled:cursor-not-allowed;
   }
 
-  .ga-btn-sm {
-    @apply px-3 py-1.5 rounded-lg text-sm transition;
-  }
-
   .ga-badge {
     @apply px-2.5 py-1 rounded-full border text-[11px];
   }

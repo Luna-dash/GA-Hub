@@ -20,7 +20,6 @@ export interface SetupStatus {
   candidates: SetupCandidate[]
 }
 
-export type AppStatus = ApiSchemas['AppStatusResp']
 export type AgentStatus = ApiSchemas['GlobalAgentStatus']
 export type ConversationSummary = ApiSchemas['ConversationSummaryResp']
 export type Conversation = ApiSchemas['ConversationDetailResp']
@@ -29,8 +28,6 @@ export type ConversationUpdateResponse = ApiSchemas['ConversationUpdateResp']
 export type ConversationDeleteResponse = ApiSchemas['ConversationMutationResp']
 export type ConversationRestoreResponse = ApiSchemas['ConversationRestoreResp']
 export type ConversationMessage = ApiSchemas['ConversationMessageResp']
-export type ArchiveZipListResponse = ApiSchemas['ArchiveZipListResp']
-export type ArchiveZipEntryListResponse = ApiSchemas['ArchiveZipEntryListResp']
 
 export interface LLMInfo {
   key: string
@@ -180,7 +177,6 @@ export type EmailTestResponse = ApiSchemas['EmailTestResp']
 
 // ── Upload ────────────────────────────────────────────────
 export type UploadResult = ApiSchemas['UploadResp']
-export type RevealFileRequest = ApiSchemas['RevealFileReq']
 export type RevealFileResponse = ApiSchemas['RevealFileResp']
 
 // ── mykey.py editor ──────────────────────────────────────
@@ -294,7 +290,6 @@ export type ConductorTextResponse = ApiSchemas['ConductorTextResp']
 export type ConductorChatListResponse = ApiSchemas['ConductorChatListResp']
 export type ConductorLogResponse = ApiSchemas['ConductorLogResp']
 export type ConductorSubagentListResponse = ApiSchemas['ConductorSubagentListResp']
-export type ConductorSubagentInstructionResponse = ApiSchemas['ConductorSubagentInstructionResp']
 export type ConductorSubagentActionResponse = ApiSchemas['ConductorSubagentActionResp']
 export type ConductorLifecycleResponse = ApiSchemas['ConductorLifecycleResp']
 export type ConductorWorkflow = ApiSchemas['ConductorWorkflow']
@@ -329,9 +324,6 @@ export interface TokenStatsResponse {
 export interface TokenHistoryPoint extends TokenTotals { timestamp: number }
 export interface TokenHistoryResponse { hours: number; history: TokenHistoryPoint[] }
 
-export type ServicePanelState = NonNullable<ApiSchemas['ServicePanelItem']['state']>
-export type ServiceActivity = NonNullable<ApiSchemas['ServicePanelItem']['activity']>
-export type ServiceHealth = NonNullable<ApiSchemas['ServicePanelItem']['health']>
 export type ServicePanelItem = Omit<ApiSchemas['ServicePanelItem'], 'metrics'> & {
   metrics: Record<string, string | number | boolean | null>
 }
