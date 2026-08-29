@@ -71,8 +71,9 @@ describe('SessionRail', () => {
 
     const current = host.querySelector('[aria-current="page"]') as HTMLButtonElement
     expect(current.textContent).toContain('研究任务')
-    expect(current.textContent).toContain('alpha')
     expect(current.title).toContain('运行中')
+    // 项目归属改由抽屉分组头表达，不再挤占会话标题行
+    expect(host.textContent).toContain('alpha')
     expect(host.textContent).toContain('未命名会话 · bbbbbbbb')
     expect(host.textContent).toContain('未命名会话 · cccccccc')
     expect(host.textContent).not.toContain('已隐藏')
@@ -164,19 +165,26 @@ describe('SessionRail', () => {
     })
   })
 
-  it('ignores legacy recent-activity ranks and orders by unstarted, running, then recency', () => {
+  it('groups sessions into project drawers while keeping unstarted sessions first', () => {
     localStorage.setItem('gahub.sessionRailRecentActivity', JSON.stringify([sessions[2].id, sessions[1].id]))
 
     act(() => root.render(
       <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,
     ))
 
-    const cards = Array.from(host.querySelectorAll('[data-activity]'))
-    expect(cards.map((card) => card.textContent)).toEqual([
+    // 自由会话抽屉在前（含未启动会话），组内保持 未启动→按近期 的次序
+    const freeGroup = Array.from(host.querySelectorAll('section'))
+      .find((section) => section.textContent?.startsWith('自由会话'))
+    expect(freeGroup).toBeTruthy()
+    const freeCards = Array.from(freeGroup!.querySelectorAll('[data-activity]'))
+    expect(freeCards.map((card) => card.textContent)).toEqual([
       expect.stringContaining('未命名会话 · bbbbbbbb'),
-      expect.stringContaining('研究任务'),
       expect.stringContaining('未命名会话 · cccccccc'),
     ])
+    // 运行中的项目会话收进自己的抽屉，标题不再与项目徽章互相挤压
+    const projectCards = Array.from(host.querySelectorAll('[data-activity]'))
+      .filter((card) => card.textContent?.includes('研究任务'))
+    expect(projectCards).toHaveLength(1)
     expect(localStorage.getItem('gahub.sessionRailRecentActivity')).toBeNull()
   })
 

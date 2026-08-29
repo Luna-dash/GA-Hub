@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import { sessionActivity, sessionStatusLabel } from '@/utils/sessionUi'
@@ -50,8 +50,10 @@ const activityRail = {
 const LEGACY_RECENT_KEY = 'gahub.sessionRailRecentActivity'
 const TERMINAL_KEY = 'gahub.sessionRailTerminalState'
 const SEEN_COMPLETED_KEY = 'gahub.sessionRailSeenCompletedRuns'
+const GROUP_COLLAPSE_KEY = 'gahub.sessionRailGroupCollapse'
 type TerminalState = 'completed' | 'error'
 type TerminalMap = Record<string, TerminalState>
+type SessionGroup = { key: string; name: string; projectPath: string | null; sessions: HubSession[] }
 
 function readJson<T>(key: string, fallback: T): T {
   try {
@@ -145,6 +147,54 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
     if (activity === 'active') return 'active'
     return terminalState[session.id] || activity
   }
+
+  // 项目抽屉：自由会话一组，其余按 project_name 分组；组间按最高紧急度
+  // 成员排序（未启动 > 运行中 > 其他），保证运行中的项目抽屉不被沉底。
+  const sessionGroups = useMemo<SessionGroup[]>(() => {
+    const free: HubSession[] = []
+    const projects = new Map<string, HubSession[]>()
+    orderedSessions.forEach((session) => {
+      const name = session.project_name?.trim()
+      if (!name) {
+        free.push(session)
+        return
+      }
+      const bucket = projects.get(name)
+      if (bucket) bucket.push(session)
+      else projects.set(name, [session])
+    })
+    const groupWeight = (list: HubSession[]) => {
+      if (list.length === 0) return 9
+      return Math.min(...list.map((session) => (
+        isUnstartedSession(session)
+          ? 0
+          : sessionActivity(runtimes[session.id]) === 'active' ? 1 : 2
+      )))
+    }
+    const groups: SessionGroup[] = [
+      { key: 'free', name: '自由会话', projectPath: null, sessions: free },
+      ...Array.from(projects.entries()).map(([name, sessions]) => ({
+        key: `project:${name}`,
+        name,
+        projectPath: sessions[0]?.project_path || null,
+        sessions,
+      })),
+    ].filter((group) => group.sessions.length > 0)
+    groups.sort((a, b) => groupWeight(a.sessions) - groupWeight(b.sessions))
+    return groups
+  }, [orderedSessions, runtimes])
+  const hasProjectGroups = sessionGroups.some((group) => group.key !== 'free')
+
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(
+    () => readJson<Record<string, boolean>>(GROUP_COLLAPSE_KEY, {}),
+  )
+  const toggleGroup = useCallback((key: string) => {
+    setCollapsedGroups((current) => {
+      const next = { ...current, [key]: !current[key] }
+      try { localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify(next)) } catch { /* 私有模式等 */ }
+      return next
+    })
+  }, [])
 
   const attentionSessions = useMemo(() => (
     orderedSessions
@@ -268,88 +318,116 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
           </button>
         )}
         <div className="flex gap-2 md:flex-col">
-          {orderedSessions.map((session) => {
-            const runtime = runtimes[session.id]
-            const activity = displayState(session)
-            const current = session.id === currentId
-            const editing = editingId === session.id
-            return (
-              <div
-                key={session.id}
-                data-activity={activity}
-                className={clsx(
-                  'group relative w-52 shrink-0 rounded-xl border transition-colors md:w-full',
-                  activityCard[activity],
-                  current && 'ring-2 ring-accent/35 ring-offset-1 ring-offset-bg-card',
-                )}
-              >
-                {editing ? (
-                  <input
-                    autoFocus
-                    value={titleDraft}
-                    onChange={(event) => setTitleDraft(event.target.value)}
-                    onBlur={() => { void finishRename(session) }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') event.currentTarget.blur()
-                      if (event.key === 'Escape') setEditingId(null)
-                    }}
-                    disabled={savingId === session.id}
-                    aria-label={`重命名 ${sessionTitle(session)}`}
-                    className="m-2 mb-1 w-[calc(100%-1rem)] rounded-md border border-accent/45 bg-white/90 px-2 py-1 text-sm text-[#2C2418] outline-none ring-accent/20 focus:ring-2"
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => selectSession(session.id)}
-                    onDoubleClick={() => beginRename(session)}
-                    aria-current={current ? 'page' : undefined}
-                    title={`${sessionTitle(session)} · ${sessionStatusLabel(runtime)}`}
-                    className="block w-full px-3 py-2 text-left"
+          {sessionGroups.map((group) => {
+            const groupClosed = collapsedGroups[group.key] === true
+            const sessions = group.sessions
+            if (sessions.length === 0) return null
+            const cards = (
+              <div className={clsx('flex gap-2 md:flex-col', hasProjectGroups && !groupClosed && 'md:pl-1')}>
+                {sessions.map((session) => {
+                  const runtime = runtimes[session.id]
+                  const activity = displayState(session)
+                  const current = session.id === currentId
+                  const editing = editingId === session.id
+                  return (
+                  <div
+                    key={session.id}
+                    data-activity={activity}
+                    className={clsx(
+                      'group relative w-52 shrink-0 rounded-xl border transition-colors md:w-full',
+                      activityCard[activity],
+                      current && 'ring-2 ring-accent/35 ring-offset-1 ring-offset-bg-card',
+                    )}
                   >
-                    <span className="flex items-center gap-2 pr-8">
-                      <span aria-hidden="true" title={sessionStatusLabel(runtime)} className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium" title={sessionTitle(session)}>{sessionTitle(session)}</span>
-                      {session.project_name && (
-                        <span
-                          className="max-w-20 shrink-0 truncate rounded bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent"
-                          title={session.project_path || session.project_name}
-                          aria-label={`项目：${session.project_name}`}
-                        >
-                          {session.project_name}
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                )}
-                {!editing && (
-                  <div className="absolute right-2 top-2 flex items-center gap-0.5">
-                    {onDelete && (
+                    {editing ? (
+                      <input
+                        autoFocus
+                        value={titleDraft}
+                        onChange={(event) => setTitleDraft(event.target.value)}
+                        onBlur={() => { void finishRename(session) }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') event.currentTarget.blur()
+                          if (event.key === 'Escape') setEditingId(null)
+                        }}
+                        disabled={savingId === session.id}
+                        aria-label={`重命名 ${sessionTitle(session)}`}
+                        className="m-2 mb-1 w-[calc(100%-1rem)] rounded-md border border-accent/45 bg-white/90 px-2 py-1 text-sm text-[#2C2418] outline-none ring-accent/20 focus:ring-2"
+                      />
+                    ) : (
                       <button
                         type="button"
-                        onClick={() => setConfirmDeleteId(session.id)}
-                        disabled={activity === 'active' || deletingId === session.id}
-                        aria-label={`删除 ${sessionTitle(session)}`}
-                        title={activity === 'active' ? '请先停止任务再删除' : '删除会话'}
-                        className="rounded p-1 text-xs text-rose-600 opacity-50 transition hover:bg-rose-100 hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-25"
+                        onClick={() => selectSession(session.id)}
+                        onDoubleClick={() => beginRename(session)}
+                        aria-current={current ? 'page' : undefined}
+                        title={`${sessionTitle(session)} · ${sessionStatusLabel(runtime)}${session.project_name ? ` · ${session.project_name}` : ''}`}
+                        className="block w-full px-3 py-2 text-left"
                       >
-                        ×
+                        <span className="flex items-center gap-2 pr-8">
+                          <span aria-hidden="true" title={sessionStatusLabel(runtime)} className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium" title={sessionTitle(session)}>{sessionTitle(session)}</span>
+                        </span>
                       </button>
                     )}
+                    {!editing && (
+                      <div className="absolute right-2 top-2 flex items-center gap-0.5">
+                        {onDelete && (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(session.id)}
+                            disabled={activity === 'active' || deletingId === session.id}
+                            aria-label={`删除 ${sessionTitle(session)}`}
+                            title={activity === 'active' ? '请先停止任务再删除' : '删除会话'}
+                            className="rounded p-1 text-xs text-rose-600 opacity-50 transition hover:bg-rose-100 hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-25"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {editing && (
+                      <span className="block px-3 pb-2 pl-7 text-[10px] opacity-70">{savingId === session.id ? '保存中…' : sessionStatusLabel(runtime)}</span>
+                    )}
+                    {confirmDeleteId === session.id && (
+                      <div role="alertdialog" aria-label={`确认删除 ${sessionTitle(session)}`} className="mx-2 mb-2 flex items-center justify-between gap-2 rounded-lg border border-rose-400/35 bg-rose-50/90 px-2 py-1.5 text-[11px] text-rose-700">
+                        <span>永久删除？</span>
+                        <span className="flex gap-1">
+                          <button type="button" disabled={deletingId === session.id} onClick={() => { void removeSession(session) }} className="rounded bg-rose-600 px-2 py-1 text-white disabled:opacity-50">{deletingId === session.id ? '删除中…' : '确认'}</button>
+                          <button type="button" disabled={deletingId === session.id} onClick={() => setConfirmDeleteId(null)} className="rounded border border-rose-300 px-2 py-1 disabled:opacity-50">取消</button>
+                        </span>
+                      </div>
+                    )}
                   </div>
-                )}
-                {editing && (
-                  <span className="block px-3 pb-2 pl-7 text-[10px] opacity-70">{savingId === session.id ? '保存中…' : sessionStatusLabel(runtime)}</span>
-                )}
-                {confirmDeleteId === session.id && (
-                  <div role="alertdialog" aria-label={`确认删除 ${sessionTitle(session)}`} className="mx-2 mb-2 flex items-center justify-between gap-2 rounded-lg border border-rose-400/35 bg-rose-50/90 px-2 py-1.5 text-[11px] text-rose-700">
-                    <span>永久删除？</span>
-                    <span className="flex gap-1">
-                      <button type="button" disabled={deletingId === session.id} onClick={() => { void removeSession(session) }} className="rounded bg-rose-600 px-2 py-1 text-white disabled:opacity-50">{deletingId === session.id ? '删除中…' : '确认'}</button>
-                      <button type="button" disabled={deletingId === session.id} onClick={() => setConfirmDeleteId(null)} className="rounded border border-rose-300 px-2 py-1 disabled:opacity-50">取消</button>
-                    </span>
-                  </div>
-                )}
+                  )
+                })}
               </div>
+            )
+            if (!hasProjectGroups) return <Fragment key={group.key}>{cards}</Fragment>
+            return (
+              <section key={group.key} className="md:mb-0.5">
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.key)}
+                  aria-expanded={!groupClosed}
+                  title={group.projectPath || group.name}
+                  className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-[11px] font-medium text-[#8D7B5D] transition hover:bg-black/5 hover:text-[#665741]"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    className={clsx('h-3 w-3 flex-none transition-transform duration-200', groupClosed && '-rotate-90')}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                  <span className="min-w-0 flex-1 truncate text-left">{group.name}</span>
+                  <span className="rounded-full bg-black/6 px-1.5 py-px text-[10px] tabular-nums">{sessions.length}</span>
+                </button>
+                {!groupClosed && cards}
+              </section>
             )
           })}
         </div>
