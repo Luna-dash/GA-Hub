@@ -92,8 +92,7 @@ function SopList() {
   return (
     <div className="h-full grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] gap-4 p-6">
       <div className="rounded-lg border border-line bg-bg-card overflow-hidden flex flex-col h-full">
-        <div className="px-3 py-2 border-b border-line space-y-2">
-          <div className="text-xs text-slate-400">SOP 文档</div>
+        <div className="px-3 py-2 border-b border-line">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
