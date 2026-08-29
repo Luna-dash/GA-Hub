@@ -16,6 +16,10 @@ import {
   getChatFontScale, setChatFontScale,
 } from '@/utils/chatAppearance'
 import {
+  RAIL_TITLE_SCALE_DEFAULT, RAIL_TITLE_SCALE_MAX, RAIL_TITLE_SCALE_MIN, RAIL_TITLE_SCALE_STEP,
+  getRailTitleScale, setRailTitleScale,
+} from '@/utils/railAppearance'
+import {
   defaultNavPreferences,
   getNavPreferences,
   NAV_ITEMS,
@@ -354,15 +358,17 @@ function MyKeySyncPanel() {
 
 function ChatAppearancePanel() {
   const [scale, setScale] = useState(getChatFontScale)
+  const [titleScale, setTitleScale] = useState(getRailTitleScale)
 
   const updateScale = (value: number) => setScale(setChatFontScale(value))
+  const updateTitleScale = (value: number) => setTitleScale(setRailTitleScale(value))
 
   return (
     <div className="bg-bg-card border border-line rounded-xl p-4">
       <div className="font-medium mb-1">会话显示</div>
-      <div className="text-xs text-slate-500 mb-3">调整会话框中用户消息与 GA 输出的字体大小，仅影响当前设备。</div>
+      <div className="text-xs text-slate-500 mb-3">调整会话消息与会话管理栏标题的字体大小，仅影响当前设备。</div>
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-sm text-slate-500">字体缩放</span>
+        <span className="text-sm text-slate-500">会话字体</span>
         <input
           type="range"
           min={CHAT_FONT_SCALE_MIN}
@@ -385,6 +391,33 @@ function ChatAppearancePanel() {
       </div>
       <div className="mt-3 rounded-lg border border-line bg-bg-soft px-3 py-2 text-[#2C2418]" style={{ fontSize: `${scale}%` }}>
         字体大小预览：GA 会话输出示例
+      </div>
+      <div className="mt-4 flex items-center gap-3 flex-wrap">
+        <span className="text-sm text-slate-500">栏目标题</span>
+        <input
+          type="range"
+          min={RAIL_TITLE_SCALE_MIN}
+          max={RAIL_TITLE_SCALE_MAX}
+          step={RAIL_TITLE_SCALE_STEP}
+          value={titleScale}
+          onChange={(e) => updateTitleScale(Number(e.target.value))}
+          aria-label="会话管理栏标题字号缩放"
+          className="w-52 accent-accent"
+        />
+        <output className="w-12 text-sm font-medium tabular-nums text-center">{titleScale}%</output>
+        <button
+          type="button"
+          onClick={() => updateTitleScale(RAIL_TITLE_SCALE_DEFAULT)}
+          disabled={titleScale === RAIL_TITLE_SCALE_DEFAULT}
+          className="px-3 py-1.5 rounded-lg border border-line bg-bg-soft text-sm hover:border-accent disabled:opacity-40"
+        >
+          恢复默认
+        </button>
+      </div>
+      <div className="mt-3 rounded-lg border border-line bg-bg-soft px-3 py-2">
+        <div className="truncate font-medium text-slate-200" style={{ fontSize: `${titleScale}%` }}>
+          标题字号预览：历史对话索引条目标题
+        </div>
       </div>
     </div>
   )

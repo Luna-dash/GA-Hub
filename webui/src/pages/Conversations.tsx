@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
@@ -10,6 +10,7 @@ import { ConversationIndexRail } from '@/components/ConversationIndexRail'
 import { VirtualMessageList } from '@/components/VirtualMessageList'
 import { parseAssistantTranscript, stripAssistantTranscriptTags } from '@/utils/assistantTranscript'
 import { previewText } from '@/utils/foldTurns'
+import { RAIL_TITLE_SCALE_EVENT, getRailTitleScale } from '@/utils/railAppearance'
 import { saveTextExport } from '@/utils/desktop'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
@@ -52,6 +53,15 @@ export default function Conversations() {
   const [openConclusion, setOpenConclusion] = usePageState<Record<string, boolean>>('conversations.openConclusion', {})
   const detailScrollRef = useRef<HTMLDivElement>(null)
   const limit = 50
+
+  // 会话管理栏标题字号（设置页可调，仅当前设备）
+  const [titleScale, setTitleScale] = useState(getRailTitleScale)
+  useEffect(() => {
+    const sync = (event: Event) => setTitleScale((event as CustomEvent<number>).detail || getRailTitleScale())
+    window.addEventListener(RAIL_TITLE_SCALE_EVENT, sync)
+    return () => window.removeEventListener(RAIL_TITLE_SCALE_EVENT, sync)
+  }, [])
+  const titleStyle: CSSProperties = { fontSize: `${titleScale}%` }
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQ(q), 300)
@@ -240,6 +250,7 @@ export default function Conversations() {
                   index={page * limit + index + 1}
                   collapsed={collapsed}
                   active={active === c.id}
+                  titleStyle={titleStyle}
                   onClick={() => nav(`/conversations/${encodeURIComponent(c.id)}`)}
                 />
               ))}
@@ -625,11 +636,12 @@ function summaryDisplayTitle(conversation: ConversationSummary): string {
     || '未命名会话'
 }
 
-function ConvRow({ c, index, collapsed, active, onClick }: {
+function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
   c: ConversationSummary
   index: number
   collapsed: boolean
   active: boolean
+  titleStyle?: CSSProperties
   onClick: () => void
 }) {
   const title = summaryDisplayTitle(c)
@@ -654,7 +666,7 @@ function ConvRow({ c, index, collapsed, active, onClick }: {
       className={`block w-full px-3 py-2.5 text-left border-b border-line/60 group ${active ? 'bg-accent-soft' : 'hover:bg-white/5'}`}
     >
       <div className="flex items-baseline justify-between gap-2">
-        <div className="text-sm text-slate-200 truncate font-medium" title={title}>
+        <div className="text-sm text-slate-200 truncate font-medium" style={titleStyle} title={title}>
           {title}
         </div>
       </div>
