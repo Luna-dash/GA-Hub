@@ -15,7 +15,7 @@ function NavIcon({ name }: { name: NavIconName }) {
     stroke: 'currentColor',
     strokeLinecap: 'round' as const,
     strokeLinejoin: 'round' as const,
-    strokeWidth: 2.15,
+    strokeWidth: 1.9,
   }
   const filledDot = { fill: 'currentColor', stroke: 'none' }
 
@@ -23,75 +23,94 @@ function NavIcon({ name }: { name: NavIconName }) {
     <svg className="ga-nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       {name === 'dashboard' && (
         <>
-          <rect {...common} x="4.5" y="4.5" width="6" height="6" rx="1" />
-          <rect {...common} x="13.5" y="4.5" width="6" height="6" rx="1" />
-          <rect {...common} x="4.5" y="13.5" width="6" height="6" rx="1" />
-          <rect {...common} x="13.5" y="13.5" width="6" height="6" rx="1" />
+          {/* 仪表盘：弧面 + 指针（横向撑满） */}
+          <path {...common} d="M3.2 16.4a8.8 8.8 0 1 1 17.6 0" />
+          <path {...common} d="m12 16.4 4.2-5.6" />
+          <circle {...filledDot} cx="12" cy="16.4" r="1.3" />
+          <path {...common} d="M2.6 19.2h18.8" />
         </>
       )}
       {name === 'chat' && (
         <>
-          <path {...common} d="M5 6.2h14v8.7H12l-4.3 3.3v-3.3H5z" />
-          <path {...common} d="M8.4 9.5h7.2M8.4 12.2h4.8" />
-        </>
-      )}
-      {name === 'conversations' && (
-        <>
-          <path {...common} d="M4.8 6.2h10.8v6.9H9.3l-3.4 2.8v-2.8H4.8z" />
-          <path {...common} d="M9 15.2h5.9l3.2 2.6v-2.6h1.1V8.7h-2" />
-        </>
-      )}
-      {name === 'memory' && (
-        <>
-          <path {...common} d="M6.2 5.2h7.3a2.4 2.4 0 0 1 2.4 2.4v12H8.1a2 2 0 0 1-2-2z" />
-          <path {...common} d="M8.9 5.2v14M11.2 8.3h3.1M11.2 11.3h4.7" />
-          <path {...common} d="M15.9 7.6h1.7a1.3 1.3 0 0 1 1.3 1.3v10.7h-3" />
+          {/* 实时聊天：圆角气泡 + 输入中圆点 */}
+          <path {...common} d="M2.6 7A2.9 2.9 0 0 1 5.5 4.1h13A2.9 2.9 0 0 1 21.4 7v5.6a2.9 2.9 0 0 1-2.9 2.9h-7.2l-4.3 3.6v-3.6H5.5A2.9 2.9 0 0 1 2.6 12.6z" />
+          <circle {...filledDot} cx="7.6" cy="9.8" r="1.05" />
+          <circle {...filledDot} cx="12" cy="9.8" r="1.05" />
+          <circle {...filledDot} cx="16.4" cy="9.8" r="1.05" />
         </>
       )}
       {name === 'conductor' && (
         <>
-          <path {...common} d="M6 6.1h4.2v4.2H6zM13.8 6.1H18v4.2h-4.2zM9.9 15h4.2v4.2H9.9z" />
-          <path {...common} d="M10.2 8.2h3.6M12 10.3V15" />
+          {/* 指挥模式：横眼监看 + 向下派发三支箭头 */}
+          <path {...common} d="M6.9 6.1C8.3 4.2 10 3.1 12 3.1s3.7 1.1 5.1 3C15.7 8 14 9.1 12 9.1s-3.7-1.1-5.1-3Z" />
+          <circle {...filledDot} cx="12" cy="6.1" r="1.4" />
+          <path {...common} d="M12 9.4 3.4 18.9M12 9.4v12.2M12 9.4l8.6 9.5" />
+          <path {...common} d="m5.9 18.3-2.5.6.4-2.5" />
+          <path {...common} d="m18.1 18.3 2.5.6-.4-2.5" />
+          <path {...common} d="m10.1 19.7 1.9 1.9 1.9-1.9" />
         </>
       )}
       {name === 'goalHive' && (
         <>
-          <path {...common} d="M12 3.9 16.1 6.3v4.8L12 13.5 7.9 11.1V6.3z" />
-          <path {...common} d="M7.8 12.9 11.9 15.3v4.2l-4.1-2.3-4-2.4v-4.2z" />
-          <path {...common} d="M16.2 12.9v4.3l-4.1 2.3v-4.2z" />
+          {/* Goal 模式：靶心 */}
+          <circle {...common} cx="12" cy="12" r="8.6" />
+          <circle {...common} cx="12" cy="12" r="4.5" />
+          <circle {...filledDot} cx="12" cy="12" r="1.4" />
+        </>
+      )}
+      {name === 'conversations' && (
+        <>
+          {/* 历史对话：书叠（归档成册） */}
+          <rect {...common} x="4.9" y="6.6" width="14.2" height="6.4" rx="1.4" />
+          <path {...common} d="M8.7 6.6v6.4" />
+          <rect {...common} x="2.6" y="13.4" width="18.8" height="6.4" rx="1.4" />
+          <path {...common} d="M6.4 13.4v6.4" />
+        </>
+      )}
+      {name === 'memory' && (
+        <>
+          {/* 记忆体系：标准双半球大脑（放大重描 + 褶皱） */}
+          <path {...common} d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z" />
+          <path {...common} d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z" />
+          <path {...common} d="M6.2 9.4c1.2-.5 2.4-.3 3.3.6M17.8 9.4c-1.2-.5-2.4-.3-3.3.6" />
         </>
       )}
       {name === 'mykey' && (
         <>
-          <circle {...common} cx="8.5" cy="10" r="3.5" />
-          <path {...common} d="M11 12.5 18.6 20M15 16.4l2.1-2.1M17.1 18.5l1.5-1.5" />
-          <circle {...filledDot} cx="8.5" cy="10" r="0.85" />
+          {/* LLM 管理：钥匙 */}
+          <circle {...common} cx="7.4" cy="8.6" r="4.4" />
+          <path {...common} d="M10.6 11.8 20.6 21.4M15.8 17l1.8-1.8M18 19.2l1.5-1.5" />
         </>
       )}
       {name === 'tasks' && (
         <>
-          <path {...common} d="M6.4 5.6h11.2v13.2H6.4z" />
-          <path {...common} d="M8.8 9.2l1.2 1.2 2.2-2.4M13.8 9.8h2.2M8.8 14.5l1.2 1.2 2.2-2.4M13.8 15.1h2.2" />
+          {/* 定时任务：钟面 */}
+          <circle {...common} cx="12" cy="12" r="8.6" />
+          <path {...common} d="M12 7.2V12l3.2 2.2" />
         </>
       )}
       {name === 'autonomous' && (
         <>
-          <path {...common} d="M18.5 11.2a6.5 6.5 0 0 0-11-4.1L6 8.5M5.5 12.8a6.5 6.5 0 0 0 11 4.1l1.5-1.4" />
-          <path {...common} d="M6 4.8v3.7h3.7M18 19.2v-3.7h-3.7" />
-          <circle {...common} cx="12" cy="12" r="2.5" />
-          <circle {...filledDot} cx="12" cy="12" r="0.8" />
+          {/* 自主进化：循环 + 实心聚点 */}
+          <path {...common} d="M19.5 11a7.6 7.6 0 0 0-13-4.8L4.8 7.9" />
+          <path {...common} d="M5 3.6v4.3h4.3" />
+          <path {...common} d="M4.5 13a7.6 7.6 0 0 0 13 4.8l1.7-1.7" />
+          <path {...common} d="M19 20.4v-4.3h-4.3" />
+          <circle {...filledDot} cx="12" cy="12" r="1.15" />
         </>
       )}
       {name === 'tokens' && (
         <>
-          <path {...common} d="M5 18.5V12M10 18.5V8M15 18.5V5M20 18.5V10" />
-          <path {...common} d="M3.5 18.5h18" />
+          {/* 用量统计：柱状 */}
+          <path {...common} d="M4.2 19.6v-7.4M9.4 19.6v-12M14.6 19.6v-15.4M19.8 19.6v-10" />
+          <path {...common} d="M2.6 19.6h18.8" />
         </>
       )}
       {name === 'settings' && (
         <>
-          <path {...common} d="M12 5.2v2M12 16.8v2M5.2 12h2M16.8 12h2M7.2 7.2l1.4 1.4M15.4 15.4l1.4 1.4M16.8 7.2l-1.4 1.4M8.6 15.4l-1.4 1.4" />
-          <circle {...common} cx="12" cy="12" r="4.1" />
+          {/* 系统设置：齿轮 */}
+          <path {...common} d="M12 3.4v2.2M12 18.4v2.2M3.4 12h2.2M18.4 12h2.2M5.9 5.9l1.6 1.6M16.5 16.5l1.6 1.6M18.1 5.9l-1.6 1.6M7.5 16.5l-1.6 1.6" />
+          <circle {...common} cx="12" cy="12" r="4.2" />
           <circle {...filledDot} cx="12" cy="12" r="1.1" />
         </>
       )}
@@ -185,52 +204,51 @@ export function SidebarNav() {
       </nav>
 
       <div className={clsx('flex flex-col gap-1.5 pb-2.5 pt-1.5', collapsed ? 'items-center px-1.5' : 'px-2.5')}>
-        {collapsed ? (
-          <>
-            <button
-              type="button"
-              onClick={openCommandPalette}
-              aria-label="命令面板 (Ctrl K)"
-              title="命令面板 (Ctrl K)"
-              className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/6 text-[#EFE5CA] hover:bg-white/10 hover:border-white/20 transition"
-            >
-              <svg className="ga-nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="2.15" strokeLinecap="round">
-                <circle cx="11" cy="11" r="5.5" />
-                <path d="M15.2 15.2 20 20" />
-              </svg>
-            </button>
-            <NavLink
-              to="/settings"
-              onMouseEnter={() => preloadRoute('/settings')}
-              onFocus={() => preloadRoute('/settings')}
-              className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/6 text-[#EFE5CA] hover:bg-white/10 hover:border-white/20 transition"
-              aria-label="系统设置"
-              title="系统设置"
-            >
-              <NavIcon name="settings" />
-            </NavLink>
-          </>
-        ) : (
+        {!collapsed && (
           <button
             type="button"
             onClick={openCommandPalette}
-            className="w-full rounded-xl border border-white/10 bg-white/6 px-2.5 py-1.5 text-left text-xs text-[#EFE5CA] hover:bg-white/10 hover:border-white/20 transition flex items-center justify-between gap-2"
+            className="ga-cmd-row"
           >
             <span>命令面板</span>
-            <kbd className="px-1.5 py-0.5 rounded-md border border-white/12 bg-black/16 font-mono text-[11px] text-[#EFE5CA]/80">Ctrl K</kbd>
+            <kbd className="ga-cmd-kbd">Ctrl K</kbd>
           </button>
+        )}
+        {collapsed && (
+          <NavLink
+            to="/settings"
+            onMouseEnter={() => preloadRoute('/settings')}
+            onFocus={() => preloadRoute('/settings')}
+            className="ga-sidebar-fold ga-sidebar-fold-collapsed"
+            aria-label="系统设置"
+            title="系统设置"
+          >
+            <NavIcon name="settings" />
+          </NavLink>
         )}
         <button
           type="button"
           onClick={toggleCollapsed}
           aria-label="折叠/展开导航栏"
-          title="折叠/展开导航栏"
+          title={collapsed ? '展开导航栏' : '折叠导航栏'}
           className={clsx(
-            'flex items-center rounded-xl border border-white/10 bg-white/6 text-xs text-[#EFE5CA]/90 hover:bg-white/10 hover:border-white/20 transition',
-            collapsed ? 'h-8 w-8 justify-center' : 'w-full justify-between px-2.5 py-1.5',
+            'ga-sidebar-fold',
+            collapsed ? 'ga-sidebar-fold-collapsed' : '',
           )}
         >
-          <span aria-hidden="true">{collapsed ? '»' : '«'}</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" className="ga-sidebar-fold-icon">
+            {collapsed ? (
+              <>
+                <path d="m10 17 5-5-5-5" />
+                <path d="m16 17 5-5-5-5" transform="translate(-2 0)" />
+              </>
+            ) : (
+              <>
+                <path d="m14 17-5-5 5-5" />
+                <path d="m8 17-5-5 5-5" transform="translate(2 0)" />
+              </>
+            )}
+          </svg>
           {!collapsed && <span>折叠</span>}
         </button>
       </div>

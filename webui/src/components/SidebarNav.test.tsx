@@ -58,8 +58,9 @@ describe('SidebarNav', () => {
       expect(link.getAttribute('title')).toBeTruthy()
     }
     expect(host.querySelector('[aria-label="展开导航栏"]')).not.toBeNull()
-    expect(host.querySelector('[aria-label="命令面板 (Ctrl K)"]')).not.toBeNull()
-    expect(host.textContent).not.toContain('命令面板')
+    // 放大镜命令面板入口已按设计移除；命令面板行折叠时直接隐藏（与设置行 30px 等高互换）
+    expect(host.querySelector('[aria-label="命令面板 (Ctrl K)"]')).toBeNull()
+    expect(host.querySelector('.ga-cmd-row')).toBeNull()
 
     act(() => {
       ;(host.querySelector('[aria-label="折叠/展开导航栏"]') as HTMLButtonElement).click()
@@ -68,7 +69,8 @@ describe('SidebarNav', () => {
     expect(aside.getAttribute('data-collapsed')).toBe('false')
     expect(localStorage.getItem('gahub.sidebar.collapsed')).toBe('0')
     expect(host.textContent).toContain('实时聊天')
-    expect(host.querySelector('[aria-label="系统设置"]')).not.toBeNull()
+    expect(host.querySelector('.ga-cmd-row')).not.toBeNull()
+    expect(host.textContent).toContain('命令面板')
   })
 
   it('starts collapsed from persisted preference and expands on toggle', async () => {
@@ -76,8 +78,8 @@ describe('SidebarNav', () => {
     await renderNav()
     const aside = host.querySelector('aside') as HTMLElement
     expect(aside.getAttribute('data-collapsed')).toBe('true')
-    expect(host.textContent).not.toContain('命令面板')
-    expect(host.querySelector('[aria-label="命令面板 (Ctrl K)"]')).not.toBeNull()
+    expect(host.querySelector('.ga-cmd-row')).toBeNull()
+    expect(host.querySelector('[aria-label="命令面板 (Ctrl K)"]')).toBeNull()
     expect(host.querySelector('.ga-brand-mark [aria-label="系统设置"]')).toBeNull()
     expect(host.querySelectorAll('[aria-label="系统设置"]').length).toBe(1)
 

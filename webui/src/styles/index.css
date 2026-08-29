@@ -477,9 +477,11 @@ html.dark .ga-panel {
   grid-template-columns: 30px max-content 30px;
   align-items: center;
   justify-content: center;
+  /* 恒定行高：两态图标垂直中心逐项对齐，切换不跳动 */
+  height: 2.875rem;
   column-gap: 0.4rem;
   margin: 0.18rem 0.25rem;
-  padding: 0.5rem 0.35rem;
+  padding: 0 0.35rem;
   border-radius: 10px;
   font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', Georgia, serif;
   font-size: 1.02rem;
@@ -560,8 +562,8 @@ html.dark .ga-panel {
   translate: 0.5rem 0;
 }
 .ga-sidebar .ga-nav-svg {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   display: block;
   filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.22));
 }
@@ -768,7 +770,9 @@ html.dark .ga-panel {
 
 /* Sidebar brand row and mark */
 .ga-sidebar-brand-row {
-  padding: 0.72rem 0.5rem 0.72rem 0.78rem;
+  /* 恒定行高：折叠/展开两态下 logo 垂直中心点完全一致，切换零抖动 */
+  height: 4.5rem;
+  padding: 0 0.5rem 0 0.78rem;
 }
 .ga-brand-mark {
   position: relative;
@@ -802,6 +806,9 @@ html.dark .ga-panel {
   display: grid;
   place-items: center;
   border-radius: 12px;
+  /* 尺寸变化以中心为锚平滑过渡（与侧栏宽度同一缓动） */
+  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1),
+              height 300ms cubic-bezier(0.22, 1, 0.36, 1);
   background:
     radial-gradient(circle at 30% 22%, rgba(255, 244, 205, 0.34), transparent 30%),
     linear-gradient(145deg, #E4C884 0%, #9E7139 46%, #35543F 100%);
@@ -843,6 +850,10 @@ html.dark .ga-panel {
   letter-spacing: -0.06em;
   color: #FFF1C7;
   text-shadow: 0 1px 0 rgba(48, 30, 14, 0.55), 0 0 10px rgba(255, 220, 150, 0.22);
+  transition: font-size 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ga-brand-orb::after {
+  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .ga-brand-text {
   display: flex;
@@ -895,18 +906,111 @@ html.dark .ga-panel {
   white-space: nowrap;
 }
 
-/* Collapsed sidebar (icon rail) */
+/* Collapsed sidebar (icon rail) — 折叠态有自己的设计语言，不沿用展开态 */
 .ga-sidebar[data-collapsed='true'] .ga-sidebar-brand-row {
-  padding: 0.72rem 0;
+  padding: 0;
   justify-content: center;
 }
-.ga-sidebar[data-collapsed='true'] .ga-brand-core {
-  gap: 0;
-}
-.ga-sidebar-item-collapsed {
+.ga-sidebar[data-collapsed='true'] .ga-brand-mark {
   justify-content: center;
+  width: auto;
+}
+.ga-sidebar[data-collapsed='true'] .ga-brand-core { gap: 0; }
+.ga-sidebar[data-collapsed='true'] .ga-brand-orb {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+.ga-sidebar[data-collapsed='true'] .ga-brand-orb::after { width: 24px; }
+.ga-sidebar[data-collapsed='true'] .ga-brand-ga { font-size: 0.98rem; }
+/* 图标项：同一恒定行高，仅水平方向收窄居中 */
+.ga-sidebar[data-collapsed='true'] .ga-sidebar-item {
+  display: flex;
+  justify-content: center;
+  width: 42px;
+  height: 2.875rem;
+  margin-left: auto;
+  margin-right: auto;
   padding-left: 0;
   padding-right: 0;
+  grid-template-columns: none;
+}
+.ga-sidebar[data-collapsed='true'] .ga-sidebar-item::before { content: none; }
+.ga-sidebar[data-collapsed='true'] .ga-sidebar-item:hover,
+.ga-sidebar[data-collapsed='true'] .ga-sidebar-item.active { transform: none; }
+.ga-sidebar[data-collapsed='true'] .ga-nav-icon {
+  translate: 0 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+.ga-sidebar[data-collapsed='true'] .ga-nav-svg { width: 21px; height: 21px; }
+/* 折叠按钮：双箭头 ghost 图标钮（两态同高，页脚堆叠几何一致） */
+.ga-sidebar-fold {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(239, 229, 202, 0.88);
+  font-size: 0.78rem;
+  padding: 0 0.6rem;
+  cursor: pointer;
+  transition: background 180ms ease, border-color 180ms ease, color 180ms ease;
+}
+.ga-sidebar-fold:hover {
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.20);
+  color: #FFF1CF;
+}
+.ga-sidebar-fold-collapsed {
+  width: 30px;
+  justify-content: center;
+  padding: 0;
+}
+.ga-sidebar-fold-icon { width: 15px; height: 15px; flex: none; }
+.ga-sidebar-fold .ga-nav-svg { width: 17px; height: 17px; filter: none; }
+/* 命令面板行：条件挂载（折叠时直接隐藏，与设置行 30px 等高互换，页脚零位移）。
+   nowrap + overflow hidden 保证展开挂载瞬间不换行（换行才是历史跳动的元凶），
+   入场淡入带延迟，遮住侧栏宽度未长开时的文字裁切态。 */
+.ga-cmd-row {
+  height: 30px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  overflow: hidden;
+  white-space: nowrap;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0 0.625rem;
+  text-align: left;
+  font-size: 0.75rem;
+  color: #EFE5CA;
+  cursor: pointer;
+  animation: ga-cmd-row-in 240ms ease 100ms backwards;
+}
+.ga-cmd-row:hover {
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.20);
+}
+.ga-cmd-kbd {
+  padding: 0.125rem 0.375rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.16);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: rgba(239, 229, 202, 0.8);
+  flex: none;
+}
+@keyframes ga-cmd-row-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 .ga-brand-toggle {
   display: flex;
