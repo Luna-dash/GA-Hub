@@ -327,10 +327,9 @@ def test_mykey_sync_reports_missing_cryptography_actionably(tmp_path):
 @pytest.mark.parametrize(
     ("environment", "expected_url"),
     [
-        ({}, "https://sector.lunadash.me/api/mykey/upload"),
-        ({"GA_MYKEY_SYNC_URL": "https://mirror.example/"}, "https://mirror.example/api/mykey/upload"),
-        ({"GA_MYKEY_SYNC_UPLOAD_URL": "https://upload.example/custom"}, "https://upload.example/custom"),
-    ],
+        ({}, "https://ga.lunadash.me"),
+        ({"GA_MYKEY_SYNC_URL": "https://mirror.example/"}, "https://mirror.example"),
+            ],
 )
 def test_mykey_upload_route_preserves_sync_cli_url_contract(tmp_path, environment, expected_url):
     target = tmp_path / "mykey.py"

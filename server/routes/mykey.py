@@ -399,7 +399,7 @@ def _mykey_sync_script() -> Path:
 
 
 def _sync_base_url() -> str:
-    return os.environ.get("GA_MYKEY_SYNC_URL", "https://sector.lunadash.me").rstrip("/")
+    return os.environ.get("GA_MYKEY_SYNC_URL", "https://ga.lunadash.me").rstrip("/")
 
 
 _MYKEY_MIN_PYTHON = (3, 11)
@@ -615,10 +615,10 @@ async def sync_upload_mykey() -> MyKeySyncResultResp:
     p = _mykey_path()
     if not p.is_file():
         raise HTTPException(404, "mykey.py 不存在")
-    upload_url = os.environ.get("GA_MYKEY_SYNC_UPLOAD_URL") or f"{_sync_base_url()}/api/mykey/upload"
+    # EdgeOne static-embed 迁移(2026-08): --upload-url 语义=上传后字节级校验的站点 base URL
     result = await asyncio.to_thread(_run_mykey_sync, [
         "upload",
-        "--upload-url", upload_url,
+        "--upload-url", _sync_base_url(),
         "--source", str(p),
     ])
     return {"ok": True, "action": "upload", "path": str(p), **result}
