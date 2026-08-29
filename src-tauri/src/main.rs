@@ -1163,12 +1163,16 @@ fn spawn_background_shutdown(handle: tauri::AppHandle, exit: ExitCoordinator) {
     });
 }
 
-/// 自适应屏幕：设计基准 1320×860 逻辑像素。所在显示器的工作区放得下时
-/// 保持设计尺寸居中；放不下（小面板 + 系统缩放会把逻辑工作区压到千像素
-/// 以下，如 1368×912@150% ≈ 912×608 逻辑）则把还原尺寸钳进工作区并最大化。
+/// 自适应屏幕：设计基准 1320×860 逻辑客户区。所有尺寸/位置约束都作用在
+/// **外框**上——客户区贴边通过 ≠ 外框入界（200% 缩放屏 860 客户区 + 36
+/// 装饰 = 896 外框 > 864 工作区，底部压进任务栏）。装饰增量建窗后实测；
+/// Windows 的 center() 按整屏居中、无视任务栏，定位一律显式钳制。
 fn fit_main_window_to_work_area<R: Runtime>(window: &WebviewWindow<R>) {
     const DESIGN_W: f64 = 1320.0;
     const DESIGN_H: f64 = 860.0;
+    const EDGE_MARGIN: f64 = 16.0; // 工作区每边呼吸边距（逻辑 px）
+    const ABSOLUTE_MIN_W: f64 = 640.0;
+    const ABSOLUTE_MIN_H: f64 = 480.0;
     let monitor = match window.current_monitor().ok().flatten() {
         Some(monitor) => monitor,
         None => match window.primary_monitor().ok().flatten() {
@@ -1180,18 +1184,41 @@ fn fit_main_window_to_work_area<R: Runtime>(window: &WebviewWindow<R>) {
     if scale <= 0.0 {
         return;
     }
-    let work_area = monitor.work_area().size;
-    let avail_w = f64::from(work_area.width) / scale;
-    let avail_h = f64::from(work_area.height) / scale;
-    if avail_w >= DESIGN_W && avail_h >= DESIGN_H {
-        return; // 常规分辨率：设计尺寸直接可用
+    let work = monitor.work_area();
+    let work_x = f64::from(work.position.x) / scale;
+    let work_y = f64::from(work.position.y) / scale;
+    let avail_w = f64::from(work.size.width) / scale;
+    let avail_h = f64::from(work.size.height) / scale;
+    // 装饰增量 = 外框 − 客户区（物理 px 实测 → 逻辑）
+    let (Ok(outer), Ok(inner)) = (window.outer_size(), window.inner_size()) else {
+        return;
+    };
+    let decor_w = f64::from(outer.width.saturating_sub(inner.width)) / scale;
+    let decor_h = f64::from(outer.height.saturating_sub(inner.height)) / scale;
+    // 外框 ≤ 工作区 − 2×边距 反解出的客户区上限
+    let max_w = (avail_w - EDGE_MARGIN * 2.0 - decor_w).max(ABSOLUTE_MIN_W);
+    let max_h = (avail_h - EDGE_MARGIN * 2.0 - decor_h).max(ABSOLUTE_MIN_H);
+    if avail_w - EDGE_MARGIN * 2.0 - decor_w < ABSOLUTE_MIN_W
+        || avail_h - EDGE_MARGIN * 2.0 - decor_h < ABSOLUTE_MIN_H
+    {
+        // 极小屏：连下限都装不下，最大化是唯一体面解
+        let _ = window.maximize();
+        return;
     }
-    // 小逻辑工作区：还原尺寸钳到工作区 98%，启动即最大化铺满
-    let restore_w = (avail_w * 0.98).min(DESIGN_W).max(760.0);
-    let restore_h = (avail_h * 0.98).min(DESIGN_H).max(540.0);
-    let _ = window.set_size(tauri::LogicalSize::new(restore_w, restore_h));
-    let _ = window.center();
-    let _ = window.maximize();
+    let target_w = DESIGN_W.min(max_w);
+    let target_h = DESIGN_H.min(max_h);
+    let _ = window.set_size(tauri::LogicalSize::new(target_w, target_h));
+    // 外框在工作区内居中（天然满足边距），钳制只作兜底
+    let outer_w = target_w + decor_w;
+    let outer_h = target_h + decor_h;
+    let px = work_x + ((avail_w - outer_w) / 2.0).max(0.0);
+    let py = work_y + ((avail_h - outer_h) / 2.0).max(0.0);
+    let px = px.clamp(work_x, work_x + (avail_w - outer_w).max(0.0));
+    let py = py.clamp(work_y, work_y + (avail_h - outer_h).max(0.0));
+    let _ = window.set_position(tauri::PhysicalPosition::new(
+        (px * scale).round() as i32,
+        (py * scale).round() as i32,
+    ));
 }
 
 fn main_window_is_offscreen<R: Runtime>(window: &WebviewWindow<R>) -> bool {
@@ -1296,8 +1323,8 @@ fn main() {
                 .on_navigation(is_allowed_main_navigation)
                 .title("GA-Hub")
                 .inner_size(1320.0, 860.0)
-                // min 必须小于最小常见逻辑工作区（1368×912@150% ≈ 894×596），否则小屏无法容纳
-                .min_inner_size(760.0, 540.0)
+                // min 与 ABSOLUTE_MIN 对齐：更小的逻辑工作区走最大化兜底
+                .min_inner_size(640.0, 480.0)
                 .center()
                 .resizable(true)
                 .build()?;
