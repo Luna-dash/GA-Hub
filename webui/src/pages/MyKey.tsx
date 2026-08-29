@@ -25,6 +25,7 @@ import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
+import { getMyKeyShowUpload, MYKEY_SHOW_UPLOAD_EVENT } from '@/utils/mykeySyncUi'
 
 type Tab = 'structured' | 'raw'
 
@@ -41,6 +42,13 @@ export default function MyKey() {
   const qc = useQueryClient()
   const [tab, setTab] = usePageState<Tab>('mykey.tab', 'structured')
   const [syncBusy, setSyncBusy] = useState<'upload' | 'fetch' | null>(null)
+  // 上传按钮默认隐藏；在设置页手动确认后才显示（跨页同步经 localStorage + 自定义事件）。
+  const [showUpload, setShowUpload] = useState(getMyKeyShowUpload)
+  useEffect(() => {
+    const sync = () => setShowUpload(getMyKeyShowUpload())
+    window.addEventListener(MYKEY_SHOW_UPLOAD_EVENT, sync)
+    return () => window.removeEventListener(MYKEY_SHOW_UPLOAD_EVENT, sync)
+  }, [])
   const { data, isLoading, refetch } = useQuery({ queryKey: queryKeys.mykey.data, queryFn: api.mykey })
 
   const onWriteResult = (r: MyKeyWriteResult) => {
@@ -124,7 +132,9 @@ export default function MyKey() {
             ))}
           </div>
           <button onClick={() => refetch()} className="ga-btn">↻ 刷新</button>
-          <button onClick={handleUploadSync} disabled={syncBusy !== null} className="ga-btn">{syncBusy === 'upload' ? '上传中…' : '⬆ 上传mykey'}</button>
+          {showUpload && (
+            <button onClick={handleUploadSync} disabled={syncBusy !== null} className="ga-btn">{syncBusy === 'upload' ? '上传中…' : '⬆ 上传mykey'}</button>
+          )}
           <button onClick={handleFetchSync} disabled={syncBusy !== null} className="ga-btn">{syncBusy === 'fetch' ? '下载中…' : '⬇ 下载mykey'}</button>
           <button onClick={handleOpenFile} className="ga-btn">📂 打开文件</button>
         </div>

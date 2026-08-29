@@ -9,6 +9,7 @@ import { api } from '@/api/client'
 import type { ChatRetryConfig } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { useNotifyStore } from '@/utils/notify'
+import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import {
   CHAT_FONT_SCALE_DEFAULT, CHAT_FONT_SCALE_MAX, CHAT_FONT_SCALE_MIN, CHAT_FONT_SCALE_STEP,
@@ -23,6 +24,7 @@ import {
 } from '@/config/navigation'
 import { isTauriDesktop, restartDesktopBackend, selectDirectory } from '@/utils/desktop'
 import { waitForDesktopRestart } from '@/utils/backendRestart'
+import { getMyKeyShowUpload, setMyKeyShowUpload } from '@/utils/mykeySyncUi'
 import { queryKeys } from '@/queries/queryKeys'
 export default function Settings({ initialMode = 'settings' }: { initialMode?: 'settings' | 'setup' }) {
   const qc = useQueryClient()
@@ -245,6 +247,8 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
 
         {!inSetup && <NavManagementPanel />}
 
+        {!inSetup && <MyKeySyncPanel />}
+
         {!inSetup && <ChatAppearancePanel />}
 
         {!inSetup && <ChatRetryPanel />}
@@ -302,6 +306,47 @@ function NavManagementPanel() {
           )
         })}
       </div>
+    </div>
+  )
+}
+
+
+function MyKeySyncPanel() {
+  const [showUpload, setShowUpload] = useState(getMyKeyShowUpload)
+
+  const toggle = async () => {
+    if (showUpload) {
+      setShowUpload(setMyKeyShowUpload(false))
+      return
+    }
+    // 开启前手动确认：上传会以本机内容覆盖同步服务器版本。
+    const ok = await dialog.confirm(
+      '显示「上传 mykey」按钮？',
+      '上传会用当前本机 mykey.py 加密覆盖同步服务器上的版本，其他设备下载后将获得该版本。'
+      + '\n\n确认要在 LLM 管理页显示上传按钮吗？',
+      { confirmText: '确认显示' },
+    )
+    if (!ok) return
+    setShowUpload(setMyKeyShowUpload(true))
+    toast.success('已显示上传按钮')
+  }
+
+  return (
+    <div className="bg-bg-card border border-line rounded-xl p-4">
+      <div className="font-medium mb-1">mykey 同步</div>
+      <div className="text-xs text-slate-500 mb-3">
+        LLM 管理页默认只提供「下载 mykey」。「上传 mykey」会用本机内容覆盖同步服务器版本、
+        影响其他设备，默认隐藏；在此手动确认后才显示。
+      </div>
+      <button
+        type="button"
+        onClick={toggle}
+        className={`px-3 py-1.5 rounded-lg text-sm transition ${
+          showUpload ? 'bg-accent text-white' : 'border border-line text-slate-300 hover:bg-white/5'
+        }`}
+      >
+        {showUpload ? '上传按钮已显示 · 点击隐藏' : '显示上传按钮…'}
+      </button>
     </div>
   )
 }
