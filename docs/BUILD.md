@@ -35,9 +35,12 @@ python scripts\build_all.py
 无需在任何机器上装任何工具链：
 
 1. `git push` 到 main（或 Actions 页面手动 `workflow_dispatch`）
-2. 打开仓库 **Actions → desktop-build** 等待绿灯（首次约 15-25 分钟，
-   之后有 cargo/npm 缓存会快很多）
-3. 任务页底部 **Artifacts** 下载 `ga-hub-desktop-windows` → 解压即用
+2. 打开仓库 **Actions → desktop-build** 等待绿灯（冷缓存 ~9 分钟，
+   有 cargo/npm 缓存后 ~4-5 分钟）
+3. 任务页底部 **Artifacts** 下载 `ga-hub-desktop-windows`，解压出
+   **两个文件**——`ga-hub-desktop.exe` + `ga-hub-sidecar.exe`，
+   **必须放在同一目录**（sidecar 是 Python 后端，主 exe 启动时从
+   自己旁边解析它），双击主 exe 即用
 
 工作流定义：`.github/workflows/desktop-build.yml`。
 

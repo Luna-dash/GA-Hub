@@ -61,5 +61,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ga-hub-desktop-windows
-          path: src-tauri/target/x86_64-pc-windows-msvc/release/ga-hub-desktop.exe
+          # 主 exe（内嵌前端）+ sidecar（Python 后端，运行时从主 exe 旁边解析）。
+          # 两者必须放在同一目录，缺 sidecar 应用无法启动。
+          path: |
+            src-tauri/target/x86_64-pc-windows-msvc/release/ga-hub-desktop.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/ga-hub-sidecar.exe
           if-no-files-found: error
