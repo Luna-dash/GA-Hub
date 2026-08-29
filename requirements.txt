@@ -1,0 +1,15 @@
+# GA-Hub 桌面端构建与运行依赖（sidecar 打包 + 后端测试）。
+# 任何机器：python -m pip install -r requirements.txt 后即可 python scripts/build_all.py
+# 版本对齐当前开发环境（conda env ga / Python 3.12）；升级时保持整组一起升。
+fastapi==0.136.1
+uvicorn==0.46.0
+pydantic==2.13.3
+psutil==7.2.2
+requests==2.34.0
+APScheduler==3.11.2
+pycryptodome==3.23.0
+httpx==0.28.1
+
+# 构建与测试工具链
+pyinstaller==6.21.0
+pytest==9.1.1

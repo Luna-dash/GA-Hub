@@ -19,7 +19,14 @@
 
 环境变量：
     GA_HUB_PYTHON   sidecar 构建使用的解释器（默认依次探测
-                    D:\\APP\\anaconda3\\envs\\ga\\python.exe → 当前解释器）
+                    本机惯用解释器 → 当前解释器；脚本自身与路径无关，
+                    换机器无需改动）
+
+通用性约定：
+    - 所有路径由 __file__ 推导，仓库放任何位置都能构建
+    - 依赖一次性写入 requirements.txt，pip install -r 后即可构建
+    - 完全没有环境的机器用 GitHub Actions（.github/workflows/desktop-build.yml）
+      云端构建，Actions 页面直接下载 ga-hub-desktop.exe
 """
 from __future__ import annotations
 
@@ -61,12 +68,28 @@ def _stage(name: str) -> None:
 
 
 def resolve_sidecar_python() -> str:
+    """解释器解析与机器解耦：显式 env → 当前解释器 → 本机惯用回退。
+
+    当前解释器（sys.executable）是自然的默认值——用哪个 python 启动
+    build_all，就用哪个 python 打包 sidecar，两侧行为永远一致。
+    """
     env = os.environ.get("GA_HUB_PYTHON", "").strip()
     if env:
         return env
-    if _CONDA_GA_PYTHON.is_file():
+    current = sys.executable
+    if current and _has_pyinstaller(current):
+        return current
+    if _CONDA_GA_PYTHON.is_file() and _has_pyinstaller(str(_CONDA_GA_PYTHON)):
         return str(_CONDA_GA_PYTHON)
-    return sys.executable or "python"
+    return current or "python"
+
+
+def _has_pyinstaller(python: str) -> bool:
+    probe = subprocess.run(
+        [python, "-c", "import PyInstaller"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    return probe.returncode == 0
 
 
 def resolve_npm() -> str:
@@ -81,8 +104,11 @@ def run_stage(title: str, cmd: list[str]) -> float:
     """Run one build stage, streaming output; abort the chain on failure."""
     _stage(title)
     _log("$ " + " ".join(cmd))
+    # Windows 控制台默认 GBK，子进程输出含 ✓/中文时会炸编码——全链路统一 UTF-8
+    env = dict(os.environ)
+    env.setdefault("PYTHONUTF8", "1")
     started = time.monotonic()
-    result = subprocess.run(cmd, cwd=str(ROOT))
+    result = subprocess.run(cmd, cwd=str(ROOT), env=env)
     elapsed = time.monotonic() - started
     if result.returncode != 0:
         _log(f"✗ {title} 失败（exit {result.returncode}，耗时 {elapsed:.1f}s）— 链式中止")
@@ -101,16 +127,17 @@ def preflight(sidecar_python: str, npm: str) -> None:
     problems: list[str] = []
     if not npm:
         problems.append("未找到 npm —— 请安装 Node.js 18+ 并确保 npm 在 PATH 中")
+    if shutil.which("cargo") is None:
+        problems.append(
+            "未找到 cargo —— 请安装 Rust 工具链（https://rustup.rs），"
+            "Windows 还需 MSVC Build Tools（x86_64-pc-windows-msvc 目标）"
+        )
     if not (ROOT / "webui").is_dir():
         problems.append("缺少 webui/ 目录")
-    probe = subprocess.run(
-        [sidecar_python, "-c", "import PyInstaller"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    if probe.returncode != 0:
+    if not _has_pyinstaller(sidecar_python):
         problems.append(
             f"解释器缺少 PyInstaller：{sidecar_python}\n"
-            f"  先执行：\"{sidecar_python}\" -m pip install pyinstaller"
+            f"  先执行：\"{sidecar_python}\" -m pip install -r requirements.txt"
         )
     if problems:
         for problem in problems:
@@ -156,10 +183,9 @@ def main(argv: list[str] | None = None) -> int:
         stat = artifact.stat()
         before = (stat.st_mtime_ns, stat.st_size)
 
-    python = shutil.which("python") or "python"
-
     if args.full:
-        run_stage("后端测试", [python, "-m", "pytest", "-q"])
+        # pytest 与 PyInstaller 同环境（requirements.txt 一并安装）
+        run_stage("后端测试", [sidecar_python, "-m", "pytest", "-q"])
         run_stage("前端测试", [npm, "--prefix", "webui", "test", "--", "--run"])
 
     run_stage("前端生产构建", [npm, "--prefix", "webui", "run", "build"])
