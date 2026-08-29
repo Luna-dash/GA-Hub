@@ -340,6 +340,7 @@ class HubConductorCallbacks:
 
     def on_conductor_request_finished(self, request_id: str) -> None:
         try:
+            self._fail_unhandled_request(request_id)
             self._publish_request_outcome(
                 request_id,
                 status="ok",
@@ -347,6 +348,42 @@ class HubConductorCallbacks:
             )
         except Exception:
             log.exception("request finished handling failed")
+
+    def _fail_unhandled_request(self, request_id: str) -> None:
+        """Close the false-success window for requests the turn never touched.
+
+        The engine reports ``ok`` when a supervisor turn ends naturally, even
+        when one request of a coalesced batch was never dispatched and never
+        answered — left alone, that request strands in ``admitted`` forever
+        while the UI shows a successful turn. If nothing trackable happened
+        (no worker, no conductor chat, no final), record a visible workflow
+        failure instead of an implicit success.
+        """
+        if not request_id:
+            return
+        tracker = self.service._ensure_workflow_tracker()
+        snapshot = tracker.snapshot(request_id)
+        if snapshot is None or snapshot.get("status") in {
+                "completed", "failed", "cancelled", "killed"}:
+            return
+        if snapshot.get("subagents") or snapshot.get("item"):
+            return
+        with self.service._chat_lock:
+            answered = any(
+                item.get("role") == "conductor"
+                and item.get("request_id") == request_id
+                for item in self.service.chat_messages
+            )
+        if answered:
+            return
+        transition = tracker.fail_supervisor(
+            request_id,
+            phase="finish",
+            error="supervisor turn finished without dispatching a worker "
+                  "or answering this request",
+        )
+        if transition is not None:
+            self.service._publish_workflow_transition(transition)
 
     def on_conductor_request_yielded(self, request_id: str,
                                      outcome=None) -> None:
@@ -880,6 +917,10 @@ class ConductorService:
                 conductor_reasoning_effort=getattr(
                     self, "_conductor_reasoning_effort", None),
             )
+            # /start restores only the conductor model and effort; re-push the
+            # full hub-owned snapshot so the subagent policy survives the
+            # engine restart instead of silently resetting to follow_main.
+            self._push_models_to_engine()
         self.lifecycle_status()
         return True
 
@@ -911,8 +952,11 @@ class ConductorService:
         try:
             status = self.client.status()
         except Exception:
+            # A stale started=True cache is actively misleading: the engine
+            # may have exited after the last successful probe. Report a
+            # degraded, stopped state so the UI exposes recovery controls.
             status = dict(self._lifecycle_cache or {})
-            status.setdefault("started", False)
+            status["started"] = False
             status.setdefault("stopping", False)
             status.setdefault("admission_open", True)
             status.setdefault("loop_alive", False)
@@ -978,13 +1022,23 @@ class ConductorService:
                 self.pool.update(event.get("subagents") or [])
                 for item in (event.get("chat") or [])[-20:]:
                     self._on_remote_chat(item, from_hello=True)
+                # The engine forgets its model policy on every cold restart;
+                # a fresh SSE hello is the reliable "engine (re)connected"
+                # signal, so re-assert the hub-owned policy snapshot. The
+                # push is best-effort and idempotent.
+                self._push_models_to_engine()
             elif kind == "request_outcome":
+                rid = event.get("request_id")
+                if not rid:
+                    # Unattributed wakes have no workflow to transition;
+                    # forwarding them would publish request_id=None noise.
+                    log.debug("ignoring unattributed request_outcome event")
+                    return
                 outcome = SimpleNamespace(
                     status=event.get("status"),
                     phase=event.get("phase"),
                     error=event.get("error", ""),
                 )
-                rid = event.get("request_id")
                 if event.get("status") == "ok":
                     self.callbacks.on_conductor_request_finished(rid)
                 elif event.get("status") == "yielded":
@@ -1077,8 +1131,19 @@ class ConductorService:
         conductor_llm_index: Optional[int] = None,
         subagent_llm_index: Optional[int] = None,
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
+        goal: Optional[str] = None,
+        boundaries: Optional[list] = None,
+        deliverables: Optional[list] = None,
+        done_when: Optional[str] = None,
+        checks: Optional[list] = None,
     ) -> dict:
-        """Dispatch through the single Hub model-policy boundary."""
+        """Dispatch through the single Hub model-policy boundary.
+
+        The manifest fields (goal/boundaries/deliverables/done_when/checks)
+        are forwarded verbatim: the engine rejects dispatches without a goal
+        and at least one absolute deliverable, so the hub must carry them
+        instead of silently dropping the contract.
+        """
         self._assert_open()
         tracker = self._ensure_workflow_tracker()
         if request_id is not None and not tracker.has_request(request_id):
@@ -1089,7 +1154,11 @@ class ConductorService:
             subagent_model_policy=subagent_model_policy,
         )
         selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
-        result = self.client.start_subagent(prompt, request_id, selected)
+        result = self.client.start_subagent(
+            prompt, request_id, selected,
+            goal=goal, boundaries=boundaries, deliverables=deliverables,
+            done_when=done_when, checks=checks,
+        )
         sid = result.get("id")
         if request_id and sid and "error" not in result:
             generation = int(result.get("active_generation", 0) or 0)

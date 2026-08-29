@@ -196,8 +196,46 @@ def test_subagent_route_uses_service_policy_boundary(monkeypatch):
             "conductor_llm_index": 1,
             "subagent_llm_index": 5,
             "subagent_model_policy": "locked",
+            "goal": None,
+            "boundaries": [],
+            "deliverables": [],
+            "done_when": None,
+            "checks": [],
         },
     )]
+
+
+def test_subagent_route_forwards_engine_manifest_contract(monkeypatch):
+    """The public dispatch route must carry the Contract B manifest fields:
+    the engine answers 422 without goal + deliverables, so dropping them
+    would make the endpoint unusable against the real engine."""
+    service = FakeService(STOPPED)
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    asyncio.run(
+        conductor_routes.start_subagent(
+            conductor_routes.ConductorStartSubagent(
+                prompt="build the report",
+                request_id="request-1",
+                goal="produce the audit report",
+                boundaries=["no network access"],
+                deliverables=[{"path": "D:/out/report.md", "desc": "final"}],
+                done_when="report exists",
+                checks=[{"kind": "file_contains", "path": "D:/out/report.md",
+                         "contains": "AUDIT"}],
+            )
+        )
+    )
+
+    _, kwargs = service.subagent_calls[0]
+    assert kwargs["goal"] == "produce the audit report"
+    assert kwargs["boundaries"] == ["no network access"]
+    assert kwargs["deliverables"] == [
+        {"path": "D:/out/report.md", "desc": "final"}]
+    assert kwargs["done_when"] == "report exists"
+    assert kwargs["checks"] == [
+        {"kind": "file_contains", "path": "D:/out/report.md",
+         "contains": "AUDIT"}]
 
 
 def test_resume_route_uses_service_policy_boundary(monkeypatch):
@@ -374,6 +412,27 @@ def test_engine_5xx_maps_to_502(monkeypatch):
         ))
 
     assert raised.value.status_code == 502
+
+
+def test_engine_503_is_relayed_with_its_own_reason(monkeypatch):
+    """An engine 503 is the engine's own unavailability signal (e.g. the
+    conductor is stopping and refused admission): relay it verbatim instead
+    of degrading it to a generic 502."""
+    service = Mock()
+    service.start_subagent = Mock(side_effect=GahubProcessError(
+        "gahub_app /subagent -> 503: conductor is stopping",
+        status_code=503,
+        detail={"error": "conductor is stopping"},
+    ))
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    with pytest.raises(conductor_routes.HTTPException) as raised:
+        asyncio.run(conductor_routes.start_subagent(
+            conductor_routes.ConductorStartSubagent(prompt="test"),
+        ))
+
+    assert raised.value.status_code == 503
+    assert "conductor is stopping" in str(raised.value.detail)
 
 
 def test_keyinfo_engine_conflict_maps_to_409(monkeypatch):

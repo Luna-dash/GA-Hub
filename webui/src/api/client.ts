@@ -438,6 +438,9 @@ export const api = {
     role: 'user' | 'assistant' = 'user',
     models: ConductorModelSettings = {},
   ) =>
+    // Cold-starting gahub_app can legitimately take longer than the generic
+    // 30s request budget. The server cannot cancel admission after a client
+    // timeout, so avoid presenting a still-running request as a clean failure.
     http<ConductorChatMessage>('POST', '/api/conductor/chat', {
       msg,
       role,
@@ -445,7 +448,7 @@ export const api = {
       subagent_llm_index: models.subagentLlmIndex,
       subagent_model_policy: models.subagentModelPolicy,
       conductor_reasoning_effort: models.conductorReasoningEffort,
-    }),
+    }, { timeoutMs: 120_000 }),
   conductorSubagents: () => http<ConductorSubagentListResponse>('GET', '/api/conductor/subagent'),
   conductorWorkflows: () => http<ConductorWorkflowListResponse>('GET', '/api/conductor/workflow'),
   conductorSubagent: (sid: string, max_len = 5000) => http<ConductorSubagent>('GET', `/api/conductor/subagent/${sid}?max_len=${max_len}`),

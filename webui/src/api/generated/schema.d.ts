@@ -2314,6 +2314,19 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * ConductorDeliverable
+         * @description One declared output artifact (mirrors the engine's Contract B shape).
+         */
+        ConductorDeliverable: {
+            /** Path */
+            path: string;
+            /**
+             * Desc
+             * @default
+             */
+            desc: string;
+        };
         /** ConductorLifecycleResp */
         ConductorLifecycleResp: {
             /** Started */
@@ -2350,6 +2363,24 @@ export interface components {
             /** Log */
             log: components["schemas"]["ConductorLogItem"][];
         };
+        /**
+         * ConductorManifestCheck
+         * @description One deterministic acceptance probe evaluated by the engine itself.
+         */
+        ConductorManifestCheck: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "path_exists" | "file_contains";
+            /** Path */
+            path: string;
+            /**
+             * Contains
+             * @default
+             */
+            contains: string;
+        };
         /** ConductorStartReq */
         ConductorStartReq: {
             /** Llm Index */
@@ -2373,6 +2404,16 @@ export interface components {
             subagent_llm_index?: number | null;
             /** Subagent Model Policy */
             subagent_model_policy?: ("follow_main" | "default" | "locked") | null;
+            /** Goal */
+            goal?: string | null;
+            /** Boundaries */
+            boundaries?: string[];
+            /** Deliverables */
+            deliverables?: components["schemas"]["ConductorDeliverable"][];
+            /** Done When */
+            done_when?: string | null;
+            /** Checks */
+            checks?: components["schemas"]["ConductorManifestCheck"][];
         };
         /** ConductorStatusResp */
         ConductorStatusResp: {
@@ -2502,6 +2543,8 @@ export interface components {
              * @enum {string}
              */
             status: "admitted" | "supervising" | "reworking" | "awaiting_review" | "completed" | "failed" | "cancelled" | "killed";
+            /** Terminal Event */
+            terminal_event?: string | null;
             /** Subagents */
             subagents: {
                 [key: string]: components["schemas"]["ConductorWorkflowWorker"];
@@ -2534,7 +2577,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            state: "running" | "pending" | "accepted" | "failed" | "cancelled" | "killed";
+            state: "running" | "pending" | "accepted" | "rejected" | "timeout" | "failed" | "cancelled" | "killed";
         };
         /** ConversationDetailResp */
         ConversationDetailResp: {

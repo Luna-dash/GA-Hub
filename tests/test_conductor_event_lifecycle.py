@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import queue
+import threading
 from types import SimpleNamespace
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
 
 import pytest
 
@@ -308,3 +309,134 @@ def test_live_user_echo_is_skipped_even_before_the_id_is_recorded():
                                  "msg": "history", "final": False},
                                 from_hello=True)
     assert [m["msg"] for m in service.chat_messages] == ["history"]
+
+
+# ── false-success / policy-resilience regression coverage ────────────────────
+
+def _service_with_tracker():
+    from server.services.conductor_workflow import WorkflowTracker
+    service = object.__new__(ConductorService)
+    service.chat_messages = []
+    service.workflow_tracker = WorkflowTracker(clock=lambda: 10.0)
+    return service
+
+
+def test_ok_outcome_for_an_untouched_request_fails_the_stranded_workflow():
+    """A coalesced batch that ends naturally without dispatching (or
+    answering) one request must not read as success for that request: the
+    workflow is visibly failed instead of stranding in ``admitted``."""
+    service = _service_with_tracker()
+    service.workflow_tracker.admit("rid-stranded")
+    callbacks = HubConductorCallbacks(service)
+
+    with patch("server.services.conductor_service.bus.publish"):
+        callbacks.on_conductor_request_finished("rid-stranded")
+
+    snapshot = service.workflow_tracker.snapshot("rid-stranded")
+    assert snapshot["status"] == "failed"
+    assert any(
+        item.get("kind") == "error"
+        and "without dispatching a worker" in item.get("msg", "")
+        for item in service.chat_messages
+    )
+
+
+def test_ok_outcome_for_a_dispatched_or_answered_request_stays_success():
+    service = _service_with_tracker()
+    service.workflow_tracker.admit("rid-worker")
+    service.workflow_tracker.bind_subagent("rid-worker", "worker-1", 1)
+    callbacks = HubConductorCallbacks(service)
+
+    with patch("server.services.conductor_service.bus.publish") as publish:
+        callbacks.on_conductor_request_finished("rid-worker")
+
+    assert service.workflow_tracker.snapshot("rid-worker")["status"] in {
+        "supervising", "awaiting_review", "completed"}
+    failure_events = [
+        call for call in publish.call_args_list
+        if call.args[0] == "conductor:workflow_failed"
+    ]
+    assert failure_events == []
+
+    # A conductor chat answer for the request also counts as handled.
+    service2 = _service_with_tracker()
+    service2.workflow_tracker.admit("rid-answered")
+    service2.chat_messages.append({
+        "id": "plan", "role": "conductor",
+        "request_id": "rid-answered", "msg": "clarifying question",
+    })
+    callbacks2 = HubConductorCallbacks(service2)
+    with patch("server.services.conductor_service.bus.publish") as publish2:
+        callbacks2.on_conductor_request_finished("rid-answered")
+    assert service2.workflow_tracker.snapshot("rid-answered")["status"] == "admitted"
+    assert not [
+        call for call in publish2.call_args_list
+        if call.args[0] == "conductor:workflow_failed"
+    ]
+
+
+def test_request_outcome_without_request_id_is_ignored():
+    service = object.__new__(ConductorService)
+    service.chat_messages = []
+    service.workflow_tracker = None
+    callbacks = HubConductorCallbacks(service)
+
+    with patch("server.services.conductor_service.bus.publish") as publish:
+        service._on_sse_event({
+            "event": "request_outcome", "status": "failed",
+            "phase": "dispatch",
+        })
+
+    publish.assert_not_called()
+
+
+def test_hello_repushes_the_hub_model_policy():
+    """The engine forgets its model policy on cold restart; the SSE hello is
+    the reconnect signal that must re-assert the hub snapshot."""
+    from unittest.mock import Mock
+    service = object.__new__(ConductorService)
+    service.pool = SimpleNamespace(update=Mock())
+    service.chat_messages = []
+    service._relayed_chat_ids = set()
+    service._push_models_to_engine = Mock()
+
+    service._on_sse_event({"event": "hello", "subagents": [], "chat": []})
+
+    service._push_models_to_engine.assert_called_once()
+
+
+def test_cold_start_repushes_the_hub_model_policy():
+    """/start only restores the conductor model and effort — the subagent
+    policy snapshot must be re-pushed or it silently resets in the engine."""
+    from unittest.mock import Mock
+    service = _service()
+    service._started = False
+    service._relay_thread = None
+    service._relay_stop = threading.Event()
+    service._process_manager = Mock()
+    service._lifecycle_cache = {}
+    service.client.status.return_value = {"started": False}
+    service.client.start.return_value = {"started": True}
+    service._push_models_to_engine = Mock()
+
+    service.ensure_started()
+
+    service.client.start.assert_called_once_with(
+        llm_index=1, conductor_reasoning_effort=None)
+    service._push_models_to_engine.assert_called_once()
+
+
+def _service() -> ConductorService:
+    from server.services.conductor_service import SUBAGENT_MODEL_POLICIES
+    service = object.__new__(ConductorService)
+    service._conductor_llm_index = 1
+    service._subagent_llm_index = None
+    service._subagent_model_policy = "follow_main"
+    service._conductor_reasoning_effort = None
+    service._model_lock = threading.RLock()
+    service.pool = SimpleNamespace(snapshot=lambda: [])
+    service.client = Mock()
+    service.client.status.return_value = {"started": True}
+    service.client.start.return_value = {"started": True}
+    service.callbacks = HubConductorCallbacks(service)
+    return service

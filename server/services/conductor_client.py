@@ -335,10 +335,33 @@ class GaConductorClient:
 
     # -- subagents -----------------------------------------------------------------
     def start_subagent(self, prompt: str, request_id: Optional[str],
-                       llm_index: Optional[int]) -> dict:
-        return self._request("POST", "/subagent", json_body={
+                       llm_index: Optional[int], *,
+                       goal: Optional[str] = None,
+                       boundaries: Optional[list] = None,
+                       deliverables: Optional[list] = None,
+                       done_when: Optional[str] = None,
+                       checks: Optional[list] = None) -> dict:
+        """Dispatch one worker; the engine requires the Contract B manifest.
+
+        ``goal`` plus at least one absolute ``deliverables`` entry are
+        mandatory on the engine side — omitting them here means the engine
+        answers 422, which the hub maps onto the caller instead of a
+        generic 500.
+        """
+        body: dict = {
             "prompt": prompt, "request_id": request_id, "llm_index": llm_index,
-        })
+        }
+        if goal is not None:
+            body["goal"] = goal
+        if boundaries:
+            body["boundaries"] = list(boundaries)
+        if deliverables:
+            body["deliverables"] = list(deliverables)
+        if done_when:
+            body["done_when"] = done_when
+        if checks:
+            body["checks"] = list(checks)
+        return self._request("POST", "/subagent", json_body=body)
 
     def subagent_action(self, sid: str, action: str, msg: str = "",
                         request_id: Optional[str] = None,

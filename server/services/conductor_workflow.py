@@ -30,7 +30,15 @@ class WorkflowState:
 class WorkflowTracker:
     """Track explicit request-to-worker ownership and terminal workflow events."""
 
-    _FAILURE_EVENTS = frozenset({"failed", "cancelled", "killed"})
+    # Only deliberate cancellation / reaping closes the whole workflow. A
+    # worker ``failed`` or ``timeout_total`` stays recoverable: the engine
+    # allows rework (a fresh attempt) or a replacement dispatch, so the
+    # workflow must remain open or the recovery would be silently dropped.
+    _TERMINAL_FAILURE_EVENTS = frozenset({"cancelled", "killed"})
+    # Review verdicts that close a worker for good. ``rejected`` refused the
+    # delivery without a new attempt; the request still needs delivery via a
+    # fresh dispatch, but the rejected worker no longer blocks the final.
+    _CLOSED_WORKER_STATES = frozenset({"accepted", "rejected"})
 
     def __init__(self, *, clock: Clock = time.time, max_workflows: int = 256) -> None:
         self._clock = clock
@@ -94,6 +102,11 @@ class WorkflowTracker:
                         raise ValueError(
                             f"subagent {agent_id} belongs to request {owner}, not {request_id}"
                         )
+                if workflow.terminal_event is not None:
+                    # Never adopt a subagent onto a terminal workflow: the
+                    # request already closed, so the ownership overwrite would
+                    # orphan the worker's remaining lifecycle events.
+                    return request_id, None
                 self._owners[agent_id] = request_id
                 owner = request_id
             if owner is None:
@@ -123,7 +136,28 @@ class WorkflowTracker:
                 workflow.state = "awaiting_review"
             elif event == "accepted":
                 worker.state = "accepted"
-            elif event in self._FAILURE_EVENTS:
+            elif event == "rejected":
+                # Terminal verdict for THIS worker only: the delivery was
+                # refused without a new attempt. The workflow stays open until
+                # a fresh dispatch (or an already-accepted sibling) delivers.
+                worker.state = "rejected"
+            elif event == "timeout_total":
+                # The watchdog killed the attempt, but the engine keeps the
+                # worker reviewable as "timeout" (rework opens a new attempt),
+                # so the workflow waits for the supervisor's decision.
+                worker.state = "timeout"
+                workflow.state = "awaiting_review"
+            elif event == "failed":
+                # A dispatch failure is recoverable (engine rework or a fresh
+                # dispatch for the same goal); only user cancellation and
+                # idle reaping close the workflow outright.
+                worker.state = "failed"
+                workflow.state = "failed"
+                return owner, (
+                    "conductor:worker_failed",
+                    self._payload(workflow, error=error, failed_agent_id=agent_id),
+                )
+            elif event in self._TERMINAL_FAILURE_EVENTS:
                 worker.state = event
                 workflow.state = event
                 workflow.completed_at = self._clock()
@@ -195,8 +229,26 @@ class WorkflowTracker:
             raise ValueError(f"workflow {workflow.request_id} is already terminal")
         if not workflow.workers:
             raise ValueError("cannot finalize before dispatching a subagent")
-        if any(worker.state != "accepted" for worker in workflow.workers.values()):
-            raise ValueError("cannot finalize before every subagent is accepted")
+        open_workers = [
+            agent_id
+            for agent_id, worker in workflow.workers.items()
+            if worker.state not in WorkflowTracker._CLOSED_WORKER_STATES
+        ]
+        if open_workers:
+            detail = ", ".join(
+                f"{agent_id}:{workflow.workers[agent_id].state}"
+                for agent_id in sorted(open_workers)
+            )
+            raise ValueError(
+                "cannot finalize before every subagent is accepted or "
+                f"rejected (open: {detail})"
+            )
+        if not any(
+            worker.state == "accepted" for worker in workflow.workers.values()
+        ):
+            raise ValueError(
+                "cannot finalize without at least one accepted subagent"
+            )
 
     def _prune_terminal(self) -> None:
         overflow = len(self._workflows) - self._max_workflows
@@ -224,7 +276,12 @@ class WorkflowTracker:
         if workflow.terminal_event is not None or workflow.final_item is None:
             return None
         if not workflow.workers or any(
-            worker.state != "accepted" for worker in workflow.workers.values()
+            worker.state not in WorkflowTracker._CLOSED_WORKER_STATES
+            for worker in workflow.workers.values()
+        ):
+            return None
+        if not any(
+            worker.state == "accepted" for worker in workflow.workers.values()
         ):
             return None
         workflow.state = "completed"
@@ -244,6 +301,9 @@ class WorkflowTracker:
         payload: dict[str, Any] = {
             "request_id": workflow.request_id,
             "status": workflow.state,
+            # None while the workflow can still recover (worker failure,
+            # rework, a fresh dispatch); set once it is terminal.
+            "terminal_event": workflow.terminal_event,
             "subagents": states,
             "created_at": workflow.created_at,
             "completed_at": workflow.completed_at,

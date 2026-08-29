@@ -138,6 +138,132 @@ def test_tracker_lists_recent_workflows_in_creation_order():
     ]
 
 
+# ── recoverable worker failures (failure/timeout state consistency) ──────────
+
+def test_failed_worker_keeps_the_workflow_recoverable():
+    """The engine supports rework (a fresh attempt) after a dispatch
+    failure; the tracker must not terminalize the workflow or the recovery
+    is silently dropped."""
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("request-1")
+    tracker.bind_subagent("request-1", "worker-1", 1)
+
+    owner, transition = tracker.record_subagent_event(
+        "worker-1", "failed", generation=1, error="worker_start",
+    )
+
+    assert owner == "request-1"
+    assert transition is not None and transition[0] == "conductor:worker_failed"
+    snapshot = tracker.snapshot("request-1")
+    assert snapshot["status"] == "failed"
+    # Recoverable: no terminal marker yet, so clients can tell this apart
+    # from a closed workflow.
+    assert snapshot["terminal_event"] is None
+    assert snapshot["subagents"]["worker-1"] == {
+        "generation": 1, "state": "failed"}
+
+    # Rework reopens the workflow and the final can still complete it.
+    tracker.record_subagent_event("worker-1", "reworked", generation=2)
+    tracker.record_subagent_event("worker-1", "pending_review", generation=2)
+    tracker.record_subagent_event("worker-1", "accepted", generation=2)
+    completed = tracker.record_final("request-1", {"id": "final"})
+    assert completed[0] == "conductor:workflow_completed"
+
+
+def test_failed_worker_lets_a_replacement_dispatch_bind():
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("request-1")
+    tracker.bind_subagent("request-1", "worker-1", 1)
+    tracker.record_subagent_event("worker-1", "failed", generation=1)
+
+    # bind_subagent would raise on a terminal workflow; a recoverable
+    # failure must accept the replacement worker.
+    transition = tracker.bind_subagent("request-1", "worker-2", 1)
+    assert transition is None
+    assert tracker.snapshot("request-1")["subagents"]["worker-2"] == {
+        "generation": 1, "state": "running"}
+
+
+def test_timeout_worker_keeps_the_workflow_awaiting_review():
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("request-1")
+    tracker.bind_subagent("request-1", "worker-1", 1)
+    tracker.record_subagent_event("worker-1", "pending_review", generation=1)
+
+    owner, transition = tracker.record_subagent_event(
+        "worker-1", "timeout_total", generation=1)
+
+    assert owner == "request-1"
+    assert transition is None
+    snapshot = tracker.snapshot("request-1")
+    assert snapshot["status"] == "awaiting_review"
+    assert snapshot["subagents"]["worker-1"] == {
+        "generation": 1, "state": "timeout"}
+
+
+def test_rejected_worker_closes_only_itself_and_final_needs_an_accepted_sibling():
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("request-1")
+    tracker.bind_subagent("request-1", "worker-1", 1)
+    tracker.record_subagent_event("worker-1", "pending_review", generation=1)
+
+    owner, transition = tracker.record_subagent_event(
+        "worker-1", "rejected", generation=1)
+
+    assert owner == "request-1" and transition is None
+    assert tracker.snapshot("request-1")["subagents"]["worker-1"] == {
+        "generation": 1, "state": "rejected"}
+
+    # A rejected-only workflow cannot finalize: nothing was delivered.
+    with pytest.raises(ValueError, match="at least one accepted subagent"):
+        tracker.record_final("request-1", {"id": "final"})
+
+    # A fresh accepted worker satisfies delivery; the rejected worker no
+    # longer blocks the final.
+    tracker.bind_subagent("request-1", "worker-2", 1)
+    tracker.record_subagent_event("worker-2", "pending_review", generation=1)
+    tracker.record_subagent_event("worker-2", "accepted", generation=1)
+    completed = tracker.record_final("request-1", {"id": "final"})
+    assert completed[0] == "conductor:workflow_completed"
+    assert completed[1]["subagents"]["worker-1"] == {
+        "generation": 1, "state": "rejected"}
+
+
+def test_terminal_workflow_does_not_adopt_new_workers_through_events():
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("request-1")
+    tracker.fail_supervisor("request-1", phase="dispatch", error="boom")
+
+    owner, transition = tracker.record_subagent_event(
+        "worker-1", "started", generation=1, request_id="request-1")
+
+    assert owner == "request-1" and transition is None
+    assert tracker.request_for_subagent("worker-1") is None
+    assert tracker.snapshot("request-1")["subagents"] == {}
+
+
+def test_cancelled_and_killed_workers_still_terminalize_the_workflow():
+    for event in ("cancelled", "killed"):
+        tracker = WorkflowTracker(clock=lambda: 10.0)
+        tracker.admit("request-1")
+        tracker.bind_subagent("request-1", "worker-1", 1)
+
+        owner, transition = tracker.record_subagent_event(
+            "worker-1", event, generation=1)
+
+        assert owner == "request-1"
+        assert transition[0] == "conductor:workflow_failed"
+        snapshot = tracker.snapshot("request-1")
+        assert snapshot["status"] == event
+        # The terminal marker is what lets clients distinguish a closed
+        # workflow from a recoverable worker failure.
+        assert snapshot["terminal_event"] == "workflow_failed"
+        # Deliberate cancellation / reaping really is terminal: replacement
+        # workers can no longer bind.
+        with pytest.raises(ValueError, match="already terminal"):
+            tracker.bind_subagent("request-1", "worker-2", 1)
+
+
 def test_terminal_workflow_transition_publishes_completion():
     service = object.__new__(ConductorService)
     service.chat_messages = []

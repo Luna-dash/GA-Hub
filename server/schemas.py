@@ -476,6 +476,21 @@ class ConductorChatIn(BaseModel):
     conductor_reasoning_effort: ConductorEffort | None = None
 
 
+class ConductorDeliverable(BaseModel):
+    """One declared output artifact (mirrors the engine's Contract B shape)."""
+
+    path: str
+    desc: str = ""
+
+
+class ConductorManifestCheck(BaseModel):
+    """One deterministic acceptance probe evaluated by the engine itself."""
+
+    kind: Literal["path_exists", "file_contains"]
+    path: str
+    contains: str = ""
+
+
 class ConductorStartSubagent(BaseModel):
     prompt: str
     request_id: str | None = None
@@ -485,6 +500,14 @@ class ConductorStartSubagent(BaseModel):
     conductor_llm_index: int | None = Field(default=None, ge=0)
     subagent_llm_index: int | None = Field(default=None, ge=0)
     subagent_model_policy: Literal["follow_main", "default", "locked"] | None = None
+    # Dispatch manifest (Contract B). The engine rejects dispatches without
+    # goal/deliverables with 422; carrying the fields here lets the public
+    # hub endpoint satisfy the real engine contract instead of failing it.
+    goal: str | None = Field(default=None, max_length=5000)
+    boundaries: list[str] = Field(default_factory=list, max_length=50)
+    deliverables: list[ConductorDeliverable] = Field(default_factory=list, max_length=50)
+    done_when: str | None = Field(default=None, max_length=5000)
+    checks: list[ConductorManifestCheck] = Field(default_factory=list, max_length=50)
 
 
 class ConductorStartReq(BaseModel):
@@ -555,7 +578,8 @@ class ConductorSubagentListResp(BaseModel):
 class ConductorWorkflowWorker(BaseModel):
     generation: int = 0
     state: Literal[
-        "running", "pending", "accepted", "failed", "cancelled", "killed"
+        "running", "pending", "accepted", "rejected", "timeout",
+        "failed", "cancelled", "killed",
     ]
 
 
@@ -565,6 +589,9 @@ class ConductorWorkflow(BaseModel):
         "admitted", "supervising", "reworking", "awaiting_review",
         "completed", "failed", "cancelled", "killed",
     ]
+    # None while the workflow can still recover; names the terminal
+    # transition ("workflow_completed" / "workflow_failed") once closed.
+    terminal_event: str | None = None
     subagents: dict[str, ConductorWorkflowWorker]
     created_at: float
     completed_at: float | None = None

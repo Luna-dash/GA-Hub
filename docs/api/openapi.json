@@ -5184,6 +5184,25 @@
         ],
         "title": "ConductorChatMessage"
       },
+      "ConductorDeliverable": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "desc": {
+            "type": "string",
+            "title": "Desc",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "ConductorDeliverable",
+        "description": "One declared output artifact (mirrors the engine's Contract B shape)."
+      },
       "ConductorLifecycleResp": {
         "properties": {
           "started": {
@@ -5286,6 +5305,34 @@
           "log"
         ],
         "title": "ConductorLogResp"
+      },
+      "ConductorManifestCheck": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "path_exists",
+              "file_contains"
+            ],
+            "title": "Kind"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "contains": {
+            "type": "string",
+            "title": "Contains",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "path"
+        ],
+        "title": "ConductorManifestCheck",
+        "description": "One deterministic acceptance probe evaluated by the engine itself."
       },
       "ConductorStartReq": {
         "properties": {
@@ -5401,6 +5448,54 @@
               }
             ],
             "title": "Subagent Model Policy"
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 5000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal"
+          },
+          "boundaries": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Boundaries"
+          },
+          "deliverables": {
+            "items": {
+              "$ref": "#/components/schemas/ConductorDeliverable"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Deliverables"
+          },
+          "done_when": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 5000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Done When"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/ConductorManifestCheck"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Checks"
           }
         },
         "type": "object",
@@ -5772,6 +5867,17 @@
             ],
             "title": "Status"
           },
+          "terminal_event": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terminal Event"
+          },
           "subagents": {
             "additionalProperties": {
               "$ref": "#/components/schemas/ConductorWorkflowWorker"
@@ -5876,6 +5982,8 @@
               "running",
               "pending",
               "accepted",
+              "rejected",
+              "timeout",
               "failed",
               "cancelled",
               "killed"

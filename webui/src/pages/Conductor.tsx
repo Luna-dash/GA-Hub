@@ -14,6 +14,7 @@ import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
+import { toast } from '@/stores/toastStore'
 
 const scrollMemory: { chatTop: number | null } = {
   chatTop: null,
@@ -69,14 +70,23 @@ function subagentPhase(sub: ConductorSubagent): {
 function workflowPresentation(
   workflow: ConductorWorkflow | undefined,
   workers: ConductorSubagent[],
+  started = true,
 ): { label: string; detail: string; tone: 'active' | 'review' | 'done' | 'error' | 'idle' } {
   if (!workflow) {
     return { label: '等待任务', detail: '发送任务后，这里会显示分派和执行进度。', tone: 'idle' }
+  }
+  if (!started && !['completed', 'failed', 'cancelled', 'killed'].includes(workflow.status)) {
+    return { label: '已暂停', detail: 'Conductor 已停止；点击“启动 / 恢复”后可继续处理。', tone: 'idle' }
   }
   if (workflow.status === 'completed') {
     return { label: '已完成', detail: '所有子任务已通过验收，交付结果已发送。', tone: 'done' }
   }
   if (['failed', 'cancelled', 'killed'].includes(workflow.status)) {
+    // A worker failure is recoverable (rework or a fresh dispatch can still
+    // finish the workflow); only terminal_event marks a closed workflow.
+    if (workflow.status === 'failed' && !workflow.terminal_event) {
+      return { label: '子代理失败', detail: '子代理处理失败，Conductor 正在决定返工或补派。', tone: 'active' }
+    }
     return { label: '执行失败', detail: '工作流未能完成，原因已写入左侧对话。', tone: 'error' }
   }
   const accepted = workers.filter((sub) => sub.review_status === 'accepted').length
@@ -105,6 +115,8 @@ export default function Conductor() {
   const [userMsg, setUserMsg] = usePageState('conductor.userMsg', '')
   const [subagentModelLocked, setSubagentModelLocked] = useState(readSubagentModelLock)
   const [subagentSettingsOpen, setSubagentSettingsOpen] = useState(false)
+  const [isSending, setIsSending] = useState(false)
+  const [isStopping, setIsStopping] = useState(false)
   const [draftSubagentLlmKey, setDraftSubagentLlmKey] = useState<string | null>(null)
   const [draftSubagentModelLocked, setDraftSubagentModelLocked] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
@@ -217,9 +229,18 @@ export default function Conductor() {
     queryKey: queryKeys.conductor.workflows,
     queryFn: api.conductorWorkflows,
     refetchOnMount: 'always',
+    // SSE is the fast path; this is a quiet recovery path for sleep/wake and
+    // half-open connections where the browser has not observed a close yet.
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   })
 
-  const { data: chatSnapshot } = useQuery({
+  const {
+    data: chatSnapshot,
+    isLoading: isChatLoading,
+    isError: isChatError,
+    refetch: refetchChat,
+  } = useQuery({
     queryKey: queryKeys.conductor.chat,
     queryFn: async () => {
       const generation = useConductorStore.getState().generation
@@ -287,15 +308,18 @@ export default function Conductor() {
   // Auto-scroll only while the reader is already at the live edge.
   useEffect(() => {
     if (shouldFollowChatRef.current) {
-      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      // Instant scrolling avoids a smooth-scroll/onScroll feedback loop that
+      // could silently disable live following while messages stream in.
+      chatEndRef.current?.scrollIntoView({ behavior: 'auto' })
     }
   }, [chatMessages])
 
   const sendChat = async (e: FormEvent) => {
     e.preventDefault()
-    if (!userMsg.trim() || effectiveLlmIndex === null) return
+    if (!userMsg.trim() || effectiveLlmIndex === null || isSending) return
     const msg = userMsg.trim()
     setUserMsg('')
+    setIsSending(true)
 
     // Send and use returned item (with real id) for instant display.
     // The EventBus and snapshot bootstrap merge by id, so this stays unique.
@@ -311,15 +335,64 @@ export default function Conductor() {
         kind: item.kind,
       })
       void qc.invalidateQueries({ queryKey: queryKeys.conductor.workflows })
+      // A user message implicitly starts the supervisor when needed. Refresh
+      // the badge immediately instead of waiting for the 12s status poll.
+      void qc.invalidateQueries({ queryKey: queryKeys.conductor.status })
     } catch (err) {
       console.error('sendChat failed', err)
-      setUserMsg(msg)  // restore on failure
+      // Preserve anything the user typed while the request was in flight.
+      setUserMsg((current) => current.trim() ? `${current}\n${msg}` : msg)
+      toast.error(
+        err instanceof Error && err.name === 'HttpTimeoutError'
+          ? '任务请求超时。任务可能仍在启动或已被受理，请勿立即重复发送。'
+          : '任务发送失败，内容已恢复，请检查 Conductor 状态后重试。',
+        7000,
+      )
+    } finally {
+      setIsSending(false)
     }
   }
 
   const stopConductor = async () => {
-    await api.conductorStop()
-    qc.invalidateQueries({ queryKey: queryKeys.conductor.status })
+    if (isStopping) return
+    setIsStopping(true)
+    try {
+      const result = await api.conductorStop()
+      if (!result.ok) {
+        toast.error('Conductor 未能停止，请检查引擎状态。')
+        return
+      }
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: queryKeys.conductor.status }),
+        qc.invalidateQueries({ queryKey: queryKeys.conductor.workflows }),
+        qc.invalidateQueries({ queryKey: queryKeys.conductor.subagents }),
+      ])
+      toast.success('Conductor 已停止')
+    } catch (err) {
+      console.error('stopConductor failed', err)
+      toast.error('停止 Conductor 失败，请稍后重试。')
+    } finally {
+      setIsStopping(false)
+    }
+  }
+
+  const startConductor = async () => {
+    if (isSending || isStopping) return
+    setIsSending(true)
+    try {
+      const result = await api.conductorStart(conductorModelSettings)
+      if (!result.ok) {
+        toast.error('Conductor 未能启动，请检查引擎配置。')
+        return
+      }
+      await qc.invalidateQueries({ queryKey: queryKeys.conductor.status })
+      toast.success('Conductor 已启动，可继续处理任务')
+    } catch (err) {
+      console.error('startConductor failed', err)
+      toast.error('启动 Conductor 失败，请稍后重试。')
+    } finally {
+      setIsSending(false)
+    }
   }
 
   useLayoutEffect(() => {
@@ -350,7 +423,7 @@ export default function Conductor() {
     ))
     return message ? compactTaskText(message.msg) : '当前任务'
   }, [chatMessages, currentWorkflow])
-  const workflowView = workflowPresentation(currentWorkflow, workflowSubagents)
+  const workflowView = workflowPresentation(currentWorkflow, workflowSubagents, status?.started ?? false)
   const acceptedCount = workflowSubagents.filter((sub) => sub.review_status === 'accepted').length
   const activeSubagents = workflowSubagents.filter((sub) => sub.status === 'running')
 
@@ -383,7 +456,15 @@ export default function Conductor() {
           >
             子代理设置
           </button>
-          <button onClick={stopConductor} disabled={!status?.started} className="ga-btn-danger">停止</button>
+          {status?.started ? (
+            <button onClick={stopConductor} disabled={isStopping} className="ga-btn-danger">
+              {isStopping ? '停止中…' : '停止'}
+            </button>
+          ) : (
+            <button onClick={startConductor} disabled={isSending} className="ga-btn ga-btn-primary">
+              {isSending ? '启动中…' : '启动 / 恢复'}
+            </button>
+          )}
         </div>
       }
     >
@@ -393,11 +474,27 @@ export default function Conductor() {
             <div
               ref={chatScrollRef}
               onScroll={() => {
-                shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
+                // Smooth programmatic scrolling emits intermediate events;
+                // don't mistake those frames for a user leaving the live edge.
+                if (!isSending) {
+                  shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
+                }
                 scrollMemory.chatTop = chatScrollRef.current?.scrollTop ?? scrollMemory.chatTop
               }}
               className="flex-1 overflow-y-auto divide-y divide-line border-y border-line text-sm"
             >
+              {isChatLoading && chatMessages.length === 0 && (
+                <div className="px-4 py-8 text-center text-sm text-[#7B6D5A]">正在加载 Conductor 历史…</div>
+              )}
+              {isChatError && chatMessages.length === 0 && (
+                <div className="px-4 py-8 text-center">
+                  <p className="text-sm text-[#9E3328]">历史暂时无法加载，Conductor 引擎可能未连接。</p>
+                  <button type="button" className="ga-btn mt-3" onClick={() => void refetchChat()}>重试</button>
+                </div>
+              )}
+              {!isChatLoading && !isChatError && chatMessages.length === 0 && (
+                <div className="px-4 py-8 text-center text-sm text-[#7B6D5A]">还没有任务，先向 Conductor 描述你要完成的工作。</div>
+              )}
               {chatMessages.map((msg) => (
                 <div
                   key={msg.id}
@@ -441,10 +538,10 @@ export default function Conductor() {
                 />
                 <button
                   type="submit"
-                  disabled={!userMsg.trim() || effectiveLlmIndex === null}
+                  disabled={!userMsg.trim() || effectiveLlmIndex === null || isSending}
                   className="shrink-0 rounded bg-accent px-4 py-2 text-sm text-white hover:bg-accent/90 disabled:opacity-50"
                 >
-                  发送
+                  {isSending ? '发送中…' : '发送'}
                 </button>
               </div>
             </form>

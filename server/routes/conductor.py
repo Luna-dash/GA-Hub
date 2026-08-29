@@ -53,7 +53,10 @@ def _engine_http_error(exc: "conductor_client_module.GahubProcessError") -> HTTP
     - Engine 4xx are domain rejections (contract, terminal states, budgets):
       pass the status through so callers see the real cause.
     - Unreachable/unhealthy engines degrade to 503 with recovery hints.
-    - Engine 5xx stay upstream failures: 502, never a hub-internal error.
+    - An engine 503 (e.g. the conductor is stopping, admission refused) is
+      relayed verbatim: it is the engine's own unavailability signal.
+    - Other engine 5xx stay upstream failures: 502, never a hub-internal
+      error.
     """
     status = exc.status_code
     if status is not None and 400 <= status < 500:
@@ -72,6 +75,11 @@ def _engine_http_error(exc: "conductor_client_module.GahubProcessError") -> HTTP
             "gahub_app engine unreachable — it will be respawned on demand "
             "(see %TEMP%\\gahub_app.log)",
         )
+    if status == 503:
+        detail = exc.detail
+        if isinstance(detail, dict):
+            detail = detail.get("error") or detail
+        return HTTPException(503, str(detail) or f"gahub_app engine error: {exc}")
     return HTTPException(502, f"gahub_app engine error: {exc}")
 
 
@@ -184,6 +192,13 @@ async def start_subagent(body: ConductorStartSubagent) -> ConductorSubagentInstr
         conductor_llm_index=body.conductor_llm_index,
         subagent_llm_index=body.subagent_llm_index,
         subagent_model_policy=body.subagent_model_policy,
+        # Contract B manifest: the engine requires goal + deliverables and
+        # answers 422 without them; forward the declared fields verbatim.
+        goal=body.goal,
+        boundaries=body.boundaries,
+        deliverables=[d.model_dump() for d in body.deliverables],
+        done_when=body.done_when,
+        checks=[c.model_dump() for c in body.checks],
     )
     result["instruction"] = INSTR_DISPATCHED
     return result
@@ -281,4 +296,7 @@ async def stop_conductor() -> ConductorLifecycleResp:
     """Stop the conductor supervisor."""
     service = svc()
     stopped = await asyncio.to_thread(service.stop)
-    return {"ok": stopped, **_status_payload(service)}
+    status = _status_payload(service)
+    if not stopped:
+        raise HTTPException(503, "Conductor engine could not be stopped; check its health and logs.")
+    return {"ok": True, **status}

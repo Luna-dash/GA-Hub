@@ -110,7 +110,9 @@ def test_dispatch_entrypoint_applies_same_locked_policy():
 
     result = service.start_subagent(prompt, llm_index=3)
 
-    service.client.start_subagent.assert_called_once_with(prompt, None, 5)
+    service.client.start_subagent.assert_called_once_with(
+        prompt, None, 5, goal=None, boundaries=None, deliverables=None,
+        done_when=None, checks=None)
     assert result["llm_index"] == 5
     assert result["model_policy"] == "locked"
 
@@ -129,7 +131,8 @@ def test_dispatch_requests_a_cooperative_supervisor_yield_for_active_workflow():
     # request attribution so the engine can bind and auto-yield.
     assert result["request_id"] == "request-1"
     service.client.start_subagent.assert_called_once_with(
-        "inspect", "request-1", 5)
+        "inspect", "request-1", 5, goal=None, boundaries=None,
+        deliverables=None, done_when=None, checks=None)
     assert service.workflow_tracker.request_for_subagent("worker-1") == "request-1"
 
 
@@ -158,7 +161,9 @@ def test_dispatch_result_uses_the_admitted_policy_snapshot():
 
     result = service.start_subagent("inspect", llm_index=3)
 
-    service.client.start_subagent.assert_called_once_with("inspect", None, 3)
+    service.client.start_subagent.assert_called_once_with(
+        "inspect", None, 3, goal=None, boundaries=None, deliverables=None,
+        done_when=None, checks=None)
     assert result["llm_index"] == 3
     assert result["model_policy"] == "default"
     assert service.model_policy_snapshot()["subagent_model_policy"] == "locked"

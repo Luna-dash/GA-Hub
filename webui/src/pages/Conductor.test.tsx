@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useConductorStore } from '@/stores/conductorStore'
+import { useToastStore } from '@/stores/toastStore'
 import Conductor from './Conductor'
 import { resetPageState } from '@/utils/pageState'
 
@@ -16,6 +17,9 @@ const mocks = vi.hoisted(() => ({
   conductorWorkflows: vi.fn(),
   conductorChat: vi.fn(),
   conductorLog: vi.fn(),
+  conductorSendChat: vi.fn(),
+  conductorStop: vi.fn(),
+  conductorStart: vi.fn(),
   llms: vi.fn(),
   selectMainLlm: vi.fn(),
   selectSubagentLlm: vi.fn(),
@@ -28,6 +32,9 @@ vi.mock('@/api/client', () => ({
     conductorWorkflows: mocks.conductorWorkflows,
     conductorChat: mocks.conductorChat,
     conductorLog: mocks.conductorLog,
+    conductorSendChat: mocks.conductorSendChat,
+    conductorStop: mocks.conductorStop,
+    conductorStart: mocks.conductorStart,
     llms: mocks.llms,
   },
 }))
@@ -101,6 +108,7 @@ describe('Conductor chat scroll restoration', () => {
     vi.clearAllMocks()
     localStorage.clear()
     useConductorStore.getState().clear()
+    useToastStore.setState({ items: [] })
     mocks.conductorStatus.mockResolvedValue({
       started: true,
       stopping: false,
@@ -362,5 +370,147 @@ describe('Conductor chat scroll restoration', () => {
     expect(host.querySelector('[role="dialog"]')).toBeNull()
     expect(mocks.selectSubagentLlm).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(button('子代理设置'))
+  })
+
+  function typeMessage(text: string) {
+    const textarea = host.querySelector('form textarea') as HTMLTextAreaElement
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype, 'value',
+    )!.set!
+    act(() => {
+      setter.call(textarea, text)
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+
+  function lastToast(): { kind: string; message: string } | undefined {
+    const items = useToastStore.getState().items
+    return items.at(-1)
+  }
+
+  it('disables resend while a task is in flight and preserves text typed during the send', async () => {
+    let resolveSend!: (item: { id: string; role: string; msg: string; ts: number }) => void
+    mocks.conductorSendChat.mockImplementation(
+      () => new Promise((resolve) => { resolveSend = resolve }),
+    )
+    renderPage()
+    await flushQueries()
+
+    typeMessage('分析这个任务')
+    act(() => button('发送').click())
+    await flushQueries()
+
+    // Double-submit guard: the in-flight request keeps the button busy.
+    const pending = button('发送中…')
+    expect(pending.disabled).toBe(true)
+    expect(mocks.conductorSendChat).toHaveBeenCalledTimes(1)
+
+    // Whatever the user types while the request is in flight survives.
+    typeMessage('补充：还包括启动流程')
+    await act(async () => {
+      resolveSend({ id: 'u1', role: 'user', msg: '分析这个任务', ts: 1 })
+    })
+    await flushQueries()
+    runAnimationFrames()
+
+    expect(button('发送').disabled).toBe(false)
+    expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
+      .toBe('补充：还包括启动流程')
+    expect(useToastStore.getState().items).toHaveLength(0)
+  })
+
+  it('restores the draft and warns instead of silently dropping a failed task', async () => {
+    mocks.conductorSendChat.mockRejectedValueOnce(new Error('boom'))
+    renderPage()
+    await flushQueries()
+
+    typeMessage('分析这个任务')
+    act(() => button('发送').click())
+    await flushQueries()
+
+    expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
+      .toBe('分析这个任务')
+    expect(lastToast()?.kind).toBe('error')
+    expect(lastToast()?.message)
+      .toBe('任务发送失败，内容已恢复，请检查 Conductor 状态后重试。')
+
+    // Timeouts carry a distinct warning: the task may already be admitted,
+    // so an immediate resend would duplicate it.
+    const timeout: Error & { name: string } = Object.assign(new Error('timeout'), { name: 'HttpTimeoutError' })
+    mocks.conductorSendChat.mockRejectedValueOnce(timeout)
+    typeMessage('重试任务')
+    act(() => button('发送').click())
+    await flushQueries()
+
+    expect(lastToast()?.message)
+      .toBe('任务请求超时。任务可能仍在启动或已被受理，请勿立即重复发送。')
+    expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
+      .toBe('重试任务')
+  })
+
+  it('reports when the conductor could not be stopped instead of faking success', async () => {
+    mocks.conductorStop.mockResolvedValueOnce({ ok: false })
+    renderPage()
+    await flushQueries()
+
+    act(() => button('停止').click())
+    await flushQueries()
+
+    expect(lastToast()?.kind).toBe('error')
+    expect(lastToast()?.message).toBe('Conductor 未能停止，请检查引擎状态。')
+    expect(button('停止').disabled).toBe(false)
+
+    mocks.conductorStop.mockRejectedValueOnce(new Error('engine down'))
+    act(() => button('停止').click())
+    await flushQueries()
+
+    expect(lastToast()?.message).toBe('停止 Conductor 失败，请稍后重试。')
+  })
+
+  function failedWorkflowFixture(terminalEvent: string | null) {
+    return {
+      request_id: 'request-1',
+      status: 'failed',
+      terminal_event: terminalEvent,
+      subagents: { worker: { generation: 1, state: 'failed' } },
+      created_at: 1,
+      completed_at: terminalEvent ? 2 : null,
+    }
+  }
+
+  it('presents a recoverable worker failure as open, not as a closed workflow', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [failedWorkflowFixture(null)],
+    })
+    mocks.conductorSubagents.mockResolvedValue({
+      items: [{
+        id: 'worker', prompt: '生成验收报告', reply: '', status: 'stopped',
+        created_at: 1, updated_at: 1, review_status: 'none', review_note: '',
+        attempt: 1, completed_at: 1, accepted_at: null, generation: 1,
+        request_id: 'request-1',
+      }],
+    })
+
+    renderPage()
+    await flushQueries()
+
+    const text = host.textContent || ''
+    expect(text).toContain('子代理失败')
+    expect(text).toContain('返工或补派')
+    expect(text).not.toContain('执行失败')
+  })
+
+  it('keeps the terminal failure wording once the workflow is closed', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [failedWorkflowFixture('workflow_failed')],
+    })
+    mocks.conductorSubagents.mockResolvedValue({ items: [] })
+
+    renderPage()
+    await flushQueries()
+
+    const text = host.textContent || ''
+    expect(text).toContain('执行失败')
+    expect(text).not.toContain('子代理失败')
   })
 })
