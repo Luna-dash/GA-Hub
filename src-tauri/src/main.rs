@@ -1163,6 +1163,37 @@ fn spawn_background_shutdown(handle: tauri::AppHandle, exit: ExitCoordinator) {
     });
 }
 
+/// 自适应屏幕：设计基准 1320×860 逻辑像素。所在显示器的工作区放得下时
+/// 保持设计尺寸居中；放不下（小面板 + 系统缩放会把逻辑工作区压到千像素
+/// 以下，如 1368×912@150% ≈ 912×608 逻辑）则把还原尺寸钳进工作区并最大化。
+fn fit_main_window_to_work_area<R: Runtime>(window: &WebviewWindow<R>) {
+    const DESIGN_W: f64 = 1320.0;
+    const DESIGN_H: f64 = 860.0;
+    let monitor = match window.current_monitor().ok().flatten() {
+        Some(monitor) => monitor,
+        None => match window.primary_monitor().ok().flatten() {
+            Some(monitor) => monitor,
+            None => return,
+        },
+    };
+    let scale = monitor.scale_factor();
+    if scale <= 0.0 {
+        return;
+    }
+    let work_area = monitor.work_area().size;
+    let avail_w = f64::from(work_area.width) / scale;
+    let avail_h = f64::from(work_area.height) / scale;
+    if avail_w >= DESIGN_W && avail_h >= DESIGN_H {
+        return; // 常规分辨率：设计尺寸直接可用
+    }
+    // 小逻辑工作区：还原尺寸钳到工作区 98%，启动即最大化铺满
+    let restore_w = (avail_w * 0.98).min(DESIGN_W).max(760.0);
+    let restore_h = (avail_h * 0.98).min(DESIGN_H).max(540.0);
+    let _ = window.set_size(tauri::LogicalSize::new(restore_w, restore_h));
+    let _ = window.center();
+    let _ = window.maximize();
+}
+
 fn main_window_is_offscreen<R: Runtime>(window: &WebviewWindow<R>) -> bool {
     let Ok(position) = window.outer_position() else {
         return false;
@@ -1260,15 +1291,18 @@ fn main() {
             }
             let owned = app.state::<OwnedSidecar>().inner().clone();
             let runtime_script = runtime_initialization_script(port, &token);
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let main_window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .initialization_script(runtime_script)
                 .on_navigation(is_allowed_main_navigation)
                 .title("GA-Hub")
                 .inner_size(1320.0, 860.0)
-                .min_inner_size(960.0, 600.0)
+                // min 必须小于最小常见逻辑工作区（1368×912@150% ≈ 894×596），否则小屏无法容纳
+                .min_inner_size(760.0, 540.0)
                 .center()
                 .resizable(true)
                 .build()?;
+
+            fit_main_window_to_work_area(&main_window);
 
             // CreateProcess, Windows Job / Unix process-group setup, PyInstaller
             // extraction, and HTTP readiness all run off the Tauri setup thread.
