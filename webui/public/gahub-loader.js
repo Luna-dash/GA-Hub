@@ -126,7 +126,11 @@
   window.__GA_HUB_LOADING_READY__ = function () {}
   setTimeout(hideLoading, AUTO_HIDE_MS)
 
-  if (!ctx || reducedMotion) { useStaticFallback(); return }
+  // 产品决策：prefers-reduced-motion 不再切换静态占位。开机画面仅数秒，
+  // 而 Windows「动画效果=关」（新装机/OEM 默认）、节电模式、远程会话都会
+  // 误报 reduce，导致银河开场整段缺失、被用户当成故障。只有 canvas 2D
+  // 上下文真正不可用（无法渲染）才降级静态兜底。
+  if (!ctx) { useStaticFallback(); return }
 
   /* ── 缓动与工具 ──────────────────────────────────────────────── */
   function easeInOutCubic(p) { return p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2 }
