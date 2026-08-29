@@ -16,7 +16,6 @@ Architecture notes:
 """
 from __future__ import annotations
 
-import inspect
 import json
 import logging
 import re
@@ -37,25 +36,6 @@ log = logging.getLogger(__name__)
 
 SubagentModelPolicy = Literal["follow_main", "default", "locked"]
 SUBAGENT_MODEL_POLICIES = frozenset({"follow_main", "default", "locked"})
-
-
-def _accepts_keyword(callable_obj, name: str) -> bool:
-    """Return whether a callable can receive a named compatibility hook."""
-    try:
-        signature = inspect.signature(callable_obj)
-    except (TypeError, ValueError):
-        return False
-    named = signature.parameters.get(name)
-    return (
-        named is not None
-        and named.kind in (
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.KEYWORD_ONLY,
-        )
-    ) or any(
-        parameter.kind is inspect.Parameter.VAR_KEYWORD
-        for parameter in signature.parameters.values()
-    )
 
 
 def _get_preferred_llm() -> Optional[int]:

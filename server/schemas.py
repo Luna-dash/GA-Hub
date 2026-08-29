@@ -29,14 +29,6 @@ class AgentTitleReq(BaseModel):
     title: str = ""
 
 
-class ChatStreamMsg(BaseModel):
-    type: Literal["heartbeat", "next", "done", "error"]
-    stream_id: str | None = None
-    content: str | None = None
-    source: str | None = None
-    error: str | None = None
-
-
 # ── application status ─────────────────────────────────────────────────────
 class GlobalAgentStatus(BaseModel):
     is_running: bool
@@ -226,10 +218,6 @@ class WxAllowlistWriteResp(BaseModel):
 
 
 # ── conversations ────────────────────────────────────────────────
-class ConvRename(BaseModel):
-    title: str
-
-
 # ── memory ───────────────────────────────────────────────────────
 class TextWrite(BaseModel):
     content: str

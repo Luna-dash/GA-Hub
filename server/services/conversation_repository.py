@@ -467,22 +467,3 @@ class ConversationRepository:
             except ConversationNotFound:
                 continue
 
-
-# ── singleton accessor ───────────────────────────────────────────
-_repo: ConversationRepository | None = None
-_repo_lock = threading.Lock()
-
-
-def get_repository() -> ConversationRepository:
-    global _repo
-    with _repo_lock:
-        if _repo is None:
-            _repo = ConversationRepository()
-        return _repo
-
-
-def reset_repository() -> None:
-    """Test helper: drop the cached singleton."""
-    global _repo
-    with _repo_lock:
-        _repo = None

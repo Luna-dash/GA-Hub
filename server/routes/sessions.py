@@ -176,15 +176,6 @@ def scheduled_chat_service() -> ScheduledChatService:
     return _get_scheduled_chats()
 
 
-def start_scheduled_chats() -> None:
-    _get_scheduled_chats().start()
-
-
-def stop_scheduled_chats() -> None:
-    if _scheduled_chats is not None:
-        _scheduled_chats.shutdown()
-
-
 def stop_session_runtimes(
     timeout: float = 3.0, *, keep_admission_closed: bool = False
 ) -> bool:
