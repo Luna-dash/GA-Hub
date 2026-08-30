@@ -399,7 +399,11 @@ def _mykey_sync_script() -> Path:
 
 
 def _sync_base_url() -> str:
-    return os.environ.get("GA_MYKEY_SYNC_URL", "https://ga.lunadash.me").rstrip("/")
+    # EdgeOne Makers 方案(2026-08-30 起)：HTTPS 上传/下载接口；旧 ga.lunadash.me 链路已下线
+    return os.environ.get(
+        "GA_MYKEY_SYNC_URL",
+        "https://ga-mykey-makers-sync-zhing7ne.edgeone.cool",
+    ).rstrip("/")
 
 
 _MYKEY_MIN_PYTHON = (3, 11)
@@ -545,10 +549,11 @@ def _mykey_sync_python() -> str:
 
 
 def _run_mykey_sync(args: list[str]) -> dict[str, Any]:
-    """Run mykey_sync.py without passing secrets on argv.
+    """Run mykey_sync.py without passing secrets on argv or env.
 
-    Secrets are read by the script from environment variables:
-    GA_MYKEY_SYNC_PASSPHRASE / GA_MYKEY_UPLOAD_TOKEN.
+    凭证由脚本自身从 GA keychain 读取（唯一凭证 ``ga_mykey_sync_key``，
+    同时用于 HTTP 上传鉴权、manifest 路径派生与 AES-256-GCM 加解密）；
+    命令行和环境变量不携带任何密值。
     """
     script = _mykey_sync_script()
     if _paths.GA_ROOT is None:
@@ -615,7 +620,7 @@ async def sync_upload_mykey() -> MyKeySyncResultResp:
     p = _mykey_path()
     if not p.is_file():
         raise HTTPException(404, "mykey.py 不存在")
-    # EdgeOne static-embed 迁移(2026-08): --upload-url 语义=上传后字节级校验的站点 base URL
+    # EdgeOne Makers 方案: --upload-url 接受服务根地址（脚本自动拼 /api/mykey/upload）
     result = await asyncio.to_thread(_run_mykey_sync, [
         "upload",
         "--upload-url", _sync_base_url(),
