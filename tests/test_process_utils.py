@@ -327,7 +327,7 @@ def test_mykey_sync_reports_missing_cryptography_actionably(tmp_path):
 @pytest.mark.parametrize(
     ("environment", "expected_url"),
     [
-        ({}, "https://ga-mykey-makers-sync-zhing7ne.edgeone.cool"),
+        ({}, "https://ga.lunadash.me"),
         ({"GA_MYKEY_SYNC_URL": "https://mirror.example/"}, "https://mirror.example"),
             ],
 )
@@ -346,6 +346,6 @@ def test_mykey_upload_route_preserves_sync_cli_url_contract(tmp_path, environmen
     assert result["ok"] is True
     runner.assert_called_once_with([
         "upload",
-        "--upload-url", expected_url,
+        "--base-url", expected_url,
         "--source", str(target),
     ])

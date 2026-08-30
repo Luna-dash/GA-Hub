@@ -399,11 +399,9 @@ def _mykey_sync_script() -> Path:
 
 
 def _sync_base_url() -> str:
-    # EdgeOne Makers 方案(2026-08-30 起)：HTTPS 上传/下载接口；旧 ga.lunadash.me 链路已下线
-    return os.environ.get(
-        "GA_MYKEY_SYNC_URL",
-        "https://ga-mykey-makers-sync-zhing7ne.edgeone.cool",
-    ).rstrip("/")
+    # Vercel 静态部署方案(2026-08-30 起)：自定义域名 ga.lunadash.me 大陆直连可达；
+    # vercel.app 直连被墙不可作端点。upload 参数=部署后回读校验用的站点根 URL。
+    return os.environ.get("GA_MYKEY_SYNC_URL", "https://ga.lunadash.me").rstrip("/")
 
 
 _MYKEY_MIN_PYTHON = (3, 11)
@@ -620,10 +618,10 @@ async def sync_upload_mykey() -> MyKeySyncResultResp:
     p = _mykey_path()
     if not p.is_file():
         raise HTTPException(404, "mykey.py 不存在")
-    # EdgeOne Makers 方案: --upload-url 接受服务根地址（脚本自动拼 /api/mykey/upload）
+    # Vercel 方案: upload 走 Vercel 部署 API，--base-url 仅用于部署后回读校验
     result = await asyncio.to_thread(_run_mykey_sync, [
         "upload",
-        "--upload-url", _sync_base_url(),
+        "--base-url", _sync_base_url(),
         "--source", str(p),
     ])
     return {"ok": True, "action": "upload", "path": str(p), **result}
