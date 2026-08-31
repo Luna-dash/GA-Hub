@@ -1,8 +1,9 @@
 export const RAIL_TITLE_SCALE_KEY = 'gahub.rail-title-scale'
 export const RAIL_TITLE_SCALE_EVENT = 'gahub:rail-title-scale'
 export const RAIL_TITLE_SCALE_DEFAULT = 100
-export const RAIL_TITLE_SCALE_MIN = 75
-export const RAIL_TITLE_SCALE_MAX = 150
+// 200px 栏宽下默认字号对长标题偏大，量程以缩小为主
+export const RAIL_TITLE_SCALE_MIN = 60
+export const RAIL_TITLE_SCALE_MAX = 120
 export const RAIL_TITLE_SCALE_STEP = 5
 
 export function clampRailTitleScale(value: number): number {

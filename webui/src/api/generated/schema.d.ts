@@ -1106,6 +1106,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/files/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve File Path
+         * @description Resolve an agent-cited path (absolute / GA-root relative / bare temp
+         *     name / fuzzy tail) without opening anything.
+         */
+        post: operations["resolve_file_path_api_files_resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/files/reveal": {
         parameters: {
             query?: never;
@@ -1120,9 +1141,12 @@ export interface paths {
          * @description Open a local path with the host's default application.
          *
          *     Any existing absolute path is allowed if its type is on the
-         *     document/image/media/text allowlist (or is a directory). Relative
-         *     paths still resolve under ``GA_ROOT``. Content download via
-         *     ``files-by-path`` remains root-restricted separately.
+         *     document/image/media/text allowlist (or is a directory). Relative paths
+         *     resolve through the citation cascade (GA root, temp, L4 archives, the
+         *     GA-Hub checkout, then a bounded fuzzy search). ``mode`` selects the
+         *     action: open the file, reveal it in the file manager, or open its parent
+         *     folder. Content download via ``files-by-path`` remains root-restricted
+         *     separately.
          */
         post: operations["reveal_file_api_files_reveal_post"];
         delete?: never;
@@ -2469,6 +2493,8 @@ export interface components {
              * @default 0
              */
             generation: number;
+            /** Llm Index */
+            llm_index?: number | null;
             /** Request Id */
             request_id?: string | null;
         } & {
@@ -3222,10 +3248,34 @@ export interface components {
             /** Raw */
             raw: string;
         };
+        /** ResolveFileReq */
+        ResolveFileReq: {
+            /** Path */
+            path: string;
+        };
+        /** ResolveFileResp */
+        ResolveFileResp: {
+            /** Raw */
+            raw: string;
+            /** Resolved */
+            resolved: string | null;
+            /** Exists */
+            exists: boolean;
+            /** Is Dir */
+            is_dir: boolean;
+            /** Ambiguous */
+            ambiguous: boolean;
+        };
         /** RevealFileReq */
         RevealFileReq: {
             /** Path */
             path: string;
+            /**
+             * Mode
+             * @default open
+             * @enum {string}
+             */
+            mode: "open" | "folder" | "parent";
         };
         /** RevealFileResp */
         RevealFileResp: {
@@ -5806,6 +5856,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_file_path_api_files_resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveFileReq"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolveFileResp"];
                 };
             };
             /** @description Validation Error */

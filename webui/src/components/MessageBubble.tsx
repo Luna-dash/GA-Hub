@@ -11,7 +11,7 @@
 //   • Fold / tool-trace segments render MarkdownView mode=plain (no math/hljs).
 //   • Hover-revealed "复制" button on assistant messages.
 
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import {
   parseAssistantTranscript,
@@ -100,7 +100,11 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
     return () => window.clearInterval(timer)
   }, [streaming, startedAt])
 
-  const messageFontStyle = compact ? undefined : { fontSize: `${fontScale}%` }
+  // fontSize 缩放普通文本；--chat-scale 供 CSS 里 rem 字号规则（标题/表格/
+  // 代码块/折叠头）做 calc 同步缩放，见 index.css 的 prose-chat 区块注释。
+  const messageFontStyle = compact
+    ? undefined
+    : { fontSize: `${fontScale}%`, '--chat-scale': fontScale / 100 } as CSSProperties
   const isUser = role === 'user'
   const isSystem = role === 'system'
   const timeLabel = formatMessageTime(timestamp)
@@ -168,7 +172,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
           {!compact && (
             <div className={clsx("mb-2 flex items-center gap-2 text-[11px] font-medium", isSystem ? "text-[#7B5A2E]" : "text-[#665741]")}>
               <span className={clsx("h-1.5 w-1.5 rounded-full", isSystem ? "bg-[#A2783F]" : "bg-[#54735D]")} />
-              {isSystem ? 'System Event' : 'GA Agent'}
+              {isSystem ? 'system' : 'GA Agent'}
             </div>
           )}
           <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
@@ -242,9 +246,14 @@ function HistoryTranscriptReply({
   return (
     <>
       {visibleProcessTurns.length > 0 && <LazyProcessFold turns={visibleProcessTurns} />}
+      {transcript.stopped && (
+        <p className="mb-2 text-xs italic leading-5 text-[#8A6B3E]">
+          ⏹ 本轮执行被手动停止，未产生结论{transcript.finalBody ? '，以下为上一轮的完整结论' : ''}
+        </p>
+      )}
       {visibleFinal ? (
         <MarkdownView mode="auto" cache>{visibleFinal}</MarkdownView>
-      ) : (
+      ) : transcript.stopped ? null : (
         <p className="text-sm leading-6 text-[#665741]">该条历史回复未包含可提取的最终回答。</p>
       )}
       {finalDeferred && (

@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 
 from .. import _paths
 from ..process_utils import hidden_process_kwargs
-from ..schemas import RevealFileReq, RevealFileResp, UploadResp
+from ..schemas import RevealFileReq, RevealFileResp, ResolveFileReq, ResolveFileResp, UploadResp
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -86,20 +86,129 @@ def _reveal_ext_allowed(path: Path) -> bool:
     return ext in _REVEAL_SAFE_EXT
 
 
-def _resolve_reveal_path(raw_path: str) -> Path:
-    value = raw_path.strip().strip('"')
+def _normalize_rel(raw: str) -> str:
+    """Normalize an agent-cited path for probing (separators, ./ noise)."""
+    value = (raw or "").strip().strip('"').replace("\\", "/")
+    while value.startswith("./"):
+        value = value[2:]
+    return value.strip()
+
+
+def _path_candidates(raw: str) -> list[Path]:
+    """Probe order for agent-cited paths (first existing wins):
+
+    1. absolute paths as-is
+    2. relative to GA root (`temp/x.md`, `memory/…`)
+    3. bare names inside GA's temp dir (`model_responses_x.txt`)
+    4. bare names inside the L4 session-archive dir
+    5. relative to the GA-Hub checkout (`scripts/build_all.py` citations)
+    """
+    value = _normalize_rel(raw)
     if not value:
-        raise HTTPException(400, "path is required")
-
+        return []
     path = Path(value).expanduser()
-    if not path.is_absolute():
-        if _paths.GA_ROOT is None:
-            raise HTTPException(503, "GA root is not configured")
-        path = Path(_paths.GA_ROOT) / path
-    path = path.resolve()
+    bases: list[Path] = []
+    if path.is_absolute():
+        bases.append(path)
+    else:
+        if _paths.GA_ROOT:
+            root = Path(_paths.GA_ROOT)
+            bases.append(root / path)
+            bases.append(root / "temp" / path)
+            bases.append(root / "memory" / "L4_raw_sessions" / path)
+        bases.append(_paths.ADMIN_ROOT / path)
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for base in bases:
+        key = str(base).lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(base)
+    return unique
 
-    if not path.exists():
+
+_FUZZY_PRUNE_DIRS = {
+    ".git", "node_modules", "__pycache__", ".venv", "venv",
+    ".idea", ".vscode", "binaries", "target",
+}
+_FUZZY_MAX_DEPTH = 3
+
+
+def _fuzzy_find(raw: str) -> tuple[Path | None, bool]:
+    """Depth-bounded unique-tail search under GA root for unresolved paths.
+
+    Returns ``(path, ambiguous)``. Ambiguous (≥2 hits) resolves to nothing —
+    guessing would open the wrong file. Bounded depth + pruned junk dirs keep
+    this in the tens-of-milliseconds range; it only runs on demand.
+    """
+    rel = _normalize_rel(raw).lstrip("/")
+    if not rel or _paths.GA_ROOT is None:
+        return None, False
+    parts = [p for p in rel.split("/") if p and p != "."]
+    if not parts:
+        return None, False
+    tail = "/".join(parts)
+    last = parts[-1]
+    hits: list[Path] = []
+    ga_root = Path(_paths.GA_ROOT)
+    base_depth = len(ga_root.parts)
+    for dirpath, dirnames, filenames in os.walk(ga_root):
+        depth = len(Path(dirpath).parts) - base_depth
+        if depth >= _FUZZY_MAX_DEPTH:
+            dirnames[:] = []
+        dirnames[:] = [d for d in dirnames if d not in _FUZZY_PRUNE_DIRS]
+        rel_dir = "/".join(Path(dirpath).parts[base_depth:])
+        for name in list(filenames) + list(dirnames):
+            rel_path = f"{rel_dir}/{name}" if rel_dir else name
+            if rel_path == tail or name == last:
+                hits.append(Path(dirpath) / name)
+                if len(hits) >= 2:
+                    return None, True
+    if hits:
+        return hits[0], False
+    return None, False
+
+
+def _resolve_path_info(raw_path: str) -> dict:
+    raw = raw_path or ""
+    for candidate in _path_candidates(raw):
+        try:
+            if candidate.exists():
+                resolved = candidate.resolve()
+                return {
+                    "raw": raw,
+                    "resolved": str(resolved),
+                    "exists": True,
+                    "is_dir": resolved.is_dir(),
+                    "ambiguous": False,
+                }
+        except OSError:
+            continue
+    hit, ambiguous = _fuzzy_find(raw)
+    if hit is not None:
+        return {
+            "raw": raw,
+            "resolved": str(hit.resolve()),
+            "exists": True,
+            "is_dir": hit.is_dir(),
+            "ambiguous": False,
+        }
+    return {
+        "raw": raw,
+        "resolved": None,
+        "exists": False,
+        "is_dir": False,
+        "ambiguous": ambiguous,
+    }
+
+
+def _resolve_reveal_path(raw_path: str) -> Path:
+    info = _resolve_path_info(raw_path)
+    if not info["resolved"]:
+        if info["ambiguous"]:
+            raise HTTPException(404, "ambiguous path matches multiple files")
         raise HTTPException(404, "not found")
+    path = Path(info["resolved"])
     if not _reveal_ext_allowed(path):
         raise HTTPException(
             403,
@@ -235,17 +344,57 @@ async def get_file(fname: str):
     )
 
 
+def _show_in_file_manager(path: Path) -> None:
+    """Reveal a file in its parent folder (Windows selects it), or open a dir.
+
+    Explorer is a GUI process: it must NOT be started with the house
+    CREATE_NO_WINDOW/SW_HIDE policy — the hidden show-state makes the window
+    never appear (the "click does nothing" bug). The select path is quoted
+    *inside* the argument, because Explorer mis-parses a whole-argument
+    re-quoting of ``/select,<path with spaces>``.
+    """
+    system = platform.system()
+    try:
+        if system == "Windows":
+            if path.is_file():
+                subprocess.Popen(f'explorer /select,"{path}"')
+            else:
+                subprocess.Popen(f'explorer "{path}"')
+            return
+        parent = path if path.is_dir() else path.parent
+        args = ["open", str(parent)] if system == "Darwin" else ["xdg-open", str(parent)]
+        subprocess.Popen(args, **hidden_process_kwargs())
+    except OSError as exc:
+        log.warning("Cannot reveal %s: %s", path, exc)
+        raise HTTPException(500, "file manager is unavailable") from exc
+
+
+@router.post("/api/files/resolve")
+def resolve_file_path(req: ResolveFileReq) -> ResolveFileResp:
+    """Resolve an agent-cited path (absolute / GA-root relative / bare temp
+    name / fuzzy tail) without opening anything."""
+    return _resolve_path_info(req.path)
+
+
 @router.post("/api/files/reveal")
 def reveal_file(req: RevealFileReq) -> RevealFileResp:
     """Open a local path with the host's default application.
 
     Any existing absolute path is allowed if its type is on the
-    document/image/media/text allowlist (or is a directory). Relative
-    paths still resolve under ``GA_ROOT``. Content download via
-    ``files-by-path`` remains root-restricted separately.
+    document/image/media/text allowlist (or is a directory). Relative paths
+    resolve through the citation cascade (GA root, temp, L4 archives, the
+    GA-Hub checkout, then a bounded fuzzy search). ``mode`` selects the
+    action: open the file, reveal it in the file manager, or open its parent
+    folder. Content download via ``files-by-path`` remains root-restricted
+    separately.
     """
     path = _resolve_reveal_path(req.path)
-    _open_in_default_app(path)
+    if req.mode == "folder":
+        _show_in_file_manager(path)
+    elif req.mode == "parent":
+        _open_in_default_app(path.parent if path.is_file() else path)
+    else:
+        _open_in_default_app(path)
     return {"ok": True, "path": str(path)}
 
 

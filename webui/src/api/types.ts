@@ -178,6 +178,7 @@ export type EmailTestResponse = ApiSchemas['EmailTestResp']
 // ── Upload ────────────────────────────────────────────────
 export type UploadResult = ApiSchemas['UploadResp']
 export type RevealFileResponse = ApiSchemas['RevealFileResp']
+export type ResolveFileResponse = ApiSchemas['ResolveFileResp']
 
 // ── mykey.py editor ──────────────────────────────────────
 export type MyKeySessionType =

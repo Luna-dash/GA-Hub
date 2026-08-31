@@ -219,6 +219,58 @@ describe('MessageBubble render isolation', () => {
     expect(host.textContent).not.toContain('🛠️ Tool:')
   })
 
+  it('labels system-role bubbles with a system header instead of GA Agent', () => {
+    act(() => root.render(
+      <MessageBubble role="system" content="GA-Hub 已重新连接会话。" streaming={false} />,
+    ))
+
+    expect(host.textContent).toContain('system')
+    expect(host.textContent).not.toContain('GA Agent')
+  })
+
+  it('renders a stopped dangling tail as a notice above the previous conclusion', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>得出结论</summary>',
+      '## 结论\n\n已完成迁移。',
+      '**LLM Running (Turn 2) ...**',
+      '<summary>执行清理命令</summary>',
+      '🛠️ Tool: `code_run`  📥 args:',
+      '````text',
+      '{"command":"rm -rf temp"}',
+      '````',
+    ].join('\n')
+
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+
+    expect(host.textContent).toContain('⏹ 本轮执行被手动停止，未产生结论，以下为上一轮的完整结论')
+    expect(markdownRender.mock.calls[0][0].children).toContain('已完成迁移。')
+    // 悬空轮留在折叠里，不顶掉结论
+    expect(host.textContent).toContain('查看执行过程')
+    expect(host.textContent).not.toContain('该条历史回复未包含可提取的最终回答')
+  })
+
+  it('renders a tool-only archived reply as a stop notice without a fabricated conclusion', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>命令仍在执行</summary>',
+      '🛠️ code_run({"script":"test"})',
+      '`````',
+      'unstructured command output',
+      '`````',
+    ].join('\n')
+
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+
+    expect(host.textContent).toContain('⏹ 本轮执行被手动停止，未产生结论')
+    // 该轮摘要作为"被打断时在做什么"的上下文兜底展示
+    expect(markdownRender).toHaveBeenCalledTimes(1)
+    expect(markdownRender.mock.calls[0][0].children).toBe('命令仍在执行')
+    // 过程仍可展开
+    expect(host.textContent).toContain('查看执行过程')
+    expect(host.textContent).not.toContain('该条历史回复未包含可提取的最终回答')
+  })
+
   it('keeps the process entry for a just-completed live reply and lazily renders its raw turn', () => {
     const content = [
       '**LLM Running (Turn 1) ...**',

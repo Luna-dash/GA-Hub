@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import type { ConversationMessage, SessionMessagesResponse } from '@/api/types'
-import { noticeKeys, useChatStore } from './chatStore'
+import { noticeKeys, useChatStore, applyEvent } from './chatStore'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -591,5 +591,47 @@ describe('pushSystem stable bubbles', () => {
     expect(msgs[0].content).toBe('_已切换到 [2] claude-y_')
     expect(msgs[0].source).toBe('system')
     expect(msgs[2].content).toBe('_再次切换项目失败：bam_')
+  })
+})
+
+describe('manual stop projection', () => {
+  const streamingMsg = {
+    role: 'assistant' as const,
+    content: '🛠️ Tool: `code_run`  📥 args:\n````text\n{"cwd":"."}\n````',
+    streamId: 's1',
+    source: 'webui' as const,
+    streaming: true,
+    timestamp: 1,
+    finishedAt: null,
+  }
+
+  it('appends a stop notice inside the stopped bubble', () => {
+    const afterAbort = applyEvent([streamingMsg], { type: 'aborted' } as never)
+    expect(afterAbort).toHaveLength(1)
+    expect(afterAbort[0].streaming).toBe(false)
+    expect(afterAbort[0].content).toContain('⏹ 已手动停止')
+    // 重复 aborted 不叠加标记
+    const again = applyEvent(afterAbort, { type: 'aborted' } as never)
+    expect(again[0].content).toBe(afterAbort[0].content)
+  })
+
+  it('suppresses the stream_error aftermath right after a manual abort', () => {
+    const afterAbort = applyEvent([streamingMsg], { type: 'aborted' } as never)
+    const afterError = applyEvent(afterAbort, { type: 'error', stream_id: 's1', code: 'stream_error', detail: 'connection closed' } as never)
+    expect(afterError).toHaveLength(1)
+    expect(afterError.some((m) => m.content.includes('运行错误'))).toBe(false)
+  })
+
+  it('keeps the stop mark when a late done replays the partial content', () => {
+    const afterAbort = applyEvent([streamingMsg], { type: 'aborted' } as never)
+    const afterDone = applyEvent(afterAbort, { type: 'done', stream_id: 's1', source: 'webui', content: '🛠️ Tool: `code_run`  📥 args:' } as never)
+    expect(afterDone[0].content).toContain('⏹ 已手动停止')
+    expect(afterDone[0].content).not.toContain('\n\n\n')
+  })
+
+  it('still surfaces genuine errors when no abort happened', () => {
+    // 用全新 stream：别的流被手动停过不影响这里的真错误
+    const afterError = applyEvent([{ ...streamingMsg, streamId: 'fresh-1' }], { type: 'error', stream_id: 'fresh-1', code: 'llm_refused', detail: 'boom' } as never)
+    expect(afterError.some((m) => m.content.includes('运行错误（llm_refused）'))).toBe(true)
   })
 })

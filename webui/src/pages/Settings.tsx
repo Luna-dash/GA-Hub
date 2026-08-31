@@ -416,7 +416,7 @@ function ChatAppearancePanel() {
       </div>
       <div className="mt-3 rounded-lg border border-line bg-bg-soft px-3 py-2">
         <div className="truncate font-medium text-slate-200" style={{ fontSize: `${titleScale}%` }}>
-          标题字号预览：历史对话索引条目标题
+          标题字号预览：会话管理栏条目标题
         </div>
       </div>
     </div>

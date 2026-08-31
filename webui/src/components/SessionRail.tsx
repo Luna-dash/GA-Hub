@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import { sessionActivity, sessionStatusLabel } from '@/utils/sessionUi'
 import { usePageState } from '@/utils/pageState'
+import { RAIL_TITLE_SCALE_EVENT, getRailTitleScale } from '@/utils/railAppearance'
 
 interface SessionRailProps {
   sessions: HubSession[]
@@ -284,6 +285,15 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
     }
   }
 
+  // 会话管理栏标题字号（设置页可调，仅当前设备；200px 栏宽下默认字号
+  // 对长标题偏大，方向以缩小为主）
+  const [titleScale, setTitleScale] = useState(getRailTitleScale)
+  useEffect(() => {
+    const sync = (event: Event) => setTitleScale((event as CustomEvent<number>).detail || getRailTitleScale())
+    window.addEventListener(RAIL_TITLE_SCALE_EVENT, sync)
+    return () => window.removeEventListener(RAIL_TITLE_SCALE_EVENT, sync)
+  }, [])
+
   return (
     <div
       data-collapsed={collapsed ? 'true' : 'false'}
@@ -364,7 +374,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                       >
                         <span className="flex items-center gap-2 pr-8">
                           <span aria-hidden="true" title={sessionStatusLabel(runtime)} className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
-                          <span className="min-w-0 flex-1 truncate text-sm font-medium" title={sessionTitle(session)}>{sessionTitle(session)}</span>
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ fontSize: `${titleScale}%` }} title={sessionTitle(session)}>{sessionTitle(session)}</span>
                         </span>
                       </button>
                     )}

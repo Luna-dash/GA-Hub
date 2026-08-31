@@ -14,9 +14,10 @@ describe('railAppearance', () => {
   })
 
   it('clamps and rounds the scale to supported steps', () => {
-    expect(clampRailTitleScale(72)).toBe(75)
+    expect(clampRailTitleScale(52)).toBe(60)
+    expect(clampRailTitleScale(72)).toBe(70)
     expect(clampRailTitleScale(103)).toBe(105)
-    expect(clampRailTitleScale(153)).toBe(150)
+    expect(clampRailTitleScale(153)).toBe(120)
     expect(clampRailTitleScale(Number.NaN)).toBe(RAIL_TITLE_SCALE_DEFAULT)
   })
 
@@ -24,9 +25,9 @@ describe('railAppearance', () => {
     const listener = vi.fn()
     window.addEventListener(RAIL_TITLE_SCALE_EVENT, listener)
 
-    expect(setRailTitleScale(123)).toBe(125)
-    expect(getRailTitleScale()).toBe(125)
-    expect(localStorage.getItem(RAIL_TITLE_SCALE_KEY)).toBe('125')
+    expect(setRailTitleScale(115)).toBe(115)
+    expect(getRailTitleScale()).toBe(115)
+    expect(localStorage.getItem(RAIL_TITLE_SCALE_KEY)).toBe('115')
     expect(listener).toHaveBeenCalledOnce()
 
     window.removeEventListener(RAIL_TITLE_SCALE_EVENT, listener)

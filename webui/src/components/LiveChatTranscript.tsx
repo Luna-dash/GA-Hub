@@ -259,8 +259,16 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     }
 
     const renderChatMessage = useCallback((message: ChatMsg) => {
-      const role = (message.role === 'system' ? 'assistant' : message.role) as 'user' | 'assistant'
-      const tag = message.source
+      // system 消息（/btw 回答 role='system'；GA-Hub 通知 source='system'；
+      // 自动重试状态 source='chat_error_retry_notice'）保留 system 角色：
+      // 琥珀气泡 + "system" 头行，正文不再被塞来源前缀。
+      const isSystemBubble = message.role === 'system'
+        || message.source === 'system'
+        || message.source === 'chat_error_retry_notice'
+        || message.source === 'runtime_error_notice'
+      const role = (isSystemBubble ? 'system' : message.role) as 'user' | 'assistant' | 'system'
+      const tag = !isSystemBubble
+        && message.source
         && message.source !== 'webui'
         && message.source !== 'user'
         && message.source !== 'history'

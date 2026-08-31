@@ -54,6 +54,7 @@ import type {
   ProjectItem,
   ReportItem,
   RevealFileResponse,
+  ResolveFileResponse,
   Schedule,
   ScheduleListResponse,
   ScheduleMutationResponse,
@@ -411,8 +412,10 @@ export const api = {
   },
   fileUrlByPath: (absPath: string) =>
     resolveApiUrl(`/api/files-by-path?path=${encodeURIComponent(absPath)}`),
-  revealFile: (path: string) =>
-    http<RevealFileResponse>('POST', '/api/files/reveal', { path }),
+  revealFile: (path: string, mode: 'open' | 'folder' | 'parent' = 'open') =>
+    http<RevealFileResponse>('POST', '/api/files/reveal', { path, mode }),
+  resolveFile: (path: string) =>
+    http<ResolveFileResponse>('POST', '/api/files/resolve', { path }),
 
   // ── logs ─────────────────────────────────────────────
   wechatLog: (tail = 200) => http<LogLinesResponse>('GET', `/api/logs/wechat?tail=${tail}`),

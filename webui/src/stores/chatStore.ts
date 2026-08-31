@@ -318,6 +318,11 @@ function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
 let historyGeneration = 0
 let historyAbort: AbortController | null = null
 let olderHistoryAbort: AbortController | null = null
+// 手动停止的痕迹：aborted 时仍在流的 streamId → 时间戳，用于压制 abort
+// 引发的 stream_error 余波误报（真错误发生在别的 stream 上不受影响）
+const abortedStreams = new Map<string, number>()
+const ABORT_ERROR_SUPPRESS_MS = 5000
+const STOP_MARK = '_⏹ 已手动停止_'
 let liveCleanup: (() => void) | null = null
 let webuiStageSequence = 0
 const sessionCursors = new Map<string, ChatEventCursor>()
@@ -342,7 +347,8 @@ function sessionSocketPath(sessionId: string): string {
 }
 
 /** Apply a single server event to the message list. */
-function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
+// exported for tests: pure reducer over the message list
+export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   const now = Date.now()
   if (evt.type === 'snapshot') {
     return evt.streams ? applySnapshot(evt.streams) : prev
@@ -417,7 +423,10 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
       return [...next, { role, content: evt.content, streamId: sid, source: evt.source, streaming: false, timestamp: now, startedAt: now, finishedAt: now }]
     }
     const updated = next.slice()
-    updated[idx] = { ...updated[idx], content: evt.content, streaming: false, timestamp: now, finishedAt: now }
+    // 手动停止后 GA 仍可能补发一条 done（半截内容）——保留气泡里的终止标记
+    const hadStopMark = updated[idx].content.trimEnd().endsWith(STOP_MARK)
+    const baseContent = hadStopMark ? updated[idx].content.trimEnd().slice(0, -STOP_MARK.length).trimEnd() : updated[idx].content
+    updated[idx] = { ...updated[idx], content: `${baseContent ? `${baseContent}\n\n` : ''}${evt.content}${hadStopMark ? `\n\n${STOP_MARK}` : ''}`, streaming: false, timestamp: now, finishedAt: now }
     return updated
   }
   if (evt.type === 'retry') {
@@ -452,6 +461,11 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
     )
   }
   if (evt.type === 'error') {
+    // abort 后 socket 关断的余波（stream_error 等）不是新故障：只结流，不报错
+    const abortedAt = evt.stream_id ? abortedStreams.get(evt.stream_id) : undefined
+    if (abortedAt !== undefined && Date.now() - abortedAt < ABORT_ERROR_SUPPRESS_MS) {
+      return prev.map((m) => (m.streaming ? { ...m, streaming: false, finishedAt: now } : m))
+    }
     const noticeId = `${evt.stream_id}:error:${evt.code}`
     const stopped = prev.map((m) =>
       m.streamId === evt.stream_id && m.streaming ? { ...m, streaming: false, finishedAt: now } : m,
@@ -470,7 +484,19 @@ function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   }
   if (evt.type === 'aborted') {
     // Mark every still-streaming bubble as finished — server confirmed abort.
-    return prev.map((m) => (m.streaming ? { ...m, streaming: false, finishedAt: now } : m))
+    // 手动停止不是故障：气泡内补终止标记，并记录被停 stream 以压掉余波 error。
+    for (const m of prev) {
+      if (m.streaming && m.streamId) abortedStreams.set(m.streamId, Date.now())
+    }
+    for (const [sid, at] of abortedStreams) {
+      if (Date.now() - at > 60_000) abortedStreams.delete(sid)
+    }
+    return prev.map((m) => {
+      if (!m.streaming) return m
+      const trimmed = m.content.trimEnd()
+      if (trimmed.endsWith(STOP_MARK)) return { ...m, streaming: false, finishedAt: now }
+      return { ...m, streaming: false, finishedAt: now, content: trimmed ? `${trimmed}\n\n${STOP_MARK}` : STOP_MARK }
+    })
   }
   if (evt.type === 'rewound') {
     // Server-driven rewind: drop bubbles whose streamId belongs to any removed

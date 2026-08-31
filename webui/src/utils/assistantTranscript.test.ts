@@ -56,7 +56,32 @@ describe('assistant transcript projection', () => {
     expect(transcript.finalBody).toBe('最终结果')
   })
 
-  it('does not expose a tool-only result as a final answer', () => {
+  it('preserves interior code fences in the projected final body', () => {
+    // 回归（ga更新任务 目录树）：全局剥壳正则曾把结论里的 ```text 围栏
+    // 吃掉，树状图退化成一段合并文本。原始内容直出后必须原样保留。
+    const content = [
+      'LLM Running (Turn 1) ...',
+      '<summary>拟写迁移方案</summary>',
+      '## 建议的清理结果',
+      '',
+      '```text',
+      'memory/',
+      '├─ gahub_sop.md   # 保留',
+      'temp/',
+      '└─ plan.md',
+      '```',
+      '',
+      '是否确认？',
+    ].join('\n')
+
+    const { finalBody } = parseAssistantTranscript(content)
+
+    expect(finalBody).toContain('```text')
+    expect(finalBody).toContain('├─ gahub_sop.md')
+    expect(finalBody).toContain('是否确认？')
+  })
+
+  it('treats a tool-only final turn as a stopped dangling tail', () => {
     const content = [
       'LLM Running (Turn 1) ...',
       '<summary>命令仍在执行</summary>',
@@ -68,8 +93,52 @@ describe('assistant transcript projection', () => {
 
     const transcript = parseAssistantTranscript(content)
 
+    // 停止按钮截断的形状：LLM 尾巴不会写入存档 → 不拿过程凑结论
+    expect(transcript.stopped).toBe(true)
     expect(transcript.finalBody).toBe('')
+    // 原始过程保留在折叠列表里
     expect(transcript.turns[0].content).toContain('unstructured command output')
+  })
+
+  it('falls back to the previous conclusion when the tail turn dangles after a stop', () => {
+    const content = [
+      'LLM Running (Turn 1) ...',
+      '<summary>得出结论</summary>',
+      '## 结论\n\n已完成迁移。',
+      'LLM Running (Turn 2) ...',
+      '<summary>执行清理命令</summary>',
+      '🛠️ Tool: `code_run`  📥 args:',
+      '````text',
+      '{"command":"rm -rf temp"}',
+      '````',
+      '`````',
+      '部分输出…',
+      '`````',
+    ].join('\n')
+
+    const transcript = parseAssistantTranscript(content)
+
+    expect(transcript.stopped).toBe(true)
+    expect(transcript.finalBody).toBe('## 结论\n\n已完成迁移。')
+    expect(transcript.finalTurnIndex).toBeNull()
+    // 悬空轮留在折叠列表（2 个 turn 都在，只有结论轮被排除显示）
+    expect(transcript.turns).toHaveLength(2)
+  })
+
+  it('does not treat an ask_user tail as a dangling stop', () => {
+    const content = [
+      'LLM Running (Turn 1) ...',
+      '<summary>等待确认</summary>',
+      '🛠️ Tool: `ask_user`  📥 args:',
+      '````text',
+      JSON.stringify({ question: '继续吗？', candidates: ['继续'] }),
+      '````',
+    ].join('\n')
+
+    const transcript = parseAssistantTranscript(content)
+
+    expect(transcript.stopped).toBe(false)
+    expect(transcript.finalTurnIndex).toBe(0)
   })
 
   it('treats ask_user as a readable final response', () => {
@@ -114,6 +183,85 @@ describe('assistant transcript projection', () => {
 
     expect(transcript.finalTurnIndex).toBe(1)
     expect(transcript.finalBody).toContain('是否继续？')
+  })
+
+  it('parses real GA ask_user args whose strings hold raw newlines', () => {
+    // GA dumps args pretty-printed WITHOUT escaping the newlines inside
+    // string values; strict JSON.parse rejects them, so the lenient field
+    // scanner must recover the question (regression from a live archive).
+    const content = [
+      'LLM Running (Turn 14) ...',
+      '<summary>方案文档已交付，向用户汇报并请求关键取舍确认</summary>',
+      '',
+      '方案已完成，全文在 `./l4_archive_proposal.md`。',
+      '',
+      '几个取舍需要你拍板：',
+      '',
+      '🛠️ Tool: `ask_user`  📥 args:',
+      '````text',
+      '{',
+      '  "candidates": [',
+      '    "认可默认值",',
+      '    "两项都改"',
+      '  ],',
+      '  "question": "1. 阈值认可默认值吗？MIN_TURNS=5？',
+      '2. 丢弃策略：quarantine 回收站还是直接物理删？',
+      '3. 授权移除 scheduler.py 里的 {隐藏 cron} 块吗？"',
+      '}',
+      '````',
+    ].join('\n')
+
+    const transcript = parseAssistantTranscript(content)
+
+    expect(transcript.finalTurnIndex).toBe(0)
+    expect(transcript.finalBody).toContain('1. 阈值认可默认值吗？MIN_TURNS=5？')
+    expect(transcript.finalBody).toContain('2. 丢弃策略：quarantine 回收站还是直接物理删？')
+    expect(transcript.finalBody).toContain('- 认可默认值')
+    expect(transcript.finalBody).toContain('- 两项都改')
+  })
+
+  it('keeps the conclusion prose when the final turn carries both prose and ask_user', () => {
+    // 回归（ga更新任务 会话 turn6）：最终 turn = 结论正文 + ask_user，
+    // 旧逻辑把整个 turn 替换成问题文本，结论消失，折叠里只剩 turn5 摘要。
+    const content = [
+      '**LLM Running (Turn 5) ...**',
+      '<summary>最新model_responses文件其实是本会话自身日志，不能作peer证据</summary>',
+      '🛠️ Tool: `code_run`  📥 args:',
+      '````text',
+      '{"cwd": "D:\\\\study\\\\GA", "code": "print(1)"}',
+      '````',
+      '`````',
+      '{"status": "success", "stdout": "ok"}',
+      '`````',
+      '**LLM Running (Turn 6) ...**',
+      '',
+      '## 是，有未提交修改（12 个文件）',
+      '',
+      '主仓工作树现在有 **10 个修改 + 2 个未跟踪**，共 +624/−69 行。',
+      '',
+      '🛠️ Tool: `ask_user`  📥 args:',
+      '````text',
+      '{',
+      '  "candidates": [',
+      '    "我来提交（按主题拆分）并推送",',
+      '    "只提交不推送"',
+      '  ],',
+      '  "question": "这批 WIP 要我怎么处理？"',
+      '}',
+      '````',
+    ].join('\n')
+
+    const transcript = parseAssistantTranscript(content)
+
+    expect(transcript.turns).toHaveLength(2)
+    expect(transcript.finalTurnIndex).toBe(1)
+    // 结论正文保留，且在问题之前
+    const body = transcript.finalBody
+    expect(body).toContain('## 是，有未提交修改（12 个文件）')
+    expect(body).toContain('共 +624/−69 行')
+    expect(body).toContain('这批 WIP 要我怎么处理？')
+    expect(body).toContain('- 我来提交（按主题拆分）并推送')
+    expect(body.indexOf('## 是，有未提交修改')).toBeLessThan(body.indexOf('这批 WIP 要我怎么处理？'))
   })
 
   it('strips only the trailing final-response protocol marker', () => {
