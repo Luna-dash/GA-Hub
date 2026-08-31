@@ -461,6 +461,7 @@ export const api = {
     msg: string,
     llm_index?: number | null,
     models: ConductorModelSettings = {},
+    force = false,
   ) =>
     http<ConductorSubagentActionResponse>('POST', `/api/conductor/subagent/${sid}`, {
       action,
@@ -469,6 +470,7 @@ export const api = {
       conductor_llm_index: models.llmIndex,
       subagent_llm_index: models.subagentLlmIndex,
       subagent_model_policy: models.subagentModelPolicy,
+      force,
     }),
   tokenStats: () => http<TokenStatsResponse>('GET', '/api/tokens/stats'),
   tokenHistory: (hours = 24) => http<TokenHistoryResponse>('GET', `/api/tokens/history?hours=${hours}`),

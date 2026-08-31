@@ -5351,27 +5351,100 @@
             "type": "string",
             "enum": [
               "path_exists",
-              "file_contains"
+              "file_contains",
+              "python_compile",
+              "json_parse",
+              "file_line_count",
+              "file_hash"
             ],
             "title": "Kind"
           },
           "path": {
             "type": "string",
-            "title": "Path"
+            "title": "Path",
+            "default": ""
           },
           "contains": {
             "type": "string",
             "title": "Contains",
             "default": ""
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Paths"
+          },
+          "min_lines": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Lines"
+          },
+          "max_lines": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Lines"
+          },
+          "algorithm": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "sha256",
+                  "sha1"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Algorithm"
+          },
+          "expected": {
+            "type": "string",
+            "maxLength": 128,
+            "title": "Expected",
+            "default": ""
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "advisory"
+            ],
+            "title": "Severity",
+            "default": "blocking"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "maximum": 120.0,
+            "minimum": 1.0,
+            "title": "Timeout Seconds",
+            "default": 30
           }
         },
         "type": "object",
         "required": [
-          "kind",
-          "path"
+          "kind"
         ],
         "title": "ConductorManifestCheck",
-        "description": "One deterministic acceptance probe evaluated by the engine itself."
+        "description": "One deterministic acceptance probe evaluated by the engine itself.\n\nRead-only probes plus fixed-template run checks (no arbitrary commands,\nno shell — mirrors the engine's ManifestCheck contract)."
       },
       "ConductorStartReq": {
         "properties": {
@@ -5721,6 +5794,11 @@
               }
             ],
             "title": "Request Id"
+          },
+          "force": {
+            "type": "boolean",
+            "title": "Force",
+            "default": false
           },
           "llm_index": {
             "anyOf": [

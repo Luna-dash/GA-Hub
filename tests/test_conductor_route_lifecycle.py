@@ -236,7 +236,9 @@ def test_subagent_route_forwards_engine_manifest_contract(monkeypatch):
     assert kwargs["done_when"] == "report exists"
     assert kwargs["checks"] == [
         {"kind": "file_contains", "path": "D:/out/report.md",
-         "contains": "AUDIT"}]
+         "contains": "AUDIT", "paths": [], "min_lines": None,
+         "max_lines": None, "algorithm": None, "expected": "",
+         "severity": "blocking", "timeout_seconds": 30}]
 
 
 def test_resume_route_uses_service_policy_boundary(monkeypatch):
@@ -290,8 +292,60 @@ def test_accept_route_forwards_request_and_returns_committed_review(monkeypatch)
 
     assert result["review_status"] == "accepted"
     service.accept_subagent.assert_called_once_with(
-        "worker-1", "verified", request_id="request-1"
+        "worker-1", "verified", request_id="request-1", force=False
     )
+
+
+def test_accept_route_forces_verdict_escape_hatch(monkeypatch):
+    """force=true is forwarded so an audited accept can bypass a failing
+    deterministic verdict after the UI has shown the evidence."""
+    service = FakeService(STOPPED)
+    service.accept_subagent = Mock(return_value={
+        "id": "worker-1", "status": "stopped", "review_status": "accepted",
+    })
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    result = asyncio.run(conductor_routes.subagent_action(
+        "worker-1",
+        conductor_routes.ConductorSubagentAction(
+            action="accept", msg="verified by hand", force=True,
+        ),
+    ))
+
+    assert result["review_status"] == "accepted"
+    service.accept_subagent.assert_called_once_with(
+        "worker-1", "verified by hand", request_id=None, force=True
+    )
+
+
+def test_accept_route_unverified_409_keeps_verification_evidence(monkeypatch):
+    """The 409 body must carry the engine's verification payload, not just
+    the error string — the UI renders that evidence before offering force."""
+    service = FakeService(STOPPED)
+    verification = {
+        "id": "worker-1", "error": "completion_unverified",
+        "checks_ok": False,
+        "quality_checks": {"checks": [
+            {"kind": "file_contains", "path": "D:/out/report.md",
+             "passed": False, "status": "failed", "severity": "blocking",
+             "detail": "content did not match"}],
+            "checks_ok": False},
+        "deliverables_missing": [],
+        "verification": {"verified": False, "checks_ok": False},
+    }
+    service.accept_subagent = Mock(return_value=verification)
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    with pytest.raises(conductor_routes.HTTPException) as raised:
+        asyncio.run(conductor_routes.subagent_action(
+            "worker-1",
+            conductor_routes.ConductorSubagentAction(action="accept"),
+        ))
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail["error"] == "completion_unverified"
+    assert raised.value.detail["quality_checks"]["checks_ok"] is False
+    assert raised.value.detail["verification"]["verified"] is False
 
 
 def test_rework_state_conflict_returns_http_409(monkeypatch):

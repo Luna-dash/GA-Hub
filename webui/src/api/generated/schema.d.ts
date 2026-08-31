@@ -2390,20 +2390,50 @@ export interface components {
         /**
          * ConductorManifestCheck
          * @description One deterministic acceptance probe evaluated by the engine itself.
+         *
+         *     Read-only probes plus fixed-template run checks (no arbitrary commands,
+         *     no shell — mirrors the engine's ManifestCheck contract).
          */
         ConductorManifestCheck: {
             /**
              * Kind
              * @enum {string}
              */
-            kind: "path_exists" | "file_contains";
-            /** Path */
+            kind: "path_exists" | "file_contains" | "python_compile" | "json_parse" | "file_line_count" | "file_hash";
+            /**
+             * Path
+             * @default
+             */
             path: string;
             /**
              * Contains
              * @default
              */
             contains: string;
+            /** Paths */
+            paths?: string[];
+            /** Min Lines */
+            min_lines?: number | null;
+            /** Max Lines */
+            max_lines?: number | null;
+            /** Algorithm */
+            algorithm?: ("sha256" | "sha1") | null;
+            /**
+             * Expected
+             * @default
+             */
+            expected: string;
+            /**
+             * Severity
+             * @default blocking
+             * @enum {string}
+             */
+            severity: "blocking" | "advisory";
+            /**
+             * Timeout Seconds
+             * @default 30
+             */
+            timeout_seconds: number;
         };
         /** ConductorStartReq */
         ConductorStartReq: {
@@ -2514,6 +2544,11 @@ export interface components {
             msg: string;
             /** Request Id */
             request_id?: string | null;
+            /**
+             * Force
+             * @default false
+             */
+            force: boolean;
             /** Llm Index */
             llm_index?: number | null;
             /** Conductor Llm Index */

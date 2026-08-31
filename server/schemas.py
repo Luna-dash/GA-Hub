@@ -472,11 +472,23 @@ class ConductorDeliverable(BaseModel):
 
 
 class ConductorManifestCheck(BaseModel):
-    """One deterministic acceptance probe evaluated by the engine itself."""
+    """One deterministic acceptance probe evaluated by the engine itself.
 
-    kind: Literal["path_exists", "file_contains"]
-    path: str
+    Read-only probes plus fixed-template run checks (no arbitrary commands,
+    no shell — mirrors the engine's ManifestCheck contract).
+    """
+
+    kind: Literal["path_exists", "file_contains", "python_compile",
+                  "json_parse", "file_line_count", "file_hash"]
+    path: str = ""
     contains: str = ""
+    paths: list[str] = Field(default_factory=list, max_length=10)
+    min_lines: int | None = Field(default=None, ge=0)
+    max_lines: int | None = Field(default=None, ge=0)
+    algorithm: Literal["sha256", "sha1"] | None = None
+    expected: str = Field(default="", max_length=128)
+    severity: Literal["blocking", "advisory"] = "blocking"
+    timeout_seconds: int = Field(default=30, ge=1, le=120)
 
 
 class ConductorStartSubagent(BaseModel):
@@ -512,6 +524,9 @@ class ConductorSubagentAction(BaseModel):
     ]
     msg: str = ""
     request_id: str | None = None
+    # Accept escape hatch: the engine refuses plain accept while its
+    # deterministic verification verdict is not clean; force is audited.
+    force: bool = False
     # Used when input/reply resumes a stopped subagent.
     llm_index: int | None = Field(default=None, ge=0)
     conductor_llm_index: int | None = Field(default=None, ge=0)

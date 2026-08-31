@@ -231,9 +231,12 @@ async def subagent_action(
             sid,
             body.msg,
             request_id=body.request_id,
+            force=body.force,
         )
         if "error" in result:
-            raise HTTPException(409, result["error"])
+            # completion_unverified must carry the verification evidence the
+            # engine computed — the UI renders it before offering force.
+            raise HTTPException(409, result)
         return result
     if action == "rework":
         result = await _dispatch_through_engine(

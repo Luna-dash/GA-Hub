@@ -1198,14 +1198,21 @@ class ConductorService:
         return result
 
     def accept_subagent(
-        self, sid: str, msg: str = "", *, request_id: str | None = None
+        self, sid: str, msg: str = "", *, request_id: str | None = None,
+        force: bool = False,
     ) -> dict:
-        """Accept a pending worker and advance its request-scoped workflow."""
+        """Accept a pending worker and advance its request-scoped workflow.
+
+        ``force`` is the audited escape hatch the engine applies when the
+        deterministic verification verdict is not clean (the UI surfaces the
+        evidence before offering it).
+        """
         self._assert_open()
         tracker = self._ensure_workflow_tracker()
         if request_id is not None and not tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")
-        result = self.client.subagent_action(sid, "accept", msg, request_id=request_id)
+        result = self.client.subagent_action(
+            sid, "accept", msg, request_id=request_id, force=force)
         if "error" not in result:
             generation = int(result.get("active_generation", 0) or 0)
             owner, transition = tracker.record_subagent_event(

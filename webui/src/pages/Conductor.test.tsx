@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   conductorSendChat: vi.fn(),
   conductorStop: vi.fn(),
   conductorStart: vi.fn(),
+  conductorSubagentAction: vi.fn(),
   llms: vi.fn(),
   selectMainLlm: vi.fn(),
   selectSubagentLlm: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock('@/api/client', () => ({
     conductorSendChat: mocks.conductorSendChat,
     conductorStop: mocks.conductorStop,
     conductorStart: mocks.conductorStart,
+    conductorSubagentAction: mocks.conductorSubagentAction,
     llms: mocks.llms,
   },
 }))
@@ -387,6 +389,137 @@ describe('Conductor chat scroll restoration', () => {
     const items = useToastStore.getState().items
     return items.at(-1)
   }
+
+  function setSubagentFixtures() {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1',
+        status: 'awaiting_review',
+        subagents: { reviewing: { generation: 1, state: 'pending' } },
+        created_at: 1,
+        completed_at: null,
+      }],
+    })
+    mocks.conductorSubagents.mockResolvedValue({
+      items: [{
+        id: 'reviewing', prompt: '检查桌面启动流程', reply: 'done', status: 'stopped',
+        created_at: 3, updated_at: 3, review_status: 'pending', review_note: '',
+        attempt: 1, completed_at: 3, accepted_at: null, generation: 1,
+        request_id: 'request-1',
+      }],
+    })
+  }
+
+  it('offers accept, rework and abort controls for a completed worker', async () => {
+    setSubagentFixtures()
+    mocks.conductorSubagentAction.mockResolvedValue({ id: 'reviewing', status: 'stopped' })
+    renderPage()
+    for (let attempt = 0; attempt < 6; attempt += 1) await flushQueries()
+
+    act(() => button('通过').click())
+    await flushQueries()
+    expect(mocks.conductorSubagentAction).toHaveBeenCalledWith(
+      'reviewing', 'accept', '', null, {}, false,
+    )
+    expect(lastToast()?.kind).toBe('success')
+  })
+
+  it('surfaces verification evidence and offers a force accept on unverified 409', async () => {
+    setSubagentFixtures()
+    mocks.conductorSubagentAction.mockRejectedValueOnce(
+      Object.assign(new Error('completion_unverified'), {
+        status: 409,
+        body: { detail: {
+          error: 'completion_unverified',
+          checks_ok: false,
+          deliverables_missing: [],
+          deliverables_stale: ['D:/out/report.md'],
+          quality_checks: { checks_ok: false, checks: [
+            { kind: 'file_contains', path: 'D:/out/report.md', passed: false,
+              status: 'failed', severity: 'blocking', detail: 'content did not match' },
+          ] },
+        } },
+      }),
+    )
+    renderPage()
+    for (let attempt = 0; attempt < 6; attempt += 1) await flushQueries()
+
+    act(() => button('通过').click())
+    await flushQueries()
+
+    const evidence = host.querySelector('[data-testid="subagent-evidence-reviewing"]')
+    expect(evidence?.textContent).toContain('机器验收未通过')
+    expect(evidence?.textContent).toContain('交付物未更新：D:/out/report.md')
+    expect(evidence?.textContent).toContain('content did not match')
+    expect(lastToast()?.kind).toBe('error')
+
+    act(() => button('强制通过（人工核对后）').click())
+    await flushQueries()
+    expect(mocks.conductorSubagentAction).toHaveBeenLastCalledWith(
+      'reviewing', 'accept', '人工核对证据后强制通过', null, {}, true,
+    )
+    expect(host.querySelector('[data-testid="subagent-evidence-reviewing"]')).toBeNull()
+  })
+
+  it('requires a reason before a rework can be submitted', async () => {
+    setSubagentFixtures()
+    mocks.conductorSubagentAction.mockResolvedValue({ id: 'reviewing', status: 'running' })
+    renderPage()
+    for (let attempt = 0; attempt < 6; attempt += 1) await flushQueries()
+
+    act(() => button('打回返工').click())
+    const textarea = host.querySelector('[aria-label="打回原因"]') as HTMLTextAreaElement
+    const confirm = button('确认打回') as HTMLButtonElement
+    expect(confirm.disabled).toBe(true)
+
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype, 'value',
+    )!.set!
+    act(() => {
+      setter.call(textarea, '补充失败场景的回归证据')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect((host.querySelector('[aria-label="打回原因"]') as HTMLTextAreaElement).value)
+      .toBe('补充失败场景的回归证据')
+    act(() => button('确认打回').click())
+    await flushQueries()
+
+    expect(mocks.conductorSubagentAction).toHaveBeenLastCalledWith(
+      'reviewing', 'rework', '补充失败场景的回归证据', null, {}, false,
+    )
+    expect(host.querySelector('[aria-label="打回原因"]')).toBeNull()
+  })
+
+  it('offers only abort for a live worker', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1',
+        status: 'supervising',
+        subagents: { live: { generation: 1, state: 'running' } },
+        created_at: 1,
+        completed_at: null,
+      }],
+    })
+    mocks.conductorSubagents.mockResolvedValue({
+      items: [{
+        id: 'live', prompt: '扫描主要性能瓶颈', reply: '', status: 'running',
+        created_at: 1, updated_at: 1, review_status: 'none', review_note: '',
+        attempt: 1, completed_at: null, accepted_at: null, generation: 1,
+        request_id: 'request-1',
+      }],
+    })
+    mocks.conductorSubagentAction.mockResolvedValue({ id: 'live', status: 'stopped' })
+    renderPage()
+    for (let attempt = 0; attempt < 6; attempt += 1) await flushQueries()
+
+    expect(() => button('通过')).toThrow()
+    expect(() => button('打回返工')).toThrow()
+    act(() => button('终止').click())
+    await flushQueries()
+    expect(mocks.conductorSubagentAction).toHaveBeenCalledWith(
+      'live', 'abort', '', null, {}, false,
+    )
+  })
 
   it('disables resend while a task is in flight and preserves text typed during the send', async () => {
     let resolveSend!: (item: { id: string; role: string; msg: string; ts: number }) => void

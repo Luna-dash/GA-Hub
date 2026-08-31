@@ -45,6 +45,50 @@ function compactTaskText(text: string): string {
   return compact.length > 180 ? `${compact.slice(0, 180)}…` : compact
 }
 
+/** Engine verification payload from a 409 completion_unverified accept. */
+type SubagentEvidence = {
+  error?: string
+  checks_ok?: boolean
+  deliverables_missing?: string[]
+  deliverables_stale?: string[]
+  quality_checks?: {
+    checks?: Array<{
+      kind?: string
+      path?: string
+      passed?: boolean
+      status?: string
+      severity?: string
+      detail?: string
+    }>
+    checks_ok?: boolean
+  }
+  verification?: { verified?: boolean }
+  [key: string]: unknown
+}
+
+/** FastAPI wraps dict details in {detail}; plain dicts pass through. */
+function subagentActionErrorDetail(err: unknown): SubagentEvidence | null {
+  const body = (err as { body?: { detail?: SubagentEvidence } } | null)?.body
+  if (!body) return null
+  return body.detail ?? (body as SubagentEvidence)
+}
+
+/** Actions the review row can offer; the page supplies the implementations. */
+type SubagentRowControl = {
+  evidence?: SubagentEvidence
+  busy: boolean
+  reworkOpen: boolean
+  reworkReason: string
+  onAccept: () => void
+  onForceAccept: () => void
+  onAbort: () => void
+  onReworkOpen: () => void
+  onReworkReasonChange: (value: string) => void
+  onReworkCancel: () => void
+  onReworkSubmit: () => void
+  onEvidenceDismiss: () => void
+}
+
 type SubagentPhase = 'running' | 'reworking' | 'reviewing' | 'accepted' | 'stopped'
 
 function subagentPhase(sub: ConductorSubagent): {
@@ -117,6 +161,12 @@ export default function Conductor() {
   const [subagentSettingsOpen, setSubagentSettingsOpen] = useState(false)
   const [isSending, setIsSending] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
+  // Subagent review surface (roadmap P1-B): inline accept/rework/abort with
+  // the engine's verification evidence shown before any forced accept.
+  const [reworkSid, setReworkSid] = useState<string | null>(null)
+  const [reworkReason, setReworkReason] = useState('')
+  const [evidenceBySid, setEvidenceBySid] = useState<Record<string, SubagentEvidence>>({})
+  const [busySid, setBusySid] = useState<string | null>(null)
   const [draftSubagentLlmKey, setDraftSubagentLlmKey] = useState<string | null>(null)
   const [draftSubagentModelLocked, setDraftSubagentModelLocked] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
@@ -395,6 +445,42 @@ export default function Conductor() {
     }
   }
 
+  const runSubagentAction = async (
+    sid: string,
+    action: 'accept' | 'rework' | 'abort',
+    msg = '',
+    force = false,
+  ) => {
+    setBusySid(sid)
+    try {
+      await api.conductorSubagentAction(sid, action, msg, null, {}, force)
+      setEvidenceBySid((prev) => {
+        if (!(sid in prev)) return prev
+        const next = { ...prev }
+        delete next[sid]
+        return next
+      })
+      setReworkSid((prev) => (prev === sid ? null : prev))
+      setReworkReason('')
+      toast.success(action === 'accept' ? '已通过验收' : action === 'rework' ? '已打回子代理' : '已终止子代理')
+    } catch (err) {
+      const detail = subagentActionErrorDetail(err)
+      if (action === 'accept' && detail?.error === 'completion_unverified') {
+        setEvidenceBySid((prev) => ({ ...prev, [sid]: detail }))
+        toast.error('机器验收未通过，已展示证据；可人工核对后强制通过。')
+      } else {
+        console.error('subagent action failed', action, sid, err)
+        toast.error(detail?.error || '操作失败，请稍后重试。')
+      }
+    } finally {
+      setBusySid(null)
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: queryKeys.conductor.subagents }),
+        qc.invalidateQueries({ queryKey: queryKeys.conductor.workflows }),
+      ])
+    }
+  }
+
   useLayoutEffect(() => {
     const el = chatInputRef.current
     if (!el) return
@@ -593,7 +679,27 @@ export default function Conductor() {
                 </div>
               ) : (
                 workflowSubagents.map((sub, index) => (
-                  <SubagentProgressRow key={sub.id} sub={sub} index={index} />
+                  <SubagentProgressRow key={sub.id} sub={sub} index={index} control={{
+                    evidence: evidenceBySid[sub.id],
+                    busy: busySid === sub.id,
+                    reworkOpen: reworkSid === sub.id,
+                    reworkReason: reworkSid === sub.id ? reworkReason : '',
+                    onAccept: () => void runSubagentAction(sub.id, 'accept'),
+                    onForceAccept: () => void runSubagentAction(sub.id, 'accept', '人工核对证据后强制通过', true),
+                    onAbort: () => void runSubagentAction(sub.id, 'abort'),
+                    onReworkOpen: () => { setReworkSid(sub.id); setReworkReason('') },
+                    onReworkReasonChange: setReworkReason,
+                    onReworkCancel: () => setReworkSid((prev) => (prev === sub.id ? null : prev)),
+                    onReworkSubmit: () => {
+                      if (reworkReason.trim()) void runSubagentAction(sub.id, 'rework', reworkReason.trim())
+                    },
+                    onEvidenceDismiss: () => setEvidenceBySid((prev) => {
+                      if (!(sub.id in prev)) return prev
+                      const next = { ...prev }
+                      delete next[sub.id]
+                      return next
+                    }),
+                  }} />
                 ))
               )}
             </div>
@@ -733,11 +839,19 @@ function SubagentStatusCell({
 function SubagentProgressRow({
   sub,
   index,
+  control,
 }: {
   sub: ConductorSubagent
   index: number
+  control: SubagentRowControl
 }) {
   const view = subagentPhase(sub)
+  // Deterministic gating: accepted/rejected rows are terminal and offer
+  // nothing; completed rows awaiting a decision offer accept/rework/abort;
+  // live rows only offer abort.
+  const reviewable = sub.status === 'stopped'
+    && !['accepted', 'rejected'].includes(sub.review_status)
+  const abortable = sub.status === 'running' || reviewable
 
   return (
     <div className="border-b border-line/70 px-4 py-3 last:border-b-0">
@@ -772,6 +886,116 @@ function SubagentProgressRow({
       <p className="mt-1.5 text-xs leading-5 text-[#7B6D5A]">
         {view.detail}{sub.attempt > 1 ? ` · 第 ${sub.attempt} 次处理` : ''}
       </p>
+      {(reviewable || abortable || control.evidence) && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {reviewable && !control.reworkOpen && (
+            <>
+              <button
+                type="button"
+                className="ga-btn ga-btn-primary px-3 py-1 text-xs"
+                disabled={control.busy}
+                onClick={control.onAccept}
+              >
+                通过
+              </button>
+              <button
+                type="button"
+                className="ga-btn px-3 py-1 text-xs"
+                disabled={control.busy}
+                onClick={control.onReworkOpen}
+              >
+                打回返工
+              </button>
+            </>
+          )}
+          {abortable && (
+            <button
+              type="button"
+              className="ga-btn px-3 py-1 text-xs text-[#9E3328]"
+              disabled={control.busy}
+              onClick={control.onAbort}
+            >
+              终止
+            </button>
+          )}
+          {control.busy && <span className="text-xs text-[#7B6D5A]">处理中…</span>}
+        </div>
+      )}
+      {control.reworkOpen && (
+        <div className="mt-2 rounded-lg border border-line bg-bg-soft px-3 py-2">
+          <textarea
+            aria-label="打回原因"
+            value={control.reworkReason}
+            placeholder="说明打回原因与整改要求（必填）"
+            className="min-h-16 w-full resize-none rounded border border-line bg-bg px-2 py-1.5 text-xs leading-5 text-[#2C2418] placeholder:text-[#8A7A63] focus:border-accent focus:outline-none"
+            onChange={(event) => control.onReworkReasonChange(event.target.value)}
+          />
+          <div className="mt-1.5 flex justify-end gap-2">
+            <button type="button" className="ga-btn px-3 py-1 text-xs" onClick={control.onReworkCancel}>取消</button>
+            <button
+              type="button"
+              className="ga-btn ga-btn-primary px-3 py-1 text-xs"
+              disabled={!control.reworkReason.trim() || control.busy}
+              onClick={control.onReworkSubmit}
+            >
+              确认打回
+            </button>
+          </div>
+        </div>
+      )}
+      {control.evidence && (
+        <div
+          role="alert"
+          data-testid={`subagent-evidence-${sub.id}`}
+          className="mt-2 rounded-lg border border-[#E8CFC7] bg-[#FFF7F5] px-3 py-2 text-xs leading-5 text-[#6B3A30]"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium text-[#9E3328]">机器验收未通过 · 证据</span>
+            <button
+              type="button"
+              className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-[#7B6D5A] hover:bg-bg-soft"
+              onClick={control.onEvidenceDismiss}
+            >
+              收起
+            </button>
+          </div>
+          <ul className="mt-1 space-y-0.5">
+            {(control.evidence.deliverables_missing ?? []).map((path) => (
+              <li key={`missing-${path}`}>✗ 交付物缺失：{path}</li>
+            ))}
+            {(control.evidence.deliverables_stale ?? []).map((path) => (
+              <li key={`stale-${path}`}>✗ 交付物未更新：{path}</li>
+            ))}
+            {(control.evidence.quality_checks?.checks ?? [])
+              .filter((check) => check.passed === false)
+              .map((check, checkIndex) => (
+                <li key={`check-${checkIndex}`}>
+                  ✗ {check.kind}{check.path ? ` · ${check.path}` : ''}
+                  {check.detail ? ` — ${check.detail}` : ''}
+                  {check.severity === 'advisory' ? '（提示项，不阻塞）' : ''}
+                </li>
+              ))}
+          </ul>
+          <div className="mt-1.5 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="ga-btn px-3 py-1 text-xs"
+              disabled={control.busy}
+              onClick={control.onForceAccept}
+            >
+              强制通过（人工核对后）
+            </button>
+            <button
+              type="button"
+              className="ga-btn px-3 py-1 text-xs"
+              disabled={control.busy}
+              onClick={control.onReworkOpen}
+            >
+              打回返工
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
