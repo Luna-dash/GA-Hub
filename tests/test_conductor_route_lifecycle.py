@@ -502,3 +502,82 @@ def test_abort_engine_unreachable_maps_to_503(monkeypatch):
 
     assert raised.value.status_code == 503
     assert "respawned on demand" in str(raised.value.detail)
+
+
+# ===== worker ownership enforcement (roadmap P0-B) =====
+
+def _service_with_tracker(owner):
+    """FakeService whose pool records keyinfo/abort calls and whose workflow
+    tracker resolves a worker's owning request (None = unbound)."""
+    service = FakeService(RUNNING)
+    service.pool = SimpleNamespace(
+        counts=lambda: (1, 0),
+        get=lambda _sid: SimpleNamespace(),
+        keyinfo_subagent=Mock(return_value={"id": "abc", "status": "ok"}),
+        abort_subagent=Mock(return_value={"id": "abc", "status": "cancelled"}),
+    )
+    service.workflow_tracker = SimpleNamespace(
+        request_for_subagent=lambda _sid: owner)
+    return service
+
+
+def test_keyinfo_forwards_tracker_request_ownership(monkeypatch):
+    """keyinfo must carry the tracker-resolved request_id so the engine's
+    request_mismatch guard applies to EVERY verb, not just accept/rework."""
+    service = _service_with_tracker("rid-owner")
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    result = asyncio.run(conductor_routes.subagent_action(
+        "abc",
+        conductor_routes.ConductorSubagentAction(action="keyinfo", msg="ctx"),
+    ))
+
+    assert result["id"] == "abc"
+    service.pool.keyinfo_subagent.assert_called_once_with(
+        "abc", "ctx", request_id="rid-owner")
+
+
+def test_abort_forwards_tracker_request_ownership(monkeypatch):
+    """abort must carry the tracker-resolved request_id (plus origin=hub)."""
+    service = _service_with_tracker("rid-owner")
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    asyncio.run(conductor_routes.subagent_action(
+        "abc",
+        conductor_routes.ConductorSubagentAction(action="abort"),
+    ))
+
+    service.pool.abort_subagent.assert_called_once_with(
+        "abc", request_id="rid-owner")
+
+
+def test_keyinfo_unbound_worker_passes_none_ownership(monkeypatch):
+    """A worker unknown to the tracker degrades to request_id=None (legacy
+    behaviour) instead of fabricating an owner."""
+    service = _service_with_tracker(None)
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    asyncio.run(conductor_routes.subagent_action(
+        "abc",
+        conductor_routes.ConductorSubagentAction(action="keyinfo", msg="ctx"),
+    ))
+
+    service.pool.keyinfo_subagent.assert_called_once_with(
+        "abc", "ctx", request_id=None)
+
+
+def test_poolmirror_stamps_request_id_and_hub_origin():
+    """PoolMirror is the single point that stamps hub-origin aborts; the
+    request_id rides the same call into the engine body."""
+    from server.services import conductor_service as csm
+    mirror = csm.PoolMirror.__new__(csm.PoolMirror)
+    mirror.client = Mock()
+    mirror.client.subagent_action = Mock(return_value={})
+
+    mirror.keyinfo_subagent("s1", "msg", request_id="rid-1")
+    mirror.abort_subagent("s1", request_id="rid-1")
+
+    mirror.client.subagent_action.assert_any_call(
+        "s1", "keyinfo", "msg", request_id="rid-1")
+    mirror.client.subagent_action.assert_any_call(
+        "s1", "abort", origin="hub", request_id="rid-1")

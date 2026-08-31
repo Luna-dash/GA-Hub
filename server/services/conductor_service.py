@@ -254,13 +254,19 @@ class PoolMirror:
         with self.lock:
             return [dict(item) for item in self._items]
 
-    def keyinfo_subagent(self, sid: str, msg: str) -> dict:
-        return self.client.subagent_action(sid, "keyinfo", msg)
+    def keyinfo_subagent(self, sid: str, msg: str,
+                         request_id: Optional[str] = None) -> dict:
+        # request_id, when resolved by the caller (workflow tracker), lets the
+        # engine enforce worker ownership on every verb, not just accept/rework.
+        return self.client.subagent_action(sid, "keyinfo", msg,
+                                           request_id=request_id)
 
-    def abort_subagent(self, sid: str) -> dict:
+    def abort_subagent(self, sid: str,
+                       request_id: Optional[str] = None) -> dict:
         # Hub-originated (user/UI) cancel: stamped so the engine records a
         # terminal CANCELLED; supervisor self-API aborts stay recoverable.
-        return self.client.subagent_action(sid, "abort", origin="hub")
+        return self.client.subagent_action(sid, "abort", origin="hub",
+                                           request_id=request_id)
 
 
 class HubConductorCallbacks:

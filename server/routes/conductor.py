@@ -215,8 +215,14 @@ async def subagent_action(
     if not s:
         raise HTTPException(404, "subagent not found")
     action = body.action.lower().strip()
+    # Worker ownership (roadmap P0-B): resolve the owning request from the
+    # workflow tracker and forward it so the engine enforces request_mismatch
+    # on EVERY verb — not just accept/rework/input which carried it before.
+    tracker = getattr(service, "workflow_tracker", None)
+    owner = tracker.request_for_subagent(sid) if tracker is not None else None
     if action == "keyinfo":
-        result = await _dispatch_through_engine(pool.keyinfo_subagent, sid, body.msg)
+        result = await _dispatch_through_engine(
+            pool.keyinfo_subagent, sid, body.msg, request_id=owner)
         result["instruction"] = INSTR_KEYINFO
         return result
     if action == "accept":
@@ -259,7 +265,8 @@ async def subagent_action(
         result["instruction"] = INSTR_DISPATCHED
         return result
     if action in ("abort", "stop"):
-        return await _dispatch_through_engine(pool.abort_subagent, sid)
+        return await _dispatch_through_engine(
+            pool.abort_subagent, sid, request_id=owner)
     raise HTTPException(400, f"unknown action: {body.action}")
 
 
