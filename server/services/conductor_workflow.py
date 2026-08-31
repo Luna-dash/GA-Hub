@@ -228,7 +228,12 @@ class WorkflowTracker:
         if workflow.terminal_event is not None:
             raise ValueError(f"workflow {workflow.request_id} is already terminal")
         if not workflow.workers:
-            raise ValueError("cannot finalize before dispatching a subagent")
+            # Workerless final: the supervisor explicitly closes a request
+            # that needed no execution at all (housekeeping/acknowledgement).
+            # Without this escape hatch such requests strand in "admitted"
+            # forever (live E2E 2026-08-30 finding); the engine boundary only
+            # admits a workerless final for a request it actually saw.
+            return
         open_workers = [
             agent_id
             for agent_id, worker in workflow.workers.items()
@@ -275,12 +280,12 @@ class WorkflowTracker:
     def _complete_if_ready(self, workflow: WorkflowState) -> dict[str, Any] | None:
         if workflow.terminal_event is not None or workflow.final_item is None:
             return None
-        if not workflow.workers or any(
+        if workflow.workers and any(
             worker.state not in WorkflowTracker._CLOSED_WORKER_STATES
             for worker in workflow.workers.values()
         ):
             return None
-        if not any(
+        if workflow.workers and not any(
             worker.state == "accepted" for worker in workflow.workers.values()
         ):
             return None

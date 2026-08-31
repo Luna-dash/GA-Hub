@@ -258,3 +258,14 @@ def test_conductor_effort_cold_start_rides_engine_start():
 
     service.client.start.assert_called_once_with(
         llm_index=1, conductor_reasoning_effort="medium")
+
+
+def test_pool_mirror_abort_stamps_hub_origin():
+    """User/UI aborts must be marked hub-origin so the engine records a
+    terminal user cancel; supervisor self-API aborts stay recoverable."""
+    from server.services.conductor_service import PoolMirror
+    client = Mock()
+    mirror = PoolMirror(client)
+    mirror.abort_subagent("worker-1")
+    client.subagent_action.assert_called_once_with(
+        "worker-1", "abort", origin="hub")

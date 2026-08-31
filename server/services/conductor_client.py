@@ -32,6 +32,30 @@ DEFAULT_PORT = 18770
 NO_PROXY_KWARGS = {"proxies": {"http": None, "https": None}}
 
 
+def _open_engine_log() -> tuple:
+    """Open the engine log for a fresh spawn.
+
+    The canonical path is shared across every hub instance and engine on the
+    machine. A live holder — typically an orphaned engine whose parent
+    backend died — must not block spawning a new engine, so fall back to a
+    unique per-process file when the canonical path refuses the open.
+    Returns ``(handle, path)``.
+    """
+    base = os.environ.get("GAHUB_TEMP_DIR") or tempfile.gettempdir()
+    log_path = os.path.join(base, "gahub_app.log")
+    try:
+        return open(log_path, "ab"), log_path
+    except OSError:
+        # Windows locks held by a live holder surface as PermissionError; a
+        # stray directory at the canonical path surfaces as IsADirectoryError.
+        # Either way a unique per-process file keeps the spawn alive.
+        fallback = os.path.join(
+            base, f"gahub_app-{os.getpid()}-{int(time.time())}.log")
+        log.warning("engine log %s is locked by another process; using %s",
+                    log_path, fallback)
+        return open(fallback, "ab"), fallback
+
+
 def _clean_child_env() -> dict:
     """Strip PyInstaller's _MEI temp dirs from PATH for spawned children.
 
@@ -165,11 +189,7 @@ class GahubProcessManager:
                     "refusing to respawn the frozen sidecar as the gahub_app "
                     "interpreter; set gahub_python in config"
                 )
-            log_path = os.path.join(
-                os.environ.get("GAHUB_TEMP_DIR") or tempfile.gettempdir(),
-                "gahub_app.log",
-            )
-            log_file = open(log_path, "ab")
+            log_file, log_path = _open_engine_log()
             self._probe_interpreter(log_file)
             cmd = [self.python_exe, "-u", script, "--host", "127.0.0.1",
                    "--port", str(self.port)]
@@ -365,11 +385,22 @@ class GaConductorClient:
 
     def subagent_action(self, sid: str, action: str, msg: str = "",
                         request_id: Optional[str] = None,
-                        llm_index: Optional[int] = None) -> dict:
-        return self._request("POST", f"/subagent/{sid}", json_body={
+                        llm_index: Optional[int] = None,
+                        origin: Optional[str] = None) -> dict:
+        """One worker action; ``origin="hub"`` marks user/UI-initiated aborts.
+
+        The engine treats a hub-originated abort as a terminal user cancel,
+        while a supervisor self-API abort (no origin) stays a recoverable
+        worker failure so the supervisor can re-dispatch under the same
+        request_id instead of dead-ending the workflow.
+        """
+        body: dict = {
             "action": action, "msg": msg, "request_id": request_id,
             "llm_index": llm_index,
-        })
+        }
+        if origin is not None:
+            body["origin"] = origin
+        return self._request("POST", f"/subagent/{sid}", json_body=body)
 
     def get_subagents(self) -> list[dict]:
         return self._request("GET", "/subagent").get("items", [])

@@ -177,6 +177,7 @@ async def get_subagent(
         "completed_at": getattr(s, "completed_at", None),
         "accepted_at": getattr(s, "accepted_at", None),
         "generation": getattr(s, "active_generation", 0),
+        "llm_index": getattr(s, "llm_index", None),
         "request_id": service.workflow_tracker.request_for_subagent(s.id),
     }
 

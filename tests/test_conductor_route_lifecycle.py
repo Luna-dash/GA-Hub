@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -412,6 +413,25 @@ def test_engine_5xx_maps_to_502(monkeypatch):
         ))
 
     assert raised.value.status_code == 502
+
+
+def test_engine_log_falls_back_when_canonical_path_is_blocked(tmp_path, monkeypatch):
+    """The canonical engine log is shared machine-wide; a live holder (e.g.
+    an orphaned engine whose parent backend died) must not block spawning a
+    new engine — the spawn falls back to a unique per-process log file."""
+    from server.services import conductor_client as ccm
+
+    monkeypatch.setenv("GAHUB_TEMP_DIR", str(tmp_path))
+    # A directory at the canonical path makes open(..., "ab") fail the same
+    # way a live holder's lock does on Windows.
+    (tmp_path / "gahub_app.log").mkdir()
+
+    handle, path = ccm._open_engine_log()
+    handle.close()
+
+    assert path != str(tmp_path / "gahub_app.log")
+    assert "gahub_app-" in os.path.basename(path)
+    assert path.endswith(".log")
 
 
 def test_engine_503_is_relayed_with_its_own_reason(monkeypatch):

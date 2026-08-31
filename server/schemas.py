@@ -556,6 +556,9 @@ class ConductorSubagent(BaseModel):
     completed_at: int | None = None
     accepted_at: int | None = None
     generation: int = 0
+    # Requested worker model index (engine-resolved; llm_fallback on the
+    # dispatch response covers the degraded case). None for legacy snapshots.
+    llm_index: int | None = None
     request_id: str | None = None
 
 
@@ -755,6 +758,19 @@ class ServicePanelResp(BaseModel):
 # Upload / local files
 class RevealFileReq(BaseModel):
     path: str
+    mode: Literal["open", "folder", "parent"] = "open"
+
+
+class ResolveFileReq(BaseModel):
+    path: str
+
+
+class ResolveFileResp(BaseModel):
+    raw: str
+    resolved: str | None
+    exists: bool
+    is_dir: bool
+    ambiguous: bool
 
 
 class UploadResp(BaseModel):

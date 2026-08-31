@@ -9,13 +9,27 @@ from server.services.conductor_service import ConductorService, HubConductorCall
 from server.services.conductor_workflow import WorkflowTracker
 
 
-def test_final_report_without_a_dispatched_worker_does_not_complete():
+def test_final_report_without_a_dispatched_worker_completes_the_workflow():
+    """Workerless finals close housekeeping/acknowledgement requests.
+
+    The old contract refused any final before a dispatch, stranding requests
+    that legitimately need no execution in "admitted" forever (live E2E
+    2026-08-30).  The engine boundary only admits such a final for a request
+    it actually saw, so the tracker completes it on the supervisor's word.
+    """
     tracker = WorkflowTracker(clock=lambda: 10.0)
     tracker.admit("request-1")
 
-    with pytest.raises(ValueError, match="before dispatching"):
-        tracker.record_final("request-1", {"id": "final"})
-    assert tracker.snapshot("request-1")["status"] == "admitted"
+    result = tracker.record_final("request-1", {"id": "final"})
+    assert result is not None
+    assert result[0] == "conductor:workflow_completed"
+    snapshot = tracker.snapshot("request-1")
+    assert snapshot["status"] == "completed"
+    assert snapshot["terminal_event"] == "workflow_completed"
+
+    # A final for a request the tracker never admitted is still an error.
+    with pytest.raises(ValueError, match="unknown conductor request_id"):
+        tracker.record_final("no-such-request", {"id": "final"})
 
 
 def test_workflow_completes_once_after_final_report_and_every_worker_acceptance():
@@ -360,3 +374,40 @@ def test_hub_snapshot_exposes_the_core_active_generation():
         "generation": 3,
         "request_id": "request-1",
     }]
+
+
+def test_five_concurrent_workers_finalize_single_workflow():
+    """Five workers fanned out on one request all close before the final.
+
+    Live round 4 (mini-convert, 2026-08-31): exactly 5 concurrent single-file
+    workers; the workflow must only complete after the fifth acceptance and
+    one final, with every worker visible in the terminal snapshot.
+    """
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("request-1")
+    workers = [f"w{i}" for i in range(5)]
+    for worker in workers:
+        tracker.bind_subagent("request-1", worker, 1)
+        tracker.record_subagent_event(worker, "pending_review", generation=1)
+
+    assert tracker.snapshot("request-1")["status"] == "awaiting_review"
+
+    for worker in workers[:-1]:
+        owner, transition = tracker.record_subagent_event(
+            worker, "accepted", generation=1)
+        assert owner == "request-1"
+        assert transition is None  # nothing to complete until the last accept
+
+    owner, transition = tracker.record_subagent_event(
+        workers[-1], "accepted", generation=1)
+    assert owner == "request-1"
+    assert transition is None  # accepted alone does not complete: final due
+
+    result = tracker.record_final("request-1", {"id": "final"})
+    assert result is not None
+    assert result[0] == "conductor:workflow_completed"
+    snapshot = tracker.snapshot("request-1")
+    assert snapshot["status"] == "completed"
+    assert set(snapshot["subagents"]) == set(workers)
+    assert all(state["state"] == "accepted"
+               for state in snapshot["subagents"].values())

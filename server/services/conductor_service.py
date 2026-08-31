@@ -258,7 +258,9 @@ class PoolMirror:
         return self.client.subagent_action(sid, "keyinfo", msg)
 
     def abort_subagent(self, sid: str) -> dict:
-        return self.client.subagent_action(sid, "abort")
+        # Hub-originated (user/UI) cancel: stamped so the engine records a
+        # terminal CANCELLED; supervisor self-API aborts stay recoverable.
+        return self.client.subagent_action(sid, "abort", origin="hub")
 
 
 class HubConductorCallbacks:
