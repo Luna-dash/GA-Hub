@@ -935,7 +935,7 @@ class ConductorService:
         )
         self._relay_thread.start()
 
-    def ensure_started(self) -> bool:
+    def ensure_started(self, exclude_request_id: str | None = None) -> bool:
         self._ensure_shutdown_state()
         with self._shutdown_lock:
             if self._closed:
@@ -968,12 +968,16 @@ class ConductorService:
             # Fresh conductor: nothing is in flight on the engine, so stranded
             # requests can be re-relayed without double-processing. On an
             # already-running conductor this must NOT run — an admitted
-            # workflow may be mid-turn right now.
-            self._redispatch_stranded_workflows()
+            # workflow may be mid-turn right now. The caller may also exclude
+            # the request it just admitted (it is about to notify the engine
+            # itself); re-relaying it here duplicated the message.
+            self._redispatch_stranded_workflows(
+                exclude_request_id=exclude_request_id)
         self.lifecycle_status()
         return True
 
-    def _redispatch_stranded_workflows(self) -> None:
+    def _redispatch_stranded_workflows(
+            self, exclude_request_id: str | None = None) -> None:
         """Re-relay stranded ``admitted`` workflows after a (re)start.
 
         Stop-drain semantics discard engine-queued user messages without
@@ -987,7 +991,11 @@ class ConductorService:
         request cannot be relayed.
         """
         tracker = self._ensure_workflow_tracker()
-        stranded = tracker.stranded_admitted()
+        stranded = [
+            workflow
+            for workflow in tracker.stranded_admitted()
+            if workflow["request_id"] != exclude_request_id
+        ]
         if not stranded:
             return
         for workflow in stranded:
@@ -1432,7 +1440,12 @@ class ConductorService:
                     subagent_model_policy=subagent_model_policy,
                     conductor_reasoning_effort=conductor_reasoning_effort,
                 )
-                self.ensure_started()
+                # Exclude the just-admitted request: it is admitted but
+                # workerless right now (the supervisor has not even woken),
+                # which is exactly the "stranded" shape. Re-relaying it here
+                # delivered the user's message to the engine twice (live
+                # 2026-09-01: duplicated user_message batch, same request_id).
+                self.ensure_started(exclude_request_id=admitted_request_id)
             except Exception as exc:
                 transition = tracker.fail_supervisor(
                     admitted_request_id,

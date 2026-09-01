@@ -496,6 +496,29 @@ def test_redispatch_failure_does_not_raise():
     service._redispatch_stranded_workflows()  # must not raise
 
 
+def test_redispatch_excludes_the_just_admitted_request():
+    """The just-admitted request looks stranded (no workers yet) but the
+    caller is about to notify the engine for it — re-relaying here duplicated
+    the user message (live 2026-09-01 regression)."""
+    service = object.__new__(ConductorService)
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("rid-new")
+    tracker.admit("rid-old")
+    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.chat_messages = [
+        {"id": "c1", "role": "user", "msg": "新消息", "request_id": "rid-new"},
+        {"id": "c2", "role": "user", "msg": "旧消息", "request_id": "rid-old"},
+    ]
+    service.client = Mock()
+    service.client.get_chat.return_value = []
+    service.client.post_chat.return_value = {"id": "engine-1"}
+
+    service._redispatch_stranded_workflows(exclude_request_id="rid-new")
+
+    service.client.post_chat.assert_called_once_with(
+        "旧消息", "user", "rid-old")
+
+
 def test_redispatch_empty_history_falls_back_to_engine_chat():
     service = object.__new__(ConductorService)
     tracker = WorkflowTracker(clock=lambda: 10.0)

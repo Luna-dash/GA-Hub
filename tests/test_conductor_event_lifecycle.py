@@ -570,7 +570,7 @@ def test_ensure_started_redispatches_stranded_on_fresh_start():
         service.ensure_started()
 
     client.start.assert_called_once()
-    rd.assert_called_once()
+    rd.assert_called_once_with(exclude_request_id=None)
 
 
 def test_ensure_started_never_redispatches_when_already_running():
@@ -582,3 +582,15 @@ def test_ensure_started_never_redispatches_when_already_running():
 
     client.start.assert_not_called()
     rd.assert_not_called()
+
+
+def test_ensure_started_excludes_the_just_admitted_request():
+    """add_chat_message admits first, then starts the conductor: the just
+    admitted request is workerless at that instant, which is exactly the
+    stranded shape — excluding it is what keeps the message from being
+    relayed to the engine twice (live 2026-09-01 regression)."""
+    service, _ = _ensure_started_service(False)
+    with patch.object(ConductorService, "_redispatch_stranded_workflows") as rd:
+        service.ensure_started(exclude_request_id="rid-just-admitted")
+
+    rd.assert_called_once_with(exclude_request_id="rid-just-admitted")

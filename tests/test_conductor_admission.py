@@ -27,7 +27,8 @@ def test_user_chat_message_is_admitted_with_a_request_id():
         subagent_model_policy=None,
         conductor_reasoning_effort=None,
     )
-    service.ensure_started.assert_called_once_with()
+    service.ensure_started.assert_called_once_with(
+        exclude_request_id=request_id)
     service.notify.assert_called_once_with(
         {"type": "user_message", "msg": "hello", "request_id": request_id}
     )
@@ -50,7 +51,8 @@ def test_conductor_plan_and_report_do_not_recursively_admit_user_tasks():
     assert "request_id" not in plan_item
     assert "request_id" not in report_item
     service.configure_models.assert_called_once()
-    service.ensure_started.assert_called_once_with()
+    service.ensure_started.assert_called_once_with(
+        exclude_request_id=user_item["request_id"])
     service.notify.assert_called_once()
     assert service.notify.call_args.args[0]["type"] == "user_message"
 
@@ -69,7 +71,7 @@ def test_user_admission_starts_conductor_before_notify():
     service = _service_for_admission_test()
     order = []
     service.configure_models.side_effect = lambda **_kwargs: order.append("configure")
-    service.ensure_started.side_effect = lambda: order.append("start")
+    service.ensure_started.side_effect = lambda **_kw: order.append("start")
     service.notify.side_effect = (
         lambda _event: order.append("notify") or {"id": "engine-1"}
     )
@@ -112,7 +114,7 @@ def test_notify_failure_is_propagated_after_start():
     ):
         service.add_chat_message("hello", role="user")
 
-    service.ensure_started.assert_called_once_with()
+    service.ensure_started.assert_called_once()
 
 
 def test_notify_false_raises_stopped_before_admission():
