@@ -79,7 +79,7 @@ def test_conductor_renders_request_scoped_semantic_worker_progress():
 
     assert "sub.request_id === currentWorkflow.request_id" in source
     assert "sub.review_status === 'accepted'" in source
-    assert "label: '正在验收'" in source
+    assert "label: '待你验收'" in source
     assert "label: '返工中'" in source
     assert "T{item.turn}" not in source
     assert "api.conductorLog()" not in source

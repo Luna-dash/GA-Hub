@@ -742,4 +742,18 @@ describe('Conductor chat scroll restoration', () => {
     expect(text).toContain('执行失败')
     expect(text).not.toContain('子代理失败')
   })
+
+  it('shows the persisted failure reason on a closed workflow', async () => {
+    const failed = { ...failedWorkflowFixture('workflow_failed'), error: 'conductor start failed: gahub_app unavailable' }
+    mocks.conductorWorkflows.mockResolvedValue({ items: [failed] })
+    mocks.conductorSubagents.mockResolvedValue({ items: [] })
+
+    renderPage()
+    await flushQueries()
+
+    const text = host.textContent || ''
+    expect(text).toContain('执行失败')
+    expect(text).toContain('失败原因：conductor start failed: gahub_app unavailable')
+    expect(text).not.toContain('原因已写入本轮对话')
+  })
 })

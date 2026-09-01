@@ -25,6 +25,12 @@ class WorkflowState:
     created_at: float = 0.0
     completed_at: float | None = None
     terminal_event: str | None = None
+    # Failure context, persisted so recovery snapshots (snapshots()/snapshot())
+    # keep naming WHY a workflow closed — the live transition event carries it
+    # once, but a page opened later must still see the reason.
+    phase: str | None = None
+    error: str | None = None
+    failed_agent_id: str | None = None
 
 
 class WorkflowTracker:
@@ -162,6 +168,8 @@ class WorkflowTracker:
                 workflow.state = event
                 workflow.completed_at = self._clock()
                 workflow.terminal_event = "workflow_failed"
+                workflow.error = error or None
+                workflow.failed_agent_id = agent_id or None
                 return owner, (
                     "conductor:workflow_failed",
                     self._payload(workflow, error=error, failed_agent_id=agent_id),
@@ -198,6 +206,8 @@ class WorkflowTracker:
             workflow.state = "failed"
             workflow.completed_at = self._clock()
             workflow.terminal_event = "workflow_failed"
+            workflow.phase = phase or None
+            workflow.error = error or None
             return (
                 "conductor:workflow_failed",
                 self._payload(workflow, phase=phase, error=error),
@@ -312,6 +322,10 @@ class WorkflowTracker:
             "subagents": states,
             "created_at": workflow.created_at,
             "completed_at": workflow.completed_at,
+            # Persisted failure context (None until a failure names it).
+            "phase": workflow.phase,
+            "error": workflow.error,
+            "failed_agent_id": workflow.failed_agent_id,
         }
         if workflow.final_item is not None:
             payload["item"] = workflow.final_item

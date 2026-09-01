@@ -165,6 +165,12 @@ function workflowPresentation(
     if (workflow.status === 'failed' && !workflow.terminal_event) {
       return { label: '子代理失败', detail: '子代理处理失败，Conductor 正在决定返工或补派。', tone: 'active' }
     }
+    // Surface the tracker-persisted reason directly: a page opened after the
+    // failure never saw the live transition, so the reason must come from the
+    // workflow snapshot itself.
+    if (workflow.error) {
+      return { label: '执行失败', detail: `失败原因：${workflow.error}`, tone: 'error' }
+    }
     return { label: '执行失败', detail: '工作流未能完成，原因已写入本轮对话。', tone: 'error' }
   }
   const accepted = workers.filter((sub) => sub.review_status === 'accepted').length
