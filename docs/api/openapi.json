@@ -2008,6 +2008,7 @@
     "/api/conductor/subagent/{sid}": {
       "get": {
         "summary": "Get Subagent",
+        "description": "Full worker dossier for human review.\n\nEngine GET /subagent/{id} is the source of the cleaned reply.  The hub\nlist snapshot already carries prompt/manifest/verification and is filled\nin for any field the engine omits, so the UI can show what was asked,\nwhat landed, and what the machine thinks.",
         "operationId": "get_subagent_api_conductor_subagent__sid__get",
         "parameters": [
           {
