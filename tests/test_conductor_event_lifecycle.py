@@ -440,3 +440,110 @@ def _service() -> ConductorService:
     service.client.start.return_value = {"started": True}
     service.callbacks = HubConductorCallbacks(service)
     return service
+
+
+# ── automation-first review: pending_review auto-accept ──────────────────────
+
+def _wait_until(predicate, timeout: float = 2.0) -> bool:
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_pending_review_auto_accepts_clean_delivery():
+    service = object.__new__(ConductorService)
+    service._auto_accept = True
+    service.accept_subagent = Mock(return_value={"id": "worker-1"})
+    callbacks = HubConductorCallbacks(service)
+
+    callbacks._maybe_auto_accept("worker-1", {"request_id": "rid-1"})
+
+    assert _wait_until(lambda: service.accept_subagent.call_count == 1)
+    service.accept_subagent.assert_called_once_with(
+        "worker-1", "自动验收：机器检查全部通过。", request_id="rid-1")
+
+
+def test_auto_accept_disabled_leaves_workers_for_human():
+    service = object.__new__(ConductorService)
+    service._auto_accept = False
+    service.accept_subagent = Mock()
+    callbacks = HubConductorCallbacks(service)
+
+    callbacks._maybe_auto_accept("worker-1", {"request_id": "rid-1"})
+
+    service.accept_subagent.assert_not_called()
+
+
+def test_auto_accept_without_request_owner_is_skipped():
+    service = object.__new__(ConductorService)
+    service._auto_accept = True
+    service.accept_subagent = Mock()
+    callbacks = HubConductorCallbacks(service)
+
+    callbacks._maybe_auto_accept("worker-1", {})
+
+    service.accept_subagent.assert_not_called()
+
+
+def test_auto_accept_verification_deferral_does_not_raise():
+    service = object.__new__(ConductorService)
+    service._auto_accept = True
+    service.accept_subagent = Mock(return_value={"error": "completion_unverified"})
+    callbacks = HubConductorCallbacks(service)
+
+    callbacks._maybe_auto_accept("worker-1", {"request_id": "rid-1"})
+
+    assert _wait_until(lambda: service.accept_subagent.call_count == 1)
+
+
+def test_auto_accept_engine_failure_does_not_raise():
+    service = object.__new__(ConductorService)
+    service._auto_accept = True
+    service.accept_subagent = Mock(side_effect=RuntimeError("engine down"))
+    callbacks = HubConductorCallbacks(service)
+
+    callbacks._maybe_auto_accept("worker-1", {"request_id": "rid-1"})
+
+    assert _wait_until(lambda: service.accept_subagent.call_count == 1)
+
+
+def test_pending_review_event_triggers_auto_accept_hook():
+    service = object.__new__(ConductorService)
+    service.chat_messages = []
+    tracker = Mock()
+    tracker.record_subagent_event.return_value = (None, None)
+    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.pool = Mock()
+    service.pool.get.return_value = None
+    service.publish_subagent_snapshot = Mock()
+    callbacks = HubConductorCallbacks(service)
+
+    with patch.object(HubConductorCallbacks, "_maybe_auto_accept") as auto:
+        with patch("server.services.conductor_service.bus.publish"):
+            callbacks.on_subagent_event(
+                "worker-1", "pending_review", {"request_id": "rid-1"})
+
+    assert auto.call_count == 1
+    assert auto.call_args.args[0] == "worker-1"
+
+
+def test_running_event_never_triggers_auto_accept_hook():
+    service = object.__new__(ConductorService)
+    service.chat_messages = []
+    tracker = Mock()
+    tracker.record_subagent_event.return_value = (None, None)
+    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.pool = Mock()
+    service.pool.get.return_value = None
+    service.publish_subagent_snapshot = Mock()
+    callbacks = HubConductorCallbacks(service)
+
+    with patch.object(HubConductorCallbacks, "_maybe_auto_accept") as auto:
+        with patch("server.services.conductor_service.bus.publish"):
+            callbacks.on_subagent_event("worker-1", "running", {})
+
+    auto.assert_not_called()

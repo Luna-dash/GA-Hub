@@ -436,7 +436,48 @@ class HubConductorCallbacks:
         except Exception:
             # Observer failures must not block the authoritative snapshot push.
             log.exception("subagent event publish failed for %s", name)
+        if name == "pending_review":
+            self._maybe_auto_accept(agent_id, payload)
         self.publish_subagent_snapshot()
+
+    def _maybe_auto_accept(self, agent_id: str, payload: dict) -> None:
+        """Accept a clean delivery automatically; escalate only problems.
+
+        The engine stays the single verification authority: an accept without
+        ``force`` succeeds only when its deterministic checks pass, so a
+        ``completion_unverified`` rejection simply leaves the worker pending
+        for a human verdict. Runs off the SSE reader thread so a slow accept
+        never delays lifecycle event processing.
+        """
+        service = self.service
+        if not service.auto_accept:
+            return
+        request_id = payload.get("request_id")
+        if not request_id:
+            return
+
+        def _accept() -> None:
+            try:
+                result = service.accept_subagent(
+                    agent_id,
+                    "自动验收：机器检查全部通过。",
+                    request_id=request_id,
+                )
+            except Exception:
+                # The worker stays pending; the reviewer sees it as before.
+                log.exception("auto-accept failed for %s", agent_id)
+                return
+            if isinstance(result, dict) and result.get("error"):
+                log.info(
+                    "auto-accept left %s for human review: %s",
+                    agent_id, result.get("error"),
+                )
+
+        threading.Thread(
+            target=_accept,
+            daemon=True,
+            name=f"conductor-auto-accept-{agent_id[:8]}",
+        ).start()
 
     def on_subagent_output(self, agent_id: str, output, done) -> None:
         """Legacy stream hook; snapshots now arrive via SSE subagents events."""
@@ -523,6 +564,10 @@ class ConductorService:
         self._subagent_llm_index = None
         self._subagent_model_policy: SubagentModelPolicy = "follow_main"
         self._conductor_reasoning_effort = _get_configured_conductor_effort()
+        # Automation-first review policy (user decision 2026-09): clean
+        # deliveries are accepted automatically and only real problems
+        # (verification not clean) wait for a human verdict.
+        self._auto_accept = True
         self._model_lock = threading.RLock()
         self.callbacks = HubConductorCallbacks(self)
         self._process_manager = GahubProcessManager()
@@ -560,6 +605,17 @@ class ConductorService:
             self._shutdown_monitor_stopped = False
         if not hasattr(self, "_closed"):
             self._closed = False
+        if not hasattr(self, "_auto_accept"):
+            self._auto_accept = True
+
+    @property
+    def auto_accept(self) -> bool:
+        """Whether clean worker deliveries are accepted without a human."""
+        return bool(getattr(self, "_auto_accept", True))
+
+    @auto_accept.setter
+    def auto_accept(self, value: bool) -> None:
+        self._auto_accept = bool(value)
 
     @staticmethod
     def _stop_result(result: object) -> bool:

@@ -651,6 +651,12 @@ class ConductorStatusResp(BaseModel):
     agent_alive: bool
     subagents: ConductorSubagentCounts
     chat_count: int
+    # Automation-first review policy: clean deliveries skip human review.
+    auto_accept: bool = True
+
+
+class ConductorSettingsReq(BaseModel):
+    auto_accept: bool
 
 
 class ConductorLifecycleResp(ConductorStatusResp):

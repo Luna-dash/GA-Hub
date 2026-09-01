@@ -903,6 +903,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/conductor/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Update Conductor Settings
+         * @description Update conductor automation policy (currently: auto-accept).
+         */
+        post: operations["update_conductor_settings_api_conductor_settings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/conductor/readme/{topic}": {
         parameters: {
             query?: never;
@@ -2398,6 +2418,11 @@ export interface components {
             subagents: components["schemas"]["ConductorSubagentCounts"];
             /** Chat Count */
             chat_count: number;
+            /**
+             * Auto Accept
+             * @default true
+             */
+            auto_accept: boolean;
             /** Ok */
             ok: boolean;
         };
@@ -2467,6 +2492,11 @@ export interface components {
              */
             timeout_seconds: number;
         };
+        /** ConductorSettingsReq */
+        ConductorSettingsReq: {
+            /** Auto Accept */
+            auto_accept: boolean;
+        };
         /** ConductorStartReq */
         ConductorStartReq: {
             /** Llm Index */
@@ -2516,6 +2546,11 @@ export interface components {
             subagents: components["schemas"]["ConductorSubagentCounts"];
             /** Chat Count */
             chat_count: number;
+            /**
+             * Auto Accept
+             * @default true
+             */
+            auto_accept: boolean;
         };
         /** ConductorSubagent */
         ConductorSubagent: {
@@ -5528,6 +5563,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConductorTextResp"];
+                };
+            };
+        };
+    };
+    update_conductor_settings_api_conductor_settings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConductorSettingsReq"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConductorStatusResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

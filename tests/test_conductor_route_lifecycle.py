@@ -41,6 +41,8 @@ class FakeService:
         self.chat_calls = []
         self.subagent_calls = []
         self.stop_calls = 0
+        self.auto_accept = True
+        self.settings_calls = []
 
     def lifecycle_status(self):
         self._started = self._lifecycle["started"]
@@ -88,6 +90,7 @@ def test_status_route_uses_live_lifecycle_instead_of_cached_started(monkeypatch)
         **STOPPED,
         "subagents": {"running": 2, "stopped": 3},
         "chat_count": 1,
+        "auto_accept": True,
     }
     assert service._started is False
 
@@ -103,6 +106,7 @@ def test_start_route_returns_live_lifecycle_and_remains_idempotent(monkeypatch):
         **RUNNING,
         "subagents": {"running": 2, "stopped": 3},
         "chat_count": 1,
+        "auto_accept": True,
     }
     assert service.start_calls == [(None, None, None)]
 
@@ -122,6 +126,7 @@ def test_start_route_forwards_main_and_subagent_models(monkeypatch):
         **RUNNING,
         "subagents": {"running": 2, "stopped": 3},
         "chat_count": 1,
+        "auto_accept": True,
     }
     assert service.start_calls == [(2, 5, None)]
 
@@ -426,8 +431,28 @@ def test_stop_route_delegates_and_returns_live_lifecycle(monkeypatch):
         **STOPPED,
         "subagents": {"running": 2, "stopped": 3},
         "chat_count": 1,
+        "auto_accept": True,
     }
     assert service.stop_calls == 1
+
+
+def test_settings_route_flips_auto_accept_and_returns_live_status(monkeypatch):
+    service = FakeService(RUNNING)
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    result = asyncio.run(
+        conductor_routes.update_conductor_settings(
+            conductor_routes.ConductorSettingsReq(auto_accept=False)
+        )
+    )
+
+    assert result == {
+        **RUNNING,
+        "subagents": {"running": 2, "stopped": 3},
+        "chat_count": 1,
+        "auto_accept": False,
+    }
+    assert service.auto_accept is False
 
 
 def test_service_lifecycle_status_refreshes_compatibility_cache():

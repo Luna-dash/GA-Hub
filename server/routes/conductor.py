@@ -16,6 +16,7 @@ from ..schemas import (
     ConductorChatMessage,
     ConductorLifecycleResp,
     ConductorLogResp,
+    ConductorSettingsReq,
     ConductorStartReq,
     ConductorStartSubagent,
     ConductorStatusResp,
@@ -99,6 +100,7 @@ def _status_payload(service: ConductorService) -> dict:
         **service.lifecycle_status(),
         "subagents": {"running": running, "stopped": stopped},
         "chat_count": len(service.chat_messages),
+        "auto_accept": service.auto_accept,
     }
 
 
@@ -106,6 +108,16 @@ def _status_payload(service: ConductorService) -> dict:
 @router.get("/api/conductor/readme")
 async def get_readme() -> ConductorTextResp:
     return {"content": svc().get_readme("api")}
+
+
+@router.post("/api/conductor/settings")
+async def update_conductor_settings(
+    body: ConductorSettingsReq,
+) -> ConductorStatusResp:
+    """Update conductor automation policy (currently: auto-accept)."""
+    service = svc()
+    service.auto_accept = body.auto_accept
+    return _status_payload(service)
 
 
 @router.get("/api/conductor/readme/{topic}")

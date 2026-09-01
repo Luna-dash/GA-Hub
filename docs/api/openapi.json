@@ -1792,6 +1792,45 @@
         }
       }
     },
+    "/api/conductor/settings": {
+      "post": {
+        "summary": "Update Conductor Settings",
+        "description": "Update conductor automation policy (currently: auto-accept).",
+        "operationId": "update_conductor_settings_api_conductor_settings_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConductorSettingsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorStatusResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/conductor/readme/{topic}": {
       "get": {
         "summary": "Get Readme Topic",
@@ -5324,6 +5363,11 @@
             "type": "integer",
             "title": "Chat Count"
           },
+          "auto_accept": {
+            "type": "boolean",
+            "title": "Auto Accept",
+            "default": true
+          },
           "ok": {
             "type": "boolean",
             "title": "Ok"
@@ -5498,6 +5542,19 @@
         ],
         "title": "ConductorManifestCheck",
         "description": "One deterministic acceptance probe evaluated by the engine itself.\n\nRead-only probes plus fixed-template run checks (no arbitrary commands,\nno shell — mirrors the engine's ManifestCheck contract)."
+      },
+      "ConductorSettingsReq": {
+        "properties": {
+          "auto_accept": {
+            "type": "boolean",
+            "title": "Auto Accept"
+          }
+        },
+        "type": "object",
+        "required": [
+          "auto_accept"
+        ],
+        "title": "ConductorSettingsReq"
       },
       "ConductorStartReq": {
         "properties": {
@@ -5697,6 +5754,11 @@
           "chat_count": {
             "type": "integer",
             "title": "Chat Count"
+          },
+          "auto_accept": {
+            "type": "boolean",
+            "title": "Auto Accept",
+            "default": true
           }
         },
         "type": "object",

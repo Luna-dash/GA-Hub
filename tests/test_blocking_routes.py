@@ -121,6 +121,7 @@ def test_conductor_stop_runs_in_worker_thread() -> None:
         lifecycle_status=lambda: stopped,
         pool=SimpleNamespace(counts=lambda: (0, 0)),
         chat_messages=[],
+        auto_accept=True,
     )
 
     with mock.patch.object(conductor, "svc", return_value=service):
@@ -131,6 +132,7 @@ def test_conductor_stop_runs_in_worker_thread() -> None:
         **stopped,
         "subagents": {"running": 0, "stopped": 0},
         "chat_count": 0,
+        "auto_accept": True,
     }
 
 

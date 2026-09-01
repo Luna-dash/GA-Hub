@@ -477,6 +477,8 @@ export const api = {
   servicePanel: () => http<ServicePanelResponse>('GET', '/api/services/panel'),
   conductorLog: () => http<ConductorLogResponse>('GET', '/api/conductor/log'),
   conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),
+  conductorSettings: (autoAccept: boolean) =>
+    http<ConductorStatus>('POST', '/api/conductor/settings', { auto_accept: autoAccept }),
   conductorStart: (models: ConductorModelSettings = {}) =>
     http<ConductorLifecycleResponse>('POST', '/api/conductor/start', {
       llm_index: models.llmIndex,

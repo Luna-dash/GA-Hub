@@ -210,6 +210,7 @@ export default function Conductor() {
   const [selectedSid, setSelectedSid] = useState<string | null>(null)
   const [draftSubagentLlmKey, setDraftSubagentLlmKey] = useState<string | null>(null)
   const [draftSubagentModelLocked, setDraftSubagentModelLocked] = useState(false)
+  const [draftAutoAccept, setDraftAutoAccept] = useState(true)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const chatInputRef = useRef<HTMLTextAreaElement>(null)
@@ -260,6 +261,7 @@ export default function Conductor() {
   const openSubagentSettings = () => {
     setDraftSubagentLlmKey(subagentLlmKey)
     setDraftSubagentModelLocked(subagentLlmKey !== null && subagentModelLocked)
+    setDraftAutoAccept(status?.auto_accept ?? true)
     setSubagentSettingsOpen(true)
   }
 
@@ -273,6 +275,11 @@ export default function Conductor() {
     selectSubagentLlm(draftSubagentLlmKey)
     setSubagentModelLocked(locked)
     writeSubagentModelLock(locked)
+    if (status && draftAutoAccept !== status.auto_accept) {
+      api.conductorSettings(draftAutoAccept)
+        .then((next) => qc.setQueryData(queryKeys.conductor.status, next))
+        .catch(() => toast.error('保存自动验收设置失败，请稍后重试。'))
+    }
     closeSubagentSettings()
   }
 
@@ -855,6 +862,20 @@ export default function Conductor() {
                 />
                 固定使用所选模型
               </label>
+              <div className="border-t border-line/70 pt-4">
+                <label className="flex items-center gap-2 text-sm text-[#4E4233]">
+                  <input
+                    type="checkbox"
+                    checked={draftAutoAccept}
+                    onChange={(event) => setDraftAutoAccept(event.target.checked)}
+                    aria-label="质检通过自动验收"
+                  />
+                  <span className="font-medium text-[#2C2418]">质检通过自动验收</span>
+                </label>
+                <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">
+                  开启后，机器检查全部通过的工人自动放行，无需人工干预；只有检查不通过或执行异常的工人才会等你拍板。
+                </p>
+              </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-line/70 px-5 py-4">
               <button type="button" className="ga-btn" onClick={closeSubagentSettings}>取消</button>

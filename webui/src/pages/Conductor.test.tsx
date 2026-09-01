@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   conductorStart: vi.fn(),
   conductorSubagentAction: vi.fn(),
   conductorSubagent: vi.fn(),
+  conductorSettings: vi.fn(),
   llms: vi.fn(),
   selectMainLlm: vi.fn(),
   selectSubagentLlm: vi.fn(),
@@ -39,6 +40,7 @@ vi.mock('@/api/client', () => ({
     conductorStart: mocks.conductorStart,
     conductorSubagentAction: mocks.conductorSubagentAction,
     conductorSubagent: mocks.conductorSubagent,
+    conductorSettings: mocks.conductorSettings,
     llms: mocks.llms,
   },
 }))
@@ -121,6 +123,7 @@ describe('Conductor chat scroll restoration', () => {
       agent_alive: true,
       subagents: { running: 0, stopped: 0 },
       chat_count: 1,
+      auto_accept: true,
     })
     mocks.conductorSubagents.mockResolvedValue({ items: [] })
     mocks.conductorWorkflows.mockResolvedValue({ items: [] })
@@ -382,6 +385,44 @@ describe('Conductor chat scroll restoration', () => {
     expect(host.querySelector('[role="dialog"]')).toBeNull()
     expect(mocks.selectSubagentLlm).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(button('子代理设置'))
+  })
+
+  it('saves the auto-accept policy through the settings API', async () => {
+    mocks.conductorSettings.mockResolvedValue({
+      started: true,
+      stopping: false,
+      admission_open: true,
+      loop_alive: true,
+      agent_alive: true,
+      subagents: { running: 0, stopped: 0 },
+      chat_count: 1,
+      auto_accept: false,
+    })
+    renderPage()
+    await flushQueries()
+
+    act(() => button('子代理设置').click())
+    let dialog = host.querySelector('[role="dialog"]')!
+    const autoAccept = dialog.querySelector('[aria-label="质检通过自动验收"]') as HTMLInputElement
+    expect(autoAccept.checked).toBe(true)
+
+    act(() => autoAccept.click())
+    act(() => button('保存').click())
+    await flushQueries()
+
+    expect(mocks.conductorSettings).toHaveBeenCalledWith(false)
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('leaves the auto-accept policy untouched when the value did not change', async () => {
+    renderPage()
+    await flushQueries()
+
+    act(() => button('子代理设置').click())
+    act(() => button('保存').click())
+    await flushQueries()
+
+    expect(mocks.conductorSettings).not.toHaveBeenCalled()
   })
 
   function typeMessage(text: string) {
