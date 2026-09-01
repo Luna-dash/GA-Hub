@@ -28,7 +28,7 @@ from ..schemas import (
     ConductorWorkflowListResp,
 )
 from ..services import conductor_client as conductor_client_module
-from ..services.conductor_service import ConductorService, clean_log_text
+from ..services.conductor_service import ConductorService
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -159,27 +159,36 @@ async def list_workflows(
 async def get_subagent(
     sid: str, max_len: int = Query(default=5000, ge=1, le=1_000_000)
 ) -> ConductorSubagent:
+    """Full worker dossier for human review.
+
+    Engine GET /subagent/{id} is the source of the cleaned reply.  The hub
+    list snapshot already carries prompt/manifest/verification and is filled
+    in for any field the engine omits, so the UI can show what was asked,
+    what landed, and what the machine thinks.
+    """
     service = svc()
-    s = service.pool.get(sid)
-    if not s:
-        raise HTTPException(404, "subagent not found")
-    cleaned = clean_log_text(s.reply or "")
-    return {
-        "id": s.id,
-        "prompt": s.prompt,
-        "status": s.status,
-        "reply": cleaned[-max_len:] if len(cleaned) > max_len else cleaned,
-        "created_at": s.created_at,
-        "updated_at": s.updated_at,
-        "review_status": getattr(s, "review_status", "none"),
-        "review_note": getattr(s, "review_note", ""),
-        "attempt": getattr(s, "attempt", 1),
-        "completed_at": getattr(s, "completed_at", None),
-        "accepted_at": getattr(s, "accepted_at", None),
-        "generation": getattr(s, "active_generation", 0),
-        "llm_index": getattr(s, "llm_index", None),
-        "request_id": service.workflow_tracker.request_for_subagent(s.id),
-    }
+    detail = await _dispatch_through_engine(service.client.get_subagent, sid, max_len)
+    mirrored = service.pool.get(sid)
+    if mirrored is not None:
+        for key in (
+            "prompt", "created_at", "updated_at", "review_note",
+            "completed_at", "accepted_at", "deliverables_missing",
+            "deliverables_stale", "done_marker", "quality_checks",
+            "manifest", "forced_accept", "force_reason", "forced_at",
+        ):
+            if key in detail and detail[key] not in (None, "", [], {}):
+                continue
+            value = getattr(mirrored, key, None)
+            if value is not None:
+                detail[key] = value
+    detail.setdefault("prompt", "")
+    detail.setdefault("created_at", 0)
+    detail.setdefault("updated_at", 0)
+    if "generation" not in detail:
+        detail["generation"] = int(detail.get("active_generation") or 0)
+    if not detail.get("request_id"):
+        detail["request_id"] = service.workflow_tracker.request_for_subagent(sid)
+    return detail
 
 
 @router.post("/api/conductor/subagent")

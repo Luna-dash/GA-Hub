@@ -66,6 +66,31 @@ type SubagentEvidence = {
   [key: string]: unknown
 }
 
+/** Snapshot fields the engine already sends; OpenAPI extra:allow. */
+type SubagentManifest = {
+  goal?: string
+  done_when?: string
+  deliverables?: Array<{ path?: string; desc?: string }>
+}
+
+type SubagentReviewFacts = ConductorSubagent & {
+  deliverables_missing?: string[]
+  deliverables_stale?: string[]
+  done_marker?: boolean
+  quality_checks?: SubagentEvidence['quality_checks']
+  manifest?: SubagentManifest
+  verification?: { verified?: boolean; done_marker?: boolean }
+}
+
+function reviewFacts(sub: ConductorSubagent): SubagentReviewFacts {
+  return sub as SubagentReviewFacts
+}
+
+function basenamePath(path: string): string {
+  const parts = path.replace(/\\/g, '/').split('/')
+  return parts[parts.length - 1] || path
+}
+
 /** FastAPI wraps dict details in {detail}; plain dicts pass through. */
 function subagentActionErrorDetail(err: unknown): SubagentEvidence | null {
   const body = (err as { body?: { detail?: SubagentEvidence } } | null)?.body
@@ -87,6 +112,7 @@ type SubagentRowControl = {
   onReworkCancel: () => void
   onReworkSubmit: () => void
   onEvidenceDismiss: () => void
+  onViewFull: () => void
 }
 
 type SubagentPhase = 'running' | 'reworking' | 'reviewing' | 'accepted' | 'stopped'
@@ -167,6 +193,7 @@ export default function Conductor() {
   const [reworkReason, setReworkReason] = useState('')
   const [evidenceBySid, setEvidenceBySid] = useState<Record<string, SubagentEvidence>>({})
   const [busySid, setBusySid] = useState<string | null>(null)
+  const [fullSid, setFullSid] = useState<string | null>(null)
   const [draftSubagentLlmKey, setDraftSubagentLlmKey] = useState<string | null>(null)
   const [draftSubagentModelLocked, setDraftSubagentModelLocked] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
@@ -699,6 +726,7 @@ export default function Conductor() {
                       delete next[sub.id]
                       return next
                     }),
+                    onViewFull: () => setFullSid(sub.id),
                   }} />
                 ))
               )}
@@ -706,6 +734,14 @@ export default function Conductor() {
             </aside>
           </div>
           </div>
+
+      {fullSid && (
+        <SubagentFullResultDialog
+          sid={fullSid}
+          fallback={subagents.find((item) => item.id === fullSid)}
+          onClose={() => setFullSid(null)}
+        />
+      )}
 
       {subagentSettingsOpen && (
         <div
@@ -846,6 +882,12 @@ function SubagentProgressRow({
   control: SubagentRowControl
 }) {
   const view = subagentPhase(sub)
+  const facts = reviewFacts(sub)
+  const deliverables = facts.manifest?.deliverables ?? []
+  const missing = new Set(facts.deliverables_missing ?? [])
+  const stale = new Set(facts.deliverables_stale ?? [])
+  const failedChecks = (facts.quality_checks?.checks ?? []).filter((check) => check.passed === false)
+  const hasReply = Boolean(sub.reply?.trim())
   // Deterministic gating: accepted/rejected rows are terminal and offer
   // nothing; completed rows awaiting a decision offer accept/rework/abort;
   // live rows only offer abort.
@@ -881,46 +923,97 @@ function SubagentProgressRow({
         </span>
       </div>
       <p className="line-clamp-4 break-words text-sm leading-5 text-[#2C2418]">
-        {compactTaskText(sub.prompt)}
+        {compactTaskText(facts.manifest?.goal || sub.prompt)}
       </p>
       <p className="mt-1.5 text-xs leading-5 text-[#7B6D5A]">
         {view.detail}{sub.attempt > 1 ? ` · 第 ${sub.attempt} 次处理` : ''}
+        {facts.done_marker === false && sub.status === 'stopped' ? ' · 未确认完成' : ''}
       </p>
-      {(reviewable || abortable || control.evidence) && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {reviewable && !control.reworkOpen && (
-            <>
-              <button
-                type="button"
-                className="ga-btn ga-btn-primary px-3 py-1 text-xs"
-                disabled={control.busy}
-                onClick={control.onAccept}
-              >
-                通过
-              </button>
-              <button
-                type="button"
-                className="ga-btn px-3 py-1 text-xs"
-                disabled={control.busy}
-                onClick={control.onReworkOpen}
-              >
-                打回返工
-              </button>
-            </>
-          )}
-          {abortable && (
-            <button
-              type="button"
-              className="ga-btn px-3 py-1 text-xs text-[#9E3328]"
-              disabled={control.busy}
-              onClick={control.onAbort}
-            >
-              终止
-            </button>
-          )}
-          {control.busy && <span className="text-xs text-[#7B6D5A]">处理中…</span>}
+      {deliverables.length > 0 && (
+        <ul className="mt-2 space-y-0.5 text-xs leading-5 text-[#4E4233]" aria-label="约定交付物">
+          {deliverables.map((item, deliverableIndex) => {
+            const path = item.path || `交付物 ${deliverableIndex + 1}`
+            const gone = missing.has(path)
+            const untouched = stale.has(path)
+            return (
+              <li key={`${sub.id}-d-${path}`} title={path} className={clsx(
+                gone && 'text-[#9E3328]',
+                untouched && !gone && 'text-[#9A5315]',
+              )}>
+                {gone ? '✗ 缺失' : untouched ? '△ 未更新' : '✓'} {basenamePath(path)}
+                {item.desc ? ` · ${item.desc}` : ''}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      {failedChecks.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5 text-xs leading-5 text-[#9E3328]" aria-label="机器检查失败">
+          {failedChecks.map((check, checkIndex) => (
+            <li key={`${sub.id}-c-${checkIndex}`}>
+              ✗ {check.kind}{check.path ? ` · ${basenamePath(check.path)}` : ''}
+              {check.detail ? ` — ${check.detail}` : ''}
+              {check.severity === 'advisory' ? '（提示项）' : ''}
+            </li>
+          ))}
+        </ul>
+      )}
+      {hasReply && (
+        <div className="mt-2 rounded-lg border border-line/80 bg-bg-soft px-3 py-2">
+          <div className="mb-1 text-[11px] font-medium text-[#7B6D5A]">
+            {sub.status === 'running' ? '进行中摘要' : '提交结果'}
+          </div>
+          <p className="whitespace-pre-wrap break-words text-xs leading-5 text-[#2C2418] line-clamp-8">
+            {sub.reply}
+          </p>
         </div>
       )}
+      {!hasReply && sub.status === 'running' && (
+        <p className="mt-2 text-xs leading-5 text-[#7B6D5A]">还没有可展示的中间结果。</p>
+      )}
+      {!hasReply && sub.status === 'stopped' && (
+        <p className="mt-2 text-xs leading-5 text-[#7B6D5A]">这次提交没有文字结果，可点「查看完整结果」核对交付物。</p>
+      )}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {reviewable && !control.reworkOpen && (
+          <>
+            <button
+              type="button"
+              className="ga-btn ga-btn-primary px-3 py-1 text-xs"
+              disabled={control.busy}
+              onClick={control.onAccept}
+            >
+              通过
+            </button>
+            <button
+              type="button"
+              className="ga-btn px-3 py-1 text-xs"
+              disabled={control.busy}
+              onClick={control.onReworkOpen}
+            >
+              打回返工
+            </button>
+          </>
+        )}
+        {abortable && (
+          <button
+            type="button"
+            className="ga-btn px-3 py-1 text-xs text-[#9E3328]"
+            disabled={control.busy}
+            onClick={control.onAbort}
+          >
+            终止
+          </button>
+        )}
+        <button
+          type="button"
+          className="ga-btn px-3 py-1 text-xs"
+          onClick={control.onViewFull}
+        >
+          查看完整结果
+        </button>
+        {control.busy && <span className="text-xs text-[#7B6D5A]">处理中…</span>}
+      </div>
       {control.reworkOpen && (
         <div className="mt-2 rounded-lg border border-line bg-bg-soft px-3 py-2">
           <textarea
@@ -996,6 +1089,103 @@ function SubagentProgressRow({
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function SubagentFullResultDialog({
+  sid,
+  fallback,
+  onClose,
+}: {
+  sid: string
+  fallback?: ConductorSubagent
+  onClose: () => void
+}) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: queryKeys.conductor.subagent(sid),
+    queryFn: () => api.conductorSubagent(sid, 20_000),
+  })
+  const detail = reviewFacts(data ?? fallback ?? { id: sid, prompt: '', reply: '', status: '', created_at: 0, updated_at: 0, review_status: 'none', review_note: '', attempt: 1, generation: 0 })
+  const deliverables = detail.manifest?.deliverables ?? []
+  const missing = new Set(detail.deliverables_missing ?? [])
+  const stale = new Set(detail.deliverables_stale ?? [])
+  const checks = detail.quality_checks?.checks ?? []
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="subagent-full-title"
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-line bg-bg-card shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-line/70 px-5 py-4">
+          <h2 id="subagent-full-title" className="text-base font-semibold text-[#2C2418]">子代理完整结果</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none text-[#7B6D5A] hover:bg-bg-soft hover:text-[#2C2418]"
+            aria-label="关闭完整结果"
+          >
+            ×
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-sm leading-6 text-[#2C2418]">
+          {isLoading && <p className="text-xs text-[#7B6D5A]">正在拉取完整回复…</p>}
+          {error && <p className="text-xs text-[#9E3328]">完整结果暂时拉不到，先显示列表里已有的摘要。</p>}
+          {detail.manifest?.goal && (
+            <section className="mb-4">
+              <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">任务目标</h3>
+              <p className="mt-1 whitespace-pre-wrap">{detail.manifest.goal}</p>
+            </section>
+          )}
+          {deliverables.length > 0 && (
+            <section className="mb-4">
+              <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">约定交付物</h3>
+              <ul className="mt-1 space-y-1 text-xs">
+                {deliverables.map((item, index) => {
+                  const path = item.path || `交付物 ${index + 1}`
+                  return (
+                    <li key={path} className="break-all">
+                      {missing.has(path) ? '✗ 缺失' : stale.has(path) ? '△ 未更新' : '✓'} {path}
+                      {item.desc ? ` · ${item.desc}` : ''}
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
+          )}
+          {checks.length > 0 && (
+            <section className="mb-4">
+              <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">机器检查</h3>
+              <ul className="mt-1 space-y-1 text-xs">
+                {checks.map((check, index) => (
+                  <li key={`${check.kind}-${index}`}>
+                    {check.passed === false ? '✗' : '✓'} {check.kind}
+                    {check.path ? ` · ${check.path}` : ''}
+                    {check.detail ? ` — ${check.detail}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          <section>
+            <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">文字结果</h3>
+            {detail.reply?.trim() ? (
+              <div className="mt-1 whitespace-pre-wrap break-words text-xs leading-5">{detail.reply}</div>
+            ) : (
+              <p className="mt-1 text-xs text-[#7B6D5A]">没有文字结果。请对照上面的交付物路径直接打开文件核对。</p>
+            )}
+          </section>
+        </div>
+      </div>
     </div>
   )
 }

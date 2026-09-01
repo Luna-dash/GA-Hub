@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   conductorStop: vi.fn(),
   conductorStart: vi.fn(),
   conductorSubagentAction: vi.fn(),
+  conductorSubagent: vi.fn(),
   llms: vi.fn(),
   selectMainLlm: vi.fn(),
   selectSubagentLlm: vi.fn(),
@@ -37,6 +38,7 @@ vi.mock('@/api/client', () => ({
     conductorStop: mocks.conductorStop,
     conductorStart: mocks.conductorStart,
     conductorSubagentAction: mocks.conductorSubagentAction,
+    conductorSubagent: mocks.conductorSubagent,
     llms: mocks.llms,
   },
 }))
@@ -126,6 +128,11 @@ describe('Conductor chat scroll restoration', () => {
       items: [{ id: 'result-1', role: 'conductor', msg: 'finished', ts: 1 }],
     })
     mocks.conductorLog.mockResolvedValue({ log: [] })
+    mocks.conductorSubagent.mockResolvedValue({
+      id: 'reviewing', prompt: '检查桌面启动流程', reply: '完整回复正文',
+      status: 'stopped', created_at: 3, updated_at: 3, review_status: 'pending',
+      review_note: '', attempt: 1, generation: 1, request_id: 'request-1',
+    })
     mocks.llms.mockResolvedValue({ llms: [] })
 
     animationFrames = []
@@ -422,6 +429,63 @@ describe('Conductor chat scroll restoration', () => {
       'reviewing', 'accept', '', null, {}, false,
     )
     expect(lastToast()?.kind).toBe('success')
+  })
+
+  it('shows the worker reply, deliverables and a full-result dialog', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1',
+        status: 'awaiting_review',
+        subagents: { reviewing: { generation: 1, state: 'pending' } },
+        created_at: 1,
+        completed_at: null,
+      }],
+    })
+    mocks.conductorSubagents.mockResolvedValue({
+      items: [{
+        id: 'reviewing',
+        prompt: '检查桌面启动流程',
+        reply: '启动路径已核对，结果写入 report.md',
+        status: 'stopped',
+        created_at: 3, updated_at: 3, review_status: 'pending', review_note: '',
+        attempt: 1, completed_at: 3, accepted_at: null, generation: 1,
+        request_id: 'request-1',
+        done_marker: true,
+        deliverables_missing: [],
+        deliverables_stale: [],
+        manifest: {
+          goal: '核对桌面启动路径',
+          deliverables: [{ path: 'D:/out/report.md', desc: '终稿' }],
+        },
+        quality_checks: { checks_ok: true, checks: [] },
+      }],
+    })
+    mocks.conductorSubagent.mockResolvedValue({
+      id: 'reviewing',
+      prompt: '检查桌面启动流程',
+      reply: '完整回复：启动路径已核对。',
+      status: 'stopped',
+      created_at: 3, updated_at: 3, review_status: 'pending',
+      review_note: '', attempt: 1, generation: 1, request_id: 'request-1',
+      manifest: {
+        goal: '核对桌面启动路径',
+        deliverables: [{ path: 'D:/out/report.md', desc: '终稿' }],
+      },
+    })
+    renderPage()
+    for (let attempt = 0; attempt < 6; attempt += 1) await flushQueries()
+
+    const text = host.textContent || ''
+    expect(text).toContain('核对桌面启动路径')
+    expect(text).toContain('report.md')
+    expect(text).toContain('启动路径已核对，结果写入 report.md')
+    expect(text).toContain('查看完整结果')
+
+    act(() => button('查看完整结果').click())
+    for (let attempt = 0; attempt < 6; attempt += 1) await flushQueries()
+    expect(mocks.conductorSubagent).toHaveBeenCalledWith('reviewing', 20_000)
+    expect(host.textContent).toContain('完整回复：启动路径已核对。')
+    expect(host.textContent).toContain('子代理完整结果')
   })
 
   it('surfaces verification evidence and offers a force accept on unverified 409', async () => {

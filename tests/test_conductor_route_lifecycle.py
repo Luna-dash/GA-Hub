@@ -172,6 +172,52 @@ def test_chat_route_forwards_model_policy(monkeypatch):
     )]
 
 
+def test_subagent_detail_route_forwards_engine_dossier(monkeypatch):
+    """Human review reads the engine reply plus list-side review facts."""
+    service = FakeService(STOPPED)
+    service.client = SimpleNamespace(get_subagent=Mock(return_value={
+        "id": "w1",
+        "reply": "full cleaned reply",
+        "status": "stopped",
+        "review_status": "pending",
+        "attempt": 1,
+        "active_generation": 2,
+        "manifest": {"goal": "写报告"},
+        "deliverables_missing": ["D:/out/report.md"],
+        "done_marker": False,
+        "quality_checks": {"checks_ok": False},
+    }))
+    service.pool = SimpleNamespace(get=lambda _sid: SimpleNamespace(
+        prompt="检查桌面启动流程",
+        created_at=3,
+        updated_at=4,
+        review_note="",
+        completed_at=4,
+        accepted_at=None,
+        deliverables_missing=["D:/out/report.md"],
+        deliverables_stale=[],
+        done_marker=False,
+        quality_checks={"checks_ok": False},
+        manifest={"goal": "写报告"},
+        forced_accept=False,
+        force_reason="",
+        forced_at=None,
+    ))
+    service.workflow_tracker = SimpleNamespace(
+        request_for_subagent=lambda _sid: "request-1")
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    result = asyncio.run(conductor_routes.get_subagent("w1", max_len=5000))
+
+    service.client.get_subagent.assert_called_once_with("w1", 5000)
+    assert result["reply"] == "full cleaned reply"
+    assert result["prompt"] == "检查桌面启动流程"
+    assert result["manifest"]["goal"] == "写报告"
+    assert result["deliverables_missing"] == ["D:/out/report.md"]
+    assert result["generation"] == 2
+    assert result["request_id"] == "request-1"
+
+
 def test_subagent_route_uses_service_policy_boundary(monkeypatch):
     service = FakeService(STOPPED)
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)
