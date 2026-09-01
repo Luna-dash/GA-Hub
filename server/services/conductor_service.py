@@ -965,8 +965,73 @@ class ConductorService:
             # full hub-owned snapshot so the subagent policy survives the
             # engine restart instead of silently resetting to follow_main.
             self._push_models_to_engine()
+            # Fresh conductor: nothing is in flight on the engine, so stranded
+            # requests can be re-relayed without double-processing. On an
+            # already-running conductor this must NOT run — an admitted
+            # workflow may be mid-turn right now.
+            self._redispatch_stranded_workflows()
         self.lifecycle_status()
         return True
+
+    def _redispatch_stranded_workflows(self) -> None:
+        """Re-relay stranded ``admitted`` workflows after a (re)start.
+
+        Stop-drain semantics discard engine-queued user messages without
+        touching the already-admitted workflow, so a message that only sat in
+        the engine inbox (or whose dispatch 422'd) used to strand forever:
+        nothing was supervising and nothing ever would. Re-relaying the
+        original user message wakes the supervisor to act on the same
+        request_id; the engine has no duplicate guard on the request id, and
+        the workflow simply gains workers when the relay lands. Failures are
+        logged, never raised — a resume must not break because one stranded
+        request cannot be relayed.
+        """
+        tracker = self._ensure_workflow_tracker()
+        stranded = tracker.stranded_admitted()
+        if not stranded:
+            return
+        for workflow in stranded:
+            request_id = workflow["request_id"]
+            original = self._original_user_message(request_id)
+            if original is None:
+                log.warning(
+                    "stranded workflow %s has no original user message; "
+                    "leaving it admitted", request_id[:8],
+                )
+                continue
+            try:
+                item = self.notify({
+                    "type": "user_message",
+                    "msg": original,
+                    "request_id": request_id,
+                })
+                if item is None:
+                    raise RuntimeError("engine refused redispatch (stopping?)")
+            except Exception:
+                log.exception(
+                    "redispatch of stranded workflow %s failed", request_id[:8],
+                )
+                continue
+            log.info(
+                "redispatched stranded workflow %s after conductor (re)start",
+                request_id[:8],
+            )
+
+    def _original_user_message(self, request_id: str) -> Optional[str]:
+        """Latest user message for a request, from engine or local history."""
+        try:
+            items = self.client.get_chat(last=200)
+        except Exception:
+            items = []
+        for item in reversed(items or []):
+            if (item.get("role") == "user"
+                    and item.get("request_id") == request_id):
+                return item.get("msg", "")
+        for item in reversed(self.chat_messages):
+            if (item.get("role") == "user"
+                    and item.get("request_id") == request_id):
+                return item.get("msg", "")
+        return None
 
     def start(
         self,

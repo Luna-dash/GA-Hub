@@ -411,3 +411,104 @@ def test_five_concurrent_workers_finalize_single_workflow():
     assert set(snapshot["subagents"]) == set(workers)
     assert all(state["state"] == "accepted"
                for state in snapshot["subagents"].values())
+
+
+# ── stranded admitted recovery (resume semantics) ────────────────────────────
+
+def test_stranded_admitted_lists_only_workerless_nonterminal():
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("rid-strand")
+    # supervising: has a worker → not stranded
+    tracker.admit("rid-busy")
+    tracker.bind_subagent("rid-busy", "worker-1", 1)
+    # terminal → not stranded
+    tracker.admit("rid-closed")
+    tracker.fail_supervisor("rid-closed", phase="drain", error="stopped")
+
+    stranded = tracker.stranded_admitted()
+    assert [wf["request_id"] for wf in stranded] == ["rid-strand"]
+    assert stranded[0]["status"] == "admitted"
+    assert stranded[0]["subagents"] == {}
+
+
+def test_stranded_admitted_keeps_newest_within_limit():
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    for i in range(7):
+        tracker.admit(f"rid-{i}")
+        tracker._workflows[f"rid-{i}"].created_at = float(i)
+
+    stranded = tracker.stranded_admitted(limit=3)
+    assert [wf["request_id"] for wf in stranded] == ["rid-4", "rid-5", "rid-6"]
+
+
+def test_redispatch_re_relays_stranded_admitted_only():
+    service = object.__new__(ConductorService)
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("rid-strand")
+    tracker.admit("rid-busy")
+    tracker.bind_subagent("rid-busy", "worker-1", 1)
+    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.chat_messages = [
+        {"id": "c1", "role": "user", "msg": "做鹈鹕任务", "request_id": "rid-strand"},
+        {"id": "c2", "role": "user", "msg": "另一个", "request_id": "rid-busy"},
+    ]
+    service.client = Mock()
+    service.client.get_chat.return_value = []
+    service.client.post_chat.return_value = {"id": "engine-1"}
+
+    service._redispatch_stranded_workflows()
+
+    service.client.post_chat.assert_called_once_with(
+        "做鹈鹕任务", "user", "rid-strand")
+
+
+def test_redispatch_ignores_terminal_and_untraceable_requests():
+    service = object.__new__(ConductorService)
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("rid-strand")
+    tracker.admit("rid-lost")  # no chat message anywhere
+    tracker.fail_supervisor("rid-closed", phase="drain", error="stopped")
+    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.chat_messages = [
+        {"id": "c1", "role": "user", "msg": "任务", "request_id": "rid-strand"},
+    ]
+    service.client = Mock()
+    service.client.get_chat.return_value = []
+    service.client.post_chat.return_value = {"id": "engine-1"}
+
+    service._redispatch_stranded_workflows()
+
+    service.client.post_chat.assert_called_once_with("任务", "user", "rid-strand")
+
+
+def test_redispatch_failure_does_not_raise():
+    service = object.__new__(ConductorService)
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("rid-strand")
+    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.chat_messages = [
+        {"id": "c1", "role": "user", "msg": "任务", "request_id": "rid-strand"},
+    ]
+    service.client = Mock()
+    service.client.get_chat.return_value = []
+    service.client.post_chat.side_effect = RuntimeError("engine down")
+
+    service._redispatch_stranded_workflows()  # must not raise
+
+
+def test_redispatch_empty_history_falls_back_to_engine_chat():
+    service = object.__new__(ConductorService)
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("rid-strand")
+    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.chat_messages = []
+    service.client = Mock()
+    service.client.get_chat.return_value = [
+        {"id": "e9", "role": "user", "msg": "引擎侧原文", "request_id": "rid-strand"},
+    ]
+    service.client.post_chat.return_value = {"id": "engine-1"}
+
+    service._redispatch_stranded_workflows()
+
+    service.client.post_chat.assert_called_once_with(
+        "引擎侧原文", "user", "rid-strand")

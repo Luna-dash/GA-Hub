@@ -227,6 +227,30 @@ class WorkflowTracker:
             )[-max(1, limit):]
             return [self._payload(workflow) for workflow in workflows]
 
+    def stranded_admitted(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Non-terminal workflows stuck in ``admitted`` with zero workers.
+
+        A request can end up here when the stop drain only sweeps engine-side
+        work (a dispatch that 422'd, a message queued behind a busy conductor,
+        or a user message discarded with the queue). The workflow never sees a
+        worker event, so it stays open forever and a conductor restart finds
+        nothing to resume. ``redispatch_stranded_workflows`` re-relays these
+        original user messages on (re)start; anything already supervising
+        workers or terminal is deliberately left alone.
+        """
+        with self._lock:
+            stranded = sorted(
+                (
+                    workflow
+                    for workflow in self._workflows.values()
+                    if workflow.terminal_event is None
+                    and workflow.state == "admitted"
+                    and not workflow.workers
+                ),
+                key=lambda workflow: workflow.created_at,
+            )
+            return [self._payload(workflow) for workflow in stranded[-max(1, limit):]]
+
     def _require(self, request_id: str) -> WorkflowState:
         workflow = self._workflows.get(request_id)
         if workflow is None:

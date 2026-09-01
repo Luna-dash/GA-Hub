@@ -547,3 +547,38 @@ def test_running_event_never_triggers_auto_accept_hook():
             callbacks.on_subagent_event("worker-1", "running", {})
 
     auto.assert_not_called()
+
+
+# ── stranded workflow redispatch wiring (resume semantics) ───────────────────
+
+def _ensure_started_service(status_started: bool):
+    service = object.__new__(ConductorService)
+    service.client = Mock()
+    service.client.status.return_value = {"started": status_started}
+    service._conductor_llm_index = None
+    service._conductor_reasoning_effort = None
+    service._relay_thread = None
+    service._relay_stop = threading.Event()
+    service._process_manager = None
+    service._push_models_to_engine = Mock()
+    return service, service.client
+
+
+def test_ensure_started_redispatches_stranded_on_fresh_start():
+    service, client = _ensure_started_service(False)
+    with patch.object(ConductorService, "_redispatch_stranded_workflows") as rd:
+        service.ensure_started()
+
+    client.start.assert_called_once()
+    rd.assert_called_once()
+
+
+def test_ensure_started_never_redispatches_when_already_running():
+    """An already-running conductor may be mid-turn on an admitted workflow;
+    re-relaying it there would double-process the request."""
+    service, client = _ensure_started_service(True)
+    with patch.object(ConductorService, "_redispatch_stranded_workflows") as rd:
+        service.ensure_started()
+
+    client.start.assert_not_called()
+    rd.assert_not_called()
