@@ -1008,6 +1008,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/conductor/journal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Conductor Journal
+         * @description Catch-up read of the engine's durable run journal (P2-A).
+         *
+         *     SSE stays the live hint; clients that dropped events re-sync from the
+         *     journal instead of guessing.  Disabled journals pass through the
+         *     engine's explicit `disabled` payload unchanged.
+         */
+        get: operations["get_conductor_journal_api_conductor_journal_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/conductor/status": {
         parameters: {
             query?: never;
@@ -5763,6 +5787,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConductorLogResp"];
+                };
+            };
+        };
+    };
+    get_conductor_journal_api_conductor_journal_get: {
+        parameters: {
+            query?: {
+                after_seq?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

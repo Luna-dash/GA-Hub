@@ -109,3 +109,29 @@ def test_probe_interpreter_passes_clean_child_env(monkeypatch) -> None:
     assert env is not None
     assert all("_MEI" not in item for item in env["PATH"].split(chr(59)))
     assert "_PYI_ARCHIVE" not in env
+
+
+def test_engine_spawn_env_injects_hub_journal_path(monkeypatch, tmp_path) -> None:
+    """The spawned engine must get GAHUB_JOURNAL_PATH under ADMIN_DATA (P2-A):
+    the durable journal lives with hub-owned state, never inside the GA repo.
+    An operator-provided environment value wins over the hub default."""
+    from server.services import conductor_client as cc
+
+    journal_file = tmp_path / "gahub_journal" / "journal.jsonl"
+    monkeypatch.setattr(cc._paths, "gahub_journal_file", lambda: journal_file)
+    monkeypatch.setattr("server.services.conductor_client.os.environ", {
+        "PATH": f"C:\\Temp\\_MEI12345\\bin{chr(59)}C:\\Windows",
+    })
+
+    env = cc._engine_spawn_env()
+
+    assert env["GAHUB_JOURNAL_PATH"] == str(journal_file)
+    assert all("_MEI" not in item for item in env["PATH"].split(chr(59)))
+
+
+def test_engine_spawn_env_respects_operator_journal_path(monkeypatch) -> None:
+    from server.services import conductor_client as cc
+
+    monkeypatch.setenv("GAHUB_JOURNAL_PATH", "D:\\custom\\journal.jsonl")
+    env = cc._engine_spawn_env()
+    assert env["GAHUB_JOURNAL_PATH"] == "D:\\custom\\journal.jsonl"

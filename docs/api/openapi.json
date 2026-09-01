@@ -2121,6 +2121,58 @@
         }
       }
     },
+    "/api/conductor/journal": {
+      "get": {
+        "summary": "Get Conductor Journal",
+        "description": "Catch-up read of the engine's durable run journal (P2-A).\n\nSSE stays the live hint; clients that dropped events re-sync from the\njournal instead of guessing.  Disabled journals pass through the\nengine's explicit `disabled` payload unchanged.",
+        "operationId": "get_conductor_journal_api_conductor_journal_get",
+        "parameters": [
+          {
+            "name": "after_seq",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "After Seq"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 1,
+              "default": 500,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/conductor/status": {
       "get": {
         "summary": "Get Status",

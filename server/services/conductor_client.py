@@ -75,6 +75,18 @@ def _clean_child_env() -> dict:
     return env
 
 
+def _engine_spawn_env() -> dict:
+    """Child env for the engine process, plus hub-side journal enablement.
+
+    GAHUB_JOURNAL_PATH points the engine's durable run journal (P2-A,
+    append-only JSONL truth stream) at a hub-owned file under ADMIN_DATA.
+    An operator-provided value in the environment wins (setdefault).
+    """
+    env = _clean_child_env()
+    env.setdefault("GAHUB_JOURNAL_PATH", str(_paths.gahub_journal_file()))
+    return env
+
+
 class GahubProcessError(RuntimeError):
     """The gahub_app subprocess could not be started or became unhealthy."""
 
@@ -199,7 +211,7 @@ class GahubProcessManager:
             self._proc = subprocess.Popen(
                 cmd, cwd=self.ga_root,
                 stdout=log_file, stderr=subprocess.STDOUT,
-                env=_clean_child_env(), **hidden_process_kwargs(),
+                env=_engine_spawn_env(), **hidden_process_kwargs(),
             )
             deadline = time.monotonic() + startup_timeout
             while time.monotonic() < deadline:
@@ -322,6 +334,12 @@ class GaConductorClient:
     def stop(self, timeout: float = 5.0) -> dict:
         return self._request("POST", "/stop", json_body={"timeout": timeout},
                              timeout=timeout + 10.0)
+
+    def journal(self, after_seq: int = 0, limit: int = 500) -> dict:
+        """Catch-up read of the engine's durable journal (P2-A)."""
+        return self._request("GET", "/journal",
+                             params={"after_seq": int(after_seq),
+                                     "limit": int(limit)})
 
     # -- models ----------------------------------------------------------------
     def llms(self) -> list[dict]:

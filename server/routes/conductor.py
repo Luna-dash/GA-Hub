@@ -279,6 +279,21 @@ async def get_conductor_log() -> ConductorLogResp:
     return {"log": svc().get_conductor_log()}
 
 
+@router.get("/api/conductor/journal")
+async def get_conductor_journal(
+    after_seq: int = Query(default=0, ge=0),
+    limit: int = Query(default=500, ge=1, le=5000),
+):
+    """Catch-up read of the engine's durable run journal (P2-A).
+
+    SSE stays the live hint; clients that dropped events re-sync from the
+    journal instead of guessing.  Disabled journals pass through the
+    engine's explicit `disabled` payload unchanged.
+    """
+    return await _dispatch_through_engine(
+        svc().client.journal, after_seq, limit)
+
+
 @router.get("/api/conductor/status")
 async def get_status() -> ConductorStatusResp:
     service = svc()

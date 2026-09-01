@@ -635,3 +635,46 @@ def test_poolmirror_stamps_request_id_and_hub_origin():
         "s1", "keyinfo", "msg", request_id="rid-1")
     mirror.client.subagent_action.assert_any_call(
         "s1", "abort", origin="hub", request_id="rid-1")
+
+
+# ── journal catch-up proxy (P2-A) ────────────────────────────────────────────
+
+def test_journal_route_forwards_catch_up_params_to_engine(monkeypatch):
+    service = Mock()
+    payload = {"journal": {"disabled": False, "epoch": "e1", "last_seq": 3},
+               "events": [{"seq": 2, "type": "subagent_done"}]}
+    service.client = SimpleNamespace(journal=Mock(return_value=payload))
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    result = asyncio.run(
+        conductor_routes.get_conductor_journal(after_seq=1, limit=100))
+
+    service.client.journal.assert_called_once_with(1, 100)
+    assert result == payload
+
+
+def test_journal_route_defaults_pass_engine_defaults(monkeypatch):
+    service = Mock()
+    service.client = SimpleNamespace(
+        journal=Mock(return_value={"journal": {"disabled": True}, "events": []}))
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    result = asyncio.run(
+        conductor_routes.get_conductor_journal(after_seq=0, limit=500))
+
+    service.client.journal.assert_called_once_with(0, 500)
+    assert result["journal"]["disabled"] is True
+    assert result["events"] == []
+
+
+def test_journal_route_engine_unreachable_maps_to_503(monkeypatch):
+    service = Mock()
+    service.client = SimpleNamespace(journal=Mock(side_effect=GahubProcessError(
+        "gahub_app /journal request failed: connection refused",
+    )))
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    with pytest.raises(conductor_routes.HTTPException) as raised:
+        asyncio.run(conductor_routes.get_conductor_journal())
+
+    assert raised.value.status_code == 503

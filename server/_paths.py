@@ -442,6 +442,16 @@ def tasks_runs_file() -> Path:
     return ADMIN_DATA / "tasks_runs.jsonl"
 
 
+def gahub_journal_file() -> Path:
+    """Durable engine journal (P2-A) — hub-owned JSONL under ADMIN_DATA.
+
+    The hub passes this to gahub_app via GAHUB_JOURNAL_PATH when spawning
+    the engine, so the truth stream lives with the other hub-owned durable
+    state (never inside the GA repo).
+    """
+    return ADMIN_DATA / "gahub_journal" / "journal.jsonl"
+
+
 def email_config_file() -> Path:
     return ADMIN_DATA / "email_config.json"
 
