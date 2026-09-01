@@ -150,7 +150,6 @@ async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
         llm_index=body.llm_index,
         subagent_llm_index=body.subagent_llm_index,
         subagent_model_policy=body.subagent_model_policy,
-        conductor_reasoning_effort=body.conductor_reasoning_effort,
     )
 
 

@@ -324,11 +324,9 @@ class GaConductorClient:
     def status(self) -> dict:
         return self._request("GET", "/status")
 
-    def start(self, llm_index: Optional[int] = None,
-              conductor_reasoning_effort: Optional[str] = None) -> dict:
+    def start(self, llm_index: Optional[int] = None) -> dict:
         return self._request("POST", "/start", json_body={
             "llm_index": llm_index,
-            "conductor_reasoning_effort": conductor_reasoning_effort,
         })
 
     def stop(self, timeout: float = 5.0) -> dict:
@@ -350,15 +348,13 @@ class GaConductorClient:
 
     def push_models(self, *, conductor_llm_index=None, subagent_llm_index=None,
                     subagent_model_policy=None, preferred_llm_index=None,
-                    clear_subagent_llm: bool = False,
-                    conductor_reasoning_effort: Optional[str] = None) -> dict:
+                    clear_subagent_llm: bool = False) -> dict:
         return self._request("POST", "/models", json_body={
             "conductor_llm_index": conductor_llm_index,
             "subagent_llm_index": subagent_llm_index,
             "subagent_model_policy": subagent_model_policy,
             "preferred_llm_index": preferred_llm_index,
             "clear_subagent_llm": clear_subagent_llm,
-            "conductor_reasoning_effort": conductor_reasoning_effort,
         })
 
     # -- chat -------------------------------------------------------------------

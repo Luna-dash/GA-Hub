@@ -406,7 +406,7 @@ def test_hello_repushes_the_hub_model_policy():
 
 
 def test_cold_start_repushes_the_hub_model_policy():
-    """/start only restores the conductor model and effort — the subagent
+    """/start only restores the conductor model — the subagent
     policy snapshot must be re-pushed or it silently resets in the engine."""
     from unittest.mock import Mock
     service = _service()
@@ -422,7 +422,7 @@ def test_cold_start_repushes_the_hub_model_policy():
     service.ensure_started()
 
     service.client.start.assert_called_once_with(
-        llm_index=1, conductor_reasoning_effort=None)
+        llm_index=1)
     service._push_models_to_engine.assert_called_once()
 
 
@@ -432,7 +432,6 @@ def _service() -> ConductorService:
     service._conductor_llm_index = 1
     service._subagent_llm_index = None
     service._subagent_model_policy = "follow_main"
-    service._conductor_reasoning_effort = None
     service._model_lock = threading.RLock()
     service.pool = SimpleNamespace(snapshot=lambda: [])
     service.client = Mock()
@@ -556,7 +555,6 @@ def _ensure_started_service(status_started: bool):
     service.client = Mock()
     service.client.status.return_value = {"started": status_started}
     service._conductor_llm_index = None
-    service._conductor_reasoning_effort = None
     service._relay_thread = None
     service._relay_stop = threading.Event()
     service._process_manager = None
