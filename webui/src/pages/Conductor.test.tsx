@@ -299,14 +299,17 @@ describe('Conductor chat scroll restoration', () => {
     expect(text).toContain('分析项目性能并给出可以落地的优化方案')
     expect(text).toContain('扫描主要性能瓶颈')
     expect(text).toContain('返工中')
-    expect(text).toContain('正在验收')
+    expect(text).toContain('待你验收')
     expect(text).toContain('已通过')
+    expect(text).toContain('有 1 个子任务等你拍板')
     expect(text).not.toContain('T1')
     expect(text).not.toContain('Reply (')
     expect(mocks.conductorLog).not.toHaveBeenCalled()
 
     const headings = Array.from(host.querySelectorAll('h2')).map((item) => item.textContent)
-    expect(headings.indexOf('子代理状态')).toBeLessThan(headings.indexOf('任务进度'))
+    expect(headings).toContain('当前任务')
+    expect(headings).toContain('工人')
+    expect(headings).toContain('工人卷宗')
     expect(host.querySelector('[aria-label="子代理状态跟踪"]')?.textContent).toContain('1/4 已通过')
     const titleBadge = host.querySelector('header .ga-badge')
     expect(titleBadge?.textContent).toBe('运行中')
@@ -478,14 +481,11 @@ describe('Conductor chat scroll restoration', () => {
     const text = host.textContent || ''
     expect(text).toContain('核对桌面启动路径')
     expect(text).toContain('report.md')
-    expect(text).toContain('启动路径已核对，结果写入 report.md')
-    expect(text).toContain('查看完整结果')
-
-    act(() => button('查看完整结果').click())
+    expect(text).toContain('有 1 个子任务等你拍板')
     for (let attempt = 0; attempt < 6; attempt += 1) await flushQueries()
     expect(mocks.conductorSubagent).toHaveBeenCalledWith('reviewing', 20_000)
     expect(host.textContent).toContain('完整回复：启动路径已核对。')
-    expect(host.textContent).toContain('子代理完整结果')
+    expect(host.textContent).toContain('工人卷宗')
   })
 
   it('surfaces verification evidence and offers a force accept on unverified 409', async () => {
@@ -552,6 +552,38 @@ describe('Conductor chat scroll restoration', () => {
       'reviewing', 'rework', '补充失败场景的回归证据', null, {}, false,
     )
     expect(host.querySelector('[aria-label="打回原因"]')).toBeNull()
+  })
+
+  it('keeps the current-round chat and hides messages from other requests', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1',
+        status: 'supervising',
+        subagents: { live: { generation: 1, state: 'running' } },
+        created_at: 1,
+        completed_at: null,
+      }],
+    })
+    mocks.conductorChat.mockResolvedValue({
+      items: [
+        { id: 'old', role: 'user', msg: '上一轮已经结束的任务', ts: 1, request_id: 'request-0' },
+        { id: 'now', role: 'user', msg: '分析项目性能并给出可以落地的优化方案', ts: 2, request_id: 'request-1' },
+        { id: 'reply', role: 'conductor', msg: '已经开始分派', ts: 3, request_id: 'request-1' },
+      ],
+    })
+    mocks.conductorSubagents.mockResolvedValue({
+      items: [{
+        id: 'live', prompt: '扫描主要性能瓶颈', reply: '', status: 'running',
+        created_at: 1, updated_at: 1, review_status: 'none', review_note: '',
+        attempt: 1, completed_at: null, accepted_at: null, generation: 1,
+        request_id: 'request-1',
+      }],
+    })
+    renderPage()
+    for (let attempt = 0; attempt < 6; attempt += 1) await flushQueries()
+    expect(host.textContent).toContain('分析项目性能并给出可以落地的优化方案')
+    expect(host.textContent).toContain('已经开始分派')
+    expect(host.textContent).not.toContain('上一轮已经结束的任务')
   })
 
   it('offers only abort for a live worker', async () => {

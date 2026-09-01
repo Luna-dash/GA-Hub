@@ -91,6 +91,15 @@ function basenamePath(path: string): string {
   return parts[parts.length - 1] || path
 }
 
+function isReviewable(sub: ConductorSubagent): boolean {
+  return sub.status === 'stopped' && !['accepted', 'rejected'].includes(sub.review_status)
+}
+
+function workerTitle(sub: ConductorSubagent): string {
+  const facts = reviewFacts(sub)
+  return compactTaskText(facts.manifest?.goal || sub.prompt)
+}
+
 /** FastAPI wraps dict details in {detail}; plain dicts pass through. */
 function subagentActionErrorDetail(err: unknown): SubagentEvidence | null {
   const body = (err as { body?: { detail?: SubagentEvidence } } | null)?.body
@@ -112,7 +121,6 @@ type SubagentRowControl = {
   onReworkCancel: () => void
   onReworkSubmit: () => void
   onEvidenceDismiss: () => void
-  onViewFull: () => void
 }
 
 type SubagentPhase = 'running' | 'reworking' | 'reviewing' | 'accepted' | 'stopped'
@@ -129,10 +137,10 @@ function subagentPhase(sub: ConductorSubagent): {
     return { phase: 'running', label: '执行中', detail: '子代理正在处理这项任务' }
   }
   if (sub.review_status === 'accepted') {
-    return { phase: 'accepted', label: '已通过', detail: '结果已通过 Conductor 验收' }
+    return { phase: 'accepted', label: '已通过', detail: '结果已通过验收' }
   }
   if (sub.review_status === 'pending') {
-    return { phase: 'reviewing', label: '正在验收', detail: '子代理已提交，Conductor 正在检查' }
+    return { phase: 'reviewing', label: '待你验收', detail: '工人已交活，请看右侧卷宗后决定通过或打回' }
   }
   return { phase: 'stopped', label: '已停止', detail: '这项任务当前没有继续执行' }
 }
@@ -157,7 +165,7 @@ function workflowPresentation(
     if (workflow.status === 'failed' && !workflow.terminal_event) {
       return { label: '子代理失败', detail: '子代理处理失败，Conductor 正在决定返工或补派。', tone: 'active' }
     }
-    return { label: '执行失败', detail: '工作流未能完成，原因已写入左侧对话。', tone: 'error' }
+    return { label: '执行失败', detail: '工作流未能完成，原因已写入本轮对话。', tone: 'error' }
   }
   const accepted = workers.filter((sub) => sub.review_status === 'accepted').length
   if (workers.length > 0 && accepted === workers.length) {
@@ -167,7 +175,7 @@ function workflowPresentation(
     return { label: '返工中', detail: '未通过的部分已交回子代理继续处理。', tone: 'active' }
   }
   if (workflow.status === 'awaiting_review') {
-    return { label: '正在验收', detail: '子代理已提交结果，Conductor 正在检查。', tone: 'review' }
+    return { label: '待你验收', detail: '子代理已交活，请查看右侧卷宗后决定通过或打回。', tone: 'review' }
   }
   if (workflow.status === 'supervising') {
     return { label: '执行中', detail: 'Conductor 已完成分派，子代理正在处理。', tone: 'active' }
@@ -193,7 +201,7 @@ export default function Conductor() {
   const [reworkReason, setReworkReason] = useState('')
   const [evidenceBySid, setEvidenceBySid] = useState<Record<string, SubagentEvidence>>({})
   const [busySid, setBusySid] = useState<string | null>(null)
-  const [fullSid, setFullSid] = useState<string | null>(null)
+  const [selectedSid, setSelectedSid] = useState<string | null>(null)
   const [draftSubagentLlmKey, setDraftSubagentLlmKey] = useState<string | null>(null)
   const [draftSubagentModelLocked, setDraftSubagentModelLocked] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
@@ -536,9 +544,33 @@ export default function Conductor() {
     ))
     return message ? compactTaskText(message.msg) : '当前任务'
   }, [chatMessages, currentWorkflow])
+  const visibleChat = useMemo(() => {
+    if (!currentWorkflow) return chatMessages
+    return chatMessages.filter((item) => item.request_id === currentWorkflow.request_id)
+  }, [chatMessages, currentWorkflow])
   const workflowView = workflowPresentation(currentWorkflow, workflowSubagents, status?.started ?? false)
   const acceptedCount = workflowSubagents.filter((sub) => sub.review_status === 'accepted').length
   const activeSubagents = workflowSubagents.filter((sub) => sub.status === 'running')
+  const pendingReview = workflowSubagents.filter(isReviewable)
+  const occupiedCount = subagents.filter((sub) => (
+    sub.status === 'running'
+    || (sub.status === 'stopped' && !['accepted', 'rejected'].includes(sub.review_status))
+  )).length
+  const selectedWorker = workflowSubagents.find((sub) => sub.id === selectedSid) ?? null
+
+  useEffect(() => {
+    if (workflowSubagents.length === 0) {
+      setSelectedSid(null)
+      return
+    }
+    setSelectedSid((prev) => {
+      if (prev && workflowSubagents.some((sub) => sub.id === prev)) return prev
+      const next = workflowSubagents.find(isReviewable)
+        ?? workflowSubagents.find((sub) => sub.status === 'running')
+        ?? workflowSubagents[workflowSubagents.length - 1]
+      return next.id
+    })
+  }, [workflowSubagents])
 
   return (
     <PageShell
@@ -546,6 +578,11 @@ export default function Conductor() {
       titleExtra={
         <span className={`ga-badge ${status?.started ? 'ga-badge-connected' : 'ga-badge-offline'}`}>
           {status?.started ? '运行中' : '未运行'}
+        </span>
+      }
+      middleArea={
+        <span className="text-xs text-[#7B6D5A]" aria-label="工人占用">
+          {occupiedCount > 0 ? `工人占用 ${occupiedCount}` : '没有占用中的工人'}
         </span>
       }
       actions={
@@ -581,167 +618,180 @@ export default function Conductor() {
         </div>
       }
     >
-      <div className="flex h-full min-h-0 gap-6 p-6">
-          {/* Main: Chat */}
-          <div className="flex min-w-0 flex-1 flex-col rounded-2xl border border-line bg-bg-card shadow-sm overflow-hidden">
-            <div
-              ref={chatScrollRef}
-              onScroll={() => {
-                // Smooth programmatic scrolling emits intermediate events;
-                // don't mistake those frames for a user leaving the live edge.
-                if (!isSending) {
-                  shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
-                }
-                scrollMemory.chatTop = chatScrollRef.current?.scrollTop ?? scrollMemory.chatTop
-              }}
-              className="flex-1 overflow-y-auto divide-y divide-line border-y border-line text-sm"
-            >
-              {isChatLoading && chatMessages.length === 0 && (
-                <div className="px-4 py-8 text-center text-sm text-[#7B6D5A]">正在加载 Conductor 历史…</div>
-              )}
-              {isChatError && chatMessages.length === 0 && (
-                <div className="px-4 py-8 text-center">
-                  <p className="text-sm text-[#9E3328]">历史暂时无法加载，Conductor 引擎可能未连接。</p>
-                  <button type="button" className="ga-btn mt-3" onClick={() => void refetchChat()}>重试</button>
-                </div>
-              )}
-              {!isChatLoading && !isChatError && chatMessages.length === 0 && (
-                <div className="px-4 py-8 text-center text-sm text-[#7B6D5A]">还没有任务，先向 Conductor 描述你要完成的工作。</div>
-              )}
-              {chatMessages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={clsx(
-                    'flex gap-3 px-4 py-2',
-                    msg.role === 'user'
-                      ? 'bg-[#8A6438] text-[#FFF4DF]'
-                      : 'bg-bg-card text-[#2C2418]'
-                  )}
-                >
-                  <span
-                    className={clsx(
-                      'shrink-0 w-16 select-none text-xs font-medium uppercase tracking-wide pt-0.5',
-                      msg.role === 'user' ? 'text-[#FFF4DF]/70' : 'text-[#665741]'
-                    )}
-                  >
-                    {msg.role === 'user' ? '' : '指挥'}
-                  </span>
-                  <MarkdownView mode="plain" cache>
-                    {msg.msg}
-                  </MarkdownView>
-                </div>
-              ))}
-              <div ref={chatEndRef} />
-            </div>
-            <form onSubmit={sendChat} className="rounded-b-2xl border-t border-line bg-bg-soft/75 p-4 shadow-[0_-12px_36px_rgba(15,23,42,0.20)] backdrop-blur-xl">
-              <div className="flex items-end gap-2">
-                <textarea
-                  ref={chatInputRef}
-                  value={userMsg}
-                  onChange={(e) => setUserMsg(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
-                    e.preventDefault()
-                    e.currentTarget.form?.requestSubmit()
-                  }}
-                  rows={1}
-                  wrap="soft"
-                  placeholder="向 Conductor 发送消息..."
-                  className="min-h-10 max-h-40 flex-1 min-w-0 resize-none overflow-y-auto overflow-x-hidden rounded border border-line bg-bg px-3 py-2 text-sm leading-6 text-[#2C2418] placeholder:text-[#8A7A63] focus:border-accent focus:outline-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
-                />
-                <button
-                  type="submit"
-                  disabled={!userMsg.trim() || effectiveLlmIndex === null || isSending}
-                  className="shrink-0 rounded bg-accent px-4 py-2 text-sm text-white hover:bg-accent/90 disabled:opacity-50"
-                >
-                  {isSending ? '发送中…' : '发送'}
-                </button>
-              </div>
-            </form>
-          </div>
+      <div className="flex h-full min-h-0 flex-col gap-3 p-4">
+        {pendingReview.length > 0 && (
+          <button
+            type="button"
+            className="shrink-0 rounded-xl border border-[#D7E4EE] bg-[#EAF2F8] px-4 py-2 text-left text-sm text-[#285A78]"
+            onClick={() => setSelectedSid(pendingReview[0].id)}
+          >
+            有 {pendingReview.length} 个子任务等你拍板
+            {pendingReview[0] ? ` · 先看「${workerTitle(pendingReview[0])}」` : ''}
+          </button>
+        )}
 
-          {/* Right: subagent tracking + semantic workflow progress */}
-          <div className="flex w-[22rem] max-w-[40%] shrink-0 flex-col gap-3 overflow-hidden">
-            <section className="shrink-0 overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm" aria-live="polite" aria-label="子代理状态跟踪">
-              <div className="flex items-center justify-between gap-3 border-b border-line/70 px-4 py-2.5">
-                <h2 className="shrink-0 text-sm font-semibold text-[#2C2418]">子代理状态</h2>
-                <span className="text-[11px] text-[#7B6D5A]">
-                  {workflowSubagents.length === 0
-                    ? '尚未指派'
-                    : `${acceptedCount}/${workflowSubagents.length} 已通过${activeSubagents.length > 0 ? ` · ${activeSubagents.length} 执行中` : ''}`}
-                </span>
-              </div>
-              {workflowSubagents.length === 0 ? (
-                <div className="px-4 py-3 text-xs text-[#7B6D5A]">等待 Conductor 分派子任务</div>
-              ) : (
-                <div className="flex min-h-[3.75rem] divide-x divide-line/70 overflow-x-auto">
-                  {workflowSubagents.map((sub, index) => (
-                    <SubagentStatusCell key={sub.id} sub={sub} index={index} />
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <aside className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
-            <div className="border-b border-line/70 px-4 py-3">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <h2 className="text-sm font-semibold text-[#2C2418]">任务进度</h2>
+        <div className="flex min-h-0 flex-1 gap-4">
+          <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-hidden">
+            <section className="shrink-0 rounded-2xl border border-line bg-bg-card px-4 py-3 shadow-sm" aria-label="当前任务">
+              <div className="mb-1.5 flex items-center justify-between gap-3">
+                <h2 className="text-sm font-semibold text-[#2C2418]">当前任务</h2>
                 <WorkflowBadge tone={workflowView.tone} label={workflowView.label} />
               </div>
               <p className="line-clamp-3 text-sm font-medium leading-5 text-[#2C2418]">
                 {currentTask || '尚未收到任务'}
               </p>
               <p className="mt-1.5 text-xs leading-5 text-[#665741]">{workflowView.detail}</p>
-            </div>
+              <p className="mt-1 text-[11px] text-[#7B6D5A]" aria-label="子代理状态跟踪">
+                {workflowSubagents.length === 0
+                  ? '尚未指派'
+                  : `${acceptedCount}/${workflowSubagents.length} 已通过${activeSubagents.length > 0 ? ` · ${activeSubagents.length} 执行中` : ''}`}
+              </p>
+            </section>
 
-            <div className="flex-1 overflow-y-auto" aria-label="子任务详情">
-              {workflowSubagents.length === 0 ? (
-                <div className="px-5 py-10 text-center">
-                  <p className="text-sm font-medium text-[#4E4233]">
-                    {currentWorkflow ? '尚未指派子代理' : '暂无执行中的任务'}
-                  </p>
-                  <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">
-                    {currentWorkflow ? 'Conductor 完成任务拆分后会在这里显示。' : '发送任务后可在这里查看具体进度。'}
-                  </p>
+            <section className="flex min-h-0 flex-[1.1] flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
+              <div className="flex items-center justify-between gap-3 border-b border-line/70 px-4 py-2.5">
+                <h2 className="text-sm font-semibold text-[#2C2418]">工人</h2>
+                <span className="text-[11px] text-[#7B6D5A]">点一项看右侧卷宗</span>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto" aria-label="子任务详情">
+                {workflowSubagents.length === 0 ? (
+                  <div className="px-5 py-10 text-center">
+                    <p className="text-sm font-medium text-[#4E4233]">
+                      {currentWorkflow ? '尚未指派子代理' : '暂无执行中的任务'}
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">
+                      {currentWorkflow ? 'Conductor 完成任务拆分后会在这里显示。' : '发送任务后可在这里查看具体进度。'}
+                    </p>
+                  </div>
+                ) : (
+                  workflowSubagents.map((sub) => (
+                    <WorkerListRow
+                      key={sub.id}
+                      sub={sub}
+                      selected={sub.id === selectedSid}
+                      onSelect={() => setSelectedSid(sub.id)}
+                    />
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section className="flex min-h-0 flex-[0.9] flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
+              <div className="border-b border-line/70 px-4 py-2.5">
+                <h2 className="text-sm font-semibold text-[#2C2418]">本轮对话</h2>
+              </div>
+              <div
+                ref={chatScrollRef}
+                onScroll={() => {
+                  if (!isSending) {
+                    shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
+                  }
+                  scrollMemory.chatTop = chatScrollRef.current?.scrollTop ?? scrollMemory.chatTop
+                }}
+                className="min-h-0 flex-1 overflow-y-auto divide-y divide-line text-sm"
+              >
+                {isChatLoading && visibleChat.length === 0 && (
+                  <div className="px-4 py-8 text-center text-sm text-[#7B6D5A]">正在加载 Conductor 历史…</div>
+                )}
+                {isChatError && visibleChat.length === 0 && (
+                  <div className="px-4 py-8 text-center">
+                    <p className="text-sm text-[#9E3328]">历史暂时无法加载，Conductor 引擎可能未连接。</p>
+                    <button type="button" className="ga-btn mt-3" onClick={() => void refetchChat()}>重试</button>
+                  </div>
+                )}
+                {!isChatLoading && !isChatError && visibleChat.length === 0 && (
+                  <div className="px-4 py-8 text-center text-sm text-[#7B6D5A]">还没有任务，先向指挥描述你要完成的工作。</div>
+                )}
+                {visibleChat.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={clsx(
+                      'flex gap-3 px-4 py-2',
+                      msg.role === 'user'
+                        ? 'bg-[#8A6438] text-[#FFF4DF]'
+                        : 'bg-bg-card text-[#2C2418]',
+                    )}
+                  >
+                    <span
+                      className={clsx(
+                        'w-16 shrink-0 select-none pt-0.5 text-xs font-medium uppercase tracking-wide',
+                        msg.role === 'user' ? 'text-[#FFF4DF]/70' : 'text-[#665741]',
+                      )}
+                    >
+                      {msg.role === 'user' ? '' : '指挥'}
+                    </span>
+                    <MarkdownView mode="plain" cache>
+                      {msg.msg}
+                    </MarkdownView>
+                  </div>
+                ))}
+                <div ref={chatEndRef} />
+              </div>
+              <form onSubmit={sendChat} className="border-t border-line bg-bg-soft/75 p-3">
+                <div className="flex items-end gap-2">
+                  <textarea
+                    ref={chatInputRef}
+                    value={userMsg}
+                    onChange={(e) => setUserMsg(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+                      e.preventDefault()
+                      e.currentTarget.form?.requestSubmit()
+                    }}
+                    rows={1}
+                    wrap="soft"
+                    placeholder="向指挥补充一句，或开一个新任务…"
+                    className="min-h-10 max-h-40 min-w-0 flex-1 resize-none overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-line bg-bg px-3 py-2 text-sm leading-6 text-[#2C2418] placeholder:text-[#8A7A63] [overflow-wrap:anywhere] focus:border-accent focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!userMsg.trim() || effectiveLlmIndex === null || isSending}
+                    className="shrink-0 rounded bg-accent px-4 py-2 text-sm text-white hover:bg-accent/90 disabled:opacity-50"
+                  >
+                    {isSending ? '发送中…' : '发送'}
+                  </button>
                 </div>
-              ) : (
-                workflowSubagents.map((sub, index) => (
-                  <SubagentProgressRow key={sub.id} sub={sub} index={index} control={{
-                    evidence: evidenceBySid[sub.id],
-                    busy: busySid === sub.id,
-                    reworkOpen: reworkSid === sub.id,
-                    reworkReason: reworkSid === sub.id ? reworkReason : '',
-                    onAccept: () => void runSubagentAction(sub.id, 'accept'),
-                    onForceAccept: () => void runSubagentAction(sub.id, 'accept', '人工核对证据后强制通过', true),
-                    onAbort: () => void runSubagentAction(sub.id, 'abort'),
-                    onReworkOpen: () => { setReworkSid(sub.id); setReworkReason('') },
-                    onReworkReasonChange: setReworkReason,
-                    onReworkCancel: () => setReworkSid((prev) => (prev === sub.id ? null : prev)),
-                    onReworkSubmit: () => {
-                      if (reworkReason.trim()) void runSubagentAction(sub.id, 'rework', reworkReason.trim())
-                    },
-                    onEvidenceDismiss: () => setEvidenceBySid((prev) => {
-                      if (!(sub.id in prev)) return prev
-                      const next = { ...prev }
-                      delete next[sub.id]
-                      return next
-                    }),
-                    onViewFull: () => setFullSid(sub.id),
-                  }} />
-                ))
-              )}
-            </div>
-            </aside>
-          </div>
+              </form>
+            </section>
           </div>
 
-      {fullSid && (
-        <SubagentFullResultDialog
-          sid={fullSid}
-          fallback={subagents.find((item) => item.id === fullSid)}
-          onClose={() => setFullSid(null)}
-        />
-      )}
+          <aside className="flex w-[28rem] max-w-[46%] shrink-0 flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
+            {selectedWorker ? (
+              <WorkerDossier
+                sub={selectedWorker}
+                control={{
+                  evidence: evidenceBySid[selectedWorker.id],
+                  busy: busySid === selectedWorker.id,
+                  reworkOpen: reworkSid === selectedWorker.id,
+                  reworkReason: reworkSid === selectedWorker.id ? reworkReason : '',
+                  onAccept: () => void runSubagentAction(selectedWorker.id, 'accept'),
+                  onForceAccept: () => void runSubagentAction(selectedWorker.id, 'accept', '人工核对证据后强制通过', true),
+                  onAbort: () => void runSubagentAction(selectedWorker.id, 'abort'),
+                  onReworkOpen: () => { setReworkSid(selectedWorker.id); setReworkReason('') },
+                  onReworkReasonChange: setReworkReason,
+                  onReworkCancel: () => setReworkSid((prev) => (prev === selectedWorker.id ? null : prev)),
+                  onReworkSubmit: () => {
+                    if (reworkReason.trim()) void runSubagentAction(selectedWorker.id, 'rework', reworkReason.trim())
+                  },
+                  onEvidenceDismiss: () => setEvidenceBySid((prev) => {
+                    if (!(selectedWorker.id in prev)) return prev
+                    const next = { ...prev }
+                    delete next[selectedWorker.id]
+                    return next
+                  }),
+                }}
+              />
+            ) : (
+              <div className="flex flex-1 items-center justify-center px-6 text-center">
+                <div>
+                  <p className="text-sm font-medium text-[#4E4233]">还没有选中的工人</p>
+                  <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">派工后点左侧一项，这里会显示目标、交付物和完整结果。</p>
+                </div>
+              </div>
+            )}
+          </aside>
+        </div>
+      </div>
 
       {subagentSettingsOpen && (
         <div
@@ -834,357 +884,296 @@ function WorkflowBadge({
   )
 }
 
-function SubagentStatusCell({
-  sub,
-  index,
-}: {
-  sub: ConductorSubagent
-  index: number
-}) {
-  const view = subagentPhase(sub)
-
-  return (
-    <div className="min-w-[7rem] flex-1 px-3 py-2.5" title={compactTaskText(sub.prompt)}>
-      <div className="truncate text-[11px] text-[#7B6D5A]">子代理 {index + 1}</div>
-      <div
-        className={clsx(
-          'mt-1 flex items-center gap-1.5 text-xs font-medium',
-          view.phase === 'running' && 'text-[#7A4F08]',
-          view.phase === 'reworking' && 'text-[#9A5315]',
-          view.phase === 'reviewing' && 'text-[#285A78]',
-          view.phase === 'accepted' && 'text-[#2D6A3F]',
-          view.phase === 'stopped' && 'text-[#7B6D5A]',
-        )}
-      >
-        <span
-          className={clsx(
-            'h-1.5 w-1.5 shrink-0 rounded-full',
-            view.phase === 'running' && 'bg-[#B47A16]',
-            view.phase === 'reworking' && 'bg-[#C4681C]',
-            view.phase === 'reviewing' && 'bg-[#3E7C9E]',
-            view.phase === 'accepted' && 'bg-[#3C8A52]',
-            view.phase === 'stopped' && 'bg-[#9A8E7D]',
-          )}
-        />
-        <span className="truncate">{view.label}</span>
-      </div>
-    </div>
+function phaseTone(phase: SubagentPhase): string {
+  return clsx(
+    phase === 'running' && 'text-[#7A4F08]',
+    phase === 'reworking' && 'text-[#9A5315]',
+    phase === 'reviewing' && 'text-[#285A78]',
+    phase === 'accepted' && 'text-[#2D6A3F]',
+    phase === 'stopped' && 'text-[#7B6D5A]',
   )
 }
 
-function SubagentProgressRow({
+function phaseDot(phase: SubagentPhase): string {
+  return clsx(
+    'h-1.5 w-1.5 shrink-0 rounded-full',
+    phase === 'running' && 'bg-[#B47A16]',
+    phase === 'reworking' && 'bg-[#C4681C]',
+    phase === 'reviewing' && 'bg-[#3E7C9E]',
+    phase === 'accepted' && 'bg-[#3C8A52]',
+    phase === 'stopped' && 'bg-[#9A8E7D]',
+  )
+}
+
+async function copyPath(path: string) {
+  try {
+    await navigator.clipboard.writeText(path)
+    toast.success('已复制路径')
+  } catch {
+    toast.error('复制失败，请手动选中路径')
+  }
+}
+
+function WorkerListRow({
   sub,
-  index,
+  selected,
+  onSelect,
+}: {
+  sub: ConductorSubagent
+  selected: boolean
+  onSelect: () => void
+}) {
+  const view = subagentPhase(sub)
+  const facts = reviewFacts(sub)
+  const missing = facts.deliverables_missing?.length ?? 0
+  const stale = facts.deliverables_stale?.length ?? 0
+  const failed = (facts.quality_checks?.checks ?? []).filter((check) => check.passed === false).length
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={clsx(
+        'block w-full border-b border-line/70 px-4 py-3 text-left last:border-b-0',
+        selected ? 'bg-[#F4EDE3]' : 'hover:bg-bg-soft',
+      )}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <p className="min-w-0 flex-1 truncate text-sm font-medium text-[#2C2418]">{workerTitle(sub)}</p>
+        <span className={clsx('flex shrink-0 items-center gap-1.5 text-[11px] font-medium', phaseTone(view.phase))}>
+          <span className={phaseDot(view.phase)} />
+          {view.label}
+        </span>
+      </div>
+      <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">
+        {sub.attempt > 1 ? `第 ${sub.attempt} 次` : view.detail}
+        {missing > 0 ? ` · ${missing} 项缺失` : ''}
+        {stale > 0 ? ` · ${stale} 项未更新` : ''}
+        {failed > 0 ? ` · ${failed} 项检查失败` : ''}
+      </p>
+    </button>
+  )
+}
+
+function WorkerDossier({
+  sub,
   control,
 }: {
   sub: ConductorSubagent
-  index: number
   control: SubagentRowControl
 }) {
   const view = subagentPhase(sub)
   const facts = reviewFacts(sub)
-  const deliverables = facts.manifest?.deliverables ?? []
-  const missing = new Set(facts.deliverables_missing ?? [])
-  const stale = new Set(facts.deliverables_stale ?? [])
-  const failedChecks = (facts.quality_checks?.checks ?? []).filter((check) => check.passed === false)
-  const hasReply = Boolean(sub.reply?.trim())
-  // Deterministic gating: accepted/rejected rows are terminal and offer
-  // nothing; completed rows awaiting a decision offer accept/rework/abort;
-  // live rows only offer abort.
-  const reviewable = sub.status === 'stopped'
-    && !['accepted', 'rejected'].includes(sub.review_status)
+  const { data, isLoading, error } = useQuery({
+    queryKey: queryKeys.conductor.subagent(sub.id),
+    queryFn: () => api.conductorSubagent(sub.id, 20_000),
+  })
+  const detail = reviewFacts(data ?? sub)
+  const deliverables = detail.manifest?.deliverables ?? facts.manifest?.deliverables ?? []
+  const missing = new Set(detail.deliverables_missing ?? facts.deliverables_missing ?? [])
+  const stale = new Set(detail.deliverables_stale ?? facts.deliverables_stale ?? [])
+  const checks = detail.quality_checks?.checks ?? facts.quality_checks?.checks ?? []
+  const reply = (detail.reply || sub.reply || '').trim()
+  const reviewable = isReviewable(sub)
   const abortable = sub.status === 'running' || reviewable
 
   return (
-    <div className="border-b border-line/70 px-4 py-3 last:border-b-0">
-      <div className="mb-1.5 flex items-center justify-between gap-3">
-        <span className="text-[11px] font-medium text-[#7B6D5A]">子代理 {index + 1}</span>
-        <span
-          className={clsx(
-            'flex shrink-0 items-center gap-1.5 text-[11px] font-medium',
-            view.phase === 'running' && 'text-[#7A4F08]',
-            view.phase === 'reworking' && 'text-[#9A5315]',
-            view.phase === 'reviewing' && 'text-[#285A78]',
-            view.phase === 'accepted' && 'text-[#2D6A3F]',
-            view.phase === 'stopped' && 'text-[#7B6D5A]',
-          )}
-        >
-          <span
-            className={clsx(
-              'h-1.5 w-1.5 rounded-full',
-              view.phase === 'running' && 'bg-[#B47A16]',
-              view.phase === 'reworking' && 'bg-[#C4681C]',
-              view.phase === 'reviewing' && 'bg-[#3E7C9E]',
-              view.phase === 'accepted' && 'bg-[#3C8A52]',
-              view.phase === 'stopped' && 'bg-[#9A8E7D]',
-            )}
-          />
-          {view.label}
-        </span>
-      </div>
-      <p className="line-clamp-4 break-words text-sm leading-5 text-[#2C2418]">
-        {compactTaskText(facts.manifest?.goal || sub.prompt)}
-      </p>
-      <p className="mt-1.5 text-xs leading-5 text-[#7B6D5A]">
-        {view.detail}{sub.attempt > 1 ? ` · 第 ${sub.attempt} 次处理` : ''}
-        {facts.done_marker === false && sub.status === 'stopped' ? ' · 未确认完成' : ''}
-      </p>
-      {deliverables.length > 0 && (
-        <ul className="mt-2 space-y-0.5 text-xs leading-5 text-[#4E4233]" aria-label="约定交付物">
-          {deliverables.map((item, deliverableIndex) => {
-            const path = item.path || `交付物 ${deliverableIndex + 1}`
-            const gone = missing.has(path)
-            const untouched = stale.has(path)
-            return (
-              <li key={`${sub.id}-d-${path}`} title={path} className={clsx(
-                gone && 'text-[#9E3328]',
-                untouched && !gone && 'text-[#9A5315]',
-              )}>
-                {gone ? '✗ 缺失' : untouched ? '△ 未更新' : '✓'} {basenamePath(path)}
-                {item.desc ? ` · ${item.desc}` : ''}
-              </li>
-            )
-          })}
-        </ul>
-      )}
-      {failedChecks.length > 0 && (
-        <ul className="mt-1.5 space-y-0.5 text-xs leading-5 text-[#9E3328]" aria-label="机器检查失败">
-          {failedChecks.map((check, checkIndex) => (
-            <li key={`${sub.id}-c-${checkIndex}`}>
-              ✗ {check.kind}{check.path ? ` · ${basenamePath(check.path)}` : ''}
-              {check.detail ? ` — ${check.detail}` : ''}
-              {check.severity === 'advisory' ? '（提示项）' : ''}
-            </li>
-          ))}
-        </ul>
-      )}
-      {hasReply && (
-        <div className="mt-2 rounded-lg border border-line/80 bg-bg-soft px-3 py-2">
-          <div className="mb-1 text-[11px] font-medium text-[#7B6D5A]">
-            {sub.status === 'running' ? '进行中摘要' : '提交结果'}
-          </div>
-          <p className="whitespace-pre-wrap break-words text-xs leading-5 text-[#2C2418] line-clamp-8">
-            {sub.reply}
-          </p>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="shrink-0 border-b border-line/70 px-4 py-3">
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-[#2C2418]">工人卷宗</h2>
+          <span className={clsx('flex items-center gap-1.5 text-[11px] font-medium', phaseTone(view.phase))}>
+            <span className={phaseDot(view.phase)} />
+            {view.label}
+          </span>
         </div>
-      )}
-      {!hasReply && sub.status === 'running' && (
-        <p className="mt-2 text-xs leading-5 text-[#7B6D5A]">还没有可展示的中间结果。</p>
-      )}
-      {!hasReply && sub.status === 'stopped' && (
-        <p className="mt-2 text-xs leading-5 text-[#7B6D5A]">这次提交没有文字结果，可点「查看完整结果」核对交付物。</p>
-      )}
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        {reviewable && !control.reworkOpen && (
-          <>
-            <button
-              type="button"
-              className="ga-btn ga-btn-primary px-3 py-1 text-xs"
-              disabled={control.busy}
-              onClick={control.onAccept}
-            >
-              通过
-            </button>
-            <button
-              type="button"
-              className="ga-btn px-3 py-1 text-xs"
-              disabled={control.busy}
-              onClick={control.onReworkOpen}
-            >
-              打回返工
-            </button>
-          </>
-        )}
-        {abortable && (
-          <button
-            type="button"
-            className="ga-btn px-3 py-1 text-xs text-[#9E3328]"
-            disabled={control.busy}
-            onClick={control.onAbort}
-          >
-            终止
-          </button>
-        )}
-        <button
-          type="button"
-          className="ga-btn px-3 py-1 text-xs"
-          onClick={control.onViewFull}
-        >
-          查看完整结果
-        </button>
-        {control.busy && <span className="text-xs text-[#7B6D5A]">处理中…</span>}
+        <p className="text-sm font-medium leading-5 text-[#2C2418]">{workerTitle(sub)}</p>
+        <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">
+          {view.detail}{sub.attempt > 1 ? ` · 第 ${sub.attempt} 次处理` : ''}
+          {detail.done_marker === false && sub.status === 'stopped' ? ' · 未确认完成' : ''}
+        </p>
       </div>
-      {control.reworkOpen && (
-        <div className="mt-2 rounded-lg border border-line bg-bg-soft px-3 py-2">
-          <textarea
-            aria-label="打回原因"
-            value={control.reworkReason}
-            placeholder="说明打回原因与整改要求（必填）"
-            className="min-h-16 w-full resize-none rounded border border-line bg-bg px-2 py-1.5 text-xs leading-5 text-[#2C2418] placeholder:text-[#8A7A63] focus:border-accent focus:outline-none"
-            onChange={(event) => control.onReworkReasonChange(event.target.value)}
-          />
-          <div className="mt-1.5 flex justify-end gap-2">
-            <button type="button" className="ga-btn px-3 py-1 text-xs" onClick={control.onReworkCancel}>取消</button>
-            <button
-              type="button"
-              className="ga-btn ga-btn-primary px-3 py-1 text-xs"
-              disabled={!control.reworkReason.trim() || control.busy}
-              onClick={control.onReworkSubmit}
-            >
-              确认打回
-            </button>
-          </div>
-        </div>
-      )}
-      {control.evidence && (
-        <div
-          role="alert"
-          data-testid={`subagent-evidence-${sub.id}`}
-          className="mt-2 rounded-lg border border-[#E8CFC7] bg-[#FFF7F5] px-3 py-2 text-xs leading-5 text-[#6B3A30]"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <span className="font-medium text-[#9E3328]">机器验收未通过 · 证据</span>
-            <button
-              type="button"
-              className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-[#7B6D5A] hover:bg-bg-soft"
-              onClick={control.onEvidenceDismiss}
-            >
-              收起
-            </button>
-          </div>
-          <ul className="mt-1 space-y-0.5">
-            {(control.evidence.deliverables_missing ?? []).map((path) => (
-              <li key={`missing-${path}`}>✗ 交付物缺失：{path}</li>
-            ))}
-            {(control.evidence.deliverables_stale ?? []).map((path) => (
-              <li key={`stale-${path}`}>✗ 交付物未更新：{path}</li>
-            ))}
-            {(control.evidence.quality_checks?.checks ?? [])
-              .filter((check) => check.passed === false)
-              .map((check, checkIndex) => (
-                <li key={`check-${checkIndex}`}>
-                  ✗ {check.kind}{check.path ? ` · ${check.path}` : ''}
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-sm leading-6 text-[#2C2418]">
+        {isLoading && <p className="mb-3 text-xs text-[#7B6D5A]">正在拉取完整回复…</p>}
+        {error && <p className="mb-3 text-xs text-[#9E3328]">完整结果暂时拉不到，先显示列表里已有的摘要。</p>}
+
+        {detail.manifest?.done_when && (
+          <section className="mb-4">
+            <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">完成条件</h3>
+            <p className="mt-1 whitespace-pre-wrap text-xs leading-5">{detail.manifest.done_when}</p>
+          </section>
+        )}
+
+        {deliverables.length > 0 && (
+          <section className="mb-4">
+            <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">约定交付物</h3>
+            <ul className="mt-1 space-y-1 text-xs" aria-label="约定交付物">
+              {deliverables.map((item, index) => {
+                const path = item.path || `交付物 ${index + 1}`
+                const gone = missing.has(path)
+                const untouched = stale.has(path)
+                return (
+                  <li key={path} className={clsx('break-all', gone && 'text-[#9E3328]', untouched && !gone && 'text-[#9A5315]')}>
+                    {gone ? '✗ 缺失' : untouched ? '△ 未更新' : '✓'} {path}
+                    {item.desc ? ` · ${item.desc}` : ''}
+                    {item.path && (
+                      <button
+                        type="button"
+                        className="ml-2 text-[11px] text-[#285A78] underline-offset-2 hover:underline"
+                        onClick={() => void copyPath(item.path!)}
+                      >
+                        复制路径
+                      </button>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+        )}
+
+        {checks.length > 0 && (
+          <section className="mb-4">
+            <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">机器检查</h3>
+            <ul className="mt-1 space-y-1 text-xs" aria-label="机器检查">
+              {checks.map((check, index) => (
+                <li key={`${check.kind}-${index}`} className={check.passed === false ? 'text-[#9E3328]' : ''}>
+                  {check.passed === false ? '✗' : '✓'} {check.kind}
+                  {check.path ? ` · ${basenamePath(check.path)}` : ''}
                   {check.detail ? ` — ${check.detail}` : ''}
-                  {check.severity === 'advisory' ? '（提示项，不阻塞）' : ''}
+                  {check.severity === 'advisory' ? '（提示项）' : ''}
                 </li>
               ))}
-          </ul>
-          <div className="mt-1.5 flex flex-wrap gap-2">
+            </ul>
+          </section>
+        )}
+
+        <section>
+          <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">
+            {sub.status === 'running' ? '进行中摘要' : '文字结果'}
+          </h3>
+          {reply ? (
+            <div className="mt-1 whitespace-pre-wrap break-words text-xs leading-5">{reply}</div>
+          ) : (
+            <p className="mt-1 text-xs text-[#7B6D5A]">
+              {sub.status === 'running'
+                ? '还没有可展示的中间结果。'
+                : '没有文字结果。请对照上面的交付物路径直接打开文件核对。'}
+            </p>
+          )}
+        </section>
+      </div>
+
+      <div className="shrink-0 border-t border-line/70 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {reviewable && !control.reworkOpen && (
+            <>
+              <button
+                type="button"
+                className="ga-btn ga-btn-primary px-3 py-1 text-xs"
+                disabled={control.busy}
+                onClick={control.onAccept}
+              >
+                通过
+              </button>
+              <button
+                type="button"
+                className="ga-btn px-3 py-1 text-xs"
+                disabled={control.busy}
+                onClick={control.onReworkOpen}
+              >
+                打回返工
+              </button>
+            </>
+          )}
+          {abortable && (
             <button
               type="button"
-              className="ga-btn px-3 py-1 text-xs"
+              className="ga-btn px-3 py-1 text-xs text-[#9E3328]"
               disabled={control.busy}
-              onClick={control.onForceAccept}
+              onClick={control.onAbort}
             >
-              强制通过（人工核对后）
+              终止
             </button>
-            <button
-              type="button"
-              className="ga-btn px-3 py-1 text-xs"
-              disabled={control.busy}
-              onClick={control.onReworkOpen}
-            >
-              打回返工
-            </button>
+          )}
+          {control.busy && <span className="text-xs text-[#7B6D5A]">处理中…</span>}
+        </div>
+        {control.reworkOpen && (
+          <div className="mt-2 rounded-lg border border-line bg-bg-soft px-3 py-2">
+            <textarea
+              aria-label="打回原因"
+              value={control.reworkReason}
+              placeholder="说明打回原因与整改要求（必填）"
+              className="min-h-16 w-full resize-none rounded border border-line bg-bg px-2 py-1.5 text-xs leading-5 text-[#2C2418] placeholder:text-[#8A7A63] focus:border-accent focus:outline-none"
+              onChange={(event) => control.onReworkReasonChange(event.target.value)}
+            />
+            <div className="mt-1.5 flex justify-end gap-2">
+              <button type="button" className="ga-btn px-3 py-1 text-xs" onClick={control.onReworkCancel}>取消</button>
+              <button
+                type="button"
+                className="ga-btn ga-btn-primary px-3 py-1 text-xs"
+                disabled={!control.reworkReason.trim() || control.busy}
+                onClick={control.onReworkSubmit}
+              >
+                确认打回
+              </button>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function SubagentFullResultDialog({
-  sid,
-  fallback,
-  onClose,
-}: {
-  sid: string
-  fallback?: ConductorSubagent
-  onClose: () => void
-}) {
-  const { data, isLoading, error } = useQuery({
-    queryKey: queryKeys.conductor.subagent(sid),
-    queryFn: () => api.conductorSubagent(sid, 20_000),
-  })
-  const detail = reviewFacts(data ?? fallback ?? { id: sid, prompt: '', reply: '', status: '', created_at: 0, updated_at: 0, review_status: 'none', review_note: '', attempt: 1, generation: 0 })
-  const deliverables = detail.manifest?.deliverables ?? []
-  const missing = new Set(detail.deliverables_missing ?? [])
-  const stale = new Set(detail.deliverables_stale ?? [])
-  const checks = detail.quality_checks?.checks ?? []
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="subagent-full-title"
-        className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-line bg-bg-card shadow-2xl"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-line/70 px-5 py-4">
-          <h2 id="subagent-full-title" className="text-base font-semibold text-[#2C2418]">子代理完整结果</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none text-[#7B6D5A] hover:bg-bg-soft hover:text-[#2C2418]"
-            aria-label="关闭完整结果"
+        )}
+        {control.evidence && (
+          <div
+            role="alert"
+            data-testid={`subagent-evidence-${sub.id}`}
+            className="mt-2 rounded-lg border border-[#E8CFC7] bg-[#FFF7F5] px-3 py-2 text-xs leading-5 text-[#6B3A30]"
           >
-            ×
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-sm leading-6 text-[#2C2418]">
-          {isLoading && <p className="text-xs text-[#7B6D5A]">正在拉取完整回复…</p>}
-          {error && <p className="text-xs text-[#9E3328]">完整结果暂时拉不到，先显示列表里已有的摘要。</p>}
-          {detail.manifest?.goal && (
-            <section className="mb-4">
-              <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">任务目标</h3>
-              <p className="mt-1 whitespace-pre-wrap">{detail.manifest.goal}</p>
-            </section>
-          )}
-          {deliverables.length > 0 && (
-            <section className="mb-4">
-              <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">约定交付物</h3>
-              <ul className="mt-1 space-y-1 text-xs">
-                {deliverables.map((item, index) => {
-                  const path = item.path || `交付物 ${index + 1}`
-                  return (
-                    <li key={path} className="break-all">
-                      {missing.has(path) ? '✗ 缺失' : stale.has(path) ? '△ 未更新' : '✓'} {path}
-                      {item.desc ? ` · ${item.desc}` : ''}
-                    </li>
-                  )
-                })}
-              </ul>
-            </section>
-          )}
-          {checks.length > 0 && (
-            <section className="mb-4">
-              <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">机器检查</h3>
-              <ul className="mt-1 space-y-1 text-xs">
-                {checks.map((check, index) => (
-                  <li key={`${check.kind}-${index}`}>
-                    {check.passed === false ? '✗' : '✓'} {check.kind}
-                    {check.path ? ` · ${check.path}` : ''}
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-medium text-[#9E3328]">机器验收未通过 · 证据</span>
+              <button
+                type="button"
+                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-[#7B6D5A] hover:bg-bg-soft"
+                onClick={control.onEvidenceDismiss}
+              >
+                收起
+              </button>
+            </div>
+            <ul className="mt-1 space-y-0.5">
+              {(control.evidence.deliverables_missing ?? []).map((path) => (
+                <li key={`missing-${path}`}>✗ 交付物缺失：{path}</li>
+              ))}
+              {(control.evidence.deliverables_stale ?? []).map((path) => (
+                <li key={`stale-${path}`}>✗ 交付物未更新：{path}</li>
+              ))}
+              {(control.evidence.quality_checks?.checks ?? [])
+                .filter((check) => check.passed === false)
+                .map((check, checkIndex) => (
+                  <li key={`check-${checkIndex}`}>
+                    ✗ {check.kind}{check.path ? ` · ${check.path}` : ''}
                     {check.detail ? ` — ${check.detail}` : ''}
+                    {check.severity === 'advisory' ? '（提示项，不阻塞）' : ''}
                   </li>
                 ))}
-              </ul>
-            </section>
-          )}
-          <section>
-            <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">文字结果</h3>
-            {detail.reply?.trim() ? (
-              <div className="mt-1 whitespace-pre-wrap break-words text-xs leading-5">{detail.reply}</div>
-            ) : (
-              <p className="mt-1 text-xs text-[#7B6D5A]">没有文字结果。请对照上面的交付物路径直接打开文件核对。</p>
-            )}
-          </section>
-        </div>
+            </ul>
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="ga-btn px-3 py-1 text-xs"
+                disabled={control.busy}
+                onClick={control.onForceAccept}
+              >
+                强制通过（人工核对后）
+              </button>
+              <button
+                type="button"
+                className="ga-btn px-3 py-1 text-xs"
+                disabled={control.busy}
+                onClick={control.onReworkOpen}
+              >
+                打回返工
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
