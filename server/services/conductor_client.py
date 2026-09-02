@@ -429,8 +429,15 @@ class GaConductorClient:
     # -- SSE ----------------------------------------------------------------------
     def stream_events(self, on_event: Callable[[dict], None],
                       should_stop: Callable[[], bool],
-                      idle_reconnect_after: float = 60.0) -> None:
-        """Blocking SSE reader with reconnect-until-stopped semantics."""
+                      idle_reconnect_after: float = 60.0,
+                      on_reconnect: Optional[Callable[[], None]] = None) -> None:
+        """Blocking SSE reader with reconnect-until-stopped semantics.
+
+        ``on_reconnect`` runs after every successful (re)connection, before
+        any live frame is read — the hook where the durable-journal catch-up
+        replay happens, so events dropped between the live hint and the
+        reconnect are fed through ``on_event`` in order first.
+        """
         while not should_stop():
             try:
                 self.pm.ensure_running()
@@ -442,6 +449,12 @@ class GaConductorClient:
                 with resp:
                     if resp.status_code != 200:
                         raise GahubProcessError(f"/events -> {resp.status_code}")
+                    if on_reconnect is not None:
+                        try:
+                            on_reconnect()
+                        except Exception:
+                            # Reconciliation must never kill the relay.
+                            log.exception("on_reconnect hook failed")
                     for raw in resp.iter_lines(decode_unicode=True):
                         if should_stop():
                             return

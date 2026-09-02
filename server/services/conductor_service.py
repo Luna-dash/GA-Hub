@@ -550,6 +550,13 @@ class ConductorService:
         self._relay_thread: Optional[threading.Thread] = None
         self._relayed_chat_ids: set[str] = set()
         self._lifecycle_cache: dict = {}
+        # Journal replay cursor (P2-A reconcile): seq of the last journal
+        # event this relay processed.  ``seq=None`` means "never connected" —
+        # the first connect baselines to the engine's current last_seq
+        # instead of replaying the whole history (hello already re-syncs
+        # state; replaying full history through the transition handlers
+        # could only manufacture spurious transitions).
+        self._journal_cursor: dict = {"seq": None, "epoch": None}
 
     @classmethod
     def instance(cls) -> "ConductorService":
@@ -914,6 +921,9 @@ class ConductorService:
         self._relay_thread = threading.Thread(
             target=self.client.stream_events,
             args=(self._on_sse_event, self._relay_stop.is_set),
+            # P2-A reconcile: replay missed journal events after every
+            # (re)connect, before any live frame is read.
+            kwargs={"on_reconnect": self._replay_journal},
             name="conductor-sse-relay",
             daemon=True,
         )
@@ -1122,7 +1132,77 @@ class ConductorService:
 
     # ===== SSE relay dispatch =====
 
+    def _advance_journal_cursor(self, seq: int) -> None:
+        cursor = self._journal_cursor_state()
+        current = cursor.get("seq")
+        if current is None or seq > current:
+            cursor["seq"] = seq
+
+    def _journal_cursor_state(self) -> dict:
+        """Backfill for legacy ``object.__new`` test/service instances."""
+        cursor = getattr(self, "_journal_cursor", None)
+        if cursor is None:
+            cursor = self._journal_cursor = {"seq": None, "epoch": None}
+        return cursor
+
+    def _replay_journal(self) -> None:
+        """Catch-up replay after an SSE (re)connect (P2-A reconcile).
+
+        The live SSE stream is a hint; the engine journal is the truth.  On
+        every reconnect, everything after the last seen seq is fed through
+        the same event handler, closing the drop window between the live
+        hint and the durable stream.  Replay runs BEFORE any live frame is
+        read (the relay calls this hook right after connecting), so events
+        are applied in journal order and the cursor stays exact.
+        """
+        try:
+            cursor = self._journal_cursor_state()
+            if cursor.get("seq") is None:
+                resp = self.client.journal(after_seq=0, limit=1)
+                info = resp.get("journal") or {}
+                if info.get("disabled"):
+                    return
+                cursor["seq"] = int(info.get("last_seq") or 0)
+                cursor["epoch"] = info.get("epoch")
+                log.info("journal cursor baselined at seq %s (epoch %s)",
+                         cursor["seq"], cursor["epoch"])
+                return
+            resp = self.client.journal(after_seq=int(cursor["seq"]), limit=5000)
+            info = resp.get("journal") or {}
+            if info.get("disabled"):
+                return
+            epoch = info.get("epoch")
+            if epoch and cursor.get("epoch") and epoch != cursor["epoch"]:
+                log.warning(
+                    "journal epoch changed (%s -> %s): engine restarted "
+                    "with a fresh journal; replaying its events",
+                    cursor["epoch"], epoch)
+            if epoch:
+                cursor["epoch"] = epoch
+            fed = 0
+            for record in resp.get("events") or []:
+                seq = record.get("seq")
+                if not isinstance(seq, int) or seq <= int(cursor["seq"] or 0):
+                    continue
+                payload = record.get("payload")
+                if isinstance(payload, dict):
+                    self._on_sse_event(payload)
+                    fed += 1
+                self._advance_journal_cursor(seq)
+            if fed:
+                log.info("journal replay fed %d missed events after reconnect", fed)
+        except Exception:
+            # Reconciliation is best-effort: a failed replay never kills the
+            # live relay; the next reconnect retries from the same cursor.
+            log.exception("journal replay after reconnect failed")
+
     def _on_sse_event(self, event: dict) -> None:
+        seq = event.get("jseq")
+        if isinstance(seq, int):
+            self._advance_journal_cursor(seq)
+        if "jseq" in event:
+            # Internal cursor field: keep it out of downstream payloads.
+            event = {k: v for k, v in event.items() if k != "jseq"}
         kind = event.get("event")
         try:
             if kind == "hello":
