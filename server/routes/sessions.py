@@ -17,6 +17,7 @@ from frontends import workspace_cmd
 from ..origin_policy import is_allowed_ui_origin
 from ..schemas import BtwReq, BtwResp, RewindReq, RewindResp
 from ..services.archive_messages import HistoryUnavailableError, read_archive_messages
+from ..services.conversation_repository import STATUS_ERROR, STATUS_IDLE
 from ..services.event_bus import Event, bus
 from ..services.llm_preference_store import LlmPreferenceStore
 from ..services.llm_registry import LlmUnavailableError, LlmRegistryError
@@ -53,7 +54,7 @@ def _publish_runtime_state(state: RuntimeState) -> None:
             "error": state.error,
         },
     )
-    if state.status != "error" or not state.run_id or not state.stream_id:
+    if state.status != STATUS_ERROR or not state.run_id or not state.stream_id:
         return
     details = {
         "abort_timeout": "停止请求超时；底层任务尚未终止，如持续占用请重启服务。",
@@ -231,7 +232,7 @@ class HubSession(BaseModel):
     llm_key: str | None = None
     llm_index: int | None
     archive_path: str | None
-    status: str = "idle"
+    status: str = STATUS_IDLE
     project_name: str | None = None
     project_path: str | None = None
     created_at: str

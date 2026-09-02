@@ -68,19 +68,19 @@ def test_conductor_success_outcome_publishes_turn_event_without_completion_item(
     )
 
 
-def test_subagent_stream_publishes_one_snapshot_without_per_chunk_metadata():
+def test_running_subagent_event_is_swallowed_without_publish():
+    """SSE running 事件刻意为 no-op：快照只由 subagents 事件推送。"""
     service = object.__new__(ConductorService)
     service.pool = SimpleNamespace(snapshot=lambda: [])
     callbacks = HubConductorCallbacks(service)
 
     with patch("server.services.conductor_service.push_subagent_cards") as snapshot:
         with patch("server.services.conductor_service.bus.publish") as publish:
-            callbacks.on_subagent_output("sid", "partial", False)
             callbacks.on_subagent_event(
                 "sid", "running", {"output_len": 7}
             )
 
-    snapshot.assert_called_once()
+    snapshot.assert_not_called()
     publish.assert_not_called()
 
 
@@ -147,7 +147,6 @@ def test_completed_output_defers_to_single_completed_snapshot():
 
     with patch("server.services.conductor_service.push_subagent_cards") as snapshot:
         with patch("server.services.conductor_service.bus.publish"):
-            callbacks.on_subagent_output("sid", "done", True)
             callbacks.on_subagent_event("sid", "completed", {})
             callbacks.on_subagent_event("sid", "pending_review", {})
 

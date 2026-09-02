@@ -13,6 +13,14 @@ import uuid
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Protocol
 
+from server.services.conversation_repository import (
+    STATUS_ABORTING,
+    STATUS_ERROR,
+    STATUS_IDLE,
+    STATUS_RUNNING,
+    STATUS_STARTING,
+)
+
 
 log = logging.getLogger(__name__)
 
@@ -95,7 +103,7 @@ class SessionCoordinatorStoppedError(RuntimeError):
 @dataclass(frozen=True)
 class RuntimeState:
     session_id: str
-    status: str = "idle"
+    status: str = STATUS_IDLE
     run_id: str | None = None
     stream_id: str | None = None
     error: str | None = None
@@ -271,7 +279,7 @@ class SessionCoordinator:
         """Return runtime identity and its matching active content together."""
         with self._lock:
             state = replace(self._states.get(session_id, RuntimeState(session_id)))
-            if state.status == "idle" or not state.run_id or not state.stream_id:
+            if state.status == STATUS_IDLE or not state.run_id or not state.stream_id:
                 return state, None
             runtime = self._runtimes.get(session_id)
             if runtime is None:
@@ -314,7 +322,7 @@ class SessionCoordinator:
                 )
 
             run_id = uuid.uuid4().hex
-            starting = RuntimeState(session_id, "starting", run_id)
+            starting = RuntimeState(session_id, STATUS_STARTING, run_id)
             self._active_by_session[session_id] = starting
             self._states[session_id] = starting
             try:
@@ -334,7 +342,7 @@ class SessionCoordinator:
                     self._states[session_id] = RuntimeState(session_id)
                 raise
 
-            running = RuntimeState(session_id, "running", run_id, handle.stream_id)
+            running = RuntimeState(session_id, STATUS_RUNNING, run_id, handle.stream_id)
             self._active_by_session[session_id] = running
             self._states[session_id] = running
 
@@ -468,12 +476,12 @@ class SessionCoordinator:
             runtime = self._runtimes.get(active.session_id)
             if runtime is None or not current.run_id:
                 return None, True
-            if current.status in {"aborting", "error"}:
+            if current.status in {STATUS_ABORTING, STATUS_ERROR}:
                 # A previous shutdown abort worker may have failed. Returning
                 # the identity lets the retry path replace that failed worker;
                 # a still-running or successful worker remains single-flight.
                 return (current.run_id, runtime), True
-            aborting = replace(current, status="aborting")
+            aborting = replace(current, status=STATUS_ABORTING)
             self._abort_started[current.run_id] = time.monotonic()
             self._active_by_session[active.session_id] = aborting
             self._states[active.session_id] = aborting
@@ -637,11 +645,11 @@ class SessionCoordinator:
             return self._abort_locked(active)
 
     def _abort_locked(self, active: RuntimeState) -> RuntimeState:
-        if active.status in {"aborting", "error"}:
+        if active.status in {STATUS_ABORTING, STATUS_ERROR}:
             return replace(active)
         runtime = self._runtimes[active.session_id]
         runtime.abort()
-        aborting = replace(active, status="aborting")
+        aborting = replace(active, status=STATUS_ABORTING)
         assert active.run_id is not None
         self._abort_started[active.run_id] = time.monotonic()
         self._active_by_session[active.session_id] = aborting
@@ -670,11 +678,11 @@ class SessionCoordinator:
                     if (
                         active is not None
                         and active.run_id == run_id
-                        and active.status == "aborting"
+                        and active.status == STATUS_ABORTING
                         and abort_started is not None
                         and time.monotonic() - abort_started >= self._abort_timeout
                     ):
-                        failed = replace(active, status="error", error="abort_timeout")
+                        failed = replace(active, status=STATUS_ERROR, error="abort_timeout")
                         self._active_by_session[session_id] = failed
                         self._states[session_id] = failed
                         notification = replace(failed)

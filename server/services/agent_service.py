@@ -174,6 +174,26 @@ class StreamHandle:
 
 # ── chat replay snapshot (so a /ws/chat client that reconnects after a tab
 #    switch can rebuild the running conversation) ───────────────────────
+def _chat_done_payload(h: StreamHandle, snap: object, content: str) -> dict:
+    """chat:done 事件载荷的唯一构造点。
+
+    正常完成、service shutdown 兜底、fanout 崩溃兜底三条路径此前各手抄一份
+    字段相同的 dict——多次 debug 中已出现过字段漂移的苗头。新增字段只改这里。
+    """
+    return {
+        "stream_id": h.stream_id,
+        "source": snap.source,
+        "content": content,
+        "logical_id": h.logical_id,
+        "retry_attempt": snap.retry_attempt,
+        "retry_max": snap.retry_max,
+        "retry_of": snap.retry_of,
+        "retry_reason": snap.retry_reason,
+        "session_id": h.session_id,
+        "run_id": h.run_id,
+    }
+
+
 def _llm_membership_metadata(backends: list[object | None]) -> list[dict]:
     """Return read-only Mixin membership/runtime metadata for LLM clients."""
     all_mixin_members: set[str] = set()
@@ -671,18 +691,7 @@ class AgentService:
                         h.final_text = error_content
                         self._mirror_stream_item(out_q, {"done": error_content, "source": snap.source})
                         terminal_committed = True
-                        bus.publish("chat:done", {
-                            "stream_id": h.stream_id,
-                            "source": snap.source,
-                            "content": error_content,
-                            "logical_id": h.logical_id,
-                            "retry_attempt": snap.retry_attempt,
-                            "retry_max": snap.retry_max,
-                            "retry_of": snap.retry_of,
-                            "retry_reason": snap.retry_reason,
-                            "session_id": h.session_id,
-                            "run_id": h.run_id,
-                        })
+                        bus.publish("chat:done", _chat_done_payload(h, snap, error_content))
                         return
                     if time.monotonic() >= heartbeat_deadline:
                         # Liveness ping so subscribers know we're still here.
@@ -730,18 +739,7 @@ class AgentService:
                     # outer error path emits the sole error terminal instead.
                     self._mirror_stream_item(out_q, {"done": content, "source": snap.source})
                     terminal_committed = True
-                    bus.publish("chat:done", {
-                        "stream_id": h.stream_id,
-                        "source": snap.source,
-                        "content": content,
-                        "logical_id": h.logical_id,
-                        "retry_attempt": snap.retry_attempt,
-                        "retry_max": snap.retry_max,
-                        "retry_of": snap.retry_of,
-                        "retry_reason": snap.retry_reason,
-                        "session_id": h.session_id,
-                        "run_id": h.run_id,
-                    })
+                    bus.publish("chat:done", _chat_done_payload(h, snap, content))
                     bus.publish("agent:done", {"stream_id": h.stream_id, "len": len(content)})
                     try:
                         handled_recoverable_error = self._maybe_retry_recoverable_error(h, snap, content)
@@ -772,18 +770,7 @@ class AgentService:
             h.finished = True
             h.final_text = error_content
             self._mirror_stream_item(out_q, {"done": error_content, "source": snap.source})
-            bus.publish("chat:done", {
-                "stream_id": h.stream_id,
-                "source": snap.source,
-                "content": error_content,
-                "logical_id": h.logical_id,
-                "retry_attempt": snap.retry_attempt,
-                "retry_max": snap.retry_max,
-                "retry_of": snap.retry_of,
-                "retry_reason": snap.retry_reason,
-                "session_id": h.session_id,
-                "run_id": h.run_id,
-            })
+            bus.publish("chat:done", _chat_done_payload(h, snap, error_content))
         finally:
             lock = getattr(self, "_lock", None)
             streams = getattr(self, "_streams", None)

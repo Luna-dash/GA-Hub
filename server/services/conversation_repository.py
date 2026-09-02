@@ -39,8 +39,13 @@ log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 2
 
-# Conversation.status
+# 会话运行状态的共享词汇表（session_coordinator 的 RuntimeState 与本模块的
+# 持久化记录共用）。此前 coordinator 用裸字符串手抄这些值，新增状态时会
+# 静默漏改——全部常量必须定义在此单一来源。
+# 注意 RUNNING_STATUSES 是"持久化层视为占用"的子集，transient 的 starting
+# 不入库但属于运行时词汇。
 STATUS_IDLE = "idle"
+STATUS_STARTING = "starting"
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
 STATUS_ABORTING = "aborting"

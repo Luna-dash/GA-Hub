@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import threading
 import time
 import uuid
@@ -50,29 +49,12 @@ def _get_preferred_llm() -> Optional[int]:
     return None
 
 
-_TURN_SPLIT_RE = re.compile(r'\**LLM Running \(Turn \d+\) \.\.\.\**')
-_SUMMARY_RE = re.compile(r'<summary>(.*?)</summary>\s*', re.DOTALL)
-
-
 def now_ms() -> int:
     return int(time.time() * 1000)
 
 
 def short_id() -> str:
     return uuid.uuid4().hex[:8]
-
-
-def clean_log_text(s: str) -> str:
-    if not s:
-        return s
-    s = re.sub(r'`{5}\n.*?`{5}\n?', '', s, flags=re.DOTALL)
-    s = re.sub(r'🛠️ Tool: `([^`]+)`\s*📥 args:\n`{4}.*?`{4}\n?', r'🛠️ `\1`\n', s, flags=re.DOTALL)
-    s = re.sub(r'^🛠️ .*\n?', '', s, flags=re.MULTILINE)
-    s = re.sub(r'<thinking>.*?</thinking>\s*', '', s, flags=re.DOTALL)
-    s = re.sub(r'^\s*\[(?:Info|Status)\][^\n]*\n?', '', s, flags=re.MULTILINE)
-    s = re.sub(r'^\s*`{4,5}\s*$\n?', '', s, flags=re.MULTILINE)
-    s = re.sub(r'\n{3,}', '\n\n', s)
-    return s.strip()
 
 
 def add_chat(
@@ -441,11 +423,6 @@ class HubConductorCallbacks:
             daemon=True,
             name=f"conductor-auto-accept-{agent_id[:8]}",
         ).start()
-
-    def on_subagent_output(self, agent_id: str, output, done) -> None:
-        """Legacy stream hook; snapshots now arrive via SSE subagents events."""
-        if not done:
-            self.publish_subagent_snapshot()
 
     def on_conductor_log_frame(self, frame: object) -> None:
         """Bridge gahub_app log frames to the Hub event bus.
@@ -1031,20 +1008,6 @@ class ConductorService:
                 return item.get("msg", "")
         return None
 
-    def start(
-        self,
-        llm_index: Optional[int] = None,
-        subagent_llm_index: Optional[int] = None,
-        subagent_model_policy: Optional[SubagentModelPolicy] = None,
-    ) -> bool:
-        """Compatibility facade: configure models, then ensure lifecycle."""
-        self.configure_models(
-            llm_index=llm_index,
-            subagent_llm_index=subagent_llm_index,
-            subagent_model_policy=subagent_model_policy,
-        )
-        return self.ensure_started()
-
     def stop(self, timeout: float = 5.0) -> bool:
         try:
             result = self.client.stop(timeout=timeout)
@@ -1357,16 +1320,13 @@ class ConductorService:
         hub generates it when absent so a transport-level retry can never
         spawn a second worker for the same logical operation.
         """
-        self._assert_engine_ready()
-        tracker = self._ensure_workflow_tracker()
-        if request_id is not None and not tracker.has_request(request_id):
-            raise ValueError(f"unknown conductor request_id: {request_id}")
-        models = self.configure_models(
-            llm_index=conductor_llm_index,
-            subagent_llm_index=subagent_llm_index,
-            subagent_model_policy=subagent_model_policy,
+        tracker, models, selected = self._admit_action_models(
+            llm_index,
+            request_id,
+            conductor_llm_index,
+            subagent_llm_index,
+            subagent_model_policy,
         )
-        selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
         operation_id = operation_id or uuid.uuid4().hex
         result = self.client.start_subagent(
             prompt, request_id, selected,
@@ -1389,6 +1349,69 @@ class ConductorService:
         result.setdefault("model_policy", models["subagent_model_policy"])
         return result
 
+    def _admit_action_models(
+        self,
+        llm_index: Optional[int],
+        request_id: str | None,
+        conductor_llm_index: Optional[int],
+        subagent_llm_index: Optional[int],
+        subagent_model_policy: Optional[SubagentModelPolicy],
+    ) -> tuple["WorkflowTracker", dict, Optional[int]]:
+        """共享前置：断言就绪 → 校验 request → 配置模型 → 解析本次派单模型。
+
+        start/input/rework 三个动作动词此前各手抄这四段（多次 debug 已现
+        只改一份的漂移）；模型策略优先级链只在此一处实现。
+        """
+        self._assert_engine_ready()
+        tracker = self._ensure_workflow_tracker()
+        if request_id is not None and not tracker.has_request(request_id):
+            raise ValueError(f"unknown conductor request_id: {request_id}")
+        models = self.configure_models(
+            llm_index=conductor_llm_index,
+            subagent_llm_index=subagent_llm_index,
+            subagent_model_policy=subagent_model_policy,
+        )
+        selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
+        return tracker, models, selected
+
+    def _resume_subagent_action(
+        self,
+        sid: str,
+        action: str,
+        msg: str,
+        llm_index: Optional[int],
+        *,
+        request_id: str | None,
+        conductor_llm_index: Optional[int],
+        subagent_llm_index: Optional[int],
+        subagent_model_policy: Optional[SubagentModelPolicy],
+    ) -> dict:
+        """input/rework 共用主体。
+
+        两个动作此前是逐字复制的双胞胎（断言/校验/配置/解析/绑定/setdefault
+        六段全同）；动作差异只剩 verb 字符串。
+        """
+        tracker, models, selected = self._admit_action_models(
+            llm_index,
+            request_id,
+            conductor_llm_index,
+            subagent_llm_index,
+            subagent_model_policy,
+        )
+        result = self.client.subagent_action(
+            sid, action, msg, request_id=request_id, llm_index=selected
+        )
+        if "error" not in result:
+            owner = request_id or tracker.request_for_subagent(sid)
+            if owner:
+                generation = int(result.get("active_generation", 0) or 0)
+                tracker.bind_subagent(owner, sid, generation)
+                result.setdefault("request_id", owner)
+            # gahub_app auto-yields the supervisor turn on resume/rework.
+        result.setdefault("llm_index", selected)
+        result.setdefault("model_policy", models["subagent_model_policy"])
+        return result
+
     def input_subagent(
         self,
         sid: str,
@@ -1401,29 +1424,13 @@ class ConductorService:
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
     ) -> dict:
         """Resume a stopped worker through the same model-policy boundary."""
-        self._assert_engine_ready()
-        tracker = self._ensure_workflow_tracker()
-        if request_id is not None and not tracker.has_request(request_id):
-            raise ValueError(f"unknown conductor request_id: {request_id}")
-        models = self.configure_models(
-            llm_index=conductor_llm_index,
+        return self._resume_subagent_action(
+            sid, "input", msg, llm_index,
+            request_id=request_id,
+            conductor_llm_index=conductor_llm_index,
             subagent_llm_index=subagent_llm_index,
             subagent_model_policy=subagent_model_policy,
         )
-        selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
-        result = self.client.subagent_action(
-            sid, "input", msg, request_id=request_id, llm_index=selected
-        )
-        if "error" not in result:
-            owner = request_id or tracker.request_for_subagent(sid)
-            if owner:
-                generation = int(result.get("active_generation", 0) or 0)
-                tracker.bind_subagent(owner, sid, generation)
-                result.setdefault("request_id", owner)
-            # gahub_app auto-yields the supervisor turn on resume.
-        result.setdefault("llm_index", selected)
-        result.setdefault("model_policy", models["subagent_model_policy"])
-        return result
 
     def accept_subagent(
         self, sid: str, msg: str = "", *, request_id: str | None = None,
@@ -1467,29 +1474,13 @@ class ConductorService:
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
     ) -> dict:
         """Rework a pending worker through the model-policy boundary."""
-        self._assert_engine_ready()
-        tracker = self._ensure_workflow_tracker()
-        if request_id is not None and not tracker.has_request(request_id):
-            raise ValueError(f"unknown conductor request_id: {request_id}")
-        models = self.configure_models(
-            llm_index=conductor_llm_index,
+        return self._resume_subagent_action(
+            sid, "rework", msg, llm_index,
+            request_id=request_id,
+            conductor_llm_index=conductor_llm_index,
             subagent_llm_index=subagent_llm_index,
             subagent_model_policy=subagent_model_policy,
         )
-        selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
-        result = self.client.subagent_action(
-            sid, "rework", msg, request_id=request_id, llm_index=selected
-        )
-        if "error" not in result:
-            owner = request_id or tracker.request_for_subagent(sid)
-            if owner:
-                generation = int(result.get("active_generation", 0) or 0)
-                tracker.bind_subagent(owner, sid, generation)
-                result.setdefault("request_id", owner)
-            # gahub_app auto-yields the supervisor turn on rework.
-        result.setdefault("llm_index", selected)
-        result.setdefault("model_policy", models["subagent_model_policy"])
-        return result
 
     # ===== snapshots & chat product surface =====
 
