@@ -219,6 +219,33 @@ describe('MessageBubble render isolation', () => {
     expect(host.textContent).not.toContain('🛠️ Tool:')
   })
 
+  it('copies only the conclusion, not the whole process, from a multi-turn card', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    ;(navigator as unknown as { clipboard: { writeText: (t: string) => Promise<void> } }).clipboard = { writeText }
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>执行搜索</summary>',
+      '🛠️ Tool: `code_run`  📥 args:',
+      '````text',
+      '{"cmd":"grep -r foo"}',
+      '````',
+      '**LLM Running (Turn 2) ...**',
+      '<summary>得出结论</summary>',
+      '## 最终结论\n\n迁移已完成，共 7 个文件。',
+    ].join('\n')
+
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+    const copyButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === '复制')
+    await act(async () => { copyButton?.click(); await Promise.resolve() })
+
+    expect(writeText).toHaveBeenCalledTimes(1)
+    const copied = writeText.mock.calls[0][0] as string
+    expect(copied).toContain('## 最终结论')
+    expect(copied).not.toContain('🛠️ Tool:')
+    expect(copied).not.toContain('执行搜索')
+  })
+
   it('labels system-role bubbles with a system header instead of GA Agent', () => {
     act(() => root.render(
       <MessageBubble role="system" content="GA-Hub 已重新连接会话。" streaming={false} />,
@@ -243,7 +270,8 @@ describe('MessageBubble render isolation', () => {
 
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
 
-    expect(host.textContent).toContain('⏹ 本轮执行被手动停止，未产生结论，以下为上一轮的完整结论')
+    // 措辞中性：轮询任务/进程重启/手动停止都适用，不指控"手动停止"
+    expect(host.textContent).toContain('⏹ 本轮以工具调用收尾，未输出文字结论，以下为上一轮的完整结论')
     expect(markdownRender.mock.calls[0][0].children).toContain('已完成迁移。')
     // 悬空轮留在折叠里，不顶掉结论
     expect(host.textContent).toContain('查看执行过程')
@@ -262,7 +290,7 @@ describe('MessageBubble render isolation', () => {
 
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
 
-    expect(host.textContent).toContain('⏹ 本轮执行被手动停止，未产生结论')
+    expect(host.textContent).toContain('⏹ 本轮以工具调用收尾，未输出文字结论')
     // 该轮摘要作为"被打断时在做什么"的上下文兜底展示
     expect(markdownRender).toHaveBeenCalledTimes(1)
     expect(markdownRender.mock.calls[0][0].children).toBe('命令仍在执行')

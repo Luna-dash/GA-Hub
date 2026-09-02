@@ -121,6 +121,18 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
     historyTranscript
     && (content.length > LONG_HISTORY_THRESHOLD || historyTranscript.turns.length > 0),
   )
+  // 复制按钮只带结论段：卡片上展示的结论是什么就复制什么，
+  // 不把整个多轮执行过程（工具转储/中间 turn）倒进剪贴板。
+  const copySource = useMemo(() => {
+    if (role !== 'assistant') return content
+    if (useHistoryProjection && historyTranscript) {
+      return historyTranscript.finalBody
+        || historyTranscript.turns.filter((turn) => turn.summary).at(-1)?.summary
+        || content
+    }
+    const answerSeg = [...foldTurns(content)].reverse().find((seg) => seg.type === 'text')
+    return answerSeg?.content || content
+  }, [role, content, useHistoryProjection, historyTranscript])
 
   if (isUser) {
     const cleaned = cleanUserContent(content)
@@ -179,7 +191,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
             {streamId && onRewind && !streaming && (
               <RewindChip onClick={() => onRewind(streamId)} />
             )}
-            <CopyChip text={content} />
+            <CopyChip text={copySource} />
           </div>
           <div className="min-w-0 max-w-full" style={messageFontStyle}>
             {useHistoryProjection && historyTranscript ? (
@@ -248,7 +260,7 @@ function HistoryTranscriptReply({
       {visibleProcessTurns.length > 0 && <LazyProcessFold turns={visibleProcessTurns} />}
       {transcript.stopped && (
         <p className="mb-2 text-xs italic leading-5 text-[#8A6B3E]">
-          ⏹ 本轮执行被手动停止，未产生结论{transcript.finalBody ? '，以下为上一轮的完整结论' : ''}
+          ⏹ 本轮以工具调用收尾，未输出文字结论{transcript.finalBody ? '，以下为上一轮的完整结论' : ''}
         </p>
       )}
       {visibleFinal ? (
@@ -382,7 +394,7 @@ function CopyChip({ text }: { text: string }) {
   return (
     <button
       onClick={() => copy(text)}
-      title="复制完整回复"
+      title="复制结论"
       className="px-2.5 py-1 text-[11px] leading-none rounded-md
                  bg-bg-soft border border-line text-[#665741]
                  hover:text-[#2C2418] hover:bg-bg-card transition-colors"

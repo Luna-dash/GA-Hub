@@ -166,6 +166,48 @@ describe('conversation route selection', () => {
     })
   })
 
+  it('deduplicates repeated turn summaries from archived assistant snapshots', async () => {
+    apiMock.conversation.mockResolvedValueOnce({
+      id: 'snapshot-thread',
+      title: 'Snapshot thread',
+      messages: [
+        { role: 'user', content: '完成任务' },
+        {
+          role: 'assistant',
+          content: [
+            '**LLM Running (Turn 1) ...**',
+            '<summary>读取配置</summary>',
+            '中间过程',
+          ].join('\n'),
+        },
+        {
+          role: 'assistant',
+          content: [
+            '**LLM Running (Turn 1) ...**',
+            '<summary>读取配置（已完成）</summary>',
+            '## 最终结果',
+            '',
+            '任务已完成。',
+          ].join('\n'),
+        },
+      ],
+    })
+
+    await renderAt('/conversations/snapshot-thread')
+    await waitFor(() => expect(host.textContent).toContain('Snapshot thread'))
+
+    const processButton = [...host.querySelectorAll('button')]
+      .find((button) => button.textContent?.trim() === '展开过程')
+    expect(processButton).toBeDefined()
+    act(() => processButton?.click())
+
+    await waitFor(() => {
+      expect(host.textContent).toContain('读取配置（已完成）')
+      expect(host.textContent).not.toContain('读取配置中间过程')
+    })
+    expect(host.textContent?.match(/Turn 1/g)).toHaveLength(1)
+  })
+
   it('windows a large conversation instead of mounting every markdown row', async () => {
     const messages = Array.from({ length: 80 }, (_, index) => ([
       { role: 'user', content: `question ${index}` },

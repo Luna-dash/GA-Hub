@@ -600,8 +600,13 @@ function buildRounds(messages: Msg[]): Round[] {
       const detail = transcript.finalBody
       if (detail && detail !== '（暂无最终正文）') box.detail = detail
       if (turnSummaries.length) {
-        box.turnSummaries.push(...turnSummaries)
-        const lastSummary = turnSummaries[turnSummaries.length - 1].summary
+        // Archived conversations can contain more than one assistant snapshot of
+        // the same transcript. Keep one row per turn; later snapshots contain
+        // the most complete summary for that turn.
+        const summariesByTurn = new Map(box.turnSummaries.map((item) => [item.turn, item]))
+        for (const summary of turnSummaries) summariesByTurn.set(summary.turn, summary)
+        box.turnSummaries = [...summariesByTurn.values()].sort((a, b) => a.turn - b.turn)
+        const lastSummary = box.turnSummaries[box.turnSummaries.length - 1].summary
         box.conclusion = lastSummary
       } else {
         const fallback = previewText(
