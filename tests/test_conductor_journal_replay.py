@@ -37,6 +37,34 @@ def _capture_client(monkeypatch) -> list:
     return calls
 
 
+def test_post_chat_body_carries_operation_id(monkeypatch):
+    calls = _capture_client(monkeypatch)
+    client = GaConductorClient(None)
+    client.post_chat("hi", "user", "rid-1", operation_id="op-abc")
+    method, path, body, _params = calls[0]
+    assert (method, path) == ("POST", "/chat")
+    assert body["operation_id"] == "op-abc"
+
+
+def test_post_chat_omits_operation_id_when_absent(monkeypatch):
+    calls = _capture_client(monkeypatch)
+    client = GaConductorClient(None)
+    client.post_chat("hi", "user", "rid-1")
+    _method, _path, body, _params = calls[0]
+    assert "operation_id" not in body
+
+
+def test_start_subagent_body_carries_operation_id(monkeypatch):
+    calls = _capture_client(monkeypatch)
+    client = GaConductorClient(None)
+    client.start_subagent("do work", "rid-1", 2, goal="g",
+                          deliverables=[{"path": "D:\\x.md"}],
+                          operation_id="op-xyz")
+    method, path, body, _params = calls[0]
+    assert (method, path) == ("POST", "/subagent")
+    assert body["operation_id"] == "op-xyz"
+
+
 # ===== client: on_reconnect fires after connect, before live frames =====
 
 class _FakeSseResponse:
@@ -246,5 +274,17 @@ def test_replay_journal_handles_engine_restart_with_fresh_epoch():
     assert service._journal_cursor == {"seq": 4, "epoch": "new-epoch"}
 
 
-# NOTE: operation_id propagation (client body) and schema-bound tests belong
-# to the P0 idempotency commit, not this journal-replay change.
+# ===== schemas: operation_id accepted and bounded =====
+
+def test_conductor_chat_schema_accepts_operation_id():
+    from server.schemas import ConductorChatIn
+    body = ConductorChatIn(msg="hi", operation_id="op-1")
+    assert body.operation_id == "op-1"
+    with pytest.raises(Exception):
+        ConductorChatIn(msg="hi", operation_id="x" * 129)
+
+
+def test_conductor_start_subagent_schema_accepts_operation_id():
+    from server.schemas import ConductorStartSubagent
+    body = ConductorStartSubagent(prompt="p", operation_id="op-2")
+    assert body.operation_id == "op-2"

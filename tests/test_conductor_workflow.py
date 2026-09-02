@@ -458,8 +458,12 @@ def test_redispatch_re_relays_stranded_admitted_only():
 
     service._redispatch_stranded_workflows()
 
-    service.client.post_chat.assert_called_once_with(
-        "做鹈鹕任务", "user", "rid-strand")
+    # P0 idempotency: the redispatch mints a fresh operation id for the
+    # re-delivery (the original admission died with the cold engine).
+    service.client.post_chat.assert_called_once()
+    args, kwargs = service.client.post_chat.call_args
+    assert args == ("做鹈鹕任务", "user", "rid-strand")
+    assert kwargs.get("operation_id")
 
 
 def test_redispatch_ignores_terminal_and_untraceable_requests():
@@ -478,7 +482,10 @@ def test_redispatch_ignores_terminal_and_untraceable_requests():
 
     service._redispatch_stranded_workflows()
 
-    service.client.post_chat.assert_called_once_with("任务", "user", "rid-strand")
+    service.client.post_chat.assert_called_once()
+    args, kwargs = service.client.post_chat.call_args
+    assert args == ("任务", "user", "rid-strand")
+    assert kwargs.get("operation_id")
 
 
 def test_redispatch_failure_does_not_raise():
@@ -515,8 +522,10 @@ def test_redispatch_excludes_the_just_admitted_request():
 
     service._redispatch_stranded_workflows(exclude_request_id="rid-new")
 
-    service.client.post_chat.assert_called_once_with(
-        "旧消息", "user", "rid-old")
+    service.client.post_chat.assert_called_once()
+    args, kwargs = service.client.post_chat.call_args
+    assert args == ("旧消息", "user", "rid-old")
+    assert kwargs.get("operation_id")
 
 
 def test_redispatch_empty_history_falls_back_to_engine_chat():
@@ -533,5 +542,7 @@ def test_redispatch_empty_history_falls_back_to_engine_chat():
 
     service._redispatch_stranded_workflows()
 
-    service.client.post_chat.assert_called_once_with(
-        "引擎侧原文", "user", "rid-strand")
+    service.client.post_chat.assert_called_once()
+    args, kwargs = service.client.post_chat.call_args
+    assert args == ("引擎侧原文", "user", "rid-strand")
+    assert kwargs.get("operation_id")

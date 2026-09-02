@@ -359,10 +359,16 @@ class GaConductorClient:
 
     # -- chat -------------------------------------------------------------------
     def post_chat(self, msg: str, role: str, request_id: Optional[str] = None,
-                  final: bool = False) -> dict:
-        return self._request("POST", "/chat", json_body={
+                  final: bool = False,
+                  operation_id: Optional[str] = None) -> dict:
+        body: dict = {
             "msg": msg, "role": role, "request_id": request_id, "final": final,
-        })
+        }
+        if operation_id:
+            # P0 idempotency: one id per logical admission; the engine
+            # replays the first terminal response on retry.
+            body["operation_id"] = operation_id
+        return self._request("POST", "/chat", json_body=body)
 
     def get_chat(self, last: int = 20) -> list[dict]:
         return self._request("GET", "/chat", params={"last": last}).get("items", [])
@@ -374,7 +380,8 @@ class GaConductorClient:
                        boundaries: Optional[list] = None,
                        deliverables: Optional[list] = None,
                        done_when: Optional[str] = None,
-                       checks: Optional[list] = None) -> dict:
+                       checks: Optional[list] = None,
+                       operation_id: Optional[str] = None) -> dict:
         """Dispatch one worker; the engine requires the Contract B manifest.
 
         ``goal`` plus at least one absolute ``deliverables`` entry are
@@ -385,6 +392,10 @@ class GaConductorClient:
         body: dict = {
             "prompt": prompt, "request_id": request_id, "llm_index": llm_index,
         }
+        if operation_id:
+            # P0 idempotency: a retried dispatch with the same id replays
+            # the first answer instead of spawning a second worker.
+            body["operation_id"] = operation_id
         if goal is not None:
             body["goal"] = goal
         if boundaries:

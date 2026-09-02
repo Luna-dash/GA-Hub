@@ -2357,6 +2357,8 @@ export interface components {
              * @default false
              */
             final: boolean;
+            /** Operation Id */
+            operation_id?: string | null;
             /** Llm Index */
             llm_index?: number | null;
             /** Subagent Llm Index */
@@ -2510,6 +2512,8 @@ export interface components {
             prompt: string;
             /** Request Id */
             request_id?: string | null;
+            /** Operation Id */
+            operation_id?: string | null;
             /** Llm Index */
             llm_index?: number | null;
             /** Conductor Llm Index */

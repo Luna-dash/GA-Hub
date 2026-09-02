@@ -450,6 +450,9 @@ class ConductorChatIn(BaseModel):
     # calls. ``final`` is only valid for the accepted delivery report.
     request_id: str | None = None
     final: bool = False
+    # P0 idempotency: one id per logical admission; the engine replays the
+    # first terminal response for a retried id. The hub mints one when absent.
+    operation_id: str | None = Field(default=None, max_length=128)
     # Page-scoped override. None means fallback to persisted/global preference.
     llm_index: int | None = Field(default=None, ge=0)
     subagent_llm_index: int | None = Field(default=None, ge=0)
@@ -486,6 +489,9 @@ class ConductorManifestCheck(BaseModel):
 class ConductorStartSubagent(BaseModel):
     prompt: str
     request_id: str | None = None
+    # P0 idempotency: a retried dispatch with the same id replays the first
+    # answer instead of spawning a second worker. Hub mints one when absent.
+    operation_id: str | None = Field(default=None, max_length=128)
     # Explicit per-dispatch request from the Conductor supervisor.
     llm_index: int | None = Field(default=None, ge=0)
     # Optional page configuration; omitted fields preserve service state.

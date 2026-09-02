@@ -155,6 +155,7 @@ async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
         llm_index=body.llm_index,
         subagent_llm_index=body.subagent_llm_index,
         subagent_model_policy=body.subagent_model_policy,
+        operation_id=body.operation_id,
     )
 
 
@@ -225,6 +226,9 @@ async def start_subagent(body: ConductorStartSubagent) -> ConductorSubagentInstr
         deliverables=[d.model_dump() for d in body.deliverables],
         done_when=body.done_when,
         checks=[c.model_dump() for c in body.checks],
+        # P0 idempotency: forward the caller's id; the service mints one
+        # when absent so a retried dispatch cannot spawn a second worker.
+        operation_id=body.operation_id,
     )
     result["instruction"] = INSTR_DISPATCHED
     return result

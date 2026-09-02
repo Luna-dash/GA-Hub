@@ -5165,6 +5165,18 @@
             "title": "Final",
             "default": false
           },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id"
+          },
           "llm_index": {
             "anyOf": [
               {
@@ -5597,6 +5609,18 @@
               }
             ],
             "title": "Request Id"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id"
           },
           "llm_index": {
             "anyOf": [

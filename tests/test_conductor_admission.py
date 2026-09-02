@@ -16,7 +16,7 @@ def test_user_chat_message_is_admitted_with_a_request_id():
     service.notify = Mock(return_value=True)
 
     with patch("server.services.conductor_service.bus.publish"):
-        item = service.add_chat_message("hello", role="user")
+        item = service.add_chat_message("hello", role="user", operation_id="op-fixed")
 
     request_id = item["request_id"]
     assert request_id
@@ -28,9 +28,27 @@ def test_user_chat_message_is_admitted_with_a_request_id():
     )
     service.ensure_started.assert_called_once_with(
         exclude_request_id=request_id)
+    # P0 idempotency: the caller's operation id rides through admission
+    # verbatim so a retried POST /chat replays instead of double-admitting.
     service.notify.assert_called_once_with(
-        {"type": "user_message", "msg": "hello", "request_id": request_id}
+        {"type": "user_message", "msg": "hello", "request_id": request_id,
+         "operation_id": "op-fixed"}
     )
+
+
+def test_add_chat_message_mints_operation_id_when_absent():
+    service = object.__new__(ConductorService)
+    service.chat_messages = []
+    service._started = True
+    service.configure_models = Mock()
+    service.ensure_started = Mock()
+    service.notify = Mock(return_value=True)
+
+    with patch("server.services.conductor_service.bus.publish"):
+        service.add_chat_message("hello", role="user")
+
+    event = service.notify.call_args.args[0]
+    assert event["operation_id"]           # fresh id per logical admission
 
 
 def test_conductor_plan_and_report_do_not_recursively_admit_user_tasks():
