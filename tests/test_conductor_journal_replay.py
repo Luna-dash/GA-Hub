@@ -288,3 +288,50 @@ def test_conductor_start_subagent_schema_accepts_operation_id():
     from server.schemas import ConductorStartSubagent
     body = ConductorStartSubagent(prompt="p", operation_id="op-2")
     assert body.operation_id == "op-2"
+
+
+def test_replay_journal_paginates_when_backlog_exceeds_one_page():
+    """A long disconnect can outgrow one catch-up page: the replay loops
+    until a short page instead of stalling the remainder until some future
+    reconnect (2026-09 audit P2)."""
+    service = _bare_service()
+    service._journal_cursor = {"seq": 0, "epoch": "e1"}
+    service.client = _FakeJournalClient([
+        {"journal": {"epoch": "e1"},
+         "events": [{"seq": 1, "payload": {"event": "a"}},
+                    {"seq": 2, "payload": {"event": "b"}}]},
+        {"journal": {"epoch": "e1"},
+         "events": [{"seq": 3, "payload": {"event": "c"}},
+                    {"seq": 4, "payload": {"event": "d"}}]},
+        {"journal": {"epoch": "e1"},
+         "events": [{"seq": 5, "payload": {"event": "e"}}]},
+    ])
+    fed: list = []
+    service._on_sse_event = fed.append
+    service._JOURNAL_REPLAY_BATCH = 2  # instance cap shadows the class default
+
+    service._replay_journal()
+
+    assert fed == [{"event": "a"}, {"event": "b"}, {"event": "c"},
+                   {"event": "d"}, {"event": "e"}]
+    assert service.client.reads == [(0, 2), (2, 2), (4, 2)]
+    assert service._journal_cursor["seq"] == 5
+
+
+def test_replay_journal_pagination_breaks_on_a_page_without_progress():
+    """Defensive: a full page of stale records must not spin the loop."""
+    service = _bare_service()
+    service._journal_cursor = {"seq": 3, "epoch": "e1"}
+    service.client = _FakeJournalClient([
+        {"journal": {"epoch": "e1"},
+         "events": [{"seq": 1, "payload": {"event": "stale"}},
+                    {"seq": 2, "payload": {"event": "stale"}}]},
+    ])
+    fed: list = []
+    service._on_sse_event = fed.append
+    service._JOURNAL_REPLAY_BATCH = 2
+
+    service._replay_journal()
+
+    assert fed == []
+    assert service._journal_cursor["seq"] == 3

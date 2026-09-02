@@ -513,6 +513,8 @@ class ConductorService:
     """Singleton GA-Hub product layer around the gahub_app engine."""
     _instance: Optional["ConductorService"] = None
     _lock = threading.Lock()
+    # Journal catch-up page size; the engine clamps /journal at 5000.
+    _JOURNAL_REPLAY_BATCH = 5000
 
     def __init__(self):
         # Application shutdown is a terminal lifecycle separate from the
@@ -1159,6 +1161,11 @@ class ConductorService:
         hint and the durable stream.  Replay runs BEFORE any live frame is
         read (the relay calls this hook right after connecting), so events
         are applied in journal order and the cursor stays exact.
+
+        Long disconnects can outgrow one page, so the catch-up fetches in a
+        pagination loop until the engine returns a short page.  The cursor
+        still advances per event (crash-safe mid-replay progress) and the
+        loop breaks defensively if a full page yields no cursor progress.
         """
         try:
             cursor = self._journal_cursor_state()
@@ -1172,28 +1179,37 @@ class ConductorService:
                 log.info("journal cursor baselined at seq %s (epoch %s)",
                          cursor["seq"], cursor["epoch"])
                 return
-            resp = self.client.journal(after_seq=int(cursor["seq"]), limit=5000)
-            info = resp.get("journal") or {}
-            if info.get("disabled"):
-                return
-            epoch = info.get("epoch")
-            if epoch and cursor.get("epoch") and epoch != cursor["epoch"]:
-                log.warning(
-                    "journal epoch changed (%s -> %s): engine restarted "
-                    "with a fresh journal; replaying its events",
-                    cursor["epoch"], epoch)
-            if epoch:
-                cursor["epoch"] = epoch
             fed = 0
-            for record in resp.get("events") or []:
-                seq = record.get("seq")
-                if not isinstance(seq, int) or seq <= int(cursor["seq"] or 0):
-                    continue
-                payload = record.get("payload")
-                if isinstance(payload, dict):
-                    self._on_sse_event(payload)
-                    fed += 1
-                self._advance_journal_cursor(seq)
+            while True:
+                page_floor = int(cursor["seq"] or 0)
+                resp = self.client.journal(
+                    after_seq=page_floor, limit=self._JOURNAL_REPLAY_BATCH)
+                info = resp.get("journal") or {}
+                if info.get("disabled"):
+                    return
+                epoch = info.get("epoch")
+                if epoch and cursor.get("epoch") and epoch != cursor["epoch"]:
+                    log.warning(
+                        "journal epoch changed (%s -> %s): engine restarted "
+                        "with a fresh journal; replaying its events",
+                        cursor["epoch"], epoch)
+                if epoch:
+                    cursor["epoch"] = epoch
+                events = resp.get("events") or []
+                highest = page_floor
+                for record in events:
+                    seq = record.get("seq")
+                    if not isinstance(seq, int) or seq <= page_floor:
+                        continue
+                    payload = record.get("payload")
+                    if isinstance(payload, dict):
+                        self._on_sse_event(payload)
+                        fed += 1
+                    self._advance_journal_cursor(seq)
+                    highest = max(highest, seq)
+                if (len(events) < self._JOURNAL_REPLAY_BATCH
+                        or highest <= page_floor):
+                    break
             if fed:
                 log.info("journal replay fed %d missed events after reconnect", fed)
         except Exception:
