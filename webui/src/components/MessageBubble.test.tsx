@@ -299,6 +299,63 @@ describe('MessageBubble render isolation', () => {
     expect(host.textContent).not.toContain('该条历史回复未包含可提取的最终回答')
   })
 
+  it('shows the manual-stop fact notice for a stopped bubble without inventing text', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>执行清理命令</summary>',
+      '🛠️ Tool: `code_run`  📥 args:',
+      '````text',
+      '{"command":"rm -rf temp"}',
+      '````',
+    ].join('\n')
+
+    // 事实标志与投影启发式相互独立：stopped=true 优先用"已手动停止"措辞
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} stopped />))
+    expect(host.textContent).toContain('⏹ 已手动停止')
+    expect(host.textContent).not.toContain('本轮以工具调用收尾')
+    // 悬空尾兜底结论（该轮摘要）仍展示
+    expect(markdownRender.mock.calls[0][0].children).toBe('执行清理命令')
+
+    // 无 stopped 标志的同样内容 → 中性启发式措辞（轮询/进程重启场景）
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+    expect(host.textContent).toContain('⏹ 本轮以工具调用收尾，未输出文字结论')
+    expect(host.textContent).not.toContain('已手动停止')
+  })
+
+  it('renders a manual stop with a complete conclusion without the fallback suffix', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>给出结论</summary>',
+      '## 结论\n\n已完成。',
+      '**LLM Running (Turn 2) ...**',
+      '<summary>补充说明</summary>',
+      '结论保持有效，无需进一步操作。',
+    ].join('\n')
+
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} stopped />))
+    // 尾轮有完整正文：没有回退发生，不出现"上一轮"后缀
+    expect(host.textContent).toContain('⏹ 已手动停止')
+    expect(host.textContent).not.toContain('以下为上一轮的完整结论')
+    expect(markdownRender.mock.calls.at(-1)?.[0].children).toContain('结论保持有效')
+  })
+
+  it('shows the live-path stop notice for a short stopped reply without turn markers', () => {
+    // 短内容 + 无 turn 标记 → 不走投影分支，直播路径也要有停止提示
+    act(() => root.render(<MessageBubble role="assistant" content="先想一下" streaming={false} stopped />))
+    expect(host.textContent).toContain('⏹ 已手动停止')
+    expect(markdownRender).toHaveBeenCalledTimes(1)
+    expect(markdownRender.mock.calls[0][0].children).toBe('先想一下')
+  })
+
+  it('renders source tags as a label line instead of content prefix', () => {
+    act(() => root.render(
+      <MessageBubble role="assistant" content="正文保持纯净。" streaming={false} tagLabel="🔁 [自动继续]" />,
+    ))
+    expect(host.textContent).toContain('🔁 [自动继续]')
+    // content 本体不再携带标签前缀
+    expect(markdownRender.mock.calls[0][0].children).toBe('正文保持纯净。')
+  })
+
   it('keeps the process entry for a just-completed live reply and lazily renders its raw turn', () => {
     const content = [
       '**LLM Running (Turn 1) ...**',

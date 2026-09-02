@@ -38,6 +38,9 @@ export interface ChatMsg {
   streamId?: string                // matched stream (omitted for system notes)
   source?: string                  // 'user' | 'webui' | 'autonomous' | 'wechat' | 'reflect' | …
   streaming?: boolean              // assistant bubble currently receiving
+  /** 用户按了停止（事件驱动的事实）。渲染层据此显示终止提示——
+   *  不再把标记拼进 content：内容保持服务端原文，去重/复制/投影不被污染。 */
+  stopped?: boolean
   attachments?: PasteAttachment[]  // local-only previews for the user bubble
   pendingWebui?: boolean           // set on local pre-add until `started` arrives
   pendingWebuiId?: string          // identifies the exact optimistic bubble for rollback
@@ -77,7 +80,12 @@ interface ChatState {
   retryHistory: () => void
   loadOlderHistory: () => Promise<void>
   dropSessionView: (sessionId: string) => void
-  stop: () => void
+  /**
+   * Tear down the live connection and local projection state (session
+   * unbind / app-level logout). This does NOT abort a running task —
+   * task abort is the session HTTP API (api.abortSession), see LiveChat.
+   */
+  teardown: () => void
 
   /** Stage a local user bubble before LiveChat submits through session HTTP. */
   stageWebui: (text: string, atts: PasteAttachment[]) => string
@@ -94,8 +102,6 @@ interface ChatState {
   pushSystem: (content: string, stableKey?: NoticeKey) => void
   /** Replace the visible transcript after a native conversation restore. */
   restoreVisibleConversation: (messages: readonly ConversationMessage[], notice: string) => void
-  /** Clear stale local streaming locks when the backend is already idle. */
-  markIdle: () => void
 }
 
 // LiveChat shows the user's own webui session + admin-side flows
@@ -264,11 +270,14 @@ function timestampsOverlap(archived: ChatMsg, snapshot: ChatMsg): boolean {
  * projections have different ids, so identity-only merging would append the
  * answer a second time when a session is revisited.
  *
- * Only collapse an adjacent completed user/assistant snapshot pair against an
- * adjacent archive pair with the same text and compatible timestamps.  Active
- * streams are deliberately excluded, as are genuinely newer identical turns.
+ * 统一身份锚点（step-3 重构）：快照流与存档消息没有共享 id（GA 存档不记录
+ * stream id），但「用户提问」在两侧都是服务端原文、从不被客户端改写——以它
+ * 为锚，配时间反证（都存在且相隔超过容忍窗 → 不是同一轮）。回答侧不再要求
+ * 文本全等：直播/快照与存档投影的格式化可能漂移，而客户端 UI 状态（停止
+ * 标志等）也不该出现在文本里；时间证据不齐（任一侧无头时间）时才退回回答
+ * 文本全等作为补充证据。导出仅供测试。
  */
-function removeArchivedSnapshotOverlap(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
+export function removeArchivedSnapshotOverlap(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
   const archived = base.filter((msg) => msg.source === 'history')
   const skipped = new Set<number>()
   for (let index = 0; index + 1 < live.length; index += 1) {
@@ -281,15 +290,7 @@ function removeArchivedSnapshotOverlap(base: ChatMsg[], live: ChatMsg[]): ChatMs
     ) continue
 
     for (let historyIndex = archived.length - 2; historyIndex >= 0; historyIndex -= 1) {
-      const archivedQuery = archived[historyIndex]
-      const archivedAnswer = archived[historyIndex + 1]
-      if (
-        archivedQuery.role === 'user' && archivedAnswer.role === 'assistant'
-        && archivedQuery.content === query.content
-        && archivedAnswer.content === answer.content
-        && timestampsOverlap(archivedQuery, query)
-        && timestampsOverlap(archivedAnswer, answer)
-      ) {
+      if (pairsDescribeSameTurn(archived[historyIndex], archived[historyIndex + 1], query, answer)) {
         skipped.add(index)
         skipped.add(index + 1)
         break
@@ -299,45 +300,82 @@ function removeArchivedSnapshotOverlap(base: ChatMsg[], live: ChatMsg[]): ChatMs
   return live.filter((_, index) => !skipped.has(index))
 }
 
+function pairsDescribeSameTurn(
+  archivedQuery: ChatMsg,
+  archivedAnswer: ChatMsg,
+  query: ChatMsg,
+  answer: ChatMsg,
+): boolean {
+  if (archivedQuery.role !== 'user' || archivedAnswer.role !== 'assistant') return false
+  if (archivedQuery.content !== query.content) return false
+  if (!timestampsOverlap(archivedQuery, query) || !timestampsOverlap(archivedAnswer, answer)) return false
+  const temporalEvidence = archivedQuery.timestamp != null && query.timestamp != null
+    && archivedAnswer.timestamp != null && answer.timestamp != null
+  if (!temporalEvidence && archivedAnswer.content !== answer.content) return false
+  return true
+}
+
+/** Snapshot user/assistant bubbles of one stream share the streamId; the
+ *  merge index must key by (streamId, role) or the pushed user bubble gets
+ *  overwritten by its own answer (回归：快照里新完成的提问在存档尚未收录的
+ *  窗口期内从界面上消失). */
+function livePositionKey(msg: ChatMsg): string | null {
+  if (!msg.streamId) return null
+  return `${msg.streamId}\u0000${msg.role}`
+}
+
 function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
   const out = [...base]
-  const positions = new Map(out.map((m, i) => [m.streamId, i]))
+  const positions = new Map<string, number>()
+  out.forEach((m, index) => {
+    const key = livePositionKey(m)
+    if (key) positions.set(key, index)
+  })
   for (const msg of removeArchivedSnapshotOverlap(base, live)) {
-    if (msg.streamId && positions.has(msg.streamId)) {
-      const index = positions.get(msg.streamId)!
+    const key = livePositionKey(msg)
+    if (key && positions.has(key)) {
+      const index = positions.get(key)!
       // Never let an old partial replace a completed archive message.
       if (msg.streaming || out[index].streamId?.startsWith('history:') === false) out[index] = msg
       continue
     }
     out.push(msg)
-    if (msg.streamId) positions.set(msg.streamId, out.length - 1)
+    if (key) positions.set(key, out.length - 1)
   }
   return out
 }
 
-let historyGeneration = 0
-let historyAbort: AbortController | null = null
-let olderHistoryAbort: AbortController | null = null
-// 手动停止的痕迹：aborted 时仍在流的 streamId → 时间戳，用于压制 abort
-// 引发的 stream_error 余波误报（真错误发生在别的 stream 上不受影响）
-const abortedStreams = new Map<string, number>()
-const ABORT_ERROR_SUPPRESS_MS = 5000
-const STOP_MARK = '_⏹ 已手动停止_'
-let liveCleanup: (() => void) | null = null
-let webuiStageSequence = 0
-const sessionCursors = new Map<string, ChatEventCursor>()
+// ── store 外的运行时单例 ────────────────────────────────────────────────
+// 这些值与 React 渲染无关（abort 句柄/代数/游标/节流清理），不属于视图
+// 状态，因此不放进 zustand；但生命周期严格跟随会话：teardown() 与
+// dropSessionView() 负责复位。新增跨会话可变量必须登记在此并明确复位点。
+const runtime = {
+  /** 递增使 start() 里旧的异步回调（历史加载等）失效 */
+  historyGeneration: 0,
+  historyAbort: null as AbortController | null,
+  olderHistoryAbort: null as AbortController | null,
+  /** 当前连接的节流清理器（flush 尾巴 + 定时器），start 切换时先结算 */
+  liveCleanup: null as (() => void) | null,
+  webuiStageSequence: 0,
+  /** 手动停止的痕迹：aborted 时仍在流的 streamId → abort 时刻。压制 abort
+   *  引发的 stream_error 余波误报，持续到该流的 done 到达为止（真错误发生
+   *  在别的 stream 上不受影响）；teardown/dropSessionView 时清空。 */
+  abortedStreams: new Map<string, number>(),
+  /** 每会话 WS 游标：跨 teardown 保留，重连只补增量事件 */
+  sessionCursors: new Map<string, ChatEventCursor>(),
+}
 
 function commitCursor(sessionId: string, event: ChatWSOut): void {
   if (typeof event.event_id !== 'number' || !event.epoch) return
-  const current = sessionCursors.get(sessionId)
+  const current = runtime.sessionCursors.get(sessionId)
   if (!current || current.epoch !== event.epoch || event.event_id > current.event_id) {
-    sessionCursors.set(sessionId, { event_id: event.event_id, epoch: event.epoch })
+    runtime.sessionCursors.set(sessionId, { event_id: event.event_id, epoch: event.epoch })
   }
 }
 
 function sessionSocketPath(sessionId: string): string {
   const base = `/ws/sessions/${encodeURIComponent(sessionId)}`
-  const cursor = sessionCursors.get(sessionId)
+  const cursor = runtime.sessionCursors.get(sessionId)
   if (!cursor) return base
   const query = new URLSearchParams({
     after_event_id: String(cursor.event_id),
@@ -409,12 +447,14 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
       return [...next, { role: 'assistant', content: evt.content, streamId: sid, source: evt.source, streaming: true, timestamp: now, startedAt: now, finishedAt: null }]
     }
     const updated = next.slice()
-    updated[idx] = { ...updated[idx], content: evt.content, streaming: true }
+    updated[idx] = { ...updated[idx], content: evt.content, streaming: updated[idx].stopped ? false : true }
     return updated
   }
   if (evt.type === 'done') {
     const sid = evt.stream_id
     if (isHiddenSource(evt.source)) return prev
+    // 该流已终态：解除 abort 余波压制（之后这条流再来的 error 是真故障）
+    runtime.abortedStreams.delete(sid)
     const next = ensureRetryStartNotice(prev, evt)
     // /btw side-question answers come with source='system' — render as system role
     const role = evt.source === 'system' ? 'system' : 'assistant'
@@ -423,10 +463,10 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
       return [...next, { role, content: evt.content, streamId: sid, source: evt.source, streaming: false, timestamp: now, startedAt: now, finishedAt: now }]
     }
     const updated = next.slice()
-    // 手动停止后 GA 仍可能补发一条 done（半截内容）——保留气泡里的终止标记
-    const hadStopMark = updated[idx].content.trimEnd().endsWith(STOP_MARK)
-    const baseContent = hadStopMark ? updated[idx].content.trimEnd().slice(0, -STOP_MARK.length).trimEnd() : updated[idx].content
-    updated[idx] = { ...updated[idx], content: `${baseContent ? `${baseContent}\n\n` : ''}${evt.content}${hadStopMark ? `\n\n${STOP_MARK}` : ''}`, streaming: false, timestamp: now, finishedAt: now }
+    // done 的 content 是服务端全量最终文本：无条件整体替换，stopped 事实
+    // 标志经展开保留。此前把终止标记拼进 content 再在 done 里拼接保留，
+    // 曾把已流出内容重复一遍（回归：cf签到 气泡里出现两个 Turn 1）。
+    updated[idx] = { ...updated[idx], content: evt.content, streaming: false, timestamp: now, finishedAt: now }
     return updated
   }
   if (evt.type === 'retry') {
@@ -461,9 +501,9 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
     )
   }
   if (evt.type === 'error') {
-    // abort 后 socket 关断的余波（stream_error 等）不是新故障：只结流，不报错
-    const abortedAt = evt.stream_id ? abortedStreams.get(evt.stream_id) : undefined
-    if (abortedAt !== undefined && Date.now() - abortedAt < ABORT_ERROR_SUPPRESS_MS) {
+    // abort 后 socket 关断的余波（stream_error 等）不是新故障：只结流，不报错。
+    // 压制按流持续到该流 done 为止——卡住的工具被停时，余波经常超过数秒才到。
+    if (evt.stream_id && runtime.abortedStreams.has(evt.stream_id)) {
       return prev.map((m) => (m.streaming ? { ...m, streaming: false, finishedAt: now } : m))
     }
     const noticeId = `${evt.stream_id}:error:${evt.code}`
@@ -484,19 +524,12 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   }
   if (evt.type === 'aborted') {
     // Mark every still-streaming bubble as finished — server confirmed abort.
-    // 手动停止不是故障：气泡内补终止标记，并记录被停 stream 以压掉余波 error。
+    // 手动停止是事实状态：置 stopped 标志，不动 content（渲染层负责提示），
+    // 并记录被停 stream 以压掉余波 error（保留到该流的 done 到达为止）。
     for (const m of prev) {
-      if (m.streaming && m.streamId) abortedStreams.set(m.streamId, Date.now())
+      if (m.streaming && m.streamId) runtime.abortedStreams.set(m.streamId, Date.now())
     }
-    for (const [sid, at] of abortedStreams) {
-      if (Date.now() - at > 60_000) abortedStreams.delete(sid)
-    }
-    return prev.map((m) => {
-      if (!m.streaming) return m
-      const trimmed = m.content.trimEnd()
-      if (trimmed.endsWith(STOP_MARK)) return { ...m, streaming: false, finishedAt: now }
-      return { ...m, streaming: false, finishedAt: now, content: trimmed ? `${trimmed}\n\n${STOP_MARK}` : STOP_MARK }
-    })
+    return prev.map((m) => (m.streaming ? { ...m, streaming: false, finishedAt: now, stopped: true } : m))
   }
   if (evt.type === 'rewound') {
     // Server-driven rewind: drop bubbles whose streamId belongs to any removed
@@ -588,12 +621,12 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
 
     // Commit the previous connection's throttled tail while its session is
     // still current, then invalidate every delayed callback it owns.
-    liveCleanup?.()
-    liveCleanup = null
+    runtime.liveCleanup?.()
+    runtime.liveCleanup = null
     current = get()
     current.sock?.close()
-    olderHistoryAbort?.abort()
-    olderHistoryAbort = null
+    runtime.olderHistoryAbort?.abort()
+    runtime.olderHistoryAbort = null
 
     const switching = current.sessionId !== sessionId
     const sessionViews = { ...current.sessionViews }
@@ -633,10 +666,10 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       hydrating: forceHistory || (resumeCachedView ? false : current.msgs.length === 0),
     })
 
-    const generation = ++historyGeneration
-    historyAbort?.abort()
+    const generation = ++runtime.historyGeneration
+    runtime.historyAbort?.abort()
     const abort = new AbortController()
-    historyAbort = abort
+    runtime.historyAbort = abort
     let historyReady = resumeCachedView
     const bufferedEvents: ChatWSOut[] = []
 
@@ -701,7 +734,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       for (const e of evts) commitCursor(sessionId, e)
     }
 
-    liveCleanup = () => {
+    runtime.liveCleanup = () => {
       flushNext(true)
       active = false
       if (nextTimer != null) { window.clearTimeout(nextTimer); nextTimer = null }
@@ -763,14 +796,14 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       }
 
       if (m.type === 'resync_required') {
-        sessionCursors.delete(sessionId)
+        runtime.sessionCursors.delete(sessionId)
         pendingNext.clear()
         if (nextTimer != null) { window.clearTimeout(nextTimer); nextTimer = null }
         historyReady = false
         sock.close()
         set({ sock: null, hydrating: true, historyStatus: 'loading_history' })
         queueMicrotask(() => {
-          if (generation === historyGeneration && get().sessionId === sessionId) get().start(sessionId)
+          if (generation === runtime.historyGeneration && get().sessionId === sessionId) get().start(sessionId)
         })
         return
       }
@@ -828,7 +861,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       maxChars: HISTORY_PAGE_MAX_CHARS,
       signal: abort.signal,
     }).then((history) => {
-      if (generation !== historyGeneration || get().sessionId !== sessionId) return
+      if (generation !== runtime.historyGeneration || get().sessionId !== sessionId) return
       historyReady = true
       const queued = bufferedEvents.splice(0)
       set(() => {
@@ -848,7 +881,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       })
       for (const event of queued) handleReadyMessage(event, false)
     }).catch((error: unknown) => {
-      if (abort.signal.aborted || generation !== historyGeneration || get().sessionId !== sessionId) return
+      if (abort.signal.aborted || generation !== runtime.historyGeneration || get().sessionId !== sessionId) return
       historyReady = true
       const queued = bufferedEvents.splice(0)
       set((st) => ({
@@ -886,9 +919,9 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
 
     const sessionId = current.sessionId
     const before = current.historyBefore
-    olderHistoryAbort?.abort()
+    runtime.olderHistoryAbort?.abort()
     const abort = new AbortController()
-    olderHistoryAbort = abort
+    runtime.olderHistoryAbort = abort
     set({ olderHistoryStatus: 'loading', olderHistoryError: null })
 
     try {
@@ -927,12 +960,12 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
         olderHistoryError: error instanceof Error ? error.message : '更早的历史消息加载失败',
       })
     } finally {
-      if (olderHistoryAbort === abort) olderHistoryAbort = null
+      if (runtime.olderHistoryAbort === abort) runtime.olderHistoryAbort = null
     }
   },
 
   dropSessionView: (sessionId) => {
-    sessionCursors.delete(sessionId)
+    runtime.sessionCursors.delete(sessionId)
     const current = get()
     const sessionViews = { ...current.sessionViews }
     delete sessionViews[sessionId]
@@ -941,12 +974,13 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       return
     }
 
-    historyGeneration++
-    historyAbort?.abort()
-    olderHistoryAbort?.abort()
-    olderHistoryAbort = null
-    liveCleanup?.()
-    liveCleanup = null
+    runtime.historyGeneration++
+    runtime.historyAbort?.abort()
+    runtime.olderHistoryAbort?.abort()
+    runtime.olderHistoryAbort = null
+    runtime.liveCleanup?.()
+    runtime.liveCleanup = null
+    runtime.abortedStreams.clear()
     current.sock?.close()
     set({
       msgs: [],
@@ -966,13 +1000,19 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     })
   },
 
-  stop: () => {
-    historyGeneration++
-    historyAbort?.abort()
-    olderHistoryAbort?.abort()
-    olderHistoryAbort = null
-    liveCleanup?.()
-    liveCleanup = null
+  /**
+   * Tear down the live connection and local projection state (session
+   * unbind / app-level logout). This does NOT abort a running task —
+   * task abort is the session HTTP API (api.abortSession), see LiveChat.
+   */
+  teardown: () => {
+    runtime.historyGeneration++
+    runtime.historyAbort?.abort()
+    runtime.olderHistoryAbort?.abort()
+    runtime.olderHistoryAbort = null
+    runtime.liveCleanup?.()
+    runtime.liveCleanup = null
+    runtime.abortedStreams.clear()
     get().sock?.close()
     set({
       sock: null,
@@ -990,7 +1030,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
   },
 
   stageWebui: (text, atts) => {
-    const stageId = `webui-stage-${++webuiStageSequence}`
+    const stageId = `webui-stage-${++runtime.webuiStageSequence}`
     const userBubble: ChatMsg = {
       role: 'user', content: text, source: 'webui',
       attachments: atts.length ? atts : undefined,
@@ -1049,9 +1089,4 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     olderHistoryStatus: 'idle',
     olderHistoryError: null,
   }),
-  markIdle: () =>
-    set((st) => ({
-      msgs: st.msgs.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
-      streaming: false,
-    })),
 })))

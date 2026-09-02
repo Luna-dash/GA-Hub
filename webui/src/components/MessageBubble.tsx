@@ -21,6 +21,7 @@ import {
 import { foldTurns } from '@/utils/foldTurns'
 import { useCopy } from '@/utils/clipboard'
 import { CHAT_FONT_SCALE_EVENT, getChatFontScale } from '@/utils/chatAppearance'
+import { FILE_HINT } from '@/utils/sessionPrompt'
 import { MarkdownView } from './MarkdownView'
 import type { PasteAttachment } from './ImagePasteInput'
 import { api } from '@/api/client'
@@ -29,6 +30,11 @@ interface Props {
   role: 'user' | 'assistant' | string
   content: string
   streaming?: boolean
+  /** 事实标志：这条流被用户手动停止（来自 aborted 事件，客户端内存态）。
+   *  与投影层的悬空尾启发式（transcript.stopped）相互独立。 */
+  stopped?: boolean
+  /** 来源标签（自动继续/定时任务等）：渲染为头部小字，不混入 content。 */
+  tagLabel?: string
   timestamp?: number | null
   startedAt?: number | null
   finishedAt?: number | null
@@ -43,8 +49,6 @@ interface Props {
 
 const LONG_HISTORY_THRESHOLD = 60_000
 const LONG_HISTORY_PREVIEW_CHARS = 20_000
-
-const FILE_HINT = 'If you need to show files to user, use [FILE:filepath] in your response.'
 
 /** Strip prompt-engineering tokens from a user message before showing it. */
 function cleanUserContent(s: string): string {
@@ -82,7 +86,7 @@ function formatDuration(milliseconds: number): string {
     : `${minutes}:${String(rest).padStart(2, '0')}`
 }
 
-export const MessageBubble = memo(function MessageBubble({ role, content, streaming, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact }: Props) {
+export const MessageBubble = memo(function MessageBubble({ role, content, streaming, stopped, tagLabel, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact }: Props) {
   const [fontScale, setFontScale] = useState(getChatFontScale)
   const [clock, setClock] = useState(Date.now)
   const [longFinalExpanded, setLongFinalExpanded] = useState(false)
@@ -187,6 +191,12 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
               {isSystem ? 'system' : 'GA Agent'}
             </div>
           )}
+          {tagLabel && (
+            <div className="mb-1.5 text-[11px] font-medium leading-4 text-[#86775F]">{tagLabel}</div>
+          )}
+          {stopped && !useHistoryProjection && (
+            <p className="mb-2 text-xs italic leading-5 text-[#8A6B3E]">⏹ 已手动停止</p>
+          )}
           <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
             {streamId && onRewind && !streaming && (
               <RewindChip onClick={() => onRewind(streamId)} />
@@ -198,6 +208,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
               <HistoryTranscriptReply
                 transcript={historyTranscript}
                 rawContent={content}
+                manualStop={Boolean(stopped)}
                 finalExpanded={longFinalExpanded}
                 onExpandFinal={() => setLongFinalExpanded(true)}
               />
@@ -233,11 +244,13 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
 function HistoryTranscriptReply({
   transcript,
   rawContent,
+  manualStop,
   finalExpanded,
   onExpandFinal,
 }: {
   transcript: AssistantTranscript
   rawContent: string
+  manualStop: boolean
   finalExpanded: boolean
   onExpandFinal: () => void
 }) {
@@ -254,18 +267,24 @@ function HistoryTranscriptReply({
     : finalBody
       ? []
       : [{ turn: 1, summary: '原始执行记录', content: rawContent }]
+  // 两类"没结论"相互独立：manualStop 是事实（用户按了停止），
+  // transcript.stopped 是投影启发式（尾轮只有工具转储——轮询任务/进程重启同形）。
+  // manualStop 优先措辞；启发式成立且发生结论回退时才说"以下为上一轮的完整结论"。
+  const fallbackSuffix = transcript.stopped && transcript.finalBody ? '，以下为上一轮的完整结论' : ''
 
   return (
     <>
       {visibleProcessTurns.length > 0 && <LazyProcessFold turns={visibleProcessTurns} />}
-      {transcript.stopped && (
+      {(manualStop || transcript.stopped) && (
         <p className="mb-2 text-xs italic leading-5 text-[#8A6B3E]">
-          ⏹ 本轮以工具调用收尾，未输出文字结论{transcript.finalBody ? '，以下为上一轮的完整结论' : ''}
+          {manualStop
+            ? `⏹ 已手动停止${fallbackSuffix}`
+            : `⏹ 本轮以工具调用收尾，未输出文字结论${transcript.finalBody ? '，以下为上一轮的完整结论' : ''}`}
         </p>
       )}
       {visibleFinal ? (
         <MarkdownView mode="auto" cache>{visibleFinal}</MarkdownView>
-      ) : transcript.stopped ? null : (
+      ) : manualStop || transcript.stopped ? null : (
         <p className="text-sm leading-6 text-[#665741]">该条历史回复未包含可提取的最终回答。</p>
       )}
       {finalDeferred && (

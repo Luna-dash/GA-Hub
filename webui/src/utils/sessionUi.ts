@@ -15,13 +15,20 @@ export interface CapacityConflict {
 export function sessionActivity(runtime?: SessionRuntime): SessionActivity {
   if (!runtime) return 'unknown'
   if (runtime.status === 'starting' || runtime.status === 'running') return 'active'
+  // 停止中仍是"运行"：aborting 归为 active，否则会话在停止期间会从
+  // 置顶运行组掉进 idle 组（回归：cf签到 按停止后会话栏位置跳到第 5-6）。
+  if (runtime.status === 'aborting') return 'active'
   if (runtime.status === 'error') return 'error'
   return 'idle'
 }
 
 export function sessionStatusLabel(runtime?: SessionRuntime): string {
   const activity = sessionActivity(runtime)
-  if (activity === 'active') return runtime?.status === 'starting' ? '启动中' : '运行中'
+  if (activity === 'active') {
+    if (runtime?.status === 'starting') return '启动中'
+    if (runtime?.status === 'aborting') return '停止中'
+    return '运行中'
+  }
   if (activity === 'error') return '异常'
   if (activity === 'idle') return '空闲'
   return '未知'

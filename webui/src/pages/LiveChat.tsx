@@ -36,6 +36,7 @@ import { dialog } from '@/stores/dialogStore'
 import { noticeKeys, useChatStore } from '@/stores/chatStore'
 import { useDraftStore } from '@/stores/draftStore'
 import { capacityConflictFromError, errorMessageFromError, sessionChatHref } from '@/utils/sessionUi'
+import { buildSessionPromptText } from '@/utils/sessionPrompt'
 import { isTauriDesktop, selectDirectory } from '@/utils/desktop'
 import { defaultSessionLlmKey, resolveSessionLlmKey } from '@/utils/llm'
 import { MainModelSelect } from '@/components/ModelSelect'
@@ -58,7 +59,7 @@ export default function LiveChat() {
   const conn = useChatStore((s) => s.conn)
   const dropSessionView = useChatStore((s) => s.dropSessionView)
   const startChat = useChatStore((s) => s.start)
-  const stopChat = useChatStore((s) => s.stop)
+  const teardownChat = useChatStore((s) => s.teardown)
   const stageWebui = useChatStore((s) => s.stageWebui)
   const rollbackWebui = useChatStore((s) => s.rollbackWebui)
   const clearLocal = useChatStore((s) => s.clearLocal)
@@ -163,7 +164,7 @@ export default function LiveChat() {
           localStorage.removeItem('gahub.currentSessionId')
           setSessionError('')
           setSession(null)
-          stopChat()
+          teardownChat()
           clearLocal()
           return
         }
@@ -363,9 +364,7 @@ export default function LiveChat() {
         return
       }
 
-      const fileMarkers = sourceAtts.map((a) => `[用户发送文件: ${a.path}]`).join('\n')
-      const fileHint = sourceAtts.length ? 'If you need to show files to user, use [FILE:filepath] in your response.\n\n' : ''
-      const promptText = fileHint + t + (fileMarkers ? (t ? '\n' : '') + fileMarkers : '')
+      const promptText = buildSessionPromptText(t, sourceAtts)
       const stageId = stageWebui(t, sourceAtts)
       transcriptRef.current?.pinToBottom()
       try {
@@ -450,9 +449,7 @@ export default function LiveChat() {
         nav(sessionChatHref(sid), { replace: true })
         startChat(sid)
       }
-      const fileMarkers = sourceAtts.map((a) => `[用户发送文件: ${a.path}]`).join('\n')
-      const fileHint = sourceAtts.length ? 'If you need to show files to user, use [FILE:filepath] in your response.\n\n' : ''
-      const promptText = fileHint + t + (fileMarkers ? (t ? '\n' : '') + fileMarkers : '')
+      const promptText = buildSessionPromptText(t, sourceAtts)
       await api.createScheduledChat(sid, promptText, sourceAtts.map((a) => a.path), scheduledFor / 1000)
       useDraftStore.getState().clearDraftIfMatch(draft.draftKey, sourceText, sourceAtts)
       await queryClient.invalidateQueries({ queryKey: queryKeys.scheduledChats(sid) })
@@ -601,7 +598,7 @@ export default function LiveChat() {
       if (sessionIdRef.current === sid) setSession(updated)
 
       await api.deleteProject(selected.name)
-        await queryClient.invalidateQueries({ queryKey: queryKeys.projects })
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projects })
     } catch (error: unknown) {
       pushSystem(`_移除项目映射失败：${errorMessageFromError(error)}_`)
     } finally {

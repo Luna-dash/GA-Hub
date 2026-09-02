@@ -5,6 +5,8 @@ export interface AssistantTranscriptTurn {
 }
 
 export interface AssistantTranscript {
+  /** Content before the first turn marker (normally empty in GA messages). */
+  leading: string
   turns: AssistantTranscriptTurn[]
   finalBody: string
   /** Index of the final rendered turn when it contains an ask_user call. */
@@ -275,8 +277,10 @@ export function parseAssistantTranscript(text: string): AssistantTranscript {
   const matches = [...safe.matchAll(turnMarkerRe())]
 
   if (!matches.length) {
-    return { turns: [], finalBody: projectFinalBody(source), finalTurnIndex: null, stopped: false }
+    return { leading: '', turns: [], finalBody: projectFinalBody(source), finalTurnIndex: null, stopped: false }
   }
+
+  const leading = stripTraceMeta(restore(safe.slice(0, matches[0].index ?? 0)))
 
   const turns = matches.map((match, index) => {
     const start = (match.index ?? 0) + match[0].length
@@ -306,7 +310,7 @@ export function parseAssistantTranscript(text: string): AssistantTranscript {
     break
   }
 
-  return { turns, finalBody, finalTurnIndex, stopped }
+  return { leading, turns, finalBody, finalTurnIndex, stopped }
 }
 
 export function stripAssistantTranscriptTags(text: string): string {

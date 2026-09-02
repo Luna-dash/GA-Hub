@@ -29,10 +29,12 @@ describe('session UI contracts', () => {
   it('maps backend runtime states without treating terminal states as active', () => {
     expect(sessionActivity(runtime('a', 'starting'))).toBe('active')
     expect(sessionActivity(runtime('a', 'running'))).toBe('active')
+    expect(sessionActivity(runtime('a', 'aborting'))).toBe('active')
     expect(sessionActivity(runtime('a', 'error'))).toBe('error')
     expect(sessionActivity(runtime('a', 'idle'))).toBe('idle')
     expect(sessionActivity(undefined)).toBe('unknown')
     expect(sessionStatusLabel(runtime('a', 'running'))).toBe('运行中')
+    expect(sessionStatusLabel(runtime('a', 'aborting'))).toBe('停止中')
   })
 
   it('builds a stable URL used to switch the selected live-chat session', () => {

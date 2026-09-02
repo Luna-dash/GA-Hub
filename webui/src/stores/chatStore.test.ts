@@ -54,7 +54,7 @@ describe('chatStore lifecycle', () => {
   })
 
   afterEach(() => {
-    useChatStore.getState().stop()
+    useChatStore.getState().teardown()
     vi.unstubAllGlobals()
   })
 
@@ -65,7 +65,7 @@ describe('chatStore lifecycle', () => {
       sessionId: 'session-a',
     })
 
-    useChatStore.getState().stop()
+    useChatStore.getState().teardown()
 
     expect(useChatStore.getState()).toMatchObject({
       sessionId: null,
@@ -302,8 +302,69 @@ describe('chatStore lifecycle', () => {
     })
 
     await new Promise((resolve) => setTimeout(resolve, 100))
+    // (streamId, role) 定位：一小时后重发的同文本提问是新一轮，两条都保留
     expect(useChatStore.getState().msgs.map((message) => message.content)).toEqual([
-      'repeat', 'repeat answer', 'repeat answer',
+      'repeat', 'repeat answer', 'repeat', 'repeat answer',
+    ])
+  })
+
+  it('dedups by the query anchor when timestamps carry the evidence', async () => {
+    // 回答侧文本在快照投影与存档投影间可能格式漂移；时间证据齐全时以
+    // 提问锚点 + 时间窗判定同一轮，不再要求回答文本全等（step-3 重构）。
+    vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
+      session_id: 'session-a', archive_bound: true, revision: 'a1',
+      items: [
+        { id: 'q', role: 'user', content: 'same question', ordinal: 0, timestamp: '2026-08-09 08:00:00' },
+        { id: 'a', role: 'assistant', content: 'archived rendering of the answer', ordinal: 1, timestamp: '2026-08-09 08:00:01' },
+      ],
+    })
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    FakeWebSocket.instances.at(-1)!.emit({
+      type: 'snapshot', streams: [{
+        stream_id: 'completed-stream', source: 'user', query: 'same question',
+        content: 'snapshot rendering of the answer', done: true,
+        started_at: Date.parse('2026-08-09T08:00:00'),
+        finished_at: Date.parse('2026-08-09T08:00:01'),
+      }],
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(useChatStore.getState().msgs.map((message) => message.content)).toEqual([
+      'same question',
+      'archived rendering of the answer',
+    ])
+  })
+
+  it('requires answer-text evidence when timestamps are missing', async () => {
+    // 存档无头时间 → 无时间证据，文本不同就不是同一轮，保留快照副本
+    vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
+      session_id: 'session-a', archive_bound: true, revision: 'a1',
+      items: [
+        { id: 'q', role: 'user', content: 'same question', ordinal: 0 },
+        { id: 'a', role: 'assistant', content: 'archived answer', ordinal: 1 },
+      ],
+    })
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    FakeWebSocket.instances.at(-1)!.emit({
+      type: 'snapshot', streams: [{
+        stream_id: 'newer-stream', source: 'user', query: 'same question',
+        content: 'brand new answer', done: true, started_at: 1, finished_at: 2,
+      }],
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    // 快照用户气泡与回答气泡共用 streamId，但合并按 (streamId, role) 定位，
+    // 用户提问不再被自己的回答覆盖（回归：新完成的提问在存档未收录的
+    // 窗口期内消失）
+    expect(useChatStore.getState().msgs.map((message) => message.content)).toEqual([
+      'same question',
+      'archived answer',
+      'same question',
+      'brand new answer',
     ])
   })
 
@@ -326,7 +387,9 @@ describe('chatStore lifecycle', () => {
     })
 
     await new Promise((resolve) => setTimeout(resolve, 100))
-    expect(useChatStore.getState().msgs).toHaveLength(3)
+    // 活跃流完整成对保留：用户提问不再被同 streamId 的回答覆盖
+    expect(useChatStore.getState().msgs).toHaveLength(4)
+    expect(useChatStore.getState().msgs.at(-2)).toMatchObject({ role: 'user', content: 'repeat' })
     expect(useChatStore.getState().msgs.at(-1)).toMatchObject({
       role: 'assistant', content: 'partial', streaming: true,
     })
@@ -467,7 +530,7 @@ describe('chat_error_retry notice bubble reuse', () => {
   })
 
   afterEach(() => {
-    useChatStore.getState().stop()
+    useChatStore.getState().teardown()
     vi.unstubAllGlobals()
   })
 
@@ -605,14 +668,17 @@ describe('manual stop projection', () => {
     finishedAt: null,
   }
 
-  it('appends a stop notice inside the stopped bubble', () => {
+  it('marks the stopped fact without touching content', () => {
     const afterAbort = applyEvent([streamingMsg], { type: 'aborted' } as never)
     expect(afterAbort).toHaveLength(1)
     expect(afterAbort[0].streaming).toBe(false)
-    expect(afterAbort[0].content).toContain('⏹ 已手动停止')
-    // 重复 aborted 不叠加标记
+    // stopped 是字段不是内容修饰：content 保持服务端原文
+    expect(afterAbort[0].stopped).toBe(true)
+    expect(afterAbort[0].content).toBe(streamingMsg.content)
+    // 重复 aborted 幂等
     const again = applyEvent(afterAbort, { type: 'aborted' } as never)
     expect(again[0].content).toBe(afterAbort[0].content)
+    expect(again[0].stopped).toBe(true)
   })
 
   it('suppresses the stream_error aftermath right after a manual abort', () => {
@@ -622,11 +688,21 @@ describe('manual stop projection', () => {
     expect(afterError.some((m) => m.content.includes('运行错误'))).toBe(false)
   })
 
-  it('keeps the stop mark when a late done replays the partial content', () => {
+  it('replaces content wholesale on the late done and keeps the stopped flag', () => {
     const afterAbort = applyEvent([streamingMsg], { type: 'aborted' } as never)
-    const afterDone = applyEvent(afterAbort, { type: 'done', stream_id: 's1', source: 'webui', content: '🛠️ Tool: `code_run`  📥 args:' } as never)
-    expect(afterDone[0].content).toContain('⏹ 已手动停止')
-    expect(afterDone[0].content).not.toContain('\n\n\n')
+    // done 的 content 是服务端全量最终文本：整体替换（回归：cf签到 停止后
+    // 补发 done 把内容翻倍，气泡里出现两个 Turn 1）
+    const afterDone = applyEvent(afterAbort, { type: 'done', stream_id: 's1', source: 'webui', content: '最终全量内容' } as never)
+    expect(afterDone[0].content).toBe('最终全量内容')
+    expect(afterDone[0].stopped).toBe(true)
+  })
+
+  it('does not resurrect a stopped bubble when a stray next arrives', () => {
+    const afterAbort = applyEvent([streamingMsg], { type: 'aborted' } as never)
+    const afterStrayNext = applyEvent(afterAbort, { type: 'next', stream_id: 's1', source: 'webui', content: '迟到的累计内容' } as never)
+    expect(afterStrayNext[0].streaming).toBe(false)
+    expect(afterStrayNext[0].stopped).toBe(true)
+    expect(afterStrayNext[0].content).toBe('迟到的累计内容')
   })
 
   it('still surfaces genuine errors when no abort happened', () => {

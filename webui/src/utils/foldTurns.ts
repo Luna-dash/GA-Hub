@@ -1,12 +1,16 @@
-// Port of stapp.fold_turns: split agent stream by "**LLM Running (Turn N) ...**"
-// markers into segments. Each non-final segment becomes a foldable detail
-// block titled by its <summary>...</summary> if present.
+// foldTurns — 直播流式渲染的分段视图。
+//
+// 实现收敛：唯一的 turn/围栏/summary 解析引擎是 assistantTranscript 的
+// parseAssistantTranscript（锚定围栏保护）。此前这里维护着第二套非锚定
+// 正则，正文里合法的 4+ 反引号块会在流式期间被错误配对吞掉、完成后又
+// "变好"（回归：ga更新任务 目录树；双引擎正则漂移）。
+// 直播与完成后的差异只剩"最后一个 turn 是生长中的正文段"，不再换引擎。
+
+import { parseAssistantTranscript } from '@/utils/assistantTranscript'
 
 export type Segment =
   | { type: 'text'; content: string }
   | { type: 'fold'; title: string; content: string }
-
-const PH_MARK = '\u0000PH'
 
 // Strip CLOSED <summary>...</summary> blocks. Half-open ones (still
 // streaming) are left intact so partial tokens don't render as plain
@@ -18,62 +22,28 @@ function stripClosedSummary(s: string): string {
 
 export function foldTurns(text: string): Segment[] {
   if (!text) return []
-  const placeholders: string[] = []
-
-  // Protect ```` blocks (4+ backticks), incl. unclosed at tail
-  let safe = text.replace(/`{4,}[\s\S]*?`{4,}/g, (m) => {
-    placeholders.push(m)
-    return `${PH_MARK}${placeholders.length - 1}\u0000`
-  })
-  safe = safe.replace(/`{4,}[^`][\s\S]*$/g, (m) => {
-    placeholders.push(m)
-    return `${PH_MARK}${placeholders.length - 1}\u0000`
-  })
-
-  const restore = (s: string) =>
-    s.replace(new RegExp(`${PH_MARK}(\\d+)\\u0000`, 'g'), (_, i) => placeholders[+i] ?? '')
-
-  const parts = safe.split(/(\**LLM Running \(Turn \d+\) \.{3}\**)/).map(restore)
-  if (parts.length < 4) {
-    return [{ type: 'text', content: stripClosedSummary(text) }]
-  }
+  const transcript = parseAssistantTranscript(text)
 
   const segments: Segment[] = []
-  if (parts[0].trim()) {
-    const cleaned0 = stripClosedSummary(parts[0])
-    if (cleaned0.trim()) segments.push({ type: 'text', content: cleaned0 })
+  if (transcript.leading.trim()) {
+    segments.push({ type: 'text', content: transcript.leading })
+  }
+  if (!transcript.turns.length) {
+    // 没有 turn 标记：整段作为生长中的正文（保持直播语义——不做
+    // ask_user 替换/结论选择，那属于完成后的投影层）。
+    segments.push({ type: 'text', content: stripClosedSummary(text) })
+    return segments
   }
 
-  const turns: Array<{ marker: string; content: string }> = []
-  for (let i = 1; i < parts.length; i += 2) {
-    turns.push({ marker: parts[i], content: parts[i + 1] ?? '' })
-  }
-
-  turns.forEach((t, idx) => {
-    if (idx < turns.length - 1) {
-      // strip code blocks + thinking before searching for summary
-      const cleaned = t.content
-        .replace(/`{3,}[\s\S]*?`{3,}/g, '')
-        .replace(/<thinking>[\s\S]*?<\/thinking>/g, '')
-      const m = /<summary>\s*([\s\S]*?)\s*<\/summary>/.exec(cleaned)
-      // Title shown on the closed <details>. Earlier versions split on the
-      // first newline AND chopped at 80 chars with an ellipsis. Both
-      // hurt: multi-line <summary> blocks lost everything past line 1,
-      // and longer single-line summaries got truncated to "...". The
-      // <details> already collapses, so the user only sees the title
-      // when they want context — give them the full thing. CSS in
-      // styles/index.css lets summary wrap to multiple lines.
-      const title = m
-        ? m[1].trim().split('\n').map((s) => s.trim()).filter(Boolean).join(' · ')
-        : t.marker.replace(/\*+/g, '').trim()
-      // Body of the <details>: drop the <summary> we just lifted into
-      // the title so it doesn't show up twice when expanded.
-      segments.push({ type: 'fold', title, content: stripClosedSummary(t.content) })
+  transcript.turns.forEach((turn, index) => {
+    if (index < transcript.turns.length - 1) {
+      segments.push({ type: 'fold', title: turn.summary || '执行记录', content: turn.content })
     } else {
-      segments.push({ type: 'text', content: stripClosedSummary(t.marker + t.content) })
+      // 最后一个 turn 是直播中的正文段；turn 标记由引擎剥除，
+      // 直播与完成后的外观因此一致（不再显示 "LLM Running (Turn N)" 原文）。
+      segments.push({ type: 'text', content: turn.content })
     }
   })
-
   return segments
 }
 
@@ -89,7 +59,7 @@ export function relTime(ts: number): string {
   const d = Math.floor(Date.now() / 1000) - ts
   if (d < 60) return `${d}秒前`
   if (d < 3600) return `${Math.floor(d / 60)}分前`
-  if (d < 86400) return `${Math.floor(d / 3600)}小时前`
+  if (d < 86400) return `${Math.floor(d / 86400)}小时前`
   if (d < 86400 * 30) return `${Math.floor(d / 86400)}天前`
   return new Date(ts * 1000).toLocaleString()
 }
