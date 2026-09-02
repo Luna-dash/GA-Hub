@@ -251,6 +251,36 @@ class WorkflowTracker:
             )
             return [self._payload(workflow) for workflow in stranded[-max(1, limit):]]
 
+    def abandon_stranded(
+            self, *, reason: str) -> list[tuple[str, dict[str, Any]]]:
+        """Terminal-fail every stranded ``admitted`` workflow (manual stop).
+
+        Manual stop means the user gave up on the task, so the cold-start
+        redispatch must not resurrect these on the next start. Returns the
+        published workflow_failed transitions; once terminal, the workflows
+        no longer count as stranded. Only workerless ``admitted`` workflows
+        are swept — supervising/awaiting_review workflows keep their own
+        terminal path via worker CANCELLED events.
+        """
+        with self._lock:
+            transitions: list[tuple[str, dict[str, Any]]] = []
+            for workflow in list(self._workflows.values()):
+                if (workflow.terminal_event is not None
+                        or workflow.state != "admitted"
+                        or workflow.workers):
+                    continue
+                workflow.state = "failed"
+                workflow.completed_at = self._clock()
+                workflow.terminal_event = "workflow_failed"
+                workflow.phase = "stopped_by_user"
+                workflow.error = reason or None
+                transitions.append((
+                    "conductor:workflow_failed",
+                    self._payload(workflow, phase="stopped_by_user",
+                                  error=reason),
+                ))
+            return transitions
+
     def _require(self, request_id: str) -> WorkflowState:
         workflow = self._workflows.get(request_id)
         if workflow is None:

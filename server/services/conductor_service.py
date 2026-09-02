@@ -500,6 +500,15 @@ class HubConductorCallbacks:
             log.exception("conductor event handling failed")
 
 
+class ConductorNotRunning(RuntimeError):
+    """A subagent operation needs a LIVE supervisor and none is running.
+
+    Chat admission is the only cold-start entry (it re-adopts stranded
+    work); dispatch/input/accept/rework refuse loudly instead, so a stopped
+    conductor can never spawn supervisor-less orphan workers (2026-09
+    audit P1: unified lifecycle admission)."""
+
+
 class ConductorService:
     """Singleton GA-Hub product layer around the gahub_app engine."""
     _instance: Optional["ConductorService"] = None
@@ -681,6 +690,32 @@ class ConductorService:
         with self._shutdown_lock:
             if self._closed:
                 raise RuntimeError("Conductor service is closed")
+
+    def _assert_engine_ready(self) -> None:
+        """Subagent operations require a running supervisor — refuse loudly.
+
+        Mirrors ``ensure_started`` at the process level (engine respawn +
+        relay), but unlike chat admission it never cold-starts the
+        supervisor: a stopped conductor must not gain workers it cannot
+        supervise (2026-09 audit P1)."""
+        self._assert_open()
+        manager = getattr(self, "_process_manager", None)
+        if manager is not None:
+            try:
+                manager.ensure_running()
+            except Exception as exc:
+                raise RuntimeError(
+                    rf"gahub_app unavailable (see %TEMP%\gahub_app.log): {exc}"
+                ) from exc
+        # Legacy object.__new__ test doubles carry no relay wiring; a real
+        # service always has _relay_stop (set in __init__).
+        if hasattr(self, "_relay_stop"):
+            self._ensure_relay()
+        status = self.client.status()
+        if not status.get("started"):
+            raise ConductorNotRunning(
+                "conductor is not running; send a chat message or press "
+                "start before subagent operations")
 
     def _ensure_workflow_tracker(self) -> WorkflowTracker:
         """Backfill workflow state for focused tests and legacy adapters."""
@@ -1005,6 +1040,18 @@ class ConductorService:
         except Exception:
             log.exception("gahub_app stop failed")
             stopped = False
+        if stopped:
+            # Manual stop = the user gave up on the in-flight work (2026-09
+            # audit, user-confirmed policy). Stranded admitted workflows must
+            # NOT be re-relayed by the next cold start: a task abandoned via
+            # stop stays abandoned. Crash restarts (no manual stop) keep the
+            # redispatch safety net. Only workerless "admitted" workflows are
+            # swept here — running workers already got terminal CANCELLED
+            # events from the engine stop sweep.
+            tracker = self._ensure_workflow_tracker()
+            for topic, payload in tracker.abandon_stranded(
+                    reason="conductor stopped by user"):
+                self._publish_workflow_transition((topic, payload))
         self.lifecycle_status()
         return stopped
 
@@ -1204,7 +1251,7 @@ class ConductorService:
         and at least one absolute deliverable, so the hub must carry them
         instead of silently dropping the contract.
         """
-        self._assert_open()
+        self._assert_engine_ready()
         tracker = self._ensure_workflow_tracker()
         if request_id is not None and not tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")
@@ -1245,7 +1292,7 @@ class ConductorService:
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
     ) -> dict:
         """Resume a stopped worker through the same model-policy boundary."""
-        self._assert_open()
+        self._assert_engine_ready()
         tracker = self._ensure_workflow_tracker()
         if request_id is not None and not tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")
@@ -1279,7 +1326,7 @@ class ConductorService:
         deterministic verification verdict is not clean (the UI surfaces the
         evidence before offering it).
         """
-        self._assert_open()
+        self._assert_engine_ready()
         tracker = self._ensure_workflow_tracker()
         if request_id is not None and not tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")
@@ -1311,7 +1358,7 @@ class ConductorService:
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
     ) -> dict:
         """Rework a pending worker through the model-policy boundary."""
-        self._assert_open()
+        self._assert_engine_ready()
         tracker = self._ensure_workflow_tracker()
         if request_id is not None and not tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")

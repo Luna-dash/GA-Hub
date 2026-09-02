@@ -29,7 +29,7 @@ from ..schemas import (
     ConductorWorkflowListResp,
 )
 from ..services import conductor_client as conductor_client_module
-from ..services.conductor_service import ConductorService
+from ..services.conductor_service import ConductorNotRunning, ConductorService
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -90,6 +90,11 @@ async def _dispatch_through_engine(func, /, *args, **kwargs):
         return await asyncio.to_thread(func, *args, **kwargs)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    except ConductorNotRunning as exc:
+        # Unified lifecycle admission (2026-09 audit P1): subagent
+        # operations never cold-start the supervisor; the UI shows the
+        # start hint instead of a blind 500.
+        raise HTTPException(409, str(exc)) from exc
     except conductor_client_module.GahubProcessError as exc:
         raise _engine_http_error(exc) from exc
 
