@@ -97,34 +97,6 @@ export default function GoalHive() {
     closeSubagentSettings()
   }
 
-  useEffect(() => {
-    if (!subagentSettingsOpen) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        closeSubagentSettings()
-        return
-      }
-      if (event.key !== 'Tab') return
-      const focusable = Array.from(
-        subagentSettingsDialogRef.current?.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), select:not([disabled])',
-        ) ?? [],
-      )
-      if (focusable.length === 0) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [subagentSettingsOpen])
 
   const config = modeConfigs[mode]
   const streaming = msgs.some((m) => m.streaming)

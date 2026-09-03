@@ -3,6 +3,7 @@
 // doesn't touch the shared index.css that other work may be editing.
 
 import { useToastStore, type ToastKind } from '@/stores/toastStore'
+import { Z_LAYERS } from '@/config/zLayers'
 
 const TONE: Record<ToastKind, { ring: string; icon: string; iconCls: string }> = {
   success: { ring: 'border-emerald-500/40', icon: '✓', iconCls: 'text-emerald-400' },
@@ -17,7 +18,8 @@ export function ToastHost() {
   if (items.length === 0) return null
 
   return (
-    <div className="fixed inset-x-0 bottom-5 z-[60] flex flex-col items-center gap-2 px-4 pointer-events-none">
+    <div style={{ zIndex: Z_LAYERS.toast }}
+    className="fixed inset-x-0 bottom-5 flex flex-col items-center gap-2 px-4 pointer-events-none">
       <style>{`
         @keyframes ga-toast-in {
           from { opacity: 0; transform: translateY(12px) scale(0.98); }

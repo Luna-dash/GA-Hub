@@ -205,8 +205,8 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
     }
   }
   return (
-    <ModalOverlay onClose={onClose} panelClassName="p-6 w-[38rem] max-w-[92vw] max-h-[92vh] overflow-y-auto">
-        <h3 className="text-base font-semibold mb-4">{initial.id ? '编辑定时任务' : '新建定时任务'}</h3>
+    <ModalOverlay onClose={onClose} labelledBy="task-dialog-title" panelClassName="p-6 w-[38rem] max-w-[92vw] max-h-[92vh] overflow-y-auto">
+        <h3 id="task-dialog-title" className="text-base font-semibold mb-4">{initial.id ? '编辑定时任务' : '新建定时任务'}</h3>
         <Field label="名称">
           <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="每日早报" />
         </Field>
@@ -353,9 +353,9 @@ function EmailSettings() {
         {result && <div className="mt-2 text-xs text-accent">{result}</div>}
       </div>
       {editing && (
-        <div className="fixed inset-0 z-30 bg-black/60 flex items-center justify-center" onMouseDown={(e) => { if (e.target === e.currentTarget) setEditing(false) }}>
-          <div className="bg-bg-soft border border-line rounded-xl p-6 w-[34rem] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-base font-semibold mb-4">SMTP 邮件配置</h3>
+        <ModalOverlay onClose={() => setEditing(false)} labelledBy="smtp-dialog-title" panelClassName="p-6 w-[34rem] max-w-[92vw]">
+          <div>
+            <h3 id="smtp-dialog-title" className="text-base font-semibold mb-4">SMTP 邮件配置</h3>
             <Field label="SMTP Host"><input value={cfg.host || ''} onChange={(e) => setCfg({ ...cfg, host: e.target.value })} className={inp} placeholder="smtp.example.com" /></Field>
             <Field label="端口"><input type="number" value={cfg.port ?? 587} onChange={(e) => setCfg({ ...cfg, port: +e.target.value })} className={inp} /></Field>
             <Field label="用户名"><input value={cfg.username || ''} onChange={(e) => setCfg({ ...cfg, username: e.target.value })} className={inp} /></Field>
@@ -381,7 +381,7 @@ function EmailSettings() {
               </div>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </section>
   )

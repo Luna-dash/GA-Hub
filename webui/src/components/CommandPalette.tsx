@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
+import { Z_LAYERS } from '@/config/zLayers'
 import { api } from '@/api/client'
 import { noticeKeys, useChatStore } from '@/stores/chatStore'
 import { dialog } from '@/stores/dialogStore'
@@ -271,7 +272,8 @@ export function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 z-40 bg-black/55 backdrop-blur-sm flex items-start justify-center pt-[9vh] px-4"
+      style={{ zIndex: Z_LAYERS.palette }}
+      className="fixed inset-0 bg-black/55 backdrop-blur-sm flex items-start justify-center pt-[9vh] px-4"
       onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}
     >
       <div

@@ -3,6 +3,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
+import { Z_LAYERS } from '@/config/zLayers'
 import { useDialogStore } from '@/stores/dialogStore'
 
 export function DialogHost() {
@@ -64,7 +65,8 @@ export function DialogHost() {
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center px-4"
+      style={{ zIndex: Z_LAYERS.dialog }}
+      className="fixed inset-0 bg-black/55 backdrop-blur-sm flex items-center justify-center px-4"
       onMouseDown={(e) => { if (e.target === e.currentTarget) cancel() }}
     >
       <div

@@ -811,7 +811,7 @@ export default function LiveChat() {
       </div>
 
       {scheduleOpen && (
-        <ModalOverlay onClose={() => setScheduleOpen(false)} labelledBy="schedule-title" panelClassName="p-5 w-full max-w-md rounded-2xl">
+        <ModalOverlay onClose={() => setScheduleOpen(false)} labelledBy="schedule-title" closeOnBackdrop={false} panelClassName="p-5 w-full max-w-md rounded-2xl">
             <h2 id="schedule-title" className="text-lg font-semibold text-ink">定时发送</h2>
             <p className="mt-1 text-sm text-ink-faint">选择未来 48 小时内的发送时间，支持跨到第二天。</p>
             <label className="mt-4 block text-sm font-medium text-ink">

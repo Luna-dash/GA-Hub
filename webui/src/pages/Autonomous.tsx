@@ -193,8 +193,8 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
     onClose()
   }
   return (
-    <ModalOverlay onClose={onClose} panelClassName="p-6 w-[34rem] max-w-[90vw]">
-        <h3 className="text-base font-semibold mb-4">{initial.id ? '编辑计划' : '新建自主进化计划'}</h3>
+    <ModalOverlay onClose={onClose} labelledBy="autonomous-schedule-title" panelClassName="p-6 w-[34rem] max-w-[90vw]">
+        <h3 id="autonomous-schedule-title" className="text-base font-semibold mb-4">{initial.id ? '编辑计划' : '新建自主进化计划'}</h3>
         <Field label="名称">
           <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="人类可读的备注" />
         </Field>
