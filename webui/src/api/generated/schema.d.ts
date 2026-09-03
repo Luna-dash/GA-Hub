@@ -2596,6 +2596,8 @@ export interface components {
             llm_index?: number | null;
             /** Request Id */
             request_id?: string | null;
+            /** Stage */
+            stage?: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -2618,6 +2620,8 @@ export interface components {
              * @default false
              */
             force: boolean;
+            /** Operation Id */
+            operation_id?: string | null;
             /** Llm Index */
             llm_index?: number | null;
             /** Conductor Llm Index */
@@ -2675,6 +2679,8 @@ export interface components {
             status: "admitted" | "supervising" | "reworking" | "awaiting_review" | "completed" | "failed" | "cancelled" | "killed";
             /** Terminal Event */
             terminal_event?: string | null;
+            /** Stage */
+            stage?: string | null;
             /** Subagents */
             subagents: {
                 [key: string]: components["schemas"]["ConductorWorkflowWorker"];

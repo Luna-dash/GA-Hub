@@ -6,45 +6,7 @@ import queue
 from threading import RLock
 
 from server.services import conductor_service
-from server.services.conductor_ext_timeout import OutputBudget, TimeoutMonitor
-
-
-def test_output_budget_truncates_once_with_injected_counter():
-    events: list[tuple[str, dict]] = []
-    budget = OutputBudget(
-        "agent-1",
-        max_tokens=5,
-        max_lines=10,
-        token_counter=len,
-        publish=lambda topic, payload: events.append((topic, payload)),
-    )
-
-    assert budget.append("abc") == "abc"
-    output = budget.append("def")
-
-    assert output.startswith("abcde")
-    assert "output truncated" in output
-    assert budget.truncated is True
-    assert budget.append("ignored") == output
-    assert len(events) == 1
-    assert events[0][0] == "conductor:subagent_timeout_output"
-    assert events[0][1]["id"] == "agent-1"
-    assert events[0][1]["estimated_tokens"] == 5
-
-
-def test_output_budget_enforces_line_limit_and_reconciles_full_done():
-    budget = OutputBudget("agent-2", max_tokens=100, max_lines=2)
-
-    assert budget.append("one\n") == "one\n"
-    output = budget.finish("one\ntwo\nthree")
-
-    assert output.startswith("one\ntwo")
-    assert "output truncated" in output
-    assert output.count("\n") <= 2
-
-    replacement = OutputBudget("agent-3", max_tokens=100, max_lines=10)
-    replacement.append("streamed")
-    assert replacement.finish("authoritative done") == "authoritative done"
+from server.services.conductor_ext_timeout import TimeoutMonitor
 
 
 @dataclass

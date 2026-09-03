@@ -152,6 +152,14 @@ function requestAbortContext(externalSignal: AbortSignal | null | undefined, tim
   }
 }
 
+/** One id per logical mutating call; the conductor boundary replays it. */
+function newOperationId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `op-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 async function http<T>(method: string, path: string, body?: unknown, init?: HttpOptions): Promise<T> {
   const { timeoutMs = DEFAULT_HTTP_TIMEOUT_MS, signal: externalSignal, query, ...requestInit } = init ?? {}
   const abortContext = requestAbortContext(externalSignal, timeoutMs)
@@ -385,6 +393,9 @@ export const api = {
     http<ConductorChatMessage>('POST', '/api/conductor/chat', {
       msg,
       role,
+      // One id per logical admission: a retried submit must not admit the
+      // task twice (the engine replays the first terminal answer).
+      operation_id: newOperationId(),
       llm_index: models.llmIndex,
       subagent_llm_index: models.subagentLlmIndex,
       subagent_model_policy: models.subagentModelPolicy,
@@ -403,6 +414,9 @@ export const api = {
     http<ConductorSubagentActionResponse>('POST', `/api/conductor/subagent/${sid}`, {
       action,
       msg,
+      // Hub-side replay for actions that re-open or advance a worker (the
+      // engine's operation cache only covers chat/dispatch).
+      operation_id: newOperationId(),
       llm_index,
       conductor_llm_index: models.llmIndex,
       subagent_llm_index: models.subagentLlmIndex,

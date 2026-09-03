@@ -21,6 +21,7 @@ import logging
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from types import SimpleNamespace
 from typing import Any, Dict, Literal, Optional
 
@@ -28,6 +29,13 @@ from .. import _paths
 
 from .conductor_client import GaConductorClient, GahubProcessManager
 from .conductor_ext_timeout import TimeoutMonitor
+from .conductor_vocabulary import (
+    SUBAGENT_RUNNING,
+    subagent_stage,
+    TERMINAL_WORKFLOW_STATES,
+    WORKER_EVENT_PENDING_REVIEW,
+    WORKER_EVENT_RUNNING,
+)
 from .conductor_workflow import WorkflowTracker
 from .event_bus import bus
 
@@ -188,7 +196,7 @@ class PoolMirror:
     def counts(self) -> tuple[int, int]:
         with self.lock:
             items = list(self._items)
-        running = sum(1 for item in items if item.get("status") == "running")
+        running = sum(1 for item in items if item.get("status") == SUBAGENT_RUNNING)
         return running, max(0, len(items) - running)
 
     def get(self, sid: str) -> Optional[_MirrorState]:
@@ -197,7 +205,15 @@ class PoolMirror:
 
     def snapshot(self) -> list[dict]:
         with self.lock:
-            return [dict(item) for item in self._items]
+            items = [dict(item) for item in self._items]
+        # UI stage decided hub-side (vocabulary); the page only renders it.
+        for item in items:
+            item["stage"] = subagent_stage(
+                status=str(item.get("status") or ""),
+                attempt=int(item.get("attempt") or 1),
+                review_status=str(item.get("review_status") or ""),
+            )
+        return items
 
     def keyinfo_subagent(self, sid: str, msg: str,
                          request_id: Optional[str] = None) -> dict:
@@ -296,8 +312,7 @@ class HubConductorCallbacks:
             return
         tracker = self.service._ensure_workflow_tracker()
         snapshot = tracker.snapshot(request_id)
-        if snapshot is None or snapshot.get("status") in {
-                "completed", "failed", "cancelled", "killed"}:
+        if snapshot is None or snapshot.get("status") in TERMINAL_WORKFLOW_STATES:
             return
         if snapshot.get("subagents") or snapshot.get("item"):
             return
@@ -354,7 +369,7 @@ class HubConductorCallbacks:
     # subagent lifecycle ------------------------------------------------------
     def on_subagent_event(self, agent_id: str, event, payload) -> None:
         name = _event_name(event)
-        if name == "running":
+        if name == WORKER_EVENT_RUNNING:
             return
         if not isinstance(payload, dict):
             payload = dict(getattr(payload, "__dict__", {}) or {})
@@ -381,7 +396,7 @@ class HubConductorCallbacks:
         except Exception:
             # Observer failures must not block the authoritative snapshot push.
             log.exception("subagent event publish failed for %s", name)
-        if name == "pending_review":
+        if name == WORKER_EVENT_PENDING_REVIEW:
             self._maybe_auto_accept(agent_id, payload)
         self.publish_subagent_snapshot()
 
@@ -492,6 +507,10 @@ class ConductorService:
     _lock = threading.Lock()
     # Journal catch-up page size; the engine clamps /journal at 5000.
     _JOURNAL_REPLAY_BATCH = 5000
+    # Hub-side operation replay for worker actions: the engine's operation
+    # cache covers chat/dispatch only, so accept/rework/input retries are
+    # deduplicated here (a replayed action must not wake the worker twice).
+    _ACTION_OPERATION_CACHE_SIZE = 512
 
     def __init__(self):
         # Application shutdown is a terminal lifecycle separate from the
@@ -527,6 +546,11 @@ class ConductorService:
         self.timeout_monitor.start()
         self._relay_stop = threading.Event()
         self._relay_thread: Optional[threading.Thread] = None
+        # Serializes the engine cold start: two concurrent admissions must
+        # not both observe "not started" and both re-relay the stranded set
+        # (each redispatch carries a fresh operation_id, so only this lock
+        # can keep the double relay from reaching the engine).
+        self._cold_start_lock = threading.Lock()
         self._relayed_chat_ids: set[str] = set()
         self._lifecycle_cache: dict = {}
         # Journal replay cursor (P2-A reconcile): seq of the last journal
@@ -927,19 +951,28 @@ class ConductorService:
         self._ensure_relay()
         status = self.client.status()
         if not status.get("started"):
-            self.client.start(llm_index=self._conductor_llm_index)
-            # /start restores only the conductor model; re-push the
-            # full hub-owned snapshot so the subagent policy survives the
-            # engine restart instead of silently resetting to follow_main.
-            self._push_models_to_engine()
-            # Fresh conductor: nothing is in flight on the engine, so stranded
-            # requests can be re-relayed without double-processing. On an
-            # already-running conductor this must NOT run — an admitted
-            # workflow may be mid-turn right now. The caller may also exclude
-            # the request it just admitted (it is about to notify the engine
-            # itself); re-relaying it here duplicated the message.
-            self._redispatch_stranded_workflows(
-                exclude_request_id=exclude_request_id)
+            # Re-check under the cold-start lock: a concurrent admission may
+            # have finished the start + redispatch between our status check
+            # and this line, and a second start would re-relay the stranded
+            # set twice (fresh operation_id each time — no engine dedupe).
+            with self._cold_start_gate():
+                status = self.client.status()
+                if not status.get("started"):
+                    self.client.start(llm_index=self._conductor_llm_index)
+                    # /start restores only the conductor model; re-push the
+                    # full hub-owned snapshot so the subagent policy survives
+                    # the engine restart instead of silently resetting to
+                    # follow_main.
+                    self._push_models_to_engine()
+                    # Fresh conductor: nothing is in flight on the engine, so
+                    # stranded requests can be re-relayed without
+                    # double-processing. On an already-running conductor this
+                    # must NOT run — an admitted workflow may be mid-turn
+                    # right now. The caller may also exclude the request it
+                    # just admitted (it is about to notify the engine itself);
+                    # re-relaying it here duplicated the message.
+                    self._redispatch_stranded_workflows(
+                        exclude_request_id=exclude_request_id)
         self.lifecycle_status()
         return True
 
@@ -1114,6 +1147,40 @@ class ConductorService:
         if cursor is None:
             cursor = self._journal_cursor = {"seq": None, "epoch": None}
         return cursor
+
+    def _cold_start_gate(self) -> threading.Lock:
+        """Backfill for legacy ``object.__new`` test/service instances."""
+        lock = getattr(self, "_cold_start_lock", None)
+        if lock is None:
+            lock = self._cold_start_lock = threading.Lock()
+        return lock
+
+    def _replay_action_operation(self, operation_id: str | None) -> dict | None:
+        """Return the recorded response for a retried worker action, if any."""
+        if not operation_id:
+            return None
+        with self._action_operation_state()[0]:
+            return self._action_operation_state()[1].get(operation_id)
+
+    def _record_action_operation(self, operation_id: str | None, result: dict) -> None:
+        if not operation_id:
+            return
+        lock, cache = self._action_operation_state()
+        with lock:
+            cache.pop(operation_id, None)
+            cache[operation_id] = result
+            while len(cache) > self._ACTION_OPERATION_CACHE_SIZE:
+                cache.popitem(last=False)
+
+    def _action_operation_state(self) -> tuple[threading.Lock, "OrderedDict[str, dict]"]:
+        """Backfill for legacy ``object.__new`` test/service instances."""
+        lock = getattr(self, "_action_operation_lock", None)
+        if lock is None:
+            lock = self._action_operation_lock = threading.Lock()
+        cache = getattr(self, "_action_operations", None)
+        if cache is None:
+            cache = self._action_operations = OrderedDict()
+        return lock, cache
 
     def _replay_journal(self) -> None:
         """Catch-up replay after an SSE (re)connect (P2-A reconcile).
@@ -1389,16 +1456,20 @@ class ConductorService:
         msg: str,
         llm_index: Optional[int],
         *,
-        request_id: str | None,
+        request_id: str | None = None,
         conductor_llm_index: Optional[int],
         subagent_llm_index: Optional[int],
         subagent_model_policy: Optional[SubagentModelPolicy],
+        operation_id: str | None = None,
     ) -> dict:
         """input/rework 共用主体。
 
         两个动作此前是逐字复制的双胞胎（断言/校验/配置/解析/绑定/setdefault
         六段全同）；动作差异只剩 verb 字符串。
         """
+        replayed = self._replay_action_operation(operation_id)
+        if replayed is not None:
+            return replayed
         tracker, models, selected = self._admit_action_models(
             llm_index,
             request_id,
@@ -1418,6 +1489,7 @@ class ConductorService:
             # gahub_app auto-yields the supervisor turn on resume/rework.
         result.setdefault("llm_index", selected)
         result.setdefault("model_policy", models["subagent_model_policy"])
+        self._record_action_operation(operation_id, result)
         return result
 
     def input_subagent(
@@ -1430,6 +1502,7 @@ class ConductorService:
         conductor_llm_index: Optional[int] = None,
         subagent_llm_index: Optional[int] = None,
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
+        operation_id: str | None = None,
     ) -> dict:
         """Resume a stopped worker through the same model-policy boundary."""
         return self._resume_subagent_action(
@@ -1438,11 +1511,12 @@ class ConductorService:
             conductor_llm_index=conductor_llm_index,
             subagent_llm_index=subagent_llm_index,
             subagent_model_policy=subagent_model_policy,
+            operation_id=operation_id,
         )
 
     def accept_subagent(
         self, sid: str, msg: str = "", *, request_id: str | None = None,
-        force: bool = False,
+        force: bool = False, operation_id: str | None = None,
     ) -> dict:
         """Accept a pending worker and advance its request-scoped workflow.
 
@@ -1450,6 +1524,9 @@ class ConductorService:
         deterministic verification verdict is not clean (the UI surfaces the
         evidence before offering it).
         """
+        replayed = self._replay_action_operation(operation_id)
+        if replayed is not None:
+            return replayed
         self._assert_engine_ready()
         tracker = self._ensure_workflow_tracker()
         if request_id is not None and not tracker.has_request(request_id):
@@ -1468,6 +1545,7 @@ class ConductorService:
                 result.setdefault("request_id", owner)
             if transition is not None:
                 self._publish_workflow_transition(transition)
+        self._record_action_operation(operation_id, result)
         return result
 
     def rework_subagent(
@@ -1480,6 +1558,7 @@ class ConductorService:
         conductor_llm_index: Optional[int] = None,
         subagent_llm_index: Optional[int] = None,
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
+        operation_id: str | None = None,
     ) -> dict:
         """Rework a pending worker through the model-policy boundary."""
         return self._resume_subagent_action(
@@ -1488,6 +1567,7 @@ class ConductorService:
             conductor_llm_index=conductor_llm_index,
             subagent_llm_index=subagent_llm_index,
             subagent_model_policy=subagent_model_policy,
+            operation_id=operation_id,
         )
 
     # ===== snapshots & chat product surface =====

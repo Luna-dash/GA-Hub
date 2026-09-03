@@ -7,88 +7,11 @@ import time
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from .conductor_vocabulary import SUBAGENT_RUNNING
 
 log = logging.getLogger(__name__)
 
 Publish = Callable[[str, dict], Any]
-TokenCounter = Callable[[str], int]
-
-
-class OutputBudget:
-    """Bound one subagent's accumulated output without a tokenizer dependency.
-
-    The default counts Unicode code points.  It is intentionally conservative
-    for ordinary English and Chinese text, and callers may inject an exact
-    tokenizer later without changing the orchestration path.
-    """
-
-    MARKER = "[output truncated by Conductor budget]"
-
-    def __init__(
-        self,
-        agent_id: str,
-        *,
-        max_tokens: int = 12_000,
-        max_lines: int = 2_000,
-        token_counter: TokenCounter = len,
-        publish: Publish | None = None,
-    ) -> None:
-        if max_tokens < 1 or max_lines < 1:
-            raise ValueError("output limits must be positive")
-        self.agent_id = agent_id
-        self.max_tokens = max_tokens
-        self.max_lines = max_lines
-        self.token_counter = token_counter
-        self.publish = publish
-        self.output = ""
-        self.truncated = False
-
-    def append(self, chunk: str) -> str:
-        """Append a stream chunk and return the complete bounded output."""
-        if self.truncated or not chunk:
-            return self.output
-
-        candidate = self.output + chunk
-        token_hit = self.token_counter(candidate) > self.max_tokens
-        line_hit = candidate.count("\n") + 1 > self.max_lines
-        if not token_hit and not line_hit:
-            self.output = candidate
-            return self.output
-
-        base = self.output
-        low, high = 0, len(chunk)
-        while low < high:
-            middle = (low + high + 1) // 2
-            trial = base + chunk[:middle]
-            fits_tokens = self.token_counter(trial) <= self.max_tokens
-            fits_lines = trial.count("\n") + 1 <= self.max_lines
-            if fits_tokens and fits_lines:
-                low = middle
-            else:
-                high = middle - 1
-
-        kept = chunk[:low]
-        bounded = base + kept
-        self.output = bounded + self.MARKER
-        self.truncated = True
-        if self.publish is not None:
-            self.publish("conductor:subagent_timeout_output", {
-                "id": self.agent_id,
-                "max_tokens": self.max_tokens,
-                "max_lines": self.max_lines,
-                "estimated_tokens": self.token_counter(bounded),
-                "lines": bounded.count("\n") + 1,
-            })
-        return self.output
-
-    def finish(self, final_output: str) -> str:
-        """Reconcile a final full response with chunks already observed."""
-        if self.truncated:
-            return self.output
-        if final_output.startswith(self.output):
-            return self.append(final_output[len(self.output):])
-        self.output = ""
-        return self.append(final_output)
 
 
 class TimeoutMonitor:
@@ -131,7 +54,7 @@ class TimeoutMonitor:
         live_generations = {
             (str(state.id), int(getattr(state, "active_generation", 0)))
             for state in states
-            if getattr(state, "status", None) == "running"
+            if getattr(state, "status", None) == SUBAGENT_RUNNING
         }
         self._emitted = {
             key for key in self._emitted

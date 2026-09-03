@@ -319,6 +319,7 @@ def test_resume_route_uses_service_policy_boundary(monkeypatch):
             "conductor_llm_index": 1,
             "subagent_llm_index": 5,
             "subagent_model_policy": "locked",
+            "operation_id": None,
         },
     )]
 
@@ -344,7 +345,8 @@ def test_accept_route_forwards_request_and_returns_committed_review(monkeypatch)
 
     assert result["review_status"] == "accepted"
     service.accept_subagent.assert_called_once_with(
-        "worker-1", "verified", request_id="request-1", force=False
+        "worker-1", "verified", request_id="request-1", force=False,
+        operation_id=None,
     )
 
 
@@ -366,7 +368,8 @@ def test_accept_route_forces_verdict_escape_hatch(monkeypatch):
 
     assert result["review_status"] == "accepted"
     service.accept_subagent.assert_called_once_with(
-        "worker-1", "verified by hand", request_id=None, force=True
+        "worker-1", "verified by hand", request_id=None, force=True,
+        operation_id=None,
     )
 
 

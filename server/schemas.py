@@ -525,6 +525,11 @@ class ConductorSubagentAction(BaseModel):
     # Accept escape hatch: the engine refuses plain accept while its
     # deterministic verification verdict is not clean; force is audited.
     force: bool = False
+    # P0 idempotency for actions that re-open or advance a worker (the
+    # engine's own operation cache only covers chat/dispatch): the hub
+    # replays the recorded response for a retried id instead of waking the
+    # worker twice.
+    operation_id: str | None = Field(default=None, max_length=128)
     # Used when input/reply resumes a stopped subagent.
     llm_index: int | None = Field(default=None, ge=0)
     conductor_llm_index: int | None = Field(default=None, ge=0)
@@ -573,6 +578,9 @@ class ConductorSubagent(BaseModel):
     # dispatch response covers the degraded case). None for legacy snapshots.
     llm_index: int | None = None
     request_id: str | None = None
+    # Hub-decided UI stage (conductor_vocabulary.subagent_stage); the page
+    # maps it to label/tone instead of re-deriving tracker semantics.
+    stage: str | None = None
 
 
 class ConductorSubagentListResp(BaseModel):
@@ -596,6 +604,10 @@ class ConductorWorkflow(BaseModel):
     # None while the workflow can still recover; names the terminal
     # transition ("workflow_completed" / "workflow_failed") once closed.
     terminal_event: str | None = None
+    # Hub-decided UI stage (conductor_workflow.workflow_stage): renders the
+    # tracker's own judgement (aggregating / recoverable_failure / ...) so
+    # the page never re-derives state-machine rules.
+    stage: str | None = None
     subagents: dict[str, ConductorWorkflowWorker]
     created_at: float
     completed_at: float | None = None

@@ -591,3 +591,68 @@ def test_ensure_started_excludes_the_just_admitted_request():
         service.ensure_started(exclude_request_id="rid-just-admitted")
 
     rd.assert_called_once_with(exclude_request_id="rid-just-admitted")
+
+
+def test_ensure_started_second_admission_rechecks_under_cold_start_lock():
+    """Two admissions racing a cold start both observe "not started" before
+    either starts the engine. The redispatch carries a fresh operation_id,
+    so the engine cannot dedupe it — the lock's inner re-check is the only
+    thing keeping the stranded set from being re-relayed twice."""
+    service, client = _ensure_started_service(False)
+    client.status.side_effect = [
+        {"started": False},  # caller A: outer check
+        {"started": False},  # caller B: outer check (A has not started yet)
+        {"started": False},  # caller A: re-check inside the lock -> starts
+        {"started": True},   # caller B: re-check inside the lock -> skips
+        {"started": True},   # lifecycle_status
+        {"started": True},   # lifecycle_status
+    ]
+    with patch.object(ConductorService, "_redispatch_stranded_workflows") as rd:
+        service.ensure_started()
+        service.ensure_started()
+
+    client.start.assert_called_once()
+    rd.assert_called_once_with(exclude_request_id=None)
+
+
+def test_ensure_started_cold_start_lock_is_thread_safe():
+    """Real interleaving: N concurrent admissions produce exactly one
+    engine start and exactly one stranded-workflow redispatch."""
+    service, client = _ensure_started_service(False)
+    started_after_engine_start = threading.Event()
+
+    def status():
+        # Start is the point of no return: before it the engine is cold,
+        # after it every caller (outer or re-check) must see "started".
+        if started_after_engine_start.is_set():
+            return {"started": True}
+        return {"started": False}
+
+    client.status.side_effect = lambda: status()
+    start_calls: list[dict] = []
+
+    def fake_start(**kwargs):
+        start_calls.append(kwargs)
+        started_after_engine_start.set()
+
+    client.start.side_effect = fake_start
+    errors: list[Exception] = []
+    gate = threading.Barrier(4, timeout=10)
+
+    with patch.object(ConductorService, "_redispatch_stranded_workflows") as rd:
+        def run():
+            gate.wait()
+            try:
+                service.ensure_started()
+            except Exception as exc:  # pragma: no cover - failure reporting
+                errors.append(exc)
+
+        threads = [threading.Thread(target=run) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+
+    assert errors == []
+    assert len(start_calls) == 1
+    assert rd.call_count == 1

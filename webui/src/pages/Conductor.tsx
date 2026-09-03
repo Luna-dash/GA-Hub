@@ -131,68 +131,62 @@ type SubagentRowControl = {
 
 type SubagentPhase = 'running' | 'reworking' | 'reviewing' | 'accepted' | 'stopped'
 
+// The hub decides each worker's stage (conductor_vocabulary.subagent_stage);
+// this page only maps stage -> label/tone copy.
+const WORKER_STAGE_VIEW: Record<string, { phase: SubagentPhase; label: string; detail: string }> = {
+  running: { phase: 'running', label: '执行中', detail: '子代理正在处理这项任务' },
+  reworking: { phase: 'reworking', label: '返工中', detail: '正在按验收意见重新处理' },
+  reviewing: { phase: 'reviewing', label: '待你验收', detail: '工人已交活，请看右侧卷宗后决定通过或打回' },
+  accepted: { phase: 'accepted', label: '已通过', detail: '结果已通过验收' },
+  stopped: { phase: 'stopped', label: '已停止', detail: '这项任务当前没有继续执行' },
+}
+
 function subagentPhase(sub: ConductorSubagent): {
   phase: SubagentPhase
   label: string
   detail: string
 } {
-  if (sub.status === 'running' && sub.attempt > 1) {
-    return { phase: 'reworking', label: '返工中', detail: '正在按验收意见重新处理' }
-  }
-  if (sub.status === 'running') {
-    return { phase: 'running', label: '执行中', detail: '子代理正在处理这项任务' }
-  }
-  if (sub.review_status === 'accepted') {
-    return { phase: 'accepted', label: '已通过', detail: '结果已通过验收' }
-  }
-  if (sub.review_status === 'pending') {
-    return { phase: 'reviewing', label: '待你验收', detail: '工人已交活，请看右侧卷宗后决定通过或打回' }
-  }
-  return { phase: 'stopped', label: '已停止', detail: '这项任务当前没有继续执行' }
+  return WORKER_STAGE_VIEW[sub.stage ?? 'stopped'] ?? WORKER_STAGE_VIEW.stopped
+}
+
+type WorkflowTone = 'active' | 'review' | 'done' | 'error' | 'idle'
+
+// Terminal stages: nothing further will happen on this workflow.
+const WORKFLOW_STAGE_CLOSED = new Set(['completed', 'failed'])
+// Stages that stall while the conductor itself is stopped.
+const WORKFLOW_STAGE_PAUSABLE = new Set([
+  'planning', 'supervising', 'reworking', 'awaiting_review', 'aggregating',
+])
+
+const WORKFLOW_STAGE_VIEW: Record<string, { label: string; detail: string; tone: WorkflowTone }> = {
+  planning: { label: '正在规划', detail: 'Conductor 正在理解需求并准备分派。', tone: 'active' },
+  supervising: { label: '执行中', detail: 'Conductor 已完成分派，子代理正在处理。', tone: 'active' },
+  reworking: { label: '返工中', detail: '未通过的部分已交回子代理继续处理。', tone: 'active' },
+  awaiting_review: { label: '待你验收', detail: '子代理已交活，请查看右侧卷宗后决定通过或打回。', tone: 'review' },
+  aggregating: { label: '正在汇总', detail: '子任务均已通过，Conductor 正在整理最终交付。', tone: 'review' },
+  recoverable_failure: { label: '子代理失败', detail: '子代理处理失败，Conductor 正在决定返工或补派。', tone: 'active' },
+  completed: { label: '已完成', detail: '所有子任务已通过验收，交付结果已发送。', tone: 'done' },
+  failed: { label: '执行失败', detail: '工作流未能完成，原因已写入本轮对话。', tone: 'error' },
 }
 
 function workflowPresentation(
   workflow: ConductorWorkflow | undefined,
-  workers: ConductorSubagent[],
   started = true,
-): { label: string; detail: string; tone: 'active' | 'review' | 'done' | 'error' | 'idle' } {
+): { label: string; detail: string; tone: WorkflowTone } {
   if (!workflow) {
     return { label: '等待任务', detail: '发送任务后，这里会显示分派和执行进度。', tone: 'idle' }
   }
-  if (!started && !['completed', 'failed', 'cancelled', 'killed'].includes(workflow.status)) {
+  const view = WORKFLOW_STAGE_VIEW[workflow.stage ?? 'planning'] ?? WORKFLOW_STAGE_VIEW.planning
+  if (!started && WORKFLOW_STAGE_PAUSABLE.has(workflow.stage ?? '')) {
     return { label: '已暂停', detail: 'Conductor 已停止；点击“启动 / 恢复”后可继续处理。', tone: 'idle' }
   }
-  if (workflow.status === 'completed') {
-    return { label: '已完成', detail: '所有子任务已通过验收，交付结果已发送。', tone: 'done' }
+  // Surface the tracker-persisted reason directly: a page opened after the
+  // failure never saw the live transition, so the reason must come from the
+  // workflow snapshot itself.
+  if (view === WORKFLOW_STAGE_VIEW.failed && workflow.error) {
+    return { ...view, detail: `失败原因：${workflow.error}` }
   }
-  if (['failed', 'cancelled', 'killed'].includes(workflow.status)) {
-    // A worker failure is recoverable (rework or a fresh dispatch can still
-    // finish the workflow); only terminal_event marks a closed workflow.
-    if (workflow.status === 'failed' && !workflow.terminal_event) {
-      return { label: '子代理失败', detail: '子代理处理失败，Conductor 正在决定返工或补派。', tone: 'active' }
-    }
-    // Surface the tracker-persisted reason directly: a page opened after the
-    // failure never saw the live transition, so the reason must come from the
-    // workflow snapshot itself.
-    if (workflow.error) {
-      return { label: '执行失败', detail: `失败原因：${workflow.error}`, tone: 'error' }
-    }
-    return { label: '执行失败', detail: '工作流未能完成，原因已写入本轮对话。', tone: 'error' }
-  }
-  const accepted = workers.filter((sub) => sub.review_status === 'accepted').length
-  if (workers.length > 0 && accepted === workers.length) {
-    return { label: '正在汇总', detail: '子任务均已通过，Conductor 正在整理最终交付。', tone: 'review' }
-  }
-  if (workflow.status === 'reworking' || workers.some((sub) => sub.status === 'running' && sub.attempt > 1)) {
-    return { label: '返工中', detail: '未通过的部分已交回子代理继续处理。', tone: 'active' }
-  }
-  if (workflow.status === 'awaiting_review') {
-    return { label: '待你验收', detail: '子代理已交活，请查看右侧卷宗后决定通过或打回。', tone: 'review' }
-  }
-  if (workflow.status === 'supervising') {
-    return { label: '执行中', detail: 'Conductor 已完成分派，子代理正在处理。', tone: 'active' }
-  }
-  return { label: '正在规划', detail: 'Conductor 正在理解需求并准备分派。', tone: 'active' }
+  return view
 }
 
 function isNearScrollBottom(el: HTMLDivElement | null): boolean {
@@ -545,7 +539,7 @@ export default function Conductor() {
   const workflows = workflowSnapshot?.items ?? []
   const currentWorkflow = useMemo(() => {
     const active = [...workflows].reverse().find((workflow) => (
-      !['completed', 'failed', 'cancelled', 'killed'].includes(workflow.status)
+      !WORKFLOW_STAGE_CLOSED.has(workflow.stage ?? '')
     ))
     return active ?? workflows.at(-1)
   }, [workflows])
@@ -567,7 +561,7 @@ export default function Conductor() {
     if (!currentWorkflow) return chatMessages
     return chatMessages.filter((item) => item.request_id === currentWorkflow.request_id)
   }, [chatMessages, currentWorkflow])
-  const workflowView = workflowPresentation(currentWorkflow, workflowSubagents, status?.started ?? false)
+  const workflowView = workflowPresentation(currentWorkflow, status?.started ?? false)
   const acceptedCount = workflowSubagents.filter((sub) => sub.review_status === 'accepted').length
   const activeSubagents = workflowSubagents.filter((sub) => sub.status === 'running')
   const pendingReview = workflowSubagents.filter(isReviewable)

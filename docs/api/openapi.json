@@ -5865,6 +5865,17 @@
               }
             ],
             "title": "Request Id"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
           }
         },
         "additionalProperties": true,
@@ -5917,6 +5928,18 @@
             "type": "boolean",
             "title": "Force",
             "default": false
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id"
           },
           "llm_index": {
             "anyOf": [
@@ -6123,6 +6146,17 @@
               }
             ],
             "title": "Terminal Event"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
           },
           "subagents": {
             "additionalProperties": {

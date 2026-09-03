@@ -6,6 +6,42 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .conductor_vocabulary import (
+    CLOSED_WORKER_STATES,
+    COMPLETION_WORKER_EVENTS,
+    RECOVERABLE_FAILURE_STATE,
+    RUNNING_WORKER_EVENTS,
+    STAGE_AGGREGATING,
+    STAGE_AWAITING_REVIEW,
+    STAGE_COMPLETED,
+    STAGE_FAILED,
+    STAGE_PLANNING,
+    STAGE_RECOVERABLE_FAILURE,
+    STAGE_REWORKING,
+    STAGE_SUPERVISING,
+    SUBAGENT_RUNNING,
+    TERMINAL_FAILURE_EVENTS,
+    TERMINAL_WORKFLOW_STATES,
+    WORKER_ACCEPTED,
+    WORKER_EVENT_ACCEPTED,
+    WORKER_FAILED,
+    WORKER_PENDING,
+    WORKER_REJECTED,
+    WORKER_TIMEOUT,
+    WORKER_EVENT_FAILED,
+    WORKER_EVENT_REJECTED,
+    WORKER_EVENT_TIMEOUT_TOTAL,
+    WORKER_RUNNING,
+    WORKER_STATES,
+    WORKFLOW_ADMITTED,
+    WORKFLOW_AWAITING_REVIEW,
+    WORKFLOW_COMPLETED,
+    WORKFLOW_FAILED,
+    WORKFLOW_REWORKING,
+    WORKFLOW_SUPERVISING,
+    WORKFLOW_STATES,
+)
+
 
 Clock = Callable[[], float]
 
@@ -13,13 +49,13 @@ Clock = Callable[[], float]
 @dataclass
 class WorkerState:
     generation: int
-    state: str = "running"
+    state: str = WORKER_RUNNING
 
 
 @dataclass
 class WorkflowState:
     request_id: str
-    state: str = "admitted"
+    state: str = WORKFLOW_ADMITTED
     workers: dict[str, WorkerState] = field(default_factory=dict)
     final_item: dict[str, Any] | None = None
     created_at: float = 0.0
@@ -33,18 +69,35 @@ class WorkflowState:
     failed_agent_id: str | None = None
 
 
+def workflow_stage(workflow: WorkflowState) -> str:
+    """Derive the UI stage of a workflow (the page only renders it).
+
+    Priority mirrors what the page must show, most specific first: a closed
+    workflow is done or dead; a ``failed`` state without a terminal event is
+    a recoverable worker failure; an all-accepted round is being finalized;
+    a rework attempt outranks siblings waiting for review.
+    """
+    if workflow.terminal_event is not None:
+        return (STAGE_COMPLETED if workflow.state == WORKFLOW_COMPLETED
+                else STAGE_FAILED)
+    if workflow.state == RECOVERABLE_FAILURE_STATE:
+        return STAGE_RECOVERABLE_FAILURE
+    workers = workflow.workers.values()
+    if workers and all(w.state == WORKER_ACCEPTED for w in workers):
+        return STAGE_AGGREGATING
+    if (workflow.state == WORKFLOW_REWORKING
+            or any(w.generation > 1 and w.state == WORKER_RUNNING
+                   for w in workers)):
+        return STAGE_REWORKING
+    if workflow.state == WORKFLOW_AWAITING_REVIEW:
+        return STAGE_AWAITING_REVIEW
+    if workflow.state == WORKFLOW_SUPERVISING:
+        return STAGE_SUPERVISING
+    return STAGE_PLANNING
+
+
 class WorkflowTracker:
     """Track explicit request-to-worker ownership and terminal workflow events."""
-
-    # Only deliberate cancellation / reaping closes the whole workflow. A
-    # worker ``failed`` or ``timeout_total`` stays recoverable: the engine
-    # allows rework (a fresh attempt) or a replacement dispatch, so the
-    # workflow must remain open or the recovery would be silently dropped.
-    _TERMINAL_FAILURE_EVENTS = frozenset({"cancelled", "killed"})
-    # Review verdicts that close a worker for good. ``rejected`` refused the
-    # delivery without a new attempt; the request still needs delivery via a
-    # fresh dispatch, but the rejected worker no longer blocks the final.
-    _CLOSED_WORKER_STATES = frozenset({"accepted", "rejected"})
 
     def __init__(self, *, clock: Clock = time.time, max_workflows: int = 256) -> None:
         self._clock = clock
@@ -83,9 +136,9 @@ class WorkflowTracker:
             # Preserve its pending/accepted state instead of resetting it.
             if current is None or generation > current.generation:
                 workflow.workers[agent_id] = WorkerState(generation=generation)
-                workflow.state = "supervising"
-            elif current.state == "running":
-                workflow.state = "supervising"
+                workflow.state = WORKFLOW_SUPERVISING
+            elif current.state == WORKER_RUNNING:
+                workflow.state = WORKFLOW_SUPERVISING
             return self._complete_if_ready(workflow)
 
     def record_subagent_event(
@@ -130,40 +183,41 @@ class WorkflowTracker:
                 return owner, None
             elif generation is not None and generation > worker.generation:
                 worker.generation = generation
-                worker.state = "running"
+                worker.state = WORKER_RUNNING
 
             if workflow.terminal_event is not None:
                 return owner, None
-            if event in {"spawned", "started", "running", "reworked"}:
-                worker.state = "running"
-                workflow.state = "reworking" if event == "reworked" else "supervising"
-            elif event in {"completed", "pending_review"}:
-                worker.state = "pending"
-                workflow.state = "awaiting_review"
-            elif event == "accepted":
-                worker.state = "accepted"
-            elif event == "rejected":
+            if event in RUNNING_WORKER_EVENTS:
+                worker.state = WORKER_RUNNING
+                workflow.state = (WORKFLOW_REWORKING
+                                  if event == "reworked" else WORKFLOW_SUPERVISING)
+            elif event in COMPLETION_WORKER_EVENTS:
+                worker.state = WORKER_PENDING
+                workflow.state = WORKFLOW_AWAITING_REVIEW
+            elif event == WORKER_EVENT_ACCEPTED:
+                worker.state = WORKER_ACCEPTED
+            elif event == WORKER_EVENT_REJECTED:
                 # Terminal verdict for THIS worker only: the delivery was
                 # refused without a new attempt. The workflow stays open until
                 # a fresh dispatch (or an already-accepted sibling) delivers.
-                worker.state = "rejected"
-            elif event == "timeout_total":
+                worker.state = WORKER_REJECTED
+            elif event == WORKER_EVENT_TIMEOUT_TOTAL:
                 # The watchdog killed the attempt, but the engine keeps the
                 # worker reviewable as "timeout" (rework opens a new attempt),
                 # so the workflow waits for the supervisor's decision.
-                worker.state = "timeout"
-                workflow.state = "awaiting_review"
-            elif event == "failed":
+                worker.state = WORKER_TIMEOUT
+                workflow.state = WORKFLOW_AWAITING_REVIEW
+            elif event == WORKER_EVENT_FAILED:
                 # A dispatch failure is recoverable (engine rework or a fresh
                 # dispatch for the same goal); only user cancellation and
                 # idle reaping close the workflow outright.
-                worker.state = "failed"
-                workflow.state = "failed"
+                worker.state = WORKER_FAILED
+                workflow.state = WORKFLOW_FAILED
                 return owner, (
                     "conductor:worker_failed",
                     self._payload(workflow, error=error, failed_agent_id=agent_id),
                 )
-            elif event in self._TERMINAL_FAILURE_EVENTS:
+            elif event in TERMINAL_FAILURE_EVENTS:
                 worker.state = event
                 workflow.state = event
                 workflow.completed_at = self._clock()
@@ -203,7 +257,7 @@ class WorkflowTracker:
             workflow = self._workflows.get(request_id)
             if workflow is None or workflow.terminal_event is not None:
                 return None
-            workflow.state = "failed"
+            workflow.state = WORKFLOW_FAILED
             workflow.completed_at = self._clock()
             workflow.terminal_event = "workflow_failed"
             workflow.phase = phase or None
@@ -244,7 +298,7 @@ class WorkflowTracker:
                     workflow
                     for workflow in self._workflows.values()
                     if workflow.terminal_event is None
-                    and workflow.state == "admitted"
+                    and workflow.state == WORKFLOW_ADMITTED
                     and not workflow.workers
                 ),
                 key=lambda workflow: workflow.created_at,
@@ -266,10 +320,10 @@ class WorkflowTracker:
             transitions: list[tuple[str, dict[str, Any]]] = []
             for workflow in list(self._workflows.values()):
                 if (workflow.terminal_event is not None
-                        or workflow.state != "admitted"
+                        or workflow.state != WORKFLOW_ADMITTED
                         or workflow.workers):
                     continue
-                workflow.state = "failed"
+                workflow.state = WORKFLOW_FAILED
                 workflow.completed_at = self._clock()
                 workflow.terminal_event = "workflow_failed"
                 workflow.phase = "stopped_by_user"
@@ -301,7 +355,7 @@ class WorkflowTracker:
         open_workers = [
             agent_id
             for agent_id, worker in workflow.workers.items()
-            if worker.state not in WorkflowTracker._CLOSED_WORKER_STATES
+            if worker.state not in CLOSED_WORKER_STATES
         ]
         if open_workers:
             detail = ", ".join(
@@ -313,7 +367,7 @@ class WorkflowTracker:
                 f"rejected (open: {detail})"
             )
         if not any(
-            worker.state == "accepted" for worker in workflow.workers.values()
+            worker.state == WORKER_ACCEPTED for worker in workflow.workers.values()
         ):
             raise ValueError(
                 "cannot finalize without at least one accepted subagent"
@@ -345,15 +399,15 @@ class WorkflowTracker:
         if workflow.terminal_event is not None or workflow.final_item is None:
             return None
         if workflow.workers and any(
-            worker.state not in WorkflowTracker._CLOSED_WORKER_STATES
+            worker.state not in CLOSED_WORKER_STATES
             for worker in workflow.workers.values()
         ):
             return None
         if workflow.workers and not any(
-            worker.state == "accepted" for worker in workflow.workers.values()
+            worker.state == WORKER_ACCEPTED for worker in workflow.workers.values()
         ):
             return None
-        workflow.state = "completed"
+        workflow.state = WORKFLOW_COMPLETED
         workflow.completed_at = self._clock()
         workflow.terminal_event = "workflow_completed"
         return self._payload(workflow)
@@ -370,6 +424,8 @@ class WorkflowTracker:
         payload: dict[str, Any] = {
             "request_id": workflow.request_id,
             "status": workflow.state,
+            # UI stage decided by the tracker; the page only renders it.
+            "stage": workflow_stage(workflow),
             # None while the workflow can still recover (worker failure,
             # rework, a fresh dispatch); set once it is terminal.
             "terminal_event": workflow.terminal_event,

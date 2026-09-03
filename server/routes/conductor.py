@@ -261,6 +261,7 @@ async def subagent_action(
             body.msg,
             request_id=body.request_id,
             force=body.force,
+            operation_id=body.operation_id,
         )
         if "error" in result:
             # completion_unverified must carry the verification evidence the
@@ -277,6 +278,7 @@ async def subagent_action(
             conductor_llm_index=body.conductor_llm_index,
             subagent_llm_index=body.subagent_llm_index,
             subagent_model_policy=body.subagent_model_policy,
+            operation_id=body.operation_id,
         )
         if "error" in result:
             raise HTTPException(409, result["error"])
@@ -293,6 +295,7 @@ async def subagent_action(
             conductor_llm_index=body.conductor_llm_index,
             subagent_llm_index=body.subagent_llm_index,
             subagent_model_policy=body.subagent_model_policy,
+            operation_id=body.operation_id,
         )
         result["instruction"] = INSTR_DISPATCHED
         return result

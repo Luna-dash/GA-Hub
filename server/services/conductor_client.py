@@ -340,12 +340,6 @@ class GaConductorClient:
                                      "limit": int(limit)})
 
     # -- models ----------------------------------------------------------------
-    def llms(self) -> list[dict]:
-        return self._request("GET", "/llms").get("llms", [])
-
-    def set_conductor_llm(self, index: int) -> dict:
-        return self._request("PUT", "/conductor/llm", json_body={"index": int(index)})
-
     def push_models(self, *, conductor_llm_index=None, subagent_llm_index=None,
                     subagent_model_policy=None, preferred_llm_index=None,
                     clear_subagent_llm: bool = False) -> dict:
@@ -432,9 +426,6 @@ class GaConductorClient:
         if force:
             body["force"] = True
         return self._request("POST", f"/subagent/{sid}", json_body=body)
-
-    def get_subagents(self) -> list[dict]:
-        return self._request("GET", "/subagent").get("items", [])
 
     def get_subagent(self, sid: str, max_len: int = 5000) -> dict:
         return self._request("GET", f"/subagent/{sid}", params={"max_len": max_len})

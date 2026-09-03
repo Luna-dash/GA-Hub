@@ -246,6 +246,7 @@ describe('Conductor chat scroll restoration', () => {
       items: [{
         request_id: 'request-1',
         status: 'awaiting_review',
+        stage: 'reworking',
         subagents: {
           running: { generation: 1, state: 'running' },
           reworking: { generation: 2, state: 'running' },
@@ -272,25 +273,25 @@ describe('Conductor chat scroll restoration', () => {
           id: 'running', prompt: '扫描主要性能瓶颈', reply: '', status: 'running',
           created_at: 1, updated_at: 1, review_status: 'none', review_note: '',
           attempt: 1, completed_at: null, accepted_at: null, generation: 1,
-          request_id: 'request-1',
+          request_id: 'request-1', stage: 'running',
         },
         {
           id: 'reworking', prompt: '补充基准测试证据', reply: '', status: 'running',
           created_at: 2, updated_at: 2, review_status: 'none', review_note: '补充测试',
           attempt: 2, completed_at: null, accepted_at: null, generation: 2,
-          request_id: 'request-1',
+          request_id: 'request-1', stage: 'reworking',
         },
         {
           id: 'reviewing', prompt: '检查桌面启动流程', reply: 'done', status: 'stopped',
           created_at: 3, updated_at: 3, review_status: 'pending', review_note: '',
           attempt: 1, completed_at: 3, accepted_at: null, generation: 1,
-          request_id: 'request-1',
+          request_id: 'request-1', stage: 'reviewing',
         },
         {
           id: 'accepted', prompt: '验证历史会话加载速度', reply: 'done', status: 'stopped',
           created_at: 4, updated_at: 4, review_status: 'accepted', review_note: '',
           attempt: 1, completed_at: 4, accepted_at: 4, generation: 1,
-          request_id: 'request-1',
+          request_id: 'request-1', stage: 'accepted',
         },
       ],
     })
@@ -446,6 +447,7 @@ describe('Conductor chat scroll restoration', () => {
       items: [{
         request_id: 'request-1',
         status: 'awaiting_review',
+        stage: 'awaiting_review',
         subagents: { reviewing: { generation: 1, state: 'pending' } },
         created_at: 1,
         completed_at: null,
@@ -456,7 +458,7 @@ describe('Conductor chat scroll restoration', () => {
         id: 'reviewing', prompt: '检查桌面启动流程', reply: 'done', status: 'stopped',
         created_at: 3, updated_at: 3, review_status: 'pending', review_note: '',
         attempt: 1, completed_at: 3, accepted_at: null, generation: 1,
-        request_id: 'request-1',
+        request_id: 'request-1', stage: 'reviewing',
       }],
     })
   }
@@ -480,6 +482,7 @@ describe('Conductor chat scroll restoration', () => {
       items: [{
         request_id: 'request-1',
         status: 'awaiting_review',
+        stage: 'awaiting_review',
         subagents: { reviewing: { generation: 1, state: 'pending' } },
         created_at: 1,
         completed_at: null,
@@ -493,7 +496,7 @@ describe('Conductor chat scroll restoration', () => {
         status: 'stopped',
         created_at: 3, updated_at: 3, review_status: 'pending', review_note: '',
         attempt: 1, completed_at: 3, accepted_at: null, generation: 1,
-        request_id: 'request-1',
+        request_id: 'request-1', stage: 'reviewing',
         done_marker: true,
         deliverables_missing: [],
         deliverables_stale: [],
@@ -600,6 +603,7 @@ describe('Conductor chat scroll restoration', () => {
       items: [{
         request_id: 'request-1',
         status: 'supervising',
+        stage: 'supervising',
         subagents: { live: { generation: 1, state: 'running' } },
         created_at: 1,
         completed_at: null,
@@ -617,7 +621,7 @@ describe('Conductor chat scroll restoration', () => {
         id: 'live', prompt: '扫描主要性能瓶颈', reply: '', status: 'running',
         created_at: 1, updated_at: 1, review_status: 'none', review_note: '',
         attempt: 1, completed_at: null, accepted_at: null, generation: 1,
-        request_id: 'request-1',
+        request_id: 'request-1', stage: 'running',
       }],
     })
     renderPage()
@@ -632,6 +636,7 @@ describe('Conductor chat scroll restoration', () => {
       items: [{
         request_id: 'request-1',
         status: 'supervising',
+        stage: 'supervising',
         subagents: { live: { generation: 1, state: 'running' } },
         created_at: 1,
         completed_at: null,
@@ -642,7 +647,7 @@ describe('Conductor chat scroll restoration', () => {
         id: 'live', prompt: '扫描主要性能瓶颈', reply: '', status: 'running',
         created_at: 1, updated_at: 1, review_status: 'none', review_note: '',
         attempt: 1, completed_at: null, accepted_at: null, generation: 1,
-        request_id: 'request-1',
+        request_id: 'request-1', stage: 'running',
       }],
     })
     mocks.conductorSubagentAction.mockResolvedValue({ id: 'live', status: 'stopped' })
@@ -741,6 +746,7 @@ describe('Conductor chat scroll restoration', () => {
     return {
       request_id: 'request-1',
       status: 'failed',
+      stage: terminalEvent ? 'failed' : 'recoverable_failure',
       terminal_event: terminalEvent,
       subagents: { worker: { generation: 1, state: 'failed' } },
       created_at: 1,
@@ -757,7 +763,7 @@ describe('Conductor chat scroll restoration', () => {
         id: 'worker', prompt: '生成验收报告', reply: '', status: 'stopped',
         created_at: 1, updated_at: 1, review_status: 'none', review_note: '',
         attempt: 1, completed_at: 1, accepted_at: null, generation: 1,
-        request_id: 'request-1',
+        request_id: 'request-1', stage: 'stopped',
       }],
     })
 

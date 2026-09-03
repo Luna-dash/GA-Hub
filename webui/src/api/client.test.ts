@@ -201,15 +201,20 @@ describe('api request failure handling', () => {
     const chatMessage = '请规划中文任务 🚀'
     await api.conductorSendChat(chatMessage, 'user', models)
 
-    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/conductor/chat', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({
-        msg: chatMessage,
-        role: 'user',
-        llm_index: 1,
-        subagent_llm_index: 5,
-        subagent_model_policy: 'locked',
-      }),
-    }))
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [, init] = fetchMock.mock.calls[0]
+    expect(init.method).toBe('POST')
+    const body = JSON.parse(init.body)
+    expect(body).toMatchObject({
+      msg: chatMessage,
+      role: 'user',
+      llm_index: 1,
+      subagent_llm_index: 5,
+      subagent_model_policy: 'locked',
+    })
+    // One id per logical admission (P0 idempotency): a retried submit must
+    // carry one so the engine replays instead of double-admitting.
+    expect(typeof body.operation_id).toBe('string')
+    expect(body.operation_id.length).toBeGreaterThan(0)
   })
 })
