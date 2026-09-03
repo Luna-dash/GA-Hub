@@ -10,7 +10,6 @@ export function RuntimeEffects() {
   const queryClient = useQueryClient()
   const addChatMessage = useConductorStore((state) => state.addChatMessage)
   const replaceSubagents = useConductorStore((state) => state.replaceSubagents)
-  const addLogItem = useConductorStore((state) => state.addLogItem)
   const clearConductor = useConductorStore((state) => state.clear)
   useDocumentTitle()
   useDesktopNotifyEffects()
@@ -25,10 +24,7 @@ export function RuntimeEffects() {
     if (event.topic === 'conductor:subagents' && event.payload.items) {
       replaceSubagents(event.payload.items)
     }
-    if (event.topic === 'conductor:log' && event.payload.item) {
-      addLogItem(event.payload.item)
-    }
-  }), [addChatMessage, addLogItem, replaceSubagents])
+  }), [addChatMessage, replaceSubagents])
 
   useEffect(() => hubEventClient.subscribeControl((control) => {
     if (control.type === 'resync_required') {

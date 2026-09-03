@@ -3,13 +3,11 @@
 // EventBus topics:
 //   conductor:chat       { item: ConductorChatMessage }
 //   conductor:subagents  { items: ConductorSubagent[] }
-//   conductor:log        { item: ConductorLogItem }
 
 import { create } from 'zustand'
 import type {
   ConductorChatMessage,
   ConductorSubagent,
-  ConductorLogItem,
 } from '@/api/types'
 
 interface ConductorState {
@@ -17,15 +15,10 @@ interface ConductorState {
   subagents: ConductorSubagent[]
   subagentsRevision: number
   generation: number
-  log: ConductorLogItem[]
   addChatMessage: (msg: ConductorChatMessage) => void
-  mergeChatMessages: (msgs: ConductorChatMessage[]) => void
   hydrateChatMessages: (msgs: ConductorChatMessage[], generation: number) => void
   replaceSubagents: (items: ConductorSubagent[]) => void
   hydrateSubagents: (items: ConductorSubagent[], expectedRevision: number) => void
-  addLogItem: (item: ConductorLogItem) => void
-  mergeLogItems: (items: ConductorLogItem[]) => void
-  hydrateLogItems: (items: ConductorLogItem[], generation: number) => void
   clear: () => void
 }
 
@@ -54,17 +47,10 @@ export const useConductorStore = create<ConductorState>((set) => ({
   subagents: [],
   subagentsRevision: 0,
   generation: 0,
-  log: [],
 
   addChatMessage: (msg) =>
     set((state) => {
       const chatMessages = mergeTimeline(state.chatMessages, [msg], 200)
-      return chatMessages === state.chatMessages ? state : { chatMessages }
-    }),
-
-  mergeChatMessages: (msgs) =>
-    set((state) => {
-      const chatMessages = mergeTimeline(state.chatMessages, msgs, 200)
       return chatMessages === state.chatMessages ? state : { chatMessages }
     }),
 
@@ -88,30 +74,10 @@ export const useConductorStore = create<ConductorState>((set) => ({
     }
   }),
 
-  addLogItem: (item) =>
-    set((state) => {
-      const log = mergeTimeline(state.log, [item], 50)
-      return log === state.log ? state : { log }
-    }),
-
-  mergeLogItems: (items) =>
-    set((state) => {
-      const log = mergeTimeline(state.log, items, 50)
-      return log === state.log ? state : { log }
-    }),
-
-  hydrateLogItems: (items, generation) =>
-    set((state) => {
-      if (state.generation !== generation) return state
-      const log = mergeTimeline(state.log, items, 50)
-      return log === state.log ? state : { log }
-    }),
-
   clear: () => set((state) => ({
     chatMessages: [],
     subagents: [],
     subagentsRevision: state.subagentsRevision + 1,
     generation: state.generation + 1,
-    log: [],
   })),
 }))

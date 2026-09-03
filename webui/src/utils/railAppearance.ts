@@ -1,4 +1,6 @@
-export const RAIL_TITLE_SCALE_KEY = 'gahub.rail-title-scale'
+import { storageKeys } from '@/config/storageKeys'
+
+export const RAIL_TITLE_SCALE_KEY = storageKeys.railTitleScale
 export const RAIL_TITLE_SCALE_EVENT = 'gahub:rail-title-scale'
 export const RAIL_TITLE_SCALE_DEFAULT = 100
 // 200px 栏宽下默认字号对长标题偏大，量程以缩小为主

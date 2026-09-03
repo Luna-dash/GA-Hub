@@ -1,4 +1,6 @@
-export const CHAT_FONT_SCALE_KEY = 'gahub.chat-font-scale'
+import { storageKeys } from '@/config/storageKeys'
+
+export const CHAT_FONT_SCALE_KEY = storageKeys.chatFontScale
 export const CHAT_FONT_SCALE_EVENT = 'gahub:chat-font-scale'
 export const CHAT_FONT_SCALE_DEFAULT = 100
 export const CHAT_FONT_SCALE_MIN = 75

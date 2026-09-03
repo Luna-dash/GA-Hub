@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { llmIndexForKey, resolveMainLlmKey, resolveSubagentLlmKey, type LlmIdentity } from '@/utils/llm'
+import { storageKeys } from '@/config/storageKeys'
 
-export const MAIN_LLM_PREFERENCE_KEY = 'gahub.modelSelection.mainLlmKey.v1'
-export const SUBAGENT_LLM_PREFERENCE_KEY = 'gahub.modelSelection.subagentLlmKey.v1'
+export const MAIN_LLM_PREFERENCE_KEY = storageKeys.modelSelectionMainLlm
+export const SUBAGENT_LLM_PREFERENCE_KEY = storageKeys.modelSelectionSubagentLlm
 
 function readPreference(key: string): string | null {
   try {

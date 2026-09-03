@@ -1,3 +1,5 @@
+import { storageKeys } from '@/config/storageKeys'
+
 export interface ChatPerformanceSample {
   at: number
   sessionId: string | null
@@ -33,7 +35,7 @@ export function hasChatPerformanceQuery(search: string): boolean {
 export function isChatPerformanceEnabled(): boolean {
   if (import.meta.env.DEV) return true
   try {
-    return window.localStorage.getItem('gahub.chatPerformance') === '1'
+    return window.localStorage.getItem(storageKeys.chatPerformance) === '1'
       || hasChatPerformanceQuery(window.location.search)
   } catch {
     return false

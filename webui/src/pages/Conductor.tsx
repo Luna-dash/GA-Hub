@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { api, type ConductorSubagentModelPolicy } from '@/api/client'
+import { storageKeys } from '@/config/storageKeys'
 import { useConductorStore } from '@/stores/conductorStore'
 import type {
   ConductorSubagent,
@@ -19,7 +20,7 @@ import { toast } from '@/stores/toastStore'
 const scrollMemory: { chatTop: number | null } = {
   chatTop: null,
 }
-const SUBAGENT_MODEL_LOCK_KEY = 'gahub.conductor.subagentModelLocked.v1'
+const SUBAGENT_MODEL_LOCK_KEY = storageKeys.conductorSubagentModelLocked
 
 function readSubagentModelLock(): boolean {
   try {

@@ -1,4 +1,5 @@
 import { api } from '@/api/client'
+import { storageKeys } from '@/config/storageKeys'
 
 export type NavIconName =
   | 'dashboard' | 'chat' | 'conversations' | 'memory'
@@ -21,7 +22,7 @@ export const NAV_ITEMS: NavItem[] = [
 ]
 
 export const NAV_PREFERENCES_EVENT = 'gahub:nav-preferences'
-const STORAGE_KEY = 'gahub.nav.preferences.v1'
+const STORAGE_KEY = storageKeys.navPreferences
 
 export const defaultNavPreferences = (): NavPreference[] => NAV_ITEMS.map(({ id }) => ({ id, visible: true }))
 

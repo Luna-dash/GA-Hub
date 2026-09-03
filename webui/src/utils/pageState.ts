@@ -4,8 +4,9 @@
 // an in-module cache (state survives route unmount/remount) plus
 // sessionStorage (state survives full reloads within the browser session).
 import { useState, type SetStateAction } from 'react'
+import { pageStatePrefix } from '@/config/storageKeys'
 
-const PREFIX = 'gahub.pageState.v1:'
+const PREFIX = pageStatePrefix
 const cache = new Map<string, unknown>()
 
 export function readPageState<T>(key: string, initial: T): T {

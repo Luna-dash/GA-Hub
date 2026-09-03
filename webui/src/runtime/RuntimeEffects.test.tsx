@@ -89,12 +89,9 @@ describe('RuntimeEffects', () => {
     const onEvent = mocks.subscribe.mock.calls[0][1] as (event: unknown) => void
     const onControl = mocks.subscribeControl.mock.calls[0][0] as (control: unknown) => void
     onEvent({ topic: 'conductor:chat', payload: { item: { id: 'chat-1', role: 'user', msg: 'hi', ts: 1 } } })
-    onEvent({ topic: 'conductor:log', payload: { item: { id: 'log-1', ts: 1, event: 'chat', turn: null, text: 'hi' } } })
     expect(useConductorStore.getState().chatMessages).toHaveLength(1)
-    expect(useConductorStore.getState().log).toHaveLength(1)
 
     onControl({ type: 'resync_required', reason: 'server_restarted' })
     expect(useConductorStore.getState().chatMessages).toEqual([])
-    expect(useConductorStore.getState().log).toEqual([])
   })
 })

@@ -8,6 +8,7 @@ import 'katex/dist/katex.min.css'
 import { applyTheme, loadInitialTheme } from './stores/themeStore'
 import { installExternalLinkInterceptor } from './utils/openExternal'
 import { DesktopRuntimeGate } from './runtime/DesktopRuntimeGate'
+import { storageKeys } from './config/storageKeys'
 
 // Apply the saved theme synchronously *before* React mounts so the first
 // paint matches user preference (no flash of dark on light-preferring
@@ -17,7 +18,7 @@ applyTheme(loadInitialTheme())
 // A production rebuild replaces Vite's hashed lazy-route chunks. An already
 // open desktop window can still reference the previous filenames; when that
 // happens, reload the no-store index once so its module map matches dist.
-const CHUNK_RELOAD_KEY = 'ga-hub:chunk-reload-at'
+const CHUNK_RELOAD_KEY = storageKeys.chunkReloadAt
 window.addEventListener('vite:preloadError', (event) => {
   event.preventDefault()
   const now = Date.now()

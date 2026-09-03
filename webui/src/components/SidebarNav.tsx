@@ -9,6 +9,7 @@ import {
   type NavIconName,
   type NavItem,
 } from '@/config/navigation'
+import { storageKeys } from '@/config/storageKeys'
 function NavIcon({ name }: { name: NavIconName }) {
   const common = {
     fill: 'none',
@@ -119,11 +120,11 @@ function NavIcon({ name }: { name: NavIconName }) {
 }
 export function SidebarNav() {
   const [items, setItems] = useState<NavItem[]>(() => getVisibleNavItems())
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('gahub.sidebar.collapsed') === '1')
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(storageKeys.sidebarCollapsed) === '1')
   const openCommandPalette = () => window.dispatchEvent(new Event('gahub:command-palette'))
   const toggleCollapsed = () => {
     setCollapsed((current) => {
-      localStorage.setItem('gahub.sidebar.collapsed', current ? '0' : '1')
+      localStorage.setItem(storageKeys.sidebarCollapsed, current ? '0' : '1')
       return !current
     })
   }

@@ -1,13 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { ConductorChatMessage, ConductorLogItem, ConductorSubagent } from '@/api/types'
+import type { ConductorChatMessage, ConductorSubagent } from '@/api/types'
 import { useConductorStore } from './conductorStore'
 
 function chat(id: string, ts: number, msg = id): ConductorChatMessage {
   return { id, ts, msg, role: 'conductor' }
-}
-
-function logItem(id: string, ts: number, text = id): ConductorLogItem {
-  return { id, ts, text, event: 'chat', turn: null }
 }
 
 function subagent(id: string, status: string): ConductorSubagent {
@@ -31,13 +27,13 @@ describe('conductorStore', () => {
   })
 
   it('merges chat snapshots by id without rolling back live items', () => {
-    const store = useConductorStore.getState()
-    store.addChatMessage(chat('live', 30, 'new value'))
-    store.mergeChatMessages([
+    const generation = useConductorStore.getState().generation
+    useConductorStore.getState().addChatMessage(chat('live', 30, 'new value'))
+    useConductorStore.getState().hydrateChatMessages([
       chat('history', 10),
       chat('live', 30, 'stale value'),
       chat('middle', 20),
-    ])
+    ], generation)
 
     expect(useConductorStore.getState().chatMessages).toEqual([
       chat('history', 10),
@@ -47,27 +43,14 @@ describe('conductorStore', () => {
   })
 
   it('keeps only the newest 200 chat messages', () => {
+    const generation = useConductorStore.getState().generation
     const items = Array.from({ length: 205 }, (_, index) => chat(String(index), index))
-    useConductorStore.getState().mergeChatMessages(items)
+    useConductorStore.getState().hydrateChatMessages(items, generation)
 
     const messages = useConductorStore.getState().chatMessages
     expect(messages).toHaveLength(200)
     expect(messages[0].id).toBe('5')
     expect(messages.at(-1)?.id).toBe('204')
-  })
-
-  it('merges logs by id and keeps only the newest 50 items', () => {
-    const store = useConductorStore.getState()
-    store.addLogItem(logItem('live', 100, 'new value'))
-    store.mergeLogItems([
-      ...Array.from({ length: 55 }, (_, index) => logItem(String(index), index)),
-      logItem('live', 100, 'stale value'),
-    ])
-
-    const items = useConductorStore.getState().log
-    expect(items).toHaveLength(50)
-    expect(items[0].id).toBe('6')
-    expect(items.at(-1)).toEqual(logItem('live', 100, 'new value'))
   })
 
   it('rejects an HTTP subagent snapshot after a live revision arrives', () => {
@@ -100,7 +83,6 @@ describe('conductorStore', () => {
     const expectedRevision = useConductorStore.getState().subagentsRevision
     const expectedGeneration = useConductorStore.getState().generation
     useConductorStore.getState().addChatMessage(chat('old', 1))
-    useConductorStore.getState().addLogItem(logItem('old', 1))
     useConductorStore.getState().clear()
     useConductorStore.getState().hydrateSubagents(
       [subagent('stale', 'running')],
@@ -110,13 +92,8 @@ describe('conductorStore', () => {
       [chat('stale-chat', 2)],
       expectedGeneration,
     )
-    useConductorStore.getState().hydrateLogItems(
-      [logItem('stale-log', 2)],
-      expectedGeneration,
-    )
 
     expect(useConductorStore.getState().subagents).toEqual([])
     expect(useConductorStore.getState().chatMessages).toEqual([])
-    expect(useConductorStore.getState().log).toEqual([])
   })
 })

@@ -4,6 +4,7 @@ import type { HubSession, SessionRuntime } from '@/api/types'
 import { sessionActivity, sessionStatusLabel } from '@/utils/sessionUi'
 import { usePageState } from '@/utils/pageState'
 import { RAIL_TITLE_SCALE_EVENT, getRailTitleScale } from '@/utils/railAppearance'
+import { storageKeys } from '@/config/storageKeys'
 
 interface SessionRailProps {
   sessions: HubSession[]
@@ -48,10 +49,10 @@ const activityRail = {
   unknown: 'bg-amber-600/65 shadow-[0_0_0_3px_rgba(217,119,6,0.11)] group-hover:bg-amber-600/80',
 }
 
-const LEGACY_RECENT_KEY = 'gahub.sessionRailRecentActivity'
-const TERMINAL_KEY = 'gahub.sessionRailTerminalState'
-const SEEN_COMPLETED_KEY = 'gahub.sessionRailSeenCompletedRuns'
-const GROUP_COLLAPSE_KEY = 'gahub.sessionRailGroupCollapse'
+const LEGACY_RECENT_KEY = storageKeys.sessionRailLegacyRecentActivity
+const TERMINAL_KEY = storageKeys.sessionRailTerminalState
+const SEEN_COMPLETED_KEY = storageKeys.sessionRailSeenCompletedRuns
+const GROUP_COLLAPSE_KEY = storageKeys.sessionRailGroupCollapse
 type TerminalState = 'completed' | 'error'
 type TerminalMap = Record<string, TerminalState>
 type SessionGroup = { key: string; name: string; projectPath: string | null; sessions: HubSession[] }

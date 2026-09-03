@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import clsx from 'clsx'
+import { storageKeys } from '@/config/storageKeys'
 
-const STORAGE_KEY = 'gahub.conversationIndexCollapsed'
+const STORAGE_KEY = storageKeys.conversationIndexCollapsed
 
 type ConversationIndexRailProps = {
   children: ReactNode | ((collapsed: boolean) => ReactNode)

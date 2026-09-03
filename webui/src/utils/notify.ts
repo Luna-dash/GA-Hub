@@ -12,8 +12,9 @@
 import { create } from 'zustand'
 import { api } from '@/api/client'
 import { isTauriDesktop } from './desktop'
+import { storageKeys } from '@/config/storageKeys'
 
-const LS_KEY = 'ga.desktopNotifications.v1'
+const LS_KEY = storageKeys.desktopNotifications
 
 function readOptIn(): boolean {
   try {

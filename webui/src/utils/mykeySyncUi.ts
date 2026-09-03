@@ -3,7 +3,9 @@
 // 上传 mykey 会用本机内容覆盖同步服务器版本，属于高风险低频操作：
 // 按钮默认隐藏，需在「设置」页手动确认后才显示（见 Settings 的 mykey 同步面板）。
 
-export const MYKEY_SHOW_UPLOAD_KEY = 'gahub.mykey-show-upload'
+import { storageKeys } from '@/config/storageKeys'
+
+export const MYKEY_SHOW_UPLOAD_KEY = storageKeys.mykeyShowUpload
 export const MYKEY_SHOW_UPLOAD_EVENT = 'gahub:mykey-show-upload'
 
 export function getMyKeyShowUpload(): boolean {

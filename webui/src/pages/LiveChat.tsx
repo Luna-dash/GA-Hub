@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
+import { storageKeys } from '@/config/storageKeys'
 import type {
   HubSession,
   LLMInfo,
@@ -153,7 +154,7 @@ export default function LiveChat() {
     void (async () => {
       try {
         const requestedId = new URLSearchParams(location.search).get('session')
-        const storedId = localStorage.getItem('gahub.currentSessionId')
+        const storedId = localStorage.getItem(storageKeys.currentSessionId)
         const listed = await queryClient.fetchQuery({ queryKey: queryKeys.sessions, queryFn: api.sessions })
         let current = requestedId ? listed.items.find((item) => item.id === requestedId) : undefined
         if (!current) current = storedId ? listed.items.find((item) => item.id === storedId) : undefined
@@ -161,7 +162,7 @@ export default function LiveChat() {
         if (cancelled || sessionSwitchSeqRef.current !== initSeq) return
         if (!current) {
           sessionIdRef.current = null
-          localStorage.removeItem('gahub.currentSessionId')
+          localStorage.removeItem(storageKeys.currentSessionId)
           setSessionError('')
           setSession(null)
           teardownChat()
@@ -169,7 +170,7 @@ export default function LiveChat() {
           return
         }
         sessionIdRef.current = current.id
-        localStorage.setItem('gahub.currentSessionId', current.id)
+        localStorage.setItem(storageKeys.currentSessionId, current.id)
         setSessionError('')
         setSession(current)
         startChat(current.id)
@@ -353,7 +354,7 @@ export default function LiveChat() {
           sessionIdRef.current = created.id
           setSession(created)
           setSessionError('')
-          localStorage.setItem('gahub.currentSessionId', created.id)
+          localStorage.setItem(storageKeys.currentSessionId, created.id)
           nav(sessionChatHref(created.id), { replace: true })
           startChat(created.id)
         } finally {
@@ -445,7 +446,7 @@ export default function LiveChat() {
         }))
         sessionIdRef.current = sid
         setSession(created)
-        localStorage.setItem('gahub.currentSessionId', sid)
+        localStorage.setItem(storageKeys.currentSessionId, sid)
         nav(sessionChatHref(sid), { replace: true })
         startChat(sid)
       }
@@ -493,7 +494,7 @@ export default function LiveChat() {
         total: (cached?.total ?? 0) + 1,
         items: [next, ...(cached?.items ?? [])],
       }))
-      localStorage.setItem('gahub.currentSessionId', next.id)
+      localStorage.setItem(storageKeys.currentSessionId, next.id)
       nav(sessionChatHref(next.id))
       return true
     } finally {
@@ -504,7 +505,7 @@ export default function LiveChat() {
 
   const selectSession = useCallback((id: string) => {
     if (id === sessionIdRef.current) return
-    localStorage.setItem('gahub.currentSessionId', id)
+    localStorage.setItem(storageKeys.currentSessionId, id)
     nav(sessionChatHref(id))
   }, [nav])
 
@@ -620,13 +621,13 @@ export default function LiveChat() {
 
       ++sessionSwitchSeqRef.current
       if (remaining.length > 0) {
-        localStorage.setItem('gahub.currentSessionId', remaining[0].id)
+        localStorage.setItem(storageKeys.currentSessionId, remaining[0].id)
         nav(sessionChatHref(remaining[0].id))
         return
       }
 
       setSession(null)
-      localStorage.removeItem('gahub.currentSessionId')
+      localStorage.removeItem(storageKeys.currentSessionId)
       nav('/chat', { replace: true })
     } catch (error: any) {
       const detail = error?.status === 409

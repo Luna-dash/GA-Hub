@@ -4,10 +4,11 @@
 // OS preference (prefers-color-scheme). Persisted in localStorage so a
 // reload doesn't flash the wrong theme. main.tsx applies the theme to
 // <html> *before* React mounts (see main.tsx) so there's no FOUC.
+import { storageKeys } from '@/config/storageKeys'
 
 export type Theme = 'dark' | 'light'
 
-const STORAGE_KEY = 'ga-admin.theme'
+const STORAGE_KEY = storageKeys.theme
 
 function detectSystem(): Theme {
   if (typeof window === 'undefined' || !window.matchMedia) return 'dark'
