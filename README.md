@@ -95,9 +95,9 @@ cd GA-Hub
 可以。`python -m server.run` 然后浏览器打开 `http://127.0.0.1:8765`。
 
 **Q: 端口被占了？**
-`lsof -iTCP:8765 -iTCP:8766 -sTCP:LISTEN` 找到 PID 然后 `kill -9 <PID>`，
-或者改 `mykey.py` 里 `webui_port=...`（如果 GA 配了的话），
-或者设环境变量启动：`WEBUI_PORT=9000 ./start.command`。
+后端默认 `127.0.0.1:8765`，并会在 8766（端口+1）绑一个单实例锁。
+`lsof -iTCP:8765 -iTCP:8766 -sTCP:LISTEN` 找到 PID 然后 `kill -9 <PID>`；
+或者改 GA 目录 `mykey.py` 里 `webui_port=...`（如果 GA 配了的话）。
 
 **Q: 启动后提示"Desktop app not built yet"？**
 桌面版需要先构建一次：运行 `build_all.bat`（Windows）。之后 `start.bat` 会直接启动它。
@@ -154,12 +154,13 @@ LiveChat 使用以下 session-scoped 链路：
 5. 服务重启、游标超前或保留窗口已过时返回 `resync_required`，客户端清除旧游标并重新执行 HTTP 水合，然后建立新水位。
 
 事件游标仅保证**当前服务进程、单实例 EventBus、有限内存保留窗口**内的增量恢复；
-它不是跨进程持久化日志。当前部署边界仍是本机回环、单 worker、单全局 Agent run。
+它不是跨进程持久化日志。当前部署边界仍是本机回环、单 worker；聊天执行统一经过
+SessionCoordinator 准入（网页会话与微信/自主/定时等系统会话走同一扇门）。
 abort 超时会保守地继续占用活动槽并提示重启服务，避免旧 worker 与新 run 并发污染。
 
 兼容边界：LiveChat 新功能只使用 session HTTP + session WebSocket，session WS
-是 receive-only。旧 `/ws/chat` 仍供尚未迁移的兼容调用方使用，本阶段不删除；新代码不得
-通过它 submit/abort。强认证、多 worker、跨重启续跑和完整消息分页不属于当前协议保证。
+是 receive-only。旧全局 `/ws/chat` 已随双聊天链路合并删除；强认证、多 worker、
+跨重启续跑和完整消息分页不属于当前协议保证。
 
 ## 目录结构
 
@@ -169,7 +170,7 @@ GA-Hub/                              # 本项目 — 完全独立
 ├── README.md
 ├── install_webui.sh / .bat          # 一键装依赖 + 构建前端
 ├── build_all.bat / .command         # 一键交付构建（前端→sidecar→Tauri→产物守卫）
-├── start.bat / start.command        # 双击启动（Tauri 桌面版 / 浏览器模式）
+├── start.bat / start.command        # 双击启动（Windows=Tauri 桌面版；macOS/Linux=浏览器模式，桌面壳未交付）
 ├── scripts/
 │   └── build_all.py                 # 交付构建链核心逻辑
 ├── server/                          # FastAPI 后端
