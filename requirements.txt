@@ -1,6 +1,10 @@
 # GA-Hub 桌面端构建与运行依赖（sidecar 打包 + 后端测试）。
 # 任何机器：python -m pip install -r requirements.txt 后即可 python scripts/build_all.py
 # 版本对齐当前开发环境（conda env ga / Python 3.12）；升级时保持整组一起升。
+#
+# 本文件是 pyproject.toml [project.dependencies] 的钉版本快照：pyproject 声明
+# 依赖范围，这里是唯一可复现安装清单。tests/test_dependency_contract.py 保证
+# 两者不漂移（pyproject 新增依赖而此处漏钉时会失败）。
 fastapi==0.136.1
 uvicorn==0.46.0
 pydantic==2.13.3
@@ -8,8 +12,11 @@ psutil==7.2.2
 requests==2.34.0
 APScheduler==3.11.2
 pycryptodome==3.23.0
-httpx==0.28.1
+python-multipart==0.0.27
+qrcode==8.2
+Pillow==12.2.0
 
-# 构建与测试工具链
+# 构建与测试工具链（httpx 仅路由测试使用，不进运行时）
+httpx==0.28.1
 pyinstaller==6.21.0
 pytest==9.1.1

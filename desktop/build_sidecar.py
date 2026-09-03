@@ -5,6 +5,7 @@ import argparse
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,7 +19,9 @@ def main() -> int:
     args = parser.parse_args()
     suffix = ".exe" if "windows" in args.target else ""
     destination = BIN / f"ga-hub-sidecar-{args.target}{suffix}"
-    workspace = ROOT / "temp" / "desktop-sidecar-build"
+    # PyInstaller's workpath/distpath/specpath churn ~150MB per build; keep
+    # that out of the repo tree so temp/ holds no irreplaceable weight.
+    workspace = Path(tempfile.gettempdir()) / "gahub-desktop-sidecar-build"
     workpath = workspace / "work"
     distpath = workspace / "dist"
     specpath = workspace / "spec"
