@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import os
 
+from .constants import ENV_RUNTIME_HOST, ENV_RUNTIME_PORT
 
-RUNTIME_HOST_ENV = "GA_HUB_RUNTIME_HOST"
-RUNTIME_PORT_ENV = "GA_HUB_RUNTIME_PORT"
+# Environment names live in server/constants.py; these aliases keep the
+# historical import surface (tests import them from here).
+RUNTIME_HOST_ENV = ENV_RUNTIME_HOST
+RUNTIME_PORT_ENV = ENV_RUNTIME_PORT
 
 
 def _callback_host(bind_host: str) -> str:

@@ -13,9 +13,15 @@ from .. import _paths
 
 log = logging.getLogger(__name__)
 
+# SMTP defaults: one home for the magic ports so the store's normalization
+# and the sender's fallback cannot drift apart (review: duplicated email
+# defaults). 587 = plain/STARTTLS submission, 465 = implicit-TLS SMTPS.
+DEFAULT_SMTP_PORT_PLAIN = 587
+DEFAULT_SMTP_PORT_SSL = 465
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "host": "",
-    "port": 587,
+    "port": DEFAULT_SMTP_PORT_PLAIN,
     "username": "",
     "password": "",
     "from_addr": "",
@@ -23,6 +29,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "use_tls": True,
     "use_ssl": False,
 }
+
+
+def effective_port(config: dict[str, Any]) -> int:
+    """Port precedence: explicit config value, else the SSL/PLAIN default."""
+    try:
+        port = int(config.get("port") or 0)
+    except (TypeError, ValueError):
+        port = 0
+    if port:
+        return port
+    return DEFAULT_SMTP_PORT_SSL if config.get("use_ssl") else DEFAULT_SMTP_PORT_PLAIN
 
 
 class EmailConfigFormatError(RuntimeError):
@@ -69,7 +86,7 @@ class EmailConfigStore:
     @staticmethod
     def _normalize(config: dict[str, Any]) -> dict[str, Any]:
         try:
-            config["port"] = int(config.get("port") or 587)
+            config["port"] = int(config.get("port") or DEFAULT_SMTP_PORT_PLAIN)
         except (TypeError, ValueError) as exc:
             raise EmailConfigFormatError("email port must be an integer") from exc
         if not 1 <= config["port"] <= 65535:

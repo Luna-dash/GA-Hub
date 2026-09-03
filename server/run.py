@@ -23,9 +23,11 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
+from server.constants import DEFAULT_WEBUI_PORT, SINGLETON_LOCK_PORT_OFFSET
+
 
 def _read_config() -> tuple[str, int]:
-    host, port = "127.0.0.1", 8765
+    host, port = "127.0.0.1", DEFAULT_WEBUI_PORT
     try:
         import mykey  # type: ignore
         host = getattr(mykey, "webui_host", host) or host
@@ -37,7 +39,7 @@ def _read_config() -> tuple[str, int]:
 
 def _ensure_single_instance(port: int) -> None:
     """Bind a tiny lock socket on port+1 to prevent two backends fighting over the agent."""
-    lock_port = port + 1
+    lock_port = port + SINGLETON_LOCK_PORT_OFFSET
     lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     lock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:

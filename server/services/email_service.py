@@ -6,7 +6,7 @@ import smtplib
 from email.message import EmailMessage
 from typing import Any
 
-from .email_config_store import _STORE
+from .email_config_store import _STORE, effective_port
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ def _validate_send_config(cfg: dict[str, Any], to: str) -> tuple[str, str, str]:
 def send_email(to: str, subject: str, body: str) -> dict[str, Any]:
     cfg = load_config(public=False)
     host, from_addr, final_to = _validate_send_config(cfg, to)
-    port = int(cfg.get("port") or (465 if cfg.get("use_ssl") else 587))
+    port = effective_port(cfg)
 
     msg = EmailMessage()
     msg["From"] = from_addr

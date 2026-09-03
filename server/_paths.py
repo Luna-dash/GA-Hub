@@ -33,6 +33,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .constants import ENV_ENABLE_EXTERNAL_SITE_PATHS
 from .process_utils import hidden_process_kwargs
 
 log = logging.getLogger(__name__)
@@ -45,13 +46,37 @@ _UNSET = object()
 
 
 # ── config load/save ────────────────────────────────────────────
+# Cached parse keyed on (path, mtime_ns, size): ~a dozen scattered call sites
+# (conductor, chat retry, LLM preference, GA-root discovery) used to re-read
+# and re-parse config.json on every single call. mtime invalidation keeps the
+# semantics identical to a fresh read — a save_config or external write
+# changes the signature and the next load re-parses.
+_config_cache: tuple[tuple[str, int, int], dict] | None = None
+
+
 def load_config() -> dict:
-    if CONFIG_FILE.is_file():
-        try:
-            return json.loads(CONFIG_FILE.read_text("utf-8"))
-        except Exception as e:
-            log.warning("config.json unreadable: %s", e)
-    return {}
+    global _config_cache
+    try:
+        st = CONFIG_FILE.stat()
+        sig = (str(CONFIG_FILE), st.st_mtime_ns, st.st_size)
+    except OSError:
+        _config_cache = None
+        return {}
+    if _config_cache is not None and _config_cache[0] == sig:
+        return dict(_config_cache[1])
+    try:
+        data = json.loads(CONFIG_FILE.read_text("utf-8"))
+    except Exception as e:
+        log.warning("config.json unreadable: %s", e)
+        data = {}
+    _config_cache = (sig, data)
+    return dict(data)
+
+
+def reset_config_cache() -> None:
+    """Drop the cached parse (test helper; normal writes invalidate via mtime)."""
+    global _config_cache
+    _config_cache = None
 
 
 def save_config(cfg: dict) -> None:
@@ -59,6 +84,7 @@ def save_config(cfg: dict) -> None:
     tmp = CONFIG_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), "utf-8")
     tmp.replace(CONFIG_FILE)
+    reset_config_cache()
 
 
 # ── GA root validation & discovery ──────────────────────────────
@@ -297,7 +323,7 @@ def external_python_site_paths(ga_root: Path | None = None) -> list[str]:
     use the same environment that ``code_run`` will launch.
     """
     if getattr(sys, "frozen", False) and os.environ.get(
-        "GA_HUB_ENABLE_EXTERNAL_SITE_PATHS", ""
+        ENV_ENABLE_EXTERNAL_SITE_PATHS, ""
     ).strip() != "1":
         return []
     python = discover_user_python(ga_root)

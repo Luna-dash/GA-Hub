@@ -22,11 +22,12 @@ from typing import Callable, Optional
 import requests
 
 from .. import _paths
+from ..constants import CONDUCTOR_ENGINE_PORT
 from ..process_utils import hidden_process_kwargs
 
 log = logging.getLogger(__name__)
 
-DEFAULT_PORT = 18770
+DEFAULT_PORT = CONDUCTOR_ENGINE_PORT
 # Never route loopback traffic through HTTP_PROXY: the desktop sidecar's
 # environment may lack NO_PROXY, which blackholes every health check.
 NO_PROXY_KWARGS = {"proxies": {"http": None, "https": None}}

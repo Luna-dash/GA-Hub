@@ -1,0 +1,42 @@
+"""Hub-wide constants: fixed ports and the GA_HUB_* environment registry.
+
+One home for every fixed localhost port and every ``GA_HUB_*`` name so call
+sites cannot drift apart silently (review: port constants and env names were
+scattered with no registry).
+
+Not every constant is importable from every layer — the webui dev port lives
+in ``webui/vite.config.ts`` and the desktop shell mirrors it in Rust; those
+are documented here as cross-language facts rather than imported values.
+"""
+from __future__ import annotations
+
+# ── fixed ports ─────────────────────────────────────────────────
+# Backend listen address (server.run). Overridable via GA's mykey.py
+# (webui_port / webui_host); the singleton lock socket binds port+1.
+DEFAULT_WEBUI_PORT = 8765
+SINGLETON_LOCK_PORT_OFFSET = 1
+# GA conductor engine's default listen port (server.services.conductor_client).
+CONDUCTOR_ENGINE_PORT = 18770
+# Frontend dev server (webui/vite.config.ts), mirrored by the Tauri dev
+# origin allowance in src-tauri/src/main.rs. Not imported anywhere in Python.
+VITE_DEV_PORT = 5173
+
+# ── GA_HUB_* environment variables (inputs) ─────────────────────
+# Callback address for in-process services that call the Hub API; set by
+# server.runtime_endpoint.configure_runtime_endpoint at startup.
+ENV_RUNTIME_HOST = "GA_HUB_RUNTIME_HOST"
+ENV_RUNTIME_PORT = "GA_HUB_RUNTIME_PORT"
+# _paths.py: opt-in to exposing site paths outside the discovered GA root.
+ENV_ENABLE_EXTERNAL_SITE_PATHS = "GA_HUB_ENABLE_EXTERNAL_SITE_PATHS"
+# Desktop build chain: interpreter used for the PyInstaller sidecar build
+# (scripts/build_all.py and src-tauri/src/main.rs).
+ENV_SIDECAR_PYTHON = "GA_HUB_PYTHON"
+# Desktop shell: dev-mode sidecar override and debug bridge port
+# (src-tauri/src/main.rs).
+ENV_SIDECAR = "GA_HUB_SIDECAR"
+ENV_BRIDGE_PORT = "GA_HUB_BRIDGE_PORT"
+
+# ── GA_HUB_-namespaced protocol markers (NOT environment inputs) ──
+# GA_HUB_MYKEY_PYTHON=..;CRYPTOGRAPHY=..  stdout probe marker (routes/mykey.py)
+# __GA_HUB_HIDE_LOADING__                 Tauri loading-gate marker (main.rs)
+# __GA_HUB_RUNTIME__                      window global injected by main.rs
