@@ -70,10 +70,6 @@ function sessionTitle(session: HubSession) {
   return session.title.trim() || `未命名会话 · ${session.id.slice(0, 8)}`
 }
 
-function isUnstartedSession(session: HubSession) {
-  return !session.title.trim() && !session.archive_path
-}
-
 function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreate, onRename, onDelete, creating }: SessionRailProps) {
   const [collapsed, setCollapsed] = usePageState('liveChat.sessionRailCollapsed', true)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -130,19 +126,16 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
   }, [runtimes, sessions, seenCompletedRuns, terminalState])
 
   const orderedSessions = useMemo(() => {
-    const weight = (session: HubSession) => {
-      if (isUnstartedSession(session)) return 0
-      if (sessionActivity(runtimes[session.id]) === 'active') return 1
-      return 2
-    }
+    // Single stable key: latest activity first. Deliberately NOT state-grouped
+    // (the old unstarted/active/other bands made a session jump between bands
+    // whenever a run started or stopped), so stopping a run never moves a row.
+    const activity = (session: HubSession) => session.updated_at || session.created_at
     return [...sessions].sort((a, b) => {
-      const aw = weight(a)
-      const bw = weight(b)
-      if (aw !== bw) return aw - bw
-      if (aw === 0) return b.created_at.localeCompare(a.created_at)
-      return b.updated_at.localeCompare(a.updated_at)
+      const byActivity = activity(b).localeCompare(activity(a))
+      if (byActivity !== 0) return byActivity
+      return b.created_at.localeCompare(a.created_at)
     })
-  }, [runtimes, sessions])
+  }, [sessions])
 
   const displayState = (session: HubSession): 'active' | 'completed' | 'idle' | 'error' => {
     const activity = sessionActivity(runtimes[session.id])
@@ -150,8 +143,8 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
     return terminalState[session.id] || activity
   }
 
-  // 项目抽屉：自由会话一组，其余按 project_name 分组；组间按最高紧急度
-  // 成员排序（未启动 > 运行中 > 其他），保证运行中的项目抽屉不被沉底。
+  // 项目抽屉：自由会话一组，其余按 project_name 分组；组间按最近活动排序，
+  // 与会话行共用同一把稳定钥匙（活动时间），不因运行状态切换而跳变。
   const sessionGroups = useMemo<SessionGroup[]>(() => {
     const free: HubSession[] = []
     const projects = new Map<string, HubSession[]>()
@@ -165,14 +158,13 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
       if (bucket) bucket.push(session)
       else projects.set(name, [session])
     })
-    const groupWeight = (list: HubSession[]) => {
-      if (list.length === 0) return 9
-      return Math.min(...list.map((session) => (
-        isUnstartedSession(session)
-          ? 0
-          : sessionActivity(runtimes[session.id]) === 'active' ? 1 : 2
-      )))
-    }
+    const groupActivity = (list: HubSession[]) => list.reduce(
+      (latest, session) => {
+        const stamp = session.updated_at || session.created_at
+        return stamp > latest ? stamp : latest
+      },
+      '',
+    )
     const groups: SessionGroup[] = [
       { key: 'free', name: '自由会话', projectPath: null, sessions: free },
       ...Array.from(projects.entries()).map(([name, sessions]) => ({
@@ -182,7 +174,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
         sessions,
       })),
     ].filter((group) => group.sessions.length > 0)
-    groups.sort((a, b) => groupWeight(a.sessions) - groupWeight(b.sessions))
+    groups.sort((a, b) => groupActivity(b.sessions).localeCompare(groupActivity(a.sessions)))
     return groups
   }, [orderedSessions, runtimes])
   const hasProjectGroups = sessionGroups.some((group) => group.key !== 'free')

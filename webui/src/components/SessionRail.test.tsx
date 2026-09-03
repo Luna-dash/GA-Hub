@@ -165,21 +165,21 @@ describe('SessionRail', () => {
     })
   })
 
-  it('groups sessions into project drawers while keeping unstarted sessions first', () => {
+  it('groups sessions into project drawers ordered by latest activity', () => {
     localStorage.setItem('gahub.sessionRailRecentActivity', JSON.stringify([sessions[2].id, sessions[1].id]))
 
     act(() => root.render(
       <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,
     ))
 
-    // 自由会话抽屉在前（含未启动会话），组内保持 未启动→按近期 的次序
+    // 自由会话抽屉在前，组内按最近活动统一排序（不再按状态分桶）
     const freeGroup = Array.from(host.querySelectorAll('section'))
       .find((section) => section.textContent?.startsWith('自由会话'))
     expect(freeGroup).toBeTruthy()
     const freeCards = Array.from(freeGroup!.querySelectorAll('[data-activity]'))
     expect(freeCards.map((card) => card.textContent)).toEqual([
-      expect.stringContaining('未命名会话 · bbbbbbbb'),
       expect.stringContaining('未命名会话 · cccccccc'),
+      expect.stringContaining('未命名会话 · bbbbbbbb'),
     ])
     // 运行中的项目会话收进自己的抽屉，标题不再与项目徽章互相挤压
     const projectCards = Array.from(host.querySelectorAll('[data-activity]'))
@@ -214,6 +214,41 @@ describe('SessionRail', () => {
 
     const firstCard = host.querySelector('[data-activity]')
     expect(firstCard?.textContent).toContain('未命名会话 · dddddddd')
+  })
+
+  it('keeps the row order stable when a running task is stopped', () => {
+    // The 2026-09 review: state-grouped ordering made a session jump bands on
+    // stop. Recency is the only key now, so a run→idle transition must not
+    // reorder anything.
+    const orderOf = () => Array.from(host.querySelectorAll('[data-activity]'))
+      .map((card) => card.getAttribute('data-session-id'))
+
+    act(() => root.render(
+      <SessionRail
+        sessions={[...sessions, sessions[1]].filter((s, i, arr) => arr.findIndex((x) => x.id === s.id) === i)}
+        runtimes={{
+          [sessions[0].id]: { session_id: sessions[0].id, status: 'running', run_id: 'run-a', stream_id: 'stream-a' },
+          [sessions[1].id]: { session_id: sessions[1].id, status: 'running', run_id: 'run-b', stream_id: 'stream-b' },
+        }}
+        currentId={sessions[0].id}
+        onSelect={vi.fn()}
+      />,
+    ))
+    const whileRunning = orderOf()
+
+    act(() => root.render(
+      <SessionRail
+        sessions={sessions}
+        runtimes={{
+          [sessions[0].id]: { session_id: sessions[0].id, status: 'idle', run_id: null, stream_id: null },
+          [sessions[1].id]: { session_id: sessions[1].id, status: 'idle', run_id: null, stream_id: null },
+        }}
+        currentId={sessions[0].id}
+        onSelect={vi.fn()}
+      />,
+    ))
+
+    expect(orderOf()).toEqual(whileRunning)
   })
 
   it('shows an unseen completed run immediately and persists acknowledgement on selection', () => {
