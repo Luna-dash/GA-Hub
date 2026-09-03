@@ -346,16 +346,16 @@ def test_deleting_idle_session_releases_cached_runtime_once(tmp_path: Path, monk
     assert store.list() == []
 
 
-def test_session_run_capacity_defaults_to_five_and_allows_one_to_five(monkeypatch) -> None:
+def test_session_run_capacity_defaults_to_ten_and_allows_one_to_ten(monkeypatch) -> None:
     from server.routes import sessions
 
     monkeypatch.delenv("GAHUB_SESSION_RUN_CAPACITY", raising=False)
-    assert sessions._session_run_capacity() == 5
+    assert sessions._session_run_capacity() == 10
 
-    for capacity in ("1", "2", "3", "4", "5"):
+    for capacity in ("1", "2", "5", "9", "10"):
         monkeypatch.setenv("GAHUB_SESSION_RUN_CAPACITY", capacity)
         assert sessions._session_run_capacity() == int(capacity)
 
-    for invalid in ("0", "6", "many", ""):
+    for invalid in ("0", "11", "many", ""):
         monkeypatch.setenv("GAHUB_SESSION_RUN_CAPACITY", invalid)
-        assert sessions._session_run_capacity() == 5
+        assert sessions._session_run_capacity() == 10

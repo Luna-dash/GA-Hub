@@ -510,11 +510,11 @@ def test_capacity_five_admits_five_sessions_and_rejects_sixth() -> None:
     assert error.value.active_count == 5
 
 
-@pytest.mark.parametrize("capacity", [0, 6])
+@pytest.mark.parametrize("capacity", [0, 11])
 def test_capacity_outside_supported_range_is_rejected(capacity: int) -> None:
     from server.services.session_coordinator import SessionCoordinator
 
-    with pytest.raises(ValueError, match="between 1 and 5"):
+    with pytest.raises(ValueError, match="between 1 and 10"):
         SessionCoordinator(lambda session_id: FakeRuntime(session_id), capacity=capacity)
 
 

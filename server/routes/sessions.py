@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from frontends import workspace_cmd
 
+from .. import constants
 from ..origin_policy import is_allowed_ui_origin
 from ..schemas import BtwReq, BtwResp, RewindReq, RewindResp
 from ..services.archive_messages import HistoryUnavailableError, read_archive_messages
@@ -80,16 +81,27 @@ def _publish_runtime_state(state: RuntimeState) -> None:
 
 
 def _session_run_capacity() -> int:
-    """Return the bounded session-run capacity; five sessions may run concurrently by default."""
-    raw = os.environ.get("GAHUB_SESSION_RUN_CAPACITY", "5").strip()
+    """Return the bounded session-run capacity (default %d).
+
+    The gate is shared by webui chat, wechat, scheduled and autonomous
+    producers, so the default leaves headroom above interactive use alone.
+    """ % constants.SESSION_RUN_CAPACITY_DEFAULT
+    raw = os.environ.get(
+        constants.ENV_SESSION_RUN_CAPACITY,
+        str(constants.SESSION_RUN_CAPACITY_DEFAULT),
+    ).strip()
     try:
         capacity = int(raw)
     except ValueError:
-        log.warning("invalid GAHUB_SESSION_RUN_CAPACITY=%r; using 5", raw)
-        return 5
-    if capacity not in {1, 2, 3, 4, 5}:
-        log.warning("unsupported GAHUB_SESSION_RUN_CAPACITY=%r; using 5", raw)
-        return 5
+        log.warning("invalid %s=%r; using %d",
+                    constants.ENV_SESSION_RUN_CAPACITY, raw,
+                    constants.SESSION_RUN_CAPACITY_DEFAULT)
+        return constants.SESSION_RUN_CAPACITY_DEFAULT
+    if not 1 <= capacity <= constants.SESSION_RUN_CAPACITY_MAX:
+        log.warning("unsupported %s=%r; using %d",
+                    constants.ENV_SESSION_RUN_CAPACITY, raw,
+                    constants.SESSION_RUN_CAPACITY_DEFAULT)
+        return constants.SESSION_RUN_CAPACITY_DEFAULT
     return capacity
 
 

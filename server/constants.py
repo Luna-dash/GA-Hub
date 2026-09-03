@@ -36,6 +36,14 @@ ENV_SIDECAR_PYTHON = "GA_HUB_PYTHON"
 ENV_SIDECAR = "GA_HUB_SIDECAR"
 ENV_BRIDGE_PORT = "GA_HUB_BRIDGE_PORT"
 
+# ── session run capacity (server/routes/sessions.py + session_coordinator) ──
+# GAHUB_* env override for how many sessions may run concurrently; the gate
+# is shared by webui chat, wechat, scheduled and autonomous producers, so
+# the ceiling must leave headroom above interactive use alone (default 10).
+ENV_SESSION_RUN_CAPACITY = "GAHUB_SESSION_RUN_CAPACITY"
+SESSION_RUN_CAPACITY_DEFAULT = 10
+SESSION_RUN_CAPACITY_MAX = 10
+
 # ── GA_HUB_-namespaced protocol markers (NOT environment inputs) ──
 # GA_HUB_MYKEY_PYTHON=..;CRYPTOGRAPHY=..  stdout probe marker (routes/mykey.py)
 # __GA_HUB_HIDE_LOADING__                 Tauri loading-gate marker (main.rs)

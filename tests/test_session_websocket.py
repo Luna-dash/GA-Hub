@@ -17,6 +17,7 @@ def test_coordinator_abort_timeout_publishes_identified_error_event(
     monkeypatch, caplog
 ):
     caplog.set_level(logging.INFO, logger="server.routes.sessions")
+    from server import constants
     from server.routes import sessions
 
     event_bus = EventBus()
@@ -33,7 +34,7 @@ def test_coordinator_abort_timeout_publishes_identified_error_event(
     monkeypatch.setattr(sessions, "SessionRuntimeFactory", lambda store: object())
 
     sessions._get_coordinator()
-    assert captured["capacity"] == 5
+    assert captured["capacity"] == constants.SESSION_RUN_CAPACITY_DEFAULT
     captured["callback"](RuntimeState(
         "session-a", "error", "run-a", "stream-a", "abort_timeout"
     ))
