@@ -203,11 +203,24 @@ class PoolMirror:
         with self.lock:
             return self.subagents.get(sid)
 
+    # Core fields the response model backfills with compat defaults.  A
+    # missing entry means the engine snapshot drifted from the Contract B
+    # shape: tolerable for one render (the UI must not crash), but it must
+    # be visible in the hub log instead of silently showing blanks.
+    _REQUIRED_SNAPSHOT_FIELDS = ("prompt", "created_at", "updated_at")
+
     def snapshot(self) -> list[dict]:
         with self.lock:
             items = [dict(item) for item in self._items]
-        # UI stage decided hub-side (vocabulary); the page only renders it.
         for item in items:
+            missing = [field for field in self._REQUIRED_SNAPSHOT_FIELDS
+                       if item.get(field) in (None, "")]
+            if missing:
+                log.warning(
+                    "subagent snapshot %s missing %s; response backfills "
+                    "compat defaults (engine protocol drift?)",
+                    item.get("id") or "<unknown>", ", ".join(missing))
+            # UI stage decided hub-side (vocabulary); the page only renders it.
             item["stage"] = subagent_stage(
                 status=str(item.get("status") or ""),
                 attempt=int(item.get("attempt") or 1),
