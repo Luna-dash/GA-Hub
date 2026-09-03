@@ -100,6 +100,12 @@ function workerTitle(sub: ConductorSubagent): string {
   return compactTaskText(facts.manifest?.goal || sub.prompt)
 }
 
+/** Rail-safe title for one-line CTAs; the dossier shows the full text. */
+function shortWorkerTitle(sub: ConductorSubagent): string {
+  const title = workerTitle(sub)
+  return title.length > 14 ? `${title.slice(0, 14)}…` : title
+}
+
 /** FastAPI wraps dict details in {detail}; plain dicts pass through. */
 function subagentActionErrorDetail(err: unknown): SubagentEvidence | null {
   const body = (err as { body?: { detail?: SubagentEvidence } } | null)?.body
@@ -631,179 +637,191 @@ export default function Conductor() {
         </div>
       }
     >
-      <div className="flex h-full min-h-0 flex-col gap-3 p-4">
-        {pendingReview.length > 0 && (
-          <button
-            type="button"
-            className="shrink-0 rounded-xl border border-[#D7E4EE] bg-[#EAF2F8] px-4 py-2 text-left text-sm text-[#285A78]"
-            onClick={() => setSelectedSid(pendingReview[0].id)}
-          >
-            有 {pendingReview.length} 个子任务等你拍板
-            {pendingReview[0] ? ` · 先看「${workerTitle(pendingReview[0])}」` : ''}
-          </button>
-        )}
-
-        <div className="flex min-h-0 flex-1 gap-4">
-          <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-hidden">
-            <section className="shrink-0 rounded-2xl border border-line bg-bg-card px-4 py-3 shadow-sm" aria-label="当前任务">
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <h2 className="text-sm font-semibold text-[#2C2418]">当前任务</h2>
-                <WorkflowBadge tone={workflowView.tone} label={workflowView.label} />
-              </div>
-              <p className="line-clamp-3 text-sm font-medium leading-5 text-[#2C2418]">
-                {currentTask || '尚未收到任务'}
-              </p>
-              <p className="mt-1.5 text-xs leading-5 text-[#665741]">{workflowView.detail}</p>
-              <p className="mt-1 text-[11px] text-[#7B6D5A]" aria-label="子代理状态跟踪">
-                {workflowSubagents.length === 0
-                  ? '尚未指派'
-                  : `${acceptedCount}/${workflowSubagents.length} 已通过${activeSubagents.length > 0 ? ` · ${activeSubagents.length} 执行中` : ''}`}
-              </p>
-            </section>
-
-            <section className="flex min-h-0 flex-[1.1] flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
-              <div className="flex items-center justify-between gap-3 border-b border-line/70 px-4 py-2.5">
-                <h2 className="text-sm font-semibold text-[#2C2418]">工人</h2>
-                <span className="text-[11px] text-[#7B6D5A]">点一项看右侧卷宗</span>
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto" aria-label="子任务详情">
-                {workflowSubagents.length === 0 ? (
-                  <div className="px-5 py-10 text-center">
-                    <p className="text-sm font-medium text-[#4E4233]">
-                      {currentWorkflow ? '尚未指派子代理' : '暂无执行中的任务'}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">
-                      {currentWorkflow ? 'Conductor 完成任务拆分后会在这里显示。' : '发送任务后可在这里查看具体进度。'}
-                    </p>
-                  </div>
-                ) : (
-                  workflowSubagents.map((sub) => (
-                    <WorkerListRow
-                      key={sub.id}
-                      sub={sub}
-                      selected={sub.id === selectedSid}
-                      onSelect={() => setSelectedSid(sub.id)}
-                    />
-                  ))
-                )}
-              </div>
-            </section>
-
-            <section className="flex min-h-0 flex-[0.9] flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
-              <div className="border-b border-line/70 px-4 py-2.5">
-                <h2 className="text-sm font-semibold text-[#2C2418]">本轮对话</h2>
-              </div>
+      <div className="flex h-full min-h-0 gap-3 p-4">
+        <div className="flex w-64 min-w-0 shrink-0 flex-col gap-3">
+          <section aria-label="当前任务" className="shrink-0 rounded-2xl border border-line bg-bg-card px-3.5 py-3 shadow-sm">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-[#2C2418]">当前任务</h2>
+              <WorkflowBadge tone={workflowView.tone} label={workflowView.label} />
+            </div>
+            <p className="mt-1.5 line-clamp-2 text-sm font-medium leading-5 text-[#2C2418]">
+              {currentTask || '尚未收到任务'}
+            </p>
+            <p className="mt-1 line-clamp-2 text-xs leading-5 text-[#665741]">{workflowView.detail}</p>
+            <p className="mt-1.5 text-[11px] text-[#7B6D5A]" aria-label="子代理状态跟踪">
+              {workflowSubagents.length === 0
+                ? '尚未指派'
+                : `${acceptedCount}/${workflowSubagents.length} 已通过${activeSubagents.length > 0 ? ` · ${activeSubagents.length} 执行中` : ''}`}
+            </p>
+            {workflowSubagents.length > 0 && (
               <div
-                ref={chatScrollRef}
-                onScroll={() => {
-                  if (!isSending) {
-                    shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
-                  }
-                  scrollMemory.chatTop = chatScrollRef.current?.scrollTop ?? scrollMemory.chatTop
-                }}
-                className="min-h-0 flex-1 overflow-y-auto divide-y divide-line text-sm"
+                className="mt-1.5 h-1 overflow-hidden rounded-full bg-bg-soft"
+                role="progressbar"
+                aria-label="验收进度"
+                aria-valuenow={acceptedCount}
+                aria-valuemax={workflowSubagents.length}
               >
-                {isChatLoading && visibleChat.length === 0 && (
-                  <div className="px-4 py-8 text-center text-sm text-[#7B6D5A]">正在加载 Conductor 历史…</div>
-                )}
-                {isChatError && visibleChat.length === 0 && (
-                  <div className="px-4 py-8 text-center">
-                    <p className="text-sm text-[#9E3328]">历史暂时无法加载，Conductor 引擎可能未连接。</p>
-                    <button type="button" className="ga-btn mt-3" onClick={() => void refetchChat()}>重试</button>
+                <div
+                  className="h-full rounded-full bg-[#3C8A52] transition-[width] duration-500"
+                  style={{ width: `${Math.round((acceptedCount / workflowSubagents.length) * 100)}%` }}
+                />
+              </div>
+            )}
+          </section>
+
+          {pendingReview.length > 0 && (
+            <button
+              type="button"
+              className="shrink-0 rounded-xl border border-[#D7E4EE] bg-[#EAF2F8] px-3 py-2 text-left text-xs leading-5 text-[#285A78]"
+              onClick={() => setSelectedSid(pendingReview[0].id)}
+            >
+              有 {pendingReview.length} 个子任务等你拍板
+              {pendingReview[0] ? ` · 先看「${shortWorkerTitle(pendingReview[0])}」` : ''}
+            </button>
+          )}
+
+          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
+            <div className="flex items-center justify-between gap-2 border-b border-line/70 px-3.5 py-2.5">
+              <h2 className="text-sm font-semibold text-[#2C2418]">工人</h2>
+              {workflowSubagents.length > 0 && (
+                <span className="text-[11px] text-[#7B6D5A]">{workflowSubagents.length} 项</span>
+              )}
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto" aria-label="子任务详情">
+              {workflowSubagents.length === 0 ? (
+                <div className="px-4 py-8 text-center">
+                  <p className="text-sm font-medium text-[#4E4233]">
+                    {currentWorkflow ? '尚未指派子代理' : '暂无执行中的任务'}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">
+                    {currentWorkflow ? '完成任务拆分后在这里显示。' : '发送任务后可在这里查看进度。'}
+                  </p>
+                </div>
+              ) : (
+                workflowSubagents.map((sub) => (
+                  <WorkerListRow
+                    key={sub.id}
+                    sub={sub}
+                    selected={sub.id === selectedSid}
+                    onSelect={() => setSelectedSid(sub.id)}
+                  />
+                ))
+              )}
+            </div>
+          </section>
+        </div>
+
+        <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
+          <div className="flex items-center justify-between gap-3 border-b border-line/70 px-4 py-2.5">
+            <h2 className="text-sm font-semibold text-[#2C2418]">本轮对话</h2>
+            <span className="text-[11px] text-[#7B6D5A]">只显示当前任务这一轮</span>
+          </div>
+          <div
+            ref={chatScrollRef}
+            onScroll={() => {
+              if (!isSending) {
+                shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
+              }
+              scrollMemory.chatTop = chatScrollRef.current?.scrollTop ?? scrollMemory.chatTop
+            }}
+            className="min-h-0 flex-1 overflow-y-auto divide-y divide-line text-sm"
+          >
+            {isChatLoading && visibleChat.length === 0 && (
+              <div className="px-4 py-8 text-center text-sm text-[#7B6D5A]">正在加载 Conductor 历史…</div>
+            )}
+            {isChatError && visibleChat.length === 0 && (
+              <div className="px-4 py-8 text-center">
+                <p className="text-sm text-[#9E3328]">历史暂时无法加载，Conductor 引擎可能未连接。</p>
+                <button type="button" className="ga-btn mt-3" onClick={() => void refetchChat()}>重试</button>
+              </div>
+            )}
+            {!isChatLoading && !isChatError && visibleChat.length === 0 && (
+              <div className="px-4 py-8 text-center text-sm text-[#7B6D5A]">还没有任务，先向指挥描述你要完成的工作。</div>
+            )}
+            {visibleChat.map((msg) => (
+              msg.role === 'user' ? (
+                <div key={msg.id} className="flex justify-end px-4 py-2">
+                  <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-[#8A6438] px-3.5 py-2 text-sm leading-6 text-[#FFF4DF] [overflow-wrap:anywhere]">
+                    {msg.msg}
                   </div>
-                )}
-                {!isChatLoading && !isChatError && visibleChat.length === 0 && (
-                  <div className="px-4 py-8 text-center text-sm text-[#7B6D5A]">还没有任务，先向指挥描述你要完成的工作。</div>
-                )}
-                {visibleChat.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={clsx(
-                      'flex gap-3 px-4 py-2',
-                      msg.role === 'user'
-                        ? 'bg-[#8A6438] text-[#FFF4DF]'
-                        : 'bg-bg-card text-[#2C2418]',
-                    )}
-                  >
-                    <span
-                      className={clsx(
-                        'w-16 shrink-0 select-none pt-0.5 text-xs font-medium uppercase tracking-wide',
-                        msg.role === 'user' ? 'text-[#FFF4DF]/70' : 'text-[#665741]',
-                      )}
-                    >
-                      {msg.role === 'user' ? '' : '指挥'}
-                    </span>
+                </div>
+              ) : (
+                <div key={msg.id} className="flex gap-3 px-4 py-2">
+                  <span className="w-10 shrink-0 select-none pt-0.5 text-[11px] font-medium uppercase tracking-wide text-[#665741]">
+                    指挥
+                  </span>
+                  <div className="min-w-0 flex-1 text-sm leading-6 text-[#2C2418]">
                     <MarkdownView mode="plain" cache>
                       {msg.msg}
                     </MarkdownView>
                   </div>
-                ))}
-                <div ref={chatEndRef} />
-              </div>
-              <form onSubmit={sendChat} className="border-t border-line bg-bg-soft/75 p-3">
-                <div className="flex items-end gap-2">
-                  <textarea
-                    ref={chatInputRef}
-                    value={userMsg}
-                    onChange={(e) => setUserMsg(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
-                      e.preventDefault()
-                      e.currentTarget.form?.requestSubmit()
-                    }}
-                    rows={1}
-                    wrap="soft"
-                    placeholder="向指挥补充一句，或开一个新任务…"
-                    className="min-h-10 max-h-40 min-w-0 flex-1 resize-none overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-line bg-bg px-3 py-2 text-sm leading-6 text-[#2C2418] placeholder:text-[#8A7A63] [overflow-wrap:anywhere] focus:border-accent focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!userMsg.trim() || effectiveLlmIndex === null || isSending}
-                    className="shrink-0 rounded bg-accent px-4 py-2 text-sm text-white hover:bg-accent/90 disabled:opacity-50"
-                  >
-                    {isSending ? '发送中…' : '发送'}
-                  </button>
                 </div>
-              </form>
-            </section>
+              )
+            ))}
+            <div ref={chatEndRef} />
           </div>
-
-          <aside className="flex w-[28rem] max-w-[46%] shrink-0 flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
-            {selectedWorker ? (
-              <WorkerDossier
-                sub={selectedWorker}
-                control={{
-                  evidence: evidenceBySid[selectedWorker.id],
-                  busy: busySid === selectedWorker.id,
-                  reworkOpen: reworkSid === selectedWorker.id,
-                  reworkReason: reworkSid === selectedWorker.id ? reworkReason : '',
-                  onAccept: () => void runSubagentAction(selectedWorker.id, 'accept'),
-                  onForceAccept: () => void runSubagentAction(selectedWorker.id, 'accept', '人工核对证据后强制通过', true),
-                  onAbort: () => void runSubagentAction(selectedWorker.id, 'abort'),
-                  onReworkOpen: () => { setReworkSid(selectedWorker.id); setReworkReason('') },
-                  onReworkReasonChange: setReworkReason,
-                  onReworkCancel: () => setReworkSid((prev) => (prev === selectedWorker.id ? null : prev)),
-                  onReworkSubmit: () => {
-                    if (reworkReason.trim()) void runSubagentAction(selectedWorker.id, 'rework', reworkReason.trim())
-                  },
-                  onEvidenceDismiss: () => setEvidenceBySid((prev) => {
-                    if (!(selectedWorker.id in prev)) return prev
-                    const next = { ...prev }
-                    delete next[selectedWorker.id]
-                    return next
-                  }),
+          <form onSubmit={sendChat} className="border-t border-line bg-bg-soft/75 p-3">
+            <div className="flex items-end gap-2">
+              <textarea
+                ref={chatInputRef}
+                value={userMsg}
+                onChange={(e) => setUserMsg(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+                  e.preventDefault()
+                  e.currentTarget.form?.requestSubmit()
                 }}
+                rows={1}
+                wrap="soft"
+                placeholder="向指挥补充一句，或开一个新任务…"
+                className="min-h-10 max-h-40 min-w-0 flex-1 resize-none overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-line bg-bg px-3 py-2 text-sm leading-6 text-[#2C2418] placeholder:text-[#8A7A63] [overflow-wrap:anywhere] focus:border-accent focus:outline-none"
               />
-            ) : (
-              <div className="flex flex-1 items-center justify-center px-6 text-center">
-                <div>
-                  <p className="text-sm font-medium text-[#4E4233]">还没有选中的工人</p>
-                  <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">派工后点左侧一项，这里会显示目标、交付物和完整结果。</p>
-                </div>
+              <button
+                type="submit"
+                disabled={!userMsg.trim() || effectiveLlmIndex === null || isSending}
+                className="shrink-0 rounded bg-accent px-4 py-2 text-sm text-white hover:bg-accent/90 disabled:opacity-50"
+              >
+                {isSending ? '发送中…' : '发送'}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <aside className="flex w-[24rem] max-w-[42%] shrink-0 flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
+          {selectedWorker ? (
+            <WorkerDossier
+              sub={selectedWorker}
+              control={{
+                evidence: evidenceBySid[selectedWorker.id],
+                busy: busySid === selectedWorker.id,
+                reworkOpen: reworkSid === selectedWorker.id,
+                reworkReason: reworkSid === selectedWorker.id ? reworkReason : '',
+                onAccept: () => void runSubagentAction(selectedWorker.id, 'accept'),
+                onForceAccept: () => void runSubagentAction(selectedWorker.id, 'accept', '人工核对证据后强制通过', true),
+                onAbort: () => void runSubagentAction(selectedWorker.id, 'abort'),
+                onReworkOpen: () => { setReworkSid(selectedWorker.id); setReworkReason('') },
+                onReworkReasonChange: setReworkReason,
+                onReworkCancel: () => setReworkSid((prev) => (prev === selectedWorker.id ? null : prev)),
+                onReworkSubmit: () => {
+                  if (reworkReason.trim()) void runSubagentAction(selectedWorker.id, 'rework', reworkReason.trim())
+                },
+                onEvidenceDismiss: () => setEvidenceBySid((prev) => {
+                  if (!(selectedWorker.id in prev)) return prev
+                  const next = { ...prev }
+                  delete next[selectedWorker.id]
+                  return next
+                }),
+              }}
+            />
+          ) : (
+            <div className="flex flex-1 items-center justify-center px-6 text-center">
+              <div>
+                <p className="text-sm font-medium text-[#4E4233]">还没有选中的工人</p>
+                <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">派工后点左侧一项，这里会显示目标、交付物和完整结果。</p>
               </div>
-            )}
-          </aside>
-        </div>
+            </div>
+          )}
+        </aside>
       </div>
 
       {subagentSettingsOpen && (
@@ -955,29 +973,32 @@ function WorkerListRow({
   const missing = facts.deliverables_missing?.length ?? 0
   const stale = facts.deliverables_stale?.length ?? 0
   const failed = (facts.quality_checks?.checks ?? []).filter((check) => check.passed === false).length
+  const issueCount = missing + stale + failed
 
   return (
     <button
       type="button"
       onClick={onSelect}
       className={clsx(
-        'block w-full border-b border-line/70 px-4 py-3 text-left last:border-b-0',
+        'block w-full border-b border-line/70 px-3.5 py-2.5 text-left last:border-b-0',
         selected ? 'bg-[#F4EDE3]' : 'hover:bg-bg-soft',
       )}
     >
-      <div className="flex items-center justify-between gap-3">
-        <p className="min-w-0 flex-1 truncate text-sm font-medium text-[#2C2418]">{workerTitle(sub)}</p>
-        <span className={clsx('flex shrink-0 items-center gap-1.5 text-[11px] font-medium', phaseTone(view.phase))}>
+      <div className="flex items-center justify-between gap-2">
+        <span className={clsx('flex items-center gap-1.5 text-[11px] font-medium', phaseTone(view.phase))}>
           <span className={phaseDot(view.phase)} />
           {view.label}
         </span>
+        {sub.attempt > 1 && <span className="shrink-0 text-[11px] text-[#9A5315]">第 {sub.attempt} 次</span>}
       </div>
-      <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">
-        {sub.attempt > 1 ? `第 ${sub.attempt} 次` : view.detail}
-        {missing > 0 ? ` · ${missing} 项缺失` : ''}
-        {stale > 0 ? ` · ${stale} 项未更新` : ''}
-        {failed > 0 ? ` · ${failed} 项检查失败` : ''}
-      </p>
+      <p className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-[#2C2418]">{workerTitle(sub)}</p>
+      {issueCount > 0 && (
+        <p className="mt-0.5 text-[11px] leading-4 text-[#9E3328]">
+          {missing > 0 ? `${missing} 项缺失` : ''}
+          {stale > 0 ? `${missing > 0 ? ' · ' : ''}${stale} 项未更新` : ''}
+          {failed > 0 ? `${missing + stale > 0 ? ' · ' : ''}${failed} 项检查失败` : ''}
+        </p>
+      )}
     </button>
   )
 }
