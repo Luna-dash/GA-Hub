@@ -32,6 +32,7 @@ from .. import _paths
 if _paths.GA_ROOT is None:
     raise RuntimeError("WeChatService imported before GA_ROOT is configured")
 
+from .session_coordinator import AgentBusyError
 from frontends.chatapp_common import public_access, to_allowed_set  # noqa: E402
 
 from .system_channels import SystemChannel
@@ -423,7 +424,21 @@ class WeChatService:
         return True
 
     def _run_agent_stream(self, uid: str, prompt: str, media: list[str], ctx: str) -> None:
-        handle = self.channel.submit(prompt, source="wechat")
+        try:
+            handle = self.channel.submit(prompt, source="wechat")
+        except AgentBusyError as exc:
+            # Admission refused: without this guard the exception kills this
+            # message's handler thread and the user gets silence (2026-09
+            # review P0). Tell them why instead.
+            log.info("[wx] submit refused uid=%s: %s", uid[:20], exc.reason)
+            try:
+                busy = ("当前已有任务在处理中，请等它完成后再发。"
+                        if exc.reason == AgentBusyError.REASON_SESSION_ACTIVE
+                        else "任务队列已满，请稍后再试。")
+                self._send_text(uid, busy, ctx)
+            except Exception:
+                log.warning("wx busy notice send failed", exc_info=True)
+            return
         try:
             self.bot.send_typing(uid)
         except Exception:

@@ -16,6 +16,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from .. import _paths
 from . import email_service
+from .session_coordinator import AgentBusyError
 from .system_channels import SystemChannel
 from .event_bus import bus
 from .file_tail import read_jsonl_tail
@@ -244,12 +245,19 @@ class TaskScheduler:
                 if s is None:
                     return {"error": "not_found"}
                 now = int(time.time())
+                if self._stop_event.is_set():
+                    return {"error": "shutting_down"}
+                try:
+                    handle = self.channel.submit(s.prompt, source="scheduled_task")
+                except AgentBusyError as exc:
+                    # Admission refused: leave last_fired_at/fire_count alone so
+                    # the next cron tick can retry instead of this trigger being
+                    # silently consumed (2026-09 review P0).
+                    log.warning("task fire refused for %s: %s", s.id, exc)
+                    return {"error": exc.reason}
                 s.last_fired_at = now
                 s.fire_count += 1
                 self._persist()
-                if self._stop_event.is_set():
-                    return {"error": "shutting_down"}
-                handle = self.channel.submit(s.prompt, source="scheduled_task")
                 run = TaskRun(
                     id=uuid.uuid4().hex,
                     task_id=s.id,

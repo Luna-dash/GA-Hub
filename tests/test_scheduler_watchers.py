@@ -156,15 +156,23 @@ def test_shutdown_timeout_barriers_fire_before_releasing_singleton(
     release = threading.Event()
     submitted = mock.Mock(wraps=service.channel.submit)
 
-    def blocked_persist() -> None:
+    def blocked_submit(*args, **kwargs) -> dict:
+        # Barrier sits inside submit: the fire passed its stop-check and is
+        # mid-admission when shutdown(times out) arrives. Since the 2026-09
+        # reorder (count AFTER a successful submit) this is the seam between
+        # "refused before submit" and "run is live".
         entered.set()
         release.wait(1)
+        return SimpleNamespace(
+            stream_id="stream-1", finished=True, final_text="", last_chunk="",
+        )
 
     service.channel.submit = submitted
+    submitted.side_effect = blocked_submit
     instance_attr._instance = service
     result: dict[str, object] = {}
     try:
-        with mock.patch.object(service, "_persist", side_effect=blocked_persist), \
+        with mock.patch.object(service, "_persist"), \
              mock.patch(f"server.services.{'task_scheduler' if scheduler_type == 'task' else 'autonomous_scheduler'}.bus.publish"):
             thread = threading.Thread(
                 target=lambda: result.update(service.trigger_now("task-1" if scheduler_type == "task" else "auto-1")),
@@ -176,13 +184,42 @@ def test_shutdown_timeout_barriers_fire_before_releasing_singleton(
             assert instance_attr._instance is service
             release.set()
             thread.join(1)
-        assert result == {"error": "shutting_down"}
-        submitted.assert_not_called()
+        # The submit went out before shutdown was observed, so the trigger
+        # counts as fired (counted, not silently consumed).
+        assert result.get("run_id") or result.get("stream_id")
+        submitted.assert_called_once()
         assert service.shutdown(timeout=1) is True
         assert instance_attr._instance is None
     finally:
         release.set()
         instance_attr._instance = None
+
+
+@pytest.mark.parametrize(
+    ("scheduler_type", "service_factory"),
+    [
+        ("task", _task_scheduler),
+        ("autonomous", _autonomous_scheduler),
+    ],
+)
+def test_fire_refuses_without_counting_when_already_stopped(
+    scheduler_type: str,
+    service_factory,
+) -> None:
+    """The entry stop-check refuses a fire after shutdown; submit is never
+    reached and the trigger is not counted."""
+    service = service_factory(_Handle())
+    schedule_id = "task-1" if scheduler_type == "task" else "auto-1"
+    submitted = mock.Mock(wraps=service.channel.submit)
+    service.channel.submit = submitted
+    service._stop_event.set()
+    try:
+        assert service.trigger_now(schedule_id) == {"error": "shutting_down"}
+        submitted.assert_not_called()
+        schedule = service.schedules[schedule_id]
+        assert schedule.fire_count == 0
+    finally:
+        service._stop_event.clear()
 
 
 def test_task_instance_does_not_reuse_a_scheduler_still_shutting_down() -> None:

@@ -30,10 +30,17 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from .. import _paths
+from .session_coordinator import AgentBusyError
 from .system_channels import SystemChannel
 from .event_bus import bus
 from .file_tail import read_jsonl_tail
 from .watcher_registry import WatcherRegistry
+
+# A desktop box may sleep through a cron/interval tick (APScheduler's default
+# misfire_grace_time is ~1s, so the missed run is silently discarded); a 6h
+# grace lets the same-day run still fire, and coalesce collapses any backlog
+# to a single run. Mirrors task_scheduler.
+MISFIRE_GRACE_SECONDS = 6 * 3600
 
 log = logging.getLogger(__name__)
 
@@ -268,12 +275,16 @@ class AutonomousScheduler:
             except Exception as e:
                 log.warning("bad cron %r: %s", s.cron, e)
                 return
-            self._sched.add_job(self._fire, trig, id=jid, args=[s.id], replace_existing=True)
+            self._sched.add_job(
+                self._fire, trig, id=jid, args=[s.id], replace_existing=True,
+                misfire_grace_time=MISFIRE_GRACE_SECONDS, coalesce=True,
+            )
         elif s.type == "interval":
             self._sched.add_job(
                 self._fire,
                 IntervalTrigger(minutes=max(1, int(s.interval_minutes))),
                 id=jid, args=[s.id], replace_existing=True,
+                misfire_grace_time=MISFIRE_GRACE_SECONDS, coalesce=True,
             )
         # idle is handled by _idle_loop
 
@@ -301,7 +312,14 @@ class AutonomousScheduler:
                 # don't fire while agent is busy
                 if getattr(agent, "is_running", False):
                     continue
-                self._fire(s.id)
+                try:
+                    self._fire(s.id)
+                except Exception:
+                    # The loop outlives individual schedules: a refused or
+                    # crashing fire (admission busy, runtime gone mid-check)
+                    # must skip this schedule now, not kill idle firing for
+                    # every remaining schedule until restart.
+                    log.exception("autonomous idle fire failed for %s", s.id)
 
     def trigger_now(self, schedule_id: str) -> dict:
         if schedule_id not in self.schedules:
@@ -317,14 +335,21 @@ class AutonomousScheduler:
                 if s is None:
                     return {"error": "not_found"}
                 now = int(time.time())
-                s.last_fired_at = now
-                s.fire_count += 1
-                self._persist()
-
                 existing_reports = self._snapshot_reports()
                 if self._stop_event.is_set():
                     return {"error": "shutting_down"}
-                handle = self.channel.submit(s.prompt or DEFAULT_PROMPT, source="autonomous")
+                try:
+                    handle = self.channel.submit(
+                        s.prompt or DEFAULT_PROMPT, source="autonomous")
+                except AgentBusyError as exc:
+                    # Admission refused: leave last_fired_at/fire_count alone so
+                    # the next cron tick (or idle window) can retry instead of
+                    # the trigger being silently consumed (2026-09 review P0).
+                    log.warning("autonomous fire refused for %s: %s", s.id, exc)
+                    return {"error": exc.reason}
+                s.last_fired_at = now
+                s.fire_count += 1
+                self._persist()
                 run = Run(
                     id=uuid.uuid4().hex,
                     schedule_id=s.id,
