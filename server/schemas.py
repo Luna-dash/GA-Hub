@@ -6,15 +6,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-# ── chat ─────────────────────────────────────────────────────────
-class ChatSubmit(BaseModel):
-    text: str = ""
-    images: list[str] = Field(default_factory=list)        # absolute paths returned by /api/upload
-    source: str = "user"
-    # Page-scoped override. None means fallback to persisted/global preference.
-    llm_index: int | None = None
-
-
 class BtwReq(BaseModel):
     text: str = ""
 

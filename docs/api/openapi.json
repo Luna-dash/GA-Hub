@@ -290,23 +290,6 @@
         }
       }
     },
-    "/api/agent/archive": {
-      "post": {
-        "summary": "Archive Current",
-        "description": "Persist current conversation to chat_history.json without starting a new one.",
-        "operationId": "archive_current_api_agent_archive_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/agent/btw": {
       "post": {
         "summary": "Btw",
@@ -3402,6 +3385,18 @@
       "get": {
         "summary": "List Sessions",
         "operationId": "list_sessions_api_sessions_get",
+        "parameters": [
+          {
+            "name": "include_system",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include System"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -3412,6 +3407,16 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       },
@@ -3419,14 +3424,14 @@
         "summary": "Create Session",
         "operationId": "create_session_api_sessions_post",
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SessionCreate"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -7260,6 +7265,11 @@
           "title": {
             "type": "string",
             "title": "Title"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": "user"
           },
           "llm_key": {
             "anyOf": [

@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
-from server.routes import agent, events, goalhive, sessions
+from server.routes import events, goalhive, sessions
 
 
 class _RejectedWebSocket:
@@ -29,11 +29,10 @@ def _session_handler(ws: _RejectedWebSocket) -> Awaitable[None]:
     "handler",
     [
         events.ws_events,
-        agent.ws_chat,
         goalhive.ws_goalhive,
         _session_handler,
     ],
-    ids=["events", "chat", "goalhive", "sessions"],
+    ids=["events", "goalhive", "sessions"],
 )
 def test_websocket_routes_reject_external_origin_before_accept(
     handler: Callable[[_RejectedWebSocket], Awaitable[None]],

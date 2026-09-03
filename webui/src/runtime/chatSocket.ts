@@ -7,7 +7,9 @@ export class ChatSocket {
   onMessage: (message: ChatWSOut) => void = () => {}
   onState: (state: ManagedSocketState) => void = () => {}
 
-  constructor(path: string | (() => string) = '/ws/chat') {
+  constructor(path: string | (() => string)) {
+    // No default path on purpose: chat sockets are always session-scoped
+    // (/ws/sessions/{id}); the legacy global /ws/chat endpoint is gone.
     this.transport = new ManagedJsonSocket({ path })
     this.transport.onMessage = (message) => this.onMessage(message)
     this.transport.onState = (state) => this.onState(state)

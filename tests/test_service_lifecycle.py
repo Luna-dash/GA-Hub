@@ -268,40 +268,8 @@ def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
     task_factory.assert_not_called()
     scheduler_host.shutdown_all.assert_called_once_with()
     feishu.shutdown.assert_called_once_with()
-    agent._archive_snapshots_to_chat_history.assert_called_once_with()
     agent.shutdown.assert_called_once_with()
     assert session_routes._coordinator_stopping is False
-
-
-def test_agent_shutdown_still_runs_when_snapshot_archival_fails() -> None:
-    from fastapi.testclient import TestClient
-    from server import _paths, main
-    from server.routes import sessions as session_routes
-    from server.services import core_contract
-
-    if _paths.GA_ROOT is None:
-        pytest.skip("normal-mode app lifecycle needs an importable GA core")
-
-    agent = mock.Mock()
-    agent._archive_snapshots_to_chat_history.side_effect = RuntimeError("archive boom")
-    scheduler_host = mock.Mock()
-    feishu = mock.Mock()
-
-    with (
-        mock.patch("server.services.agent_service.AgentService.instance", return_value=agent),
-        mock.patch("server.services.feishu_service.FeishuService.instance", return_value=feishu),
-        mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
-        mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
-        mock.patch.object(session_routes, "stop_session_runtimes"),
-        mock.patch("server.services.conductor_service.shutdown_conductor_service", return_value=True),
-        mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
-    ):
-        app = main.create_app()
-        with TestClient(app, base_url="http://127.0.0.1"):
-            pass
-
-    agent._archive_snapshots_to_chat_history.assert_called_once_with()
-    agent.shutdown.assert_called_once_with()
 
 
 def test_reentered_lifespan_never_reaps_previous_round_services_twice() -> None:
@@ -337,7 +305,6 @@ def test_reentered_lifespan_never_reaps_previous_round_services_twice() -> None:
     assert agent_factory.call_count == 2
     scheduler_host.shutdown_all.assert_called_once_with()
     feishu.shutdown.assert_called_once_with()
-    agent._archive_snapshots_to_chat_history.assert_called_once_with()
     agent.shutdown.assert_called_once_with()
 
 
@@ -370,6 +337,5 @@ def test_partial_startup_failure_reaps_already_owned_services() -> None:
                 pass
 
     scheduler_host.shutdown_all.assert_called_once_with()
-    agent._archive_snapshots_to_chat_history.assert_called_once_with()
     agent.shutdown.assert_called_once_with()
     feishu_factory.assert_not_called()

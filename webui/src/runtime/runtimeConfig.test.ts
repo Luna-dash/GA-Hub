@@ -18,9 +18,9 @@ describe('runtimeConfig', () => {
     })
     expect(resolveApiUrl('/api/status?full=true')).toBe('/api/status?full=true')
 
-    const expected = new URL('/ws/chat', window.location.href)
+    const expected = new URL('/ws/events?prefix=chat%3A', window.location.href)
     expected.protocol = expected.protocol === 'https:' ? 'wss:' : 'ws:'
-    expect(resolveWsUrl('/ws/chat')).toBe(expected.href)
+    expect(resolveWsUrl('/ws/events?prefix=chat%3A')).toBe(expected.href)
   })
 
   it('routes HTTP, file, and WebSocket paths through an injected backend', () => {

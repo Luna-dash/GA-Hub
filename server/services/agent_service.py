@@ -40,7 +40,6 @@ from .chat_stream_projection import ChatSnapshot, ChatStreamProjection  # noqa: 
 from .event_bus import bus  # noqa: E402
 from .llm_preference_store import LlmPreferenceStore  # noqa: E402
 from .llm_registry import LlmRegistry, LlmUnavailableError  # noqa: E402
-from .legacy_chat_history_store import LegacyChatHistoryStore  # noqa: E402
 from .rewind_adapter import RewindAdapter  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -249,7 +248,6 @@ class AgentService:
         self._rewind_lock = threading.RLock()
         self._rewind_store = None
         self._rewind_adapter: RewindAdapter | None = None
-        self._legacy_chat_history = LegacyChatHistoryStore()
         self._next_id = 0
         self._run_thread: threading.Thread | None = None
         # ── conversation title ────────────────────────────────────
@@ -967,36 +965,7 @@ class AgentService:
             run_id=h.run_id,
         )
 
-    # ── replay (used by /ws/chat on connect) ────────────────────
-    def chat_state_snapshot(self) -> list[dict]:
-        """Return a flat list of recent / in-flight chat streams so a
-        reconnecting WS client can rebuild its UI atomically.
-
-        Order is insertion order (oldest → newest). Each entry is a single
-        stream's full state — frontend replaces its message list with this.
-        """
-        out: list[dict] = []
-        with self._lock:
-            for snap in self._snapshots.values():
-                item = {
-                    "stream_id": snap.stream_id,
-                    "source": snap.source,
-                    "query": snap.query,
-                    "content": snap.content,
-                    "done": snap.done,
-                    "started_at": snap.started_at,
-                    "finished_at": snap.finished_at,
-                    "logical_id": snap.logical_id,
-                    "retry_attempt": snap.retry_attempt,
-                    "retry_max": snap.retry_max,
-                    "retry_of": snap.retry_of,
-                    "retry_reason": snap.retry_reason,
-                    "session_id": snap.session_id,
-                    "run_id": snap.run_id,
-                }
-                out.append(item)
-        return out
-
+    # ── replay ──────────────────────────────────────────────────
     def active_message_snapshot(
         self, stream_id: str, *, session_id: str, run_id: str
     ) -> dict | None:
@@ -1042,9 +1011,7 @@ class AgentService:
         # reads GA's raw session archives (temp/model_responses/*.txt)
         # directly for the "对话管理" view, so a per-conversation snapshot on
         # every reset is redundant — and writing GA's file would violate the
-        # "don't mutate GA" boundary. _archive_snapshots_to_chat_history
-        # remains available only for the explicit POST /api/agent/archive
-        # export and the best-effort shutdown snapshot in main.py.
+        # "don't mutate GA" boundary.
         # Wipe per-stream UI snapshots so a reconnecting WS doesn't replay
         # stale bubbles from the previous conversation.
         with self._lock:
@@ -1052,68 +1019,6 @@ class AgentService:
         self.set_title("")
         bus.publish("chat:reset", {"reason": "new_conversation"})
         return reset_conversation(self.agent)
-
-    # ---- helpers for archive on /new ----
-    @staticmethod
-    def _strip_webui_prompt_artifacts(s: str) -> str:
-        """Remove the file-marker scaffolding LiveChat appends to user prompts
-        so saved messages read like what the user actually typed."""
-        if not s:
-            return ""
-        # Drop the 'If you need to show files...' preamble injected by LiveChat
-        s = _re.sub(
-            r"^If you need to show files to user, use \[FILE:filepath\] in your response\.\s*",
-            "",
-            s,
-        )
-        # Drop trailing "[用户发送文件: <path>]" markers, possibly multiple
-        s = _re.sub(r"(?:\n|^)\[用户发送文件:[^\]]*\]\s*", "", s)
-        return s.strip()
-
-    def _archive_snapshots_to_chat_history(self) -> None:
-        """Dump the current chat snapshots as one new entry in chat_history.json.
-
-        Schema matches what frontends/qtapp.py writes (so the same file is
-        readable by the Qt app and by /api/conversations):
-
-            {"id", "title", "messages": [{role, content}, ...], "updatedAt"}
-        """
-        with self._lock:
-            snaps = [s for s in self._snapshots.values() if s.done and (s.query or s.content)]
-        if not snaps:
-            return  # nothing meaningful to save
-
-        messages: list[dict] = []
-        first_user_text = ""
-        for snap in snaps:
-            user_text = self._strip_webui_prompt_artifacts(snap.query)
-            if user_text:
-                messages.append({"role": "user", "content": user_text})
-                if not first_user_text:
-                    first_user_text = user_text
-            if snap.content:
-                messages.append({"role": "assistant", "content": snap.content})
-        if not messages:
-            return
-
-        explicit_title = (self._current_title or "").strip()
-        if explicit_title:
-            title = explicit_title
-        else:
-            title = (first_user_text[:30].replace("\n", " ") or "Web 对话")
-            if len(first_user_text) > 30:
-                title += "…"
-        entry = {
-            "id": datetime.now().strftime("%Y%m%d_%H%M%S_%f"),
-            "title": title,
-            "messages": messages,
-            "updatedAt": datetime.now().isoformat(),
-            "source": "webui",
-        }
-
-        self._legacy_chat_history.append(entry)
-        log.info("archived webui conversation %s (%d msgs) to chat_history.json",
-                 entry["id"], len(messages))
 
     def get_history(self) -> list[str]:
         return list(getattr(self.agent, "history", []))

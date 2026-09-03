@@ -421,11 +421,6 @@ def create_app() -> FastAPI:
                     log.exception("feishu shutdown failed")
                 try:
                     if services.agent is not None:
-                        services.agent._archive_snapshots_to_chat_history()
-                except Exception:
-                    log.exception("agent snapshot archival failed")
-                try:
-                    if services.agent is not None:
                         services.agent.shutdown()
                 except Exception:
                     log.exception("agent shutdown failed")

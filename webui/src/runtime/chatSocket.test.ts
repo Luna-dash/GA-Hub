@@ -84,7 +84,7 @@ describe('ChatSocket adapter', () => {
   })
 
   it('keeps receive-only callers safe while disconnected and serializes commands when open', () => {
-    const socket = new ChatSocket('/ws/chat')
+    const socket = new ChatSocket('/ws/sessions/s1')
     socket.send({ type: 'ping' })
     socket.open()
     const current = FakeWebSocket.instances[0]
@@ -99,7 +99,7 @@ describe('ChatSocket adapter', () => {
 
   it('cancels pending reconnect on explicit close', async () => {
     vi.useFakeTimers()
-    const socket = new ChatSocket('/ws/chat')
+    const socket = new ChatSocket('/ws/sessions/s1')
     socket.open()
     FakeWebSocket.instances[0].remoteClose()
     socket.close()

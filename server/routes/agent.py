@@ -2,19 +2,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException
 
-from ..origin_policy import is_allowed_ui_origin
 from ..schemas import (
     AgentTitleReq,
     BtwReq,
     BtwResp,
     ChatRetryConfigReq,
-    ChatSubmit,
     LLMSwitch,
     RewindReq,
     RewindResp,
@@ -52,16 +49,6 @@ async def abort():
 async def new_conv():
     msg = svc().new_conversation()
     return {"ok": True, "message": msg}
-
-
-@router.post("/api/agent/archive")
-async def archive_current():
-    """Persist current conversation to chat_history.json without starting a new one."""
-    try:
-        svc()._archive_snapshots_to_chat_history()
-        return {"ok": True}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
 
 
 @router.post("/api/agent/btw", response_model=BtwResp)
@@ -239,103 +226,7 @@ def _test_llm_sync(service: AgentService, client):
 
 
 # ── chat WebSocket ───────────────────────────────────────────────
-# Architecture:
-#   • All submissions (webui, autonomous, wechat, reflect) flow through
-#     AgentService.submit, which spawns a fan-out drainer that publishes
-#     chat:* events to the bus.
-#   • This WS subscribes to chat:* and forwards to the client. So a single
-#     socket sees *everything* the agent does — autonomous-evolution
-#     triggers show up alongside user prompts.
-#   • On connect we send AgentService.chat_state_snapshot() as a single
-#     {type: 'snapshot', streams: [...]} message so a reconnecting tab
-#     rebuilds in-flight + recent state atomically.
-@router.websocket("/ws/chat")
-async def ws_chat(ws: WebSocket):
-    origin = ws.headers.get("origin")
-    if not is_allowed_ui_origin(origin):
-        log.warning("Rejected chat WebSocket from origin %r", origin)
-        await ws.close(code=1008, reason="Forbidden origin")
-        return
-    source_filter = (ws.query_params.get("source") or "").strip()
-    await ws.accept()
-    s = svc()
-
-    def _matches_source(payload: dict) -> bool:
-        if not source_filter:
-            return True
-        source = payload.get("source")
-        return source == source_filter
-
-    # 1. Send current chat state snapshot so a tab-switch / reload doesn't
-    #    lose the running conversation.
-    try:
-        streams = s.chat_state_snapshot()
-        if source_filter:
-            streams = [item for item in streams if item.get("source") == source_filter]
-        await ws.send_json({"type": "snapshot", "streams": streams})
-    except Exception:
-        log.exception("ws_chat snapshot failed")
-
-    # 2. Subscribe to chat:* events and forward to this socket.
-    async def _forward():
-        async for evt in bus.subscribe("chat:"):
-            if not _matches_source(evt.payload):
-                continue
-            topic = evt.topic.split(":", 1)[1] if ":" in evt.topic else evt.topic
-            msg = {"type": topic, **evt.payload}
-            try:
-                await ws.send_json(msg)
-            except Exception:
-                return
-
-    forward_task = asyncio.create_task(_forward())
-
-    # 3. Handle incoming submit/abort/ping.
-    try:
-        while True:
-            raw = await ws.receive_text()
-            try:
-                msg = json.loads(raw)
-            except Exception:
-                await ws.send_json({"type": "error", "error": "bad_json"})
-                continue
-            mt = msg.get("type")
-            if mt == "submit":
-                # P0: if the GA core contract probe failed at startup, refuse
-                # new chats with an explicit 503-style frame instead of letting
-                # AgentService hit an opaque ImportError/AttributeError deep
-                # in the run loop.
-                report = getattr(ws.app.state, "core_contract", None)
-                if report is not None and not report.ok:
-                    await ws.send_json({
-                        "type": "error",
-                        "error": "core_contract_failed",
-                        "code": 503,
-                        "missing": list(report.errors),
-                    })
-                    continue
-                payload = ChatSubmit(**{k: v for k, v in msg.items() if k != "type"})
-                # Just kick it off — events come back via bus subscription above.
-                s.submit(payload.text, source=payload.source, images=payload.images, llm_index=payload.llm_index)
-            elif mt == "abort":
-                s.abort()
-                # The agent's run loop emits a final {'done': ...} which the
-                # fan-out drainer turns into a chat:done frame.
-            elif mt == "ping":
-                await ws.send_json({"type": "pong"})
-            else:
-                await ws.send_json({"type": "error", "error": f"unknown_type:{mt}"})
-    except WebSocketDisconnect:
-        return
-    except Exception as e:
-        log.exception("ws_chat crashed: %s", e)
-        try:
-            await ws.send_json({"type": "error", "error": str(e)})
-        except Exception:
-            pass
-    finally:
-        forward_task.cancel()
-        try:
-            await forward_task
-        except Exception:
-            pass
+# (removed) /ws/chat was the legacy global-agent chat socket: no frontend page
+# connected to it (the webui submits through POST /api/sessions/{id}/runs and
+# receives on /ws/sessions/{id}). Background producers moved onto system
+# sessions through SessionCoordinator, so the global chat socket is dead.
