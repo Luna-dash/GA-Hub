@@ -150,7 +150,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
             {cleaned && (
               <div
                 className={clsx(
-                  "rounded-lg bg-[#8A6438] text-[#FFF4DF] whitespace-pre-wrap break-words shadow-[0_2px_6px_rgba(45,34,22,0.16)] border border-[#6F4D28]",
+                  "rounded-lg bg-accent text-[#FFF4DF] whitespace-pre-wrap break-words shadow-[0_2px_6px_rgba(45,34,22,0.16)] border border-[#6F4D28]",
                   compact ? "px-3 py-2 leading-6" : "px-3.5 py-2.5 leading-7"
                 )}
                 style={messageFontStyle}
@@ -160,7 +160,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
             )}
           </div>
           {timeLabel && (
-            <span className="mb-1 shrink-0 whitespace-nowrap text-[10px] leading-none text-[#8A7B65]">
+            <span className="mb-1 shrink-0 whitespace-nowrap text-[10px] leading-none text-ink-faint">
               {timeLabel}
             </span>
           )}
@@ -178,7 +178,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
           compact ? "px-3 py-2 text-xs" : "px-3.5 py-3",
           isSystem
             ? "bg-[#E8D8B8] border border-[#B69761] text-[#3C2C19]"
-            : "bg-bg-card border border-line text-[#2C2418]"
+            : "bg-bg-card border border-line text-ink"
         )}>
           {isSystem && (
             <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-amber-400 flex items-center justify-center text-sm shadow">
@@ -186,13 +186,13 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
             </div>
           )}
           {!compact && (
-            <div className={clsx("mb-2 flex items-center gap-2 text-[11px] font-medium", isSystem ? "text-[#7B5A2E]" : "text-[#665741]")}>
+            <div className={clsx("mb-2 flex items-center gap-2 text-[11px] font-medium", isSystem ? "text-[#7B5A2E]" : "text-ink-muted")}>
               <span className={clsx("h-1.5 w-1.5 rounded-full", isSystem ? "bg-[#A2783F]" : "bg-[#54735D]")} />
               {isSystem ? 'system' : 'GA Agent'}
             </div>
           )}
           {tagLabel && (
-            <div className="mb-1.5 text-[11px] font-medium leading-4 text-[#86775F]">{tagLabel}</div>
+            <div className="mb-1.5 text-[11px] font-medium leading-4 text-ink-faint">{tagLabel}</div>
           )}
           {stopped && !useHistoryProjection && (
             <p className="mb-2 text-xs italic leading-5 text-[#8A6B3E]">⏹ 已手动停止</p>
@@ -230,7 +230,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
           </div>
         </div>
         {(timeLabel || startedAt) && (
-          <span className={clsx("shrink-0 whitespace-nowrap px-0.5 text-[10px] leading-4 tabular-nums", isSystem ? "text-[#8A6B3E]" : "text-[#8A7B65]")}>
+          <span className={clsx("shrink-0 whitespace-nowrap px-0.5 text-[10px] leading-4 tabular-nums", isSystem ? "text-[#8A6B3E]" : "text-ink-faint")}>
             {timeLabel}
             {timeLabel && startedAt && ' · '}
             {startedAt && `${streaming ? '已运行' : '用时'} ${formatDuration(Math.max(0, (streaming ? clock : (finishedAt ?? timestamp ?? clock)) - startedAt))}`}
@@ -285,13 +285,13 @@ function HistoryTranscriptReply({
       {visibleFinal ? (
         <MarkdownView mode="auto" cache>{visibleFinal}</MarkdownView>
       ) : manualStop || transcript.stopped ? null : (
-        <p className="text-sm leading-6 text-[#665741]">该条历史回复未包含可提取的最终回答。</p>
+        <p className="text-sm leading-6 text-ink-muted">该条历史回复未包含可提取的最终回答。</p>
       )}
       {finalDeferred && (
         <button
           type="button"
           onClick={onExpandFinal}
-          className="mt-3 rounded-md border border-line bg-bg-soft px-3 py-1.5 text-xs text-[#665741] transition-colors hover:bg-bg-card hover:text-[#2C2418]"
+          className="mt-3 rounded-md border border-line bg-bg-soft px-3 py-1.5 text-xs text-ink-muted transition-colors hover:bg-bg-card hover:text-ink"
         >
           最终回答较长，展开完整内容
         </button>
@@ -308,11 +308,11 @@ function LazyProcessFold({ turns }: { turns: AssistantTranscriptTurn[] }) {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
-        className="flex w-full items-center gap-2 rounded-md border border-line bg-bg-soft px-3 py-2 text-left text-xs font-medium text-[#665741] transition-colors hover:bg-bg-card hover:text-[#2C2418]"
+        className="flex w-full items-center gap-2 rounded-md border border-line bg-bg-soft px-3 py-2 text-left text-xs font-medium text-ink-muted transition-colors hover:bg-bg-card hover:text-ink"
       >
         <span aria-hidden="true" className={clsx('inline-block transition-transform', open && 'rotate-90')}>›</span>
         <span>{open ? '收起执行过程' : '查看执行过程'}</span>
-        <span className="ml-auto shrink-0 tabular-nums text-[#8A7B65]">共 {turns.length} 个 Turn</span>
+        <span className="ml-auto shrink-0 tabular-nums text-ink-faint">共 {turns.length} 个 Turn</span>
       </button>
       {open && (
         <div className="mt-1 divide-y divide-line/70 border-t border-line/70">
@@ -330,17 +330,17 @@ function LazyTranscriptTurn({ turn }: { turn: AssistantTranscriptTurn }) {
   const title = turn.summary || '执行记录'
   if (!turn.content.trim()) {
     return (
-      <div className="flex min-w-0 gap-2 py-2 text-xs leading-5 text-[#665741]">
-        <span className="shrink-0 font-medium text-[#8A7B65]">Turn {turn.turn}</span>
+      <div className="flex min-w-0 gap-2 py-2 text-xs leading-5 text-ink-muted">
+        <span className="shrink-0 font-medium text-ink-faint">Turn {turn.turn}</span>
         <span className="min-w-0 break-words">{title}</span>
       </div>
     )
   }
   return (
     <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="flex cursor-pointer list-none items-start gap-2 py-2 text-xs leading-5 text-[#665741] hover:text-[#2C2418] [&::-webkit-details-marker]:hidden">
+      <summary className="flex cursor-pointer list-none items-start gap-2 py-2 text-xs leading-5 text-ink-muted hover:text-ink [&::-webkit-details-marker]:hidden">
         <span aria-hidden="true" className={clsx('mt-0.5 inline-block transition-transform', open && 'rotate-90')}>›</span>
-        <span className="shrink-0 font-medium text-[#8A7B65]">Turn {turn.turn}</span>
+        <span className="shrink-0 font-medium text-ink-faint">Turn {turn.turn}</span>
         <span className="min-w-0 break-words">{title}</span>
       </summary>
       {open && (
@@ -395,11 +395,11 @@ function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
             target="_blank"
             rel="noreferrer"
             title={a.name}
-            className="px-3 py-2 rounded-md border border-line bg-bg-card text-xs text-[#2C2418] hover:bg-bg-soft inline-flex items-center gap-2 max-w-[16rem]"
+            className="px-3 py-2 rounded-md border border-line bg-bg-card text-xs text-ink hover:bg-bg-soft inline-flex items-center gap-2 max-w-[16rem]"
           >
             <span>📎</span>
             <span className="truncate">{a.name}</span>
-            {!!a.size && <span className="text-[#86775F] shrink-0">{fmtSize(a.size)}</span>}
+            {!!a.size && <span className="text-ink-faint shrink-0">{fmtSize(a.size)}</span>}
           </a>
         )
       })}
@@ -415,8 +415,8 @@ function CopyChip({ text }: { text: string }) {
       onClick={() => copy(text)}
       title="复制结论"
       className="px-2.5 py-1 text-[11px] leading-none rounded-md
-                 bg-bg-soft border border-line text-[#665741]
-                 hover:text-[#2C2418] hover:bg-bg-card transition-colors"
+                 bg-bg-soft border border-line text-ink-muted
+                 hover:text-ink hover:bg-bg-card transition-colors"
     >
       {copied ? '✓ 已复制' : '复制'}
     </button>
@@ -429,7 +429,7 @@ function RewindChip({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       title="回退此轮对话（删除本轮提问与回复）"
       className="px-2.5 py-1 text-[11px] leading-none rounded-md
-                 bg-bg-soft border border-line text-[#665741]
+                 bg-bg-soft border border-line text-ink-muted
                  hover:text-accent hover:bg-bg-card transition-colors"
     >
       ↺ 回退

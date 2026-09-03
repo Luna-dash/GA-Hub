@@ -331,13 +331,13 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
             <div className="flex h-full items-center justify-center text-sm text-red-400">会话初始化失败：{sessionError}</div>
           )}
           {!sessionError && hydrating && msgs.length === 0 && (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-[#86775F]">
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-ink-faint">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-600 border-t-accent" />
               <div>正在恢复历史对话…</div>
             </div>
           )}
           {!hydrating && msgs.length === 0 && (
-            <div className="flex h-full items-center justify-center text-sm text-[#86775F]">
+            <div className="flex h-full items-center justify-center text-sm text-ink-faint">
               开始一段对话，或粘贴一张图问个问题。
             </div>
           )}
@@ -397,7 +397,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
                 屏幕位置恒定（底部按钮置于其上方，不随 stuckBottom 翻转挤动），
                 到达最底后整组隐藏，避免角落误触。 */}
             {turnCount > 0 && !stuckBottom && (
-              <div className="mt-auto flex shrink-0 flex-col gap-1.5 text-xs text-[#2C2418]">
+              <div className="mt-auto flex shrink-0 flex-col gap-1.5 text-xs text-ink">
                 <button
                   onClick={jumpToBottom}
                   className="min-h-9 rounded-lg border border-line bg-bg-soft/95 px-1 py-1 leading-tight shadow-md backdrop-blur hover:bg-bg-card"

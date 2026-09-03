@@ -27,7 +27,7 @@ const activityDot = {
 const activityCard = {
   active: 'border-emerald-400/60 bg-emerald-50/80 text-emerald-950 shadow-[inset_3px_0_0_rgba(16,185,129,0.65)] hover:bg-emerald-50',
   completed: 'border-sky-400/60 bg-sky-50/80 text-sky-950 shadow-[inset_3px_0_0_rgba(14,165,233,0.65)] hover:bg-sky-50',
-  idle: 'border-line/60 text-[#665741] hover:border-line hover:bg-bg-card',
+  idle: 'border-line/60 text-ink-muted hover:border-line hover:bg-bg-card',
   error: 'border-rose-400/60 bg-rose-50/80 text-rose-950 shadow-[inset_3px_0_0_rgba(244,63,94,0.65)] hover:bg-rose-50',
   unknown: 'border-amber-400/55 bg-amber-50/70 text-amber-950 hover:bg-amber-50',
 }
@@ -361,7 +361,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                         }}
                         disabled={savingId === session.id}
                         aria-label={`重命名 ${sessionTitle(session)}`}
-                        className="m-2 mb-1 w-[calc(100%-1rem)] rounded-md border border-accent/45 bg-white/90 px-2 py-1 text-sm text-[#2C2418] outline-none ring-accent/20 focus:ring-2"
+                        className="m-2 mb-1 w-[calc(100%-1rem)] rounded-md border border-accent/45 bg-white/90 px-2 py-1 text-sm text-ink outline-none ring-accent/20 focus:ring-2"
                       />
                     ) : (
                       <button
@@ -419,7 +419,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                   onClick={() => toggleGroup(group.key)}
                   aria-expanded={!groupClosed}
                   title={group.projectPath || group.name}
-                  className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-[11px] font-medium text-[#8D7B5D] transition hover:bg-black/5 hover:text-[#665741]"
+                  className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-[11px] font-medium text-[#8D7B5D] transition hover:bg-black/5 hover:text-ink-muted"
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -479,7 +479,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
         onClick={toggle}
         title={collapsed ? '展开会话管理' : '折叠会话管理'}
         className={clsx(
-          'absolute z-30 flex items-center justify-center border border-line bg-bg-card/95 text-[#665741] shadow-md backdrop-blur-sm hover:bg-white',
+          'absolute z-30 flex items-center justify-center border border-line bg-bg-card/95 text-ink-muted shadow-md backdrop-blur-sm hover:bg-white',
           'left-1/2 h-6 w-12 -translate-x-1/2 rounded-b-lg border-t-0 transition-[top,background-color] duration-300',
           'md:left-auto md:top-1/2 md:h-12 md:w-6 md:translate-x-0 md:-translate-y-1/2 md:rounded-b-none md:rounded-r-lg md:border-l-0 md:border-t',
           collapsed ? 'top-0 md:-right-6' : 'top-32 md:-right-6 md:top-1/2',

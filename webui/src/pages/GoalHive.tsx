@@ -199,7 +199,7 @@ export default function GoalHive() {
       }
       actions={
         <div className="flex h-9 items-center gap-2 whitespace-nowrap">
-          <span className="text-xs text-[#7B6D5A]">主模型</span>
+          <span className="text-xs text-ink-muted">主模型</span>
           <MainModelSelect
             llms={llms}
             value={mainLlmKey}
@@ -235,7 +235,7 @@ export default function GoalHive() {
                 aria-pressed={mode === item}
                 className={clsx(
                   'rounded-lg px-4 py-1 text-sm transition',
-                  mode === item ? 'bg-accent text-white shadow-sm' : 'text-[#665741] hover:text-[#2C2418]',
+                  mode === item ? 'bg-accent text-white shadow-sm' : 'text-ink-muted hover:text-ink',
                 )}
               >
                 {item.toUpperCase()}
@@ -245,13 +245,13 @@ export default function GoalHive() {
 
           <div className="mb-4 space-y-2 lg:mb-5">
             <div className="text-sm text-accent font-medium">{config.title}</div>
-            <h2 className="text-lg font-semibold text-[#2C2418]">{config.subtitle}</h2>
-            <p className="text-sm text-[#665741] leading-6">启动输出会留在本页面的独立日志区，不跳转、不混入普通聊天页。</p>
+            <h2 className="text-lg font-semibold text-ink">{config.subtitle}</h2>
+            <p className="text-sm text-ink-muted leading-6">启动输出会留在本页面的独立日志区，不跳转、不混入普通聊天页。</p>
           </div>
 
           <div className="mb-4 flex flex-wrap gap-2 lg:mb-5">
             {config.chips.map((chip) => (
-              <span key={chip} className="text-xs px-2.5 py-1 rounded-full border border-line bg-bg-soft text-[#665741]">
+              <span key={chip} className="text-xs px-2.5 py-1 rounded-full border border-line bg-bg-soft text-ink-muted">
                 {chip}
               </span>
             ))}
@@ -259,7 +259,7 @@ export default function GoalHive() {
 
           <form onSubmit={submit} className="space-y-3 lg:space-y-4">
             <label className="block space-y-2">
-              <span className="text-sm font-medium text-[#2C2418]">目标</span>
+              <span className="text-sm font-medium text-ink">目标</span>
               <textarea
                 ref={targetRef}
                 value={target}
@@ -267,12 +267,12 @@ export default function GoalHive() {
                 onChange={(event) => setTarget(event.target.value)}
                 placeholder={config.placeholder}
                 wrap="soft"
-                className="w-full min-w-0 max-h-[280px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line bg-bg-soft px-4 py-3 text-sm leading-6 text-[#2C2418] placeholder:text-[#8A7B65] outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+                className="w-full min-w-0 max-h-[280px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line bg-bg-soft px-4 py-3 text-sm leading-6 text-ink placeholder:text-ink-faint outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
               />
             </label>
 
             <label className="block space-y-2">
-              <span className="text-sm font-medium text-[#2C2418]">补充约束（可选）</span>
+              <span className="text-sm font-medium text-ink">补充约束（可选）</span>
               <textarea
                 ref={conditionRef}
                 value={condition}
@@ -280,17 +280,17 @@ export default function GoalHive() {
                 onChange={(event) => setCondition(event.target.value)}
                 placeholder="例如：先汇报计划；不得修改记忆；预算到期后总结验证结果。"
                 wrap="soft"
-                className="w-full min-w-0 max-h-[280px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line bg-bg-soft px-4 py-3 text-sm leading-6 text-[#2C2418] placeholder:text-[#8A7B65] outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+                className="w-full min-w-0 max-h-[280px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line bg-bg-soft px-4 py-3 text-sm leading-6 text-ink placeholder:text-ink-faint outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
               />
             </label>
 
             <div className="rounded-xl border border-line bg-bg-soft/70 p-4 space-y-2">
-              <div className="text-xs uppercase tracking-[0.16em] text-[#8A7B65]">将发送到本页独立通道</div>
+              <div className="text-xs uppercase tracking-[0.16em] text-ink-faint">将发送到本页独立通道</div>
               <pre className="whitespace-pre-wrap break-words text-sm text-[#3B3326] font-mono">{preview || `${config.command} ...`}</pre>
             </div>
 
             <div className="flex items-center justify-between gap-3">
-              <p className="text-xs text-[#665741]">{streaming ? '当前任务输出中，完成后可启动下一项。' : config.helper}</p>
+              <p className="text-xs text-ink-muted">{streaming ? '当前任务输出中，完成后可启动下一项。' : config.helper}</p>
               <button
                 type="submit"
                 disabled={!canSubmit}
@@ -305,24 +305,24 @@ export default function GoalHive() {
         <section className="rounded-2xl border border-line bg-bg-card shadow-sm flex flex-col min-h-0 overflow-hidden">
           <div className="px-5 py-4 border-b border-line flex items-center justify-between">
             <div>
-              <div className="text-sm font-medium text-[#2C2418]">独立输出</div>
-              <div className="text-xs text-[#8A7B65]">独立 GoalHive 通道</div>
+              <div className="text-sm font-medium text-ink">独立输出</div>
+              <div className="text-xs text-ink-faint">独立 GoalHive 通道</div>
             </div>
-            <button type="button" onClick={reset} className="text-xs px-3 py-1.5 rounded-lg border border-line text-[#665741] hover:text-[#2C2418]">
+            <button type="button" onClick={reset} className="text-xs px-3 py-1.5 rounded-lg border border-line text-ink-muted hover:text-ink">
               清空历史
             </button>
           </div>
           <div ref={logRef} className="flex-1 min-h-0 overflow-auto p-5 space-y-4">
             {msgs.length === 0 ? (
-              <div className="h-full min-h-64 grid place-items-center text-sm text-[#8A7B65]">尚无 Goal / Hive 输出。</div>
+              <div className="h-full min-h-64 grid place-items-center text-sm text-ink-faint">尚无 Goal / Hive 输出。</div>
             ) : (
               msgs.map((msg) => (
                 <article key={msg.id} className={clsx('rounded-xl border p-4', msg.role === 'user' ? 'border-accent/30 bg-accent/10' : msg.role === 'system' ? 'border-amber-500/30 bg-amber-500/10' : 'border-line bg-bg-soft/70')}>
-                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#8A7B65]">
+                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-ink-faint">
                     {msg.role === 'user' ? 'YOU' : mode === 'hive' ? 'HIVE MASTER' : 'GOAL AGENT'}
                     {msg.streaming && <span className="text-accent normal-case tracking-normal">streaming</span>}
                   </div>
-                  <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-[#2C2418] font-sans">{msg.content}</pre>
+                  <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-ink font-sans">{msg.content}</pre>
                 </article>
               ))
             )}
@@ -346,11 +346,11 @@ export default function GoalHive() {
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-line/70 px-5 py-4">
-              <h2 id="goal-hive-subagent-settings-title" className="text-base font-semibold text-[#2C2418]">子代理设置</h2>
+              <h2 id="goal-hive-subagent-settings-title" className="text-base font-semibold text-ink">子代理设置</h2>
               <button
                 type="button"
                 onClick={closeSubagentSettings}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none text-[#7B6D5A] hover:bg-bg-soft hover:text-[#2C2418]"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none text-ink-muted hover:bg-bg-soft hover:text-ink"
                 aria-label="关闭子代理设置"
                 title="关闭"
               >
@@ -358,7 +358,7 @@ export default function GoalHive() {
               </button>
             </div>
             <div className="px-5 py-5">
-              <label className="block text-sm font-medium text-[#2C2418]">
+              <label className="block text-sm font-medium text-ink">
                 默认模型
                 <SubagentModelSelect
                   llms={llms}

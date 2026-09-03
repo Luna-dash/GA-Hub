@@ -83,7 +83,7 @@ export default function Dashboard() {
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse mr-2 align-middle" /><span className="text-sm text-slate-200">{service.name}</span><span className="ml-2 text-xs text-slate-500">{service.summary}</span>
               </ServiceSurface>
             ))}</div>
-          ) : <p className="rounded-lg border border-border/70 bg-bg-panel/40 px-3 py-3 text-xs text-slate-500">当前没有后台活动；这不影响待命模块接收任务。</p>}
+          ) : <p className="rounded-lg border border-line/70 bg-bg-card/40 px-3 py-3 text-xs text-slate-500">当前没有后台活动；这不影响待命模块接收任务。</p>}
         </section>
 
         <section>
@@ -97,7 +97,7 @@ export default function Dashboard() {
         {tokens.data?.available && totals && (
           <section>
             <SectionTitle title="Token 用量" hint="统计范围内的累计值，不代表当前并发请求" link="/tokens" />
-            <div className="rounded-xl border border-border bg-bg-panel px-4 py-3 flex flex-wrap gap-x-7 gap-y-3">
+            <div className="rounded-xl border border-line bg-bg-card px-4 py-3 flex flex-wrap gap-x-7 gap-y-3">
               <TokenFact label="请求累计" value={totals.requests} />
               <TokenFact label="输入" value={totals.input} />
               <TokenFact label="输出" value={totals.output} />
@@ -113,7 +113,7 @@ export default function Dashboard() {
 }
 
 function SectionTitle({ title, hint, link }: { title: string; hint: string; link?: string }) {
-  return <div className="flex items-end justify-between gap-3 mb-3"><div><h2 className="text-sm font-medium text-slate-200">{title}</h2><p className="text-[11px] text-slate-500 mt-0.5">{hint}</p></div>{link && <Link to={link} className="text-xs text-accent hover:text-accent-hover shrink-0">查看详情 →</Link>}</div>
+  return <div className="flex items-end justify-between gap-3 mb-3"><div><h2 className="text-sm font-medium text-slate-200">{title}</h2><p className="text-[11px] text-slate-500 mt-0.5">{hint}</p></div>{link && <Link to={link} className="text-xs text-accent hover:text-accent/80 shrink-0">查看详情 →</Link>}</div>
 }
 
 function ActionRow({ service }: { service: ServicePanelItem }) {
@@ -126,7 +126,7 @@ function ServiceRow({ service }: { service: ServicePanelItem }) {
   const needsAttention = service.health !== 'healthy'
   const dot = needsAttention ? 'bg-amber-400' : service.activity === 'active' ? 'bg-sky-400' : service.activity === 'standby' ? 'bg-emerald-400' : 'bg-slate-600'
   return (
-    <ServiceSurface service={service} className={`rounded-lg border bg-bg-panel px-3 py-3 min-w-0 ${needsAttention ? 'border-amber-500/25' : 'border-border'}`}>
+    <ServiceSurface service={service} className={`rounded-lg border bg-bg-card px-3 py-3 min-w-0 ${needsAttention ? 'border-amber-500/25' : 'border-line'}`}>
       <div className="flex items-center justify-between gap-3"><span className="flex items-center min-w-0"><span className={`h-2 w-2 rounded-full shrink-0 mr-2 ${dot}`} /><b className="text-sm font-medium text-slate-200 truncate">{service.name}</b></span><span className={`text-[11px] shrink-0 ${needsAttention ? 'text-amber-300' : 'text-slate-500'}`}>{serviceActivityLabel(service)}</span></div>
       <p className="mt-1 text-xs text-slate-500 truncate" title={service.error || service.summary}>{service.error || service.summary}</p>
       {metrics.length > 0 && <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">{metrics.map(([key, value]) => <span key={key} className="text-[10px] text-slate-600">{key} <b className="font-mono font-normal text-slate-400">{value === true ? '是' : String(value)}</b></span>)}</div>}
@@ -136,7 +136,7 @@ function ServiceRow({ service }: { service: ServicePanelItem }) {
 
 function ServiceSurface({ service, className, children }: { service: ServicePanelItem; className: string; children: ReactNode }) {
   if (service.href === '/dashboard') return <div className={className}>{children}</div>
-  return <Link to={service.href} className={`${className} hover:bg-bg-hover transition-colors`}>{children}</Link>
+  return <Link to={service.href} className={`${className} hover:bg-bg-soft transition-colors`}>{children}</Link>
 }
 
 function TokenFact({ label, value, suffix = '' }: { label: string; value: number; suffix?: string }) {

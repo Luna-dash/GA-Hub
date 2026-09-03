@@ -17,6 +17,14 @@ export default {
           DEFAULT: 'var(--c-accent)',
           soft: 'var(--c-accent-soft)',
         },
+        // Text tones: the ONLY sanctioned text colors. Hardcoding hex
+        // text-[#...] values is what let three slightly different "muted
+        // grays" (#665741/#7B6D5A/#8A7B65) drift across pages.
+        ink: {
+          DEFAULT: 'var(--c-text)',
+          muted: 'var(--c-text-muted)',
+          faint: 'var(--c-text-faint)',
+        },
       },
       fontFamily: {
         sans: ['"Inter"', '"PingFang SC"', '"Noto Sans SC"', 'system-ui', 'sans-serif'],

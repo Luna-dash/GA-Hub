@@ -20,7 +20,7 @@ interface SubagentModelSelectProps extends CommonModelSelectProps {
   onChange: (llmKey: string | null) => void
 }
 
-const SELECT_CLASS = 'min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50'
+const SELECT_CLASS = 'min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-ink hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50'
 
 export function MainModelSelect({ llms, value, onChange, className, disabled, ...props }: MainModelSelectProps) {
   return (

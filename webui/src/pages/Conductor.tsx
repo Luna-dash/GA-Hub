@@ -594,13 +594,13 @@ export default function Conductor() {
         </span>
       }
       middleArea={
-        <span className="text-xs text-[#7B6D5A]" aria-label="工人占用">
+        <span className="text-xs text-ink-muted" aria-label="工人占用">
           {occupiedCount > 0 ? `工人占用 ${occupiedCount}` : '没有占用中的工人'}
         </span>
       }
       actions={
         <div className="flex h-9 items-center gap-2 whitespace-nowrap">
-          <span className="text-xs text-[#7B6D5A]">主模型</span>
+          <span className="text-xs text-ink-muted">主模型</span>
           <MainModelSelect
             llms={llms}
             value={mainLlmKey}
@@ -635,14 +635,14 @@ export default function Conductor() {
         <div className="flex w-64 min-w-0 shrink-0 flex-col gap-3">
           <section aria-label="当前任务" className="shrink-0 rounded-2xl border border-line bg-bg-card px-3.5 py-3 shadow-sm">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-[#2C2418]">当前任务</h2>
+              <h2 className="text-sm font-semibold text-ink">当前任务</h2>
               <WorkflowBadge tone={workflowView.tone} label={workflowView.label} />
             </div>
-            <p className="mt-1.5 line-clamp-2 text-sm font-medium leading-5 text-[#2C2418]">
+            <p className="mt-1.5 line-clamp-2 text-sm font-medium leading-5 text-ink">
               {currentTask || '尚未收到任务'}
             </p>
-            <p className="mt-1 line-clamp-2 text-xs leading-5 text-[#665741]">{workflowView.detail}</p>
-            <p className="mt-1.5 text-[11px] text-[#7B6D5A]" aria-label="子代理状态跟踪">
+            <p className="mt-1 line-clamp-2 text-xs leading-5 text-ink-muted">{workflowView.detail}</p>
+            <p className="mt-1.5 text-[11px] text-ink-muted" aria-label="子代理状态跟踪">
               {workflowSubagents.length === 0
                 ? '尚未指派'
                 : `${acceptedCount}/${workflowSubagents.length} 已通过${activeSubagents.length > 0 ? ` · ${activeSubagents.length} 执行中` : ''}`}
@@ -676,9 +676,9 @@ export default function Conductor() {
 
           <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
             <div className="flex items-center justify-between gap-2 border-b border-line/70 px-3.5 py-2.5">
-              <h2 className="text-sm font-semibold text-[#2C2418]">工人</h2>
+              <h2 className="text-sm font-semibold text-ink">工人</h2>
               {workflowSubagents.length > 0 && (
-                <span className="text-[11px] text-[#7B6D5A]">{workflowSubagents.length} 项</span>
+                <span className="text-[11px] text-ink-muted">{workflowSubagents.length} 项</span>
               )}
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto" aria-label="子任务详情">
@@ -687,7 +687,7 @@ export default function Conductor() {
                   <p className="text-sm font-medium text-[#4E4233]">
                     {currentWorkflow ? '尚未指派子代理' : '暂无执行中的任务'}
                   </p>
-                  <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">
+                  <p className="mt-1 text-xs leading-5 text-ink-muted">
                     {currentWorkflow ? '完成任务拆分后在这里显示。' : '发送任务后可在这里查看进度。'}
                   </p>
                 </div>
@@ -707,8 +707,8 @@ export default function Conductor() {
 
         <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
           <div className="flex items-center justify-between gap-3 border-b border-line/70 px-4 py-2.5">
-            <h2 className="text-sm font-semibold text-[#2C2418]">本轮对话</h2>
-            <span className="text-[11px] text-[#7B6D5A]">只显示当前任务这一轮</span>
+            <h2 className="text-sm font-semibold text-ink">本轮对话</h2>
+            <span className="text-[11px] text-ink-muted">只显示当前任务这一轮</span>
           </div>
           <div
             ref={chatScrollRef}
@@ -721,7 +721,7 @@ export default function Conductor() {
             className="min-h-0 flex-1 overflow-y-auto divide-y divide-line text-sm"
           >
             {isChatLoading && visibleChat.length === 0 && (
-              <div className="px-4 py-8 text-center text-sm text-[#7B6D5A]">正在加载 Conductor 历史…</div>
+              <div className="px-4 py-8 text-center text-sm text-ink-muted">正在加载 Conductor 历史…</div>
             )}
             {isChatError && visibleChat.length === 0 && (
               <div className="px-4 py-8 text-center">
@@ -730,21 +730,21 @@ export default function Conductor() {
               </div>
             )}
             {!isChatLoading && !isChatError && visibleChat.length === 0 && (
-              <div className="px-4 py-8 text-center text-sm text-[#7B6D5A]">还没有任务，先向指挥描述你要完成的工作。</div>
+              <div className="px-4 py-8 text-center text-sm text-ink-muted">还没有任务，先向指挥描述你要完成的工作。</div>
             )}
             {visibleChat.map((msg) => (
               msg.role === 'user' ? (
                 <div key={msg.id} className="flex justify-end px-4 py-2">
-                  <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-[#8A6438] px-3.5 py-2 text-sm leading-6 text-[#FFF4DF] [overflow-wrap:anywhere]">
+                  <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent px-3.5 py-2 text-sm leading-6 text-[#FFF4DF] [overflow-wrap:anywhere]">
                     {msg.msg}
                   </div>
                 </div>
               ) : (
                 <div key={msg.id} className="flex gap-3 px-4 py-2">
-                  <span className="w-10 shrink-0 select-none pt-0.5 text-[11px] font-medium uppercase tracking-wide text-[#665741]">
+                  <span className="w-10 shrink-0 select-none pt-0.5 text-[11px] font-medium uppercase tracking-wide text-ink-muted">
                     指挥
                   </span>
-                  <div className="min-w-0 flex-1 text-sm leading-6 text-[#2C2418]">
+                  <div className="min-w-0 flex-1 text-sm leading-6 text-ink">
                     <MarkdownView mode="plain" cache>
                       {msg.msg}
                     </MarkdownView>
@@ -768,7 +768,7 @@ export default function Conductor() {
                 rows={1}
                 wrap="soft"
                 placeholder="向指挥补充一句，或开一个新任务…"
-                className="min-h-10 max-h-40 min-w-0 flex-1 resize-none overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-line bg-bg px-3 py-2 text-sm leading-6 text-[#2C2418] placeholder:text-[#8A7A63] [overflow-wrap:anywhere] focus:border-accent focus:outline-none"
+                className="min-h-10 max-h-40 min-w-0 flex-1 resize-none overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-line bg-bg px-3 py-2 text-sm leading-6 text-ink placeholder:text-[#8A7A63] [overflow-wrap:anywhere] focus:border-accent focus:outline-none"
               />
               <button
                 type="submit"
@@ -811,7 +811,7 @@ export default function Conductor() {
             <div className="flex flex-1 items-center justify-center px-6 text-center">
               <div>
                 <p className="text-sm font-medium text-[#4E4233]">还没有选中的工人</p>
-                <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">派工后点左侧一项，这里会显示目标、交付物和完整结果。</p>
+                <p className="mt-1 text-xs leading-5 text-ink-muted">派工后点左侧一项，这里会显示目标、交付物和完整结果。</p>
               </div>
             </div>
           )}
@@ -834,11 +834,11 @@ export default function Conductor() {
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-line/70 px-5 py-4">
-              <h2 id="subagent-settings-title" className="text-base font-semibold text-[#2C2418]">子代理设置</h2>
+              <h2 id="subagent-settings-title" className="text-base font-semibold text-ink">子代理设置</h2>
               <button
                 type="button"
                 onClick={closeSubagentSettings}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none text-[#7B6D5A] hover:bg-bg-soft hover:text-[#2C2418]"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none text-ink-muted hover:bg-bg-soft hover:text-ink"
                 aria-label="关闭子代理设置"
                 title="关闭"
               >
@@ -846,7 +846,7 @@ export default function Conductor() {
               </button>
             </div>
             <div className="space-y-5 px-5 py-5">
-              <label className="block text-sm font-medium text-[#2C2418]">
+              <label className="block text-sm font-medium text-ink">
                 默认模型
                 <SubagentModelSelect
                   llms={llms}
@@ -882,9 +882,9 @@ export default function Conductor() {
                     onChange={(event) => setDraftAutoAccept(event.target.checked)}
                     aria-label="质检通过自动验收"
                   />
-                  <span className="font-medium text-[#2C2418]">质检通过自动验收</span>
+                  <span className="font-medium text-ink">质检通过自动验收</span>
                 </label>
-                <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">
+                <p className="mt-1 text-xs leading-5 text-ink-muted">
                   开启后，机器检查全部通过的工人自动放行，无需人工干预；只有检查不通过或执行异常的工人才会等你拍板。
                 </p>
               </div>
@@ -915,7 +915,7 @@ function WorkflowBadge({
         tone === 'review' && 'bg-[#EAF2F8] text-[#285A78]',
         tone === 'done' && 'bg-[#E8F4EA] text-[#2D6A3F]',
         tone === 'error' && 'bg-[#FFF0ED] text-[#9E3328]',
-        tone === 'idle' && 'bg-bg-soft text-[#7B6D5A]',
+        tone === 'idle' && 'bg-bg-soft text-ink-muted',
       )}
     >
       {label}
@@ -929,7 +929,7 @@ function phaseTone(phase: SubagentPhase): string {
     phase === 'reworking' && 'text-[#9A5315]',
     phase === 'reviewing' && 'text-[#285A78]',
     phase === 'accepted' && 'text-[#2D6A3F]',
-    phase === 'stopped' && 'text-[#7B6D5A]',
+    phase === 'stopped' && 'text-ink-muted',
   )
 }
 
@@ -985,7 +985,7 @@ function WorkerListRow({
         </span>
         {sub.attempt > 1 && <span className="shrink-0 text-[11px] text-[#9A5315]">第 {sub.attempt} 次</span>}
       </div>
-      <p className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-[#2C2418]">{workerTitle(sub)}</p>
+      <p className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-ink">{workerTitle(sub)}</p>
       {issueCount > 0 && (
         <p className="mt-0.5 text-[11px] leading-4 text-[#9E3328]">
           {missing > 0 ? `${missing} 项缺失` : ''}
@@ -1023,33 +1023,33 @@ function WorkerDossier({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-line/70 px-4 py-3">
         <div className="mb-1 flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-[#2C2418]">工人卷宗</h2>
+          <h2 className="text-sm font-semibold text-ink">工人卷宗</h2>
           <span className={clsx('flex items-center gap-1.5 text-[11px] font-medium', phaseTone(view.phase))}>
             <span className={phaseDot(view.phase)} />
             {view.label}
           </span>
         </div>
-        <p className="text-sm font-medium leading-5 text-[#2C2418]">{workerTitle(sub)}</p>
-        <p className="mt-1 text-xs leading-5 text-[#7B6D5A]">
+        <p className="text-sm font-medium leading-5 text-ink">{workerTitle(sub)}</p>
+        <p className="mt-1 text-xs leading-5 text-ink-muted">
           {view.detail}{sub.attempt > 1 ? ` · 第 ${sub.attempt} 次处理` : ''}
           {detail.done_marker === false && sub.status === 'stopped' ? ' · 未确认完成' : ''}
         </p>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-sm leading-6 text-[#2C2418]">
-        {isLoading && <p className="mb-3 text-xs text-[#7B6D5A]">正在拉取完整回复…</p>}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-sm leading-6 text-ink">
+        {isLoading && <p className="mb-3 text-xs text-ink-muted">正在拉取完整回复…</p>}
         {error && <p className="mb-3 text-xs text-[#9E3328]">完整结果暂时拉不到，先显示列表里已有的摘要。</p>}
 
         {detail.manifest?.done_when && (
           <section className="mb-4">
-            <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">完成条件</h3>
+            <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">完成条件</h3>
             <p className="mt-1 whitespace-pre-wrap text-xs leading-5">{detail.manifest.done_when}</p>
           </section>
         )}
 
         {deliverables.length > 0 && (
           <section className="mb-4">
-            <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">约定交付物</h3>
+            <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">约定交付物</h3>
             <ul className="mt-1 space-y-1 text-xs" aria-label="约定交付物">
               {deliverables.map((item, index) => {
                 const path = item.path || `交付物 ${index + 1}`
@@ -1077,7 +1077,7 @@ function WorkerDossier({
 
         {checks.length > 0 && (
           <section className="mb-4">
-            <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">机器检查</h3>
+            <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">机器检查</h3>
             <ul className="mt-1 space-y-1 text-xs" aria-label="机器检查">
               {checks.map((check, index) => (
                 <li key={`${check.kind}-${index}`} className={check.passed === false ? 'text-[#9E3328]' : ''}>
@@ -1092,13 +1092,13 @@ function WorkerDossier({
         )}
 
         <section>
-          <h3 className="text-[11px] font-medium uppercase tracking-wide text-[#7B6D5A]">
+          <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">
             {sub.status === 'running' ? '进行中摘要' : '文字结果'}
           </h3>
           {reply ? (
             <div className="mt-1 whitespace-pre-wrap break-words text-xs leading-5">{reply}</div>
           ) : (
-            <p className="mt-1 text-xs text-[#7B6D5A]">
+            <p className="mt-1 text-xs text-ink-muted">
               {sub.status === 'running'
                 ? '还没有可展示的中间结果。'
                 : '没有文字结果。请对照上面的交付物路径直接打开文件核对。'}
@@ -1139,7 +1139,7 @@ function WorkerDossier({
               终止
             </button>
           )}
-          {control.busy && <span className="text-xs text-[#7B6D5A]">处理中…</span>}
+          {control.busy && <span className="text-xs text-ink-muted">处理中…</span>}
         </div>
         {control.reworkOpen && (
           <div className="mt-2 rounded-lg border border-line bg-bg-soft px-3 py-2">
@@ -1147,7 +1147,7 @@ function WorkerDossier({
               aria-label="打回原因"
               value={control.reworkReason}
               placeholder="说明打回原因与整改要求（必填）"
-              className="min-h-16 w-full resize-none rounded border border-line bg-bg px-2 py-1.5 text-xs leading-5 text-[#2C2418] placeholder:text-[#8A7A63] focus:border-accent focus:outline-none"
+              className="min-h-16 w-full resize-none rounded border border-line bg-bg px-2 py-1.5 text-xs leading-5 text-ink placeholder:text-[#8A7A63] focus:border-accent focus:outline-none"
               onChange={(event) => control.onReworkReasonChange(event.target.value)}
             />
             <div className="mt-1.5 flex justify-end gap-2">
@@ -1173,7 +1173,7 @@ function WorkerDossier({
               <span className="font-medium text-[#9E3328]">机器验收未通过 · 证据</span>
               <button
                 type="button"
-                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-[#7B6D5A] hover:bg-bg-soft"
+                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-bg-soft"
                 onClick={control.onEvidenceDismiss}
               >
                 收起

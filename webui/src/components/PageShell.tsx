@@ -16,7 +16,7 @@ export function PageShell({ title, titleExtra, middleArea, actions, children }: 
         <header className="min-h-16 shrink-0 px-4 py-3 flex items-center gap-4 bg-bg-card/75 border-b border-line/70">
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
-              <h1 className="text-base font-semibold text-[#2C2418]">{title}</h1>
+              <h1 className="text-base font-semibold text-ink">{title}</h1>
               {titleExtra}
             </div>
           </div>

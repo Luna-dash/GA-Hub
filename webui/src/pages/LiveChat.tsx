@@ -720,7 +720,7 @@ export default function LiveChat() {
               value={session?.project_path || ''}
               onChange={(e) => { void changeProject(e.target.value) }}
               disabled={!session || projectSaving || projectsQuery.isLoading}
-              className="max-w-[220px] min-w-0 truncate rounded-l border border-line bg-bg-card px-3 py-1.5 text-sm text-[#2C2418] hover:border-accent focus:z-10 focus:border-accent focus:outline-none disabled:opacity-50"
+              className="max-w-[220px] min-w-0 truncate rounded-l border border-line bg-bg-card px-3 py-1.5 text-sm text-ink hover:border-accent focus:z-10 focus:border-accent focus:outline-none disabled:opacity-50"
               title={activeProjectPath || '选择当前会话的项目'}
               aria-label="当前项目"
             >
@@ -811,9 +811,9 @@ export default function LiveChat() {
       {scheduleOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-labelledby="schedule-title">
           <div className="w-full max-w-md rounded-2xl border border-line bg-bg-card p-5 shadow-2xl">
-            <h2 id="schedule-title" className="text-lg font-semibold text-[#2C2418]">定时发送</h2>
-            <p className="mt-1 text-sm text-[#86775F]">选择未来 48 小时内的发送时间，支持跨到第二天。</p>
-            <label className="mt-4 block text-sm font-medium text-[#2C2418]">
+            <h2 id="schedule-title" className="text-lg font-semibold text-ink">定时发送</h2>
+            <p className="mt-1 text-sm text-ink-faint">选择未来 48 小时内的发送时间，支持跨到第二天。</p>
+            <label className="mt-4 block text-sm font-medium text-ink">
               发送时间（24 小时制）
               <input
                 type="datetime-local"
@@ -825,7 +825,7 @@ export default function LiveChat() {
                   setScheduleAt(event.target.value)
                   setScheduleError('')
                 }}
-                className="mt-2 w-full rounded-lg border border-line bg-bg px-3 py-2 text-[#2C2418] outline-none focus:border-accent"
+                className="mt-2 w-full rounded-lg border border-line bg-bg px-3 py-2 text-ink outline-none focus:border-accent"
                 autoFocus
               />
             </label>

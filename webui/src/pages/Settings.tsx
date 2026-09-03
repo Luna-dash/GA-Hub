@@ -389,7 +389,7 @@ function ChatAppearancePanel() {
           恢复默认
         </button>
       </div>
-      <div className="mt-3 rounded-lg border border-line bg-bg-soft px-3 py-2 text-[#2C2418]" style={{ fontSize: `${scale}%` }}>
+      <div className="mt-3 rounded-lg border border-line bg-bg-soft px-3 py-2 text-ink" style={{ fontSize: `${scale}%` }}>
         字体大小预览：GA 会话输出示例
       </div>
       <div className="mt-4 flex items-center gap-3 flex-wrap">
