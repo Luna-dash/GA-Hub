@@ -100,7 +100,7 @@ class WeChatServiceInboundTests(unittest.TestCase):
     def test_dispatch_command_stop_consumes_message(self):
         svc = self.make_service()
         self.assertTrue(svc._dispatch_command("u1", "/stop", "ctx"))
-        self.assertTrue(svc.agent_service.aborted)
+        self.assertTrue(svc.channel.aborted)
         svc._send_text.assert_called_once_with("u1", "已停止", "ctx")
 
     def test_on_message_records_and_starts_worker_thread(self):

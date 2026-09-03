@@ -154,13 +154,13 @@ def test_shutdown_timeout_barriers_fire_before_releasing_singleton(
     service = service_factory(_Handle())
     entered = threading.Event()
     release = threading.Event()
-    submitted = mock.Mock(wraps=service.agent_service.submit)
+    submitted = mock.Mock(wraps=service.channel.submit)
 
     def blocked_persist() -> None:
         entered.set()
         release.wait(1)
 
-    service.agent_service.submit = submitted
+    service.channel.submit = submitted
     instance_attr._instance = service
     result: dict[str, object] = {}
     try:
@@ -241,9 +241,9 @@ def test_timed_out_shutdown_keeps_inflight_fire_admissible(
         assert source in {"autonomous", "scheduled_task"}
         entered.set()
         release.wait()
-        return service.agent_service.handle
+        return service.channel.handle
 
-    service.agent_service.submit = blocked_submit
+    service.channel.submit = blocked_submit
     with (
         mock.patch.object(service, "_persist"),
         mock.patch("server.services.autonomous_scheduler.bus.publish"),

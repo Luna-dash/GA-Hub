@@ -19,14 +19,15 @@ from ..schemas import (
     WxSendResp,
     WxStatusResp,
 )
-from ..services.agent_service import AgentService
 from ..services.wechat_service import WeChatService
 
 router = APIRouter()
 
 
 def svc() -> WeChatService:
-    return WeChatService.instance(AgentService.instance())
+    from .sessions import system_channels
+
+    return WeChatService.instance(system_channels().channel("wechat"))
 
 
 @router.get("/api/wechat/status")

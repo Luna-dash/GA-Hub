@@ -34,7 +34,7 @@ if _paths.GA_ROOT is None:
 
 from frontends.chatapp_common import public_access, to_allowed_set  # noqa: E402
 
-from .agent_service import AgentService  # noqa: E402
+from .system_channels import SystemChannel
 from .event_bus import bus  # noqa: E402
 from .file_tail import read_tail_lines  # noqa: E402
 from .wx_bot_client import WxBotClient, download_media  # noqa: E402
@@ -229,9 +229,13 @@ def _compact_log(file: Path, entries: list[WxLogEntry]) -> None:
 class WeChatService:
     _instance: "WeChatService | None" = None
 
-    def __init__(self, agent_service: AgentService, *, allowlist: list[str] | None = None,
+    def __init__(self, channel: SystemChannel, *, allowlist: list[str] | None = None,
                  log_capacity: int = 2000):
-        self.agent_service = agent_service
+        # The wechat system channel: admission goes through the same
+        # SessionCoordinator gate as web sessions (merge of the two chat
+        # chains), so /stop aborts the wechat run precisely instead of
+        # bluntly killing the shared global agent.
+        self.channel = channel
         self.bot = WxBotClient()
         self.contacts: dict[str, WxContact] = {}
         self.allowlist = to_allowed_set(allowlist if allowlist is not None else ["*"])
@@ -287,10 +291,10 @@ class WeChatService:
         bus.publish("wechat:log_cleared", {})
 
     @classmethod
-    def instance(cls, agent_service: AgentService | None = None) -> "WeChatService":
+    def instance(cls, channel: SystemChannel | None = None) -> "WeChatService":
         if cls._instance is None:
-            assert agent_service is not None, "first call must pass agent_service"
-            cls._instance = cls(agent_service)
+            assert channel is not None, "first call must pass the wechat system channel"
+            cls._instance = cls(channel)
         return cls._instance
 
     # ── status ───────────────────────────────────────────────────
@@ -394,7 +398,7 @@ class WeChatService:
     def _dispatch_command(self, uid: str, text: str, ctx: str) -> bool:
         """Handle WeChat slash commands. Return True when consumed."""
         if text in ("/stop", "/abort"):
-            self.agent_service.abort()
+            self.channel.abort()
             self._send_text(uid, "已停止", ctx)
             return True
         if not text.startswith("/llm"):
@@ -404,22 +408,22 @@ class WeChatService:
         if len(args) > 1:
             try:
                 n = int(args[1])
-                self.agent_service.switch_llm(n)
+                self.channel.switch_llm(n)
                 self._send_text(
                     uid,
-                    f"切换到 [{self.agent_service.agent.llm_no}] {self.agent_service.agent.get_llm_name()}",
+                    f"切换到 [{self.channel.agent.llm_no}] {self.channel.agent.get_llm_name()}",
                     ctx,
                 )
             except (ValueError, IndexError):
-                self._send_text(uid, f"用法: /llm <0-{len(self.agent_service.list_llms())-1}>", ctx)
+                self._send_text(uid, f"用法: /llm <0-{len(self.channel.list_llms())-1}>", ctx)
         else:
             lines = [f"{'→' if cur else '  '} [{i}] {name}"
-                     for i, name, cur in self.agent_service.agent.list_llms()]
+                     for i, name, cur in self.channel.agent.list_llms()]
             self._send_text(uid, "LLMs:\n" + "\n".join(lines), ctx)
         return True
 
     def _run_agent_stream(self, uid: str, prompt: str, media: list[str], ctx: str) -> None:
-        handle = self.agent_service.submit(prompt, source="wechat")
+        handle = self.channel.submit(prompt, source="wechat")
         try:
             self.bot.send_typing(uid)
         except Exception:

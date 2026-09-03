@@ -16,7 +16,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from .. import _paths
 from . import email_service
-from .agent_service import AgentService
+from .system_channels import SystemChannel
 from .event_bus import bus
 from .file_tail import read_jsonl_tail
 from .watcher_registry import WatcherRegistry
@@ -75,11 +75,14 @@ class TaskScheduler:
 
     def __init__(
         self,
-        agent_service: AgentService,
+        channel: SystemChannel,
         *,
         scheduler_runtime: Any | None = None,
     ):
-        self.agent_service = agent_service
+        # The scheduled-task system channel: admission goes through the same
+        # SessionCoordinator gate as web sessions (merge of the two chat
+        # chains); ``channel`` duck-types the AgentService submit surface.
+        self.channel = channel
         self.schedules: dict[str, TaskSchedule] = {}
         self._tz = _local_tz()
         self._owns_sched = scheduler_runtime is None
@@ -98,7 +101,7 @@ class TaskScheduler:
     @classmethod
     def instance(
         cls,
-        agent_service: AgentService | None = None,
+        channel: SystemChannel | None = None,
         *,
         scheduler_runtime: Any | None = None,
     ) -> "TaskScheduler":
@@ -106,8 +109,8 @@ class TaskScheduler:
             if not cls._instance.shutdown(timeout=0):
                 raise RuntimeError("previous task scheduler is still shutting down")
         if cls._instance is None:
-            assert agent_service is not None
-            cls._instance = cls(agent_service, scheduler_runtime=scheduler_runtime)
+            assert channel is not None
+            cls._instance = cls(channel, scheduler_runtime=scheduler_runtime)
         return cls._instance
 
     def _sched_file(self) -> str:
@@ -236,7 +239,7 @@ class TaskScheduler:
                 self._persist()
                 if self._stop_event.is_set():
                     return {"error": "shutting_down"}
-                handle = self.agent_service.submit(s.prompt, source="scheduled_task")
+                handle = self.channel.submit(s.prompt, source="scheduled_task")
                 run = TaskRun(
                     id=uuid.uuid4().hex,
                     task_id=s.id,

@@ -19,14 +19,15 @@ from ..schemas import (
 )
 from ..services import email_service
 from ..services.email_config_store import EmailConfigFormatError
-from ..services.agent_service import AgentService
 from ..services.task_scheduler import TaskScheduler
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
 def svc() -> TaskScheduler:
-    return TaskScheduler.instance(AgentService.instance())
+    from .sessions import system_channels
+
+    return TaskScheduler.instance(system_channels().channel("scheduled_task"))
 
 
 @router.get("/schedules", response_model=TaskScheduleListResp)

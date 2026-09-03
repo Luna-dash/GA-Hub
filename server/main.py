@@ -341,15 +341,20 @@ def create_app() -> FastAPI:
             "scheduled_chats",
             lambda: session_routes.scheduled_chat_service(),
         )
+        # Background producers run on system sessions through the SAME
+        # SessionCoordinator admission gate as web sessions (chat-chain merge).
+        channels = session_routes.system_channels()
         scheduler_host.register(
             "autonomous",
             lambda: AutonomousScheduler.instance(
-                agent_svc, scheduler_runtime=scheduler_host.runtime
+                channels.channel("autonomous"), scheduler_runtime=scheduler_host.runtime
             ),
         )
         scheduler_host.register(
             "tasks",
-            lambda: TaskScheduler.instance(agent_svc, scheduler_runtime=scheduler_host.runtime),
+            lambda: TaskScheduler.instance(
+                channels.channel("scheduled_task"), scheduler_runtime=scheduler_host.runtime
+            ),
         )
         scheduler_host.start_all()
         log.info("scheduler host started %s", scheduler_host.status())

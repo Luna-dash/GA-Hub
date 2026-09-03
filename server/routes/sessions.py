@@ -32,6 +32,7 @@ from ..services.session_metadata import SessionMetadataStore, SessionNotFoundErr
 from ..services.project_runtime import activate_project, deactivate_project
 from ..services.session_runtime_factory import RuntimeRestoreError, SessionRuntimeFactory
 from ..services.scheduled_chat_service import ScheduledChat, ScheduledChatService
+from ..services.system_channels import SystemChannels
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ _coordinator: SessionCoordinator | None = None
 _coordinator_lifecycle_lock = threading.Lock()
 _coordinator_stopping = False
 _scheduled_chats: ScheduledChatService | None = None
+_system_channels: SystemChannels | None = None
 
 
 def _publish_runtime_state(state: RuntimeState) -> None:
@@ -177,6 +179,19 @@ def scheduled_chat_service() -> ScheduledChatService:
     return _get_scheduled_chats()
 
 
+def system_channels() -> SystemChannels:
+    """Process-owned system-channel registry (wechat / autonomous / tasks)."""
+    global _system_channels
+    if _system_channels is None or _system_channels.store is not _store:
+        # Rebind when the store identity changed (tests monkeypatch _store).
+        _system_channels = SystemChannels(
+            coordinator=_get_coordinator,
+            store=_store,
+            llm_key_resolver=_effective_llm_key,
+        )
+    return _system_channels
+
+
 def stop_session_runtimes(
     timeout: float = 3.0, *, keep_admission_closed: bool = False
 ) -> bool:
@@ -229,6 +244,7 @@ class SessionModelUpdate(BaseModel):
 class HubSession(BaseModel):
     id: str
     title: str
+    kind: str = "user"
     llm_key: str | None = None
     llm_index: int | None
     archive_path: str | None
@@ -500,9 +516,13 @@ async def unbind_session_project(session_id: str) -> HubSession:
 
 
 @router.get("/api/sessions")
-async def list_sessions() -> SessionListResp:
-    items = _store.list()
-    return SessionListResp(total=len(items), items=items)
+async def list_sessions(include_system: bool = False) -> SessionListResp:
+    rows = _store.list()
+    if not include_system:
+        # System channels (wechat / autonomous / scheduled tasks) are hub
+        # plumbing, not user chats: hide them unless explicitly asked for.
+        rows = [row for row in rows if row.get("kind") != "system"]
+    return SessionListResp(total=len(rows), items=rows)
 
 
 @router.post("/api/sessions", status_code=status.HTTP_201_CREATED)

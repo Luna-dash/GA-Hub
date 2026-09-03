@@ -877,3 +877,56 @@ def test_shutdown_waits_for_completion_projection_callback() -> None:
     callback_release.set()
     assert coordinator.shutdown(timeout=1.0) is True
     assert coordinator._watchers == {}
+
+
+def test_submit_stream_returns_the_handle_submit_stays_state_only() -> None:
+    from server.services.session_coordinator import STATUS_RUNNING, SessionCoordinator
+
+    runtimes: dict[str, FakeRuntime] = {}
+
+    def factory(session_id: str) -> FakeRuntime:
+        return runtimes.setdefault(session_id, FakeRuntime(session_id))
+
+    coordinator = SessionCoordinator(factory, poll_interval=0.005)
+    state, handle = coordinator.submit_stream("task", session_id="SYS")
+    assert state.status == STATUS_RUNNING
+    assert state.run_id is not None
+    # Background channels need the exact handle for their own watchers.
+    assert handle is runtimes["SYS"].handle
+    assert handle.stream_id == state.stream_id
+
+    # Plain submit() keeps returning only the projected state.
+    runtimes["SYS"].handle.finished = True
+    _wait_until(lambda: coordinator.active_run() is None)
+    state2 = coordinator.submit("second", session_id="SYS")
+    assert state2.status == STATUS_RUNNING
+    assert state2.stream_id is not None
+    runtimes["SYS"].handle.finished = True
+
+
+def test_ensure_runtime_materializes_without_capacity_and_peek_does_not_create() -> None:
+    from server.services.session_coordinator import SessionCoordinator
+
+    created: list[str] = []
+
+    def factory(session_id: str) -> FakeRuntime:
+        created.append(session_id)
+        return FakeRuntime(session_id)
+
+    coordinator = SessionCoordinator(factory, capacity=1, poll_interval=0.005)
+    # peek never creates
+    assert coordinator.peek_runtime("X") is None
+    assert created == []
+
+    runtime = coordinator.ensure_runtime("X")
+    assert created == ["X"]
+    assert runtime is coordinator.peek_runtime("X")
+    # No active run: the capacity gate stays free for real submissions.
+    assert coordinator.active_run() is None
+
+    # A run occupies the slot, but ensure/peek still resolve the same runtime.
+    coordinator.submit("run", session_id="X")
+    assert coordinator.ensure_runtime("X") is runtime
+    with pytest.raises(Exception):
+        coordinator.submit("overflow", session_id="Y")
+    runtime.handle.finished = True

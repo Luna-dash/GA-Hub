@@ -304,6 +304,33 @@ class SessionCoordinator:
         llm_index: int | None = None,
         llm_key: str | None = None,
     ) -> RuntimeState:
+        """Admit one run; the stream handle stays coordinator-internal."""
+        return self.submit_stream(
+            text,
+            session_id=session_id,
+            source=source,
+            images=images,
+            llm_index=llm_index,
+            llm_key=llm_key,
+        )[0]
+
+    def submit_stream(
+        self,
+        text: str,
+        *,
+        session_id: str,
+        source: str = "webui",
+        images: list[str] | None = None,
+        llm_index: int | None = None,
+        llm_key: str | None = None,
+    ) -> tuple[RuntimeState, RuntimeHandle]:
+        """Admit one run and also return its stream handle.
+
+        Background channels (system sessions) consume the handle directly
+        (wechat relays display_queue items back into the chat; the schedulers
+        watch ``finished``/``final_text``), so admission must hand it back
+        without a second lookup racing the watcher.
+        """
         # Admission, per-session identity reservation, runtime creation and
         # submit are one critical section. No concurrent caller can overbook a
         # slot or start a second run for this session.
@@ -357,7 +384,24 @@ class SessionCoordinator:
             # Register and start atomically with respect to shutdown.  Once a
             # watcher is visible to ``shutdown()``, joining it must be valid.
             watcher.start()
-        return replace(running)
+        return replace(running), handle
+
+    def ensure_runtime(self, session_id: str) -> SessionRuntime:
+        """Create (or return) the session runtime WITHOUT admitting a run.
+
+        The runtime occupies no capacity slot — only an active run does. It
+        exists so introspection surfaces (LLM listing, idle checks) can touch
+        the session's agent before its first submit, exactly like the global
+        singleton the background channels used before the merge.
+        """
+        with self._lock:
+            self._raise_if_shutdown()
+            return self._runtime_for_session_locked(session_id)
+
+    def peek_runtime(self, session_id: str) -> SessionRuntime | None:
+        """Return the session's runtime if one exists, never creating one."""
+        with self._lock:
+            return self._runtimes.get(session_id)
 
     def _runtime_for_session_locked(self, session_id: str) -> SessionRuntime:
         runtime = self._runtimes.get(session_id)

@@ -92,12 +92,19 @@ class SessionMetadataStore:
         title: str = "",
         llm_key: str | None = None,
         llm_index: int | None = None,
+        kind: str = "user",
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             data = self._read()
             timestamp = _now()
             row = {
-                "id": uuid4().hex,
+                # ``kind`` separates hub-owned system channels (wechat /
+                # autonomous / scheduled tasks, created with explicit stable
+                # ids) from user-created sessions. Rows written before the
+                # field existed simply have none and always read as user.
+                "id": session_id or uuid4().hex,
+                "kind": kind,
                 "title": title.strip(),
                 "llm_key": llm_key,
                 "llm_index": llm_index,
@@ -111,6 +118,27 @@ class SessionMetadataStore:
             data["sessions"].append(row)
             self._write(data)
             return dict(row)
+
+    def ensure(
+        self,
+        session_id: str,
+        *,
+        title: str = "",
+        kind: str = "user",
+    ) -> tuple[dict[str, Any], bool]:
+        """Return ``(row, created)`` for a stable-id session, creating it once.
+
+        System channels use this to materialize their session row on first
+        touch; the id is the channel key so the row is idempotent across
+        restarts.
+        """
+        with self._lock:
+            try:
+                return self.get(session_id), False
+            except SessionNotFoundError:
+                return self.create(
+                    session_id=session_id, title=title, kind=kind
+                ), True
 
     def update(self, session_id: str, changes: dict[str, Any]) -> dict[str, Any]:
         with self._lock:

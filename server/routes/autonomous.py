@@ -15,14 +15,15 @@ from ..schemas import (
     AutonomousTriggerResp,
     ScheduleUpsert,
 )
-from ..services.agent_service import AgentService
 from ..services.autonomous_scheduler import AutonomousScheduler
 
 router = APIRouter()
 
 
 def svc() -> AutonomousScheduler:
-    return AutonomousScheduler.instance(AgentService.instance())
+    from .sessions import system_channels
+
+    return AutonomousScheduler.instance(system_channels().channel("autonomous"))
 
 
 @router.get("/api/autonomous/schedules", response_model=AutonomousScheduleListResp)

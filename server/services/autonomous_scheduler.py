@@ -30,7 +30,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from .. import _paths
-from .agent_service import AgentService
+from .system_channels import SystemChannel
 from .event_bus import bus
 from .file_tail import read_jsonl_tail
 from .watcher_registry import WatcherRegistry
@@ -101,11 +101,15 @@ class AutonomousScheduler:
 
     def __init__(
         self,
-        agent_service: AgentService,
+        channel: SystemChannel,
         *,
         scheduler_runtime: Any | None = None,
     ):
-        self.agent_service = agent_service
+        # The autonomous system channel: admission goes through the same
+        # SessionCoordinator gate as web sessions (merge of the two chat
+        # chains); ``channel`` duck-types the AgentService surface used here
+        # (submit + agent introspection for idle checks).
+        self.channel = channel
         self.schedules: dict[str, Schedule] = {}
         self._tz = _local_tz()
         self._owns_sched = scheduler_runtime is None
@@ -125,7 +129,7 @@ class AutonomousScheduler:
     @classmethod
     def instance(
         cls,
-        agent_service: AgentService | None = None,
+        channel: SystemChannel | None = None,
         *,
         scheduler_runtime: Any | None = None,
     ) -> "AutonomousScheduler":
@@ -133,8 +137,8 @@ class AutonomousScheduler:
             if not cls._instance.shutdown(timeout=0):
                 raise RuntimeError("previous autonomous scheduler is still shutting down")
         if cls._instance is None:
-            assert agent_service is not None
-            cls._instance = cls(agent_service, scheduler_runtime=scheduler_runtime)
+            assert channel is not None
+            cls._instance = cls(channel, scheduler_runtime=scheduler_runtime)
         return cls._instance
 
     # ── persistence ──────────────────────────────────────────────
@@ -280,7 +284,14 @@ class AutonomousScheduler:
             for s in list(self.schedules.values()):
                 if s.type != "idle" or not s.enabled:
                     continue
-                lr = int(getattr(self.agent_service.agent, "last_reply_time", 0)) or now
+                # Same introspection surface the global singleton used to
+                # provide: the channel's own agent (created on first touch).
+                try:
+                    agent = self.channel.agent
+                except Exception:
+                    log.debug("autonomous idle check: runtime unavailable", exc_info=True)
+                    continue
+                lr = int(getattr(agent, "last_reply_time", 0)) or now
                 idle = now - lr
                 if idle < s.idle_minutes * 60:
                     continue
@@ -288,7 +299,7 @@ class AutonomousScheduler:
                 if (now - (s.last_fired_at or 0)) < s.idle_minutes * 60:
                     continue
                 # don't fire while agent is busy
-                if self.agent_service.agent.is_running:
+                if getattr(agent, "is_running", False):
                     continue
                 self._fire(s.id)
 
@@ -313,7 +324,7 @@ class AutonomousScheduler:
                 existing_reports = self._snapshot_reports()
                 if self._stop_event.is_set():
                     return {"error": "shutting_down"}
-                handle = self.agent_service.submit(s.prompt or DEFAULT_PROMPT, source="autonomous")
+                handle = self.channel.submit(s.prompt or DEFAULT_PROMPT, source="autonomous")
                 run = Run(
                     id=uuid.uuid4().hex,
                     schedule_id=s.id,
