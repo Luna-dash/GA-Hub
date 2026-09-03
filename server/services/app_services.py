@@ -7,13 +7,16 @@ using a getter that might construct fresh work during partial startup/teardown.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .agent_service import AgentService
     from .feishu_service import FeishuService
     from .scheduler_host import SchedulerHost
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -27,3 +30,42 @@ class AppServices:
         self.agent = None
         self.feishu = None
         self.scheduler_host = None
+
+    def status_snapshot(self) -> dict[str, Any]:
+        """Merge per-service status reports; failures degrade, never raise."""
+        out: dict[str, Any] = {}
+        if self.agent is not None:
+            out["agent"] = self.agent.status().__dict__
+        if self.feishu is not None:
+            try:
+                out["feishu"] = self.feishu.status()
+            except Exception:
+                log.exception("feishu status read failed")
+        if self.scheduler_host is not None:
+            scheduler_status = self.scheduler_host.status()
+            out["schedulers"] = scheduler_status
+            for source in ("autonomous", "tasks"):
+                count = scheduler_status.get(source, {}).get("schedule_count")
+                if count is not None:
+                    out[source] = {"schedule_count": count}
+        return out
+
+    def shutdown_all(self) -> None:
+        """Close owned services in dependency order (producers first)."""
+        host = self.scheduler_host
+        if host is not None:
+            try:
+                if host.shutdown_all() is False:
+                    log.warning("scheduler host shutdown exceeded its graceful deadline")
+            except Exception:
+                log.exception("scheduler host shutdown failed")
+        if self.feishu is not None:
+            try:
+                self.feishu.shutdown()
+            except Exception:
+                log.exception("feishu shutdown failed")
+        if self.agent is not None:
+            try:
+                self.agent.shutdown()
+            except Exception:
+                log.exception("agent shutdown failed")

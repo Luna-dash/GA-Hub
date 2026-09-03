@@ -262,7 +262,6 @@ def create_app() -> FastAPI:
         version="0.3.4",
         lifespan=_lifespan,
     )
-    app.state.services = services
 
     # CORS: browser/server mode is same-origin, while Vite and packaged Tauri
     # assets call the random-port sidecar cross-origin.  Keep both origin sets
@@ -395,13 +394,7 @@ def create_app() -> FastAPI:
                 except Exception:
                     log.exception("session runtime abort failed")
                 await _cancel_background_task(feishu_autostart_task)
-                host = services.scheduler_host
-                if host is not None:
-                    try:
-                        if host.shutdown_all() is False:
-                            log.warning("scheduler host shutdown exceeded its graceful deadline")
-                    except Exception:
-                        log.exception("scheduler host shutdown failed")
+                services.shutdown_all()
                 try:
                     from .services.conductor_service import shutdown_conductor_service
                     if not shutdown_conductor_service():
@@ -414,16 +407,6 @@ def create_app() -> FastAPI:
                         log.warning("goalhive shutdown exceeded its graceful deadline")
                 except Exception:
                     log.exception("goalhive shutdown failed")
-                try:
-                    if services.feishu is not None:
-                        services.feishu.shutdown()
-                except Exception:
-                    log.exception("feishu shutdown failed")
-                try:
-                    if services.agent is not None:
-                        services.agent.shutdown()
-                except Exception:
-                    log.exception("agent shutdown failed")
             finally:
                 if session_runtime_shutdown_ok and session_routes is not None:
                     try:
@@ -446,21 +429,7 @@ def create_app() -> FastAPI:
             out["mode"] = "setup"
             return out
 
-        if services.agent is not None:
-            out["agent"] = services.agent.status().__dict__
-        if services.feishu is not None:
-            try:
-                out["feishu"] = services.feishu.status()
-            except Exception:
-                log.exception("feishu status read failed")
-        host = services.scheduler_host
-        if host is not None:
-            scheduler_status = host.status()
-            out["schedulers"] = scheduler_status
-            for source, target in (("autonomous", "autonomous"), ("tasks", "tasks")):
-                count = scheduler_status.get(source, {}).get("schedule_count")
-                if count is not None:
-                    out[target] = {"schedule_count": count}
+        out.update(services.status_snapshot())
         return out
 
     @app.get("/api/health")

@@ -23,6 +23,12 @@ from .watcher_registry import WatcherRegistry
 
 log = logging.getLogger(__name__)
 
+# Desktop machines sleep/boot late: without an explicit grace window a missed
+# cron tick is silently discarded (APScheduler default misfire_grace_time=1s).
+# 6h mirrors the GenericAgent scheduler's max_delay_hours default so a late
+# boot still fires the same day, and coalesce collapses any backlog to one run.
+MISFIRE_GRACE_SECONDS = 6 * 3600
+
 
 def _local_tz():
     try:
@@ -212,12 +218,16 @@ class TaskScheduler:
             except Exception as e:
                 log.warning("bad task cron %r: %s", s.cron, e)
                 return
-            self._sched.add_job(self._fire, trig, id=jid, args=[s.id], replace_existing=True)
+            self._sched.add_job(
+                self._fire, trig, id=jid, args=[s.id], replace_existing=True,
+                misfire_grace_time=MISFIRE_GRACE_SECONDS, coalesce=True,
+            )
         elif s.type == "interval":
             self._sched.add_job(
                 self._fire,
                 IntervalTrigger(minutes=max(1, int(s.interval_minutes))),
                 id=jid, args=[s.id], replace_existing=True,
+                misfire_grace_time=MISFIRE_GRACE_SECONDS, coalesce=True,
             )
 
     def trigger_now(self, schedule_id: str) -> dict:

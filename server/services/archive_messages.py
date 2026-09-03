@@ -145,9 +145,16 @@ def _extract_ui_messages_from_text(content: str) -> list[dict[str, Any]]:
     return [message for message in out if str(message.get("content") or "").strip()]
 
 
-def _items_from_text(content: str, ordinal_start: int = 0) -> list[dict[str, Any]]:
-    messages = _extract_ui_messages_from_text(content)
-    timestamps = _message_timestamps(content)
+def _items_from_messages(
+    messages: list[dict[str, Any]],
+    timestamps: list[str | None],
+    ordinal_start: int = 0,
+) -> list[dict[str, Any]]:
+    """Attach stable ids/ordinals/timestamps — the single item assembler.
+
+    Both parse paths (GA-native full-file reads and hub-side slice folding)
+    must produce identical item shapes; this is where that invariant lives.
+    """
     return [
         {
             "id": f"{ordinal_start + index}:{hashlib.sha256(str(message).encode('utf-8')).hexdigest()[:16]}",
@@ -158,6 +165,12 @@ def _items_from_text(content: str, ordinal_start: int = 0) -> list[dict[str, Any
         }
         for index, message in enumerate(messages)
     ]
+
+
+def _items_from_text(content: str, ordinal_start: int = 0) -> list[dict[str, Any]]:
+    messages = _extract_ui_messages_from_text(content)
+    timestamps = _message_timestamps(content)
+    return _items_from_messages(messages, timestamps, ordinal_start)
 
 
 def _prompt_is_user(data: mmap.mmap, start: int, end: int) -> bool:
@@ -368,16 +381,7 @@ def read_archive_messages(
     except (OSError, HistoryUnavailableError) as exc:
         raise HistoryUnavailableError from exc
     timestamps = _message_timestamps(data.decode("utf-8", errors="replace"))
-    items = [
-        {
-            "id": f"{index}:{hashlib.sha256(str(message).encode('utf-8')).hexdigest()[:16]}",
-            "role": message.get("role", "assistant"),
-            "content": message.get("content", ""),
-            "ordinal": index,
-            "timestamp": timestamps[index] if index < len(timestamps) else None,
-        }
-        for index, message in enumerate(messages)
-    ]
+    items = _items_from_messages(messages, timestamps)
     window, has_more, next_before = _window_items(
         items,
         before=before,

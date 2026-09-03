@@ -175,6 +175,26 @@ class RewindAdapter:
             "removed_history_entries": max(0, old_len - len(restored_history)),
         }
 
+    def _removed_sids_after(
+        self,
+        all_items: list[tuple[str, Any]],
+        done_items: list[tuple[str, Any]],
+        turn_count: int,
+    ) -> list[str]:
+        """Stream ids from the first removed turn to the end — shared by both
+        the durable and the in-memory rewind paths."""
+        removed_sids: list[str] = []
+        if done_items:
+            overlap = min(turn_count, len(done_items))
+            first_removed_sid = done_items[-overlap][0]
+            hit = False
+            for stream_id, _snapshot in all_items:
+                if stream_id == first_removed_sid:
+                    hit = True
+                if hit:
+                    removed_sids.append(stream_id)
+        return removed_sids
+
     def rewind_session_turns(
         self, *, sid: str | None = None, n: int | None = None
     ) -> dict:
@@ -219,19 +239,10 @@ class RewindAdapter:
                 raise RuntimeError("durable rewind store is not bound")
             result = self.apply_durable(store, turn_count)
 
-            removed_sids: list[str] = []
             with lock:
-                if done_items:
-                    overlap = min(turn_count, len(done_items))
-                    first_removed_sid = done_items[-overlap][0]
-                    hit = False
-                    for stream_id, _snapshot in all_items:
-                        if stream_id == first_removed_sid:
-                            hit = True
-                        if hit:
-                            removed_sids.append(stream_id)
-                    for stream_id in removed_sids:
-                        self.snapshots.pop(stream_id, None)
+                removed_sids = self._removed_sids_after(all_items, done_items, turn_count)
+                for stream_id in removed_sids:
+                    self.snapshots.pop(stream_id, None)
 
             result = {"removed_sids": removed_sids, **result}
 
@@ -311,14 +322,7 @@ class RewindAdapter:
             removed_lines = len(backend_history) - cut_at
             backend_history[:] = backend_history[:cut_at]
 
-            first_removed_sid = done_items[-turn_count][0]
-            removed_sids: list[str] = []
-            hit = False
-            for stream_id, _snapshot in all_items:
-                if stream_id == first_removed_sid:
-                    hit = True
-                if hit:
-                    removed_sids.append(stream_id)
+            removed_sids = self._removed_sids_after(all_items, done_items, turn_count)
             for stream_id in removed_sids:
                 self.snapshots.pop(stream_id, None)
 
