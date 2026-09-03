@@ -20,6 +20,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { MyKeyData, MyKeySession, MyKeySessionTestResult, MyKeySessionType, MyKeyWriteResult } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
+import { ModalOverlay } from '@/components/ModalOverlay'
 import { RawView } from '@/components/MyKeyRawView'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
@@ -454,9 +455,7 @@ function SessionDialog({ mode, session, allSessions, onClose, onSaved }: {
   }
 
   return (
-    <div className="fixed inset-0 z-30 bg-black/60 flex items-center justify-center" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-bg-soft border border-line rounded-xl p-6 w-[40rem] max-w-[92vw] max-h-[88vh] overflow-y-auto"
-           onClick={(e) => e.stopPropagation()}>
+    <ModalOverlay onClose={onClose} panelClassName="p-6 w-[40rem] max-w-[92vw] max-h-[88vh] overflow-y-auto">
         <div className="flex items-baseline justify-between mb-4">
           <h3 className="text-base font-semibold">
             {mode === 'create' ? '新增链路' : '编辑链路'}
@@ -580,8 +579,7 @@ function SessionDialog({ mode, session, allSessions, onClose, onSaved }: {
             {saving ? '保存中…' : '保存并热更新'}
           </button>
         </div>
-      </div>
-    </div>
+    </ModalOverlay>
   )
 }
 

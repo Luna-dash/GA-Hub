@@ -552,13 +552,16 @@ class ConductorChatListResp(BaseModel):
 
 class ConductorSubagent(BaseModel):
     model_config = {"extra": "allow"}
+    # extra=allow is deliberate: the hub list snapshot mirrors engine-only
+    # fields (manifest, quality_checks, done_marker, ...) that the worker
+    # dossier renders. Declared fields below are the required core.
 
     id: str
-    prompt: str
+    prompt: str = ""
     reply: str
     status: str
-    created_at: int
-    updated_at: int
+    created_at: int = 0
+    updated_at: int = 0
     review_status: str = "none"
     review_note: str = ""
     attempt: int = 1
@@ -693,8 +696,6 @@ class MyKeyDataResp(BaseModel):
 
 
 class MyKeyWriteResp(BaseModel):
-    model_config = {"extra": "allow"}
-
     ok: bool
     backup: str | None = None
     removed_mixin_references: int = 0
@@ -704,8 +705,6 @@ class MyKeyWriteResp(BaseModel):
 
 
 class MyKeySessionTestResp(BaseModel):
-    model_config = {"extra": "allow"}
-
     ok: bool
     error: str | None = None
     latency_ms: int | None = None
@@ -725,8 +724,6 @@ class MyKeyBackupListResp(BaseModel):
 
 
 class MyKeySyncResultResp(BaseModel):
-    model_config = {"extra": "allow"}
-
     ok: bool
     action: str
     path: str

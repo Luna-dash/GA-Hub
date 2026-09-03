@@ -23,6 +23,7 @@ import { useCopy } from '@/utils/clipboard'
 import { CHAT_FONT_SCALE_EVENT, getChatFontScale } from '@/utils/chatAppearance'
 import { FILE_HINT } from '@/utils/sessionPrompt'
 import { MarkdownView } from './MarkdownView'
+import { bubbleTone } from './bubbleTone'
 import type { PasteAttachment } from './ImagePasteInput'
 import { api } from '@/api/client'
 
@@ -111,6 +112,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
     : { fontSize: `${fontScale}%`, '--chat-scale': fontScale / 100 } as CSSProperties
   const isUser = role === 'user'
   const isSystem = role === 'system'
+  const tone = bubbleTone(role)
   const timeLabel = formatMessageTime(timestamp)
   const shouldProjectTranscript = Boolean(
     role === 'assistant'
@@ -150,7 +152,8 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
             {cleaned && (
               <div
                 className={clsx(
-                  "rounded-lg bg-accent text-[#FFF4DF] whitespace-pre-wrap break-words shadow-[0_2px_6px_rgba(45,34,22,0.16)] border border-[#6F4D28]",
+                  "rounded-lg whitespace-pre-wrap break-words shadow-[0_2px_6px_rgba(45,34,22,0.16)]",
+                  tone.surfaceClass,
                   compact ? "px-3 py-2 leading-6" : "px-3.5 py-2.5 leading-7"
                 )}
                 style={messageFontStyle}
@@ -176,9 +179,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
         <div className={clsx(
           "min-w-0 max-w-full relative rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.13)]",
           compact ? "px-3 py-2 text-xs" : "px-3.5 py-3",
-          isSystem
-            ? "bg-[#E8D8B8] border border-[#B69761] text-[#3C2C19]"
-            : "bg-bg-card border border-line text-ink"
+          tone.surfaceClass
         )}>
           {isSystem && (
             <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-amber-400 flex items-center justify-center text-sm shadow">

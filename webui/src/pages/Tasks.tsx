@@ -5,6 +5,7 @@ import { CronExpressionParser } from 'cron-parser'
 import { api } from '@/api/client'
 import type { EmailConfig, TaskRun, TaskSchedule, TaskScheduleType } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
+import { ModalOverlay } from '@/components/ModalOverlay'
 import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
 import { useHubEvent } from '@/hooks/useHubEvent'
@@ -204,8 +205,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
     }
   }
   return (
-    <div className="fixed inset-0 z-30 bg-black/60 flex items-center justify-center" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-bg-soft border border-line rounded-xl p-6 w-[38rem] max-w-[92vw] max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+    <ModalOverlay onClose={onClose} panelClassName="p-6 w-[38rem] max-w-[92vw] max-h-[92vh] overflow-y-auto">
         <h3 className="text-base font-semibold mb-4">{initial.id ? '编辑定时任务' : '新建定时任务'}</h3>
         <Field label="名称">
           <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="每日早报" />
@@ -263,8 +263,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg border border-line text-slate-300">取消</button>
           <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-50">{saving ? '保存中…' : '保存'}</button>
         </div>
-      </div>
-    </div>
+    </ModalOverlay>
   )
 }
 

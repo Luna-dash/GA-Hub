@@ -4,6 +4,8 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { PageShell } from '@/components/PageShell'
 import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
+import { bubbleTone } from '@/components/bubbleTone'
+import { ModalOverlay } from '@/components/ModalOverlay'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useDraftStore } from '@/stores/draftStore'
 import { useGoalHiveStore } from '@/stores/goalhiveStore'
@@ -317,7 +319,7 @@ export default function GoalHive() {
               <div className="h-full min-h-64 grid place-items-center text-sm text-ink-faint">尚无 Goal / Hive 输出。</div>
             ) : (
               msgs.map((msg) => (
-                <article key={msg.id} className={clsx('rounded-xl border p-4', msg.role === 'user' ? 'border-accent/30 bg-accent/10' : msg.role === 'system' ? 'border-amber-500/30 bg-amber-500/10' : 'border-line bg-bg-soft/70')}>
+                <article key={msg.id} className={clsx('rounded-xl border p-4', bubbleTone(msg.role, 'card').surfaceClass)}>
                   <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-ink-faint">
                     {msg.role === 'user' ? 'YOU' : mode === 'hive' ? 'HIVE MASTER' : 'GOAL AGENT'}
                     {msg.streaming && <span className="text-accent normal-case tracking-normal">streaming</span>}
@@ -331,20 +333,12 @@ export default function GoalHive() {
       </div>
 
       {subagentSettingsOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) closeSubagentSettings()
-          }}
+        <ModalOverlay
+          onClose={closeSubagentSettings}
+          panelRef={subagentSettingsDialogRef}
+          labelledBy="goal-hive-subagent-settings-title"
+          panelClassName="w-full max-w-md"
         >
-          <div
-            ref={subagentSettingsDialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="goal-hive-subagent-settings-title"
-            className="w-full max-w-md rounded-xl border border-line bg-bg-card shadow-2xl"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
             <div className="flex items-center justify-between border-b border-line/70 px-5 py-4">
               <h2 id="goal-hive-subagent-settings-title" className="text-base font-semibold text-ink">子代理设置</h2>
               <button
@@ -374,8 +368,7 @@ export default function GoalHive() {
               <button type="button" className="ga-btn" onClick={closeSubagentSettings}>取消</button>
               <button type="button" className="ga-btn ga-btn-primary" onClick={saveSubagentSettings}>保存</button>
             </div>
-          </div>
-        </div>
+        </ModalOverlay>
       )}
     </PageShell>
   )

@@ -27,6 +27,7 @@ import {
   type LiveChatTranscriptHandle,
 } from '@/components/LiveChatTranscript'
 import { SessionRail } from '@/components/SessionRail'
+import { ModalOverlay } from '@/components/ModalOverlay'
 import {
   findLatestRewindStreamId,
   rewindTurnCountFromAssistant,
@@ -810,8 +811,7 @@ export default function LiveChat() {
       </div>
 
       {scheduleOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-labelledby="schedule-title">
-          <div className="w-full max-w-md rounded-2xl border border-line bg-bg-card p-5 shadow-2xl">
+        <ModalOverlay onClose={() => setScheduleOpen(false)} labelledBy="schedule-title" panelClassName="p-5 w-full max-w-md rounded-2xl">
             <h2 id="schedule-title" className="text-lg font-semibold text-ink">定时发送</h2>
             <p className="mt-1 text-sm text-ink-faint">选择未来 48 小时内的发送时间，支持跨到第二天。</p>
             <label className="mt-4 block text-sm font-medium text-ink">
@@ -845,8 +845,7 @@ export default function LiveChat() {
                 onClick={() => { void saveSchedule() }}
               >{scheduleSaving ? '保存中…' : '确认定时'}</button>
             </div>
-          </div>
-        </div>
+        </ModalOverlay>
       )}
     </PageShell>
   )

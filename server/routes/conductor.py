@@ -198,9 +198,6 @@ async def get_subagent(
             value = getattr(mirrored, key, None)
             if value is not None:
                 detail[key] = value
-    detail.setdefault("prompt", "")
-    detail.setdefault("created_at", 0)
-    detail.setdefault("updated_at", 0)
     if "generation" not in detail:
         detail["generation"] = int(detail.get("active_generation") or 0)
     if not detail.get("request_id"):

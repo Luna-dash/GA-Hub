@@ -6,6 +6,7 @@ import { readPageState, usePageState, writePageState } from '@/utils/pageState'
 import type { ConversationSummary } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { MarkdownView } from '@/components/MarkdownView'
+import { bubbleTone } from '@/components/bubbleTone'
 import { ConversationIndexRail } from '@/components/ConversationIndexRail'
 import { VirtualMessageList } from '@/components/VirtualMessageList'
 import { parseAssistantTranscript, stripAssistantTranscriptTags } from '@/utils/assistantTranscript'
@@ -496,13 +497,8 @@ function FlatView({ messages, scrollRef }: { messages: Msg[]; scrollRef: RefObje
 }
 
 function MessageBlock({ m, label, tone }: { m: Msg; label: string; tone: 'user' | 'assistant' | 'other' }) {
-  const cls = tone === 'user'
-    ? 'border-accent/40 bg-accent-soft/30'
-    : tone === 'assistant'
-      ? 'border-line bg-bg-card'
-      : 'border-slate-700 bg-bg-soft'
   return (
-    <div className={`rounded-xl border ${cls} p-3`}>
+    <div className={`rounded-xl border ${bubbleTone(tone, 'card').surfaceClass} p-3`}>
       <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">{label}</div>
       <MarkdownView mode="auto">{m.content || ''}</MarkdownView>
     </div>

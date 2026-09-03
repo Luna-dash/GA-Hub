@@ -1411,6 +1411,7 @@ class ConductorService:
         )
         result.setdefault("operation_id", operation_id)
         sid = result.get("id")
+        bound_request_id: str | None = None
         if request_id and sid and "error" not in result:
             generation = int(result.get("active_generation", 0) or 0)
             completed = tracker.bind_subagent(request_id, sid, generation)
@@ -1419,10 +1420,33 @@ class ConductorService:
                     ("conductor:workflow_completed", completed)
                 )
             # gahub_app auto-yields the supervisor turn on dispatch.
-            result.setdefault("request_id", request_id)
-        result.setdefault("llm_index", selected)
-        result.setdefault("model_policy", models["subagent_model_policy"])
+            bound_request_id = request_id
+        self._fill_dispatch_defaults(
+            result,
+            llm_index=selected,
+            model_policy=models["subagent_model_policy"],
+            request_id=bound_request_id,
+        )
         return result
+
+    @staticmethod
+    def _fill_dispatch_defaults(
+        result: dict,
+        *,
+        llm_index: Optional[int],
+        model_policy: SubagentModelPolicy,
+        request_id: str | None = None,
+    ) -> None:
+        """Fill the resolved model context the UI renders on dispatch results.
+
+        Engine responses omit these hub-resolved fields; every dispatch verb
+        (start/input/rework/accept) fills the same trio, so the defaulting
+        lives here once instead of per action.
+        """
+        if request_id:
+            result.setdefault("request_id", request_id)
+        result.setdefault("llm_index", llm_index)
+        result.setdefault("model_policy", model_policy)
 
     def _admit_action_models(
         self,
@@ -1480,15 +1504,20 @@ class ConductorService:
         result = self.client.subagent_action(
             sid, action, msg, request_id=request_id, llm_index=selected
         )
+        bound_request_id: str | None = None
         if "error" not in result:
             owner = request_id or tracker.request_for_subagent(sid)
             if owner:
                 generation = int(result.get("active_generation", 0) or 0)
                 tracker.bind_subagent(owner, sid, generation)
-                result.setdefault("request_id", owner)
+                bound_request_id = owner
             # gahub_app auto-yields the supervisor turn on resume/rework.
-        result.setdefault("llm_index", selected)
-        result.setdefault("model_policy", models["subagent_model_policy"])
+        self._fill_dispatch_defaults(
+            result,
+            llm_index=selected,
+            model_policy=models["subagent_model_policy"],
+            request_id=bound_request_id,
+        )
         self._record_action_operation(operation_id, result)
         return result
 

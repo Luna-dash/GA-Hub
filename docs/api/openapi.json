@@ -5789,7 +5789,8 @@
           },
           "prompt": {
             "type": "string",
-            "title": "Prompt"
+            "title": "Prompt",
+            "default": ""
           },
           "reply": {
             "type": "string",
@@ -5801,11 +5802,13 @@
           },
           "created_at": {
             "type": "integer",
-            "title": "Created At"
+            "title": "Created At",
+            "default": 0
           },
           "updated_at": {
             "type": "integer",
-            "title": "Updated At"
+            "title": "Updated At",
+            "default": 0
           },
           "review_status": {
             "type": "string",
@@ -5887,11 +5890,8 @@
         "type": "object",
         "required": [
           "id",
-          "prompt",
           "reply",
-          "status",
-          "created_at",
-          "updated_at"
+          "status"
         ],
         "title": "ConductorSubagent"
       },
@@ -7627,7 +7627,6 @@
             "title": "Name"
           }
         },
-        "additionalProperties": true,
         "type": "object",
         "required": [
           "ok"
@@ -7729,7 +7728,6 @@
             ]
           }
         },
-        "additionalProperties": true,
         "type": "object",
         "required": [
           "ok",
@@ -7791,7 +7789,6 @@
             ]
           }
         },
-        "additionalProperties": true,
         "type": "object",
         "required": [
           "ok"

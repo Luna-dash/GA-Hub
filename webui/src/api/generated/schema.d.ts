@@ -2538,15 +2538,24 @@ export interface components {
         ConductorSubagent: {
             /** Id */
             id: string;
-            /** Prompt */
+            /**
+             * Prompt
+             * @default
+             */
             prompt: string;
             /** Reply */
             reply: string;
             /** Status */
             status: string;
-            /** Created At */
+            /**
+             * Created At
+             * @default 0
+             */
             created_at: number;
-            /** Updated At */
+            /**
+             * Updated At
+             * @default 0
+             */
             updated_at: number;
             /**
              * Review Status
@@ -3194,8 +3203,6 @@ export interface components {
             model?: string | null;
             /** Name */
             name?: string | null;
-        } & {
-            [key: string]: unknown;
         };
         /** MyKeyStructured */
         MyKeyStructured: {
@@ -3238,8 +3245,6 @@ export interface components {
              */
             warnings: string[];
             structured?: components["schemas"]["MyKeyStructured"] | null;
-        } & {
-            [key: string]: unknown;
         };
         /** MyKeyWriteResp */
         MyKeyWriteResp: {
@@ -3265,8 +3270,6 @@ export interface components {
              */
             warnings: string[];
             structured?: components["schemas"]["MyKeyStructured"] | null;
-        } & {
-            [key: string]: unknown;
         };
         /** NavPreference */
         NavPreference: {

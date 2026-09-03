@@ -10,6 +10,8 @@ import type {
 } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { MarkdownView } from '@/components/MarkdownView'
+import { bubbleTone } from '@/components/bubbleTone'
+import { ModalOverlay } from '@/components/ModalOverlay'
 import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useHubEvent } from '@/hooks/useHubEvent'
@@ -736,7 +738,7 @@ export default function Conductor() {
             {visibleChat.map((msg) => (
               msg.role === 'user' ? (
                 <div key={msg.id} className="flex justify-end px-4 py-2">
-                  <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent px-3.5 py-2 text-sm leading-6 text-[#FFF4DF] [overflow-wrap:anywhere]">
+                  <div className={clsx('max-w-[85%] whitespace-pre-wrap break-words rounded-lg px-3.5 py-2 text-sm leading-7 [overflow-wrap:anywhere]', bubbleTone('user').surfaceClass)}>
                     {msg.msg}
                   </div>
                 </div>
@@ -820,20 +822,12 @@ export default function Conductor() {
       </div>
 
       {subagentSettingsOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) closeSubagentSettings()
-          }}
+        <ModalOverlay
+          onClose={closeSubagentSettings}
+          panelRef={subagentSettingsDialogRef}
+          labelledBy="subagent-settings-title"
+          panelClassName="w-full max-w-md"
         >
-          <div
-            ref={subagentSettingsDialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="subagent-settings-title"
-            className="w-full max-w-md rounded-xl border border-line bg-bg-card shadow-2xl"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
             <div className="flex items-center justify-between border-b border-line/70 px-5 py-4">
               <h2 id="subagent-settings-title" className="text-base font-semibold text-ink">子代理设置</h2>
               <button
@@ -894,8 +888,7 @@ export default function Conductor() {
               <button type="button" className="ga-btn" onClick={closeSubagentSettings}>取消</button>
               <button type="button" className="ga-btn ga-btn-primary" onClick={saveSubagentSettings}>保存</button>
             </div>
-          </div>
-        </div>
+        </ModalOverlay>
       )}
     </PageShell>
   )

@@ -8,6 +8,7 @@ import { api } from '@/api/client'
 import type { Schedule, ScheduleType } from '@/api/types'
 import { MarkdownView } from '@/components/MarkdownView'
 import { PageShell } from '@/components/PageShell'
+import { ModalOverlay } from '@/components/ModalOverlay'
 import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
 import { useHubEvent } from '@/hooks/useHubEvent'
@@ -192,8 +193,7 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
     onClose()
   }
   return (
-    <div className="fixed inset-0 z-30 bg-black/60 flex items-center justify-center" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-bg-soft border border-line rounded-xl p-6 w-[34rem] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
+    <ModalOverlay onClose={onClose} panelClassName="p-6 w-[34rem] max-w-[90vw]">
         <h3 className="text-base font-semibold mb-4">{initial.id ? '编辑计划' : '新建自主进化计划'}</h3>
         <Field label="名称">
           <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="人类可读的备注" />
@@ -242,22 +242,19 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg border border-line text-slate-300">取消</button>
           <button onClick={save} className="px-3 py-1.5 rounded-lg bg-accent text-white">保存</button>
         </div>
-      </div>
-    </div>
+    </ModalOverlay>
   )
 }
 
 function ReportDrawer({ name, content, onClose }: { name: string; content: string; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-30 bg-black/60 flex items-end justify-end" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="w-[42rem] h-full bg-bg-soft border-l border-line p-6 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+    <ModalOverlay onClose={onClose} align="right" panelClassName="w-[42rem] h-full border-l p-6 overflow-y-auto">
         <div className="flex items-baseline justify-between mb-3">
           <h3 className="text-sm font-mono text-slate-300">{name}</h3>
           <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
         </div>
         <MarkdownView>{content}</MarkdownView>
-      </div>
-    </div>
+    </ModalOverlay>
   )
 }
 

@@ -5,6 +5,7 @@ import type { MyKeyBackup, MyKeyData, MyKeyWriteResult } from '@/api/types'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { queryKeys } from '@/queries/queryKeys'
+import { ModalOverlay } from '@/components/ModalOverlay'
 
 // ── raw view ────────────────────────────────────────────────────────
 export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKeyWriteResult) => void }) {
@@ -113,9 +114,7 @@ function BackupDrawer({ onClose, onRestored }: {
   }
 
   return (
-    <div className="fixed inset-0 z-30 bg-black/55 flex items-end justify-end" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="w-[28rem] h-full bg-bg-soft border-l border-line flex flex-col"
-           onClick={(e) => e.stopPropagation()}>
+    <ModalOverlay onClose={onClose} align="right" panelClassName="w-[28rem] h-full border-l flex flex-col">
         <header className="px-5 py-3 border-b border-line flex items-baseline justify-between">
           <div>
             <h3 className="text-base font-semibold">备份历史</h3>
@@ -146,8 +145,7 @@ function BackupDrawer({ onClose, onRestored }: {
         <footer className="border-t border-line px-4 py-2 text-xs text-slate-500 flex items-center justify-end">
           <button onClick={() => refetch()} className="text-accent hover:underline">↻ 刷新</button>
         </footer>
-      </div>
-    </div>
+    </ModalOverlay>
   )
 }
 
