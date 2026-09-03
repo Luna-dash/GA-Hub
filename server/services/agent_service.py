@@ -1038,12 +1038,13 @@ class AgentService:
 
     # ── conversation control ────────────────────────────────────
     def new_conversation(self) -> str:
-        # Archive-to-chat_history.json disabled: GA-Hub now reads GA's raw
-        # session archives (temp/model_responses/*.txt) directly for the
-        # "对话管理" view, so writing back to memory/chat_history.json is no
-        # longer needed — and writing GA's file would violate the "don't
-        # mutate GA" boundary. _archive_snapshots_to_chat_history is kept as
-        # dead code for reference but intentionally not called here.
+        # Automatic archive-to-chat_history.json on /new is disabled: GA-Hub
+        # reads GA's raw session archives (temp/model_responses/*.txt)
+        # directly for the "对话管理" view, so a per-conversation snapshot on
+        # every reset is redundant — and writing GA's file would violate the
+        # "don't mutate GA" boundary. _archive_snapshots_to_chat_history
+        # remains available only for the explicit POST /api/agent/archive
+        # export and the best-effort shutdown snapshot in main.py.
         # Wipe per-stream UI snapshots so a reconnecting WS doesn't replay
         # stale bubbles from the previous conversation.
         with self._lock:

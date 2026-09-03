@@ -1,25 +1,26 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 import time
 
 from server.routes import conversations
 
 
-def test_conversation_title_uses_metadata_adapter(tmp_path, monkeypatch):
+def test_conversation_title_reads_archive_bound_metadata(tmp_path, monkeypatch):
     archive = tmp_path / "session.txt"
-    calls: list[tuple[str, str]] = []
+    calls: list[str] = []
 
     class Metadata:
-        def get_title(self, conversation_id, archive_path):
-            calls.append((conversation_id, archive_path))
+        def title_for_archive(self, archive_path):
+            calls.append(str(archive_path))
             return "Canonical title"
 
     monkeypatch.setattr(conversations, "_metadata", Metadata())
 
-    assert conversations._conversation_title("session.txt", str(archive)) == "Canonical title"
-    assert calls == [("session.txt", str(archive))]
+    assert conversations._conversation_title(str(archive)) == "Canonical title"
+    assert calls == [str(archive)]
 
 
 def test_list_conversations_does_not_block_event_loop(tmp_path, monkeypatch):
@@ -34,7 +35,7 @@ def test_list_conversations_does_not_block_event_loop(tmp_path, monkeypatch):
         return [(str(archive), 0.0, "preview", 1)]
 
     monkeypatch.setattr(conversations, "_ga_sessions", slow_sessions)
-    monkeypatch.setattr(conversations, "_conversation_title", lambda cid, path: "title")
+    monkeypatch.setattr(conversations, "_conversation_title", lambda path: "title")
 
     async def heartbeat():
         await asyncio.sleep(0.01)
@@ -66,7 +67,7 @@ def test_list_conversations_keeps_search_and_pagination_semantics(tmp_path, monk
             (str(other), 1.0, "preview b", 3),
         ],
     )
-    monkeypatch.setattr(conversations, "_conversation_title", lambda cid, path: "")
+    monkeypatch.setattr(conversations, "_conversation_title", lambda path: "")
 
     result = asyncio.run(conversations.list_conversations(q="needle", offset=0, limit=1))
 
@@ -105,7 +106,7 @@ def test_list_uses_first_user_question_only_for_untitled_page_items(tmp_path, mo
     monkeypatch.setattr(
         conversations,
         "_conversation_title",
-        lambda cid, path: "Renamed" if cid == "titled.txt" else "",
+        lambda path: "Renamed" if os.path.basename(path) == "titled.txt" else "",
     )
     monkeypatch.setattr(
         conversations,
@@ -173,7 +174,7 @@ def test_detail_and_export_parsing_do_not_block_event_loop(tmp_path, monkeypatch
         "_session_by_id",
         lambda cid: (str(archive), 0.0, "preview", 1),
     )
-    monkeypatch.setattr(conversations, "_conversation_title", lambda cid, path: "title")
+    monkeypatch.setattr(conversations, "_conversation_title", lambda path: "title")
 
     def slow_extract(path):
         events.append("parse-start")
@@ -218,7 +219,7 @@ def test_restore_archive_work_does_not_block_event_loop(tmp_path, monkeypatch):
         "_session_by_id",
         lambda cid: (str(archive), 0.0, "preview", 1),
     )
-    monkeypatch.setattr(conversations, "_conversation_title", lambda cid, path: "Title")
+    monkeypatch.setattr(conversations, "_conversation_title", lambda path: "Title")
     monkeypatch.setattr(AgentService, "instance", classmethod(lambda cls: service))
     monkeypatch.setattr(bus, "publish", lambda topic, payload: events.append("published"))
 
@@ -259,7 +260,7 @@ def test_repeated_detail_and_export_requests_are_consistent(tmp_path, monkeypatc
         "_session_by_id",
         lambda cid: (str(archive), 7.0, "preview", 1),
     )
-    monkeypatch.setattr(conversations, "_conversation_title", lambda cid, path: "Title")
+    monkeypatch.setattr(conversations, "_conversation_title", lambda path: "Title")
     monkeypatch.setattr(conversations, "_ga_extract", lambda path: [dict(m) for m in messages])
 
     async def run():

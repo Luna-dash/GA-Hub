@@ -17,7 +17,7 @@ from frontends import workspace_cmd
 from ..origin_policy import is_allowed_ui_origin
 from ..schemas import BtwReq, BtwResp, RewindReq, RewindResp
 from ..services.archive_messages import HistoryUnavailableError, read_archive_messages
-from ..services.conversation_repository import STATUS_ERROR, STATUS_IDLE
+from ..services.session_runtime_status import STATUS_ERROR, STATUS_IDLE
 from ..services.event_bus import Event, bus
 from ..services.llm_preference_store import LlmPreferenceStore
 from ..services.llm_registry import LlmUnavailableError, LlmRegistryError

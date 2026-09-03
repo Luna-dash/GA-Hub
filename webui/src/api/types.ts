@@ -116,29 +116,6 @@ export interface ChatRetryConfig {
   scheduled_backoff_max_seconds?: number
 }
 
-// ── WeChat ────────────────────────────────────────────────
-export type WxQRState = ApiSchemas['WxQRState']
-
-export type WxStatus = ApiSchemas['WxStatusResp']
-
-export type WxContact = ApiSchemas['WxContact']
-export type WxContactListResponse = ApiSchemas['WxContactListResp']
-
-export type WxLogEntry = ApiSchemas['WxLogEntry']
-export type WxLogListResponse = ApiSchemas['WxLogListResp']
-export type WxMutationResponse = ApiSchemas['WxLogoutResp']
-export type WxPollStartResponse = ApiSchemas['WxPollStartResp']
-export type WxAllowlistResponse = ApiSchemas['WxAllowlistResp']
-export type WxAllowlistWriteResponse = ApiSchemas['WxAllowlistWriteResp']
-
-// ── Feishu ────────────────────────────────────────────────
-export type FsStatus = ApiSchemas['FsStatusResp']
-export type FsCheckResult = ApiSchemas['FsCheckResp']
-export type FsKeysResponse = ApiSchemas['FsKeysResp']
-export type FsStartResponse = ApiSchemas['FsStartResp']
-export type FsStopResponse = ApiSchemas['FsStopResp']
-export type FsSendResponse = ApiSchemas['FsSendResp']
-
 export type ScheduledChat = ApiSchemas['ScheduledChatResp']
 export type ScheduledChatListResponse = ApiSchemas['ScheduledChatListResp']
 

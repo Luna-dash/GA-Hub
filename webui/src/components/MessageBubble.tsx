@@ -43,7 +43,7 @@ interface Props {
   streamId?: string
   /** Rewind callback. When provided + streamId set, a "回退" chip appears. */
   onRewind?: (sid: string) => void
-  /** Compact mode: hide role labels and reduce padding (for FeishuBot) */
+  /** Compact mode: hide role labels and reduce padding (rail/compact surfaces) */
   compact?: boolean
 }
 

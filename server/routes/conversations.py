@@ -25,16 +25,14 @@ from pydantic import BaseModel, Field
 
 from .. import _paths
 from ..services.archive_messages import read_ui_messages
-from ..services.conversation_metadata import ConversationMetadataAdapter
-from ..services.conversation_titles import ConversationTitleStore
+from ..services.conversation_titles import migrate_legacy_titles
 from ..services.session_coordinator import AgentBusyError, SessionControlBusyError
 from ..services.session_metadata import SessionMetadataStore
 
 log = logging.getLogger(__name__)
 router = APIRouter()
-_metadata = ConversationMetadataAdapter(
-    SessionMetadataStore(), ConversationTitleStore()
-)
+_metadata = SessionMetadataStore()
+_legacy_titles_migrated = False
 _ZIP_ENTRY_MAX_SIZE = 10 * 1024 * 1024
 _ZIP_READ_CHUNK_SIZE = 64 * 1024
 _session_index_lock = threading.Lock()
@@ -174,7 +172,7 @@ def _invalidate_session_index() -> None:
 
 
 def _refresh_session_index() -> dict[str, tuple]:
-    global _session_index_state, _session_index
+    global _session_index_state, _session_index, _legacy_titles_migrated
     signature = _session_index_signature()
     with _session_index_lock:
         if signature != _session_index_state:
@@ -184,6 +182,19 @@ def _refresh_session_index() -> dict[str, tuple]:
                 index.setdefault(os.path.basename(row[0]), row)
             _session_index = index
             _session_index_state = signature
+            if not _legacy_titles_migrated and index:
+                # The sid→path map doubles as the resolver for the one-shot
+                # legacy title migration: sessions absent from the index no
+                # longer exist, so their stale titles are dropped with the
+                # sidecar file.
+                _legacy_titles_migrated = True
+                try:
+                    migrate_legacy_titles(
+                        _metadata,
+                        lambda sid: (index.get(sid) or (None,))[0],
+                    )
+                except Exception:
+                    log.exception("legacy conversation title migration failed")
         return _session_index
 
 
@@ -205,8 +216,8 @@ def _session_by_id(cid: str):
     return _refresh_session_index().get(cid)
 
 
-def _conversation_title(cid: str, path: str) -> str:
-    return _metadata.get_title(cid, path)
+def _conversation_title(path: str) -> str:
+    return _metadata.title_for_archive(path)
 
 
 @lru_cache(maxsize=1024)
@@ -299,7 +310,7 @@ def _list_conversations_sync(
         cid = os.path.basename(path)
         items.append({
             "id": cid,
-            "title": _conversation_title(cid, path),
+            "title": _conversation_title(path),
             "message_count": rounds,
             "last_user_preview": preview,
             "_archive_path": path,
@@ -353,7 +364,7 @@ async def get_conversation(cid: str):
     messages = await asyncio.to_thread(_ga_extract, path)
     return {
         "id": cid,
-        "title": _conversation_title(cid, path),
+        "title": _conversation_title(path),
         "messages": messages,
     }
 
@@ -367,7 +378,7 @@ async def update_conversation(cid: str, req: ConversationUpdate):
     if s is None:
         raise HTTPException(404, "conversation not found")
     title = req.title.strip()
-    _metadata.set_title(cid, s[0], title)
+    _metadata.set_title_for_archive(s[0], title)
     return {"ok": True, "id": cid, "title": title}
 
 
@@ -380,7 +391,7 @@ async def delete_conversation(cid: str):
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = Path(s[0]).resolve()
-    bound_session = _metadata._sessions.find_by_archive(path)
+    bound_session = _metadata.find_by_archive(path)
     if bound_session is not None:
         from ..routes import sessions as session_routes
         coordinator = session_routes._coordinator
@@ -389,7 +400,7 @@ async def delete_conversation(cid: str):
                 # The binding was resolved before this session reservation was
                 # acquired. Refuse rather than unlink through a reservation that
                 # may now belong to a different archive identity.
-                current_binding = _metadata._sessions.find_by_archive(path)
+                current_binding = _metadata.find_by_archive(path)
                 if current_binding and current_binding["id"] != bound_session["id"]:
                     raise HTTPException(409, {
                         "code": "archive_binding_changed",
@@ -434,7 +445,7 @@ def _unlink_archive(cid: str, path: Path) -> None:
     except OSError as exc:
         log.exception("failed to delete conversation %s", cid)
         raise HTTPException(500, f"failed to delete conversation: {exc}")
-    _metadata.delete(cid, path)
+    _metadata.delete_by_archive(path)
 
 
 @router.post(
@@ -466,7 +477,7 @@ async def restore_conversation(cid: str):
     return {
         "ok": True,
         "id": cid,
-        "title": _conversation_title(cid, path),
+        "title": _conversation_title(path),
         "restored_lines": len(messages),
     }
 
@@ -478,7 +489,7 @@ async def export_conversation(cid: str, format: str = Query("md", pattern="^(md|
         raise HTTPException(404, "conversation not found")
     path = s[0]
     messages = await asyncio.to_thread(_ga_extract, path)
-    title = _conversation_title(cid, path)
+    title = _conversation_title(path)
 
     if format == "json":
         payload = {"id": cid, "title": title, "messages": messages}

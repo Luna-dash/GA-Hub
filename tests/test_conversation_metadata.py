@@ -1,71 +1,108 @@
 from __future__ import annotations
 
+import json
 import threading
 
 import pytest
 
-from server.services.conversation_metadata import ConversationMetadataAdapter
-from server.services.conversation_titles import ConversationTitleStore
+from server.services import conversation_titles
+from server.services import session_metadata
 from server.services.session_metadata import SessionMetadataStore
 
 
-def _stores(tmp_path):
-    sessions = SessionMetadataStore(tmp_path / "sessions")
-    legacy = ConversationTitleStore(tmp_path / "legacy")
-    return sessions, legacy, ConversationMetadataAdapter(sessions, legacy)
+def _store(tmp_path):
+    return SessionMetadataStore(tmp_path / "sessions")
 
 
-def test_legacy_title_is_migrated_once_to_session_metadata(tmp_path):
-    sessions, legacy, metadata = _stores(tmp_path)
-    archive = tmp_path / "archive.txt"
+def _write_legacy_sidecar(tmp_path, titles: dict[str, str]):
+    sidecar = tmp_path / "legacy" / "titles.json"
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(
+        json.dumps({"schema_version": 1, "titles": titles}), encoding="utf-8"
+    )
+    return sidecar
+
+
+@pytest.fixture(autouse=True)
+def _reset_migration_flag(monkeypatch):
+    """Each test gets a fresh one-shot migration budget."""
+    monkeypatch.setattr(conversation_titles, "_migrated", False)
+
+
+def test_legacy_titles_are_migrated_once_via_sid_to_path_map(tmp_path):
+    sessions = _store(tmp_path)
+    archive = tmp_path / "model_responses_a.txt"
     archive.write_text("x", encoding="utf-8")
-    legacy.set("archive.txt", "Legacy title")
+    sidecar = _write_legacy_sidecar(tmp_path, {"model_responses_a.txt": "Legacy title"})
 
-    assert metadata.get_title("archive.txt", archive) == "Legacy title"
+    migrated = conversation_titles.migrate_legacy_titles(
+        sessions, lambda sid: str(archive) if sid == "model_responses_a.txt" else None,
+        sidecar=sidecar,
+    )
+
+    assert migrated == 1
     rows = sessions.list()
     assert len(rows) == 1
     assert rows[0]["title"] == "Legacy title"
     assert rows[0]["archive_path"] == str(archive.resolve())
-    assert legacy.get("archive.txt") == ""
+    assert not sidecar.exists()
 
 
-def test_bound_session_title_wins_and_removes_stale_legacy_value(tmp_path):
-    sessions, legacy, metadata = _stores(tmp_path)
+def test_migration_drops_titles_for_vanished_sessions_and_is_idempotent(tmp_path):
+    sessions = _store(tmp_path)
+    archive = tmp_path / "model_responses_a.txt"
+    archive.write_text("x", encoding="utf-8")
+    sidecar = _write_legacy_sidecar(tmp_path, {
+        "model_responses_a.txt": "Legacy title",
+        "model_responses_gone.txt": "Orphan",
+    })
+
+    resolver = lambda sid: str(archive) if sid == "model_responses_a.txt" else None  # noqa: E731
+    assert conversation_titles.migrate_legacy_titles(
+        sessions, resolver, sidecar=sidecar) == 1
+    # Second sweep in the same process is a no-op (one-shot flag).
+    assert conversation_titles.migrate_legacy_titles(
+        sessions, resolver, sidecar=sidecar) == 0
+    titles = {row["archive_path"]: row["title"] for row in sessions.list()}
+    assert titles == {str(archive.resolve()): "Legacy title"}
+
+
+def test_title_for_archive_reads_canonical_store_only(tmp_path):
+    sessions = _store(tmp_path)
     archive = tmp_path / "archive.txt"
     archive.write_text("x", encoding="utf-8")
+
+    assert sessions.title_for_archive(archive) == ""
+
     row = sessions.create(title="Canonical")
     sessions.bind_archive(row["id"], archive)
-    legacy.set("archive.txt", "Stale")
-
-    assert metadata.get_title("archive.txt", archive) == "Canonical"
-    assert legacy.get("archive.txt") == ""
+    assert sessions.title_for_archive(archive) == "Canonical"
 
 
-def test_set_title_uses_only_session_metadata_and_keeps_stable_id(tmp_path):
-    sessions, legacy, metadata = _stores(tmp_path)
+def test_set_title_for_archive_keeps_stable_id(tmp_path):
+    sessions = _store(tmp_path)
     archive = tmp_path / "archive.txt"
     archive.write_text("x", encoding="utf-8")
 
-    first = metadata.set_title("archive.txt", archive, "First")
-    second = metadata.set_title("archive.txt", archive, "Renamed")
+    first = sessions.set_title_for_archive(archive, "First")
+    second = sessions.set_title_for_archive(archive, "Renamed")
 
     assert first["id"] == second["id"]
     assert second["title"] == "Renamed"
     assert len(sessions.list()) == 1
-    assert legacy.get("archive.txt") == ""
 
 
 def test_conflicting_stable_id_binding_does_not_overwrite_other_session(tmp_path, monkeypatch):
-    sessions, _legacy, metadata = _stores(tmp_path)
+    sessions = _store(tmp_path)
     first = tmp_path / "first.txt"
     second = tmp_path / "second.txt"
     first.write_text("1", encoding="utf-8")
     second.write_text("2", encoding="utf-8")
-    monkeypatch.setattr(metadata, "_stable_id", lambda _path: "same-id")
+    monkeypatch.setattr(session_metadata, "stable_archive_id", lambda _path: "same-id")
 
-    metadata.set_title("first.txt", first, "First")
+    sessions.set_title_for_archive(first, "First")
     with pytest.raises(ValueError):
-        metadata.set_title("second.txt", second, "Second")
+        sessions.set_title_for_archive(second, "Second")
 
     rows = sessions.list()
     assert len(rows) == 1
@@ -73,20 +110,19 @@ def test_conflicting_stable_id_binding_does_not_overwrite_other_session(tmp_path
     assert rows[0]["title"] == "First"
 
 
-def test_delete_removes_only_metadata_bound_to_target_archive(tmp_path):
-    sessions, legacy, metadata = _stores(tmp_path)
+def test_delete_by_archive_removes_only_target_rows(tmp_path):
+    sessions = _store(tmp_path)
     target = tmp_path / "target.txt"
     other = tmp_path / "other.txt"
     target.write_text("1", encoding="utf-8")
     other.write_text("2", encoding="utf-8")
-    target_row = metadata.set_title("target.txt", target, "Target")
-    other_row = metadata.set_title("other.txt", other, "Other")
-    legacy.set("target.txt", "old")
+    target_row = sessions.set_title_for_archive(target, "Target")
+    other_row = sessions.set_title_for_archive(other, "Other")
 
-    assert metadata.delete("target.txt", target) is True
+    assert sessions.delete_by_archive(target) is True
+    assert sessions.delete_by_archive(target) is False
     assert {row["id"] for row in sessions.list()} == {other_row["id"]}
     assert target_row["id"] != other_row["id"]
-    assert legacy.get("target.txt") == ""
 
 
 def test_store_instances_share_lock_for_concurrent_archive_upserts(tmp_path):
@@ -118,9 +154,7 @@ def test_store_instances_share_lock_for_concurrent_archive_upserts(tmp_path):
 
 
 def test_atomic_write_failure_preserves_previous_file_and_cleans_temp(tmp_path, monkeypatch):
-    from server.services import session_metadata
-
-    store = SessionMetadataStore(tmp_path / "sessions")
+    store = _store(tmp_path)
     row = store.create(title="Before")
     original = store.path.read_bytes()
 
@@ -137,7 +171,7 @@ def test_atomic_write_failure_preserves_previous_file_and_cleans_temp(tmp_path, 
 
 
 def test_session_metadata_persists_optional_project_binding(tmp_path):
-    store, _legacy, _adapter = _stores(tmp_path)
+    store = _store(tmp_path)
     row = store.create()
 
     bound = store.update(row["id"], {
@@ -160,7 +194,7 @@ def test_deleting_bound_archive_releases_session_runtime_before_unlink(tmp_path,
 
     from server.routes import conversations, sessions
 
-    sessions_store, _legacy, metadata = _stores(tmp_path)
+    sessions_store = _store(tmp_path)
     archive = tmp_path / "model_responses_delete.txt"
     archive.write_text("archive", encoding="utf-8")
     row = sessions_store.create(title="Bound")
@@ -185,7 +219,7 @@ def test_deleting_bound_archive_releases_session_runtime_before_unlink(tmp_path,
             return True
 
     monkeypatch.setattr(sessions, "_coordinator", Coordinator())
-    monkeypatch.setattr(conversations, "_metadata", metadata)
+    monkeypatch.setattr(conversations, "_metadata", sessions_store)
     monkeypatch.setattr(
         conversations,
         "_session_by_id",

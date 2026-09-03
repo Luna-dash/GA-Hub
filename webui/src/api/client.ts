@@ -32,12 +32,6 @@ import type {
   EmailConfig,
   EmailTestResponse,
   EventRecentResponse,
-  FsCheckResult,
-  FsKeysResponse,
-  FsSendResponse,
-  FsStartResponse,
-  FsStatus,
-  FsStopResponse,
   LLMInfo,
   LogLinesResponse,
   LLMTestResult,
@@ -81,16 +75,6 @@ import type {
   SkillListResponse,
   SkillSearchResult,
   UploadResult,
-  WxContact,
-  WxContactListResponse,
-  WxLogEntry,
-  WxLogListResponse,
-  WxMutationResponse,
-  WxPollStartResponse,
-  WxStatus,
-  WxAllowlistResponse,
-  WxAllowlistWriteResponse,
-  WxQRState,
 } from './types'
 import type { components as GeneratedApiComponents } from './generated/schema'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
@@ -279,41 +263,6 @@ export const api = {
   fetchMyKeySync: () => http<MyKeySyncResult>(
     'POST', '/api/mykey/sync/fetch', undefined, { timeoutMs: MYKEY_SYNC_HTTP_TIMEOUT_MS },
   ),
-
-  // ── feishu ───────────────────────────────────────────
-  fsStatus: () => http<FsStatus>('GET', '/api/feishu/status'),
-  fsCheck: (initAgent = false, force = false) => http<FsCheckResult>(
-    'POST',
-    `/api/feishu/check?init_agent=${initAgent ? 'true' : 'false'}${force ? '&force=true' : ''}`,
-  ),
-  fsStart: () => http<FsStartResponse>('POST', '/api/feishu/start'),
-  fsStop: () => http<FsStopResponse>('POST', '/api/feishu/stop'),
-  fsLogs: (tail = 300) => http<LogLinesResponse>('GET', `/api/feishu/logs?tail=${tail}`),
-  fsRecentEvents: (limit = 100) => http<EventRecentResponse>('GET', `/api/events/recent?prefix=feishu:chat&limit=${limit}`),
-  fsSaveKeys: (app_id: string, app_secret: string, allowed_users = '') =>
-    http<FsKeysResponse>('PUT', '/api/feishu/keys', { app_id, app_secret, allowed_users }),
-  fsSend: (receive_id: string, text: string, receive_id_type = 'open_id', use_card = false) =>
-    http<FsSendResponse>('POST', '/api/feishu/send', { receive_id, text, receive_id_type, use_card }),
-
-  // ── wechat (legacy endpoints kept for compatibility) ─
-  wxStatus: () => http<WxStatus>('GET', '/api/wechat/status'),
-  wxLogin: () => http<WxQRState>('POST', '/api/wechat/login'),
-  wxLogout: () => http<WxMutationResponse>('POST', '/api/wechat/logout'),
-  wxStartPoll: () => http<WxPollStartResponse>('POST', '/api/wechat/poll/start'),
-  wxStopPoll: () => http<WxMutationResponse>('POST', '/api/wechat/poll/stop'),
-  wxContacts: () => http<WxContactListResponse>('GET', '/api/wechat/contacts'),
-  wxMessages: (uid?: string, limit = 200) => {
-    const q = new URLSearchParams()
-    if (uid) q.set('uid', uid)
-    q.set('limit', String(limit))
-    return http<WxLogListResponse>('GET', `/api/wechat/messages?${q}`)
-  },
-  wxSend: (uid: string, text?: string, file_path?: string, context_token = '') =>
-    http<WxMutationResponse>('POST', '/api/wechat/send', { uid, text, file_path, context_token }),
-  wxClearMessages: () => http<WxMutationResponse>('DELETE', '/api/wechat/messages'),
-  wxAllowlist: () => http<WxAllowlistResponse>('GET', '/api/wechat/allowlist'),
-  wxSetAllowlist: (allowlist: string[]) =>
-    http<WxAllowlistWriteResponse>('PUT', '/api/wechat/allowlist', { allowlist }),
 
   // ── conversations ────────────────────────────────────
   conversations: (q?: string, offset = 0, limit = 50) => {

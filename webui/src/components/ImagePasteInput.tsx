@@ -36,7 +36,7 @@ interface Props {
   submitDisabled?: boolean
   acceptFiles?: boolean
   /** Auto-focus the textarea when mounted. Default true so chat-style
-   *  surfaces (LiveChat, WechatBot reply box) start ready-to-type. */
+   *  surfaces (LiveChat reply box) start ready-to-type. */
   autoFocus?: boolean
 }
 

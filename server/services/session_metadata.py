@@ -5,6 +5,7 @@ instances and GA's raw archives remain the conversation truth sources.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
@@ -18,6 +19,13 @@ from .. import _paths
 
 class SessionNotFoundError(KeyError):
     """Raised when a metadata record does not exist."""
+
+
+def stable_archive_id(archive_path: str | Path) -> str:
+    """Deterministic pseudo-session id for archive-only metadata rows."""
+    resolved = str(Path(archive_path).resolve())
+    digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()
+    return f"archive-{digest}"
 
 
 _store_locks_guard = threading.Lock()
@@ -248,3 +256,14 @@ class SessionMetadataStore:
                 raise SessionNotFoundError(session_id)
             data["sessions"] = kept
             self._write(data)
+
+    def title_for_archive(self, archive_path: str | Path) -> str:
+        """Display title of the archive-bound row, or '' when unbound."""
+        row = self.find_by_archive(archive_path)
+        return str(row["title"]) if row else ""
+
+    def set_title_for_archive(self, archive_path: str | Path, title: str) -> dict[str, Any]:
+        """Create/update the archive-bound row's title (user-assigned)."""
+        return self.upsert_archive(
+            stable_archive_id(archive_path), archive_path, title=title
+        )

@@ -36,10 +36,6 @@ export const queryKeys = {
   agent: {
     chatRetryConfig: ['agent.chatRetryConfig'] as const,
   },
-  feishu: {
-    status: ['feishu-status'] as const,
-    check: ['feishu-check'] as const,
-  },
   memory: {
     global: ['mem.global'] as const,
     insight: ['mem.insight'] as const,
@@ -54,10 +50,5 @@ export const queryKeys = {
   mykey: {
     data: ['mykey'] as const,
     backups: ['mykey.backups'] as const,
-  },
-  wechat: {
-    status: ['wxStatus'] as const,
-    messages: ['wxMessages'] as const,
-    allowlist: ['wxAllow'] as const,
   },
 } as const
