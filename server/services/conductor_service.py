@@ -1154,8 +1154,16 @@ class ConductorService:
                 if epoch and cursor.get("epoch") and epoch != cursor["epoch"]:
                     log.warning(
                         "journal epoch changed (%s -> %s): engine restarted "
-                        "with a fresh journal; replaying its events",
+                        "with a fresh journal; resetting the cursor and "
+                        "replaying it",
                         cursor["epoch"], epoch)
+                    # A fresh journal renumbers seq from 1, so the old
+                    # cursor floor would filter every new event out.
+                    # Replay the new epoch from its beginning; the SSE
+                    # handlers merge pool/chat state idempotently.
+                    cursor["seq"] = 0
+                    cursor["epoch"] = epoch
+                    continue
                 if epoch:
                     cursor["epoch"] = epoch
                 events = resp.get("events") or []

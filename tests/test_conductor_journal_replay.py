@@ -256,13 +256,23 @@ def test_replay_journal_never_raises(monkeypatch):
 
 
 def test_replay_journal_handles_engine_restart_with_fresh_epoch():
+    """An epoch change means the engine rebuilt its journal file, so seq
+    restarts at 1 (conductor_journal.py only mints a new epoch with a new
+    file).  The old high-water cursor would filter every event of the new
+    journal, so the replay must reset it and start over."""
     service = _bare_service()
     service._journal_cursor = {"seq": 3, "epoch": "old-epoch"}
     service.client = _FakeJournalClient([
-        {"journal": {"last_seq": 4, "epoch": "new-epoch"},
+        # First read still uses the stale floor; the fresh journal has
+        # nothing above seq 3, but its metadata reveals the epoch change.
+        {"journal": {"last_seq": 2, "epoch": "new-epoch"}, "events": []},
+        # After the reset the replay starts from the new journal's beginning.
+        {"journal": {"last_seq": 2, "epoch": "new-epoch"},
          "events": [
-             {"seq": 4, "type": "engine_started",
+             {"seq": 1, "type": "engine_started",
               "payload": {"event": "engine_started"}},
+             {"seq": 2, "type": "subagent_started",
+              "payload": {"event": "subagent_started"}},
          ]},
     ])
     fed: list = []
@@ -270,8 +280,9 @@ def test_replay_journal_handles_engine_restart_with_fresh_epoch():
 
     service._replay_journal()
 
-    assert fed == [{"event": "engine_started"}]
-    assert service._journal_cursor == {"seq": 4, "epoch": "new-epoch"}
+    assert fed == [{"event": "engine_started"}, {"event": "subagent_started"}]
+    assert service._journal_cursor == {"seq": 2, "epoch": "new-epoch"}
+    assert service.client.reads == [(3, 5000), (0, 5000)]
 
 
 # ===== schemas: operation_id accepted and bounded =====

@@ -411,13 +411,17 @@ class GaConductorClient:
     def subagent_action(self, sid: str, action: str, msg: str = "",
                         request_id: Optional[str] = None,
                         llm_index: Optional[int] = None,
-                        origin: Optional[str] = None) -> dict:
+                        origin: Optional[str] = None,
+                        force: bool = False) -> dict:
         """One worker action; ``origin="hub"`` marks user/UI-initiated aborts.
 
         The engine treats a hub-originated abort as a terminal user cancel,
         while a supervisor self-API abort (no origin) stays a recoverable
         worker failure so the supervisor can re-dispatch under the same
         request_id instead of dead-ending the workflow.
+
+        ``force=True`` is the audited accept escape hatch the engine applies
+        when its deterministic verification verdict is not clean.
         """
         body: dict = {
             "action": action, "msg": msg, "request_id": request_id,
@@ -425,6 +429,8 @@ class GaConductorClient:
         }
         if origin is not None:
             body["origin"] = origin
+        if force:
+            body["force"] = True
         return self._request("POST", f"/subagent/{sid}", json_body=body)
 
     def get_subagents(self) -> list[dict]:

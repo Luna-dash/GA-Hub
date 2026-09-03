@@ -1,11 +1,14 @@
 """Hub-only Conductor output budgets and timeout warnings (Phase C.2)."""
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Callable, Iterable
 from typing import Any
 
+
+log = logging.getLogger(__name__)
 
 Publish = Callable[[str, dict], Any]
 TokenCounter = Callable[[str], int]
@@ -208,4 +211,11 @@ class TimeoutMonitor:
 
     def _run(self) -> None:
         while not self._stop.wait(self.check_interval):
-            self.check_once()
+            try:
+                self.check_once()
+            except Exception:
+                # A single malformed snapshot (engine dict missing a field,
+                # mid-mutation state) must never kill the monitor thread:
+                # that would silence every timeout warning for the rest of
+                # the supervisor's life with no error on any request path.
+                log.exception("timeout monitor check failed")
