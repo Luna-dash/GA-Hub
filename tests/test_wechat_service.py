@@ -6,7 +6,23 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from server.services import wechat_service as wx
+import pytest
+
+try:
+    # wechat_service refuses to import before GA_ROOT is configured (a
+    # module-level guard), so on a machine without a GA checkout this import
+    # would fail at collection time — degrade to skip instead of erroring.
+    from server.services import wechat_service as wx
+except RuntimeError as _exc:  # pragma: no cover - environment-dependent
+    wx = None
+    _WX_SKIP = str(_exc)
+else:
+    _WX_SKIP = None
+
+pytestmark = pytest.mark.skipif(
+    wx is None,
+    reason=f"GA checkout not configured on this machine ({_WX_SKIP})",
+)
 
 
 class FakeBot:

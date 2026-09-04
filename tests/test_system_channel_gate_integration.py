@@ -21,6 +21,22 @@ from server.services.session_coordinator import (
 from server.services.session_metadata import SessionMetadataStore
 from server.services.system_channels import SystemChannels
 
+try:
+    # wechat_service refuses to import before GA_ROOT is configured (a
+    # module-level guard) — on a machine without a GA checkout the wechat
+    # tests below degrade to skip instead of erroring at runtime.
+    from server.services import wechat_service as _wechat_service
+except RuntimeError as _exc:  # pragma: no cover - environment-dependent
+    _wechat_service = None
+    _WECHAT_SKIP = str(_exc)
+else:
+    _WECHAT_SKIP = None
+
+_wechat_needs_ga = pytest.mark.skipif(
+    _wechat_service is None,
+    reason=f"GA checkout not configured on this machine ({_WECHAT_SKIP})",
+)
+
 
 class _GateRuntime:
     """Minimal runtime: real handle lifecycle plus agent introspection."""
@@ -80,6 +96,7 @@ def _busy(exc_reason: str):
     return submit
 
 
+@_wechat_needs_ga
 def test_wechat_busy_reply_reaches_the_user(gate) -> None:
     """A capacity-refused wechat message answers with a busy notice instead of
     dying silently inside the handler thread."""
@@ -104,6 +121,7 @@ def test_wechat_busy_reply_reaches_the_user(gate) -> None:
     gate.runtimes["other-session"].handle.finished = True
 
 
+@_wechat_needs_ga
 def test_wechat_session_active_reply_names_the_conflict(gate) -> None:
     from server.services.wechat_service import WeChatService
 
