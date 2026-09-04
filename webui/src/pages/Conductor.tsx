@@ -901,10 +901,11 @@ function phaseTone(phase: SubagentPhase): string {
 function phaseDot(phase: SubagentPhase): string {
   return clsx(
     'h-1.5 w-1.5 shrink-0 rounded-full',
-    phase === 'running' && 'bg-[#B47A16]',
+    phase === 'running' && 'bg-status-warning-strong',
     phase === 'reworking' && 'bg-status-warning-hot',
-    phase === 'reviewing' && 'bg-[#3E7C9E]',
+    phase === 'reviewing' && 'bg-status-info',
     phase === 'accepted' && 'bg-status-success-strong',
+    // stopped: one-off neutral, sanctioned by the palette comment
     phase === 'stopped' && 'bg-[#9A8E7D]',
   )
 }
