@@ -27,7 +27,7 @@ import { toast } from '@/stores/toastStore'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
 import { getMyKeyShowUpload, MYKEY_SHOW_UPLOAD_EVENT } from '@/utils/mykeySyncUi'
-import { errorMessageFromError } from '@/utils/sessionUi'
+import { errorMessageFromError, myKeyParseErrorFromError } from '@/utils/sessionUi'
 
 type Tab = 'structured' | 'raw'
 
@@ -282,8 +282,8 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
     try {
       const r = await api.testMyKeySession(s.var)
       setTestResult(r)
-    } catch (e: any) {
-      setTestResult({ ok: false, error: String(e?.message || e) })
+    } catch (e: unknown) {
+      setTestResult({ ok: false, error: errorMessageFromError(e) })
     } finally {
       setTesting(false)
     }
@@ -444,12 +444,8 @@ function SessionDialog({ mode, session, allSessions, onClose, onSaved }: {
       const fields = stripUiOnly(s.fields)
       const r = await api.upsertMyKeySession({ var: s.var, type: s.type, fields })
       onSaved(r)
-    } catch (e: any) {
-      const body = e?.body?.detail
-      const msg = (body && typeof body === 'object')
-        ? `${body.error}: ${body.message}${body.line ? ` (line ${body.line}:${body.col})` : ''}`
-        : (e?.body || e?.message || String(e))
-      setErr(typeof msg === 'string' ? msg : JSON.stringify(msg))
+    } catch (e: unknown) {
+      setErr(myKeyParseErrorFromError(e))
     } finally {
       setSaving(false)
     }

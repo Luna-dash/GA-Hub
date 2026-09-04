@@ -186,6 +186,24 @@ describe('Conductor chat scroll restoration', () => {
     })
   }
 
+  // Under parallel-suite load a single setTimeout(0) can race react-query
+  // resolution (full-suite runs failed different tests here three times in a
+  // row). Poll inside `act` until the assertion holds instead of asserting
+  // synchronously after one flush.
+  async function waitFor(assertion: () => void, attempts = 40) {
+    let lastError: unknown
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await flushQueries()
+      try {
+        assertion()
+        return
+      } catch (error) {
+        lastError = error
+      }
+    }
+    throw lastError
+  }
+
   async function waitForInitialScrollFrame() {
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await flushQueries()
@@ -729,17 +747,13 @@ describe('Conductor chat scroll restoration', () => {
     await flushQueries()
 
     act(() => button('停止').click())
-    await flushQueries()
-
+    await waitFor(() => expect(lastToast()?.message).toBe('Conductor 未能停止，请检查引擎状态。'))
     expect(lastToast()?.kind).toBe('error')
-    expect(lastToast()?.message).toBe('Conductor 未能停止，请检查引擎状态。')
     expect(button('停止').disabled).toBe(false)
 
     mocks.conductorStop.mockRejectedValueOnce(new Error('engine down'))
     act(() => button('停止').click())
-    await flushQueries()
-
-    expect(lastToast()?.message).toBe('停止 Conductor 失败，请稍后重试。')
+    await waitFor(() => expect(lastToast()?.message).toBe('停止 Conductor 失败，请稍后重试。'))
   })
 
   function failedWorkflowFixture(terminalEvent: string | null) {
@@ -768,12 +782,12 @@ describe('Conductor chat scroll restoration', () => {
     })
 
     renderPage()
-    await flushQueries()
-
-    const text = host.textContent || ''
-    expect(text).toContain('子代理失败')
-    expect(text).toContain('返工或补派')
-    expect(text).not.toContain('执行失败')
+    await waitFor(() => {
+      const text = host.textContent || ''
+      expect(text).toContain('子代理失败')
+      expect(text).toContain('返工或补派')
+      expect(text).not.toContain('执行失败')
+    })
   })
 
   it('keeps the terminal failure wording once the workflow is closed', async () => {
@@ -783,11 +797,11 @@ describe('Conductor chat scroll restoration', () => {
     mocks.conductorSubagents.mockResolvedValue({ items: [] })
 
     renderPage()
-    await flushQueries()
-
-    const text = host.textContent || ''
-    expect(text).toContain('执行失败')
-    expect(text).not.toContain('子代理失败')
+    await waitFor(() => {
+      const text = host.textContent || ''
+      expect(text).toContain('执行失败')
+      expect(text).not.toContain('子代理失败')
+    })
   })
 
   it('shows the persisted failure reason on a closed workflow', async () => {
@@ -796,11 +810,11 @@ describe('Conductor chat scroll restoration', () => {
     mocks.conductorSubagents.mockResolvedValue({ items: [] })
 
     renderPage()
-    await flushQueries()
-
-    const text = host.textContent || ''
-    expect(text).toContain('执行失败')
-    expect(text).toContain('失败原因：conductor start failed: gahub_app unavailable')
-    expect(text).not.toContain('原因已写入本轮对话')
+    await waitFor(() => {
+      const text = host.textContent || ''
+      expect(text).toContain('执行失败')
+      expect(text).toContain('失败原因：conductor start failed: gahub_app unavailable')
+      expect(text).not.toContain('原因已写入本轮对话')
+    })
   })
 })

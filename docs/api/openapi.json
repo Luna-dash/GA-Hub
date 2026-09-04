@@ -437,7 +437,7 @@
     "/api/agent/sessions": {
       "get": {
         "summary": "Sessions",
-        "description": "Recoverable model_responses snapshots (used by /continue).",
+        "description": "Recoverable model_responses snapshots (used by /continue).\n\nReads go through the shared archive catalogue (services.archive_messages)\nso list, point lookup and search observe one enumeration + cache instead\nof racing a second raw scan of GA's log directory.",
         "operationId": "sessions_api_agent_sessions_get",
         "responses": {
           "200": {

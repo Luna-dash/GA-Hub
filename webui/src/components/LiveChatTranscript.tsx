@@ -16,6 +16,7 @@ import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { useChatPerformanceProbe } from '@/utils/useChatPerformanceProbe'
 import { MessageBubble } from './MessageBubble'
 import { VirtualMessageList, type VirtualMessageListHandle } from './VirtualMessageList'
+import { Z_LAYERS } from '@/config/zLayers'
 
 export interface LiveChatTranscriptHandle {
   /** Preserve the existing send behavior: a local submission follows the tail. */
@@ -430,8 +431,8 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           <div
             data-schedule-tooltip
             role="tooltip"
-            className="pointer-events-none fixed z-50 w-72 -translate-y-1 rounded-xl border border-line bg-bg-card/98 p-3 text-left shadow-xl backdrop-blur"
-            style={{ top: Math.max(12, hoveredSchedule.top), right: hoveredSchedule.right }}
+            className="pointer-events-none fixed w-72 -translate-y-1 rounded-xl border border-line bg-bg-card/98 p-3 text-left shadow-xl backdrop-blur"
+            style={{ top: Math.max(12, hoveredSchedule.top), right: hoveredSchedule.right, zIndex: Z_LAYERS.tooltip }}
           >
             <div className="mb-2 flex items-center justify-between gap-3 text-xs text-text-muted">
               <span>定时发送内容</span>

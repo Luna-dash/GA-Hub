@@ -60,6 +60,27 @@ export function errorMessageFromError(error: unknown, fallback = '请求失败')
   return fallback
 }
 
+/** Parse-error display for mykey session/raw edits: the backend puts the
+ * line/column diagnostics on the structured detail object. Both callers used
+ * to hand-roll this and had already drifted (one guarded, one printing
+ * "第 undefined:undefined 行" when the backend omits the offsets). */
+export function myKeyParseErrorFromError(error: unknown, fallback = '保存失败'): string {
+  const value = error as { body?: { detail?: unknown } } | null
+  const detail = value?.body?.detail
+  if (detail && typeof detail === 'object' && 'line' in (detail as Record<string, unknown>)) {
+    const payload = detail as Record<string, unknown>
+    const line = typeof payload.line === 'number' ? payload.line : null
+    const col = typeof payload.col === 'number' ? payload.col : null
+    const message = typeof payload.message === 'string' ? payload.message : null
+    const errorName = typeof payload.error === 'string' ? payload.error : null
+    const location = line !== null ? `第 ${line}${col !== null ? `:${col}` : ''} 行 — ` : ''
+    const parts = [errorName && message ? `${errorName}: ${message}` : (message ?? errorName)]
+      .filter((part): part is string => Boolean(part))
+    if (parts.length) return `${location}${parts[0]}`
+  }
+  return errorMessageFromError(error, fallback)
+}
+
 export function capacityConflictFromError(error: unknown): CapacityConflict | null {
   const value = error as { status?: unknown; body?: { detail?: unknown } } | null
   const detail = value?.body?.detail

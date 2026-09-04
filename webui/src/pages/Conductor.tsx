@@ -18,6 +18,7 @@ import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
 import { toast } from '@/stores/toastStore'
+import { writeClipboard } from '@/utils/clipboard'
 
 const scrollMemory: { chatTop: number | null } = {
   chatTop: null,
@@ -909,12 +910,9 @@ function phaseDot(phase: SubagentPhase): string {
 }
 
 async function copyPath(path: string) {
-  try {
-    await navigator.clipboard.writeText(path)
-    toast.success('已复制路径')
-  } catch {
-    toast.error('复制失败，请手动选中路径')
-  }
+  const ok = await writeClipboard(path)
+  if (ok) toast.success('已复制路径')
+  else toast.error('复制失败，请手动选中路径')
 }
 
 function WorkerListRow({

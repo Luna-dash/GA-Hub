@@ -18,7 +18,8 @@ import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
 import { memo, ReactNode, useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { useCopy } from '@/utils/clipboard'
+import { Z_LAYERS } from '@/config/zLayers'
+import { useCopy, writeClipboard } from '@/utils/clipboard'
 import { api } from '@/api/client'
 import { toast } from '@/stores/toastStore'
 import { isAppInternalUrl, isHttpUrl, openExternalIfNeeded } from '@/utils/openExternal'
@@ -376,12 +377,9 @@ function PathLinkMenu({ path, info, pos, onOpen, onClose }: {
   }, [onClose])
 
   const copyText = async (text: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-      toast.success(`${label}已复制`)
-    } catch {
-      toast.error('复制失败：剪贴板不可用')
-    }
+    const ok = await writeClipboard(text)
+    if (ok) toast.success(`${label}已复制`)
+    else toast.error('复制失败：剪贴板不可用')
     onClose()
   }
 
@@ -394,13 +392,14 @@ function PathLinkMenu({ path, info, pos, onOpen, onClose }: {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100]"
+      className="fixed inset-0"
+      style={{ zIndex: Z_LAYERS.contextMenu }}
       onClick={onClose}
       onContextMenu={(event) => { event.preventDefault(); onClose() }}
     >
       <div
         className="fixed min-w-[190px] rounded-lg border border-line bg-bg-card py-1 shadow-lg"
-        style={{ left, top }}
+        style={{ left, top, zIndex: Z_LAYERS.contextMenu }}
         onClick={(event) => event.stopPropagation()}
       >
         <PathMenuItem

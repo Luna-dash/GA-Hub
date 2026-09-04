@@ -6,6 +6,7 @@ import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { queryKeys } from '@/queries/queryKeys'
 import { ModalOverlay } from '@/components/ModalOverlay'
+import { myKeyParseErrorFromError } from '@/utils/sessionUi'
 import { errorMessageFromError } from '@/utils/sessionUi'
 
 // ── raw view ────────────────────────────────────────────────────────
@@ -26,12 +27,8 @@ export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
     try {
       const r = await api.putMyKeyRaw(text)
       onWrite(r)
-    } catch (e: any) {
-      const body = e?.body?.detail
-      const msg = (body && typeof body === 'object')
-        ? `第 ${body.line}:${body.col} 行 — ${body.message}`
-        : (e?.body || e?.message || String(e))
-      setErr(typeof msg === 'string' ? msg : JSON.stringify(msg))
+    } catch (e: unknown) {
+      setErr(myKeyParseErrorFromError(e))
     } finally {
       setSaving(false)
     }

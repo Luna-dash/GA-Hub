@@ -3,6 +3,7 @@ import type { HubSession, SessionRuntime } from '@/api/types'
 import {
   capacityConflictFromError,
   errorMessageFromError,
+  myKeyParseErrorFromError,
   sessionActivity,
   sessionChatHref,
   sessionStatusLabel,
@@ -81,6 +82,19 @@ describe('session UI contracts', () => {
     // Message wins over code inside a structured detail (canonical precedence).
     expect(errorMessageFromError({ body: { detail: { message: '人话', code: 'E123' } } })).toBe('人话')
     expect(errorMessageFromError({ body: {}, message: 'transport broken' })).toBe('transport broken')
+  })
+
+  it('renders mykey parse diagnostics with line/column and guards missing offsets', () => {
+    expect(myKeyParseErrorFromError({
+      body: { detail: { error: 'YamlError', message: 'bad indent', line: 3, col: 5 } },
+    })).toBe('第 3:5 行 — YamlError: bad indent')
+    expect(myKeyParseErrorFromError({
+      body: { detail: { message: 'bad indent', line: 3 } },
+    })).toBe('第 3 行 — bad indent')
+    // Backend omitted offsets entirely: no more "第 undefined:undefined 行".
+    expect(myKeyParseErrorFromError({ body: { detail: { message: 'bad indent' } } })).toBe('bad indent')
+    expect(myKeyParseErrorFromError({ body: { detail: 'plain detail' } })).toBe('plain detail')
+    expect(myKeyParseErrorFromError(new Error('network down'))).toBe('network down')
   })
 
   it('provides a useful fallback title for untitled sessions', () => {

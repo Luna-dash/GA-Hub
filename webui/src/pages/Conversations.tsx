@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { readPageState, usePageState, writePageState } from '@/utils/pageState'
-import type { ConversationSummary } from '@/api/types'
+import type { ConversationMessage, ConversationSummary } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { MessageContent } from '@/components/MessageContent'
 import { bubbleTone } from '@/components/bubbleTone'
@@ -23,7 +23,7 @@ import {
 } from '@/queries/conversations'
 
 type ViewMode = 'round' | 'flat'
-type Msg = { role?: string; content?: string; [key: string]: any }
+type Msg = ConversationMessage
 type TurnSummary = {
   turn: number
   summary: string
@@ -134,7 +134,7 @@ export default function Conversations() {
       capture()
     }
   }, [active])
-  const rounds = useMemo(() => buildRounds((detail?.messages || []) as Msg[]), [detail])
+  const rounds = useMemo(() => buildRounds(detail?.messages || []), [detail])
 
   const handleExport = async (id: string, fmt: 'md' | 'json') => {
     try {
@@ -359,7 +359,7 @@ export default function Conversations() {
                 : (
                   <FlatView
                     key={`flat:${detail.id}`}
-                    messages={(detail.messages || []) as Msg[]}
+                    messages={detail.messages || []}
                     scrollRef={detailScrollRef}
                   />
                 )}

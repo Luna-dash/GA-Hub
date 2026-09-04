@@ -290,6 +290,10 @@ export interface paths {
         /**
          * Sessions
          * @description Recoverable model_responses snapshots (used by /continue).
+         *
+         *     Reads go through the shared archive catalogue (services.archive_messages)
+         *     so list, point lookup and search observe one enumeration + cache instead
+         *     of racing a second raw scan of GA's log directory.
          */
         get: operations["sessions_api_agent_sessions_get"];
         put?: never;
