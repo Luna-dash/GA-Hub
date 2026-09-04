@@ -1,8 +1,8 @@
 """GoalHive service — independent agent for goal/hive mode.
 
 Owns its OWN GeneraticAgent instance, separate thread, and separate message
-state. Does NOT share anything with AgentService, so the main realtime chat
-(``/ws/chat``) is never affected.
+state. Does NOT share anything with AgentService, so the main realtime
+chat session is never affected.
 """
 from __future__ import annotations
 

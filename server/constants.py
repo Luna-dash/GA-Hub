@@ -41,6 +41,11 @@ ENV_BRIDGE_PORT = "GA_HUB_BRIDGE_PORT"
 # is shared by webui chat, wechat, scheduled and autonomous producers, so
 # the ceiling must leave headroom above interactive use alone (default 10).
 ENV_SESSION_RUN_CAPACITY = "GAHUB_SESSION_RUN_CAPACITY"
+# gahub_app engine (conductor_client): engine temp/journal locations.
+ENV_GAHUB_TEMP_DIR = "GAHUB_TEMP_DIR"
+ENV_GAHUB_JOURNAL_PATH = "GAHUB_JOURNAL_PATH"
+# UI origin allowlist beyond localhost (main.py).
+ENV_GAHUB_ALLOWED_HOSTS = "GAHUB_ALLOWED_HOSTS"
 SESSION_RUN_CAPACITY_DEFAULT = 10
 SESSION_RUN_CAPACITY_MAX = 10
 

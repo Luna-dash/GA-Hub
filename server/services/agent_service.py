@@ -171,8 +171,8 @@ class StreamHandle:
     run_id: str = ""
 
 
-# ── chat replay snapshot (so a /ws/chat client that reconnects after a tab
-#    switch can rebuild the running conversation) ───────────────────────
+# ── chat replay snapshot (lets a reconnecting webui rebuild the running
+#    conversation) ───────────────────────────────────────────────────────
 def _chat_done_payload(h: StreamHandle, snap: object, content: str) -> dict:
     """chat:done 事件载荷的唯一构造点。
 
@@ -220,7 +220,7 @@ def _llm_membership_metadata(backends: list[object | None]) -> list[dict]:
 
 class AgentService:
     _instance: "AgentService | None" = None
-    _SNAPSHOT_CAP = 20  # keep last N submissions for /ws/chat replay
+    _SNAPSHOT_CAP = 20  # keep last N submissions for reconnect replay
 
     def __init__(
         self,
