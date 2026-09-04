@@ -8,6 +8,7 @@ import { queryKeys } from '@/queries/queryKeys'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { myKeyParseErrorFromError } from '@/utils/sessionUi'
 import { errorMessageFromError } from '@/utils/sessionUi'
+import { formatDateTime } from '@/utils/formatTime'
 
 // ── raw view ────────────────────────────────────────────────────────
 export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKeyWriteResult) => void }) {
@@ -135,7 +136,7 @@ function BackupDrawer({ onClose, onRestored }: {
                 </button>
               </div>
               <div className="text-[10px] text-slate-500">
-                {new Date(b.mtime * 1000).toLocaleString()} · {(b.size / 1024).toFixed(1)} KB
+                {formatDateTime(b.mtime)} · {(b.size / 1024).toFixed(1)} KB
               </div>
             </div>
           ))}

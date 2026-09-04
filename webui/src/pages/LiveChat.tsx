@@ -36,6 +36,7 @@ import {
 import { PageShell } from '@/components/PageShell'
 import { dialog } from '@/stores/dialogStore'
 import { noticeKeys, useChatStore } from '@/stores/chatStore'
+import { formatDateTime } from '@/utils/formatTime'
 import { useDraftStore } from '@/stores/draftStore'
 import { capacityConflictFromError, errorMessageFromError, sessionChatHref } from '@/utils/sessionUi'
 import { buildSessionPromptText } from '@/utils/sessionPrompt'
@@ -467,7 +468,7 @@ export default function LiveChat() {
     if (!session?.id) return
     const ok = await dialog.confirm(
       '取消定时发送？',
-      `确定取消 ${new Date(task.scheduled_for * 1000).toLocaleString('zh-CN', { hour12: false })} 的定时消息吗？`,
+      `确定取消 ${formatDateTime(task.scheduled_for)} 的定时消息吗？`,
       { confirmText: '取消任务', tone: 'danger' },
     )
     if (!ok) return

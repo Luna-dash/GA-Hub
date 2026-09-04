@@ -10,6 +10,7 @@ import {
 } from 'react'
 import type { ScheduledChat } from '@/api/types'
 import { useChatStore, type ChatMsg } from '@/stores/chatStore'
+import { formatDateTime } from '@/utils/formatTime'
 import { readPageState, writePageState } from '@/utils/pageState'
 import { createRafScheduler } from '@/utils/rafScheduler'
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
@@ -436,7 +437,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           >
             <div className="mb-2 flex items-center justify-between gap-3 text-xs text-text-muted">
               <span>定时发送内容</span>
-              <time>{new Date(hoveredSchedule.task.scheduled_for * 1000).toLocaleString('zh-CN', { hour12: false })}</time>
+              <time>{formatDateTime(hoveredSchedule.task.scheduled_for)}</time>
             </div>
             <p className="max-h-48 overflow-hidden whitespace-pre-wrap break-words text-sm leading-5 text-text">
               {hoveredSchedule.task.text || '（仅附件）'}
