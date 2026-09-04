@@ -132,8 +132,10 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
 - [x] 点查路由在事件循环内做目录刷新+迁移副作用——迁移已挪到 lifespan
       启动钩子（永不抛出、失败可重试），5 处点查 `_session_by_id` 进
       to_thread（d6ab384）
-- [ ] 事件主题 ~70 处内联字符串（"chat:reset" 三处发布）——建
-      event_topics.py 常量表，仿 test_env_registry 扫描
+- [x] 事件主题 ~70 处内联字符串（"chat:reset" 三处发布）——已建
+      server/event_topics.py（47 常量 + conductor 动态 f-string 家族，
+      35956e9），tests/test_event_topics.py 仿 test_env_registry 扫描
+      （未注册字面量/重复值/孤儿常量全失败；值不变，线上契约与断言不变）
 - [ ] 生产代码携带测试回填脚手架（ConductorService 五个 _ensure_* hasattr
       回填，专为 object.__new__ 测试实例）——给测试正规的 for_tests()
       构造器后删除
