@@ -148,12 +148,16 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
 - [x] runtime-state payload 三处手拼（sessions.py bus/WS/REST）——已全部走
       SessionRuntimePayload.from_state（cdb1664）；bus 帧刻意保留 error 恒在
       的差异（test_session_websocket.py 锁定，注释已说明）
-- [ ] conductor 路由内联服务级业务（subagent 镜像合并、动词分派、指令文案）
-      ——下沉 ConductorService；顺带修 accept/rework/input 未透传 tracker
-      owner 的不一致
-- [ ] ConductorService.instance() 在请求路径懒构造重服务（TimeoutMonitor
-      线程/进程管理器）——把 conductor 纳入 AppServices 所有权（完成
-      16b4f08 模式的最后一角）
+- [x] conductor 路由内联服务级业务（subagent 镜像合并、动词分派、指令文案）
+      ——已下沉 ConductorService.subagent_dossier / apply_subagent_action /
+      INSTR_* / SUBAGENT_VERBS（12434e1）；顺带修了 accept/rework/input 未
+      透传 tracker owner 的不一致（现在三个动词在服务内部自行解析 owner，
+      引擎的 request_mismatch 守护对全部动词生效，路由旧注释声称的
+      "EVERY verb" 才真正成立）
+- [x] ConductorService.instance() 在请求路径懒构造重服务（TimeoutMonitor
+      线程/进程管理器）——已纳入 AppServices 所有权（cb9fd29，完成
+      16b4f08 模式的最后一角）；shutdown 排在 feishu 后 agent 前（引擎
+      停机时会回调 hub HTTP API）
 - [ ] tests/ 无 conftest.py；smoke 测试靠 importlib.reload 制造分叉模块态
       （xdist 不安全）；wechat 测试隐式依赖本机 GA checkout 布局
 - [x] README 存储目录表过期——已补全 13 行（e99bf6c，含 conversations_v2/
