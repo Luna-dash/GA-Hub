@@ -6,9 +6,9 @@ import { useToastStore, type ToastKind } from '@/stores/toastStore'
 import { Z_LAYERS } from '@/config/zLayers'
 
 const TONE: Record<ToastKind, { ring: string; icon: string; iconCls: string }> = {
-  success: { ring: 'border-emerald-500/40', icon: '✓', iconCls: 'text-emerald-400' },
-  error: { ring: 'border-rose-500/40', icon: '✕', iconCls: 'text-rose-400' },
-  info: { ring: 'border-sky-500/40', icon: 'ℹ', iconCls: 'text-sky-400' },
+  success: { ring: 'border-status-success-line', icon: '✓', iconCls: 'text-status-success' },
+  error: { ring: 'border-status-danger-line', icon: '✕', iconCls: 'text-status-danger' },
+  info: { ring: 'border-status-info-line', icon: 'ℹ', iconCls: 'text-status-info' },
 }
 
 export function ToastHost() {

@@ -127,8 +127,8 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
           <div className="text-xs text-slate-500 mb-1">当前 GenericAgent 路径</div>
           <div className="font-mono text-sm break-all">
             {setup?.ga_root
-              ? <span className="text-emerald-300">{setup.ga_root}</span>
-              : <span className="text-rose-400">尚未配置</span>}
+              ? <span className="text-status-success">{setup.ga_root}</span>
+              : <span className="text-status-danger">尚未配置</span>}
           </div>
           <div className="text-xs text-slate-500 mt-2">
             Admin 数据目录：<span className="font-mono">{setup?.admin_data}</span>
@@ -176,7 +176,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
           </div>
 
           {validResult && (
-            <div className={`mt-2 text-sm ${validResult.valid ? 'text-emerald-400' : 'text-rose-400'}`}>
+            <div className={`mt-2 text-sm ${validResult.valid ? 'text-status-success' : 'text-status-danger'}`}>
               {validResult.valid
                 ? `✓ 这是一个有效的 GenericAgent 目录（解析为 ${validResult.resolved}）`
                 : '✗ 该目录不是 GenericAgent 项目（缺少 agentmain.py 或 memory/）'}
@@ -209,8 +209,8 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
                 className="px-4 py-2 rounded-lg border border-accent text-accent text-sm hover:bg-accent/10 disabled:opacity-40"
               >{restarting ? '重启中…' : '重启后端'}</button>
             )}
-            {saveMsg && <span className="text-sm text-emerald-400 whitespace-pre-line">{saveMsg}</span>}
-            {saveErr && <span className="text-sm text-rose-400 whitespace-pre-line">{saveErr}</span>}
+            {saveMsg && <span className="text-sm text-status-success whitespace-pre-line">{saveMsg}</span>}
+            {saveErr && <span className="text-sm text-status-danger whitespace-pre-line">{saveErr}</span>}
           </div>
         </div>
 
@@ -225,7 +225,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
                     {c.path}
                   </code>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className={`text-xs ${c.valid ? 'text-emerald-400' : 'text-slate-500'}`}>
+                    <span className={`text-xs ${c.valid ? 'text-status-success' : 'text-slate-500'}`}>
                       {c.valid ? '有效' : '不可用'}
                     </span>
                     {c.valid && (
@@ -242,7 +242,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
         )}
 
         {inSetup && setup?.configured && (
-          <div className="rounded-xl border border-amber-700/60 bg-amber-900/20 p-4 text-sm text-amber-200">
+          <div className="rounded-xl border border-status-warning-line bg-status-warning-soft p-4 text-sm text-status-warning">
             {isTauriDesktop()
               ? '✓ 配置已保存。点击上方「重启后端」即可进入正常模式。'
               : '✓ 配置已保存。请重启后端（Ctrl+C 后重新执行 python -m server.run）以进入正常模式。'}
@@ -536,7 +536,7 @@ function ChatRetryPanel() {
           {saving ? '保存中…' : '保存'}
         </button>
 
-        {msg && <span className={`text-xs ${msg.startsWith('保存失败') ? 'text-rose-400' : 'text-emerald-400'}`}>{msg}</span>}
+        {msg && <span className={`text-xs ${msg.startsWith('保存失败') ? 'text-status-danger' : 'text-status-success'}`}>{msg}</span>}
       </div>
       <div className="text-[11px] text-slate-600 mt-2">
         计数按同一次逻辑提交累加，达到上限后会停止并保留错误回复；非可恢复错误不会重试。
@@ -607,7 +607,7 @@ function NotifyPanel() {
       {testing && <div className="mt-2 text-xs text-slate-400">{testing}</div>}
 
       {unsupported && (
-        <div className="mt-2 text-xs text-amber-400">
+        <div className="mt-2 text-xs text-status-warning">
           ⚠ 当前系统暂不支持（{backendName}）。仅 macOS / Windows / Linux 已实现。
         </div>
       )}

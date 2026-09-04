@@ -37,7 +37,6 @@ export const storageKeys = {
   /** chatPerformance: '1' = performance mode enabled. */
   chatPerformance: 'gahub.chatPerformance',
   /** LEGACY pre-`gahub.` prefixes — frozen so saved prefs keep working. */
-  theme: 'ga-admin.theme',
   desktopNotifications: 'ga.desktopNotifications.v1',
   /** main.tsx: dynamic-import chunk reload guard (epoch timestamp). */
   chunkReloadAt: 'ga-hub:chunk-reload-at',

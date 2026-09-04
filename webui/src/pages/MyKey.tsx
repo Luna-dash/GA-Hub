@@ -145,9 +145,9 @@ export default function MyKey() {
       <div className="p-6 max-w-5xl mx-auto h-full flex flex-col">
         {isLoading && <div className="text-slate-500 text-sm">载入中…</div>}
         {data && !data.exists && (
-          <div className="rounded-xl border border-amber-700/60 bg-amber-900/20 p-4 text-sm text-amber-200">
+          <div className="rounded-xl border border-status-warning-line bg-status-warning-soft p-4 text-sm text-status-warning">
             <div className="font-semibold mb-1">mykey.py 不存在</div>
-            <div className="text-amber-200/80">
+            <div className="text-status-warning-strong">
               路径 <span className="font-mono">{data.path}</span> 上还没有这个文件。
               切到「原始」tab 创建一份，或下方点 <strong>+ 新增</strong> 直接添加第一条链路。
             </div>
@@ -212,11 +212,11 @@ function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
           <h2 className="text-sm font-semibold text-slate-300">LLM 链路（{sessions.length}）</h2>
           <div className="flex items-center gap-2">
             <button onClick={() => startCreate('native_claude')}
-              className="px-3 py-1.5 text-xs rounded-lg border border-purple-300/60 bg-purple-100/80 text-purple-700 hover:bg-purple-100 dark:border-purple-500/30 dark:bg-purple-900/40 dark:text-purple-300">+ Claude</button>
+              className="px-3 py-1.5 text-xs rounded-lg border border-purple-300/60 bg-purple-100/80 text-purple-700 hover:bg-purple-100">+ Claude</button>
             <button onClick={() => startCreate('native_oai')}
-              className="px-3 py-1.5 text-xs rounded-lg border border-emerald-300/60 bg-emerald-100/80 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-900/40 dark:text-emerald-300">+ OpenAI</button>
+              className="px-3 py-1.5 text-xs rounded-lg border border-emerald-300/60 bg-emerald-100/80 text-emerald-700 hover:bg-emerald-100">+ OpenAI</button>
             <button onClick={() => startCreate('mixin')}
-              className="px-3 py-1.5 text-xs rounded-lg border border-amber-300/70 bg-amber-100/80 text-amber-700 hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-900/40 dark:text-amber-300"
+              className="px-3 py-1.5 text-xs rounded-lg border border-amber-300/70 bg-amber-100/80 text-amber-700 hover:bg-amber-100"
               title="新增一条故障转移路由；可同时保留多条 mixin 配置"
             >+ Mixin 路由</button>
           </div>
@@ -291,10 +291,10 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
   const isClaude = s.type === 'native_claude'
   const isOpenAI = s.type === 'native_oai' || s.type === 'oai'
   const colorTone = isClaude
-    ? 'from-fuchsia-100/72 via-fuchsia-50/56 to-slate-200/84 dark:from-fuchsia-950/28 dark:via-slate-950/72 dark:to-slate-900/48 shadow-[0_8px_22px_rgba(15,23,42,0.07)]'
+    ? 'from-fuchsia-100/72 via-fuchsia-50/56 to-slate-200/84 shadow-[0_8px_22px_rgba(15,23,42,0.07)]'
     : isOpenAI
-      ? 'from-cyan-300/95 via-cyan-200/88 to-slate-300/94 dark:from-cyan-950/34 dark:via-slate-950/74 dark:to-slate-900/50 shadow-[0_8px_22px_rgba(15,23,42,0.08)]'
-      : 'from-amber-300/94 via-amber-200/86 to-slate-300/94 dark:from-amber-950/30 dark:via-slate-950/74 dark:to-slate-900/50 shadow-[0_8px_22px_rgba(15,23,42,0.08)]'
+      ? 'from-cyan-300/95 via-cyan-200/88 to-slate-300/94 shadow-[0_8px_22px_rgba(15,23,42,0.08)]'
+      : 'from-amber-300/94 via-amber-200/86 to-slate-300/94 shadow-[0_8px_22px_rgba(15,23,42,0.08)]'
   const accentTone = isClaude
     ? 'bg-fuchsia-300 shadow-[0_0_10px_rgba(244,114,182,0.28)]'
     : isOpenAI
@@ -306,18 +306,18 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
     : (mixinTargets.join(' → ') || '未设置路由目标')
 
   return (
-    <div className={`group overflow-hidden rounded-2xl border border-slate-300/85 bg-gradient-to-br from-slate-200/95 via-slate-200/90 to-slate-300/92 text-slate-900 shadow-sm shadow-slate-900/6 transition-all dark:border-white/8 dark:from-slate-900/65 dark:via-slate-950/55 dark:to-slate-900/35 dark:text-slate-100 ${colorTone} ${expanded ? 'border-slate-400/90 dark:border-white/12' : ''}`}>
-      <button type="button" onClick={onToggle} className="w-full text-left px-4 py-3 hover:bg-black/[0.02] dark:hover:bg-white/[0.03] transition-colors">
+    <div className={`group overflow-hidden rounded-2xl border border-slate-300/85 bg-gradient-to-br from-slate-200/95 via-slate-200/90 to-slate-300/92 text-slate-900 shadow-sm shadow-slate-900/6 transition-all ${colorTone} ${expanded ? 'border-slate-400/90' : ''}`}>
+      <button type="button" onClick={onToggle} className="w-full text-left px-4 py-3 hover:bg-black/[0.02] transition-colors">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2.5 min-w-0">
               <span className={`shrink-0 text-[10px] tracking-[0.12em] uppercase px-2 py-1 rounded-full border backdrop-blur-[2px] ${meta.tone}`}>{meta.label}</span>
-              <span className="min-w-0 truncate text-[15px] leading-5 font-semibold tracking-[0.01em] text-slate-900 dark:text-slate-100">{title}</span>
+              <span className="min-w-0 truncate text-[15px] leading-5 font-semibold tracking-[0.01em] text-slate-900">{title}</span>
             </div>
             {!expanded && (
               <div className="mt-1.5 flex items-center gap-2 min-w-0">
                 <div className={`h-2 w-2 rounded-full shrink-0 ${accentTone}`} />
-                <div className="min-w-0 truncate text-[13px] leading-5 text-slate-500 dark:text-slate-400 font-medium tracking-[0.01em]" title={String(summary)}>
+                <div className="min-w-0 truncate text-[13px] leading-5 text-slate-500 font-medium tracking-[0.01em]" title={String(summary)}>
                   {String(summary)}
                 </div>
               </div>
@@ -337,7 +337,7 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
       </button>
 
       {expanded && (
-        <div className="border-t border-slate-300/80 bg-slate-200/90 px-4 py-3 dark:border-white/8 dark:bg-white/[0.03]">
+        <div className="border-t border-slate-300/80 bg-slate-200/90 px-4 py-3">
           <div className={`grid gap-x-6 gap-y-3 ${s.type !== 'mixin' ? 'md:grid-cols-2' : ''}`}>
             {s.type !== 'mixin' ? (
               <dl className="space-y-1.5 text-xs">
@@ -369,9 +369,9 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
           <div className="mt-3 flex gap-2 flex-wrap">
             <button onClick={onEdit} className="text-xs px-3 py-1.5 rounded-xl bg-accent text-white shadow-sm shadow-accent/20">编辑</button>
             <button onClick={onDuplicate} className="text-xs px-3 py-1.5 rounded-xl border border-white/10 text-slate-300 hover:bg-white/5">复制</button>
-            <button onClick={onDelete} className="text-xs px-3 py-1.5 rounded-xl border border-rose-700/60 text-rose-300 hover:bg-rose-900/20">删除</button>
+            <button onClick={onDelete} className="text-xs px-3 py-1.5 rounded-xl border border-status-danger-line text-status-danger hover:bg-status-danger-soft">删除</button>
             {canTest && (
-              <button onClick={runTest} disabled={testing} className="text-xs px-3 py-1.5 rounded-xl border border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/20 disabled:opacity-50">
+              <button onClick={runTest} disabled={testing} className="text-xs px-3 py-1.5 rounded-xl border border-status-success-line text-status-success hover:bg-status-success-soft disabled:opacity-50">
                 {testing ? '测试中…' : '测 ping'}
               </button>
             )}
@@ -380,7 +380,7 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
             <div className="mt-2 text-xs">
               {testResult.ok ? (
                 <div className="space-y-0.5">
-                  <div className="text-emerald-400">
+                  <div className="text-status-success">
                     ✓ {testResult.latency_ms ?? '?'} ms
                     {testResult.model && <span className="text-slate-500 ml-2 font-mono">{testResult.model}</span>}
                   </div>
@@ -389,7 +389,7 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
                   )}
                 </div>
               ) : (
-                <div className="text-rose-400 break-words font-mono leading-snug">✗ {testResult.error || '失败'}</div>
+                <div className="text-status-danger break-words font-mono leading-snug">✗ {testResult.error || '失败'}</div>
               )}
             </div>
           )}
@@ -412,11 +412,11 @@ function KV({ k, v, mono }: { k: string; v: any; mono?: boolean }) {
 
 function sessionMeta(type: MyKeySessionType) {
   switch (type) {
-    case 'native_claude': return { label: '🅒 Claude (native)', tone: 'bg-purple-900/40 text-purple-300' }
-    case 'native_oai':    return { label: '🅞 OpenAI (native)', tone: 'bg-emerald-900/40 text-emerald-300' }
+    case 'native_claude': return { label: '🅒 Claude (native)', tone: 'bg-purple-100/80 text-purple-700' }
+    case 'native_oai':    return { label: '🅞 OpenAI (native)', tone: 'bg-emerald-100/80 text-emerald-700' }
     case 'claude':        return { label: '🅒 Claude (text)',  tone: 'bg-slate-700/60 text-slate-300' }
     case 'oai':           return { label: '🅞 OpenAI (text)',  tone: 'bg-slate-700/60 text-slate-300' }
-    case 'mixin':         return { label: '🔀 Mixin 路由',       tone: 'bg-amber-900/40 text-amber-300' }
+    case 'mixin':         return { label: '🔀 Mixin 路由',       tone: 'bg-amber-100/80 text-amber-700' }
   }
 }
 
@@ -568,7 +568,7 @@ function SessionDialog({ mode, session, allSessions, onClose, onSaved }: {
           </div>
         </details>
 
-        {err && <div className="mt-3 text-xs text-rose-400 bg-rose-900/20 border border-rose-700/40 rounded p-2 break-words">{err}</div>}
+        {err && <div className="mt-3 text-xs text-status-danger bg-status-danger-soft border border-status-danger-line rounded p-2 break-words">{err}</div>}
 
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg border border-line text-slate-300">取消</button>
@@ -604,13 +604,13 @@ function MixinFields({ s, setS, allSessions }: { s: MyKeySession; setS: (v: MyKe
             <div key={i} className="flex items-center gap-1">
               <input value={n} onChange={(e) => {
                 const next = [...llmNos]; next[i] = e.target.value; setNos(next)
-              }} list="mixin-name-candidates" className={inp + ' font-mono flex-1 rounded-md bg-slate-200/80 border-slate-400/70 text-slate-800 dark:bg-slate-700/45 dark:border-slate-500/60 dark:text-slate-100'} />
+              }} list="mixin-name-candidates" className={inp + ' font-mono flex-1 rounded-md bg-slate-200/80 border-slate-400/70 text-slate-800'} />
               <button onClick={() => move(i, -1)} disabled={i === 0}
                 className="px-2 py-1.5 text-xs rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-30">↑</button>
               <button onClick={() => move(i, 1)} disabled={i === llmNos.length - 1}
                 className="px-2 py-1.5 text-xs rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-30">↓</button>
               <button onClick={() => setNos(llmNos.filter((_, k) => k !== i))}
-                className="px-2 py-1.5 text-xs rounded border border-rose-700/60 text-rose-300 hover:bg-rose-900/20">×</button>
+                className="px-2 py-1.5 text-xs rounded border border-status-danger-line text-status-danger hover:bg-status-danger-soft">×</button>
             </div>
           ))}
           {candidates.length > 0 && (

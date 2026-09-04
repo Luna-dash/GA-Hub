@@ -35,7 +35,7 @@ export function CronPreview({ expr }: { expr: string }) {
 
   if (!result.ok) {
     return (
-      <div className="mt-1.5 text-xs text-rose-400 bg-rose-900/20 border border-rose-700/40 rounded px-2 py-1">
+      <div className="mt-1.5 text-xs text-status-danger bg-status-danger-soft border border-status-danger-line rounded px-2 py-1">
         ✗ {result.error}
       </div>
     )
@@ -43,7 +43,7 @@ export function CronPreview({ expr }: { expr: string }) {
 
   return (
     <div className="mt-1.5 text-xs text-slate-400 space-y-0.5">
-      <div className="text-emerald-400">✓ {result.desc}</div>
+      <div className="text-status-success">✓ {result.desc}</div>
       {result.next.length > 0 && (
         <div className="text-slate-500">
           下次触发：{result.next.map(formatLocal).join(' · ')}

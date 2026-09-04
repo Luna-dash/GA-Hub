@@ -182,7 +182,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
           tone.surfaceClass
         )}>
           {isSystem && (
-            <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-amber-400 flex items-center justify-center text-sm shadow">
+            <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-status-warning flex items-center justify-center text-sm shadow">
               🟡
             </div>
           )}

@@ -195,7 +195,7 @@ export function ImagePasteInput({
               <button
                 type="button"
                 onClick={() => onAttachments(attachments.filter((x) => x.file_id !== a.file_id))}
-                className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border border-line bg-bg/90 text-xs leading-none text-slate-300 hover:border-rose-400 hover:text-rose-400"
+                className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border border-line bg-bg/90 text-xs leading-none text-slate-300 hover:border-status-danger-line hover:text-status-danger"
                 aria-label={`移除 ${a.name}`}
               >×</button>
             </div>
@@ -210,7 +210,7 @@ export function ImagePasteInput({
               <button
                 type="button"
                 onClick={() => onAttachments(attachments.filter((x) => x.file_id !== a.file_id))}
-                className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-xs leading-none text-slate-400 hover:text-rose-400"
+                className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-xs leading-none text-slate-400 hover:text-status-danger"
                 aria-label={`移除 ${a.name}`}
               >×</button>
             </div>
@@ -219,7 +219,7 @@ export function ImagePasteInput({
       )}
 
       {uploadErrors.length > 0 && (
-        <div role="alert" className="mx-2 mt-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+        <div role="alert" className="mx-2 mt-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-xs text-status-danger">
           <div className="font-medium">部分文件添加失败</div>
           {uploadErrors.map((error) => <div key={error} className="mt-1 break-all">{error}</div>)}
         </div>
@@ -343,7 +343,7 @@ export function ImagePasteInput({
           onClick={stopActive ? onStop : onSubmit}
           disabled={disabled || (!stopActive && (submitDisabled || (!text.trim() && attachments.length === 0)))}
           className={stopActive
-            ? 'h-10 px-4 rounded-xl bg-rose-600 text-white text-sm font-medium hover:bg-rose-500 disabled:opacity-40 disabled:shadow-none transition flex items-center justify-center'
+            ? 'h-10 px-4 rounded-xl bg-status-danger text-white text-sm font-medium hover:bg-status-danger-strong disabled:opacity-40 disabled:shadow-none transition flex items-center justify-center'
             : 'h-10 px-4 rounded-xl bg-accent text-white text-sm font-medium hover:brightness-110 disabled:opacity-40 disabled:shadow-none transition flex items-center justify-center'}
           title={stopActive ? '停止当前会话任务' : '发送消息'}
         >{stopActive ? '停止' : '发送'}</button>
@@ -442,11 +442,11 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
         transform: `translate(${position.x}px, ${position.y}px)`,
         cursor: dragging ? 'grabbing' : 'grab'
       }}
-      className="absolute bottom-full right-2 z-30 mb-2 w-[min(520px,calc(100vw-2rem))] rounded-2xl border border-amber-600/40 bg-amber-600/25 backdrop-blur-sm shadow-2xl shadow-black/40 overflow-hidden">
-      <div className="flex items-center justify-between border-b border-amber-600/30 px-3 py-2 bg-amber-600/20">
+      className="absolute bottom-full right-2 z-30 mb-2 w-[min(520px,calc(100vw-2rem))] rounded-2xl border border-status-warning-line bg-status-warning-soft backdrop-blur-sm shadow-2xl shadow-black/40 overflow-hidden">
+      <div className="flex items-center justify-between border-b border-status-warning-line px-3 py-2 bg-status-warning-soft">
         <div>
-          <div className="text-sm font-medium text-amber-950">BTW 旁路提问</div>
-          <div className="text-[11px] text-amber-900/70">不打断主任务，答案只显示在这个小窗里</div>
+          <div className="text-sm font-medium text-status-warning">BTW 旁路提问</div>
+          <div className="text-[11px] text-status-warning-strong">不打断主任务，答案只显示在这个小窗里</div>
         </div>
         <button
           type="button"
@@ -464,11 +464,11 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
         )}
         {turns.map((t) => (
           <div key={t.id} className="space-y-2">
-            <div className="ml-auto max-w-[85%] rounded-xl bg-amber-400/15 border border-amber-400/20 px-3 py-2 text-amber-950 whitespace-pre-wrap break-words">
+            <div className="ml-auto max-w-[85%] rounded-xl bg-status-warning-soft border border-status-warning-line px-3 py-2 text-status-warning whitespace-pre-wrap break-words">
               {t.q}
             </div>
             <div className="max-w-[92%] rounded-xl bg-bg-soft border border-line px-3 py-2 text-slate-200 whitespace-pre-wrap break-words">
-              {t.error ? <span className="text-rose-300">{t.error}</span> : (t.a ?? '思考中…')}
+              {t.error ? <span className="text-status-danger">{t.error}</span> : (t.a ?? '思考中…')}
             </div>
           </div>
         ))}
@@ -489,13 +489,13 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
               ask()
             }
           }}
-          className="flex-1 resize-none overflow-y-auto rounded-xl border border-line bg-bg px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-600 focus:border-amber-400/50 disabled:opacity-60"
+          className="flex-1 resize-none overflow-y-auto rounded-xl border border-line bg-bg px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-600 focus:border-status-warning-strong disabled:opacity-60"
         />
         <button
           type="button"
           onClick={ask}
           disabled={loading || !text.trim()}
-          className="px-3 py-2 rounded-xl bg-amber-500 text-slate-950 text-sm font-medium hover:brightness-110 disabled:opacity-40"
+          className="px-3 py-2 rounded-xl bg-status-warning text-white text-sm font-medium hover:bg-status-warning-strong disabled:opacity-40"
         >提问</button>
       </div>
     </div>

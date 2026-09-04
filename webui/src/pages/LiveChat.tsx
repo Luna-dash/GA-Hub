@@ -738,7 +738,7 @@ export default function LiveChat() {
               type="button"
               onClick={() => { void deleteCurrentProject() }}
               disabled={!session?.project_path || projectSaving || !projects.some((item) => item.path === session.project_path)}
-              className="-ml-px inline-flex h-[34px] w-9 shrink-0 items-center justify-center rounded-r border border-line bg-bg-card text-slate-500 hover:z-10 hover:border-red-300 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-35"
+              className="-ml-px inline-flex h-[34px] w-9 shrink-0 items-center justify-center rounded-r border border-line bg-bg-card text-slate-500 hover:z-10 hover:border-status-danger-line hover:bg-status-danger-soft hover:text-status-danger disabled:cursor-not-allowed disabled:opacity-35"
               title="删除当前项目索引（不会删除目录文件）"
               aria-label="删除当前项目索引"
             >
@@ -830,7 +830,7 @@ export default function LiveChat() {
                 autoFocus
               />
             </label>
-            {scheduleError && <div className="mt-2 text-sm text-red-500">{scheduleError}</div>}
+            {scheduleError && <div className="mt-2 text-sm text-status-danger">{scheduleError}</div>}
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"

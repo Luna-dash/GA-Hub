@@ -67,7 +67,7 @@ export default function App() {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-bg">
         <div className="max-w-md text-center space-y-4 px-6">
-          <div className="text-rose-400 text-base font-medium">无法连接后端</div>
+          <div className="text-status-danger text-base font-medium">无法连接后端</div>
           <div className="text-slate-400 text-sm break-all whitespace-pre-wrap font-mono bg-bg-card border border-line rounded-lg p-3">
             {msg}
           </div>

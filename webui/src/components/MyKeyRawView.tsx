@@ -40,7 +40,7 @@ export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
       <div className="flex items-center justify-between text-xs">
         <div className="flex items-center gap-2 text-slate-400">
           <span className="font-mono break-all">{data.path}</span>
-          {dirty && <span className="text-amber-300">(未保存)</span>}
+          {dirty && <span className="text-status-warning">(未保存)</span>}
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowBackups(true)}
@@ -55,7 +55,7 @@ export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
       </div>
 
       {err && (
-        <div className="text-xs text-rose-400 bg-rose-900/20 border border-rose-700/40 rounded p-2 break-words">
+        <div className="text-xs text-status-danger bg-status-danger-soft border border-status-danger-line rounded p-2 break-words">
           ✗ {err}
         </div>
       )}

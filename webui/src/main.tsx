@@ -5,15 +5,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import './styles/index.css'
 import 'katex/dist/katex.min.css'
-import { applyTheme, loadInitialTheme } from './stores/themeStore'
 import { installExternalLinkInterceptor } from './utils/openExternal'
 import { DesktopRuntimeGate } from './runtime/DesktopRuntimeGate'
 import { storageKeys } from './config/storageKeys'
-
-// Apply the saved theme synchronously *before* React mounts so the first
-// paint matches user preference (no flash of dark on light-preferring
-// machines, and vice versa).
-applyTheme(loadInitialTheme())
 
 // A production rebuild replaces Vite's hashed lazy-route chunks. An already
 // open desktop window can still reference the previous filenames; when that

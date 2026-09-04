@@ -10,7 +10,7 @@ const KNOWN_EXPECTATIONS: Array<[string, 'chat' | 'card', RegExp]> = [
   ['assistant', 'chat', /bg-bg-card/],
   ['assistant', 'card', /bg-bg-card/],
   ['system', 'chat', /#E8D8B8/],
-  ['system', 'card', /amber-500\/10/],
+  ['system', 'card', /status-warning-soft/],
 ]
 
 describe('bubbleTone role/variant table', () => {

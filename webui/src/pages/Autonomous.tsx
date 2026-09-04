@@ -153,7 +153,7 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
     <div className={`rounded-xl border p-4 ${s.enabled ? 'border-accent/60 bg-accent-soft/20' : 'border-line bg-bg-card'}`}>
       <div className="flex items-baseline justify-between mb-2">
         <div className="text-sm font-semibold text-slate-200">{s.name || s.id}</div>
-        <span className={`text-[10px] px-1.5 py-0.5 rounded ${s.enabled ? 'bg-emerald-900/40 text-emerald-300' : 'bg-slate-700 text-slate-400'}`}>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded ${s.enabled ? 'bg-status-success-soft text-status-success' : 'bg-slate-700 text-slate-400'}`}>
           {s.enabled ? '启用' : '禁用'}
         </span>
       </div>
@@ -168,7 +168,7 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
         <button onClick={onFire} className="text-xs px-2.5 py-1 rounded bg-accent text-white">立即触发</button>
         <button onClick={toggle} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5">{s.enabled ? '禁用' : '启用'}</button>
         <button onClick={onEdit} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5">编辑</button>
-        <button onClick={remove} className="text-xs px-2.5 py-1 rounded border border-rose-700/60 text-rose-300 hover:bg-rose-900/20">删除</button>
+        <button onClick={remove} className="text-xs px-2.5 py-1 rounded border border-status-danger-line text-status-danger hover:bg-status-danger-soft">删除</button>
       </div>
     </div>
   )

@@ -18,7 +18,7 @@ const CHAT_TONES: Record<string, BubbleTone> = {
 const CARD_TONES: Record<string, BubbleTone> = {
   user: { surfaceClass: 'border-accent/40 bg-accent-soft/30' },
   assistant: { surfaceClass: 'border-line bg-bg-card' },
-  system: { surfaceClass: 'border-amber-500/30 bg-amber-500/10' },
+  system: { surfaceClass: 'border-status-warning-line bg-status-warning-soft' },
 }
 
 const CHAT_OTHER: BubbleTone = { surfaceClass: 'border border-slate-700 bg-bg-soft text-ink' }

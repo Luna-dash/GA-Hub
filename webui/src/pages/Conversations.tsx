@@ -320,7 +320,7 @@ export default function Conversations() {
                       <button
                         type="button"
                         onClick={() => handleDelete(detail.id, detail.title || '')}
-                        className="border-l border-line px-3 py-1.5 text-sm text-red-300 hover:bg-red-500/10"
+                        className="border-l border-line px-3 py-1.5 text-sm text-status-danger hover:bg-status-danger-soft"
                       >
                         删除
                       </button>

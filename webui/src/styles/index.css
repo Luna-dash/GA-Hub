@@ -5,7 +5,7 @@
 @tailwind utilities;
 
 /* ─────────────────────────────────────────────────────────────
-   Paper-yellow eye-friendly theme
+   Paper-yellow eye-friendly theme (single forced theme)
    ─────────────────────────────────────────────────────────────
    Goals (from design ref):
    - 用低饱和米黄替代纯白，长时间使用更舒适
@@ -13,13 +13,11 @@
    - 深橄榄侧栏稳定视觉重心
    - 不使用高饱和/荧光色，不出现纯白大面积
 
-   Tailwind tokens (bg/line/accent in tailwind.config.js) read these
-   CSS vars. `html.dark` is kept as a warm-dim variant; default and
-   `html.light` are both paper-yellow.
+   Tailwind tokens (bg/line/accent/status in tailwind.config.js) read
+   these CSS vars. There is no dark variant: :root is the only theme;
+   the old html.light/html.dark class machinery is gone.
 */
-/* 强制纸黄主题：不区分 light/dark class，避免 OS prefers-color-scheme:dark
-   时 html.dark 生效造成深色泥地。 */
-:root, html.light, html.dark {
+:root {
   --c-bg: #DED6C5;            /* 低饱和灰米旧纸底，不再黄亮 */
   --c-bg-soft: #D3C8B3;       /* 次级旧纸面 */
   --c-bg-card: #E7DFCF;       /* 实体纸卡片 */
@@ -60,8 +58,7 @@ body {
 /* ─── Global text remap ────────────────────────────────────────
    The codebase heavily uses slate-* utilities tuned for dark UI.
    Remap them globally to warm dark text so paper theme reads well
-   without touching 100+ components. Dark-mode (.dark) keeps the
-   original lighter tones for contrast on warm-dim background.
+   without touching 100+ components.
 */
 .text-slate-50,
 .text-slate-100,
@@ -86,34 +83,9 @@ body {
 .bg-black\/55,
 .bg-black\/60 { background-color: rgba(58, 42, 28, 0.18); }
 
-/* Status badges — soften for paper background, keep semantic hues */
-.bg-emerald-900\/40 { background-color: #DDEACF; }
-.bg-amber-900\/40   { background-color: #F4E0B5; }
-.bg-rose-900\/40    { background-color: #F4D6CE; }
-.bg-amber-900\/20   { background-color: #F8EBC8; }
-.border-amber-700\/60 { border-color: #C49A55; }
-.text-amber-200 { color: #8A5A1F; }
-.text-amber-300 { color: #8A5A1F; }
-
-.bg-green-600\/20 { background-color: rgba(82, 127, 58, 0.16); }
-.hover\:bg-green-600\/30:hover { background-color: rgba(82, 127, 58, 0.24); }
-.text-green-400 { color: #4F7D39; }
-.bg-red-600\/20 { background-color: rgba(150, 68, 52, 0.14); }
-.hover\:bg-red-600\/30:hover { background-color: rgba(150, 68, 52, 0.22); }
-.text-red-400 { color: #9A4433; }
-.text-emerald-300 { color: #4F6F3F; }
-.text-emerald-400 { color: #5A7E4A; }
-.text-rose-300 { color: #A24A4A; }
-.text-rose-400 { color: #B05050; }
-
-/* Dark variant restores original slate semantics */
-html.dark .text-slate-50,
-html.dark .text-slate-100,
-html.dark .text-slate-200 { color: var(--c-text); }
-html.dark .text-slate-300 { color: #E0D2AC; }
-html.dark .text-slate-400 { color: #B8A678; }
-html.dark .text-slate-500 { color: #8E7A50; }
-html.dark .text-slate-600 { color: #6E5A38; }
+/* Status hues live in the tailwind `status-*` tokens (see tailwind.config.js);
+   state-semantic hue utilities were converged onto them, so the old
+   per-class softening overrides below are gone. */
 
 /* ─── Markdown ─────────────────────────────────────────────── */
 .prose-chat pre {
@@ -441,7 +413,6 @@ html.dark .text-slate-600 { color: #6E5A38; }
   background-repeat: repeat, repeat;
   mix-blend-mode: multiply;
 }
-/* dark class 已与 light 同色，无需 aurora override */
 
 /* Sidebar (深橄榄稳定视觉重心) — opt-in via .ga-sidebar */
 .ga-sidebar {
@@ -863,12 +834,9 @@ html.dark .text-slate-600 { color: #6E5A38; }
   background-color: rgba(138, 100, 56, 0.22);
   color: var(--c-text);
 }
-html.dark ::selection {
-  background-color: rgba(216, 180, 120, 0.26);
-}
 
 /* 原生控件（checkbox/radio/range/progress）统一主题色 */
-:root, html.light, html.dark {
+:root {
   accent-color: var(--c-accent);
 }
 

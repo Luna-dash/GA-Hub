@@ -1,9 +1,8 @@
 /** @type {import('tailwindcss').Config} */
-// Custom palette references CSS variables so we can swap dark/light at
-// runtime by toggling a class on <html>. See styles/index.css.
+// Custom palette references CSS variables in styles/index.css. The app is a
+// single forced paper-yellow theme — no dark-mode machinery anywhere.
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
-  darkMode: 'class',
   theme: {
     extend: {
       colors: {
@@ -36,12 +35,24 @@ export default {
             soft: '#FFF7F5',
             line: '#E8CFC7',
             muted: '#6B3A30',
+            strong: '#7E2A20',
           },
-          info: { DEFAULT: '#285A78', soft: '#EAF2F8', line: '#D7E4EE' },
-          success: { DEFAULT: '#2D6A3F', soft: '#E8F4EA', strong: '#3C8A52' },
+          info: {
+            DEFAULT: '#285A78',
+            soft: '#EAF2F8',
+            line: '#D7E4EE',
+            strong: '#1F4A63',
+          },
+          success: {
+            DEFAULT: '#2D6A3F',
+            soft: '#E8F4EA',
+            line: '#CBE2CF',
+            strong: '#3C8A52',
+          },
           warning: {
             DEFAULT: '#7A4F08',
             soft: '#FFF3D8',
+            line: '#EBD8AC',
             strong: '#9A5315',
             hot: '#C4681C',
           },

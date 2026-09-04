@@ -309,7 +309,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           className="relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto py-4 pl-4 pr-[76px] outline-none [overflow-anchor:none] md:pl-10"
         >
           {historyStatus === 'history_error' && (
-            <div className="sticky top-0 z-10 mx-auto flex w-fit max-w-full items-center gap-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 shadow-sm">
+            <div className="sticky top-0 z-10 mx-auto flex w-fit max-w-full items-center gap-3 rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-sm text-status-danger shadow-sm">
               <span>历史消息加载失败：{historyError || '未知错误'}。实时消息仍可继续接收。</span>
               <button type="button" className="ga-btn shrink-0" onClick={retryHistory}>重试</button>
             </div>
@@ -325,12 +325,12 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
                 {olderHistoryStatus === 'loading' ? '正在加载更早消息…' : '加载更早消息'}
               </button>
               {olderHistoryStatus === 'error' && (
-                <span className="text-xs text-red-600">{olderHistoryError || '加载失败，请重试'}</span>
+                <span className="text-xs text-status-danger">{olderHistoryError || '加载失败，请重试'}</span>
               )}
             </div>
           )}
           {sessionError && msgs.length === 0 && (
-            <div className="flex h-full items-center justify-center text-sm text-red-400">会话初始化失败：{sessionError}</div>
+            <div className="flex h-full items-center justify-center text-sm text-status-danger">会话初始化失败：{sessionError}</div>
           )}
           {!sessionError && hydrating && msgs.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-ink-faint">

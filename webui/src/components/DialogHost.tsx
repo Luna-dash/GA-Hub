@@ -60,7 +60,7 @@ export function DialogHost() {
 
   const danger = config.tone === 'danger'
   const primaryCls = danger
-    ? 'bg-rose-600 hover:bg-rose-500 text-white'
+    ? 'bg-status-danger hover:bg-status-danger-strong text-white'
     : 'bg-accent text-white hover:brightness-110'
 
   return (

@@ -18,19 +18,19 @@ interface SessionRailProps {
 }
 
 const activityDot = {
-  active: 'bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]',
-  completed: 'bg-sky-500 shadow-[0_0_0_3px_rgba(14,165,233,0.16)]',
+  active: 'bg-status-success shadow-[0_0_0_3px_rgba(16,185,129,0.18)]',
+  completed: 'bg-status-info shadow-[0_0_0_3px_rgba(14,165,233,0.16)]',
   idle: 'bg-[#9A8B70]',
-  error: 'bg-rose-500 shadow-[0_0_0_3px_rgba(244,63,94,0.16)]',
-  unknown: 'bg-amber-500',
+  error: 'bg-status-danger-soft0 shadow-[0_0_0_3px_rgba(244,63,94,0.16)]',
+  unknown: 'bg-status-warning',
 }
 
 const activityCard = {
-  active: 'border-emerald-400/60 bg-emerald-50/80 text-emerald-950 shadow-[inset_3px_0_0_rgba(16,185,129,0.65)] hover:bg-emerald-50',
-  completed: 'border-sky-400/60 bg-sky-50/80 text-sky-950 shadow-[inset_3px_0_0_rgba(14,165,233,0.65)] hover:bg-sky-50',
+  active: 'border-status-success-line bg-status-success-soft text-status-success shadow-[inset_3px_0_0_rgba(16,185,129,0.65)] hover:bg-status-success-soft',
+  completed: 'border-status-info-line bg-status-info-soft text-status-info shadow-[inset_3px_0_0_rgba(14,165,233,0.65)] hover:bg-status-info-soft',
   idle: 'border-line/60 text-ink-muted hover:border-line hover:bg-bg-card',
-  error: 'border-rose-400/60 bg-rose-50/80 text-rose-950 shadow-[inset_3px_0_0_rgba(244,63,94,0.65)] hover:bg-rose-50',
-  unknown: 'border-amber-400/55 bg-amber-50/70 text-amber-950 hover:bg-amber-50',
+  error: 'border-status-danger-line bg-status-danger-soft text-status-danger shadow-[inset_3px_0_0_rgba(244,63,94,0.65)] hover:bg-status-danger-soft',
+  unknown: 'border-status-warning-line bg-status-warning-soft text-status-warning hover:bg-status-warning-soft',
 }
 
 const activityLabel = {
@@ -42,11 +42,11 @@ const activityLabel = {
 }
 
 const activityRail = {
-  active: 'bg-emerald-600/75 shadow-[0_0_0_3px_rgba(5,150,105,0.13)] group-hover:bg-emerald-600/90',
-  completed: 'bg-sky-600/65 shadow-[0_0_0_3px_rgba(2,132,199,0.11)] group-hover:bg-sky-600/80',
+  active: 'bg-status-success shadow-[0_0_0_3px_rgba(5,150,105,0.13)] group-hover:bg-status-success-strong',
+  completed: 'bg-status-info shadow-[0_0_0_3px_rgba(2,132,199,0.11)] group-hover:bg-status-info-strong',
   idle: 'bg-[#8D7B5D]/55 shadow-[0_0_0_3px_rgba(141,123,93,0.10)] group-hover:bg-[#8D7B5D]/70',
-  error: 'bg-rose-600/75 shadow-[0_0_0_3px_rgba(225,29,72,0.11)] group-hover:bg-rose-600/90',
-  unknown: 'bg-amber-600/65 shadow-[0_0_0_3px_rgba(217,119,6,0.11)] group-hover:bg-amber-600/80',
+  error: 'bg-status-danger shadow-[0_0_0_3px_rgba(225,29,72,0.11)] group-hover:bg-status-danger-strong',
+  unknown: 'bg-status-warning shadow-[0_0_0_3px_rgba(217,119,6,0.11)] group-hover:bg-status-warning-strong',
 }
 
 const LEGACY_RECENT_KEY = storageKeys.sessionRailLegacyRecentActivity
@@ -380,7 +380,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                             disabled={activity === 'active' || deletingId === session.id}
                             aria-label={`删除 ${sessionTitle(session)}`}
                             title={activity === 'active' ? '请先停止任务再删除' : '删除会话'}
-                            className="rounded p-1 text-xs text-rose-600 opacity-50 transition hover:bg-rose-100 hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-25"
+                            className="rounded p-1 text-xs text-status-danger opacity-50 transition hover:bg-status-danger-soft hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-25"
                           >
                             ×
                           </button>
@@ -391,11 +391,11 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                       <span className="block px-3 pb-2 pl-7 text-[10px] opacity-70">{savingId === session.id ? '保存中…' : sessionStatusLabel(runtime)}</span>
                     )}
                     {confirmDeleteId === session.id && (
-                      <div role="alertdialog" aria-label={`确认删除 ${sessionTitle(session)}`} className="mx-2 mb-2 flex items-center justify-between gap-2 rounded-lg border border-rose-400/35 bg-rose-50/90 px-2 py-1.5 text-[11px] text-rose-700">
+                      <div role="alertdialog" aria-label={`确认删除 ${sessionTitle(session)}`} className="mx-2 mb-2 flex items-center justify-between gap-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-2 py-1.5 text-[11px] text-status-danger">
                         <span>永久删除？</span>
                         <span className="flex gap-1">
-                          <button type="button" disabled={deletingId === session.id} onClick={() => { void removeSession(session) }} className="rounded bg-rose-600 px-2 py-1 text-white disabled:opacity-50">{deletingId === session.id ? '删除中…' : '确认'}</button>
-                          <button type="button" disabled={deletingId === session.id} onClick={() => setConfirmDeleteId(null)} className="rounded border border-rose-300 px-2 py-1 disabled:opacity-50">取消</button>
+                          <button type="button" disabled={deletingId === session.id} onClick={() => { void removeSession(session) }} className="rounded bg-status-danger px-2 py-1 text-white disabled:opacity-50">{deletingId === session.id ? '删除中…' : '确认'}</button>
+                          <button type="button" disabled={deletingId === session.id} onClick={() => setConfirmDeleteId(null)} className="rounded border border-status-danger-line px-2 py-1 disabled:opacity-50">取消</button>
                         </span>
                       </div>
                     )}
