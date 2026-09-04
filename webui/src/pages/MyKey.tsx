@@ -27,18 +27,9 @@ import { toast } from '@/stores/toastStore'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
 import { getMyKeyShowUpload, MYKEY_SHOW_UPLOAD_EVENT } from '@/utils/mykeySyncUi'
-import { errorMessageFromError, myKeyParseErrorFromError } from '@/utils/sessionUi'
+import { errorMessageFromError, myKeyParseErrorFromError, myKeySyncErrorFromError } from '@/utils/sessionUi'
 
 type Tab = 'structured' | 'raw'
-
-function syncFailureMessage(error: any): string {
-  const detail = error?.body?.detail
-  if (typeof detail === 'string') return detail
-  const message = typeof detail?.message === 'string' ? detail.message.trim() : ''
-  const stderr = typeof detail?.stderr === 'string' ? detail.stderr.trim() : ''
-  if (message && stderr && message !== stderr) return `${message}\n\n${stderr}`
-  return message || stderr || error?.message || String(error)
-}
 
 export default function MyKey() {
   const qc = useQueryClient()
@@ -86,7 +77,7 @@ export default function MyKey() {
       const r = await api.uploadMyKeySync()
       toast.success((r.stdout || 'mykey 上传完成').trim().split('\n').slice(-1)[0])
     } catch (e: any) {
-      dialog.alert('上传 mykey 失败', syncFailureMessage(e))
+      dialog.alert('上传 mykey 失败', myKeySyncErrorFromError(e))
     } finally {
       setSyncBusy(null)
     }
@@ -111,7 +102,7 @@ export default function MyKey() {
       qc.invalidateQueries({ queryKey: queryKeys.llms })
       qc.invalidateQueries({ queryKey: queryKeys.servicePanel })
     } catch (e: any) {
-      dialog.alert('下载 mykey 失败', syncFailureMessage(e))
+      dialog.alert('下载 mykey 失败', myKeySyncErrorFromError(e))
     } finally {
       setSyncBusy(null)
     }

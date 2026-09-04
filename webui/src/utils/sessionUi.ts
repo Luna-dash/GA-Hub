@@ -60,6 +60,32 @@ export function errorMessageFromError(error: unknown, fallback = '请求失败')
   return fallback
 }
 
+/** Structured failure text for mykey sync (upload/fetch) dialogs: the sync
+ * scripts answer with {message, stderr} and the two halves are both useful —
+ * merge them instead of dropping the subprocess output. Kept byte-compatible
+ * with the MyKey-local original (empty detail objects must not stringify). */
+export function myKeySyncErrorFromError(error: unknown, fallback = '同步失败'): string {
+  const detail = (error as { body?: { detail?: unknown } } | null)?.body?.detail
+  if (typeof detail === 'string') return detail
+  const payload = (detail ?? {}) as { message?: unknown; stderr?: unknown }
+  const message = typeof payload.message === 'string' ? payload.message.trim() : ''
+  const stderr = typeof payload.stderr === 'string' ? payload.stderr.trim() : ''
+  if (message && stderr && message !== stderr) return `${message}\n\n${stderr}`
+  const raw = (error as { message?: unknown } | null)?.message
+  return message || stderr || (typeof raw === 'string' && raw ? raw : String(error ?? fallback))
+}
+
+/** Controlled exception to the *FromError string family: returns the
+ * structured payload behind FastAPI's {detail} wrapping (or the raw body when
+ * the route returned a plain dict) for callers that need evidence objects,
+ * not display text. */
+export function structuredErrorDetailFromError<T>(error: unknown): T | null {
+  const body = (error as { body?: unknown } | null)?.body
+  if (!body || typeof body !== 'object') return null
+  const detail = (body as { detail?: unknown }).detail
+  return (detail ?? body) as T
+}
+
 /** Parse-error display for mykey session/raw edits: the backend puts the
  * line/column diagnostics on the structured detail object. Both callers used
  * to hand-roll this and had already drifted (one guarded, one printing

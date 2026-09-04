@@ -4,9 +4,11 @@ import {
   capacityConflictFromError,
   errorMessageFromError,
   myKeyParseErrorFromError,
+  myKeySyncErrorFromError,
   sessionActivity,
   sessionChatHref,
   sessionStatusLabel,
+  structuredErrorDetailFromError,
 } from './sessionUi'
 
 const session = (id: string, title = ''): HubSession => ({
@@ -95,6 +97,30 @@ describe('session UI contracts', () => {
     expect(myKeyParseErrorFromError({ body: { detail: { message: 'bad indent' } } })).toBe('bad indent')
     expect(myKeyParseErrorFromError({ body: { detail: 'plain detail' } })).toBe('plain detail')
     expect(myKeyParseErrorFromError(new Error('network down'))).toBe('network down')
+  })
+
+  it('merges mykey sync message with subprocess stderr instead of dropping it', () => {
+    expect(myKeySyncErrorFromError({
+      body: { detail: { message: '同步失败', stderr: 'rsync: exit 23' } },
+    })).toBe('同步失败\n\nrsync: exit 23')
+    // Identical halves collapse to one copy.
+    expect(myKeySyncErrorFromError({
+      body: { detail: { message: 'same', stderr: 'same' } },
+    })).toBe('same')
+    expect(myKeySyncErrorFromError({ body: { detail: 'plain detail' } })).toBe('plain detail')
+    expect(myKeySyncErrorFromError({ body: { detail: {} }, message: 'transport down' })).toBe('transport down')
+    expect(myKeySyncErrorFromError(new Error('network down'))).toBe('network down')
+  })
+
+  it('unwraps the structured detail payload for evidence-style consumers', () => {
+    interface Evidence { error?: string }
+    // FastAPI wraps dict details in {detail}…
+    expect(structuredErrorDetailFromError<Evidence>({ body: { detail: { error: 'completion_unverified' } } }))
+      .toEqual({ error: 'completion_unverified' })
+    // …plain dicts pass through as the body itself.
+    expect(structuredErrorDetailFromError<Evidence>({ body: { error: 'completion_unverified' } }))
+      .toEqual({ error: 'completion_unverified' })
+    expect(structuredErrorDetailFromError<Evidence>(new Error('network down'))).toBeNull()
   })
 
   it('provides a useful fallback title for untitled sessions', () => {

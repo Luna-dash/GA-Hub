@@ -53,6 +53,7 @@ export default {
             DEFAULT: '#7A4F08',
             soft: '#FFF3D8',
             line: '#EBD8AC',
+            muted: '#8A6B3E',
             strong: '#9A5315',
             hot: '#C4681C',
           },

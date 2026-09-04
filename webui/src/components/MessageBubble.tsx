@@ -187,8 +187,8 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
             </div>
           )}
           {!compact && (
-            <div className={clsx("mb-2 flex items-center gap-2 text-[11px] font-medium", isSystem ? "text-[#7B5A2E]" : "text-ink-muted")}>
-              <span className={clsx("h-1.5 w-1.5 rounded-full", isSystem ? "bg-[#A2783F]" : "bg-[#54735D]")} />
+            <div className={clsx("mb-2 flex items-center gap-2 text-[11px] font-medium", isSystem ? "text-status-warning" : "text-ink-muted")}>
+              <span className={clsx("h-1.5 w-1.5 rounded-full", isSystem ? "bg-status-warning" : "bg-[#54735D]")} />
               {isSystem ? 'system' : 'GA Agent'}
             </div>
           )}
@@ -196,7 +196,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
             <div className="mb-1.5 text-[11px] font-medium leading-4 text-ink-faint">{tagLabel}</div>
           )}
           {stopped && !useHistoryProjection && (
-            <p className="mb-2 text-xs italic leading-5 text-[#8A6B3E]">⏹ 已手动停止</p>
+            <p className="mb-2 text-xs italic leading-5 text-status-warning-muted">⏹ 已手动停止</p>
           )}
           <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
             {streamId && onRewind && !streaming && (
@@ -231,7 +231,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
           </div>
         </div>
         {(timeLabel || startedAt) && (
-          <span className={clsx("shrink-0 whitespace-nowrap px-0.5 text-[10px] leading-4 tabular-nums", isSystem ? "text-[#8A6B3E]" : "text-ink-faint")}>
+          <span className={clsx("shrink-0 whitespace-nowrap px-0.5 text-[10px] leading-4 tabular-nums", isSystem ? "text-status-warning-muted" : "text-ink-faint")}>
             {timeLabel}
             {timeLabel && startedAt && ' · '}
             {startedAt && `${streaming ? '已运行' : '用时'} ${formatDuration(Math.max(0, (streaming ? clock : (finishedAt ?? timestamp ?? clock)) - startedAt))}`}
@@ -277,7 +277,7 @@ function HistoryTranscriptReply({
     <>
       {visibleProcessTurns.length > 0 && <LazyProcessFold turns={visibleProcessTurns} />}
       {(manualStop || transcript.stopped) && (
-        <p className="mb-2 text-xs italic leading-5 text-[#8A6B3E]">
+        <p className="mb-2 text-xs italic leading-5 text-status-warning-muted">
           {manualStop
             ? `⏹ 已手动停止${fallbackSuffix}`
             : `⏹ 本轮以工具调用收尾，未输出文字结论${transcript.finalBody ? '，以下为上一轮的完整结论' : ''}`}

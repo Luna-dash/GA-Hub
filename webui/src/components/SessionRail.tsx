@@ -18,18 +18,22 @@ interface SessionRailProps {
 }
 
 const activityDot = {
-  active: 'bg-status-success shadow-[0_0_0_3px_rgba(16,185,129,0.18)]',
-  completed: 'bg-status-info shadow-[0_0_0_3px_rgba(14,165,233,0.16)]',
-  idle: 'bg-[#9A8B70]',
-  error: 'bg-status-danger-soft0 shadow-[0_0_0_3px_rgba(244,63,94,0.16)]',
+  // Glow rings reuse the status hex from tailwind.config.js — the old
+  // emerald/sky/rose rgba values were pre-palette hues that no token owns.
+  active: 'bg-status-success shadow-[0_0_0_3px_rgba(45,106,63,0.18)]',
+  completed: 'bg-status-info shadow-[0_0_0_3px_rgba(40,90,120,0.16)]',
+  // Idle is a neutral on purpose (palette comment sanctions it), shared
+  // with Conductor's stopped dot — one hex, not two near-misses.
+  idle: 'bg-[#9A8E7D]',
+  error: 'bg-status-danger shadow-[0_0_0_3px_rgba(158,51,40,0.16)]',
   unknown: 'bg-status-warning',
 }
 
 const activityCard = {
-  active: 'border-status-success-line bg-status-success-soft text-status-success shadow-[inset_3px_0_0_rgba(16,185,129,0.65)] hover:bg-status-success-soft',
-  completed: 'border-status-info-line bg-status-info-soft text-status-info shadow-[inset_3px_0_0_rgba(14,165,233,0.65)] hover:bg-status-info-soft',
+  active: 'border-status-success-line bg-status-success-soft text-status-success shadow-[inset_3px_0_0_rgba(45,106,63,0.65)] hover:bg-status-success-soft',
+  completed: 'border-status-info-line bg-status-info-soft text-status-info shadow-[inset_3px_0_0_rgba(40,90,120,0.65)] hover:bg-status-info-soft',
   idle: 'border-line/60 text-ink-muted hover:border-line hover:bg-bg-card',
-  error: 'border-status-danger-line bg-status-danger-soft text-status-danger shadow-[inset_3px_0_0_rgba(244,63,94,0.65)] hover:bg-status-danger-soft',
+  error: 'border-status-danger-line bg-status-danger-soft text-status-danger shadow-[inset_3px_0_0_rgba(158,51,40,0.65)] hover:bg-status-danger-soft',
   unknown: 'border-status-warning-line bg-status-warning-soft text-status-warning hover:bg-status-warning-soft',
 }
 
@@ -42,11 +46,11 @@ const activityLabel = {
 }
 
 const activityRail = {
-  active: 'bg-status-success shadow-[0_0_0_3px_rgba(5,150,105,0.13)] group-hover:bg-status-success-strong',
-  completed: 'bg-status-info shadow-[0_0_0_3px_rgba(2,132,199,0.11)] group-hover:bg-status-info-strong',
+  active: 'bg-status-success shadow-[0_0_0_3px_rgba(60,138,82,0.13)] group-hover:bg-status-success-strong',
+  completed: 'bg-status-info shadow-[0_0_0_3px_rgba(31,74,99,0.11)] group-hover:bg-status-info-strong',
   idle: 'bg-[#8D7B5D]/55 shadow-[0_0_0_3px_rgba(141,123,93,0.10)] group-hover:bg-[#8D7B5D]/70',
-  error: 'bg-status-danger shadow-[0_0_0_3px_rgba(225,29,72,0.11)] group-hover:bg-status-danger-strong',
-  unknown: 'bg-status-warning shadow-[0_0_0_3px_rgba(217,119,6,0.11)] group-hover:bg-status-warning-strong',
+  error: 'bg-status-danger shadow-[0_0_0_3px_rgba(126,42,32,0.11)] group-hover:bg-status-danger-strong',
+  unknown: 'bg-status-warning shadow-[0_0_0_3px_rgba(154,83,21,0.11)] group-hover:bg-status-warning-strong',
 }
 
 const LEGACY_RECENT_KEY = storageKeys.sessionRailLegacyRecentActivity

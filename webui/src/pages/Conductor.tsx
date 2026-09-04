@@ -19,6 +19,7 @@ import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
 import { toast } from '@/stores/toastStore'
 import { writeClipboard } from '@/utils/clipboard'
+import { structuredErrorDetailFromError } from '@/utils/sessionUi'
 
 const scrollMemory: { chatTop: number | null } = {
   chatTop: null,
@@ -108,13 +109,6 @@ function workerTitle(sub: ConductorSubagent): string {
 function shortWorkerTitle(sub: ConductorSubagent): string {
   const title = workerTitle(sub)
   return title.length > 14 ? `${title.slice(0, 14)}…` : title
-}
-
-/** FastAPI wraps dict details in {detail}; plain dicts pass through. */
-function subagentActionErrorDetail(err: unknown): SubagentEvidence | null {
-  const body = (err as { body?: { detail?: SubagentEvidence } } | null)?.body
-  if (!body) return null
-  return body.detail ?? (body as SubagentEvidence)
 }
 
 /** Actions the review row can offer; the page supplies the implementations. */
@@ -488,7 +482,7 @@ export default function Conductor() {
       setReworkReason('')
       toast.success(action === 'accept' ? '已通过验收' : action === 'rework' ? '已打回子代理' : '已终止子代理')
     } catch (err) {
-      const detail = subagentActionErrorDetail(err)
+      const detail = structuredErrorDetailFromError<SubagentEvidence>(err)
       if (action === 'accept' && detail?.error === 'completion_unverified') {
         setEvidenceBySid((prev) => ({ ...prev, [sid]: detail }))
         toast.error('机器验收未通过，已展示证据；可人工核对后强制通过。')
