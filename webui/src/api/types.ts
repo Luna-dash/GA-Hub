@@ -109,9 +109,7 @@ export type ScheduledChat = ApiSchemas['ScheduledChatResp']
 export type ScheduledChatListResponse = ApiSchemas['ScheduledChatListResp']
 
 // ── Memory / SOPs ─────────────────────────────────────────
-export type SOPItem = ApiSchemas['SOPItem']
 export type SOPListResponse = ApiSchemas['SOPListResp']
-export type SkillItem = ApiSchemas['SkillItem']
 export type SkillListResponse = ApiSchemas['SkillListResp']
 export type SkillDetailResponse = ApiSchemas['SkillDetailResp']
 export type SOPDetailResponse = ApiSchemas['SOPDetailResp']
@@ -123,9 +121,7 @@ export type Schedule = ApiSchemas['AutonomousScheduleResp']
 export type ScheduleListResponse = ApiSchemas['AutonomousScheduleListResp']
 export type ScheduleMutationResponse = ApiSchemas['AutonomousMutationResp']
 export type ScheduleTriggerResponse = ApiSchemas['AutonomousTriggerResp']
-export type AutonomousRun = ApiSchemas['AutonomousRunResp']
 export type AutonomousRunListResponse = ApiSchemas['AutonomousRunListResp']
-export type ReportItem = ApiSchemas['AutonomousReportItem']
 export type AutonomousReportListResponse = ApiSchemas['AutonomousReportListResp']
 export type AutonomousReportDetailResponse = ApiSchemas['AutonomousReportDetailResp']
 
@@ -247,15 +243,11 @@ export type HubEventControl =
   | { type: 'resync_required'; reason: string; epoch: string }
   | { type: 'replay_done'; event_id: number; epoch: string }
 export type HubEventMessage = BusEvent | HubEventControl
-export type EventRecentResponse = Omit<ApiSchemas['EventRecentResp'], 'events'> & {
-  events: EventBusEnvelope[]
-}
 export type LogLinesResponse = ApiSchemas['LogLinesResp']
 
 // ── Conductor ─────────────────────────────────────────────
 export type ConductorChatMessage = ApiSchemas['ConductorChatMessage']
 export type ConductorSubagent = ApiSchemas['ConductorSubagent']
-export type ConductorLogItem = ApiSchemas['ConductorLogItem']
 export type ConductorStatus = ApiSchemas['ConductorStatusResp']
 export type ConductorTextResponse = ApiSchemas['ConductorTextResp']
 export type ConductorChatListResponse = ApiSchemas['ConductorChatListResp']

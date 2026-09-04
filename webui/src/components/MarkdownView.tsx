@@ -20,6 +20,7 @@ import { memo, ReactNode, useEffect, useMemo, useState, type MouseEvent } from '
 import { createPortal } from 'react-dom'
 import { Z_LAYERS } from '@/config/zLayers'
 import { useCopy, writeClipboard } from '@/utils/clipboard'
+import { errorMessageFromError } from '@/utils/sessionUi'
 import { api } from '@/api/client'
 import { toast } from '@/stores/toastStore'
 import { isAppInternalUrl, isHttpUrl, openExternalIfNeeded } from '@/utils/openExternal'
@@ -323,7 +324,7 @@ function PathLink({ path, display }: { path: string; display: string }) {
     try {
       await api.revealFile(path)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : `无法打开 ${path}`)
+      toast.error(errorMessageFromError(err, `无法打开 ${path}`))
     }
   }
 
@@ -413,7 +414,7 @@ function PathLinkMenu({ path, info, pos, onOpen, onClose }: {
           onClick={() => {
             onClose()
             api.revealFile(path, 'folder').catch((err: unknown) => {
-              toast.error(err instanceof Error ? err.message : '无法定位文件')
+              toast.error(errorMessageFromError(err, '无法定位文件'))
             })
           }}
         />

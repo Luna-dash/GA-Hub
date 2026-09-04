@@ -654,6 +654,8 @@ export default function Conductor() {
             <div className="min-h-0 flex-1 overflow-y-auto" aria-label="子任务详情">
               {workflowSubagents.length === 0 ? (
                 <div className="px-4 py-8 text-center">
+                  {/* Shared neutrals, sanctioned: #4E4233 (empty-state text) and
+                       #8A7A63 (placeholder) repeat across this page on purpose. */}
                   <p className="text-sm font-medium text-[#4E4233]">
                     {currentWorkflow ? '尚未指派子代理' : '暂无执行中的任务'}
                   </p>

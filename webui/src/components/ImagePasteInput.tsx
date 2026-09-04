@@ -143,7 +143,7 @@ export function ImagePasteInput({
           results.push(att)
         } catch (e) {
           console.error('upload failed', e)
-          errors.push(`${f.name}：${e instanceof Error ? e.message : String(e)}`)
+          errors.push(`${f.name}：${errorMessageFromError(e, '上传失败')}`)
         }
       }
       setUploadErrors(errors)

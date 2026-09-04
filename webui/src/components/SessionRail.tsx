@@ -442,7 +442,10 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
       <div
         aria-label="最近活动会话"
         className={clsx(
-          'absolute z-25 flex gap-1.5 transition-[opacity,transform] duration-300 md:flex-col',
+          // z-25 is not a Tailwind scale step — the class never generated
+          // CSS. This float sits between the rail shell (z-20) and the
+          // collapse button (z-30), so 20 is the intended layer.
+          'absolute z-20 flex gap-1.5 transition-[opacity,transform] duration-300 md:flex-col',
           'left-2 right-2 top-1 md:bottom-[calc(50%+2.125rem)] md:left-auto md:right-[-1.5rem] md:top-auto md:w-6',
           collapsed ? 'pointer-events-auto translate-y-0 opacity-100 md:translate-x-0' : 'pointer-events-none -translate-y-2 opacity-0 md:translate-x-2 md:translate-y-0',
         )}
