@@ -441,5 +441,65 @@ class RewindAdapterSharedPlanningTests(unittest.TestCase):
         )
 
 
+class RewindWithRealProjectionTests(unittest.TestCase):
+    """Regression: the shared snapshot-drop helper must work against the real
+    ``ChatStreamProjection`` store, not only plain dicts.
+
+    ``ChatStreamProjection.pop(stream_id)`` takes no default argument — a
+    ``pop(sid, None)`` call raised ``TypeError`` in production, killing both
+    rewind endpoints *after* history truncation (legacy) or worldline rewrite
+    (durable) but *before* the ``chat:rewound`` event.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.svc_mod = _load_agent_service_module()
+
+    def _make_svc(self, history: list[dict], snapshots: list[tuple[str, bool]]):
+        from server.services.chat_stream_projection import ChatSnapshot, ChatStreamProjection
+
+        AgentService = self.svc_mod.AgentService
+        svc = object.__new__(AgentService)
+        svc._lock = threading.RLock()
+        svc._snapshots = ChatStreamProjection()
+        for sid, done in snapshots:
+            svc._snapshots.add(
+                ChatSnapshot(stream_id=sid, source="user", query=f"q-{sid}", started_at=0.0, done=done)
+            )
+
+        backend = types.SimpleNamespace(history=list(history))
+        svc.agent = types.SimpleNamespace(
+            is_running=False,
+            llmclient=types.SimpleNamespace(backend=backend),
+            history=[],
+        )
+        return svc
+
+    def test_rewind_by_n_drops_last_turn_against_real_projection(self):
+        history = [
+            _make_user_msg("u1"), _make_assistant("a1"),
+            _make_user_msg("u2"), _make_assistant("a2"),
+        ]
+        svc = self._make_svc(history, [("s1", True), ("s2", True)])
+
+        with mock.patch.object(self.svc_mod, "bus", mock.MagicMock()):
+            result = svc.rewind_turns(n=1)
+
+        self.assertEqual(result["removed_sids"], ["s2"])
+        self.assertEqual(result["kept"], 1)
+        self.assertIsNone(svc._snapshots.get("s2"))
+        self.assertIsNotNone(svc._snapshots.get("s1"))
+
+    def test_drop_snapshots_tolerates_missing_ids_on_real_projection(self):
+        from server.services.chat_stream_projection import ChatStreamProjection
+
+        adapter = object.__new__(self.svc_mod.RewindAdapter)
+        adapter.snapshots = ChatStreamProjection()
+
+        adapter._drop_snapshots(["ghost"])  # must not raise
+
+        self.assertEqual(adapter.snapshots.items(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

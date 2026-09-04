@@ -233,8 +233,11 @@ class RewindAdapter:
         raise ValueError("either sid or n required")
 
     def _drop_snapshots(self, removed_sids: list[str]) -> None:
+        # ChatStreamProjection.pop(stream_id) already tolerates missing ids;
+        # a default-argument pop would only match plain dicts (tests), not the
+        # real projection store.
         for stream_id in removed_sids:
-            self.snapshots.pop(stream_id, None)
+            self.snapshots.pop(stream_id)
 
     def _finalize_rewind(
         self,

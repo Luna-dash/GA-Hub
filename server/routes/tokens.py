@@ -1,6 +1,7 @@
 """Live LLM token usage and lightweight history."""
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timedelta
 from typing import Any
@@ -9,6 +10,8 @@ from fastapi import APIRouter, Query
 
 from .. import _paths
 from ..services.session_metadata import SessionMetadataStore
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tokens", tags=["tokens"])
 _SESSION_METADATA = SessionMetadataStore()
