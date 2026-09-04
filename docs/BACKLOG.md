@@ -102,21 +102,28 @@ API 封装，而服务端无开机自启（`WeChatService.instance()` 仅由 `/a
       /memory _read 同；conductor_client/conductor_service/conductor_workflow
       未用 import 与缺 Any 注解
 
-需要决策的大件（按伤害排序）：
+需要决策的大件（按伤害排序）。2026-09-04 已定四项方向（条目内【已定】标注）：
+Skills.tsx 删除、折叠解析走策略 b、暗色确认废弃；LLM ping 分析修正（原
+"双实现"实为"一活一死"，无需新抽象）。
 
-- [ ] Skills.tsx 是孤儿页面（253 行，无路由/无导航/无测试）——删除或重新
-      挂路由，属产品决策
+- [ ] Skills.tsx 是孤儿页面（253 行，无路由/无导航/无测试）——【已定：
+      删除】页面文件直接清掉，不留存档
 - [ ] 双调度器（autonomous/task）~70% 逐行克隆（持久化/装 job/fire/守卫），
       已咬过一次（misfire 只补了一边）——抽 SchedulerDomainBase，测试收缩
       到差异面
 - [ ] routes/mykey.py 674 行是"穿着路由皮的服务"（备份轮转/原子写/解释器
       探测/子进程编排内联）——抽 services/mykey_service.py
-- [ ] 双 LLM ping 实现（routes/agent.py:_test_llm_sync 与 routes/mykey.py:
-      _test_session_sync）各带一套脆弱的 history/tools 保存恢复——抽
-      services/llm_probe.py
+- [ ] LLM ping——【2026-09-04 分析修正】UI 入口只有一个：MyKey 卡片"测 ping"
+      （MyKey.tsx:374 → api.testMyKeySession → /api/mykey/sessions/{var}/test），
+      routes/mykey.py:_test_session_sync 是唯一活实现。/api/llms/{idx}/test
+      （routes/agent.py:_test_llm_sync）+ 前端 api.testLLM 死包装
+      （client.ts:239）+ LLMTestResult 类型均无任何调用方（webui/桌面壳/
+      脚本/服务端内部全查过）。原"抽 llm_probe 合并双实现"不再需要：
+      删除死端点整链并重生成 OpenAPI/TS 契约即可，mykey 侧保持单实现
 - [ ] 归档折叠解析 `_extract_ui_messages_from_text` fork 了 GA 的
-      extract_ui_messages（分页回退路径）——请 GA 暴露 parse(content) 核心，
-      hub 侧归零折叠逻辑；短期至少加双路径一致性测试
+      extract_ui_messages（分页回退路径）——【已定：策略 b】保留 fork、
+      不动 GA；补双路径一致性守护测试（hub 切片折叠结果 == GA 整文件
+      extract_ui_messages 结果），让格式漂移从无声变有声
 - [ ] 点查路由在事件循环内做目录刷新+迁移副作用——迁移挪到 lifespan
       启动钩子，`_session_by_id` 进 to_thread
 - [ ] 事件主题 ~70 处内联字符串（"chat:reset" 三处发布）——建
@@ -125,8 +132,12 @@ API 封装，而服务端无开机自启（`WeChatService.instance()` 仅由 `/a
       回填，专为 object.__new__ 测试实例）——给测试正规的 for_tests()
       构造器后删除
 - [ ] 状态词汇漂移：Conductor phaseDot 硬编码色 vs 相邻 phaseTone 语义令牌；
-      全仓 62 处裸 rose/emerald 类 vs 23 处 status-* 令牌——需先定语义令牌
-      的暗色策略再收敛（盲替会丢暗色变体）
+      全仓 62 处裸 rose/emerald 类 vs 23 处 status-* 令牌——【2026-09-04
+      更新】暗色已确认废弃（index.css 强制纸黄单主题，:root/html.light/
+      html.dark 钉同一套变量），原"先定暗色策略"前置取消。收敛 62 处到
+      令牌（机械活）+ 顺手清暗色残骸：themeStore/main.tsx 仍在按系统偏好
+      打 html.dark class、个别 html.dark 元素级覆盖（text-slate/::selection）
+      仍会生效、tailwind darkMode:'class' 配置
 - [ ] WS 游标管线（events.py 与 sessions.py）重复 invalid-cursor 解析 +
       replay/ping 生命周期——抽可恢复 WS 会话助手
 - [ ] runtime-state payload 三处手拼（sessions.py bus/WS/REST）——全部走
