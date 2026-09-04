@@ -139,13 +139,19 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
 - [ ] 生产代码携带测试回填脚手架（ConductorService 五个 _ensure_* hasattr
       回填，专为 object.__new__ 测试实例）——给测试正规的 for_tests()
       构造器后删除
-- [ ] 状态词汇漂移：Conductor phaseDot 硬编码色 vs 相邻 phaseTone 语义令牌；
-      全仓 62 处裸 rose/emerald 类 vs 23 处 status-* 令牌——【2026-09-04
-      更新】暗色已确认废弃（index.css 强制纸黄单主题，:root/html.light/
-      html.dark 钉同一套变量），原"先定暗色策略"前置取消。收敛 62 处到
-      令牌（机械活）+ 顺手清暗色残骸：themeStore/main.tsx 仍在按系统偏好
-      打 html.dark class、个别 html.dark 元素级覆盖（text-slate/::selection）
-      仍会生效、tailwind darkMode:'class' 配置
+- [x] 状态词汇漂移：Conductor phaseDot 硬编码色 vs 相邻 phaseTone 语义令牌；
+      全仓 62 处裸 rose/emerald 类 vs 23 处 status-* 令牌——已收敛（defa88b
+      + 80f7a08）。18 个文件的状态语义 hue 类（rose/red→danger、emerald/
+      green→success、amber/yellow→warning、sky/blue→info）全部映射到
+      status-* 令牌（bg/text/border × soft/line/strong/DEFAULT，含 hover/
+      focus 变体）；调色板补齐 danger/info 的 strong 与 success/warning 的
+      line，四族档位对齐；phaseDot 两个硬编码 hex 改令牌（stopped 灰点属
+      一次性的中性色，按调色板注释保留内联）。暗色残骸同步清除：themeStore
+      删除、main.tsx 去 class 切换、tailwind darkMode:'class' 移除、
+      index.css 的 html.dark 覆盖与整块 hue 软化 remap（类已不存在，全死）
+      删除、MyKey 12 处 dark: 变体剥离、ga-admin.theme 存储键退役；
+      provider 身份色（紫/翡翠/琥珀 chips、卡片渐变）按调色板注释保留为
+      一次性身份色。bubbleTone 契约测试随令牌改名。
 - [ ] WS 游标管线（events.py 与 sessions.py）重复 invalid-cursor 解析 +
       replay/ping 生命周期——抽可恢复 WS 会话助手
 - [x] runtime-state payload 三处手拼（sessions.py bus/WS/REST）——已全部走
