@@ -48,13 +48,6 @@ class ServicePanelItem:
 
 
 class ServiceRegistry:
-    _HEALTH_BY_STATE = {
-        "running": "healthy",
-        "ready": "healthy",
-        "stopped": "unavailable",
-        "error": "unknown",
-    }
-
     def __init__(self, services: "AppServices | None" = None) -> None:
         # Lifespan-owned instances win over singleton probes when present.
         self._services = services
@@ -79,13 +72,19 @@ class ServiceRegistry:
         return {"services": [asdict(item) for item in items], "timestamp": int(time.time())}
 
     def health_summary(self) -> dict[str, Any]:
-        """Return a stable health vocabulary derived from one panel snapshot."""
+        """Return a stable health vocabulary derived from one panel snapshot.
+
+        Every real panel item fills ``health`` in ``__post_init__``
+        (healthy / attention / unknown); ``stopped`` items count as healthy —
+        an inactive optional service is not an incident. The process-level
+        ``unavailable`` verdict lives in ``/api/health`` (core-contract gate),
+        not here.
+        """
         snapshot = self.panel()
         services = [
             {
                 "id": item["id"],
-                "status": item.get("health")
-                or self._HEALTH_BY_STATE.get(item.get("state"), "unknown"),
+                "status": item.get("health") or "unknown",
                 "summary": item["summary"],
             }
             for item in snapshot["services"]
@@ -95,8 +94,6 @@ class ServiceRegistry:
             overall = "unknown"
         elif statuses == {"healthy"}:
             overall = "healthy"
-        elif statuses == {"unavailable"}:
-            overall = "unavailable"
         else:
             overall = "degraded"
         return {"status": overall, "services": services, "timestamp": snapshot["timestamp"]}

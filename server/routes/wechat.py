@@ -31,40 +31,40 @@ def svc() -> WeChatService:
 
 
 @router.get("/api/wechat/status")
-async def status() -> WxStatusResp:
+def status() -> WxStatusResp:
     return svc().status()
 
 
 @router.post("/api/wechat/login")
-async def login() -> WxQRState:
+def login() -> WxQRState:
     """Begin QR login flow. Frontend should subscribe to /ws/events?prefix=wechat: for QR updates."""
     return svc().start_qr_login()
 
 
 @router.post("/api/wechat/logout")
-async def logout() -> WxLogoutResp:
+def logout() -> WxLogoutResp:
     svc().logout()
     return {"ok": True}
 
 
 @router.post("/api/wechat/poll/start")
-async def start_polling() -> WxPollStartResp:
+def start_polling() -> WxPollStartResp:
     return {"started": svc().start_polling()}
 
 
 @router.post("/api/wechat/poll/stop")
-async def stop_polling() -> WxPollStopResp:
+def stop_polling() -> WxPollStopResp:
     svc().stop_polling()
     return {"ok": True}
 
 
 @router.get("/api/wechat/contacts")
-async def contacts() -> WxContactListResp:
+def contacts() -> WxContactListResp:
     return {"contacts": svc().list_contacts()}
 
 
 @router.get("/api/wechat/messages")
-async def messages(
+def messages(
     uid: str | None = None,
     limit: int = Query(default=200, ge=1, le=1000),
 ) -> WxLogListResp:
@@ -72,7 +72,7 @@ async def messages(
 
 
 @router.delete("/api/wechat/messages")
-async def clear_messages() -> WxLogoutResp:
+def clear_messages() -> WxLogoutResp:
     svc().clear_log()
     return {"ok": True}
 
@@ -92,11 +92,11 @@ async def send(req: WxSendReq) -> WxSendResp:
 
 
 @router.get("/api/wechat/allowlist")
-async def get_allowlist() -> WxAllowlistResp:
+def get_allowlist() -> WxAllowlistResp:
     return {"allowlist": sorted(svc().allowlist) if svc().allowlist != {"*"} else ["*"]}
 
 
 @router.put("/api/wechat/allowlist")
-async def put_allowlist(req: WxAllowlistReq) -> WxAllowlistWriteResp:
+def put_allowlist(req: WxAllowlistReq) -> WxAllowlistWriteResp:
     svc().set_allowlist(req.allowlist)
     return {"ok": True, "allowlist": sorted(svc().allowlist)}

@@ -27,7 +27,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import _paths
+from .. import _paths, constants
 from ..process_utils import hidden_process_kwargs
 from ..services.mykey_codec import (
     AssignmentNotFoundError,
@@ -401,7 +401,7 @@ def _mykey_sync_script() -> Path:
 def _sync_base_url() -> str:
     # Vercel 静态部署方案(2026-08-30 起)：自定义域名 ga.lunadash.me 大陆直连可达；
     # vercel.app 直连被墙不可作端点。upload 参数=部署后回读校验用的站点根 URL。
-    return os.environ.get("GA_MYKEY_SYNC_URL", "https://ga.lunadash.me").rstrip("/")
+    return os.environ.get(constants.ENV_MYKEY_SYNC_URL, "https://ga.lunadash.me").rstrip("/")
 
 
 _MYKEY_MIN_PYTHON = (3, 11)
@@ -440,8 +440,8 @@ def _mykey_python_candidates() -> list[tuple[str, str]]:
 def _probe_mykey_python(python: str) -> tuple[tuple[int, int], bool] | None:
     """Read the candidate version and verify the sync script's crypto imports."""
     env = os.environ.copy()
-    env.pop("GA_MYKEY_SYNC_PASSPHRASE", None)
-    env.pop("GA_MYKEY_UPLOAD_TOKEN", None)
+    env.pop(constants.ENV_MYKEY_SYNC_PASSPHRASE, None)
+    env.pop(constants.ENV_MYKEY_UPLOAD_TOKEN, None)
     try:
         proc = subprocess.run(
             [python, "-c", _MYKEY_PYTHON_PROBE],

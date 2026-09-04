@@ -16,7 +16,6 @@ Architecture notes:
 """
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
@@ -698,6 +697,12 @@ class ConductorService:
                 self._shutdown_complete = complete
                 self._shutdown_in_progress = False
                 event.set()
+
+        # Every shutdown path is terminal (`_assert_open` refuses all later
+        # calls), so keeping the class singleton would poison the next app
+        # lifecycle with a closed instance. Release it like AgentService does.
+        if type(self)._instance is self:
+            type(self)._instance = None
 
         if not complete:
             log.warning(

@@ -189,3 +189,16 @@ def test_closed_service_cannot_restart_core() -> None:
     core.start.assert_not_called()
 
 
+
+
+def test_shutdown_releases_the_class_singleton(monkeypatch) -> None:
+    """A closed ConductorService must never be handed to the next app
+    lifecycle: once shutdown runs, the singleton slot is cleared so the next
+    ``instance()`` call constructs a fresh service."""
+    core = _StopRecorder(True)
+    monitor = _StopRecorder(True)
+    service = _service(core, monitor)
+    monkeypatch.setattr(conductor_service.ConductorService, "_instance", service)
+
+    assert service.shutdown(timeout=0.1) is True
+    assert conductor_service.ConductorService._instance is None

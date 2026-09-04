@@ -131,7 +131,8 @@ class TaskScheduler:
         if not os.path.isfile(path):
             return
         try:
-            data = json.loads(open(path, encoding="utf-8").read())
+            with open(path, encoding="utf-8") as fh:
+                data = json.loads(fh.read())
             allowed = {f.name for f in TaskSchedule.__dataclass_fields__.values()}
             for raw in data.get("schedules", []):
                 clean = {k: v for k, v in raw.items() if k in allowed}

@@ -46,6 +46,12 @@ ENV_GAHUB_TEMP_DIR = "GAHUB_TEMP_DIR"
 ENV_GAHUB_JOURNAL_PATH = "GAHUB_JOURNAL_PATH"
 # UI origin allowlist beyond localhost (main.py).
 ENV_GAHUB_ALLOWED_HOSTS = "GAHUB_ALLOWED_HOSTS"
+# mykey sync (routes/mykey.py): sync-site root URL and the credential env
+# entries the sync subprocess consumes; the probe strips both secrets from
+# the child environment.
+ENV_MYKEY_SYNC_URL = "GA_MYKEY_SYNC_URL"
+ENV_MYKEY_SYNC_PASSPHRASE = "GA_MYKEY_SYNC_PASSPHRASE"
+ENV_MYKEY_UPLOAD_TOKEN = "GA_MYKEY_UPLOAD_TOKEN"
 SESSION_RUN_CAPACITY_DEFAULT = 10
 SESSION_RUN_CAPACITY_MAX = 10
 

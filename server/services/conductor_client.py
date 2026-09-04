@@ -17,12 +17,12 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import requests
 
 from .. import _paths
-from ..constants import CONDUCTOR_ENGINE_PORT
+from ..constants import CONDUCTOR_ENGINE_PORT, ENV_GAHUB_JOURNAL_PATH, ENV_GAHUB_TEMP_DIR
 from ..process_utils import hidden_process_kwargs
 
 log = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ def _open_engine_log() -> tuple:
     unique per-process file when the canonical path refuses the open.
     Returns ``(handle, path)``.
     """
-    base = os.environ.get("GAHUB_TEMP_DIR") or tempfile.gettempdir()
+    base = os.environ.get(ENV_GAHUB_TEMP_DIR) or tempfile.gettempdir()
     log_path = os.path.join(base, "gahub_app.log")
     try:
         return open(log_path, "ab"), log_path
@@ -84,7 +84,7 @@ def _engine_spawn_env() -> dict:
     An operator-provided value in the environment wins (setdefault).
     """
     env = _clean_child_env()
-    env.setdefault("GAHUB_JOURNAL_PATH", str(_paths.gahub_journal_file()))
+    env.setdefault(ENV_GAHUB_JOURNAL_PATH, str(_paths.gahub_journal_file()))
     return env
 
 

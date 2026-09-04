@@ -155,7 +155,8 @@ class AutonomousScheduler:
             self._seed_defaults()
             return
         try:
-            data = json.loads(open(path, encoding="utf-8").read())
+            with open(path, encoding="utf-8") as fh:
+                data = json.loads(fh.read())
             for s in data.get("schedules", []):
                 # tolerate unknown keys
                 allowed = {f.name for f in Schedule.__dataclass_fields__.values()}
@@ -466,7 +467,8 @@ class AutonomousScheduler:
         p = os.path.join(_reports_dir(), name)
         if not os.path.isfile(p):
             raise FileNotFoundError(name)
-        return open(p, encoding="utf-8").read()
+        with open(p, encoding="utf-8") as fh:
+            return fh.read()
 
     def list_runs(self, limit: int = 100) -> list[dict]:
         path = _runs_file()

@@ -975,7 +975,9 @@ async def delete_session(session_id: str):
         if _coordinator is None:
             _delete()
         else:
-            _coordinator.release_runtime(
+            # Go through the accessor so the shutdown admission gate applies
+            # to delete like every other runtime-touching endpoint.
+            _get_coordinator().release_runtime(
                 session_id,
                 shutdown=lambda runtime: runtime.shutdown(),
                 operation="delete",

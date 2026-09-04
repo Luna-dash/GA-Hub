@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import _paths
+from .constants import ENV_GAHUB_ALLOWED_HOSTS
 from .origin_policy import LOOPBACK_HTTP_ORIGIN_REGEX, TAURI_UI_ORIGINS
 from .routes import events as event_routes  # safe to import in setup mode
 from .schemas import AppStatusResp
@@ -81,11 +82,12 @@ async def _delayed_feishu_autostart(
 #   * a literal IP address (loopback / LAN — what a real user types), or
 #   * ``localhost`` / ``*.localhost``.
 # Power users who front the app with a custom hostname can extend the list via
-# the ``GAHUB_ALLOWED_HOSTS`` env var (comma-separated). This adds **zero**
+# the allowlist env var (constants.ENV_GAHUB_ALLOWED_HOSTS, comma-separated).
+# This adds **zero**
 # friction to the default localhost workflow.
 _EXTRA_ALLOWED_HOSTS = {
     h.strip().lower()
-    for h in os.environ.get("GAHUB_ALLOWED_HOSTS", "").split(",")
+    for h in os.environ.get(ENV_GAHUB_ALLOWED_HOSTS, "").split(",")
     if h.strip()
 }
 

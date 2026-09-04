@@ -51,26 +51,30 @@ def test_backend_log_redaction_and_tail_limit() -> None:
     assert all(secret not in "\n".join(lines) for secret in ("super-secret", "abc123", "hunter2"))
 
 
-def _summary_for(states: list[str]) -> dict:
+def _summary_for(healths: list[str]) -> dict:
+    """health_summary must consume the same ``health`` field the panel ships."""
     registry = ServiceRegistry()
     services = [
-        {"id": f"service-{index}", "state": state, "summary": state}
-        for index, state in enumerate(states)
+        {"id": f"service-{index}", "health": health, "summary": health}
+        for index, health in enumerate(healths)
     ]
     with mock.patch.object(registry, "panel", return_value={"services": services, "timestamp": 42}):
         return registry.health_summary()
 
 
 def test_health_summary_uses_stable_vocabulary() -> None:
-    assert _summary_for(["running", "ready"])["status"] == "healthy"
-    assert _summary_for(["stopped"])["status"] == "unavailable"
-    assert _summary_for(["error"])["status"] == "unknown"
+    assert _summary_for(["healthy", "healthy"])["status"] == "healthy"
+    # An inactive optional service is not an incident; an enabled-but-stopped
+    # one reports "attention" via its reader and degrades the summary.
+    assert _summary_for(["healthy", "attention"])["status"] == "degraded"
+    assert _summary_for(["unknown"])["status"] == "unknown"
+    assert _summary_for([])["status"] == "unknown"
 
-    degraded = _summary_for(["running", "stopped", "unexpected"])
+    degraded = _summary_for(["healthy", "attention", "unknown"])
     assert degraded["status"] == "degraded"
     assert [item["status"] for item in degraded["services"]] == [
         "healthy",
-        "unavailable",
+        "attention",
         "unknown",
     ]
     assert degraded["timestamp"] == 42

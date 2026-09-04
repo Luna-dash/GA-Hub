@@ -1,5 +1,6 @@
-"""GA_HUB_* names must be registered in server/constants.py (or whitelisted
-as protocol markers). A static scan keeps the registry from drifting."""
+"""GA_HUB_* / GAHUB_* / GA_MYKEY_* names must be registered in
+server/constants.py (or whitelisted as protocol markers). A static scan keeps
+the registry from drifting."""
 from __future__ import annotations
 
 import re
@@ -19,6 +20,7 @@ MARKERS = {
     "GA_HUB_MYKEY_PYTHON",  # stdout probe marker (routes/mykey.py)
     "GA_HUB_HIDE_LOADING",  # Tauri loading gate (main.rs)
     "GA_HUB_RUNTIME",       # window global injected by main.rs
+    "GAHUB_FEISHU_CHAT",    # chat id marker in feishu messages (feishu_service)
 }
 
 
@@ -30,6 +32,13 @@ def _registered_names() -> set[str]:
         constants.ENV_SIDECAR_PYTHON,
         constants.ENV_SIDECAR,
         constants.ENV_BRIDGE_PORT,
+        constants.ENV_SESSION_RUN_CAPACITY,
+        constants.ENV_GAHUB_TEMP_DIR,
+        constants.ENV_GAHUB_JOURNAL_PATH,
+        constants.ENV_GAHUB_ALLOWED_HOSTS,
+        constants.ENV_MYKEY_SYNC_URL,
+        constants.ENV_MYKEY_SYNC_PASSPHRASE,
+        constants.ENV_MYKEY_UPLOAD_TOKEN,
     }
 
 
@@ -43,7 +52,7 @@ def _scan_files() -> list[Path]:
 
 def test_every_ga_hub_name_is_registered() -> None:
     registered = _registered_names() | MARKERS
-    pattern = re.compile(r"GA_HUB_[A-Z_]+")
+    pattern = re.compile(r"(?:GA_HUB_|GAHUB_|GA_MYKEY_)[A-Z_]+")
     offenders: list[str] = []
     for path in _scan_files():
         for lineno, line in enumerate(

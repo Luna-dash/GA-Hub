@@ -99,9 +99,14 @@ async def put_chat_retry_config(req: ChatRetryConfigReq):
 
 @router.get("/api/agent/sessions")
 async def sessions():
-    """Recoverable model_responses snapshots (used by /continue)."""
-    from frontends.continue_cmd import list_sessions
-    out = await asyncio.to_thread(list_sessions)
+    """Recoverable model_responses snapshots (used by /continue).
+
+    Reads go through the shared archive catalogue (services.archive_messages)
+    so list, point lookup and search observe one enumeration + cache instead
+    of racing a second raw scan of GA's log directory.
+    """
+    from ..services.archive_messages import list_archive_sessions
+    out = await asyncio.to_thread(list_archive_sessions)
     return {
         "sessions": [
             {"path": p, "mtime": int(m), "preview": preview, "rounds": n}
@@ -126,9 +131,11 @@ async def restore_session(idx: int):
 
 
 def _restore_session_sync(service: AgentService, idx: int) -> tuple[str, str] | None:
-    from frontends.continue_cmd import list_sessions, restore
+    from frontends.continue_cmd import restore
 
-    sessions = list_sessions()
+    from ..services.archive_messages import list_archive_sessions
+
+    sessions = list_archive_sessions()
     if idx < 0 or idx >= len(sessions):
         return None
     return restore(service.agent, sessions[idx][0])

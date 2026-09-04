@@ -35,7 +35,8 @@ def _skill_dir() -> str: return str(_paths.memory_dir() / "skill_search")
 def _read(path: str) -> str:
     if not os.path.isfile(path):
         return ""
-    return open(path, encoding="utf-8").read()
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
 
 
 def _write(path: str, content: str) -> None:

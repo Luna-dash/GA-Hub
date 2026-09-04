@@ -51,12 +51,11 @@ async def ws_events(ws: WebSocket):
     cursor_enabled = ws.query_params.get("cursor") == "1" or raw_after is not None
     if not cursor_enabled:
         try:
+            # Same frame shape as the cursor branch: event_id/epoch are
+            # additive, so legacy (cursor-less) consumers keep working while
+            # both branches stay on one wire contract.
             async for evt in bus.subscribe(prefix=prefix_filter, replay=replay_n):
-                await ws.send_json({
-                    "topic": evt.topic,
-                    "payload": evt.payload,
-                    "ts": evt.ts,
-                })
+                await ws.send_json(_event_frame(evt))
         except WebSocketDisconnect:
             return
         except Exception as e:
