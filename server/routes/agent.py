@@ -232,8 +232,9 @@ def _test_llm_sync(service: AgentService, client):
             pass
 
 
-# ── chat WebSocket ───────────────────────────────────────────────
-# (removed) /ws/chat was the legacy global-agent chat socket: no frontend page
-# connected to it (the webui submits through POST /api/sessions/{id}/runs and
-# receives on /ws/sessions/{id}). Background producers moved onto system
-# sessions through SessionCoordinator, so the global chat socket is dead.
+# ── chat WebSocket tombstone ─────────────────────────────────────
+# /ws/chat (the legacy global-agent chat socket) was removed: no frontend page
+# ever connected to it (the webui submits through POST /api/sessions/{id}/runs
+# and receives on /ws/sessions/{id}). Background producers moved onto system
+# sessions through SessionCoordinator. Every route above in this file is live
+# on the current UI — do not prune them because of this note.

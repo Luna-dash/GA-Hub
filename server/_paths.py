@@ -13,11 +13,18 @@ runs in **setup mode** — only ``/api/setup/*`` endpoints respond. The
 desktop launcher (or the Settings page in the SPA) prompts the user to
 pick a directory, then calls ``set_ga_root()`` and restarts the backend.
 
-ADMIN_DATA = ``~/.genericagent-admin/`` holds:
+ADMIN_DATA = ``~/.genericagent-admin/`` holds (mirrors the README storage
+table — keep the two lists in sync):
 
     config.json                 → discovered ga_root, port, etc.
+    conversations_v2/           → conversation archive (index + per-session JSON)
     autonomous_schedules.json   → admin-managed self-evolution schedules
-    autonomous_runs.jsonl       → trigger history
+    autonomous_runs.jsonl       → self-evolution trigger history
+    tasks_schedules.json        → task-scheduler schedules
+    tasks_runs.jsonl            → task-scheduler trigger history
+    gahub_journal/journal.jsonl → conductor engine durable journal
+    email_config.json           → email notification settings
+    mykey-backups/              → mykey.py backup rotation
     uploads/                    → files pasted/dragged in the React UI
 
 Crucially, NOTHING is written into the GenericAgent repo from admin code,

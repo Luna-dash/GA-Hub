@@ -73,8 +73,14 @@ cd GA-Hub
 | 路径 | 内容 | 是否在 GA 目录里 |
 |---|---|---|
 | `~/.genericagent-admin/config.json` | 已配置的 GA 路径 | ❌ |
+| `~/.genericagent-admin/conversations_v2/` | 会话归档（index.json + 各会话 JSON） | ❌ |
 | `~/.genericagent-admin/autonomous_schedules.json` | 自主进化定时计划 | ❌ |
-| `~/.genericagent-admin/autonomous_runs.jsonl` | 触发历史 | ❌ |
+| `~/.genericagent-admin/autonomous_runs.jsonl` | 自主进化触发历史 | ❌ |
+| `~/.genericagent-admin/tasks_schedules.json` | 定时任务计划 | ❌ |
+| `~/.genericagent-admin/tasks_runs.jsonl` | 定时任务触发历史 | ❌ |
+| `~/.genericagent-admin/gahub_journal/journal.jsonl` | Conductor 引擎持久化日志 | ❌ |
+| `~/.genericagent-admin/email_config.json` | 邮件通知配置 | ❌ |
+| `~/.genericagent-admin/mykey-backups/` | mykey.py 编辑前的备份轮转 | ❌ |
 | `~/.genericagent-admin/uploads/` | 前端粘贴/拖放的文件 | ❌ |
 | `~/.wxbot/token.json` | 微信登录 token（与官方 wechatapp.py 共享） | ❌ |
 | `<GA>/temp/wechat_media/` | 接收的微信媒体（GA 自己用） | ✅ |
