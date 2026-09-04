@@ -22,7 +22,7 @@ import { foldTurns } from '@/utils/foldTurns'
 import { useCopy } from '@/utils/clipboard'
 import { CHAT_FONT_SCALE_EVENT, getChatFontScale } from '@/utils/chatAppearance'
 import { FILE_HINT } from '@/utils/sessionPrompt'
-import { MarkdownView } from './MarkdownView'
+import { MessageContent } from './MessageContent'
 import { bubbleTone } from './bubbleTone'
 import type { PasteAttachment } from './ImagePasteInput'
 import { api } from '@/api/client'
@@ -152,13 +152,13 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
             {cleaned && (
               <div
                 className={clsx(
-                  "rounded-lg whitespace-pre-wrap break-words shadow-[0_2px_6px_rgba(45,34,22,0.16)]",
+                  "rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.16)]",
                   tone.surfaceClass,
                   compact ? "px-3 py-2 leading-6" : "px-3.5 py-2.5 leading-7"
                 )}
                 style={messageFontStyle}
               >
-                {cleaned}
+                <MessageContent content={cleaned} format="text" />
               </div>
             )}
           </div>
@@ -224,7 +224,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
               ) : (
                 <div key={i} className={clsx(streaming && i === segs.length - 1 && 'cursor-blink')}>
                   {/* Final segment: auto-detect tool-only tails vs real prose. */}
-                  <MarkdownView mode="auto" cache={!streaming}>{seg.content}</MarkdownView>
+                  <MessageContent content={seg.content} format="markdown" cache={!streaming} />
                 </div>
               ),
             )}
@@ -284,7 +284,7 @@ function HistoryTranscriptReply({
         </p>
       )}
       {visibleFinal ? (
-        <MarkdownView mode="auto" cache>{visibleFinal}</MarkdownView>
+        <MessageContent content={visibleFinal} format="markdown" />
       ) : manualStop || transcript.stopped ? null : (
         <p className="text-sm leading-6 text-ink-muted">该条历史回复未包含可提取的最终回答。</p>
       )}
@@ -346,7 +346,7 @@ function LazyTranscriptTurn({ turn }: { turn: AssistantTranscriptTurn }) {
       </summary>
       {open && (
         <div className="pb-3 pl-5">
-          <MarkdownView mode="plain" cache>{turn.content}</MarkdownView>
+          <MessageContent content={turn.content} format="markdown" markdownMode="plain" />
         </div>
       )}
     </details>
@@ -358,7 +358,7 @@ function LazyMarkdownFold({ title, content, cache }: { title: string; content: s
   return (
     <details className="turn-fold" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>{title}</summary>
-      {open && <div><MarkdownView mode="plain" cache={cache}>{content}</MarkdownView></div>}
+      {open && <div><MessageContent content={content} format="markdown" markdownMode="plain" cache={cache} /></div>}
     </details>
   )
 }

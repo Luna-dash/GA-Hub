@@ -9,7 +9,7 @@ import type {
   ConductorWorkflow,
 } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
-import { MarkdownView } from '@/components/MarkdownView'
+import { MessageContent } from '@/components/MessageContent'
 import { bubbleTone } from '@/components/bubbleTone'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
@@ -710,8 +710,8 @@ export default function Conductor() {
             {visibleChat.map((msg) => (
               msg.role === 'user' ? (
                 <div key={msg.id} className="flex justify-end px-4 py-2">
-                  <div className={clsx('max-w-[85%] whitespace-pre-wrap break-words rounded-lg px-3.5 py-2 text-sm leading-7 [overflow-wrap:anywhere]', bubbleTone('user').surfaceClass)}>
-                    {msg.msg}
+                  <div className={clsx('max-w-[85%] rounded-lg px-3.5 py-2 text-sm leading-7 [overflow-wrap:anywhere]', bubbleTone('user').surfaceClass)}>
+                    <MessageContent content={msg.msg} format="text" />
                   </div>
                 </div>
               ) : (
@@ -720,9 +720,7 @@ export default function Conductor() {
                     指挥
                   </span>
                   <div className="min-w-0 flex-1 text-sm leading-6 text-ink">
-                    <MarkdownView mode="plain" cache>
-                      {msg.msg}
-                    </MarkdownView>
+                    <MessageContent content={msg.msg} format="markdown" markdownMode="plain" />
                   </div>
                 </div>
               )

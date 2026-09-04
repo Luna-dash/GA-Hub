@@ -5,6 +5,7 @@ import { api } from '@/api/client'
 import { PageShell } from '@/components/PageShell'
 import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
 import { bubbleTone } from '@/components/bubbleTone'
+import { MessageContent } from '@/components/MessageContent'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useDraftStore } from '@/stores/draftStore'
@@ -296,7 +297,7 @@ export default function GoalHive() {
                     {msg.role === 'user' ? 'YOU' : mode === 'hive' ? 'HIVE MASTER' : 'GOAL AGENT'}
                     {msg.streaming && <span className="text-accent normal-case tracking-normal">streaming</span>}
                   </div>
-                  <pre className="whitespace-pre-wrap break-words text-sm leading-6 text-ink font-sans">{msg.content}</pre>
+                  <MessageContent content={msg.content} format="pre" className="text-sm leading-6 text-ink font-sans" />
                 </article>
               ))
             )}

@@ -5,7 +5,7 @@ import { api } from '@/api/client'
 import { readPageState, usePageState, writePageState } from '@/utils/pageState'
 import type { ConversationSummary } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
-import { MarkdownView } from '@/components/MarkdownView'
+import { MessageContent } from '@/components/MessageContent'
 import { bubbleTone } from '@/components/bubbleTone'
 import { ConversationIndexRail } from '@/components/ConversationIndexRail'
 import { VirtualMessageList } from '@/components/VirtualMessageList'
@@ -410,7 +410,7 @@ function RoundView({
                 {r.user && (
                   <div className="flex justify-end">
                     <div className={`w-[70%] rounded-[18px] px-4 py-3 shadow-sm ${bubbleTone('user').surfaceClass}`}>
-                      <div className="whitespace-pre-wrap text-sm leading-6">{r.user.content || ''}</div>
+                      <MessageContent content={r.user.content || ''} format="text" className="text-sm leading-6" />
                     </div>
                   </div>
                 )}
@@ -444,7 +444,7 @@ function RoundView({
                     {detailText && (
                       <div className={isProcessOpen && hasTurnSummaries ? 'border-t border-line/70 pt-3' : ''}>
                         <div className="mb-2 text-[11px] uppercase tracking-wider text-slate-500">assistant conclusion</div>
-                        <MarkdownView mode="auto">{detailText}</MarkdownView>
+                        <MessageContent content={detailText} format="markdown" />
                       </div>
                     )}
                   </div>
@@ -501,7 +501,13 @@ function MessageBlock({ m, label, tone }: { m: Msg; label: string; tone: 'user' 
   return (
     <div className={`rounded-xl border ${bubbleTone(tone, 'card').surfaceClass} p-3`}>
       <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">{label}</div>
-      <MarkdownView mode="auto">{m.content || ''}</MarkdownView>
+      {/* User prompts are literal input everywhere (live chat, round view);
+          the flat view previously markdown-rendered them — converge on text. */}
+      <MessageContent
+        content={m.content || ''}
+        format={tone === 'user' ? 'text' : 'markdown'}
+        className="text-sm leading-6"
+      />
     </div>
   )
 }
