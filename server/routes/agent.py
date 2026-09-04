@@ -15,6 +15,7 @@ from ..schemas import (
     RewindReq,
     RewindResp,
 )
+from ..event_topics import CHAT_RESET
 from ..services.agent_service import AgentService
 from ..services.chat_retry import load_chat_retry_config, save_chat_retry_config
 from ..services.event_bus import bus
@@ -125,7 +126,7 @@ async def restore_session(idx: int):
     # conversation, so any in-flight UI bubbles would be misleading.
     with s._lock:
         s._snapshots.clear()
-    bus.publish("chat:reset", {"reason": "session_restored"})
+    bus.publish(CHAT_RESET, {"reason": "session_restored"})
     return {"ok": True, "message": msg, "full": full}
 
 

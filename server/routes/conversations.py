@@ -26,6 +26,7 @@ from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from .. import _paths
+from ..event_topics import CHAT_RESET
 from ..services.archive_messages import (
     archive_contains,
     first_user_preview,
@@ -351,7 +352,7 @@ async def restore_conversation(cid: str):
     messages = await asyncio.to_thread(_restore_archive, svc.agent, path)
     with svc._lock:
         svc._snapshots.clear()
-    bus.publish("chat:reset", {"reason": "restore_conversation"})
+    bus.publish(CHAT_RESET, {"reason": "restore_conversation"})
 
     return {
         "ok": True,

@@ -39,6 +39,17 @@ from .system_channels import SystemChannel
 from .event_bus import bus  # noqa: E402
 from .file_tail import read_tail_lines  # noqa: E402
 from .wx_bot_client import WxBotClient, download_media  # noqa: E402
+from ..event_topics import (
+    WECHAT_ALLOWLIST,
+    WECHAT_BLOCKED,
+    WECHAT_ERROR,
+    WECHAT_LOGOUT,
+    WECHAT_LOG_CLEARED,
+    WECHAT_MESSAGE_IN,
+    WECHAT_MESSAGE_OUT,
+    WECHAT_POLLING,
+    WECHAT_QR_STATUS,
+)
 
 log = logging.getLogger(__name__)
 
@@ -289,7 +300,7 @@ class WeChatService:
                     WX_LOG_FILE.unlink()
             except Exception as e:
                 log.warning("wechat clear failed: %s", e)
-        bus.publish("wechat:log_cleared", {})
+        bus.publish(WECHAT_LOG_CLEARED, {})
 
     @classmethod
     def instance(cls, channel: SystemChannel | None = None) -> "WeChatService":
@@ -314,7 +325,7 @@ class WeChatService:
 
     def set_allowlist(self, allowed: list[str]) -> None:
         self.allowlist = to_allowed_set(allowed)
-        bus.publish("wechat:allowlist", {"allowlist": sorted(self.allowlist)})
+        bus.publish(WECHAT_ALLOWLIST, {"allowlist": sorted(self.allowlist)})
 
     def is_allowed(self, uid: str) -> bool:
         if public_access(self.allowlist):
@@ -337,25 +348,25 @@ class WeChatService:
         def _on_status(s: dict):
             with self._qr_lock:
                 self._qr_state = {**s}
-            bus.publish("wechat:qr_status", s)
+            bus.publish(WECHAT_QR_STATUS, s)
 
         try:
             self.bot.login_qr(on_status=_on_status)
             with self._qr_lock:
                 self._qr_state = {"status": "confirmed", "bot_id": self.bot.bot_id}
-            bus.publish("wechat:qr_status", {"status": "confirmed", "bot_id": self.bot.bot_id})
+            bus.publish(WECHAT_QR_STATUS, {"status": "confirmed", "bot_id": self.bot.bot_id})
             self.start_polling()
         except Exception as e:
             with self._qr_lock:
                 self._qr_state = {"status": "error", "error": str(e)}
-            bus.publish("wechat:qr_status", {"status": "error", "error": str(e)})
+            bus.publish(WECHAT_QR_STATUS, {"status": "error", "error": str(e)})
 
     def logout(self) -> None:
         self.stop_polling()
         self.bot.clear_token()
         with self._qr_lock:
             self._qr_state = {"status": "idle"}
-        bus.publish("wechat:logout", {})
+        bus.publish(WECHAT_LOGOUT, {})
 
     # ── polling ──────────────────────────────────────────────────
     def start_polling(self) -> bool:
@@ -366,19 +377,19 @@ class WeChatService:
         self._stop_flag = False
         self._poll_thread = threading.Thread(target=self._poll_run, daemon=True, name="wx-poll")
         self._poll_thread.start()
-        bus.publish("wechat:polling", {"running": True, "bot_id": self.bot.bot_id})
+        bus.publish(WECHAT_POLLING, {"running": True, "bot_id": self.bot.bot_id})
         return True
 
     def stop_polling(self) -> None:
         self._stop_flag = True
-        bus.publish("wechat:polling", {"running": False})
+        bus.publish(WECHAT_POLLING, {"running": False})
 
     def _poll_run(self) -> None:
         try:
             self.bot.run_loop(self._on_message, stop_flag=lambda: self._stop_flag)
         except Exception as e:
             log.exception("wx poll loop crashed: %s", e)
-            bus.publish("wechat:error", {"error": str(e)})
+            bus.publish(WECHAT_ERROR, {"error": str(e)})
 
     # ── inbound ──────────────────────────────────────────────────
     def _record_inbound(self, uid: str, text: str, media: list[str], ctx: str) -> None:
@@ -394,7 +405,7 @@ class WeChatService:
         )
         self.log.append(entry)
         self._persist_entry(entry)
-        bus.publish("wechat:message_in", entry.to_dict())
+        bus.publish(WECHAT_MESSAGE_IN, entry.to_dict())
 
     def _dispatch_command(self, uid: str, text: str, ctx: str) -> bool:
         """Handle WeChat slash commands. Return True when consumed."""
@@ -503,7 +514,7 @@ class WeChatService:
 
         if not self.is_allowed(uid):
             log.info("[wx] blocked uid=%s (not in allowlist)", uid[:20])
-            bus.publish("wechat:blocked", {"uid": uid, "preview": text[:80]})
+            bus.publish(WECHAT_BLOCKED, {"uid": uid, "preview": text[:80]})
             return
 
         self._record_inbound(uid, text, media, ctx)
@@ -528,7 +539,7 @@ class WeChatService:
         )
         self.log.append(entry)
         self._persist_entry(entry)
-        bus.publish("wechat:message_out", entry.to_dict())
+        bus.publish(WECHAT_MESSAGE_OUT, entry.to_dict())
 
     def _send_text(self, uid: str, text: str, ctx: str = "") -> dict:
         r = self.bot.send_text(uid, text, context_token=ctx)

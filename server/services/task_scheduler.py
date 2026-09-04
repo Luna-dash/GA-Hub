@@ -24,6 +24,13 @@ from .scheduler_domain_base import (  # noqa: F401 — MISFIRE_GRACE_SECONDS re-
     SchedulerDomainBase,
 )
 from .system_channels import SystemChannel
+from ..event_topics import (
+    TASK_DELETE,
+    TASK_DONE,
+    TASK_ERROR,
+    TASK_FIRED,
+    TASK_UPSERT,
+)
 
 log = logging.getLogger(__name__)
 
@@ -75,9 +82,9 @@ class TaskScheduler(SchedulerDomainBase):
     job_prefix = "task_"
     id_prefix = "task_"
     watch_prefix = "task"
-    topic_fired = "task:fired"
-    topic_upsert = "task:upsert"
-    topic_delete = "task:delete"
+    topic_fired = TASK_FIRED
+    topic_upsert = TASK_UPSERT
+    topic_delete = TASK_DELETE
 
     # The scheduled-task system channel: admission goes through the same
     # SessionCoordinator gate as web sessions (merge of the two chat chains);
@@ -155,7 +162,7 @@ class TaskScheduler(SchedulerDomainBase):
 
         def commit_done() -> None:
             self._record_run(run)
-            bus.publish("task:done", run.to_dict())
+            bus.publish(TASK_DONE, run.to_dict())
 
         self._watchers.run_if_active(commit_done)
 
@@ -170,7 +177,7 @@ class TaskScheduler(SchedulerDomainBase):
 
         def commit_error() -> None:
             self._record_run(run)
-            bus.publish("task:error", run.to_dict())
+            bus.publish(TASK_ERROR, run.to_dict())
 
         self._watchers.run_if_active(commit_error)
 

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from frontends import workspace_cmd
 
 from .. import constants
+from ..event_topics import CHAT_ERROR, SESSION_RUNTIME
 from ..origin_policy import is_allowed_ui_origin
 from ..schemas import BtwReq, BtwResp, RewindReq, RewindResp
 from ..services.archive_messages import HistoryUnavailableError, read_archive_messages
@@ -48,7 +49,7 @@ _system_channels: SystemChannels | None = None
 
 def _publish_runtime_state(state: RuntimeState) -> None:
     bus.publish(
-        "session:runtime",
+        SESSION_RUNTIME,
         {
             "session_id": state.session_id,
             "status": state.status,
@@ -70,7 +71,7 @@ def _publish_runtime_state(state: RuntimeState) -> None:
         state.error or "runtime_error", state.status,
     )
     bus.publish(
-        "chat:error",
+        CHAT_ERROR,
         {
             "session_id": state.session_id,
             "run_id": state.run_id,

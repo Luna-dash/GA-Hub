@@ -86,6 +86,22 @@ _patch_ga_subprocess()
 # ``mock.patch.object(agent_service, "_ExternalGaWebTools", ...)``; that lookup
 # only works if the name is bound on this module.
 from .ga_external_worker import _ExternalGaWebTools, _WEB_TOOL_WORKER_SCRIPT  # noqa: E402,F401
+from ..event_topics import (
+    AGENT_ABORT,
+    AGENT_DONE,
+    AGENT_SUBMIT,
+    AGENT_TITLE,
+    AGENT_TURN,
+    CHAT_ABORTED,
+    CHAT_DONE,
+    CHAT_HEARTBEAT,
+    CHAT_NEXT,
+    CHAT_RESET,
+    CHAT_RETRY,
+    CHAT_RETRY_EXHAUSTED,
+    CHAT_RETRY_SCHEDULED,
+    CHAT_STARTED,
+)
 
 
 def _patch_ga_web_tools() -> None:
@@ -370,7 +386,7 @@ class AgentService:
         if len(title) > 120:
             title = title[:120]
         self._current_title = title
-        bus.publish("agent:title", {"title": title})
+        bus.publish(AGENT_TITLE, {"title": title})
         return title
 
     def list_llms(self) -> list[dict]:
@@ -512,11 +528,11 @@ class AgentService:
 
     def abort(self) -> None:
         self.agent.abort()
-        bus.publish("agent:abort", {"ts": time.time()})
+        bus.publish(AGENT_ABORT, {"ts": time.time()})
         # Immediately publish chat:aborted to unblock the UI.
         # The agent's run loop may still emit a final {'done': ...} if it
         # manages to break out, but when LLM is stuck we can't wait for that.
-        bus.publish("chat:aborted", {"ts": time.time()})
+        bus.publish(CHAT_ABORTED, {"ts": time.time()})
 
     # ── tasks ────────────────────────────────────────────────────
     def btw(self, question: str) -> str:
@@ -628,7 +644,7 @@ class AgentService:
                 "retry_of": retry_of,
                 "retry_reason": retry_reason,
             })
-        bus.publish("agent:submit", submit_payload)
+        bus.publish(AGENT_SUBMIT, submit_payload)
         started_payload = {
             "stream_id": sid,
             "source": source,
@@ -645,7 +661,7 @@ class AgentService:
                 "retry_of": retry_of,
                 "retry_reason": retry_reason,
             })
-        bus.publish("chat:started", started_payload)
+        bus.publish(CHAT_STARTED, started_payload)
         fanout_thread = threading.Thread(
             target=self._fanout, args=(src_q, out_q, h, snap),
             daemon=True, name=f"agent-fanout-{sid}",
@@ -689,11 +705,11 @@ class AgentService:
                         h.final_text = error_content
                         self._mirror_stream_item(out_q, {"done": error_content, "source": snap.source})
                         terminal_committed = True
-                        bus.publish("chat:done", _chat_done_payload(h, snap, error_content))
+                        bus.publish(CHAT_DONE, _chat_done_payload(h, snap, error_content))
                         return
                     if time.monotonic() >= heartbeat_deadline:
                         # Liveness ping so subscribers know we're still here.
-                        bus.publish("chat:heartbeat", {"stream_id": h.stream_id})
+                        bus.publish(CHAT_HEARTBEAT, {"stream_id": h.stream_id})
                         heartbeat_deadline = time.monotonic() + 300
                     continue
                 if fanout_stop is not None and fanout_stop.is_set() and "done" not in item:
@@ -707,7 +723,7 @@ class AgentService:
                     h.last_chunk = content
                     with self._lock:
                         snap.content = content
-                    bus.publish("chat:next", {
+                    bus.publish(CHAT_NEXT, {
                         "stream_id": h.stream_id,
                         "source": snap.source,
                         "content": content,
@@ -737,8 +753,8 @@ class AgentService:
                     # outer error path emits the sole error terminal instead.
                     self._mirror_stream_item(out_q, {"done": content, "source": snap.source})
                     terminal_committed = True
-                    bus.publish("chat:done", _chat_done_payload(h, snap, content))
-                    bus.publish("agent:done", {"stream_id": h.stream_id, "len": len(content)})
+                    bus.publish(CHAT_DONE, _chat_done_payload(h, snap, content))
+                    bus.publish(AGENT_DONE, {"stream_id": h.stream_id, "len": len(content)})
                     try:
                         handled_recoverable_error = self._maybe_retry_recoverable_error(h, snap, content)
                         if not handled_recoverable_error:
@@ -768,7 +784,7 @@ class AgentService:
             h.finished = True
             h.final_text = error_content
             self._mirror_stream_item(out_q, {"done": error_content, "source": snap.source})
-            bus.publish("chat:done", _chat_done_payload(h, snap, error_content))
+            bus.publish(CHAT_DONE, _chat_done_payload(h, snap, error_content))
         finally:
             lock = getattr(self, "_lock", None)
             streams = getattr(self, "_streams", None)
@@ -817,7 +833,7 @@ class AgentService:
                 eff_max,
                 match.label,
             )
-            bus.publish("chat:retry_exhausted", {
+            bus.publish(CHAT_RETRY_EXHAUSTED, {
                 "stream_id": h.stream_id,
                 "source": snap.source,
                 "logical_id": h.logical_id,
@@ -836,7 +852,7 @@ class AgentService:
             # released its session slot; waiting on this fanout thread does
             # not hold any admission capacity. Back off before resubmitting
             # so transient upstream failures are spaced out exponentially.
-            bus.publish("chat:retry_scheduled", {
+            bus.publish(CHAT_RETRY_SCHEDULED, {
                 "stream_id": h.stream_id,
                 "source": snap.source,
                 "logical_id": h.logical_id,
@@ -877,7 +893,7 @@ class AgentService:
             eff_max,
             match.label,
         )
-        bus.publish("chat:retry", {
+        bus.publish(CHAT_RETRY, {
             "stream_id": h.stream_id,
             "source": snap.source,
             "logical_id": h.logical_id,
@@ -1001,7 +1017,7 @@ class AgentService:
                 h.final_text = item["done"]
                 h.finished = True
                 self.agent.last_reply_time = int(time.time())
-                bus.publish("agent:done", {"stream_id": h.stream_id, "len": len(item["done"])})
+                bus.publish(AGENT_DONE, {"stream_id": h.stream_id, "len": len(item["done"])})
                 yield {"type": "done", "stream_id": h.stream_id, "content": item["done"], "source": item.get("source")}
                 return
 
@@ -1017,7 +1033,7 @@ class AgentService:
         with self._lock:
             self._snapshots.clear()
         self.set_title("")
-        bus.publish("chat:reset", {"reason": "new_conversation"})
+        bus.publish(CHAT_RESET, {"reason": "new_conversation"})
         return reset_conversation(self.agent)
 
     def get_history(self) -> list[str]:
@@ -1093,7 +1109,7 @@ class AgentService:
 
     # ── hooks ────────────────────────────────────────────────────
     def _on_turn_end(self, ctx: dict) -> None:
-        bus.publish("agent:turn", {
+        bus.publish(AGENT_TURN, {
             "turn": ctx.get("turn"),
             "summary": ctx.get("summary"),
             "exit_reason": ctx.get("exit_reason"),

@@ -17,6 +17,14 @@ import psutil
 from .. import _paths
 from ..process_utils import hidden_process_kwargs
 from .event_bus import bus
+from ..event_topics import (
+    FEISHU_CHAT,
+    FEISHU_CHECK,
+    FEISHU_KEYS_SAVED,
+    FEISHU_SEND,
+    FEISHU_STARTED,
+    FEISHU_STOPPED,
+)
 
 
 class FeishuService:
@@ -97,7 +105,7 @@ class FeishuService:
                     self._chat_event_seen.discard(old)
             payloads.append(payload)
         for payload in payloads:
-            bus.publish("feishu:chat", payload)
+            bus.publish(FEISHU_CHAT, payload)
         return len(payloads)
 
     @staticmethod
@@ -390,7 +398,7 @@ class FeishuService:
             self._last_check = None
             self._last_check_ts = 0.0
         evt = {"ok": True, "app_id_masked": self._mask(app_id), "allowed_users_saved": bool(allowed_users)}
-        bus.publish("feishu:keys_saved", evt)
+        bus.publish(FEISHU_KEYS_SAVED, evt)
         return evt
 
     @staticmethod
@@ -463,7 +471,7 @@ class FeishuService:
                 self._last_check_ts = checked_at
             self._check_inflight.discard(key)
             self._check_condition.notify_all()
-        bus.publish("feishu:check", parsed)
+        bus.publish(FEISHU_CHECK, parsed)
         return parsed
 
     def tail(self, n: int = 300) -> list[str]:
@@ -502,7 +510,7 @@ class FeishuService:
         evt = {"started": True, "running": True, "pid": pid, "log_file": str(self.log_file())}
         self._publish_chat_events_from_log()
         self.start_log_watcher()
-        bus.publish("feishu:started", evt)
+        bus.publish(FEISHU_STARTED, evt)
         return evt
 
     def stop(self, timeout: float = 8.0) -> dict[str, Any]:
@@ -527,7 +535,7 @@ class FeishuService:
         with self._lock:
             self._proc = None
         evt = {"stopped": True, "running": False, "pid": pid}
-        bus.publish("feishu:stopped", evt)
+        bus.publish(FEISHU_STOPPED, evt)
         return evt
 
     def send_text(self, receive_id: str, text: str, receive_id_type: str = "open_id", use_card: bool = False) -> dict[str, Any]:
@@ -567,5 +575,5 @@ class FeishuService:
                 out.update(json.loads(raw[start:end + 1]))
             except Exception:
                 pass
-        bus.publish("feishu:send", out)
+        bus.publish(FEISHU_SEND, out)
         return out

@@ -37,6 +37,14 @@ from .conductor_vocabulary import (
 )
 from .conductor_workflow import WorkflowTracker
 from .event_bus import bus
+from ..event_topics import (
+    CONDUCTOR_CHAT,
+    CONDUCTOR_CHAT_READ,
+    CONDUCTOR_LOG,
+    CONDUCTOR_REQUEST_OUTCOME,
+    CONDUCTOR_REQUEST_YIELD_REQUESTED,
+    CONDUCTOR_SUBAGENTS,
+)
 
 log = logging.getLogger(__name__)
 
@@ -125,7 +133,7 @@ def add_chat(
 
 def push_subagent_cards(snapshot: list):
     """Publish subagent pool snapshot to event bus."""
-    bus.publish("conductor:subagents", {"items": snapshot})
+    bus.publish(CONDUCTOR_SUBAGENTS, {"items": snapshot})
 
 
 def _event_name(event: Any) -> str:
@@ -324,7 +332,7 @@ class HubConductorCallbacks:
         )
         if latest is not None:
             payload["item"] = latest
-        bus.publish("conductor:request_outcome", payload)
+        bus.publish(CONDUCTOR_REQUEST_OUTCOME, payload)
 
     def on_conductor_request_finished(self, request_id: str) -> None:
         try:
@@ -497,7 +505,7 @@ class HubConductorCallbacks:
                 and (frame.get("turn") is None or isinstance(frame.get("turn"), int))
             ):
                 return
-            bus.publish("conductor:log", {"item": dict(frame)})
+            bus.publish(CONDUCTOR_LOG, {"item": dict(frame)})
         except Exception:
             # Logging is an observer path and must not fail a conductor request.
             log.exception("Failed to publish conductor log frame")
@@ -524,7 +532,7 @@ class HubConductorCallbacks:
                         self.service.chat_messages,
                         kind="error",
                     )
-                    bus.publish("conductor:chat", {"item": latest})
+                    bus.publish(CONDUCTOR_CHAT, {"item": latest})
                 payload = {**payload, "item": latest}
             bus.publish(f"conductor:{event_type}", payload)
         except Exception:
@@ -804,7 +812,7 @@ class ConductorService:
                 request_id=request_id,
                 kind="error",
             )
-            bus.publish("conductor:chat", {"item": item})
+            bus.publish(CONDUCTOR_CHAT, {"item": item})
             return item
 
     @staticmethod
@@ -1322,11 +1330,11 @@ class ConductorService:
             elif kind == "chat":
                 self._on_remote_chat(event.get("item") or {})
             elif kind == "chat_read":
-                bus.publish("conductor:chat_read", {})
+                bus.publish(CONDUCTOR_CHAT_READ, {})
             elif kind == "log":
                 self.callbacks.on_conductor_log_frame(event.get("item") or {})
             elif kind == "request_yield_requested":
-                bus.publish("conductor:request_yield_requested", {
+                bus.publish(CONDUCTOR_REQUEST_YIELD_REQUESTED, {
                     "request_id": event.get("request_id"),
                     "reason": event.get("reason", ""),
                 })
@@ -1361,7 +1369,7 @@ class ConductorService:
             kind=("final" if final else None),
             item_id=item.get("id"),
         )
-        bus.publish("conductor:chat", {"item": hub_item})
+        bus.publish(CONDUCTOR_CHAT, {"item": hub_item})
         if role == "conductor" and final and item.get("request_id"):
             tracker = self.workflow_tracker
             try:
@@ -1800,14 +1808,14 @@ class ConductorService:
                 if transition is not None:
                     self._publish_workflow_transition(transition)
                 raise
-            bus.publish("conductor:chat", {"item": item})
+            bus.publish(CONDUCTOR_CHAT, {"item": item})
         elif role == "conductor" and kind == "final" and admitted_request_id:
-            bus.publish("conductor:chat", {"item": item})
+            bus.publish(CONDUCTOR_CHAT, {"item": item})
             transition = tracker.record_final(admitted_request_id, item)
             if transition is not None:
                 self._publish_workflow_transition(transition)
         else:
-            bus.publish("conductor:chat", {"item": item})
+            bus.publish(CONDUCTOR_CHAT, {"item": item})
         return item
 
     def get_readmes(self) -> dict:

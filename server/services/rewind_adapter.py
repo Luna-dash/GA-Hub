@@ -14,6 +14,7 @@ from typing import Any
 from .. import _paths
 from .chat_stream_projection import ChatStreamProjection
 from .event_bus import bus
+from ..event_topics import CHAT_REWOUND
 
 
 log = logging.getLogger(__name__)
@@ -249,7 +250,7 @@ class RewindAdapter:
     ) -> dict:
         """Publish the shared success event and log line after either commit."""
         out = {"removed_sids": removed_sids, **result}
-        self._bus.publish("chat:rewound", {
+        self._bus.publish(CHAT_REWOUND, {
             "removed_sids": removed_sids,
             "kept": out["kept"],
             "history_lines": out["history_lines"],

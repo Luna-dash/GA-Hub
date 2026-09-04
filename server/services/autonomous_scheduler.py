@@ -36,6 +36,12 @@ from .scheduler_domain_base import (  # noqa: F401 — MISFIRE_GRACE_SECONDS re-
     SchedulerDomainBase,
 )
 from .system_channels import SystemChannel
+from ..event_topics import (
+    AUTONOMOUS_DELETE,
+    AUTONOMOUS_FIRED,
+    AUTONOMOUS_REPORT_SAVED,
+    AUTONOMOUS_UPSERT,
+)
 
 log = logging.getLogger(__name__)
 
@@ -86,9 +92,9 @@ class AutonomousScheduler(SchedulerDomainBase):
     job_prefix = "auto_"
     id_prefix = "sched_"
     watch_prefix = "auto"
-    topic_fired = "autonomous:fired"
-    topic_upsert = "autonomous:upsert"
-    topic_delete = "autonomous:delete"
+    topic_fired = AUTONOMOUS_FIRED
+    topic_upsert = AUTONOMOUS_UPSERT
+    topic_delete = AUTONOMOUS_DELETE
 
     def __init__(
         self,
@@ -204,7 +210,7 @@ class AutonomousScheduler(SchedulerDomainBase):
 
         def commit() -> None:
             self._record_run(run)
-            bus.publish("autonomous:report_saved", run.to_dict())
+            bus.publish(AUTONOMOUS_REPORT_SAVED, run.to_dict())
 
         self._watchers.run_if_active(commit)
 
