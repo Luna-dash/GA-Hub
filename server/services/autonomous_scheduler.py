@@ -13,10 +13,12 @@ Reports themselves stay in GA's ``temp/autonomous_reports/`` (per the SOP conven
 When fired, the schedule's ``prompt`` is submitted to the agent with
 ``source="autonomous"``. The default prompt mirrors
 ``reflect/autonomous.py`` so the agent invokes the autonomous SOP.
+
+The shared singleton/lifecycle/persistence/CRUD skeleton lives in
+``scheduler_domain_base.SchedulerDomainBase``.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import threading
@@ -26,49 +28,21 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 
 from .. import _paths
-from .session_coordinator import AgentBusyError
-from .system_channels import SystemChannel
 from .event_bus import bus
-from .file_tail import read_jsonl_tail
-from .watcher_registry import WatcherRegistry
-
-# A desktop box may sleep through a cron/interval tick (APScheduler's default
-# misfire_grace_time is ~1s, so the missed run is silently discarded); a 6h
-# grace lets the same-day run still fire, and coalesce collapses any backlog
-# to a single run. Mirrors task_scheduler.
-MISFIRE_GRACE_SECONDS = 6 * 3600
+from .scheduler_domain_base import (  # noqa: F401 — MISFIRE_GRACE_SECONDS re-exported for test seams
+    MISFIRE_GRACE_SECONDS,
+    SchedulerDomainBase,
+)
+from .system_channels import SystemChannel
 
 log = logging.getLogger(__name__)
-
-
-def _local_tz():
-    """Resolve the local timezone in a way APScheduler accepts."""
-    try:
-        from datetime import datetime, timezone
-        return datetime.now(timezone.utc).astimezone().tzinfo
-    except Exception:
-        return None
 
 
 DEFAULT_PROMPT = (
     "[AUTO]🤖 用户已经离开超过约定时间，作为自主智能体，请阅读自动化sop，执行自动任务。"
 )
-
-
-def _sched_file() -> str:
-    return str(_paths.schedules_file())
-
-
-def _runs_file() -> str:
-    return str(_paths.runs_file())
-
-
-def _reports_dir() -> str:
-    return str(_paths.reports_dir())
 
 
 @dataclass
@@ -103,8 +77,18 @@ class Run:
         return asdict(self)
 
 
-class AutonomousScheduler:
+class AutonomousScheduler(SchedulerDomainBase):
     _instance: "AutonomousScheduler | None" = None
+
+    schedule_cls = Schedule
+    display_name = "autonomous scheduler"
+    source = "autonomous"
+    job_prefix = "auto_"
+    id_prefix = "sched_"
+    watch_prefix = "auto"
+    topic_fired = "autonomous:fired"
+    topic_upsert = "autonomous:upsert"
+    topic_delete = "autonomous:delete"
 
     def __init__(
         self,
@@ -116,56 +100,21 @@ class AutonomousScheduler:
         # SessionCoordinator gate as web sessions (merge of the two chat
         # chains); ``channel`` duck-types the AgentService surface used here
         # (submit + agent introspection for idle checks).
-        self.channel = channel
-        self.schedules: dict[str, Schedule] = {}
-        self._tz = _local_tz()
-        self._owns_sched = scheduler_runtime is None
-        self._sched = (
-            scheduler_runtime
-            if scheduler_runtime is not None
-            else BackgroundScheduler(timezone=self._tz) if self._tz else BackgroundScheduler()
-        )
+        super().__init__(channel, scheduler_runtime=scheduler_runtime)
         self._idle_thread: threading.Thread | None = None
-        self._stop_event = threading.Event()
-        self._watchers = WatcherRegistry(self._stop_event)
-        self._admission_lock = threading.Lock()
-        self._lock = threading.Lock()
-        self._run_write_lock = threading.Lock()
-        self._load()
 
-    @classmethod
-    def instance(
-        cls,
-        channel: SystemChannel | None = None,
-        *,
-        scheduler_runtime: Any | None = None,
-    ) -> "AutonomousScheduler":
-        if cls._instance is not None and cls._instance._stop_event.is_set():
-            if not cls._instance.shutdown(timeout=0):
-                raise RuntimeError("previous autonomous scheduler is still shutting down")
-        if cls._instance is None:
-            assert channel is not None
-            cls._instance = cls(channel, scheduler_runtime=scheduler_runtime)
-        return cls._instance
+    # ── persistence paths ────────────────────────────────────────
+    def _sched_file(self) -> str:
+        return str(_paths.schedules_file())
 
-    # ── persistence ──────────────────────────────────────────────
-    def _load(self) -> None:
-        path = _sched_file()
-        if not os.path.isfile(path):
-            self._seed_defaults()
-            return
-        try:
-            with open(path, encoding="utf-8") as fh:
-                data = json.loads(fh.read())
-            for s in data.get("schedules", []):
-                # tolerate unknown keys
-                allowed = {f.name for f in Schedule.__dataclass_fields__.values()}
-                clean = {k: v for k, v in s.items() if k in allowed}
-                sch = Schedule(**clean)
-                self.schedules[sch.id] = sch
-        except Exception as e:
-            log.exception("failed to load schedules: %s", e)
-            self._seed_defaults()
+    def _runs_file(self) -> str:
+        return str(_paths.runs_file())
+
+    def _reports_dir(self) -> str:
+        return str(_paths.reports_dir())
+
+    def _new_runtime(self) -> BackgroundScheduler:
+        return BackgroundScheduler(timezone=self._tz) if self._tz else BackgroundScheduler()
 
     def _seed_defaults(self) -> None:
         sch = Schedule(
@@ -178,118 +127,16 @@ class AutonomousScheduler:
         self.schedules[sch.id] = sch
         self._persist()
 
-    def _persist(self) -> None:
-        path = _sched_file()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"schedules": [s.to_dict() for s in self.schedules.values()]},
-                      f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+    # ── autonomous idle ticker ───────────────────────────────────
+    def _check_restart_allowed(self) -> None:
+        if self._idle_thread is not None and self._idle_thread.is_alive():
+            raise RuntimeError("cannot restart while autonomous idle thread is stopping")
 
-    def _record_run(self, run: Run) -> None:
-        path = _runs_file()
-        with self._run_write_lock:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(run.to_dict(), ensure_ascii=False) + "\n")
-
-    # ── lifecycle ────────────────────────────────────────────────
-    def start(self) -> None:
-        if self._watchers.stopping:
-            if self._idle_thread is not None and self._idle_thread.is_alive():
-                raise RuntimeError("cannot restart while autonomous idle thread is stopping")
-            self._watchers.reset()
-        if not self._sched.running:
-            self._sched.start()
-        # rebuild jobs from schedules
-        for s in self.schedules.values():
-            self._install_job(s)
-        # idle ticker
+    def _start_idle(self) -> None:
         if not self._idle_thread or not self._idle_thread.is_alive():
             self._idle_thread = threading.Thread(target=self._idle_loop, daemon=True, name="auto-idle")
             self._idle_thread.start()
 
-    def shutdown(self, timeout: float = 5.0) -> bool:
-        deadline = time.monotonic() + max(0.0, timeout)
-        stop_event = getattr(self, "_stop_event", None)
-        if stop_event is not None:
-            stop_event.set()
-        admission_stopped = True
-        admission_lock = getattr(self, "_admission_lock", None)
-        if admission_lock is not None:
-            admission_stopped = admission_lock.acquire(
-                timeout=max(0.0, deadline - time.monotonic())
-            )
-            if admission_stopped:
-                admission_lock.release()
-        watchers = getattr(self, "_watchers", None)
-        if watchers is not None and admission_stopped:
-            watchers.request_stop()
-        if getattr(self, "_owns_sched", True):
-            try:
-                scheduler = getattr(self, "_sched", None)
-                if scheduler is not None:
-                    scheduler.shutdown(wait=False)
-            except Exception:
-                pass
-        thread = getattr(self, "_idle_thread", None)
-        if thread is not None:
-            thread.join(timeout=max(0.0, deadline - time.monotonic()))
-            if not thread.is_alive():
-                self._idle_thread = None
-        if watchers is None:
-            watchers_stopped = True
-        elif admission_stopped:
-            watchers_stopped = watchers.shutdown(
-                timeout=max(0.0, deadline - time.monotonic())
-            )
-        else:
-            # An in-flight fire still owns admission and must be allowed to
-            # register its watcher after this timed-out shutdown returns.
-            # stop_event already asks that watcher to exit promptly.
-            watchers_stopped = False
-        stopped = (
-            admission_stopped
-            and (thread is None or not thread.is_alive())
-            and watchers_stopped
-        )
-        if stopped and type(self)._instance is self:
-            type(self)._instance = None
-        return stopped
-
-    # ── job management ───────────────────────────────────────────
-    def _job_id(self, sch_id: str) -> str:
-        return f"auto_{sch_id}"
-
-    def _install_job(self, s: Schedule) -> None:
-        jid = self._job_id(s.id)
-        try:
-            self._sched.remove_job(jid)
-        except Exception:
-            pass
-        if not s.enabled:
-            return
-        if s.type == "cron":
-            try:
-                trig = CronTrigger.from_crontab(s.cron, timezone=self._tz) if self._tz else CronTrigger.from_crontab(s.cron)
-            except Exception as e:
-                log.warning("bad cron %r: %s", s.cron, e)
-                return
-            self._sched.add_job(
-                self._fire, trig, id=jid, args=[s.id], replace_existing=True,
-                misfire_grace_time=MISFIRE_GRACE_SECONDS, coalesce=True,
-            )
-        elif s.type == "interval":
-            self._sched.add_job(
-                self._fire,
-                IntervalTrigger(minutes=max(1, int(s.interval_minutes))),
-                id=jid, args=[s.id], replace_existing=True,
-                misfire_grace_time=MISFIRE_GRACE_SECONDS, coalesce=True,
-            )
-        # idle is handled by _idle_loop
-
-    # ── triggers ─────────────────────────────────────────────────
     def _idle_loop(self) -> None:
         while not self._stop_event.wait(30):
             now = int(time.time())
@@ -322,83 +169,54 @@ class AutonomousScheduler:
                     # every remaining schedule until restart.
                     log.exception("autonomous idle fire failed for %s", s.id)
 
-    def trigger_now(self, schedule_id: str) -> dict:
-        if schedule_id not in self.schedules:
-            raise KeyError(schedule_id)
-        return self._fire(schedule_id)
+    # ── fire hooks ───────────────────────────────────────────────
+    def _before_submit(self) -> set[str]:
+        # Reports are diffed after the run finishes; snapshot the directory
+        # before submitting so only newly produced files count.
+        return self._snapshot_reports()
 
-    def _fire(self, schedule_id: str) -> dict:
-        with self._admission_lock:
-            with self._lock:
-                if self._stop_event.is_set():
-                    return {"error": "shutting_down"}
-                s = self.schedules.get(schedule_id)
-                if s is None:
-                    return {"error": "not_found"}
-                now = int(time.time())
-                existing_reports = self._snapshot_reports()
-                if self._stop_event.is_set():
-                    return {"error": "shutting_down"}
-                try:
-                    handle = self.channel.submit(
-                        s.prompt or DEFAULT_PROMPT, source="autonomous")
-                except AgentBusyError as exc:
-                    # Admission refused: leave last_fired_at/fire_count alone so
-                    # the next cron tick (or idle window) can retry instead of
-                    # the trigger being silently consumed (2026-09 review P0).
-                    log.warning("autonomous fire refused for %s: %s", s.id, exc)
-                    return {"error": exc.reason}
-                s.last_fired_at = now
-                s.fire_count += 1
-                self._persist()
-                run = Run(
-                    id=uuid.uuid4().hex,
-                    schedule_id=s.id,
-                    fired_at=now,
-                    prompt_preview=(s.prompt or DEFAULT_PROMPT)[:120],
-                )
+    def _fire_prompt(self, s: Schedule) -> str:
+        return s.prompt or DEFAULT_PROMPT
 
-            bus.publish("autonomous:fired", {
-                "schedule_id": s.id, "schedule_name": s.name, "run_id": run.id,
-                "stream_id": handle.stream_id, "fired_at": now,
-            })
+    def _build_run(self, s: Schedule, now: int, handle: Any, prompt: str) -> Run:
+        return Run(
+            id=uuid.uuid4().hex,
+            schedule_id=s.id,
+            fired_at=now,
+            prompt_preview=prompt[:120],
+        )
 
-            # Register before releasing admission so shutdown cannot miss it.
-            def _watch(stop_event: threading.Event) -> None:
-                try:
-                    while not handle.finished:
-                        if stop_event.wait(2):
-                            return
-                        if (time.time() - run.fired_at) > 60 * 60:
-                            run.note = "watch_timeout"
-                            break
-                    if stop_event.is_set():
-                        return
-                    produced = self._diff_reports(existing_reports)
-                    run.report_paths = produced
+    def _fired_payload(self, s: Schedule, run: Run, handle: Any, now: int) -> dict:
+        return {
+            "schedule_id": s.id, "schedule_name": s.name, "run_id": run.id,
+            "stream_id": handle.stream_id, "fired_at": now,
+        }
 
-                    def commit() -> None:
-                        self._record_run(run)
-                        bus.publish("autonomous:report_saved", run.to_dict())
+    def _watch_deadline_reached(self, run: Run) -> bool:
+        if (time.time() - run.fired_at) > 60 * 60:
+            run.note = "watch_timeout"
+            return True
+        return False
 
-                    self._watchers.run_if_active(commit)
-                except Exception as e:
-                    log.exception("autonomous watch crash: %s", e)
+    def _finalize_run(self, s: Schedule, run: Run, handle: Any, context: Any) -> None:
+        produced = self._diff_reports(context if context is not None else set())
+        run.report_paths = produced
 
-            if not self._watchers.start(_watch, name=f"auto-watch-{run.id[:8]}"):
-                return {"error": "shutting_down"}
-            return {"run_id": run.id, "stream_id": handle.stream_id}
+        def commit() -> None:
+            self._record_run(run)
+            bus.publish("autonomous:report_saved", run.to_dict())
 
-    @staticmethod
-    def _snapshot_reports() -> set[str]:
+        self._watchers.run_if_active(commit)
+
+    # ── reports diff ─────────────────────────────────────────────
+    def _snapshot_reports(self) -> set[str]:
         try:
-            return set(os.listdir(_reports_dir()))
+            return set(os.listdir(self._reports_dir()))
         except FileNotFoundError:
             return set()
 
-    @classmethod
-    def _diff_reports(cls, before: set[str]) -> list[str]:
-        rdir = _reports_dir()
+    def _diff_reports(self, before: set[str]) -> list[str]:
+        rdir = self._reports_dir()
         try:
             now = set(os.listdir(rdir))
         except FileNotFoundError:
@@ -406,43 +224,10 @@ class AutonomousScheduler:
         new = sorted(now - before)
         return [os.path.join(rdir, n) for n in new if n.endswith(".md")]
 
-    # ── CRUD ─────────────────────────────────────────────────────
-    def list(self) -> list[dict]:
-        return [s.to_dict() for s in sorted(self.schedules.values(), key=lambda s: s.id)]
-
-    def upsert(self, payload: dict) -> Schedule:
-        sid = payload.get("id") or f"sched_{uuid.uuid4().hex[:8]}"
-        with self._lock:
-            existing = self.schedules.get(sid)
-            base = existing.to_dict() if existing else {}
-            base.update({k: v for k, v in payload.items() if v is not None})
-            base["id"] = sid
-            allowed = {f.name for f in Schedule.__dataclass_fields__.values()}
-            clean = {k: v for k, v in base.items() if k in allowed}
-            sch = Schedule(**clean)
-            self.schedules[sid] = sch
-            self._persist()
-            self._install_job(sch)
-        bus.publish("autonomous:upsert", sch.to_dict())
-        return sch
-
-    def delete(self, sid: str) -> bool:
-        with self._lock:
-            if sid not in self.schedules:
-                return False
-            try:
-                self._sched.remove_job(self._job_id(sid))
-            except Exception:
-                pass
-            del self.schedules[sid]
-            self._persist()
-        bus.publish("autonomous:delete", {"id": sid})
-        return True
-
     # ── reports/runs browse ─────────────────────────────────────
     def list_reports(self) -> list[dict]:
         out: list[dict] = []
-        rdir = _reports_dir()
+        rdir = self._reports_dir()
         if not os.path.isdir(rdir):
             return out
         for name in sorted(os.listdir(rdir), reverse=True):
@@ -464,18 +249,8 @@ class AutonomousScheduler:
         # Prevent path traversal
         if "/" in name or ".." in name:
             raise ValueError("invalid name")
-        p = os.path.join(_reports_dir(), name)
+        p = os.path.join(self._reports_dir(), name)
         if not os.path.isfile(p):
             raise FileNotFoundError(name)
         with open(p, encoding="utf-8") as fh:
             return fh.read()
-
-    def list_runs(self, limit: int = 100) -> list[dict]:
-        path = _runs_file()
-        if not os.path.isfile(path):
-            return []
-        try:
-            return read_jsonl_tail(path, limit)
-        except Exception as e:
-            log.warning("failed to read runs: %s", e)
-            return []
