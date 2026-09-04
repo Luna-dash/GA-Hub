@@ -1,7 +1,5 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import cronstrue from 'cronstrue/i18n'
-import { CronExpressionParser } from 'cron-parser'
 import { api } from '@/api/client'
 import type { EmailConfig, TaskRun, TaskSchedule, TaskScheduleType } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
@@ -11,6 +9,8 @@ import { errorMessageFromError } from '@/utils/sessionUi'
 import { dialog } from '@/stores/dialogStore'
 import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
+import { CronExpressionParser } from 'cron-parser'
+import { CronCardLine, CronPreview } from '@/components/CronPreview'
 
 export default function Tasks() {
   const qc = useQueryClient()
@@ -408,56 +408,3 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-function CronPreview({ expr }: { expr: string }) {
-  const lang = navigator.language?.toLowerCase().startsWith('zh') ? 'zh_CN' : 'en'
-  const result = useMemo(() => {
-    const e = expr.trim()
-    if (!e) return { ok: true as const, desc: '', next: [] as Date[] }
-    try {
-      const parsed = CronExpressionParser.parse(e)
-      const desc = cronstrue.toString(e, { locale: lang })
-      const next: Date[] = []
-      for (let i = 0; i < 3; i++) next.push(parsed.next().toDate())
-      return { ok: true as const, desc, next }
-    } catch (err: any) {
-      return { ok: false as const, error: String(err?.message || err) }
-    }
-  }, [expr, lang])
-
-  if (!expr.trim()) return null
-
-  if (!result.ok) {
-    return (
-      <div className="mt-1.5 text-xs text-rose-400 bg-rose-900/20 border border-rose-700/40 rounded px-2 py-1">
-        ✗ {result.error}
-      </div>
-    )
-  }
-
-  return (
-    <div className="mt-1.5 text-xs text-slate-400 space-y-0.5">
-      <div className="text-emerald-400">✓ {result.desc}</div>
-      {result.next.length > 0 && (
-        <div className="text-slate-500">下次触发：{result.next.map(formatLocal).join(' · ')}</div>
-      )}
-    </div>
-  )
-}
-
-function formatLocal(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-function CronCardLine({ expr }: { expr: string }) {
-  const next = useMemo(() => {
-    try { return CronExpressionParser.parse(expr).next().toDate() }
-    catch { return null }
-  }, [expr])
-  return (
-    <div>
-      <span className="font-mono text-xs">{expr}</span>
-      {next && <span className="text-xs text-slate-500 ml-2">→ {formatLocal(next)}</span>}
-    </div>
-  )
-}

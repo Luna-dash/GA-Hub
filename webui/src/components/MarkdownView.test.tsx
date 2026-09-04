@@ -39,6 +39,9 @@ describe('MarkdownView responsive wrapping', () => {
     ;(navigator as unknown as { clipboard: unknown }).clipboard = {
       writeText: mocks.clipboardWrite,
     }
+    // writeClipboard() falls back to execCommand outside secure contexts;
+    // jsdom is not secure, so pin the secure path for the mock.
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
