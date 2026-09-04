@@ -43,7 +43,6 @@ export const queryKeys = {
   },
   skills: {
     list: (limit = 200) => ['skills', limit] as const,
-    search: (filter: string) => ['skills.search', filter] as const,
     detail: (name: string | null | undefined) => ['skill', name] as const,
   },
   mykey: {

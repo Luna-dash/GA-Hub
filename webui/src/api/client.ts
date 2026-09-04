@@ -70,7 +70,6 @@ import type {
   SkillDetailResponse,
   SkillItem,
   SkillListResponse,
-  SkillSearchResult,
   UploadResult,
 } from './types'
 import type { components as GeneratedApiComponents } from './generated/schema'
@@ -292,10 +291,9 @@ export const api = {
   sop: (name: string) => http<SOPDetailResponse>('GET', `/api/memory/sops/${encodeURIComponent(name)}`),
   setSop: (name: string, content: string) =>
     http<MemoryWriteResponse>('PUT', `/api/memory/sops/${encodeURIComponent(name)}`, { content }),
+
   skills: (limit = 200) => http<SkillListResponse>('GET', `/api/memory/skills?limit=${limit}`),
   skill: (path: string) => http<SkillDetailResponse>('GET', `/api/memory/skills/read?path=${encodeURIComponent(path)}`),
-  searchSkills: (q: string, limit = 60) =>
-    http<SkillSearchResult>('GET', `/api/memory/skills/search?q=${encodeURIComponent(q)}&limit=${limit}`),
 
   // ── autonomous ───────────────────────────────────────
   schedules: () => http<ScheduleListResponse>('GET', '/api/autonomous/schedules'),
