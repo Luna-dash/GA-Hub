@@ -375,18 +375,12 @@ class SessionMessagesResp(BaseModel):
 
 
 def _state_payload(state: RuntimeState, *, ok: bool | None = None) -> dict:
-    payload = {
-        "session_id": state.session_id,
-        "status": state.status,
-        "run_id": state.run_id,
-        "stream_id": state.stream_id,
-        "completed_run_id": state.completed_run_id,
-    }
-    if state.error is not None:
-        payload["error"] = state.error
-    if ok is not None:
-        payload = {"ok": ok, **payload}
-    return payload
+    """WS/REST frames share one assembly: SessionRuntimePayload.from_state.
+
+    The bus frame in _publish_runtime_state deliberately differs (error key
+    always present) — that shape is locked by test_session_websocket.py.
+    """
+    return SessionRuntimePayload.from_state(state, ok=ok).model_dump(exclude_unset=True)
 
 
 def _session(session_id: str) -> dict:

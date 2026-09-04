@@ -68,7 +68,14 @@ class FakeCoordinator:
             raise SessionControlBusyError(session_id, self.control_error)
         request = {"session_id": session_id, "sid": sid, "n": n}
         self.rewinds.append(request)
-        return {"removed_sids": ["stream-2"], "kept": 1, "history_lines": 2}
+        # Matches RewindResp / the real rewind_adapter contract (both commit
+        # paths report removed_history_entries).
+        return {
+            "removed_sids": ["stream-2"],
+            "kept": 1,
+            "history_lines": 2,
+            "removed_history_entries": 2,
+        }
 
     def release_runtime(
         self, session_id: str, *, shutdown, operation="release", after_release=None
@@ -166,6 +173,7 @@ def test_session_controls_use_selected_runtime_contract(tmp_path: Path, monkeypa
         "removed_sids": ["stream-2"],
         "kept": 1,
         "history_lines": 2,
+        "removed_history_entries": 2,
     }
     assert coordinator.rewinds == [{"session_id": sid, "sid": None, "n": 2}]
 
