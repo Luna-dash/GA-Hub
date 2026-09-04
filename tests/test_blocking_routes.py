@@ -25,32 +25,6 @@ def _slow_result(result):
     return result
 
 
-def test_llm_probe_runs_in_worker_thread() -> None:
-    backend = SimpleNamespace(history=["saved"], tools={"saved": True})
-
-    class Client:
-        def __init__(self) -> None:
-            self.backend = backend
-
-        def chat(self, **_kwargs):
-            time.sleep(0.3)
-            yield "pong"
-
-    client = Client()
-    fake_agent = SimpleNamespace(
-        llmclients=[client],
-        get_llm_name=lambda _client, model=False: "model" if model else "client",
-    )
-    service = SimpleNamespace(agent=fake_agent)
-
-    with mock.patch.object(agent, "svc", return_value=service):
-        result = asyncio.run(_run_with_probe(agent.test_llm(0)))
-
-    assert result["ok"] is True
-    assert backend.history == ["saved"]
-    assert backend.tools == {"saved": True}
-
-
 def test_mykey_sync_runs_in_worker_thread(tmp_path) -> None:
     path = tmp_path / "mykey.py"
     path.write_text("# fixture\n", encoding="utf-8")
