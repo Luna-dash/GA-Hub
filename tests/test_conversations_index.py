@@ -139,8 +139,8 @@ def test_legacy_title_migration_runs_once_through_the_catalogue(monkeypatch):
 
     monkeypatch.setattr(conversations, "migrate_legacy_titles", fake_migrate)
 
-    conversations._archive_catalogue_with_migration()
-    conversations._archive_catalogue_with_migration()
+    conversations.run_legacy_title_migration_once()
+    conversations.run_legacy_title_migration_once()
 
     assert resolved == ["/sessions/a.txt", None]
 

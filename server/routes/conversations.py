@@ -128,32 +128,36 @@ class ArchiveZipEntryListResp(BaseModel):
 
 
 # ── GA archive helpers ────────────────────────────────────────────
-def _archive_catalogue_with_migration() -> dict[str, tuple]:
-    """Refresh the GA session catalogue, then run the one-shot title migration.
+def run_legacy_title_migration_once() -> None:
+    """Sweep legacy titles once; run from lifespan startup, off the event loop.
 
-    The sid→path map doubles as the resolver for the legacy title migration:
-    sessions absent from the catalogue no longer exist, so their stale titles
-    are dropped with the sidecar file.
+    The sid→path map doubles as the resolver for the migration: sessions
+    absent from the catalogue no longer exist, so their stale titles are
+    dropped with the sidecar file. Never raises — a failed sweep is simply
+    not marked done, and the next lookup retries it.
     """
     global _legacy_titles_migrated
-    index = refresh_archive_catalogue()
-    if not _legacy_titles_migrated and index:
-        with _legacy_titles_lock:
-            if not _legacy_titles_migrated:
-                _legacy_titles_migrated = True
-                try:
-                    migrate_legacy_titles(
-                        _metadata,
-                        lambda sid: (index.get(sid) or (None,))[0],
-                    )
-                except Exception:
-                    log.exception("legacy conversation title migration failed")
-    return index
+    if _legacy_titles_migrated:
+        return
+    with _legacy_titles_lock:
+        if _legacy_titles_migrated:
+            return
+        try:
+            index = refresh_archive_catalogue()
+            if not index:
+                return
+            _legacy_titles_migrated = True
+            migrate_legacy_titles(
+                _metadata,
+                lambda sid: (index.get(sid) or (None,))[0],
+            )
+        except Exception:
+            log.exception("legacy conversation title migration failed")
 
 
 def _session_by_id(cid: str):
     """Find a GA session tuple by its basename id (catalogue lookup)."""
-    return _archive_catalogue_with_migration().get(cid)
+    return refresh_archive_catalogue().get(cid)
 
 
 def _ga_extract(path: str):
@@ -228,7 +232,8 @@ async def list_conversations(
 
 @router.get("/api/conversations/{cid}", response_model=ConversationDetailResp)
 async def get_conversation(cid: str):
-    s = _session_by_id(cid)
+    # Catalogue refresh stats/scans the archive dir — keep it off the loop.
+    s = await asyncio.to_thread(_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = s[0]
@@ -245,7 +250,8 @@ async def get_conversation(cid: str):
     response_model=ConversationUpdateResp,
 )
 async def update_conversation(cid: str, req: ConversationUpdate):
-    s = _session_by_id(cid)
+    # Catalogue refresh stats/scans the archive dir — keep it off the loop.
+    s = await asyncio.to_thread(_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     title = req.title.strip()
@@ -258,7 +264,8 @@ async def update_conversation(cid: str, req: ConversationUpdate):
     response_model=ConversationMutationResp,
 )
 async def delete_conversation(cid: str):
-    s = _session_by_id(cid)
+    # Catalogue refresh stats/scans the archive dir — keep it off the loop.
+    s = await asyncio.to_thread(_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = Path(s[0]).resolve()
@@ -334,7 +341,8 @@ async def restore_conversation(cid: str):
     from ..services.agent_service import AgentService
     from ..services.event_bus import bus
 
-    s = _session_by_id(cid)
+    # Catalogue refresh stats/scans the archive dir — keep it off the loop.
+    s = await asyncio.to_thread(_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = s[0]
@@ -355,7 +363,8 @@ async def restore_conversation(cid: str):
 
 @router.get("/api/conversations/{cid}/export")
 async def export_conversation(cid: str, format: str = Query("md", pattern="^(md|json)$")):
-    s = _session_by_id(cid)
+    # Catalogue refresh stats/scans the archive dir — keep it off the loop.
+    s = await asyncio.to_thread(_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = s[0]

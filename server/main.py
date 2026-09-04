@@ -380,6 +380,12 @@ def create_app() -> FastAPI:
         except Exception as e:
             log.warning("feishu log watcher/auto-start init skipped: %s", e)
 
+        # One-shot legacy title migration: blocking catalogue walk + sidecar
+        # unlink, so it belongs to startup (off the event loop) instead of the
+        # first point-lookup request.
+        from .routes import conversations as conversations_routes
+        await asyncio.to_thread(conversations_routes.run_legacy_title_migration_once)
+
     async def _shutdown():
         if not setup_mode:
             session_routes = None
