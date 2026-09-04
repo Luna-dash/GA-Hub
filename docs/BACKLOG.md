@@ -67,3 +67,82 @@ API 封装，而服务端无开机自启（`WeChatService.instance()` 仅由 `/a
       preview/搜索下沉 archive_messages（路由只留 HTTP 编排）；rewind 双策略
       保留独立提交但共享规划/收尾助手；ServiceRegistry 绑定 app 所有权
       （owned 优先、单例回退，跨端点单一真相源）
+
+## 2026-09-04 结构整合度重扫描（第二轮，四路并行）
+
+来源：P3 收敛完成后对全仓的再次结构扫描。本轮已修（能立即修的分类提交）：
+
+- [x] P0×2（无测试能抓到）：rewind 共享助手对真 ChatStreamProjection 的
+      `pop(sid, None)` 签名错配——两个 rewind 端点在改写历史/世界线之后、
+      发事件之前崩溃（tests/test_rewind_turns.py 补真投影回归）；tokens.py
+      清理时删掉 logger 但保留 `log.` 调用，GA 无 cost_tracker 时整站起不来
+      （tests/test_module_loggers.py 静态扫描门禁）
+- [x] ConductorService 关闭后不释放类单例——二次 create_app 复用死实例
+      全线 500（对齐 AgentService 语义）
+- [x] ServiceRegistry._HEALTH_BY_STATE 死表：测试锁的词汇表在生产路径永不
+      执行；health_summary 统一吃 panel 的 health 字段（healthy/attention/
+      unknown），unavailable 语义保留在 /api/health 的核心契约闸门层
+- [x] /api/agent/sessions(+restore) 绕过归档目录直接枚举 GA 日志目录
+      （与目录缓存竞态、restore 按易漂移的索引定位）——改走
+      archive_messages.list_archive_sessions
+- [x] GAHUB_*/GA_MYKEY_* env 族全量入 constants 注册表 + 扫描门禁扩网
+      （此前只扫 GA_HUB_ 前缀，GAHUB_* 家族零约束）
+- [x] wechat 路由全部 async 导致 0.4s 登录阻塞共享事件循环——改同步
+      def（FastAPI 线程池派发，对齐 feishu 既有注释约定）
+- [x] 前端：MyKey 两处漏网错误提取 + line/col 诊断去重（新 helper
+      myKeyParseErrorFromError，修掉"第 undefined:undefined 行"）；MarkdownView
+      右键菜单 z-[100]/LiveChatTranscript tooltip z-50 越层——Z_LAYERS 增
+      contextMenu/tooltip 令牌；Conductor/MarkdownView 剪贴板写入绕过
+      writeClipboard 的非安全上下文回退；Conversations 自造 Msg 类型换
+      ConversationMessage；Conductor.test 滚动/失败用例改 waitFor 轮询
+      （并行跑全量时不同用例随机挂）；两个页面 verbatim 重复的 CronPreview
+      提为组件；死 CSS 块（.ga-sidebar-llm-*，136 行）删除；delete_session
+      补走 coordinator 准入门；事件 WS legacy 分支保持原帧形（有测试锁定，
+      是有意兼容决定）；两调度器 unclosed 文件句柄；autonomous read_report
+      /memory _read 同；conductor_client/conductor_service/conductor_workflow
+      未用 import 与缺 Any 注解
+
+需要决策的大件（按伤害排序）：
+
+- [ ] Skills.tsx 是孤儿页面（253 行，无路由/无导航/无测试）——删除或重新
+      挂路由，属产品决策
+- [ ] 双调度器（autonomous/task）~70% 逐行克隆（持久化/装 job/fire/守卫），
+      已咬过一次（misfire 只补了一边）——抽 SchedulerDomainBase，测试收缩
+      到差异面
+- [ ] routes/mykey.py 674 行是"穿着路由皮的服务"（备份轮转/原子写/解释器
+      探测/子进程编排内联）——抽 services/mykey_service.py
+- [ ] 双 LLM ping 实现（routes/agent.py:_test_llm_sync 与 routes/mykey.py:
+      _test_session_sync）各带一套脆弱的 history/tools 保存恢复——抽
+      services/llm_probe.py
+- [ ] 归档折叠解析 `_extract_ui_messages_from_text` fork 了 GA 的
+      extract_ui_messages（分页回退路径）——请 GA 暴露 parse(content) 核心，
+      hub 侧归零折叠逻辑；短期至少加双路径一致性测试
+- [ ] 点查路由在事件循环内做目录刷新+迁移副作用——迁移挪到 lifespan
+      启动钩子，`_session_by_id` 进 to_thread
+- [ ] 事件主题 ~70 处内联字符串（"chat:reset" 三处发布）——建
+      event_topics.py 常量表，仿 test_env_registry 扫描
+- [ ] 生产代码携带测试回填脚手架（ConductorService 五个 _ensure_* hasattr
+      回填，专为 object.__new__ 测试实例）——给测试正规的 for_tests()
+      构造器后删除
+- [ ] 状态词汇漂移：Conductor phaseDot 硬编码色 vs 相邻 phaseTone 语义令牌；
+      全仓 62 处裸 rose/emerald 类 vs 23 处 status-* 令牌——需先定语义令牌
+      的暗色策略再收敛（盲替会丢暗色变体）
+- [ ] WS 游标管线（events.py 与 sessions.py）重复 invalid-cursor 解析 +
+      replay/ping 生命周期——抽可恢复 WS 会话助手
+- [ ] runtime-state payload 三处手拼（sessions.py bus/WS/REST）——全部走
+      SessionRuntimePayload.from_state
+- [ ] conductor 路由内联服务级业务（subagent 镜像合并、动词分派、指令文案）
+      ——下沉 ConductorService；顺带修 accept/rework/input 未透传 tracker
+      owner 的不一致
+- [ ] ConductorService.instance() 在请求路径懒构造重服务（TimeoutMonitor
+      线程/进程管理器）——把 conductor 纳入 AppServices 所有权（完成
+      16b4f08 模式的最后一角）
+- [ ] tests/ 无 conftest.py；smoke 测试靠 importlib.reload 制造分叉模块态
+      （xdist 不安全）；wechat 测试隐式依赖本机 GA checkout 布局
+- [ ] README 存储目录表过期（缺 conversations_v2/gahub_journal/
+      tasks_schedules.json/mykey-backups 等）；routes/agent.py "legacy 全局
+      路由"注释误导（除 /ws/chat 外全部在用，勿删）
+- [ ] 剩余小块：RewindResp 缺 removed_history_entries 字段（response_model
+      静默剥离，需重生成 TS）；时间格式化四处各异（formatDateTime 助手）；
+      PasteAttachment 从 components 挪 api/types；重定向 cwd 跑 api:generate
+      会把输出生成到 webui/webui/（--output 锚定脚本位置）
