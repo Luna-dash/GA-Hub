@@ -29,19 +29,15 @@ from ..schemas import (
     ConductorWorkflowListResp,
 )
 from ..services import conductor_client as conductor_client_module
-from ..services.conductor_service import ConductorNotRunning, ConductorService
+from ..services.conductor_service import (
+    INSTR_DISPATCHED,
+    SUBAGENT_VERBS,
+    ConductorNotRunning,
+    ConductorService,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter()
-
-INSTR_DISPATCHED = (
-    "Task received. I'll handle THIS TASK from here. "
-    "You MUST to do other task or end your reply."
-)
-INSTR_KEYINFO = (
-    "Received. I'll incorporate this. "
-    "You MUST to do other task or end your reply."
-)
 
 
 def svc() -> ConductorService:
@@ -176,33 +172,8 @@ async def list_workflows(
 async def get_subagent(
     sid: str, max_len: int = Query(default=5000, ge=1, le=1_000_000)
 ) -> ConductorSubagent:
-    """Full worker dossier for human review.
-
-    Engine GET /subagent/{id} is the source of the cleaned reply.  The hub
-    list snapshot already carries prompt/manifest/verification and is filled
-    in for any field the engine omits, so the UI can show what was asked,
-    what landed, and what the machine thinks.
-    """
-    service = svc()
-    detail = await _dispatch_through_engine(service.client.get_subagent, sid, max_len)
-    mirrored = service.pool.get(sid)
-    if mirrored is not None:
-        for key in (
-            "prompt", "created_at", "updated_at", "review_note",
-            "completed_at", "accepted_at", "deliverables_missing",
-            "deliverables_stale", "done_marker", "quality_checks",
-            "manifest", "forced_accept", "force_reason", "forced_at",
-        ):
-            if key in detail and detail[key] not in (None, "", [], {}):
-                continue
-            value = getattr(mirrored, key, None)
-            if value is not None:
-                detail[key] = value
-    if "generation" not in detail:
-        detail["generation"] = int(detail.get("active_generation") or 0)
-    if not detail.get("request_id"):
-        detail["request_id"] = service.workflow_tracker.request_for_subagent(sid)
-    return detail
+    """Full worker dossier for human review (engine reply + mirror facts)."""
+    return await _dispatch_through_engine(svc().subagent_dossier, sid, max_len)
 
 
 @router.post("/api/conductor/subagent")
@@ -236,70 +207,33 @@ async def subagent_action(
     sid: str, body: ConductorSubagentAction
 ) -> ConductorSubagentActionResp:
     service = svc()
-    pool = service.pool
-    s = pool.get(sid)
-    if not s:
+    if not service.pool.get(sid):
         raise HTTPException(404, "subagent not found")
     action = body.action.lower().strip()
-    # Worker ownership (roadmap P0-B): resolve the owning request from the
-    # workflow tracker and forward it so the engine enforces request_mismatch
-    # on EVERY verb — not just accept/rework/input which carried it before.
-    tracker = getattr(service, "workflow_tracker", None)
-    owner = tracker.request_for_subagent(sid) if tracker is not None else None
-    if action == "keyinfo":
-        result = await _dispatch_through_engine(
-            pool.keyinfo_subagent, sid, body.msg, request_id=owner)
-        result["instruction"] = INSTR_KEYINFO
-        return result
-    if action == "accept":
-        result = await _dispatch_through_engine(
-            service.accept_subagent,
-            sid,
-            body.msg,
-            request_id=body.request_id,
-            force=body.force,
-            operation_id=body.operation_id,
-        )
-        if "error" in result:
-            # completion_unverified must carry the verification evidence the
-            # engine computed — the UI renders it before offering force.
-            raise HTTPException(409, result)
-        return result
-    if action == "rework":
-        result = await _dispatch_through_engine(
-            service.rework_subagent,
-            sid,
-            body.msg,
-            request_id=body.request_id,
-            llm_index=body.llm_index,
-            conductor_llm_index=body.conductor_llm_index,
-            subagent_llm_index=body.subagent_llm_index,
-            subagent_model_policy=body.subagent_model_policy,
-            operation_id=body.operation_id,
-        )
-        if "error" in result:
-            raise HTTPException(409, result["error"])
-        result["instruction"] = INSTR_DISPATCHED
-        return result
-    if action in ("input", "reply", "append", "message", "msg"):
-        workflow = {"request_id": body.request_id} if body.request_id is not None else {}
-        result = await _dispatch_through_engine(
-            service.input_subagent,
-            sid,
-            body.msg,
-            **workflow,
-            llm_index=body.llm_index,
-            conductor_llm_index=body.conductor_llm_index,
-            subagent_llm_index=body.subagent_llm_index,
-            subagent_model_policy=body.subagent_model_policy,
-            operation_id=body.operation_id,
-        )
-        result["instruction"] = INSTR_DISPATCHED
-        return result
-    if action in ("abort", "stop"):
-        return await _dispatch_through_engine(
-            pool.abort_subagent, sid, request_id=owner)
-    raise HTTPException(400, f"unknown action: {body.action}")
+    if action not in SUBAGENT_VERBS:
+        raise HTTPException(400, f"unknown action: {body.action}")
+    # Dispatch, instructions, and tracker-owner forwarding all live in the
+    # service; only HTTP status mapping stays here.
+    result = await _dispatch_through_engine(
+        service.apply_subagent_action,
+        sid,
+        action,
+        body.msg,
+        request_id=body.request_id,
+        force=body.force,
+        llm_index=body.llm_index,
+        conductor_llm_index=body.conductor_llm_index,
+        subagent_llm_index=body.subagent_llm_index,
+        subagent_model_policy=body.subagent_model_policy,
+        operation_id=body.operation_id,
+    )
+    if action == "accept" and "error" in result:
+        # completion_unverified must carry the verification evidence the
+        # engine computed — the UI renders it before offering force.
+        raise HTTPException(409, result)
+    if action == "rework" and "error" in result:
+        raise HTTPException(409, result["error"])
+    return result
 
 
 # ── status / log ─────────────────────────────────────────────────────────────

@@ -43,6 +43,33 @@ log = logging.getLogger(__name__)
 SubagentModelPolicy = Literal["follow_main", "default", "locked"]
 SUBAGENT_MODEL_POLICIES = frozenset({"follow_main", "default", "locked"})
 
+# Instruction lines the hub appends to subagent action responses; the webui
+# renders them as the conductor's acknowledgment.
+INSTR_DISPATCHED = (
+    "Task received. I'll handle THIS TASK from here. "
+    "You MUST to do other task or end your reply."
+)
+INSTR_KEYINFO = (
+    "Received. I'll incorporate this. "
+    "You MUST to do other task or end your reply."
+)
+
+# Verbs served by apply_subagent_action (the single dispatcher behind
+# POST /api/conductor/subagent/{sid}).
+SUBAGENT_VERBS = frozenset({
+    "keyinfo", "accept", "rework", "input", "reply", "append",
+    "message", "msg", "abort", "stop",
+})
+
+# Dossier fields the hub list snapshot mirrors; the engine detail may omit
+# any of them and the mirror fills in what it has.
+SUBAGENT_MIRROR_FIELDS = (
+    "prompt", "created_at", "updated_at", "review_note",
+    "completed_at", "accepted_at", "deliverables_missing",
+    "deliverables_stale", "done_marker", "quality_checks",
+    "manifest", "forced_accept", "force_reason", "forced_at",
+)
+
 
 def _get_preferred_llm() -> Optional[int]:
     """Read user's preferred LLM index from config."""
@@ -1494,17 +1521,19 @@ class ConductorService:
             subagent_llm_index,
             subagent_model_policy,
         )
+        # Owner parity (P0-B): forward the tracker-resolved owner so the
+        # engine's request_mismatch guard applies even when the caller
+        # omitted the request (keyinfo/abort already behave this way).
+        owner = request_id or tracker.request_for_subagent(sid)
         result = self.client.subagent_action(
-            sid, action, msg, request_id=request_id, llm_index=selected
+            sid, action, msg, request_id=owner, llm_index=selected
         )
         bound_request_id: str | None = None
-        if "error" not in result:
-            owner = request_id or tracker.request_for_subagent(sid)
-            if owner:
-                generation = int(result.get("active_generation", 0) or 0)
-                tracker.bind_subagent(owner, sid, generation)
-                bound_request_id = owner
-            # gahub_app auto-yields the supervisor turn on resume/rework.
+        if "error" not in result and owner:
+            generation = int(result.get("active_generation", 0) or 0)
+            tracker.bind_subagent(owner, sid, generation)
+            bound_request_id = owner
+        # gahub_app auto-yields the supervisor turn on resume/rework.
         self._fill_dispatch_defaults(
             result,
             llm_index=selected,
@@ -1553,6 +1582,11 @@ class ConductorService:
         tracker = self.workflow_tracker
         if request_id is not None and not tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")
+        if request_id is None:
+            # Owner parity (P0-B): keyinfo/abort already forward the
+            # tracker-resolved owner so the engine's request_mismatch guard
+            # applies; plain accepts must not be the loophole.
+            request_id = tracker.request_for_subagent(sid)
         result = self.client.subagent_action(
             sid, "accept", msg, request_id=request_id, force=force)
         if "error" not in result:
@@ -1591,6 +1625,90 @@ class ConductorService:
             subagent_model_policy=subagent_model_policy,
             operation_id=operation_id,
         )
+
+    def subagent_dossier(self, sid: str, max_len: int) -> dict:
+        """Full worker dossier for human review.
+
+        The engine GET /subagent/{id} is the source of the cleaned reply; the
+        hub list snapshot carries prompt/manifest/verification and fills in
+        any field the engine omits, so the UI can show what was asked, what
+        landed, and what the machine thinks.
+        """
+        detail = self.client.get_subagent(sid, max_len)
+        mirrored = self.pool.get(sid)
+        if mirrored is not None:
+            for key in SUBAGENT_MIRROR_FIELDS:
+                if key in detail and detail[key] not in (None, "", [], {}):
+                    continue
+                value = getattr(mirrored, key, None)
+                if value is not None:
+                    detail[key] = value
+        if "generation" not in detail:
+            detail["generation"] = int(detail.get("active_generation") or 0)
+        if not detail.get("request_id"):
+            detail["request_id"] = self.workflow_tracker.request_for_subagent(sid)
+        return detail
+
+    def apply_subagent_action(
+        self,
+        sid: str,
+        action: str,
+        msg: str = "",
+        *,
+        request_id: str | None = None,
+        force: bool = False,
+        llm_index: Optional[int] = None,
+        conductor_llm_index: Optional[int] = None,
+        subagent_llm_index: Optional[int] = None,
+        subagent_model_policy: Optional[SubagentModelPolicy] = None,
+        operation_id: str | None = None,
+    ) -> dict:
+        """Dispatch one POST /api/conductor/subagent/{sid} verb.
+
+        Single home for the verb matrix: which method serves each action and
+        which responses carry a conductor instruction line. Accept/rework/
+        input resolve the tracker owner inside their own methods; keyinfo/
+        abort round-trip through the pool mirror, so their owner resolution
+        lives here.
+        """
+        action = action.lower().strip()
+        if action == "keyinfo":
+            result = self.pool.keyinfo_subagent(
+                sid, msg,
+                request_id=self.workflow_tracker.request_for_subagent(sid))
+            result["instruction"] = INSTR_KEYINFO
+            return result
+        if action == "accept":
+            return self.accept_subagent(
+                sid, msg, request_id=request_id, force=force,
+                operation_id=operation_id)
+        if action == "rework":
+            result = self.rework_subagent(
+                sid, msg, llm_index,
+                request_id=request_id,
+                conductor_llm_index=conductor_llm_index,
+                subagent_llm_index=subagent_llm_index,
+                subagent_model_policy=subagent_model_policy,
+                operation_id=operation_id,
+            )
+            if "error" not in result:
+                result["instruction"] = INSTR_DISPATCHED
+            return result
+        if action in ("input", "reply", "append", "message", "msg"):
+            result = self.input_subagent(
+                sid, msg, llm_index,
+                request_id=request_id,
+                conductor_llm_index=conductor_llm_index,
+                subagent_llm_index=subagent_llm_index,
+                subagent_model_policy=subagent_model_policy,
+                operation_id=operation_id,
+            )
+            result["instruction"] = INSTR_DISPATCHED
+            return result
+        if action in ("abort", "stop"):
+            return self.pool.abort_subagent(
+                sid, request_id=self.workflow_tracker.request_for_subagent(sid))
+        raise ValueError(f"unknown conductor action: {action}")
 
     # ===== snapshots & chat product surface =====
 

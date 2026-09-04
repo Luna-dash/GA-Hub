@@ -9,7 +9,7 @@ import pytest
 
 from server.routes import conductor as conductor_routes
 from server.services.conductor_client import GahubProcessError
-from server.services.conductor_service import ConductorService
+from server.services.conductor_service import ConductorService, INSTR_DISPATCHED
 
 
 RUNNING = {
@@ -43,6 +43,9 @@ class FakeService:
         self.stop_calls = 0
         self.auto_accept = True
         self.settings_calls = []
+        self.apply_calls = []
+        self.apply_result: dict = {}
+        self.subagent_dossier = Mock()
 
     def lifecycle_status(self):
         self._started = self._lifecycle["started"]
@@ -72,6 +75,10 @@ class FakeService:
     def input_subagent(self, sid, msg, **kwargs):
         self.subagent_calls.append(((sid, msg), kwargs))
         return {"id": sid, "status": "running"}
+
+    def apply_subagent_action(self, sid, action, msg="", **kwargs):
+        self.apply_calls.append((sid, action, msg, kwargs))
+        return dict(self.apply_result)
 
     def stop(self):
         self.stop_calls += 1
@@ -177,50 +184,18 @@ def test_chat_route_forwards_model_policy(monkeypatch):
     )]
 
 
-def test_subagent_detail_route_forwards_engine_dossier(monkeypatch):
-    """Human review reads the engine reply plus list-side review facts."""
+def test_subagent_detail_route_delegates_to_service_dossier(monkeypatch):
+    """The engine+mirror merge lives in ConductorService; the route only
+    forwards (the merge matrix is covered at service level)."""
     service = FakeService(STOPPED)
-    service.client = SimpleNamespace(get_subagent=Mock(return_value={
-        "id": "w1",
-        "reply": "full cleaned reply",
-        "status": "stopped",
-        "review_status": "pending",
-        "attempt": 1,
-        "active_generation": 2,
-        "manifest": {"goal": "写报告"},
-        "deliverables_missing": ["D:/out/report.md"],
-        "done_marker": False,
-        "quality_checks": {"checks_ok": False},
-    }))
-    service.pool = SimpleNamespace(get=lambda _sid: SimpleNamespace(
-        prompt="检查桌面启动流程",
-        created_at=3,
-        updated_at=4,
-        review_note="",
-        completed_at=4,
-        accepted_at=None,
-        deliverables_missing=["D:/out/report.md"],
-        deliverables_stale=[],
-        done_marker=False,
-        quality_checks={"checks_ok": False},
-        manifest={"goal": "写报告"},
-        forced_accept=False,
-        force_reason="",
-        forced_at=None,
-    ))
-    service.workflow_tracker = SimpleNamespace(
-        request_for_subagent=lambda _sid: "request-1")
+    dossier = {"id": "w1", "reply": "full cleaned reply", "status": "stopped"}
+    service.subagent_dossier = Mock(return_value=dossier)
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)
 
     result = asyncio.run(conductor_routes.get_subagent("w1", max_len=5000))
 
-    service.client.get_subagent.assert_called_once_with("w1", 5000)
-    assert result["reply"] == "full cleaned reply"
-    assert result["prompt"] == "检查桌面启动流程"
-    assert result["manifest"]["goal"] == "写报告"
-    assert result["deliverables_missing"] == ["D:/out/report.md"]
-    assert result["generation"] == 2
-    assert result["request_id"] == "request-1"
+    service.subagent_dossier.assert_called_once_with("w1", 5000)
+    assert result == dossier
 
 
 def test_subagent_route_uses_service_policy_boundary(monkeypatch):
@@ -293,7 +268,9 @@ def test_subagent_route_forwards_engine_manifest_contract(monkeypatch):
          "severity": "blocking", "timeout_seconds": 30}]
 
 
-def test_resume_route_uses_service_policy_boundary(monkeypatch):
+def test_subagent_action_route_forwards_verbs_to_service_dispatcher(monkeypatch):
+    """Verb matrix, instructions, and owner forwarding live in the service;
+    the route forwards the action body verbatim."""
     service = FakeService(STOPPED)
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)
 
@@ -311,10 +288,12 @@ def test_resume_route_uses_service_policy_boundary(monkeypatch):
         )
     )
 
-    assert result["instruction"] == conductor_routes.INSTR_DISPATCHED
-    assert service.subagent_calls == [(
-        ("worker-1", "retry"),
+    assert result == {}
+    assert service.apply_calls == [(
+        "worker-1", "input", "retry",
         {
+            "request_id": None,
+            "force": False,
             "llm_index": 3,
             "conductor_llm_index": 1,
             "subagent_llm_index": 5,
@@ -326,12 +305,12 @@ def test_resume_route_uses_service_policy_boundary(monkeypatch):
 
 def test_accept_route_forwards_request_and_returns_committed_review(monkeypatch):
     service = FakeService(STOPPED)
-    service.accept_subagent = Mock(return_value={
+    service.apply_result = {
         "id": "worker-1",
         "status": "stopped",
         "review_status": "accepted",
         "request_id": "request-1",
-    })
+    }
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)
 
     result = asyncio.run(conductor_routes.subagent_action(
@@ -344,19 +323,27 @@ def test_accept_route_forwards_request_and_returns_committed_review(monkeypatch)
     ))
 
     assert result["review_status"] == "accepted"
-    service.accept_subagent.assert_called_once_with(
-        "worker-1", "verified", request_id="request-1", force=False,
-        operation_id=None,
-    )
+    assert service.apply_calls == [(
+        "worker-1", "accept", "verified",
+        {
+            "request_id": "request-1",
+            "force": False,
+            "llm_index": None,
+            "conductor_llm_index": None,
+            "subagent_llm_index": None,
+            "subagent_model_policy": None,
+            "operation_id": None,
+        },
+    )]
 
 
 def test_accept_route_forces_verdict_escape_hatch(monkeypatch):
     """force=true is forwarded so an audited accept can bypass a failing
     deterministic verdict after the UI has shown the evidence."""
     service = FakeService(STOPPED)
-    service.accept_subagent = Mock(return_value={
+    service.apply_result = {
         "id": "worker-1", "status": "stopped", "review_status": "accepted",
-    })
+    }
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)
 
     result = asyncio.run(conductor_routes.subagent_action(
@@ -367,10 +354,18 @@ def test_accept_route_forces_verdict_escape_hatch(monkeypatch):
     ))
 
     assert result["review_status"] == "accepted"
-    service.accept_subagent.assert_called_once_with(
-        "worker-1", "verified by hand", request_id=None, force=True,
-        operation_id=None,
-    )
+    assert service.apply_calls == [(
+        "worker-1", "accept", "verified by hand",
+        {
+            "request_id": None,
+            "force": True,
+            "llm_index": None,
+            "conductor_llm_index": None,
+            "subagent_llm_index": None,
+            "subagent_model_policy": None,
+            "operation_id": None,
+        },
+    )]
 
 
 def test_accept_route_unverified_409_keeps_verification_evidence(monkeypatch):
@@ -388,7 +383,7 @@ def test_accept_route_unverified_409_keeps_verification_evidence(monkeypatch):
         "deliverables_missing": [],
         "verification": {"verified": False, "checks_ok": False},
     }
-    service.accept_subagent = Mock(return_value=verification)
+    service.apply_result = verification
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)
 
     with pytest.raises(conductor_routes.HTTPException) as raised:
@@ -405,10 +400,10 @@ def test_accept_route_unverified_409_keeps_verification_evidence(monkeypatch):
 
 def test_rework_state_conflict_returns_http_409(monkeypatch):
     service = FakeService(STOPPED)
-    service.rework_subagent = Mock(return_value={
+    service.apply_result = {
         "id": "worker-1",
         "error": "only a stopped pending subagent can be reworked",
-    })
+    }
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)
 
     with pytest.raises(conductor_routes.HTTPException) as raised:
@@ -495,7 +490,7 @@ def test_engine_terminal_state_conflict_passes_through(monkeypatch):
     """Engine 409 domain conflicts (accepted terminal / keyinfo budget /
     rework gate) keep their status code and message."""
     service = Mock()
-    service.input_subagent = Mock(side_effect=GahubProcessError(
+    service.apply_subagent_action = Mock(side_effect=GahubProcessError(
         "gahub_app /subagent/abc -> 409: accepted_subagent_is_terminal",
         status_code=409,
         detail="accepted_subagent_is_terminal",
@@ -588,16 +583,12 @@ def test_keyinfo_engine_conflict_maps_to_409(monkeypatch):
     """keyinfo must go through the engine mapping too: the engine's
     one-intervention-per-attempt budget conflict surfaces as 409."""
     service = FakeService(STOPPED)
-    service.pool = SimpleNamespace(
-        counts=lambda: (0, 1),
-        get=lambda _sid: SimpleNamespace(),
-        keyinfo_subagent=Mock(side_effect=GahubProcessError(
-            "gahub_app /subagent/abc -> 409: only a running subagent can "
-            "receive keyinfo",
-            status_code=409,
-            detail="only a running subagent can receive keyinfo",
-        )),
-    )
+    service.apply_subagent_action = Mock(side_effect=GahubProcessError(
+        "gahub_app /subagent/abc -> 409: only a running subagent can "
+        "receive keyinfo",
+        status_code=409,
+        detail="only a running subagent can receive keyinfo",
+    ))
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)
 
     with pytest.raises(conductor_routes.HTTPException) as raised:
@@ -614,13 +605,9 @@ def test_abort_engine_unreachable_maps_to_503(monkeypatch):
     """abort/stop must go through the engine mapping too: stopping a worker
     while the engine is being respawned reads as 503, never a blind 500."""
     service = FakeService(STOPPED)
-    service.pool = SimpleNamespace(
-        counts=lambda: (0, 1),
-        get=lambda _sid: SimpleNamespace(),
-        abort_subagent=Mock(side_effect=GahubProcessError(
-            "gahub_app /subagent/abc request failed: connection refused",
-        )),
-    )
+    service.apply_subagent_action = Mock(side_effect=GahubProcessError(
+        "gahub_app /subagent/abc request failed: connection refused",
+    ))
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)
 
     with pytest.raises(conductor_routes.HTTPException) as raised:
@@ -631,68 +618,6 @@ def test_abort_engine_unreachable_maps_to_503(monkeypatch):
 
     assert raised.value.status_code == 503
     assert "respawned on demand" in str(raised.value.detail)
-
-
-# ===== worker ownership enforcement (roadmap P0-B) =====
-
-def _service_with_tracker(owner):
-    """FakeService whose pool records keyinfo/abort calls and whose workflow
-    tracker resolves a worker's owning request (None = unbound)."""
-    service = FakeService(RUNNING)
-    service.pool = SimpleNamespace(
-        counts=lambda: (1, 0),
-        get=lambda _sid: SimpleNamespace(),
-        keyinfo_subagent=Mock(return_value={"id": "abc", "status": "ok"}),
-        abort_subagent=Mock(return_value={"id": "abc", "status": "cancelled"}),
-    )
-    service.workflow_tracker = SimpleNamespace(
-        request_for_subagent=lambda _sid: owner)
-    return service
-
-
-def test_keyinfo_forwards_tracker_request_ownership(monkeypatch):
-    """keyinfo must carry the tracker-resolved request_id so the engine's
-    request_mismatch guard applies to EVERY verb, not just accept/rework."""
-    service = _service_with_tracker("rid-owner")
-    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
-
-    result = asyncio.run(conductor_routes.subagent_action(
-        "abc",
-        conductor_routes.ConductorSubagentAction(action="keyinfo", msg="ctx"),
-    ))
-
-    assert result["id"] == "abc"
-    service.pool.keyinfo_subagent.assert_called_once_with(
-        "abc", "ctx", request_id="rid-owner")
-
-
-def test_abort_forwards_tracker_request_ownership(monkeypatch):
-    """abort must carry the tracker-resolved request_id (plus origin=hub)."""
-    service = _service_with_tracker("rid-owner")
-    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
-
-    asyncio.run(conductor_routes.subagent_action(
-        "abc",
-        conductor_routes.ConductorSubagentAction(action="abort"),
-    ))
-
-    service.pool.abort_subagent.assert_called_once_with(
-        "abc", request_id="rid-owner")
-
-
-def test_keyinfo_unbound_worker_passes_none_ownership(monkeypatch):
-    """A worker unknown to the tracker degrades to request_id=None (legacy
-    behaviour) instead of fabricating an owner."""
-    service = _service_with_tracker(None)
-    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
-
-    asyncio.run(conductor_routes.subagent_action(
-        "abc",
-        conductor_routes.ConductorSubagentAction(action="keyinfo", msg="ctx"),
-    ))
-
-    service.pool.keyinfo_subagent.assert_called_once_with(
-        "abc", "ctx", request_id=None)
 
 
 def test_poolmirror_stamps_request_id_and_hub_origin():
