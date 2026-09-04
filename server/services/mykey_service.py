@@ -67,7 +67,13 @@ def _mykey_path() -> Path:
 
 
 def _backup_dir() -> Path:
-    p = _paths.ADMIN_DATA / "mykey-backups"
+    # Pure lookup: readers (list_backups) must not create the directory as
+    # a side effect. Writers go through _ensure_backup_dir.
+    return _paths.ADMIN_DATA / "mykey-backups"
+
+
+def _ensure_backup_dir() -> Path:
+    p = _backup_dir()
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -75,7 +81,7 @@ def _backup_dir() -> Path:
 def _backup_current(path: Path) -> str | None:
     """Snapshot the current file before overwrite. Returns backup name or None."""
     if not path.is_file(): return None
-    bdir = _backup_dir()
+    bdir = _ensure_backup_dir()
     name = f"mykey.py.{time.strftime('%Y%m%d-%H%M%S')}.bak"
     target = bdir / name
     try:
@@ -525,11 +531,13 @@ def _mykey_sync_python() -> str:
 
 
 def _run_mykey_sync(args: list[str]) -> dict[str, Any]:
-    """Run mykey_sync.py without passing secrets on argv or env.
+    """Run mykey_sync.py without passing secrets on argv.
 
-    凭证由脚本自身从 GA keychain 读取（唯一凭证 ``ga_mykey_sync_key``，
-    同时用于 HTTP 上传鉴权、manifest 路径派生与 AES-256-GCM 加解密）；
-    命令行和环境变量不携带任何密值。
+    凭证不进 argv；GA_MYKEY_SYNC_PASSPHRASE / GA_MYKEY_UPLOAD_TOKEN 两个
+    env 变量原样透传给子进程（通常由外部注入，本函数只负责不额外泄露），
+    探测子进程则显式 pop 掉它们（见 _probe_mykey_python）。脚本自身优先
+    从 GA keychain 读取凭证（``ga_mykey_sync_key``，同时用于 HTTP 上传
+    鉴权、manifest 路径派生与 AES-256-GCM 加解密）。
     """
     script = _mykey_sync_script()
     if _paths.GA_ROOT is None:

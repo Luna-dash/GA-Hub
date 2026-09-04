@@ -22,8 +22,14 @@ table — keep the two lists in sync):
     autonomous_runs.jsonl       → self-evolution trigger history
     tasks_schedules.json        → task-scheduler schedules
     tasks_runs.jsonl            → task-scheduler trigger history
+    scheduled_chats.json        → scheduled chat triggers (per-session)
+    session_metadata/           → session sidecar labels/preferences (no messages)
+    conversation_metadata/      → derived conversation titles (titles.json)
     gahub_journal/journal.jsonl → conductor engine durable journal
     email_config.json           → email notification settings
+    ui_preferences.json         → sidebar navigation visibility
+    wechat_log.jsonl            → wechat message log
+    logs/                       → backend.log (run.py logging setup)
     mykey-backups/              → mykey.py backup rotation
     uploads/                    → files pasted/dragged in the React UI
 

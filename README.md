@@ -78,8 +78,14 @@ cd GA-Hub
 | `~/.genericagent-admin/autonomous_runs.jsonl` | 自主进化触发历史 | ❌ |
 | `~/.genericagent-admin/tasks_schedules.json` | 定时任务计划 | ❌ |
 | `~/.genericagent-admin/tasks_runs.jsonl` | 定时任务触发历史 | ❌ |
+| `~/.genericagent-admin/scheduled_chats.json` | 定时对话触发器（按会话） | ❌ |
+| `~/.genericagent-admin/session_metadata/` | 会话侧车元数据（标签/偏好，不含消息） | ❌ |
+| `~/.genericagent-admin/conversation_metadata/` | 派生的会话标题（titles.json） | ❌ |
 | `~/.genericagent-admin/gahub_journal/journal.jsonl` | Conductor 引擎持久化日志 | ❌ |
 | `~/.genericagent-admin/email_config.json` | 邮件通知配置 | ❌ |
+| `~/.genericagent-admin/ui_preferences.json` | 侧边栏导航可见性 | ❌ |
+| `~/.genericagent-admin/wechat_log.jsonl` | 微信消息日志 | ❌ |
+| `~/.genericagent-admin/logs/` | 后端日志（backend.log） | ❌ |
 | `~/.genericagent-admin/mykey-backups/` | mykey.py 编辑前的备份轮转 | ❌ |
 | `~/.genericagent-admin/uploads/` | 前端粘贴/拖放的文件 | ❌ |
 | `~/.wxbot/token.json` | 微信登录 token（与官方 wechatapp.py 共享） | ❌ |
