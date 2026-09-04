@@ -33,7 +33,7 @@ def _live_relay(service: ConductorService) -> None:
 
 
 def _ready_service(started: bool) -> ConductorService:
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service._process_manager = Mock()
     service.client = Mock()
     service.client.status.return_value = {"started": started}
@@ -78,7 +78,7 @@ def test_route_maps_conductor_not_running_to_409():
 # ── manual stop = abandon stranded workflows ─────────────────────────────────
 
 def _stoppable_service(tracker: WorkflowTracker) -> ConductorService:
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.workflow_tracker = tracker
     service.chat_messages = []
     service.client = Mock()

@@ -279,7 +279,7 @@ def test_cancelled_and_killed_workers_still_terminalize_the_workflow():
 
 
 def test_terminal_workflow_transition_publishes_completion():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
 
     payload = {
@@ -296,7 +296,7 @@ def test_terminal_workflow_transition_publishes_completion():
 
 
 def test_service_rejects_a_final_report_before_acceptance_without_persisting_it():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     service.workflow_tracker = WorkflowTracker(clock=lambda: 10.0)
     service.workflow_tracker.admit("request-1")
@@ -314,7 +314,7 @@ def test_service_rejects_a_final_report_before_acceptance_without_persisting_it(
 
 
 def test_service_final_report_publishes_the_single_workflow_completion():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     service.workflow_tracker = WorkflowTracker(clock=lambda: 10.0)
     service.workflow_tracker.admit("request-1")
@@ -337,7 +337,7 @@ def test_service_final_report_publishes_the_single_workflow_completion():
 
 
 def test_generic_conductor_error_is_persisted_once_as_chat():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     service.pool = SimpleNamespace(snapshot=lambda: [])
     callbacks = HubConductorCallbacks(service)
@@ -362,7 +362,7 @@ def test_generic_conductor_error_is_persisted_once_as_chat():
 def test_hub_snapshot_exposes_the_core_active_generation():
     # gahub_app enriches its SSE snapshots with generation/request_id; the
     # hub mirror passes them straight through.
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.pool = SimpleNamespace(
         snapshot=lambda: [{"id": "worker-1", "status": "stopped",
                            "generation": 3, "request_id": "request-1"}],
@@ -442,12 +442,12 @@ def test_stranded_admitted_keeps_newest_within_limit():
 
 
 def test_redispatch_re_relays_stranded_admitted_only():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     tracker = WorkflowTracker(clock=lambda: 10.0)
     tracker.admit("rid-strand")
     tracker.admit("rid-busy")
     tracker.bind_subagent("rid-busy", "worker-1", 1)
-    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.workflow_tracker = tracker
     service.chat_messages = [
         {"id": "c1", "role": "user", "msg": "做鹈鹕任务", "request_id": "rid-strand"},
         {"id": "c2", "role": "user", "msg": "另一个", "request_id": "rid-busy"},
@@ -467,12 +467,12 @@ def test_redispatch_re_relays_stranded_admitted_only():
 
 
 def test_redispatch_ignores_terminal_and_untraceable_requests():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     tracker = WorkflowTracker(clock=lambda: 10.0)
     tracker.admit("rid-strand")
     tracker.admit("rid-lost")  # no chat message anywhere
     tracker.fail_supervisor("rid-closed", phase="drain", error="stopped")
-    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.workflow_tracker = tracker
     service.chat_messages = [
         {"id": "c1", "role": "user", "msg": "任务", "request_id": "rid-strand"},
     ]
@@ -489,10 +489,10 @@ def test_redispatch_ignores_terminal_and_untraceable_requests():
 
 
 def test_redispatch_failure_does_not_raise():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     tracker = WorkflowTracker(clock=lambda: 10.0)
     tracker.admit("rid-strand")
-    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.workflow_tracker = tracker
     service.chat_messages = [
         {"id": "c1", "role": "user", "msg": "任务", "request_id": "rid-strand"},
     ]
@@ -507,11 +507,11 @@ def test_redispatch_excludes_the_just_admitted_request():
     """The just-admitted request looks stranded (no workers yet) but the
     caller is about to notify the engine for it — re-relaying here duplicated
     the user message (live 2026-09-01 regression)."""
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     tracker = WorkflowTracker(clock=lambda: 10.0)
     tracker.admit("rid-new")
     tracker.admit("rid-old")
-    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.workflow_tracker = tracker
     service.chat_messages = [
         {"id": "c1", "role": "user", "msg": "新消息", "request_id": "rid-new"},
         {"id": "c2", "role": "user", "msg": "旧消息", "request_id": "rid-old"},
@@ -529,10 +529,10 @@ def test_redispatch_excludes_the_just_admitted_request():
 
 
 def test_redispatch_empty_history_falls_back_to_engine_chat():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     tracker = WorkflowTracker(clock=lambda: 10.0)
     tracker.admit("rid-strand")
-    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.workflow_tracker = tracker
     service.chat_messages = []
     service.client = Mock()
     service.client.get_chat.return_value = [

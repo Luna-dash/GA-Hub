@@ -20,7 +20,7 @@ def _service(
     worker: int | None = None,
     policy: str = "follow_main",
 ) -> ConductorService:
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service._conductor_llm_index = main
     service._subagent_llm_index = worker
     service._subagent_model_policy = policy

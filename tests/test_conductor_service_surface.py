@@ -18,7 +18,7 @@ from server.services.conductor_client import GahubProcessManager
 
 def _bare_service() -> cs.ConductorService:
     """Build a ConductorService without running __init__ (no engine needed)."""
-    return object.__new__(cs.ConductorService)
+    return cs.ConductorService.for_tests()
 
 
 def test_get_chat_messages_proxies_engine_items(monkeypatch) -> None:

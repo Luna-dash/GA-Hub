@@ -460,7 +460,7 @@ def test_settings_route_flips_auto_accept_and_returns_live_status(monkeypatch):
 
 
 def test_service_lifecycle_status_refreshes_compatibility_cache():
-    service = ConductorService.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service._started = True
     service._lifecycle_cache = {}
     service.client = SimpleNamespace(status=lambda: dict(STOPPED))

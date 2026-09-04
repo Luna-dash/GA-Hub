@@ -120,7 +120,7 @@ class _FakePool:
 
 def test_conductor_service_shutdown_stops_timeout_monitor_twice_safely():
     monitor = TimeoutMonitor(FakeCore(), check_interval=1.0)
-    service = object.__new__(conductor_service.ConductorService)
+    service = conductor_service.ConductorService.for_tests()
     service.timeout_monitor = monitor
 
     service.shutdown()

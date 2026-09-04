@@ -20,7 +20,7 @@ from server.services.conductor_service import ConductorService
 
 
 def _bare_service() -> ConductorService:
-    return object.__new__(ConductorService)
+    return ConductorService.for_tests()
 
 
 # ===== client: operation_id rides in the request body =====

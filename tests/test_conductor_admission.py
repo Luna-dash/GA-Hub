@@ -8,7 +8,7 @@ from server.services.conductor_service import ConductorService
 
 
 def test_user_chat_message_is_admitted_with_a_request_id():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     service._started = True
     service.configure_models = Mock()
@@ -37,7 +37,7 @@ def test_user_chat_message_is_admitted_with_a_request_id():
 
 
 def test_add_chat_message_mints_operation_id_when_absent():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     service._started = True
     service.configure_models = Mock()
@@ -52,7 +52,7 @@ def test_add_chat_message_mints_operation_id_when_absent():
 
 
 def test_conductor_plan_and_report_do_not_recursively_admit_user_tasks():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     service._started = True
     service.configure_models = Mock()
@@ -75,7 +75,7 @@ def test_conductor_plan_and_report_do_not_recursively_admit_user_tasks():
 
 
 def _service_for_admission_test():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     service._started = False
     service.configure_models = Mock()

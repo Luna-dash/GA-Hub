@@ -21,7 +21,7 @@ def RequestOutcome(**kw):
 
 
 def test_cooperative_yield_publishes_a_nonterminal_turn_outcome():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     request_id = "rid-yield"
     callbacks = HubConductorCallbacks(service)
@@ -43,7 +43,7 @@ def test_cooperative_yield_publishes_a_nonterminal_turn_outcome():
 
 
 def test_conductor_success_outcome_publishes_turn_event_without_completion_item():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = [
         {"id": "plan", "role": "conductor", "msg": "dispatching"},
         {"id": "user", "role": "user", "msg": "question"},
@@ -70,7 +70,7 @@ def test_conductor_success_outcome_publishes_turn_event_without_completion_item(
 
 def test_running_subagent_event_is_swallowed_without_publish():
     """SSE running 事件刻意为 no-op：快照只由 subagents 事件推送。"""
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.pool = SimpleNamespace(snapshot=lambda: [])
     callbacks = HubConductorCallbacks(service)
 
@@ -98,7 +98,7 @@ def test_running_subagent_event_is_swallowed_without_publish():
 )
 def test_subagent_state_transitions_publish_authoritative_snapshot(event):
     items = [{"id": "sid", "status": "stopped"}]
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.pool = SimpleNamespace(snapshot=lambda: items)
     callbacks = HubConductorCallbacks(service)
 
@@ -123,7 +123,7 @@ def test_subagent_state_transitions_publish_authoritative_snapshot(event):
 def test_identical_subagent_transitions_keep_typed_events_without_second_snapshot(
     first, second
 ):
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.pool = SimpleNamespace(snapshot=lambda: [])
     callbacks = HubConductorCallbacks(service)
 
@@ -141,7 +141,7 @@ def test_identical_subagent_transitions_keep_typed_events_without_second_snapsho
 
 def test_completed_output_defers_to_single_completed_snapshot():
     items = [{"id": "sid", "status": "stopped", "review_status": "pending"}]
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.pool = SimpleNamespace(snapshot=lambda: items)
     callbacks = HubConductorCallbacks(service)
 
@@ -154,7 +154,7 @@ def test_completed_output_defers_to_single_completed_snapshot():
 
 
 def test_conductor_log_frame_publishes_valid_item_only():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     callbacks = HubConductorCallbacks(service)
     item = {
         "id": "log-1",
@@ -173,7 +173,7 @@ def test_conductor_log_frame_publishes_valid_item_only():
 
 
 def test_conductor_log_publish_failure_is_observer_only():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     callbacks = HubConductorCallbacks(service)
     frame = {
         "type": "log",
@@ -195,7 +195,7 @@ def test_conductor_log_publish_failure_is_observer_only():
 
 def test_subagent_snapshot_publish_failure_is_retried():
     items = [{"id": "sid", "status": "running"}]
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.pool = SimpleNamespace(snapshot=lambda: items)
     callbacks = HubConductorCallbacks(service)
 
@@ -211,7 +211,7 @@ def test_subagent_snapshot_publish_failure_is_retried():
 
 def test_subagent_lifecycle_publish_failure_still_attempts_snapshot():
     items = [{"id": "sid", "status": "stopped"}]
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.pool = SimpleNamespace(snapshot=lambda: items)
     callbacks = HubConductorCallbacks(service)
 
@@ -237,7 +237,7 @@ def test_subagent_lifecycle_publish_failure_still_attempts_snapshot():
 
 @pytest.mark.parametrize("phase", ["prompt", "dispatch", "drain"])
 def test_failed_request_outcome_publishes_failure_event(phase):
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     request_id = f"rid-{phase}"
     callbacks = HubConductorCallbacks(service)
 
@@ -265,7 +265,7 @@ def test_relayed_user_chat_is_not_duplicated_by_the_sse_echo():
     from unittest.mock import Mock
     from server.services.conductor_service import HubConductorCallbacks
 
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     service.client = Mock()
     service.client.post_chat.return_value = {"id": "ga-echo-1", "role": "user",
@@ -295,7 +295,7 @@ def test_relayed_user_chat_is_not_duplicated_by_the_sse_echo():
 def test_live_user_echo_is_skipped_even_before_the_id_is_recorded():
     # The engine broadcasts the SSE echo before post_chat returns; a user
     # echo arriving ahead of the id bookkeeping must still not duplicate.
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     service._relayed_chat_ids = set()
     with patch("server.services.conductor_service.bus.publish"):
@@ -314,7 +314,7 @@ def test_live_user_echo_is_skipped_even_before_the_id_is_recorded():
 
 def _service_with_tracker():
     from server.services.conductor_workflow import WorkflowTracker
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     service.workflow_tracker = WorkflowTracker(clock=lambda: 10.0)
     return service
@@ -375,7 +375,7 @@ def test_ok_outcome_for_a_dispatched_or_answered_request_stays_success():
 
 
 def test_request_outcome_without_request_id_is_ignored():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     service.workflow_tracker = None
     callbacks = HubConductorCallbacks(service)
@@ -393,7 +393,7 @@ def test_hello_repushes_the_hub_model_policy():
     """The engine forgets its model policy on cold restart; the SSE hello is
     the reconnect signal that must re-assert the hub snapshot."""
     from unittest.mock import Mock
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.pool = SimpleNamespace(update=Mock())
     service.chat_messages = []
     service._relayed_chat_ids = set()
@@ -427,7 +427,7 @@ def test_cold_start_repushes_the_hub_model_policy():
 
 def _service() -> ConductorService:
     from server.services.conductor_service import SUBAGENT_MODEL_POLICIES
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service._conductor_llm_index = 1
     service._subagent_llm_index = None
     service._subagent_model_policy = "follow_main"
@@ -453,7 +453,7 @@ def _wait_until(predicate, timeout: float = 2.0) -> bool:
 
 
 def test_pending_review_auto_accepts_clean_delivery():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service._auto_accept = True
     service.accept_subagent = Mock(return_value={"id": "worker-1"})
     callbacks = HubConductorCallbacks(service)
@@ -466,7 +466,7 @@ def test_pending_review_auto_accepts_clean_delivery():
 
 
 def test_auto_accept_disabled_leaves_workers_for_human():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service._auto_accept = False
     service.accept_subagent = Mock()
     callbacks = HubConductorCallbacks(service)
@@ -477,7 +477,7 @@ def test_auto_accept_disabled_leaves_workers_for_human():
 
 
 def test_auto_accept_without_request_owner_is_skipped():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service._auto_accept = True
     service.accept_subagent = Mock()
     callbacks = HubConductorCallbacks(service)
@@ -488,7 +488,7 @@ def test_auto_accept_without_request_owner_is_skipped():
 
 
 def test_auto_accept_verification_deferral_does_not_raise():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service._auto_accept = True
     service.accept_subagent = Mock(return_value={"error": "completion_unverified"})
     callbacks = HubConductorCallbacks(service)
@@ -499,7 +499,7 @@ def test_auto_accept_verification_deferral_does_not_raise():
 
 
 def test_auto_accept_engine_failure_does_not_raise():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service._auto_accept = True
     service.accept_subagent = Mock(side_effect=RuntimeError("engine down"))
     callbacks = HubConductorCallbacks(service)
@@ -510,11 +510,11 @@ def test_auto_accept_engine_failure_does_not_raise():
 
 
 def test_pending_review_event_triggers_auto_accept_hook():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     tracker = Mock()
     tracker.record_subagent_event.return_value = (None, None)
-    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.workflow_tracker = tracker
     service.pool = Mock()
     service.pool.get.return_value = None
     service.publish_subagent_snapshot = Mock()
@@ -530,11 +530,11 @@ def test_pending_review_event_triggers_auto_accept_hook():
 
 
 def test_running_event_never_triggers_auto_accept_hook():
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.chat_messages = []
     tracker = Mock()
     tracker.record_subagent_event.return_value = (None, None)
-    service._ensure_workflow_tracker = Mock(return_value=tracker)
+    service.workflow_tracker = tracker
     service.pool = Mock()
     service.pool.get.return_value = None
     service.publish_subagent_snapshot = Mock()
@@ -550,7 +550,7 @@ def test_running_event_never_triggers_auto_accept_hook():
 # ── stranded workflow redispatch wiring (resume semantics) ───────────────────
 
 def _ensure_started_service(status_started: bool):
-    service = object.__new__(ConductorService)
+    service = ConductorService.for_tests()
     service.client = Mock()
     service.client.status.return_value = {"started": status_started}
     service._conductor_llm_index = None

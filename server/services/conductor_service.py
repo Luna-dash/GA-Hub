@@ -322,7 +322,7 @@ class HubConductorCallbacks:
         """
         if not request_id:
             return
-        tracker = self.service._ensure_workflow_tracker()
+        tracker = self.service.workflow_tracker
         snapshot = tracker.snapshot(request_id)
         if snapshot is None or snapshot.get("status") in TERMINAL_WORKFLOW_STATES:
             return
@@ -364,7 +364,7 @@ class HubConductorCallbacks:
         error = getattr(outcome, "error", "") or ""
         try:
             if status != "ok":
-                tracker = self.service._ensure_workflow_tracker()
+                tracker = self.service.workflow_tracker
                 transition = tracker.fail_supervisor(
                     request_id,
                     phase=phase,
@@ -386,7 +386,7 @@ class HubConductorCallbacks:
         if not isinstance(payload, dict):
             payload = dict(getattr(payload, "__dict__", {}) or {})
         service = self.service
-        tracker = service._ensure_workflow_tracker()
+        tracker = service.workflow_tracker
         getter = getattr(getattr(service, "pool", None), "get", None)
         state = getter(agent_id) if callable(getter) else None
         if state is not None and "generation" not in payload:
@@ -525,6 +525,22 @@ class ConductorService:
     _ACTION_OPERATION_CACHE_SIZE = 512
 
     def __init__(self):
+        self._init_fields()
+        self.timeout_monitor.start()
+
+    @classmethod
+    def for_tests(cls) -> "ConductorService":
+        """Fully initialized instance without threads or engine side effects.
+
+        The unit-test constructor that replaces ``object.__new__`` plus the
+        old ``_ensure_*`` backfills: every production field exists, and
+        nothing runs.
+        """
+        obj = cls.__new__(cls)
+        obj._init_fields()
+        return obj
+
+    def _init_fields(self) -> None:
         # Application shutdown is a terminal lifecycle separate from the
         # user-facing ``stop`` route.  Keep the singleton alive while a close
         # is in progress (or after a timeout) so a late request cannot create
@@ -555,7 +571,6 @@ class ConductorService:
         self.client = GaConductorClient(self._process_manager)
         self.pool = PoolMirror(self.client)
         self.timeout_monitor = TimeoutMonitor(self.pool, publish=bus.publish)
-        self.timeout_monitor.start()
         self._relay_stop = threading.Event()
         self._relay_thread: Optional[threading.Thread] = None
         # Serializes the engine cold start: two concurrent admissions must
@@ -573,6 +588,7 @@ class ConductorService:
         # could only manufacture spurious transitions).
         self._journal_cursor: dict = {"seq": None, "epoch": None}
 
+
     @classmethod
     def instance(cls) -> "ConductorService":
         if cls._instance is None:
@@ -581,30 +597,10 @@ class ConductorService:
                     cls._instance = cls()
         return cls._instance
 
-    def _ensure_shutdown_state(self) -> None:
-        """Backfill lifecycle fields for legacy ``object.__new__`` tests."""
-        if not hasattr(self, "_shutdown_lock"):
-            self._shutdown_lock = threading.RLock()
-        if not hasattr(self, "_shutdown_in_progress"):
-            self._shutdown_in_progress = False
-        if not hasattr(self, "_shutdown_complete"):
-            self._shutdown_complete = False
-        if not hasattr(self, "_shutdown_event"):
-            self._shutdown_event = threading.Event()
-            self._shutdown_event.set()
-        if not hasattr(self, "_shutdown_core_stopped"):
-            self._shutdown_core_stopped = False
-        if not hasattr(self, "_shutdown_monitor_stopped"):
-            self._shutdown_monitor_stopped = False
-        if not hasattr(self, "_closed"):
-            self._closed = False
-        if not hasattr(self, "_auto_accept"):
-            self._auto_accept = True
-
     @property
     def auto_accept(self) -> bool:
         """Whether clean worker deliveries are accepted without a human."""
-        return bool(getattr(self, "_auto_accept", True))
+        return bool(self._auto_accept)
 
     @auto_accept.setter
     def auto_accept(self, value: bool) -> None:
@@ -617,10 +613,7 @@ class ConductorService:
 
     def shutdown(self, timeout: float = 2.0) -> bool:
         """Terminally close the engine session and monitor under one deadline."""
-        self._ensure_shutdown_state()
-        relay_stop = getattr(self, "_relay_stop", None)
-        if relay_stop is not None:
-            relay_stop.set()
+        self._relay_stop.set()
         deadline = time.monotonic() + max(0.0, float(timeout))
 
         with self._shutdown_lock:
@@ -714,7 +707,6 @@ class ConductorService:
         return complete
 
     def _assert_open(self) -> None:
-        self._ensure_shutdown_state()
         with self._shutdown_lock:
             if self._closed:
                 raise RuntimeError("Conductor service is closed")
@@ -735,29 +727,15 @@ class ConductorService:
                 raise RuntimeError(
                     rf"gahub_app unavailable (see %TEMP%\gahub_app.log): {exc}"
                 ) from exc
-        # Legacy object.__new__ test doubles carry no relay wiring; a real
-        # service always has _relay_stop (set in __init__).
-        if hasattr(self, "_relay_stop"):
-            self._ensure_relay()
         status = self.client.status()
         if not status.get("started"):
+            # Refuse BEFORE _ensure_relay: the relay thread spawns gahub_app
+            # asynchronously, so starting it for a refused operation would
+            # cold-start the very supervisor this path must never start.
             raise ConductorNotRunning(
                 "conductor is not running; send a chat message or press "
                 "start before subagent operations")
-
-    def _ensure_workflow_tracker(self) -> WorkflowTracker:
-        """Backfill workflow state for focused tests and legacy adapters."""
-        tracker = getattr(self, "workflow_tracker", None)
-        if tracker is None:
-            tracker = WorkflowTracker()
-            self.workflow_tracker = tracker
-        if not hasattr(self, "_dispatch_context"):
-            self._dispatch_context = threading.local()
-        if not hasattr(self, "_chat_lock"):
-            self._chat_lock = threading.RLock()
-        if not hasattr(self, "chat_messages"):
-            self.chat_messages = []
-        return tracker
+        self._ensure_relay()
 
     def _publish_workflow_transition(
         self, transition: tuple[str, dict]
@@ -778,7 +756,7 @@ class ConductorService:
         self, request_id: str, *, phase: str, error: str
     ) -> dict:
         """Persist one visible failure report per request, even across retries."""
-        self._ensure_workflow_tracker()
+        self.workflow_tracker
         with self._chat_lock:
             existing = next(
                 (
@@ -951,7 +929,6 @@ class ConductorService:
         self._relay_thread.start()
 
     def ensure_started(self, exclude_request_id: str | None = None) -> bool:
-        self._ensure_shutdown_state()
         with self._shutdown_lock:
             if self._closed:
                 raise RuntimeError("Conductor service is closed")
@@ -1008,7 +985,7 @@ class ConductorService:
         logged, never raised — a resume must not break because one stranded
         request cannot be relayed.
         """
-        tracker = self._ensure_workflow_tracker()
+        tracker = self.workflow_tracker
         stranded = [
             workflow
             for workflow in tracker.stranded_admitted()
@@ -1074,7 +1051,7 @@ class ConductorService:
             # redispatch safety net. Only workerless "admitted" workflows are
             # swept here — running workers already got terminal CANCELLED
             # events from the engine stop sweep.
-            tracker = self._ensure_workflow_tracker()
+            tracker = self.workflow_tracker
             for topic, payload in tracker.abandon_stranded(
                     reason="conductor stopped by user"):
                 self._publish_workflow_transition((topic, payload))
@@ -1101,8 +1078,6 @@ class ConductorService:
     def _remember_relayed(self, ga_id) -> None:
         if not ga_id:
             return
-        if not hasattr(self, "_relayed_chat_ids"):
-            self._relayed_chat_ids = set()
         self._relayed_chat_ids.add(ga_id)
         if len(self._relayed_chat_ids) > 500:
             self._relayed_chat_ids = set(list(self._relayed_chat_ids)[-250:])
@@ -1361,7 +1336,7 @@ class ConductorService:
         )
         bus.publish("conductor:chat", {"item": hub_item})
         if role == "conductor" and final and item.get("request_id"):
-            tracker = self._ensure_workflow_tracker()
+            tracker = self.workflow_tracker
             try:
                 transition = tracker.record_final(item["request_id"], hub_item)
                 if transition is not None:
@@ -1480,7 +1455,7 @@ class ConductorService:
         只改一份的漂移）；模型策略优先级链只在此一处实现。
         """
         self._assert_engine_ready()
-        tracker = self._ensure_workflow_tracker()
+        tracker = self.workflow_tracker
         if request_id is not None and not tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")
         models = self.configure_models(
@@ -1575,7 +1550,7 @@ class ConductorService:
         if replayed is not None:
             return replayed
         self._assert_engine_ready()
-        tracker = self._ensure_workflow_tracker()
+        tracker = self.workflow_tracker
         if request_id is not None and not tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")
         result = self.client.subagent_action(
@@ -1625,7 +1600,7 @@ class ConductorService:
 
     def get_workflow_snapshot(self, limit: int = 20) -> list[dict]:
         """Expose the Hub-owned workflow projection for page reloads."""
-        return self._ensure_workflow_tracker().snapshots(limit=limit)
+        return self.workflow_tracker.snapshots(limit=limit)
 
     def add_chat_message(
         self,
@@ -1639,7 +1614,7 @@ class ConductorService:
         operation_id: Optional[str] = None,
     ) -> dict:
         self._assert_open()
-        tracker = self._ensure_workflow_tracker()
+        tracker = self.workflow_tracker
         if kind is not None and role != "conductor":
             raise ValueError("kind is only valid for conductor messages")
         if kind == "final" and not request_id:

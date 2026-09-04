@@ -23,7 +23,7 @@ class _StopRecorder:
 
 
 def _service(core: object | None, monitor: object | None):
-    service = object.__new__(conductor_service.ConductorService)
+    service = conductor_service.ConductorService.for_tests()
     if core is not None:
         # The engine stop now goes through the HTTP client; record like a core.
         service.client = SimpleNamespace(
