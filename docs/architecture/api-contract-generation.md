@@ -10,8 +10,8 @@ The checked-in [`openapi.json`](../api/openapi.json) is generated from the confi
 
 Regenerate it after changing backend routes:
 
-```powershell
-D:/APP/anaconda3/envs/ga/python.exe scripts/export_openapi.py
+```bash
+python scripts/export_openapi.py   # 仓库根目录执行；脚本自钉 sys.path
 ```
 
 Check every `api.client` HTTP call against the artifact:

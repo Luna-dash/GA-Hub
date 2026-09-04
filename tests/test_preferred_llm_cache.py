@@ -5,9 +5,10 @@ A. 聊天流畅度优化：submit 热路径每次调用 ``_restore_preferred_llm
    首次加载即填缓存，后续 submit 与 switch 共享缓存，磁盘读次数不再随
    submit 次数线性增长。
 
-真值源唯一性：``preferred_llm_no`` 的写入入口仅 ``switch_llm``（经
-``_save_preferred_llm``）；``_restore_preferred_llm`` 与 ``_select_llm_for_task``
-只读不改持久值。因此缓存可在 save 时同步刷新而保持语义等价。
+真值源唯一性：``preferred_llm_key/no`` 的写入入口仅 ``switch_llm``（经
+``LlmPreferenceStore.set_selection``）；``_restore_preferred_llm`` 与
+``_select_llm_for_task`` 只读不改持久值。因此缓存可在 save 时同步刷新
+而保持语义等价。
 """
 from __future__ import annotations
 

@@ -21,6 +21,7 @@ MARKERS = {
     "GA_HUB_HIDE_LOADING",  # Tauri loading gate (main.rs)
     "GA_HUB_RUNTIME",       # window global injected by main.rs
     "GAHUB_FEISHU_CHAT",    # chat id marker in feishu messages (feishu_service)
+    "GA_HUB_PERF",          # __GA_HUB_PERF__ webui window global (chatPerformance.ts)
 }
 
 

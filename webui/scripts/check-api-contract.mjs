@@ -118,25 +118,33 @@ if (unknown.length > 0) {
   )
 }
 
+// A check must not mutate tracked sources: generate into a scratch file and
+// diff it against the committed artifact instead of refreshing it in place.
+const scratchPath = `${generatedPath}.check-tmp`
 const generation = spawnSync(
   process.execPath,
-  [path.join(webuiRoot, 'node_modules/openapi-typescript/bin/cli.js'), openapiPath, '--output', generatedPath],
+  [path.join(webuiRoot, 'node_modules/openapi-typescript/bin/cli.js'), openapiPath, '--output', scratchPath],
   { encoding: 'utf8' },
 )
-if (generation.error || generation.status !== 0) {
-  console.error('Generated TypeScript API contract could not be refreshed:')
-  console.error(generation.stderr || generation.error)
-  process.exitCode = 1
-} else if (generation.stdout.trim()) {
-  // The generator prints a short success banner on every run.
-  process.stdout.write(generation.stdout)
-}
-
-if (!process.exitCode) {
-  const generatedAfter = fs.readFileSync(generatedPath, 'utf8')
-  if (generatedBefore !== generatedAfter) {
-    console.error(`Generated TypeScript API contract is stale: ${generatedPath}`)
-    console.error('Refresh it with: npm run api:generate')
+try {
+  if (generation.error || generation.status !== 0) {
+    console.error('Generated TypeScript API contract could not be refreshed:')
+    console.error(generation.stderr || generation.error)
     process.exitCode = 1
+  } else {
+    if (generation.stdout.trim()) {
+      // The generator prints a short success banner on every run.
+      process.stdout.write(generation.stdout)
+    }
+    if (!process.exitCode) {
+      const generatedNow = fs.readFileSync(scratchPath, 'utf8')
+      if (generatedBefore !== generatedNow) {
+        console.error(`Generated TypeScript API contract is stale: ${generatedPath}`)
+        console.error('Refresh it with: npm run api:generate')
+        process.exitCode = 1
+      }
+    }
   }
+} finally {
+  fs.rmSync(scratchPath, { force: true })
 }

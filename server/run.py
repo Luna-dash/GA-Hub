@@ -72,7 +72,7 @@ def main():
     try:
         import uvicorn  # noqa
     except ImportError:
-        print("[server] uvicorn not installed. Run: pip install -e \".[webui]\"", file=sys.stderr)
+        print("[server] uvicorn not installed. Run: pip install -r requirements.txt", file=sys.stderr)
         sys.exit(1)
 
     print(f"[server] starting GenericAgent admin API on http://{host}:{port}")

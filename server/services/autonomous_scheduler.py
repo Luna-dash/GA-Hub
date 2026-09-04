@@ -143,6 +143,16 @@ class AutonomousScheduler(SchedulerDomainBase):
             self._idle_thread = threading.Thread(target=self._idle_loop, daemon=True, name="auto-idle")
             self._idle_thread.start()
 
+    def _join_background_workers(self, deadline: float) -> bool:
+        thread = self._idle_thread
+        if thread is None:
+            return True
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        if not thread.is_alive():
+            self._idle_thread = None
+            return True
+        return False
+
     def _idle_loop(self) -> None:
         while not self._stop_event.wait(30):
             now = int(time.time())

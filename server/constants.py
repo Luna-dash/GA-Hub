@@ -67,3 +67,6 @@ SESSION_RUN_CAPACITY_MAX = 10
 # GA_HUB_MYKEY_PYTHON=..;CRYPTOGRAPHY=..  stdout probe marker (routes/mykey.py)
 # __GA_HUB_HIDE_LOADING__                 Tauri loading-gate marker (main.rs)
 # __GA_HUB_RUNTIME__                      window global injected by main.rs
+# __GA_HUB_PERF__                         webui-only chat perf ring buffer
+#                                         (webui/src/utils/chatPerformance.ts;
+#                                         never crosses a process boundary)

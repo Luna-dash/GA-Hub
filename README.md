@@ -184,7 +184,8 @@ GA-Hub/                              # 本项目 — 完全独立
 ├── build_all.bat / .command         # 一键交付构建（前端→sidecar→Tauri→产物守卫）
 ├── start.bat / start.command        # 双击启动（Windows=Tauri 桌面版；macOS/Linux=浏览器模式，桌面壳未交付）
 ├── scripts/
-│   └── build_all.py                 # 交付构建链核心逻辑
+│   ├── build_all.py                 # 交付构建链核心逻辑
+│   └── export_openapi.py            # OpenAPI 契约导出（docs/api/openapi.json）
 ├── server/                          # FastAPI 后端
 │   ├── _paths.py                    # 路径发现 + 配置（关键）
 │   ├── main.py                      # 应用装配（setup mode / normal mode）
@@ -196,7 +197,7 @@ GA-Hub/                              # 本项目 — 完全独立
 │   ├── src/
 │   │   ├── api/                     # client + 类型
 │   │   ├── components/              # ImagePasteInput / MessageBubble / ...
-│   │   ├── pages/                   # Settings + 8 个业务页
+│   │   ├── pages/                   # Settings + 10 个业务页
 │   │   └── ...
 │   └── dist/                        # 构建产物（自动被后端挂载）
 └── src-tauri/                       # Tauri 2 桌面壳（唯一桌面入口）

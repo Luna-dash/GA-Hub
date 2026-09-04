@@ -15,6 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 from .. import _paths
+from .session_runtime_status import STATUS_IDLE
 
 
 class SessionNotFoundError(KeyError):
@@ -108,7 +109,7 @@ class SessionMetadataStore:
                 "title": title.strip(),
                 "llm_key": llm_key,
                 "llm_index": llm_index,
-                "status": "idle",
+                "status": STATUS_IDLE,
                 "archive_path": None,
                 "project_name": None,
                 "project_path": None,
@@ -252,7 +253,7 @@ class SessionMetadataStore:
                 "title": title.strip(),
                 "llm_key": None,
                 "llm_index": None,
-                "status": "idle",
+                "status": STATUS_IDLE,
                 "archive_path": path,
                 "created_at": timestamp,
                 "updated_at": timestamp,

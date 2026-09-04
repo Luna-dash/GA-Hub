@@ -145,6 +145,10 @@ class SchedulerDomainBase:
     def _apply_upsert_defaults(self, base: dict) -> None:
         """Hook: subclass backfills legacy defaults before materialization."""
 
+    def _join_background_workers(self, deadline: float) -> bool:
+        """Hook: join domain-owned background threads; True when drained."""
+        return True
+
     @classmethod
     def instance(
         cls: type[_SelfT],
@@ -230,11 +234,7 @@ class SchedulerDomainBase:
                     scheduler.shutdown(wait=False)
             except Exception:
                 pass
-        thread = getattr(self, "_idle_thread", None)
-        if thread is not None:
-            thread.join(timeout=max(0.0, deadline - time.monotonic()))
-            if not thread.is_alive():
-                self._idle_thread = None
+        idle_stopped = self._join_background_workers(deadline)
         if watchers is None:
             watchers_stopped = True
         elif admission_stopped:
@@ -248,7 +248,7 @@ class SchedulerDomainBase:
             watchers_stopped = False
         stopped = (
             admission_stopped
-            and (thread is None or not thread.is_alive())
+            and idle_stopped
             and watchers_stopped
         )
         if stopped and type(self)._instance is self:

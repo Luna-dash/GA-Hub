@@ -29,12 +29,17 @@ def _registry_values() -> list[str]:
 
 
 def _publish_sites():
+    """Yield (path, lineno, is_fstring, literal) for every .publish site.
+
+    Matching runs over whole-file text, not per-line: `.publish(` followed
+    by a topic literal on the next line is exactly the shape a drift would
+    take (routes/sessions.py's multiline bus.publish calls predate this).
+    """
     for path in sorted((ROOT / "server").rglob("*.py")):
-        for lineno, line in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), 1
-        ):
-            for match in PUBLISH_RE.finditer(line):
-                yield path, lineno, match.group(1) == "f", match.group(2)
+        text = path.read_text(encoding="utf-8")
+        for match in PUBLISH_RE.finditer(text):
+            lineno = text.count("\n", 0, match.start()) + 1
+            yield path, lineno, match.group(1) == "f", match.group(2)
 
 
 def test_registry_has_no_duplicate_values() -> None:

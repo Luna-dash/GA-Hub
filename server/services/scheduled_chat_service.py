@@ -33,8 +33,6 @@ class ScheduledChat:
 class ScheduledChatService:
     """Owns persisted scheduled-chat state and one bounded worker thread."""
 
-    _instance: "ScheduledChatService | None" = None
-
     def __init__(
         self,
         submit: Callable[[ScheduledChat], None],
@@ -55,14 +53,6 @@ class ScheduledChatService:
         self._thread: threading.Thread | None = None
         self._tasks: dict[str, ScheduledChat] = {}
         self._load()
-
-    @classmethod
-    def instance(cls, submit: Callable[[ScheduledChat], None] | None = None) -> "ScheduledChatService":
-        if cls._instance is None:
-            if submit is None:
-                raise RuntimeError("scheduled chat submit callback is required")
-            cls._instance = cls(submit)
-        return cls._instance
 
     def start(self) -> None:
         with self._lock:

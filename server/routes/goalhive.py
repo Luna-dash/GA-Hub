@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -49,7 +50,7 @@ async def ws_goalhive(ws: WebSocket):
         while True:
             raw = await ws.receive_text()
             try:
-                msg = __import__("json").loads(raw)
+                msg = json.loads(raw)
             except Exception:
                 continue
             
@@ -98,7 +99,7 @@ async def _broadcast_updates(ws: WebSocket, service):
         await asyncio.sleep(0.2)
         try:
             messages = service.get_messages()
-            state = __import__("json").dumps(messages, ensure_ascii=False)
+            state = json.dumps(messages, ensure_ascii=False)
             if state != last_state:
                 last_state = state
                 await ws.send_json({"type": "update", "messages": messages})

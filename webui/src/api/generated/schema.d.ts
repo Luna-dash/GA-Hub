@@ -960,12 +960,7 @@ export interface paths {
         };
         /**
          * Get Subagent
-         * @description Full worker dossier for human review.
-         *
-         *     Engine GET /subagent/{id} is the source of the cleaned reply.  The hub
-         *     list snapshot already carries prompt/manifest/verification and is filled
-         *     in for any field the engine omits, so the UI can show what was asked,
-         *     what landed, and what the machine thinks.
+         * @description Full worker dossier for human review (engine reply + mirror facts).
          */
         get: operations["get_subagent_api_conductor_subagent__sid__get"];
         put?: never;

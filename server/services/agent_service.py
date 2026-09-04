@@ -45,6 +45,17 @@ from .rewind_adapter import RewindAdapter  # noqa: E402
 log = logging.getLogger(__name__)
 
 _AUTO_CONTINUE_MAX = 2
+
+# Unattended-producer source vocabulary, kept side by side so the asymmetry
+# stays visible: retries treat both scheduled spellings equally
+# (SCHEDULED_RETRY_SOURCES), auto-continue only knows "scheduled_task" —
+# scheduled-chat runs (source="scheduled") do NOT auto-continue past
+# truncation markers today. Unifying that is a product decision (BACKLOG).
+RETRY_ELIGIBLE_SOURCES = frozenset({
+    "user", "webui", "chat_error_retry", "auto_continue",
+    "scheduled_task", "scheduled", "autonomous", "reflect",
+})
+AUTO_CONTINUE_SOURCES = RETRY_ELIGIBLE_SOURCES - {"scheduled"}
 _STREAM_MIRROR_QUEUE_CAPACITY = 2
 _AUTO_CONTINUE_MARKERS = ("[!!! 流异常中断", "[!!! Response truncated: max_tokens")
 _AUTO_CONTINUE_PROMPT = "继续上一条回复，从中断处继续，不要重复已经完成的内容。"
@@ -85,7 +96,7 @@ _patch_ga_subprocess()
 # (``tests/test_paths_python.py``) override ``_ExternalGaWebTools`` via
 # ``mock.patch.object(agent_service, "_ExternalGaWebTools", ...)``; that lookup
 # only works if the name is bound on this module.
-from .ga_external_worker import _ExternalGaWebTools, _WEB_TOOL_WORKER_SCRIPT  # noqa: E402,F401
+from .ga_external_worker import _ExternalGaWebTools  # noqa: E402,F401
 from ..event_topics import (
     AGENT_ABORT,
     AGENT_DONE,
@@ -452,19 +463,6 @@ class AgentService:
         return {"llm_no": selected, "key": key, "name": self.agent.get_llm_name()}
 
     # ── llm preference persistence ───────────────────────────────
-    def _save_preferred_llm(self, n: int) -> None:
-        try:
-            self._llm_preferences.set(n)
-        except Exception as e:
-            log.warning("failed to persist preferred_llm_no=%s: %s", n, e)
-
-    def _get_preferred_llm_no(self):
-        """Return the persisted preferred LLM index (int or None).
-
-        Kept as a compatibility facade over LlmPreferenceStore.
-        """
-        return self._llm_preferences.get()
-
     def _restore_preferred_llm(self) -> None:
         try:
             saved, legacy_index = self._llm_preferences.get_selection()
@@ -500,9 +498,9 @@ class AgentService:
         command, autonomous SOP via code_run inline_eval, etc. — surfaces the
         change in admin logs and (optionally) updates the user-preferred slot.
 
-        We only persist on USER-initiated changes (``switch_llm`` calls this
-        helper directly via ``_save_preferred_llm``). For other sources we
-        just log so the user can spot unexpected drift.
+        Persistence now lives solely in ``switch_llm`` (via
+        LlmPreferenceStore.set_selection); this wrapper only logs so the user
+        can spot unexpected drift from other callers.
         """
         import inspect, traceback
         original = self.agent.next_llm
@@ -811,7 +809,7 @@ class AgentService:
                     continue
 
     def _maybe_retry_recoverable_error(self, h: StreamHandle, snap: ChatSnapshot, content: str) -> bool:
-        if snap.source not in ("user", "webui", "chat_error_retry", "auto_continue", "scheduled_task", "scheduled", "autonomous", "reflect"):
+        if snap.source not in RETRY_ELIGIBLE_SOURCES:
             return False
         match = classify_recoverable_error(content)
         if match is None:
@@ -959,7 +957,7 @@ class AgentService:
             return ChatRetryConfig()
 
     def _maybe_auto_continue(self, h: StreamHandle, snap: ChatSnapshot, content: str) -> None:
-        if snap.source not in ("user", "webui", "auto_continue", "chat_error_retry", "scheduled_task", "autonomous", "reflect"):
+        if snap.source not in AUTO_CONTINUE_SOURCES:
             return
         if h.auto_continue_count >= _AUTO_CONTINUE_MAX:
             return
@@ -1047,14 +1045,6 @@ class AgentService:
     def get_history(self) -> list[str]:
         return list(getattr(self.agent, "history", []))
 
-    def _rewind_guard(self):
-        """Return the per-runtime lock used by checkpoint sync and rewind."""
-        lock = getattr(self, "_rewind_lock", None)
-        if lock is None:
-            lock = threading.RLock()
-            self._rewind_lock = lock
-        return lock
-
     def _rewind(self) -> RewindAdapter:
         adapter = getattr(self, "_rewind_adapter", None)
         if adapter is None:
@@ -1087,14 +1077,6 @@ class AgentService:
         store = adapter.sync_store(strict=strict)
         self._rewind_store = adapter.store
         return store
-
-    def _sync_rewind_working_memory(self, result: dict) -> None:
-        """Compatibility facade for the extracted rewind adapter."""
-        self._rewind().sync_working_memory(result)
-
-    def _apply_durable_rewind(self, store, n_eff: int) -> dict:
-        """Compatibility facade for durable archive rewind."""
-        return self._rewind().apply_durable(store, n_eff)
 
     def _rewind_session_turns(
         self, *, sid: str | None = None, n: int | None = None
