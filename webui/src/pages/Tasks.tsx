@@ -7,6 +7,7 @@ import type { EmailConfig, TaskRun, TaskSchedule, TaskScheduleType } from '@/api
 import { PageShell } from '@/components/PageShell'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { relTime } from '@/utils/foldTurns'
+import { errorMessageFromError } from '@/utils/sessionUi'
 import { dialog } from '@/stores/dialogStore'
 import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
@@ -199,7 +200,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
       qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
       onClose()
     } catch (e: any) {
-      await dialog.alert('保存失败', e?.body?.detail || e?.message || String(e))
+      await dialog.alert('保存失败', errorMessageFromError(e))
     } finally {
       setSaving(false)
     }
@@ -300,7 +301,7 @@ function EmailSettings() {
       setEditing(false)
       setResult('已保存')
     } catch (e: any) {
-      const msg = e?.body?.detail || e?.message || String(e)
+      const msg = errorMessageFromError(e)
       setResult(`保存失败: ${msg}`)
       await dialog.alert('保存失败', msg)
     } finally {
@@ -332,7 +333,7 @@ function EmailSettings() {
         await dialog.alert('测试邮件发送失败', r.error || 'unknown')
       }
     } catch (e: any) {
-      const msg = e?.body?.detail || e?.message || String(e)
+      const msg = errorMessageFromError(e)
       setResult(`发送失败: ${msg}`)
       await dialog.alert('测试邮件发送失败', msg)
     } finally {

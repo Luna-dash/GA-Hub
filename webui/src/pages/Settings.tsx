@@ -29,6 +29,7 @@ import {
 import { isTauriDesktop, restartDesktopBackend, selectDirectory } from '@/utils/desktop'
 import { waitForDesktopRestart } from '@/utils/backendRestart'
 import { getMyKeyShowUpload, setMyKeyShowUpload } from '@/utils/mykeySyncUi'
+import { errorMessageFromError } from '@/utils/sessionUi'
 import { queryKeys } from '@/queries/queryKeys'
 export default function Settings({ initialMode = 'settings' }: { initialMode?: 'settings' | 'setup' }) {
   const qc = useQueryClient()
@@ -57,7 +58,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
       setValidResult(r)
     } catch (e: any) {
       setValidResult({ valid: false, resolved: path })
-      toast.error('路径校验请求失败：' + (e?.message || String(e)))
+      toast.error('路径校验请求失败：' + errorMessageFromError(e))
     } finally {
       setValidating(false)
     }
@@ -76,7 +77,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
       setValidResult(null)
       await validate(result.path)
     } catch (e: any) {
-      toast.error(`目录选择失败：${e?.message || String(e)}`)
+      toast.error(`目录选择失败：${errorMessageFromError(e)}`)
     } finally {
       setPicking(false)
     }
@@ -94,8 +95,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
         qc.invalidateQueries({ queryKey: queryKeys.servicePanel }),
       ])
     } catch (e: any) {
-      const msg = e?.body?.detail || e?.message || String(e)
-      setSaveErr(msg)
+      setSaveErr(errorMessageFromError(e, '保存失败'))
     } finally {
       setSaving(false)
     }
@@ -110,7 +110,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
       await waitForDesktopRestart()
       window.location.reload()
     } catch (e: any) {
-      toast.error('重启后端失败：' + (e?.message || String(e)))
+      toast.error('重启后端失败：' + errorMessageFromError(e))
       setRestarting(false)
     }
   }
@@ -452,7 +452,7 @@ function ChatRetryPanel() {
       await qc.invalidateQueries({ queryKey: queryKeys.agent.chatRetryConfig })
       setMsg('已保存')
     } catch (e: any) {
-      setMsg(`保存失败：${e?.body?.detail || e?.message || String(e)}`)
+      setMsg(`保存失败：${errorMessageFromError(e)}`)
     } finally {
       setSaving(false)
       window.setTimeout(() => setMsg(''), 3500)

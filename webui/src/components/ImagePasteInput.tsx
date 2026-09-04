@@ -9,6 +9,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { api } from '@/api/client'
 import type { UploadResult } from '@/api/types'
+import { errorMessageFromError } from '@/utils/sessionUi'
 import {
   filterSlashCommands,
   handleSlashMenuKey,
@@ -430,7 +431,7 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
       const r = await api.sessionBtw(sessionId, q)
       setTurns((xs) => xs.map((x) => x.id === id ? { ...x, a: r.ok ? r.content : '', error: r.ok ? '' : (r.error || 'BTW 请求失败') } : x))
     } catch (e: any) {
-      setTurns((xs) => xs.map((x) => x.id === id ? { ...x, error: e?.message || String(e) } : x))
+      setTurns((xs) => xs.map((x) => x.id === id ? { ...x, error: errorMessageFromError(e, 'BTW 请求失败') } : x))
     } finally {
       setLoading(false)
       window.setTimeout(() => inputRef.current?.focus(), 0)

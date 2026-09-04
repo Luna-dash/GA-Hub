@@ -6,6 +6,7 @@ import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { queryKeys } from '@/queries/queryKeys'
 import { ModalOverlay } from '@/components/ModalOverlay'
+import { errorMessageFromError } from '@/utils/sessionUi'
 
 // ── raw view ────────────────────────────────────────────────────────
 export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKeyWriteResult) => void }) {
@@ -107,7 +108,7 @@ function BackupDrawer({ onClose, onRestored }: {
       toast.success('已回滚到该备份')
       onClose()
     } catch (e: any) {
-      dialog.alert('回滚失败', e?.body?.detail || e?.message || String(e))
+      dialog.alert('回滚失败', errorMessageFromError(e))
     } finally {
       setBusy(null)
     }

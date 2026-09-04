@@ -21,6 +21,7 @@ import { noticeKeys, useChatStore } from '@/stores/chatStore'
 import { dialog } from '@/stores/dialogStore'
 import { conversationKeys } from '@/queries/conversations'
 import { queryKeys } from '@/queries/queryKeys'
+import { errorMessageFromError } from '@/utils/sessionUi'
 
 interface Action {
   id: string
@@ -242,7 +243,7 @@ export function CommandPalette() {
   const close = () => setOpen(false)
   const exec = async (a: Action) => {
     close()
-    try { await a.run() } catch (e: any) { dialog.alert('操作失败', e?.message || String(e)) }
+    try { await a.run() } catch (e: any) { dialog.alert('操作失败', errorMessageFromError(e)) }
   }
 
   const onKey = (e: React.KeyboardEvent) => {

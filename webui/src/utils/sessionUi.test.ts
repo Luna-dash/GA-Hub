@@ -74,6 +74,15 @@ describe('session UI contracts', () => {
     expect(errorMessageFromError(null, '未知错误')).toBe('未知错误')
   })
 
+  it('prefers the nested detail payload in backend error envelopes', () => {
+    expect(errorMessageFromError({ body: { detail: { detail: '具体错误', code: 'fallback_code' } } })).toBe('具体错误')
+    expect(errorMessageFromError({ body: { detail: { error: '上游失败', code: 'x' } } })).toBe('上游失败')
+    expect(errorMessageFromError({ body: { detail: '纯文本 detail' } })).toBe('纯文本 detail')
+    // Message wins over code inside a structured detail (canonical precedence).
+    expect(errorMessageFromError({ body: { detail: { message: '人话', code: 'E123' } } })).toBe('人话')
+    expect(errorMessageFromError({ body: {}, message: 'transport broken' })).toBe('transport broken')
+  })
+
   it('provides a useful fallback title for untitled sessions', () => {
     expect(sessionStatusLabel(runtime('a', 'error'))).toBe('异常')
     expect(session('a').title).toBe('')

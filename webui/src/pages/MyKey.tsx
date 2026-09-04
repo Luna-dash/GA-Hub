@@ -27,6 +27,7 @@ import { toast } from '@/stores/toastStore'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
 import { getMyKeyShowUpload, MYKEY_SHOW_UPLOAD_EVENT } from '@/utils/mykeySyncUi'
+import { errorMessageFromError } from '@/utils/sessionUi'
 
 type Tab = 'structured' | 'raw'
 
@@ -68,7 +69,7 @@ export default function MyKey() {
       const result = await api.openMyKeyFile()
       toast.success(`已打开 ${result.path}`)
     } catch (e: any) {
-      toast.error('打开文件失败：' + (e?.message || String(e)))
+      toast.error('打开文件失败：' + errorMessageFromError(e))
     }
   }
 
@@ -200,7 +201,7 @@ function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
       const r = await api.deleteMyKeySession(s.var)
       onWrite(r)
     } catch (e: any) {
-      dialog.alert('删除失败', e?.body?.detail || e?.message || String(e))
+      dialog.alert('删除失败', errorMessageFromError(e))
     }
   }
 
@@ -673,7 +674,7 @@ function GlobalsSection({ globals_, onWrite, rawText }: {
       const r = await api.putMyKeyRaw(next)
       onWrite(r)
     } catch (e: any) {
-      dialog.alert('保存失败', e?.body?.detail || e?.message || String(e))
+      dialog.alert('保存失败', errorMessageFromError(e))
     } finally {
       setSaving(false)
     }

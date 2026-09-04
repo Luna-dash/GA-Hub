@@ -13,6 +13,7 @@ import { parseAssistantTranscript, stripAssistantTranscriptTags } from '@/utils/
 import { previewText } from '@/utils/foldTurns'
 import { RAIL_TITLE_SCALE_EVENT, getRailTitleScale } from '@/utils/railAppearance'
 import { saveTextExport } from '@/utils/desktop'
+import { errorMessageFromError } from '@/utils/sessionUi'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import {
@@ -147,7 +148,7 @@ export default function Conversations() {
       if (!saved.ok) throw new Error(saved.error || 'save failed')
       toast.success(`已导出 ${filename}`)
     } catch (e: any) {
-      dialog.alert('导出失败', String(e?.message || e))
+      dialog.alert('导出失败', errorMessageFromError(e, '导出失败'))
     }
   }
 
@@ -164,7 +165,7 @@ export default function Conversations() {
       await applyConversationTitle(qc, id, updated.title)
       toast.success('会话名称已更新')
     } catch (e: any) {
-      await dialog.alert('重命名失败', e?.message || String(e))
+      await dialog.alert('重命名失败', errorMessageFromError(e))
     }
   }
 
@@ -185,7 +186,7 @@ export default function Conversations() {
       await removeConversationFromCache(qc, id)
       toast.success('会话文件已删除')
     } catch (e: any) {
-      await dialog.alert('删除失败', e?.message || String(e))
+      await dialog.alert('删除失败', errorMessageFromError(e))
     }
   }
 
@@ -209,7 +210,7 @@ export default function Conversations() {
         },
       })
     } catch (e: any) {
-      await dialog.alert('恢复失败', e?.message || String(e))
+      await dialog.alert('恢复失败', errorMessageFromError(e))
     } finally {
       setRestoring(null)
     }

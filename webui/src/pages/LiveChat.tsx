@@ -177,7 +177,7 @@ export default function LiveChat() {
         startChat(current.id)
       } catch (e: any) {
         if (!cancelled && sessionSwitchSeqRef.current === initSeq) {
-          setSessionError(e?.body?.detail || e?.message || String(e))
+          setSessionError(errorMessageFromError(e))
         }
       }
     })()
@@ -192,7 +192,7 @@ export default function LiveChat() {
         if (!cancelled) setLlms(result.llms)
       })
       .catch((e: any) => {
-        if (!cancelled) pushSystem(`_加载模型列表失败:${e?.body?.detail || e?.message || String(e)}_`)
+        if (!cancelled) pushSystem(`_加载模型列表失败:${errorMessageFromError(e)}_`)
       })
       .finally(() => {
         if (!cancelled) setLlmLoading(false)
@@ -255,7 +255,7 @@ export default function LiveChat() {
       })
       .catch((e: any) => {
         if (sessionIdRef.current === sid && llmChangeSeqRef.current === changeSeq) {
-          pushSystem(`_保存会话模型失败:${e?.body?.detail || e?.message || String(e)}_`, noticeKeys.llmSwitchFail)
+          pushSystem(`_保存会话模型失败:${errorMessageFromError(e)}_`, noticeKeys.llmSwitchFail)
         }
       })
       .finally(() => {
@@ -287,7 +287,7 @@ export default function LiveChat() {
     } catch (e: any) {
       if (sessionIdRef.current === sid && llmChangeSeqRef.current === changeSeq) {
         setSession((current) => current ? { ...current, llm_key: previousKey } : current)
-        pushSystem(`_切换模型失败:${e?.body?.detail || e?.message || String(e)}_`, noticeKeys.llmSwitchFail)
+        pushSystem(`_切换模型失败:${errorMessageFromError(e)}_`, noticeKeys.llmSwitchFail)
       }
     } finally {
       if (llmChangeSeqRef.current === changeSeq) setLlmSaving(false)
@@ -320,7 +320,7 @@ export default function LiveChat() {
         .then((created) => {
           if (created) useDraftStore.getState().clearDraftIfMatch(commandKey, commandText, commandAtts)
         })
-        .catch((e: any) => pushSystem(`_新建会话失败：${e?.body?.detail || e?.message || String(e)}。命令已保留，可直接重试。_`, noticeKeys.sessionCreateFail))
+        .catch((e: any) => pushSystem(`_新建会话失败：${errorMessageFromError(e)}。命令已保留，可直接重试。_`, noticeKeys.sessionCreateFail))
       return
     }
     if (streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair || creatingSessionRef.current) return
@@ -390,12 +390,11 @@ export default function LiveChat() {
             pushSystem(`_会话运行容量已满${usage}，请先在左侧会话栏选择一个运行中的会话并停止任务。草稿已保留，可直接重试。_`, noticeKeys.sendBlocked)
           }
         } else {
-          const code = e?.body?.detail?.code
-          pushSystem(`_发送失败：${e?.body?.detail?.detail || code || e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`, noticeKeys.sendBlocked)
+          pushSystem(`_发送失败：${errorMessageFromError(e)}。草稿已保留，可直接重试。_`, noticeKeys.sendBlocked)
         }
       }
     })().catch((e: any) => {
-      pushSystem(`_创建会话失败：${e?.body?.detail || e?.message || String(e)}。草稿已保留，可直接重试。_`, noticeKeys.sessionCreateFail)
+      pushSystem(`_创建会话失败：${errorMessageFromError(e)}。草稿已保留，可直接重试。_`, noticeKeys.sessionCreateFail)
     })
   }
 
@@ -458,7 +457,7 @@ export default function LiveChat() {
       setScheduleNow(Date.now())
       setScheduleOpen(false)
     } catch (e: any) {
-      setScheduleError(e?.body?.detail?.message || e?.body?.detail || e?.message || String(e))
+      setScheduleError(errorMessageFromError(e))
     } finally {
       setScheduleSaving(false)
     }
@@ -476,7 +475,7 @@ export default function LiveChat() {
       await api.cancelScheduledChat(session.id, task.id)
       await queryClient.invalidateQueries({ queryKey: queryKeys.scheduledChats(session.id) })
     } catch (e: any) {
-      pushSystem(`_取消定时消息失败：${e?.body?.detail?.message || e?.body?.detail || e?.message || String(e)}。_`)
+      pushSystem(`_取消定时消息失败：${errorMessageFromError(e)}。_`)
     }
   }
 
@@ -514,7 +513,7 @@ export default function LiveChat() {
     try {
       await newConv()
     } catch (error: any) {
-      pushSystem(`_新建会话失败：${error?.body?.detail || error?.message || String(error)}_`)
+      pushSystem(`_新建会话失败：${errorMessageFromError(error)}_`)
     }
   }, [newConv, pushSystem])
 
@@ -527,7 +526,7 @@ export default function LiveChat() {
       }))
       if (sessionIdRef.current === id) setSession(updated)
     } catch (error: any) {
-      pushSystem(`_重命名失败：${error?.body?.detail || error?.message || String(error)}_`)
+      pushSystem(`_重命名失败：${errorMessageFromError(error)}_`)
       throw error
     }
   }, [pushSystem, queryClient])
@@ -633,7 +632,7 @@ export default function LiveChat() {
     } catch (error: any) {
       const detail = error?.status === 409
         ? '会话仍在运行，请先停止任务。'
-        : (error?.body?.detail || error?.message || String(error))
+        : errorMessageFromError(error)
       pushSystem(`_删除会话失败：${detail}_`)
       throw error
     }
@@ -687,7 +686,7 @@ export default function LiveChat() {
           if (created) useDraftStore.getState().clearDraftIfMatch(commandKey, commandText, commandAtts)
         })
         .catch((error: any) => {
-          pushSystem(`_新建会话失败：${error?.body?.detail || error?.message || String(error)}。命令已保留，可直接重试。_`, noticeKeys.sessionCreateFail)
+          pushSystem(`_新建会话失败：${errorMessageFromError(error)}。命令已保留，可直接重试。_`, noticeKeys.sessionCreateFail)
         })
       return
     }

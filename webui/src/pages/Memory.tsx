@@ -7,6 +7,7 @@ import { toast } from '@/stores/toastStore'
 import { PageShell } from '@/components/PageShell'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
+import { errorMessageFromError } from '@/utils/sessionUi'
 
 type Tab = 'sop' | 'skill' | 'insight' | 'global'
 
@@ -57,7 +58,7 @@ function GlobalMem() {
       value={v}
       dirty={dirty}
       onChange={(s) => { setV(s); setDirty(true) }}
-      onSave={async () => { try { await api.setGlobalMem(v); setDirty(false); qc.invalidateQueries({ queryKey: queryKeys.memory.global }); toast.success('已保存 global_mem.txt') } catch (e: any) { toast.error('保存失败：' + (e?.message || String(e))) } }}
+      onSave={async () => { try { await api.setGlobalMem(v); setDirty(false); qc.invalidateQueries({ queryKey: queryKeys.memory.global }); toast.success('已保存 global_mem.txt') } catch (e: any) { toast.error('保存失败：' + errorMessageFromError(e)) } }}
     />
   )
 }
@@ -73,7 +74,7 @@ function Insight() {
       value={v}
       dirty={dirty}
       onChange={(s) => { setV(s); setDirty(true) }}
-      onSave={async () => { try { await api.setInsight(v); setDirty(false); qc.invalidateQueries({ queryKey: queryKeys.memory.insight }); toast.success('已保存 insight') } catch (e: any) { toast.error('保存失败：' + (e?.message || String(e))) } }}
+      onSave={async () => { try { await api.setInsight(v); setDirty(false); qc.invalidateQueries({ queryKey: queryKeys.memory.insight }); toast.success('已保存 insight') } catch (e: any) { toast.error('保存失败：' + errorMessageFromError(e)) } }}
     />
   )
 }
@@ -126,7 +127,7 @@ function SopList() {
             value={v}
             dirty={dirty}
             onChange={(s) => { setV(s); setDirty(true) }}
-            onSave={async () => { try { await api.setSop(active, v); setDirty(false); qc.invalidateQueries({ queryKey: queryKeys.memory.sop(active) }); toast.success('已保存 ' + active) } catch (e: any) { toast.error('保存失败：' + (e?.message || String(e))) } }}
+            onSave={async () => { try { await api.setSop(active, v); setDirty(false); qc.invalidateQueries({ queryKey: queryKeys.memory.sop(active) }); toast.success('已保存 ' + active) } catch (e: any) { toast.error('保存失败：' + errorMessageFromError(e)) } }}
           />
         )}
       </div>
