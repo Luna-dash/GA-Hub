@@ -142,9 +142,11 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
       server/event_topics.py（47 常量 + conductor 动态 f-string 家族，
       35956e9），tests/test_event_topics.py 仿 test_env_registry 扫描
       （未注册字面量/重复值/孤儿常量全失败；值不变，线上契约与断言不变）
-- [ ] 生产代码携带测试回填脚手架（ConductorService 五个 _ensure_* hasattr
-      回填，专为 object.__new__ 测试实例）——给测试正规的 for_tests()
-      构造器后删除
+- [x] 生产代码携带测试回填脚手架——已删（a3eefde）：ConductorService 得到
+      正规的 `for_tests()` 构造器（真实构造路径，生产字段全部存在），
+      五个专为 object.__new__ 测试实例服务的 `_ensure_*` hasattr 回填删除；
+      剩余 `_ensure_relay` 是生产惰性初始化（relay 线程首次使用时启动），
+      非测试脚手架
 - [x] 状态词汇漂移：Conductor phaseDot 硬编码色 vs 相邻 phaseTone 语义令牌；
       全仓 62 处裸 rose/emerald 类 vs 23 处 status-* 令牌——已收敛（defa88b
       + 80f7a08）。18 个文件的状态语义 hue 类（rose/red→danger、emerald/
@@ -158,8 +160,10 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
       删除、MyKey 12 处 dark: 变体剥离、ga-admin.theme 存储键退役；
       provider 身份色（紫/翡翠/琥珀 chips、卡片渐变）按调色板注释保留为
       一次性身份色。bubbleTone 契约测试随令牌改名。
-- [ ] WS 游标管线（events.py 与 sessions.py）重复 invalid-cursor 解析 +
-      replay/ping 生命周期——抽可恢复 WS 会话助手
+- [x] WS 游标管线（events.py 与 sessions.py）重复 invalid-cursor 解析 +
+      replay/ping 生命周期——已抽 services/event_cursor.py（b1b7c1f）：
+      parse_event_cursor + subscribe_with_cursor 单份实现，两条 WS 流共用；
+      bus 以显式参数传入，events.bus / sessions.bus 的测试补丁 seam 保持不变
 - [x] runtime-state payload 三处手拼（sessions.py bus/WS/REST）——已全部走
       SessionRuntimePayload.from_state（cdb1664）；bus 帧刻意保留 error 恒在
       的差异（test_session_websocket.py 锁定，注释已说明）
