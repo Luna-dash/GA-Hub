@@ -30,7 +30,6 @@ from ..schemas import (
 )
 from ..services import conductor_client as conductor_client_module
 from ..services.conductor_service import (
-    INSTR_DISPATCHED,
     SUBAGENT_VERBS,
     ConductorNotRunning,
     ConductorService,
@@ -198,7 +197,6 @@ async def start_subagent(body: ConductorStartSubagent) -> ConductorSubagentInstr
         # when absent so a retried dispatch cannot spawn a second worker.
         operation_id=body.operation_id,
     )
-    result["instruction"] = INSTR_DISPATCHED
     return result
 
 

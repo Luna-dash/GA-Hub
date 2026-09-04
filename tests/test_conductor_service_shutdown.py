@@ -35,19 +35,6 @@ def _service(core: object | None, monitor: object | None):
     return service
 
 
-def test_shutdown_helper_does_not_construct_unused_singleton(monkeypatch) -> None:
-    instance = mock.Mock(side_effect=AssertionError("must not construct"))
-    monkeypatch.setattr(conductor_service.ConductorService, "_instance", None)
-    monkeypatch.setattr(
-        conductor_service.ConductorService,
-        "instance",
-        instance,
-    )
-
-    assert conductor_service.shutdown_conductor_service(timeout=0.01) is True
-    instance.assert_not_called()
-
-
 def test_shutdown_stops_core_then_monitor_with_one_shared_deadline() -> None:
     order: list[str] = []
 

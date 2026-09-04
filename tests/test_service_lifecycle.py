@@ -255,7 +255,6 @@ def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
         mock.patch("server.services.task_scheduler.TaskScheduler.instance", side_effect=AssertionError("status constructed tasks")) as task_factory,
         mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
         mock.patch.object(session_routes, "stop_session_runtimes"),
-        mock.patch("server.services.conductor_service.shutdown_conductor_service", return_value=True),
         mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
     ):
         app = main.create_app()
@@ -299,7 +298,6 @@ def test_reentered_lifespan_never_reaps_previous_round_services_twice() -> None:
         mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
         mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
         mock.patch.object(session_routes, "stop_session_runtimes"),
-        mock.patch("server.services.conductor_service.shutdown_conductor_service", return_value=True),
         mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
     ):
         app = main.create_app()
@@ -340,7 +338,6 @@ def test_partial_startup_failure_reaps_already_owned_services() -> None:
         mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
         mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
         mock.patch.object(session_routes, "stop_session_runtimes"),
-        mock.patch("server.services.conductor_service.shutdown_conductor_service", return_value=True),
         mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
     ):
         app = main.create_app()

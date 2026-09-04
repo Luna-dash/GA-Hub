@@ -237,6 +237,24 @@ def test_apply_rework_attaches_instruction_only_on_success() -> None:
     assert ok["instruction"] == cs.INSTR_DISPATCHED
 
 
+def test_start_subagent_attaches_dispatch_instruction() -> None:
+    service = _bare_service()
+    service._conductor_llm_index = 1
+    service._subagent_llm_index = None
+    service._subagent_model_policy = "follow_main"
+    service._model_lock = threading.RLock()
+    service.pool = Mock()
+    service.pool.snapshot.return_value = []
+    service.client = Mock()
+    service.client.start_subagent.return_value = {"id": "worker-1", "active_generation": 1}
+
+    result = service.start_subagent("检查桌面启动流程", llm_index=3)
+
+    # Dispatched responses carry the instruction from the service itself,
+    # the same contract as apply_subagent_action's rework/input verbs.
+    assert result["instruction"] == cs.INSTR_DISPATCHED
+
+
 def test_apply_accept_forwards_request_force_and_operation_id() -> None:
     service = _dispatch_service()
     service.accept_subagent = Mock(return_value={

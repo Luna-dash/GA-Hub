@@ -107,21 +107,6 @@ class TaskScheduler(SchedulerDomainBase):
     def _new_runtime(self) -> BackgroundScheduler:
         return BackgroundScheduler(timezone=self._tz) if self._tz else BackgroundScheduler()
 
-    @classmethod
-    def instance(
-        cls,
-        channel: SystemChannel | None = None,
-        *,
-        scheduler_runtime: Any | None = None,
-    ) -> "TaskScheduler":
-        if cls._instance is not None and cls._instance._stop_event.is_set():
-            if not cls._instance.shutdown(timeout=0):
-                raise RuntimeError("previous task scheduler is still shutting down")
-        if cls._instance is None:
-            assert channel is not None
-            cls._instance = cls(channel, scheduler_runtime=scheduler_runtime)
-        return cls._instance
-
     # ── fire hooks ───────────────────────────────────────────────
     def _build_run(self, s: TaskSchedule, now: int, handle: Any, prompt: str) -> TaskRun:
         return TaskRun(

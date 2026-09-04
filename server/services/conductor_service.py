@@ -622,6 +622,10 @@ class ConductorService:
         # state; replaying full history through the transition handlers
         # could only manufacture spurious transitions).
         self._journal_cursor: dict = {"seq": None, "epoch": None}
+        # Idempotency cache for retried worker actions (operation_id →
+        # recorded response); bounded, oldest entries evicted first.
+        self._action_operation_lock = threading.Lock()
+        self._action_operations: OrderedDict[str, dict] = OrderedDict()
 
 
     @classmethod
@@ -791,7 +795,6 @@ class ConductorService:
         self, request_id: str, *, phase: str, error: str
     ) -> dict:
         """Persist one visible failure report per request, even across retries."""
-        self.workflow_tracker
         with self._chat_lock:
             existing = next(
                 (
@@ -985,7 +988,7 @@ class ConductorService:
             # have finished the start + redispatch between our status check
             # and this line, and a second start would re-relay the stranded
             # set twice (fresh operation_id each time — no engine dedupe).
-            with self._cold_start_gate():
+            with self._cold_start_lock:
                 status = self.client.status()
                 if not status.get("started"):
                     self.client.start(llm_index=self._conductor_llm_index)
@@ -1164,51 +1167,27 @@ class ConductorService:
     # ===== SSE relay dispatch =====
 
     def _advance_journal_cursor(self, seq: int) -> None:
-        cursor = self._journal_cursor_state()
+        cursor = self._journal_cursor
         current = cursor.get("seq")
         if current is None or seq > current:
             cursor["seq"] = seq
-
-    def _journal_cursor_state(self) -> dict:
-        """Backfill for legacy ``object.__new`` test/service instances."""
-        cursor = getattr(self, "_journal_cursor", None)
-        if cursor is None:
-            cursor = self._journal_cursor = {"seq": None, "epoch": None}
-        return cursor
-
-    def _cold_start_gate(self) -> threading.Lock:
-        """Backfill for legacy ``object.__new`` test/service instances."""
-        lock = getattr(self, "_cold_start_lock", None)
-        if lock is None:
-            lock = self._cold_start_lock = threading.Lock()
-        return lock
 
     def _replay_action_operation(self, operation_id: str | None) -> dict | None:
         """Return the recorded response for a retried worker action, if any."""
         if not operation_id:
             return None
-        with self._action_operation_state()[0]:
-            return self._action_operation_state()[1].get(operation_id)
+        with self._action_operation_lock:
+            return self._action_operations.get(operation_id)
 
     def _record_action_operation(self, operation_id: str | None, result: dict) -> None:
         if not operation_id:
             return
-        lock, cache = self._action_operation_state()
-        with lock:
+        with self._action_operation_lock:
+            cache = self._action_operations
             cache.pop(operation_id, None)
             cache[operation_id] = result
             while len(cache) > self._ACTION_OPERATION_CACHE_SIZE:
                 cache.popitem(last=False)
-
-    def _action_operation_state(self) -> tuple[threading.Lock, "OrderedDict[str, dict]"]:
-        """Backfill for legacy ``object.__new`` test/service instances."""
-        lock = getattr(self, "_action_operation_lock", None)
-        if lock is None:
-            lock = self._action_operation_lock = threading.Lock()
-        cache = getattr(self, "_action_operations", None)
-        if cache is None:
-            cache = self._action_operations = OrderedDict()
-        return lock, cache
 
     def _replay_journal(self) -> None:
         """Catch-up replay after an SSE (re)connect (P2-A reconcile).
@@ -1226,7 +1205,7 @@ class ConductorService:
         loop breaks defensively if a full page yields no cursor progress.
         """
         try:
-            cursor = self._journal_cursor_state()
+            cursor = self._journal_cursor
             if cursor.get("seq") is None:
                 resp = self.client.journal(after_seq=0, limit=1)
                 info = resp.get("journal") or {}
@@ -1455,6 +1434,10 @@ class ConductorService:
             model_policy=models["subagent_model_policy"],
             request_id=bound_request_id,
         )
+        # Dispatched responses carry the conductor instruction line, like
+        # apply_subagent_action does for rework/input — "which responses
+        # carry an instruction" stays single-homed in the service.
+        result["instruction"] = INSTR_DISPATCHED
         return result
 
     @staticmethod
@@ -1823,12 +1806,3 @@ class ConductorService:
 
     def get_readme(self, topic: str) -> Optional[str]:
         return READMES.get(topic)
-
-
-def shutdown_conductor_service(timeout: float = 2.0) -> bool:
-    """Close the existing singleton without constructing one at app exit."""
-    with ConductorService._lock:
-        service = ConductorService._instance
-    if service is None:
-        return True
-    return service.shutdown(timeout=timeout)

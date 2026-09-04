@@ -9,7 +9,7 @@ import pytest
 
 from server.routes import conductor as conductor_routes
 from server.services.conductor_client import GahubProcessError
-from server.services.conductor_service import ConductorService, INSTR_DISPATCHED
+from server.services.conductor_service import ConductorService
 
 
 RUNNING = {
@@ -215,7 +215,6 @@ def test_subagent_route_uses_service_policy_boundary(monkeypatch):
         )
     )
 
-    assert result["instruction"] == conductor_routes.INSTR_DISPATCHED
     assert service.subagent_calls == [(
         prompt,
         {
