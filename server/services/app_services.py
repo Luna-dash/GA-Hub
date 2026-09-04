@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .agent_service import AgentService
+    from .conductor_service import ConductorService
     from .feishu_service import FeishuService
     from .scheduler_host import SchedulerHost
 
@@ -22,12 +23,14 @@ log = logging.getLogger(__name__)
 @dataclass(slots=True)
 class AppServices:
     agent: AgentService | None = None
+    conductor: ConductorService | None = None
     feishu: FeishuService | None = None
     scheduler_host: SchedulerHost | None = None
 
     def clear(self) -> None:
         """Forget every owner before a new lifespan or after teardown."""
         self.agent = None
+        self.conductor = None
         self.feishu = None
         self.scheduler_host = None
 
@@ -64,6 +67,14 @@ class AppServices:
                 self.feishu.shutdown()
             except Exception:
                 log.exception("feishu shutdown failed")
+        # The conductor engine may still reach hub HTTP APIs while it is
+        # being stopped, so it closes before the agent that serves them.
+        if self.conductor is not None:
+            try:
+                if self.conductor.shutdown() is False:
+                    log.warning("conductor shutdown did not finish before its deadline")
+            except Exception:
+                log.exception("conductor shutdown failed")
         if self.agent is not None:
             try:
                 self.agent.shutdown()

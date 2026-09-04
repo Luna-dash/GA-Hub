@@ -39,6 +39,18 @@ class _Feishu:
             raise RuntimeError("feishu shutdown exploded")
 
 
+class _Conductor:
+    def __init__(self, *, explode: bool = False) -> None:
+        self.shutdown_calls = 0
+        self._explode = explode
+
+    def shutdown(self) -> bool:
+        self.shutdown_calls += 1
+        if self._explode:
+            raise RuntimeError("conductor shutdown exploded")
+        return True
+
+
 class _SchedulerHost:
     def __init__(self) -> None:
         self.shutdown_calls = 0
@@ -91,11 +103,12 @@ def test_shutdown_all_follows_dependency_order() -> None:
 
     services = AppServices(
         agent=_Tracked("agent"),
+        conductor=_Tracked("conductor"),
         feishu=_Tracked("feishu"),
         scheduler_host=_Host("unused-name"),
     )
     services.shutdown_all()
-    assert order == ["scheduler_host", "feishu", "agent"]
+    assert order == ["scheduler_host", "feishu", "conductor", "agent"]
 
 
 def test_shutdown_all_isolates_one_service_failure() -> None:
@@ -107,11 +120,21 @@ def test_shutdown_all_isolates_one_service_failure() -> None:
     assert agent.shutdown_calls == 1
 
 
+def test_shutdown_all_isolates_conductor_failure() -> None:
+    agent = _Agent()
+    services = AppServices(agent=agent, conductor=_Conductor(explode=True),
+                           scheduler_host=_SchedulerHost())
+    services.shutdown_all()
+    # conductor exploded, but the agent still got its shutdown.
+    assert agent.shutdown_calls == 1
+
+
 def test_clear_releases_every_owner() -> None:
-    services = AppServices(agent=_Agent(), feishu=_Feishu(),
+    services = AppServices(agent=_Agent(), conductor=_Conductor(), feishu=_Feishu(),
                            scheduler_host=_SchedulerHost())
     services.clear()
     assert services.agent is None
+    assert services.conductor is None
     assert services.feishu is None
     assert services.scheduler_host is None
     # A cleared snapshot observes nothing and shuts nothing down.

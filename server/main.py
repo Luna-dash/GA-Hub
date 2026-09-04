@@ -368,6 +368,14 @@ def create_app() -> FastAPI:
         scheduler_host.start_all()
         log.info("scheduler host started %s", scheduler_host.status())
 
+        # Conductor completes the 16b4f08 ownership pattern: constructed
+        # here instead of on the first conductor request, so status reads
+        # and teardown observe the one real instance and no request path
+        # pays for lazy construction (TimeoutMonitor thread included).
+        from .services.conductor_service import ConductorService
+        services.conductor = ConductorService.instance()
+        log.info("conductor service owned (monitor running)")
+
         try:
             fs = FeishuService.instance()
             services.feishu = fs
@@ -411,12 +419,6 @@ def create_app() -> FastAPI:
                     log.exception("session runtime abort failed")
                 await _cancel_background_task(feishu_autostart_task)
                 services.shutdown_all()
-                try:
-                    from .services.conductor_service import shutdown_conductor_service
-                    if not shutdown_conductor_service():
-                        log.warning("conductor shutdown exceeded its graceful deadline")
-                except Exception:
-                    log.exception("conductor shutdown failed")
                 try:
                     from .services.goalhive_service import shutdown_goalhive_service
                     if not shutdown_goalhive_service():

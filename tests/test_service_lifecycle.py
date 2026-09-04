@@ -242,11 +242,14 @@ def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
     scheduler_host.status.return_value = scheduler_status
     agent_factory = mock.Mock(return_value=agent)
     feishu_factory = mock.Mock(return_value=feishu)
+    conductor = mock.Mock()
 
     with (
         mock.patch.object(_paths, "GA_ROOT", _paths.GA_ROOT),
         mock.patch("server.services.agent_service.AgentService.instance", agent_factory),
         mock.patch("server.services.feishu_service.FeishuService.instance", feishu_factory),
+        mock.patch("server.services.conductor_service.ConductorService.instance",
+                   mock.Mock(return_value=conductor)),
         mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
         mock.patch("server.services.autonomous_scheduler.AutonomousScheduler.instance", side_effect=AssertionError("status constructed autonomous")) as autonomous_factory,
         mock.patch("server.services.task_scheduler.TaskScheduler.instance", side_effect=AssertionError("status constructed tasks")) as task_factory,
@@ -268,6 +271,7 @@ def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
     task_factory.assert_not_called()
     scheduler_host.shutdown_all.assert_called_once_with()
     feishu.shutdown.assert_called_once_with()
+    conductor.shutdown.assert_called_once_with()
     agent.shutdown.assert_called_once_with()
     assert session_routes._coordinator_stopping is False
 
@@ -284,11 +288,14 @@ def test_reentered_lifespan_never_reaps_previous_round_services_twice() -> None:
     agent = mock.Mock()
     feishu = mock.Mock()
     scheduler_host = mock.Mock()
+    conductor = mock.Mock()
     agent_factory = mock.Mock(side_effect=[agent, RuntimeError("second startup boom")])
 
     with (
         mock.patch("server.services.agent_service.AgentService.instance", agent_factory),
         mock.patch("server.services.feishu_service.FeishuService.instance", return_value=feishu),
+        mock.patch("server.services.conductor_service.ConductorService.instance",
+                   mock.Mock(return_value=conductor)),
         mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
         mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
         mock.patch.object(session_routes, "stop_session_runtimes"),
@@ -305,6 +312,7 @@ def test_reentered_lifespan_never_reaps_previous_round_services_twice() -> None:
     assert agent_factory.call_count == 2
     scheduler_host.shutdown_all.assert_called_once_with()
     feishu.shutdown.assert_called_once_with()
+    conductor.shutdown.assert_called_once_with()
     agent.shutdown.assert_called_once_with()
 
 
@@ -321,10 +329,14 @@ def test_partial_startup_failure_reaps_already_owned_services() -> None:
     scheduler_host = mock.Mock()
     scheduler_host.start_all.side_effect = RuntimeError("scheduler boom")
     feishu_factory = mock.Mock(side_effect=AssertionError("startup must stop before Feishu"))
+    conductor_factory = mock.Mock(
+        side_effect=AssertionError("startup must stop before conductor"))
 
     with (
         mock.patch("server.services.agent_service.AgentService.instance", return_value=agent),
         mock.patch("server.services.feishu_service.FeishuService.instance", feishu_factory),
+        mock.patch("server.services.conductor_service.ConductorService.instance",
+                   conductor_factory),
         mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
         mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
         mock.patch.object(session_routes, "stop_session_runtimes"),
@@ -339,3 +351,4 @@ def test_partial_startup_failure_reaps_already_owned_services() -> None:
     scheduler_host.shutdown_all.assert_called_once_with()
     agent.shutdown.assert_called_once_with()
     feishu_factory.assert_not_called()
+    conductor_factory.assert_not_called()

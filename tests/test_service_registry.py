@@ -113,7 +113,7 @@ def test_conductor_and_goalhive_share_inactive_semantics_before_use() -> None:
         mock.patch("server.services.conductor_service.ConductorService._instance", None),
         mock.patch("server.services.goalhive_service._service", None),
     ):
-        conductor = ServiceRegistry._conductor()
+        conductor = ServiceRegistry()._conductor()
         goalhive = ServiceRegistry._goalhive()
 
     assert (conductor.state, conductor.summary) == ("stopped", "尚未启用")
@@ -135,7 +135,7 @@ def test_conductor_and_goalhive_share_inactive_semantics_when_idle() -> None:
         mock.patch("server.services.conductor_service.ConductorService._instance", conductor_service),
         mock.patch("server.services.goalhive_service._service", goalhive_service),
     ):
-        conductor = ServiceRegistry._conductor()
+        conductor = ServiceRegistry()._conductor()
         goalhive = ServiceRegistry._goalhive()
 
     assert (conductor.state, conductor.summary) == ("stopped", "当前未运行")
@@ -155,7 +155,7 @@ def test_conductor_panel_uses_live_lifecycle_instead_of_cached_started() -> None
         "server.services.conductor_service.ConductorService._instance",
         conductor_service,
     ):
-        conductor = ServiceRegistry._conductor()
+        conductor = ServiceRegistry()._conductor()
 
     assert (conductor.state, conductor.summary) == ("stopped", "当前未运行")
     lifecycle_status.assert_called_once_with()

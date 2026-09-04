@@ -8,8 +8,8 @@ An application-bound registry prefers the lifespan-owned instances recorded
 in ``AppServices`` (agent, feishu, scheduler host) so ``/api/status``,
 ``/api/health`` and ``/api/services/panel`` observe the same objects during
 partial startup/teardown. The module-global ``registry`` stays as a
-compatibility seam for tests and unbound callers; services not owned by the
-lifespan (WeChat, Conductor, Goal/Hive) remain singleton observers.
+compatibility seam for tests and unbound callers; optional services not
+owned by the lifespan (WeChat, Goal/Hive) remain singleton observers.
 """
 from __future__ import annotations
 
@@ -171,10 +171,11 @@ class ServiceRegistry:
             {"联系人": status.get("contacts", 0), "日志": status.get("log_count", 0)},
         )
 
-    @staticmethod
-    def _conductor() -> ServicePanelItem:
+    def _conductor(self) -> ServicePanelItem:
         from .conductor_service import ConductorService
-        svc = ConductorService._instance
+        svc = getattr(self._owned_services(), "conductor", None)
+        if svc is None:
+            svc = ConductorService._instance
         if svc is None:
             return ServicePanelItem("conductor", "Conductor", "stopped", "尚未启用", "/conductor")
         running, stopped = svc.pool.counts()
