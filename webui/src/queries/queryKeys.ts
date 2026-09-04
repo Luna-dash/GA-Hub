@@ -21,7 +21,6 @@ export const queryKeys = {
     subagent: (sid: string) => ['conductor', 'subagent', sid] as const,
     workflows: ['conductor', 'workflows'] as const,
     chat: ['conductor', 'chat'] as const,
-    log: ['conductor', 'log'] as const,
   },
   autonomous: {
     runs: ['auto.runs'] as const,

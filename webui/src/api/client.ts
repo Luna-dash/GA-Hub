@@ -13,7 +13,6 @@ import type {
   ConductorChatListResponse,
   ConductorLifecycleResponse,
   ConductorLogItem,
-  ConductorLogResponse,
   ConductorStatus,
   ConductorSubagentActionResponse,
   ConductorSubagentListResponse,
@@ -33,7 +32,6 @@ import type {
   EmailTestResponse,
   EventRecentResponse,
   LLMInfo,
-  LogLinesResponse,
   LLMTestResult,
   MemoryTextResponse,
   MemoryWriteResponse,
@@ -56,7 +54,6 @@ import type {
   ScheduleType,
   ScheduledChat,
   ScheduledChatListResponse,
-  SessionSnapshot,
   SessionMessagesResponse,
   SessionRuntime,
   TaskRun,
@@ -231,16 +228,10 @@ export const api = {
   agentStatus: (init?: Pick<RequestInit, 'signal'>) =>
     http<AgentStatus>('GET', '/api/agent/status', undefined, init),
   agentAbort: () => http<{ ok: boolean }>('POST', '/api/agent/abort'),
-  btw: (text: string) => http<BtwResp>('POST', '/api/agent/btw', { text }),
   agentNew: () => http<{ ok: boolean; message: string }>('POST', '/api/agent/new'),
-  agentSetTitle: (title: string) =>
-    http<{ ok: boolean; title: string }>('PUT', '/api/agent/title', { title }),
   chatRetryConfig: () => http<ChatRetryConfig>('GET', '/api/agent/chat-retry-config'),
   saveChatRetryConfig: (cfg: ChatRetryConfig) =>
     http<ChatRetryConfig>('PUT', '/api/agent/chat-retry-config', cfg),
-  agentSessions: () => http<{ sessions: SessionSnapshot[] }>('GET', '/api/agent/sessions'),
-  agentRestoreSession: (idx: number) =>
-    http<{ ok: boolean; message: string; full: boolean }>('POST', `/api/agent/sessions/${idx}/restore`),
 
   // ── llms ─────────────────────────────────────────────
   llms: () => http<{ llms: LLMInfo[] }>('GET', '/api/llms'),
@@ -363,18 +354,6 @@ export const api = {
   resolveFile: (path: string) =>
     http<ResolveFileResponse>('POST', '/api/files/resolve', { path }),
 
-  // ── logs ─────────────────────────────────────────────
-  wechatLog: (tail = 200) => http<LogLinesResponse>('GET', `/api/logs/wechat?tail=${tail}`),
-  agentLog: (tail = 200) => http<LogLinesResponse>('GET', `/api/logs/agent?tail=${tail}`),
-  backendLog: (tail = 200) => http<LogLinesResponse>('GET', `/api/logs/backend?tail=${tail}`),
-
-  // ── rewind ───────────────────────────────────────────
-  rewindTurns: (req: { sid?: string; n?: number }) =>
-    http<{ ok: boolean; removed_sids: string[]; kept: number; history_lines: number; removed_history_entries?: number }>(
-      'POST',
-      '/api/agent/rewind',
-      req,
-    ),
 
   // ── conductor ────────────────────────────────────────
   conductorReadme: (topic = 'api') =>
@@ -426,7 +405,6 @@ export const api = {
   tokenStats: () => http<TokenStatsResponse>('GET', '/api/tokens/stats'),
   tokenHistory: (hours = 24) => http<TokenHistoryResponse>('GET', `/api/tokens/history?hours=${hours}`),
   servicePanel: () => http<ServicePanelResponse>('GET', '/api/services/panel'),
-  conductorLog: () => http<ConductorLogResponse>('GET', '/api/conductor/log'),
   conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),
   conductorSettings: (autoAccept: boolean) =>
     http<ConductorStatus>('POST', '/api/conductor/settings', { auto_accept: autoAccept }),
