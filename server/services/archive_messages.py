@@ -1,4 +1,13 @@
-"""Read-only projection of GA-native conversation archives."""
+"""Read-only projection of GA-native conversation archives.
+
+Two layers share this module's GA-native boundary:
+
+* The message projection index (per-file mmap group offsets, bounded paging).
+* The archive *catalogue* — which GA sessions exist right now, their GA-order
+  rows and their basename ids. Route code keeps HTTP shaping, title metadata,
+  delete orchestration and exports; enumeration/signature/lookup mechanics
+  live here so there is one catalogue implementation for list + point lookup.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,6 +18,7 @@ import mmap
 import os
 from pathlib import Path
 import re
+import threading
 from typing import Any
 
 from .. import _paths  # Bootstrap GA's import path for the native archive parser.
@@ -396,3 +406,171 @@ def read_archive_messages(
         "has_more": has_more,
         "next_before": next_before,
     }
+
+
+# ── GA archive catalogue ──────────────────────────────────────────
+# Which GA-native sessions exist right now. list_sessions() (without a
+# rewind_root) enumerates exactly temp/model_responses/model_responses_*.txt,
+# so the directory signature below fully covers its scan universe: if no
+# archive path changed mtime/size/name, the GA enumeration result cannot have
+# changed either.
+
+_CATALOGUE_LOCK = threading.Lock()
+_CATALOGUE_STATE: tuple | None = None
+_CATALOGUE_INDEX: dict[str, tuple] = {}
+
+
+def _ga_sessions() -> list[tuple]:
+    """Return GA's session list, mirroring server/routes/agent.py.
+
+    list_sessions() -> [(path, mtime, preview, n_rounds)] sorted by mtime desc.
+    Importing inside the function keeps the (optional) GA path injection local.
+    """
+    from frontends.continue_cmd import list_sessions
+
+    return list_sessions()
+
+
+def _catalogue_signature() -> tuple:
+    root = _paths.GA_ROOT
+    if root is None:
+        return ()
+    archive_dir = Path(root) / "temp" / "model_responses"
+    entries = []
+    try:
+        paths = archive_dir.glob("model_responses_*.txt")
+        for path in paths:
+            try:
+                stat = path.stat()
+                entries.append((path.name, stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                continue
+    except OSError:
+        return ()
+    return tuple(sorted(entries))
+
+
+def invalidate_archive_catalogue() -> None:
+    """Drop the cached GA session catalogue (after archive deletion)."""
+    global _CATALOGUE_STATE, _CATALOGUE_INDEX
+    with _CATALOGUE_LOCK:
+        _CATALOGUE_STATE = None
+        _CATALOGUE_INDEX = {}
+
+
+def refresh_archive_catalogue() -> dict[str, tuple]:
+    """Return the basename→GA-row map, re-scanning GA only when files changed."""
+    global _CATALOGUE_STATE, _CATALOGUE_INDEX
+    signature = _catalogue_signature()
+    with _CATALOGUE_LOCK:
+        if signature != _CATALOGUE_STATE:
+            index: dict[str, tuple] = {}
+            for row in _ga_sessions():
+                index.setdefault(os.path.basename(row[0]), row)
+            _CATALOGUE_INDEX = index
+            _CATALOGUE_STATE = signature
+        return _CATALOGUE_INDEX
+
+
+def archive_session_by_id(cid: str) -> tuple | None:
+    """Find a GA session tuple by its basename id (newest row wins)."""
+    return refresh_archive_catalogue().get(cid)
+
+
+def list_archive_sessions() -> list[tuple]:
+    """GA-order session rows (mtime desc) — the one enumeration for listings."""
+    return _ga_sessions()
+
+
+def _stat_signature(path_text: str) -> tuple[int, int] | None:
+    try:
+        stat = os.stat(path_text)
+    except OSError:
+        return None
+    return (
+        int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
+        int(stat.st_size),
+    )
+
+
+# Listing only needs the first real user question.  Reading a bounded head is
+# enough for native GA archives (the prompt header and JSON normally occur in
+# the first few KB), while keeping a pathological multi-GB archive from
+# turning one list request into a full-history parse.  Content search reads
+# bounded chunks so "search all archives" cannot read whole multi-GB files.
+FIRST_USER_PREVIEW_READ_BYTES = 64 * 1024
+SEARCH_READ_CHUNK_BYTES = 256 * 1024
+_PROMPT_BLOCK_RE = re.compile(
+    r"^=== Prompt ===[^\r\n]*\r?\n(.*?)(?=^=== (?:Prompt|Response) ===|\Z)",
+    re.DOTALL | re.MULTILINE,
+)
+
+
+@lru_cache(maxsize=1024)
+def _first_user_preview_head(path: str, mtime_ns: int, size: int) -> str:
+    """Extract the first user question from a bounded archive head.
+
+    ``mtime_ns`` and ``size`` are part of the cache key; callers never need a
+    global invalidation when a session is appended or replaced.  Parsing uses
+    GA's own ``_user_text`` filtering so tool-result continuations and working
+    memory injections retain the existing title semantics.
+    """
+    del mtime_ns, size  # identity-only cache inputs
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(FIRST_USER_PREVIEW_READ_BYTES)
+        from frontends.continue_cmd import _user_text
+    except (OSError, ImportError):
+        return ""
+    text = head.decode("utf-8", errors="replace")
+    for body in _PROMPT_BLOCK_RE.findall(text):
+        content = _user_text(body)
+        if content:
+            return " ".join(content.split())[:200]
+    return ""
+
+
+def first_user_preview(archive_path: str | Path) -> str:
+    """Return the original user question used as the default display title."""
+    path = os.path.abspath(str(archive_path))
+    signature = _stat_signature(path)
+    if signature is None:
+        return ""
+    return _first_user_preview_head(path, signature[0], signature[1])
+
+
+@lru_cache(maxsize=2048)
+def _archive_contains_query(
+    path: str,
+    mtime_ns: int,
+    size: int,
+    query: str,
+) -> bool:
+    """Search an archive in bounded chunks, caching by file revision."""
+    del mtime_ns, size
+    needle = query.encode("utf-8", errors="ignore").lower()
+    if not needle:
+        return True
+    overlap = max(0, len(needle) - 1)
+    carry = b""
+    try:
+        with open(path, "rb") as handle:
+            while True:
+                chunk = handle.read(SEARCH_READ_CHUNK_BYTES)
+                if not chunk:
+                    return False
+                haystack = carry + chunk.lower()
+                if needle in haystack:
+                    return True
+                carry = haystack[-overlap:] if overlap else b""
+    except OSError:
+        return False
+
+
+def archive_contains(archive_path: str | Path, query: str) -> bool:
+    """Bounded chunked raw-text search with a per-revision cache."""
+    path = os.path.abspath(str(archive_path))
+    signature = _stat_signature(path)
+    if signature is None:
+        return False
+    return _archive_contains_query(path, signature[0], signature[1], query)

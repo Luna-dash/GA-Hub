@@ -148,9 +148,9 @@ def _session_title(metadata: dict[str, Any]) -> str:
     archive_path = metadata.get("archive_path")
     if archive_path:
         try:
-            from .conversations import _first_user_preview
+            from ..services.archive_messages import first_user_preview
 
-            preview = _first_user_preview(str(archive_path)).strip()
+            preview = first_user_preview(str(archive_path)).strip()
             if preview:
                 return preview[:200]
         except Exception:

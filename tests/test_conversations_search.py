@@ -6,21 +6,7 @@ import threading
 import time
 
 from server.routes import conversations
-
-
-def test_conversation_title_reads_archive_bound_metadata(tmp_path, monkeypatch):
-    archive = tmp_path / "session.txt"
-    calls: list[str] = []
-
-    class Metadata:
-        def title_for_archive(self, archive_path):
-            calls.append(str(archive_path))
-            return "Canonical title"
-
-    monkeypatch.setattr(conversations, "_metadata", Metadata())
-
-    assert conversations._conversation_title(str(archive)) == "Canonical title"
-    assert calls == [str(archive)]
+from server.services import archive_messages
 
 
 def test_list_conversations_does_not_block_event_loop(tmp_path, monkeypatch):
@@ -34,8 +20,8 @@ def test_list_conversations_does_not_block_event_loop(tmp_path, monkeypatch):
         events.append("scan-end")
         return [(str(archive), 0.0, "preview", 1)]
 
-    monkeypatch.setattr(conversations, "_ga_sessions", slow_sessions)
-    monkeypatch.setattr(conversations, "_conversation_title", lambda path: "title")
+    monkeypatch.setattr(conversations, "list_archive_sessions", slow_sessions)
+    monkeypatch.setattr(conversations._metadata, "title_for_archive", lambda path: "title")
 
     async def heartbeat():
         await asyncio.sleep(0.01)
@@ -61,13 +47,13 @@ def test_list_conversations_keeps_search_and_pagination_semantics(tmp_path, monk
     other.write_text("unrelated", encoding="utf-8")
     monkeypatch.setattr(
         conversations,
-        "_ga_sessions",
+        "list_archive_sessions",
         lambda: [
             (str(matching), 2.0, "preview a", 2),
             (str(other), 1.0, "preview b", 3),
         ],
     )
-    monkeypatch.setattr(conversations, "_conversation_title", lambda path: "")
+    monkeypatch.setattr(conversations._metadata, "title_for_archive", lambda path: "")
 
     result = asyncio.run(conversations.list_conversations(q="needle", offset=0, limit=1))
 
@@ -97,15 +83,15 @@ def test_list_uses_first_user_question_only_for_untitled_page_items(tmp_path, mo
     titled.write_text(native, encoding="utf-8")
     monkeypatch.setattr(
         conversations,
-        "_ga_sessions",
+        "list_archive_sessions",
         lambda: [
             (str(untitled), 2.0, "last question", 2),
             (str(titled), 1.0, "last question", 2),
         ],
     )
     monkeypatch.setattr(
-        conversations,
-        "_conversation_title",
+        conversations._metadata,
+        "title_for_archive",
         lambda path: "Renamed" if os.path.basename(path) == "titled.txt" else "",
     )
     monkeypatch.setattr(
@@ -115,7 +101,7 @@ def test_list_uses_first_user_question_only_for_untitled_page_items(tmp_path, mo
             AssertionError("conversation list must not parse full archives")
         ),
     )
-    conversations._first_user_preview_head.cache_clear()
+    archive_messages._first_user_preview_head.cache_clear()
 
     result = asyncio.run(conversations.list_conversations(offset=0, limit=2))
 
@@ -132,10 +118,10 @@ def test_first_user_preview_reads_a_bounded_head_and_invalidates_on_append(tmp_p
         "=== Prompt ===\n"
         '{"role":"user","content":[{"type":"text","text":"中文任务 🚀"}]}\n'
         "=== Response ===\n[]\n"
-        + ("x" * (conversations._FIRST_USER_PREVIEW_READ_BYTES * 2)),
+        + ("x" * (archive_messages.FIRST_USER_PREVIEW_READ_BYTES * 2)),
         encoding="utf-8",
     )
-    conversations._first_user_preview_head.cache_clear()
+    archive_messages._first_user_preview_head.cache_clear()
 
     reads: list[int] = []
     original_open = open
@@ -153,14 +139,14 @@ def test_first_user_preview_reads_a_bounded_head_and_invalidates_on_append(tmp_p
         return handle
 
     monkeypatch.setattr("builtins.open", bounded_open)
-    assert conversations._first_user_preview(str(archive)) == "中文任务 🚀"
-    assert reads == [conversations._FIRST_USER_PREVIEW_READ_BYTES]
+    assert archive_messages.first_user_preview(str(archive)) == "中文任务 🚀"
+    assert reads == [archive_messages.FIRST_USER_PREVIEW_READ_BYTES]
 
     archive.write_text(archive.read_text(encoding="utf-8") + "\n", encoding="utf-8")
-    assert conversations._first_user_preview(str(archive)) == "中文任务 🚀"
+    assert archive_messages.first_user_preview(str(archive)) == "中文任务 🚀"
     assert reads == [
-        conversations._FIRST_USER_PREVIEW_READ_BYTES,
-        conversations._FIRST_USER_PREVIEW_READ_BYTES,
+        archive_messages.FIRST_USER_PREVIEW_READ_BYTES,
+        archive_messages.FIRST_USER_PREVIEW_READ_BYTES,
     ]
 
 
@@ -174,7 +160,7 @@ def test_detail_and_export_parsing_do_not_block_event_loop(tmp_path, monkeypatch
         "_session_by_id",
         lambda cid: (str(archive), 0.0, "preview", 1),
     )
-    monkeypatch.setattr(conversations, "_conversation_title", lambda path: "title")
+    monkeypatch.setattr(conversations._metadata, "title_for_archive", lambda path: "title")
 
     def slow_extract(path):
         events.append("parse-start")
@@ -219,7 +205,7 @@ def test_restore_archive_work_does_not_block_event_loop(tmp_path, monkeypatch):
         "_session_by_id",
         lambda cid: (str(archive), 0.0, "preview", 1),
     )
-    monkeypatch.setattr(conversations, "_conversation_title", lambda path: "Title")
+    monkeypatch.setattr(conversations._metadata, "title_for_archive", lambda path: "Title")
     monkeypatch.setattr(AgentService, "instance", classmethod(lambda cls: service))
     monkeypatch.setattr(bus, "publish", lambda topic, payload: events.append("published"))
 
@@ -260,7 +246,7 @@ def test_repeated_detail_and_export_requests_are_consistent(tmp_path, monkeypatc
         "_session_by_id",
         lambda cid: (str(archive), 7.0, "preview", 1),
     )
-    monkeypatch.setattr(conversations, "_conversation_title", lambda path: "Title")
+    monkeypatch.setattr(conversations._metadata, "title_for_archive", lambda path: "Title")
     monkeypatch.setattr(conversations, "_ga_extract", lambda path: [dict(m) for m in messages])
 
     async def run():
@@ -280,8 +266,8 @@ def test_repeated_detail_and_export_requests_are_consistent(tmp_path, monkeypatc
 def test_content_search_reads_in_chunks_and_finds_boundary_match(tmp_path, monkeypatch):
     archive = tmp_path / "large.txt"
     needle = "跨块搜索目标"
-    archive.write_bytes(b"a" * (conversations._SEARCH_READ_CHUNK_BYTES - 2) + needle.encode() + b"\n")
-    conversations._archive_contains_query.cache_clear()
+    archive.write_bytes(b"a" * (archive_messages.SEARCH_READ_CHUNK_BYTES - 2) + needle.encode() + b"\n")
+    archive_messages._archive_contains_query.cache_clear()
     reads: list[int] = []
     original_open = open
 
@@ -298,18 +284,18 @@ def test_content_search_reads_in_chunks_and_finds_boundary_match(tmp_path, monke
         return handle
 
     monkeypatch.setattr("builtins.open", tracking_open)
-    assert conversations._archive_contains(str(archive), needle.lower()) is True
+    assert archive_messages.archive_contains(str(archive), needle.lower()) is True
     assert reads
-    assert all(size == conversations._SEARCH_READ_CHUNK_BYTES for size in reads[:-1])
+    assert all(size == archive_messages.SEARCH_READ_CHUNK_BYTES for size in reads[:-1])
     assert all(size >= 0 for size in reads)
 
 
 def test_content_search_cache_invalidates_after_archive_append(tmp_path):
     archive = tmp_path / "archive.txt"
     archive.write_text("old content", encoding="utf-8")
-    conversations._archive_contains_query.cache_clear()
+    archive_messages._archive_contains_query.cache_clear()
 
-    assert conversations._archive_contains(str(archive), "new content") is False
+    assert archive_messages.archive_contains(str(archive), "new content") is False
     with archive.open("a", encoding="utf-8") as handle:
         handle.write(" new content")
-    assert conversations._archive_contains(str(archive), "new content") is True
+    assert archive_messages.archive_contains(str(archive), "new content") is True

@@ -4,16 +4,18 @@
 Read-only with respect to GA: we never write back to GA's files. The only
 mutating action is `restore`, which loads a chosen archive into the agent's
 in-memory working history via GA's own `restore()` helper.
+
+GA enumeration/signature/lookup mechanics live in the archive service
+(`services/archive_messages.py`); this route keeps HTTP shaping, title
+metadata, delete orchestration, restore, export and ZIP browsing.
 """
 from __future__ import annotations
 
 import asyncio
-from functools import lru_cache
 import io
 import json
 import logging
 import os
-import re
 import threading
 import zipfile
 from pathlib import Path
@@ -24,7 +26,14 @@ from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from .. import _paths
-from ..services.archive_messages import read_ui_messages
+from ..services.archive_messages import (
+    archive_contains,
+    first_user_preview,
+    invalidate_archive_catalogue,
+    list_archive_sessions,
+    read_ui_messages,
+    refresh_archive_catalogue,
+)
 from ..services.conversation_titles import migrate_legacy_titles
 from ..services.session_coordinator import AgentBusyError, SessionControlBusyError
 from ..services.session_metadata import SessionMetadataStore
@@ -33,23 +42,9 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 _metadata = SessionMetadataStore()
 _legacy_titles_migrated = False
+_legacy_titles_lock = threading.Lock()
 _ZIP_ENTRY_MAX_SIZE = 10 * 1024 * 1024
 _ZIP_READ_CHUNK_SIZE = 64 * 1024
-_session_index_lock = threading.Lock()
-_session_index_state = None
-_session_index: dict[str, tuple] = {}
-
-# Listing only needs the first real user question.  Reading a bounded head is
-# enough for native GA archives (the prompt header and JSON normally occur in
-# the first few KB), while keeping a pathological multi-GB archive from
-# turning one list request into a full-history parse.  The key includes the
-# archive identity so edits naturally invalidate the cache.
-_FIRST_USER_PREVIEW_READ_BYTES = 64 * 1024
-_PROMPT_BLOCK_RE = re.compile(
-    r"^=== Prompt ===[^\r\n]*\r?\n(.*?)(?=^=== (?:Prompt|Response) ===|\Z)",
-    re.DOTALL | re.MULTILINE,
-)
-_SEARCH_READ_CHUNK_BYTES = 256 * 1024
 
 
 class ZipEntryTooLarge(Exception):
@@ -133,60 +128,18 @@ class ArchiveZipEntryListResp(BaseModel):
 
 
 # ── GA archive helpers ────────────────────────────────────────────
-def _ga_sessions():
-    """Return GA's session list, mirroring server/routes/agent.py.
+def _archive_catalogue_with_migration() -> dict[str, tuple]:
+    """Refresh the GA session catalogue, then run the one-shot title migration.
 
-    list_sessions() -> [(path, mtime, preview, n_rounds)] sorted by mtime desc.
-    Importing inside the function keeps the (optional) GA path injection local
-    and matches the established pattern in agent.py.
+    The sid→path map doubles as the resolver for the legacy title migration:
+    sessions absent from the catalogue no longer exist, so their stale titles
+    are dropped with the sidecar file.
     """
-    from frontends.continue_cmd import list_sessions
-
-    return list_sessions()
-
-
-def _session_index_signature():
-    root = _paths.GA_ROOT
-    if root is None:
-        return ()
-    archive_dir = Path(root) / "temp" / "model_responses"
-    entries = []
-    try:
-        paths = archive_dir.glob("model_responses_*.txt")
-        for path in paths:
-            try:
-                stat = path.stat()
-                entries.append((path.name, stat.st_mtime_ns, stat.st_size))
-            except OSError:
-                continue
-    except OSError:
-        return ()
-    return tuple(sorted(entries))
-
-
-def _invalidate_session_index() -> None:
-    global _session_index_state, _session_index
-    with _session_index_lock:
-        _session_index_state = None
-        _session_index = {}
-
-
-def _refresh_session_index() -> dict[str, tuple]:
-    global _session_index_state, _session_index, _legacy_titles_migrated
-    signature = _session_index_signature()
-    with _session_index_lock:
-        if signature != _session_index_state:
-            rows = _ga_sessions()
-            index = {}
-            for row in rows:
-                index.setdefault(os.path.basename(row[0]), row)
-            _session_index = index
-            _session_index_state = signature
-            if not _legacy_titles_migrated and index:
-                # The sid→path map doubles as the resolver for the one-shot
-                # legacy title migration: sessions absent from the index no
-                # longer exist, so their stale titles are dropped with the
-                # sidecar file.
+    global _legacy_titles_migrated
+    index = refresh_archive_catalogue()
+    if not _legacy_titles_migrated and index:
+        with _legacy_titles_lock:
+            if not _legacy_titles_migrated:
                 _legacy_titles_migrated = True
                 try:
                     migrate_legacy_titles(
@@ -195,7 +148,12 @@ def _refresh_session_index() -> dict[str, tuple]:
                     )
                 except Exception:
                     log.exception("legacy conversation title migration failed")
-        return _session_index
+    return index
+
+
+def _session_by_id(cid: str):
+    """Find a GA session tuple by its basename id (catalogue lookup)."""
+    return _archive_catalogue_with_migration().get(cid)
 
 
 def _ga_extract(path: str):
@@ -211,106 +169,19 @@ def _restore_archive(agent, path: str):
     return _ga_extract(path)
 
 
-def _session_by_id(cid: str):
-    """Find a GA session tuple by its basename id."""
-    return _refresh_session_index().get(cid)
-
-
-def _conversation_title(path: str) -> str:
-    return _metadata.title_for_archive(path)
-
-
-@lru_cache(maxsize=1024)
-def _first_user_preview_head(path: str, mtime_ns: int, size: int) -> str:
-    """Extract the first user question from a bounded archive head.
-
-    ``mtime_ns`` and ``size`` are part of the cache key; callers never need a
-    global invalidation when a session is appended or replaced.  Parsing uses
-    GA's own ``_user_text`` filtering so tool-result continuations and working
-    memory injections retain the existing title semantics.
-    """
-    del mtime_ns, size  # identity-only cache inputs
-    try:
-        with open(path, "rb") as fh:
-            head = fh.read(_FIRST_USER_PREVIEW_READ_BYTES)
-        from frontends.continue_cmd import _user_text
-    except (OSError, ImportError):
-        return ""
-    text = head.decode("utf-8", errors="replace")
-    for body in _PROMPT_BLOCK_RE.findall(text):
-        content = _user_text(body)
-        if content:
-            return " ".join(content.split())[:200]
-    return ""
-
-
-def _first_user_preview(path: str) -> str:
-    """Return the original user question used as the default display title."""
-    try:
-        stat = os.stat(path)
-    except OSError:
-        return ""
-    return _first_user_preview_head(
-        os.path.abspath(path),
-        int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
-        int(stat.st_size),
-    )
-
-
-@lru_cache(maxsize=2048)
-def _archive_contains_query(
-    path: str,
-    mtime_ns: int,
-    size: int,
-    query: str,
-) -> bool:
-    """Search an archive in bounded chunks, caching by file revision."""
-    del mtime_ns, size
-    needle = query.encode("utf-8", errors="ignore").lower()
-    if not needle:
-        return True
-    overlap = max(0, len(needle) - 1)
-    carry = b""
-    try:
-        with open(path, "rb") as handle:
-            while True:
-                chunk = handle.read(_SEARCH_READ_CHUNK_BYTES)
-                if not chunk:
-                    return False
-                haystack = carry + chunk.lower()
-                if needle in haystack:
-                    return True
-                carry = haystack[-overlap:] if overlap else b""
-    except OSError:
-        return False
-
-
-def _archive_contains(path: str, query: str) -> bool:
-    try:
-        stat = os.stat(path)
-    except OSError:
-        return False
-    return _archive_contains_query(
-        os.path.abspath(path),
-        int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
-        int(stat.st_size),
-        query,
-    )
-
-
 # ── conversation list / detail / export / restore ─────────────────
 def _list_conversations_sync(
     q: str | None,
     offset: int,
     limit: int,
 ):
-    sessions = _ga_sessions()
+    sessions = list_archive_sessions()
     items = []
     for path, mtime, preview, rounds in sessions:
         cid = os.path.basename(path)
         items.append({
             "id": cid,
-            "title": _conversation_title(path),
+            "title": _metadata.title_for_archive(path),
             "message_count": rounds,
             "last_user_preview": preview,
             "_archive_path": path,
@@ -328,7 +199,7 @@ def _list_conversations_sync(
                     or ql in (it["last_user_preview"] or "").lower()):
                 keep.append(it)
                 continue
-            if _archive_contains(path, ql):
+            if archive_contains(path, ql):
                 keep.append(it)
         items = keep
     total = len(items)
@@ -336,7 +207,7 @@ def _list_conversations_sync(
     for item in page:
         path = item.pop("_archive_path")
         item["original_user_preview"] = (
-            "" if item["title"] else _first_user_preview(path)
+            "" if item["title"] else first_user_preview(path)
         )
     return {
         "total": total,
@@ -364,7 +235,7 @@ async def get_conversation(cid: str):
     messages = await asyncio.to_thread(_ga_extract, path)
     return {
         "id": cid,
-        "title": _conversation_title(path),
+        "title": _metadata.title_for_archive(path),
         "messages": messages,
     }
 
@@ -428,11 +299,11 @@ async def delete_conversation(cid: str):
                     "session_id": bound_session["id"],
                 })
 
-            _invalidate_session_index()
+            invalidate_archive_catalogue()
             return {"ok": True, "id": cid}
 
     _unlink_archive(cid, path)
-    _invalidate_session_index()
+    invalidate_archive_catalogue()
     return {"ok": True, "id": cid}
 
 
@@ -477,7 +348,7 @@ async def restore_conversation(cid: str):
     return {
         "ok": True,
         "id": cid,
-        "title": _conversation_title(path),
+        "title": _metadata.title_for_archive(path),
         "restored_lines": len(messages),
     }
 
@@ -489,7 +360,7 @@ async def export_conversation(cid: str, format: str = Query("md", pattern="^(md|
         raise HTTPException(404, "conversation not found")
     path = s[0]
     messages = await asyncio.to_thread(_ga_extract, path)
-    title = _conversation_title(path)
+    title = _metadata.title_for_archive(path)
 
     if format == "json":
         payload = {"id": cid, "title": title, "messages": messages}

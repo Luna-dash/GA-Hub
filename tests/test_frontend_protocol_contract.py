@@ -83,4 +83,5 @@ def test_conductor_renders_request_scoped_semantic_worker_progress():
     assert "label: '返工中'" in source
     assert "T{item.turn}" not in source
     assert "api.conductorLog()" not in source
-    assert "<MarkdownView mode=\"plain\" cache>" in source
+    # Non-user rows render plain markdown through the shared content primitive.
+    assert "format=\"markdown\" markdownMode=\"plain\"" in source
