@@ -158,8 +158,13 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
       线程/进程管理器）——已纳入 AppServices 所有权（cb9fd29，完成
       16b4f08 模式的最后一角）；shutdown 排在 feishu 后 agent 前（引擎
       停机时会回调 hub HTTP API）
-- [ ] tests/ 无 conftest.py；smoke 测试靠 importlib.reload 制造分叉模块态
+- [x] tests/ 无 conftest.py；smoke 测试靠 importlib.reload 制造分叉模块态
       （xdist 不安全）；wechat 测试隐式依赖本机 GA checkout 布局
+      ——已修（aa371a8）：conftest.py 钉根目录入 sys.path（任意 cwd 裸
+      pytest 可跑）；smoke 改为原地 patch _paths 的 GA_ROOT/ADMIN_DATA/
+      CONFIG_FILE（服务端全部经模块对象按调用时读取，无需 reload）；
+      wechat 单测与系统通道闸门集成测试在无 GA checkout 的机器上显式
+      skip 而非导入报错（空 admin-data 环境实测 7 skip 12 pass）
 - [x] README 存储目录表过期——已补全 13 行（e99bf6c，含 conversations_v2/
       gahub_journal/tasks_schedules.json/mykey-backups 等），_paths.py
       ADMIN_DATA docstring 同步并注明与 README 保持一致；routes/agent.py
