@@ -540,44 +540,6 @@
         }
       }
     },
-    "/api/llms/{idx}/test": {
-      "post": {
-        "summary": "Test Llm",
-        "description": "Fire a tiny ping at the LLM at index `idx`.\n\nWe bypass the agent's real history: the underlying backend session has\na `history` list we save + restore so the test message never lands in\nthe user's conversation. tools=None so we don't pay the schema cost.\n\nReturns: {ok, latency_ms, preview, model, error?}",
-        "operationId": "test_llm_api_llms__idx__test_post",
-        "parameters": [
-          {
-            "name": "idx",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Idx"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/feishu/status": {
       "get": {
         "summary": "Status",
@@ -8112,13 +8074,18 @@
           "history_lines": {
             "type": "integer",
             "title": "History Lines"
+          },
+          "removed_history_entries": {
+            "type": "integer",
+            "title": "Removed History Entries"
           }
         },
         "type": "object",
         "required": [
           "removed_sids",
           "kept",
-          "history_lines"
+          "history_lines",
+          "removed_history_entries"
         ],
         "title": "RewindResp"
       },

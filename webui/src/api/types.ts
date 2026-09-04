@@ -44,15 +44,6 @@ export interface LLMInfo {
   api_key_masked?: string
 }
 
-export interface LLMTestResult {
-  ok: boolean
-  latency_ms?: number
-  preview?: string
-  model?: string
-  name?: string
-  error?: string
-}
-
 export type MemoryTextResponse = ApiSchemas['MemoryTextResp']
 export type MemoryWriteResponse = ApiSchemas['MemoryWriteResp']
 

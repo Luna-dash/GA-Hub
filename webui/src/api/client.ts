@@ -32,7 +32,6 @@ import type {
   EmailTestResponse,
   EventRecentResponse,
   LLMInfo,
-  LLMTestResult,
   MemoryTextResponse,
   MemoryWriteResponse,
   MyKeyBackup,
@@ -235,7 +234,6 @@ export const api = {
   // ── llms ─────────────────────────────────────────────
   llms: () => http<{ llms: LLMInfo[] }>('GET', '/api/llms'),
   switchLLM: (index: number) => http<{ llm_no: number; name: string }>('POST', '/api/llms/switch', { index }),
-  testLLM: (index: number) => http<LLMTestResult>('POST', `/api/llms/${index}/test`),
 
   // ── desktop notifications (backend OS notifier) ──────
   notifyInfo: () => http<{ backend: string }>('GET', '/api/notify/info'),

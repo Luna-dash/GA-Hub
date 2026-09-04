@@ -123,6 +123,7 @@ class RewindResp(BaseModel):
     removed_sids: list[str]
     kept: int
     history_lines: int
+    removed_history_entries: int
 
 
 # ── wechat ───────────────────────────────────────────────────────

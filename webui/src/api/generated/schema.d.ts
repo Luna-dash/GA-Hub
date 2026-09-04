@@ -355,32 +355,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/llms/{idx}/test": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Test Llm
-         * @description Fire a tiny ping at the LLM at index `idx`.
-         *
-         *     We bypass the agent's real history: the underlying backend session has
-         *     a `history` list we save + restore so the test message never lands in
-         *     the user's conversation. tools=None so we don't pay the schema cost.
-         *
-         *     Returns: {ok, latency_ms, preview, model, error?}
-         */
-        post: operations["test_llm_api_llms__idx__test_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/feishu/status": {
         parameters: {
             query?: never;
@@ -3409,6 +3383,8 @@ export interface components {
             kept: number;
             /** History Lines */
             history_lines: number;
+            /** Removed History Entries */
+            removed_history_entries: number;
         };
         /** RunSubmit */
         RunSubmit: {
@@ -4525,37 +4501,6 @@ export interface operations {
                 "application/json": components["schemas"]["LLMSwitch"];
             };
         };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    test_llm_api_llms__idx__test_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                idx: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

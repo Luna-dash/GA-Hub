@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 
 from fastapi import APIRouter, HTTPException
 
@@ -155,81 +154,6 @@ async def switch_llm(req: LLMSwitch):
         raise HTTPException(409, str(e))
 
 
-@router.post("/api/llms/{idx}/test")
-async def test_llm(idx: int):
-    """Fire a tiny ping at the LLM at index `idx`.
-
-    We bypass the agent's real history: the underlying backend session has
-    a `history` list we save + restore so the test message never lands in
-    the user's conversation. tools=None so we don't pay the schema cost.
-
-    Returns: {ok, latency_ms, preview, model, error?}
-    """
-    s = svc()
-    clients = getattr(s.agent, "llmclients", None)
-    if clients is None or idx < 0 or idx >= len(clients):
-        raise HTTPException(404, f"llm index out of range: {idx}")
-
-    return await asyncio.to_thread(_test_llm_sync, s, clients[idx])
-
-
-def _test_llm_sync(service: AgentService, client):
-    backend = getattr(client, "backend", None)
-    if backend is None:
-        return {"ok": False, "error": "client has no backend"}
-
-    saved_history = list(getattr(backend, "history", []))
-    saved_tools = getattr(backend, "tools", None)
-    # Silence the archive logger: a bare ping must not leave a
-    # model_responses_{pid}.txt file behind (it would surface as a new
-    # entry in the 历史对话 page). llmcore treats log_path=False as "off".
-    saved_log = getattr(client, "log_path", None)
-    try:
-        # Best-effort reset to neutral; not every backend has these.
-        if hasattr(backend, "history"): backend.history = []
-        if hasattr(backend, "tools"): backend.tools = None
-        if hasattr(client, "log_path"): client.log_path = False
-
-        start = time.time()
-        # client.chat is a generator — exhaust it. We do this in a thread
-        # because raw_ask issues a blocking HTTP request.
-        messages = [
-            {"role": "system", "content": "You are a connectivity probe. Reply with exactly one word: pong."},
-            {"role": "user", "content": "ping"},
-        ]
-        text = ""
-        try:
-            gen = client.chat(messages=messages, tools=None)
-            # `gen` may yield streaming chunks then return a response object.
-            # For the test we only care that *something* came back without
-            # exception, plus the first ~80 chars as a preview.
-            for chunk in gen:
-                if isinstance(chunk, str): text += chunk
-                if len(text) > 80: break
-        except StopIteration as si:
-            resp = si.value
-            text = (getattr(resp, "content", "") or "")[:80]
-        elapsed_ms = int((time.time() - start) * 1000)
-        return {
-            "ok": True,
-            "latency_ms": elapsed_ms,
-            "preview": (text or "").strip()[:120],
-            "model": service.agent.get_llm_name(client, model=True),
-            "name": service.agent.get_llm_name(client),
-        }
-    except Exception as e:
-        return {
-            "ok": False,
-            "error": f"{type(e).__name__}: {e}",
-            "name": service.agent.get_llm_name(client) if client else "?",
-        }
-    finally:
-        try:
-            if hasattr(backend, "history"): backend.history = saved_history
-            if hasattr(backend, "tools"): backend.tools = saved_tools
-            if hasattr(client, "log_path"): client.log_path = saved_log
-        except Exception:
-            pass
 
 
 # ── chat WebSocket tombstone ─────────────────────────────────────
