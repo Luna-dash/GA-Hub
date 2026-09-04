@@ -194,3 +194,63 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
       助手统一四处完整日期时间显示（气泡时钟/紧凑卡/datetime-local/日期
       分桶各有不同需求，不迁移）；PasteAttachment 挪 api/types；
       api:generate 输出锚定脚本位置（import.meta.dirname 先例）
+
+## 2026-09-04 结构整合度重扫描（第三轮，四路并行）
+
+来源：P0-P3 全清 + 第二轮重扫描清零后，按用户目标做的又一轮全仓扫描
+（34 项发现：P1×4 / P2×10 / P3×20，每项修复前均重新核实真伪）。本轮已修
+（分类提交）：
+
+- [x] 阻塞 IO 回潮清零（f3b693e）：memory 路由 7 处、conversations zip
+      列举/读条目、upload 分块写盘、双 delete 的 runtime.shutdown 线程
+      join 全部 to_thread；补 6 条 0.02s 让步探针进 test_blocking_routes
+- [x] conversations 服务目录违规三处（3b5cc28）：`_session_by_id` 私有
+      复制、restore 手发 CHAT_RESET、delete 手抓 coordinator——全部改走
+      archive 目录 / AgentService.reset_live_snapshots 门面 /
+      sessions.peek_coordinator（peek 不构造，保 shutdown 准入门）
+- [x] conductor 残余清尾（1f73fd9）：_init_fields 真实持有
+      _journal_cursor/_cold_start_gate/_action_operations（三个 getattr
+      回填 shim 删除）；start_subagent 的 INSTR_DISPATCHED 下沉服务层
+      （"哪些响应带指令"单源）；死语句 workflow_tracker、死 helper
+      shutdown_conductor_service、TaskScheduler.instance 对基类的逐字
+      覆写（display_name 输出等价）全删
+- [x] webui 状态点与错误提取（0fca1ce）：SessionRail error 点引用不存在的
+      status-danger-soft0（点不可见真 bug）；发光环 rgba 是令牌前史的
+      emerald/sky/rose 色相——全部改由 tailwind status hex 派生；idle 点
+      与 Conductor stopped 点统一 #9A8E7D；MessageBubble 三种棕 hex 收敛
+      warning 令牌（新增 warning.muted）；MyKey syncFailureMessage →
+      sessionUi.myKeySyncErrorFromError、Conductor subagentActionErrorDetail
+      → sessionUi.structuredErrorDetailFromError（结构化例外，受控注明）；
+      App/chatStore/Settings 三处裸 Error.message 核实为合理边界后保留
+- [x] webui 注册表收编（0c94bf7）：Z_LAYERS 增 gate=80 收编 DesktopRuntimeGate
+      裸 z-[10001]；api client 四个零调用包装删除；Autonomous ReportDrawer
+      走 MessageContent；queryKeys 注明 conversations 领域模块例外
+      （内联 queryKey 全仓为零，LiveChat 一项早前批次已完成）
+- [x] 事件主题登记补漏（ac1150c）：workflow 三主题（completed/failed/
+      worker_failed）是 (topic, payload) 元组在 tracker 内构造、远离
+      publish 点，内联字符串逃过扫描——入注册表为常量；DYNAMIC_FAMILIES
+      收敛为 "conductor:"（窄项被包含）；扫描正则从 bus.publish 放宽到
+      一切 .publish 变体；conductor_client 动态拼的 GAHUB_GAHUB_* env 名
+      （config 键 + GAHUB_ 前缀，双重前缀是历史兼容）手工入 constants
+- [x] 文档说真话（0860785）：_run_mykey_sync docstring 声称 env 不带密值
+      与实现矛盾（透传被 test_process_utils 钉住）——改述为 argv 不携带、
+      env 原样透传、探测子进程剥离；_backup_dir 变纯查询，mkdir 只在写
+      路径（list_backups 读路径不再建目录）；_paths ADMIN_DATA 清单与
+      README 存储表补 6 条（scheduled_chats.json、session_metadata/、
+      conversation_metadata/、ui_preferences.json、wechat_log.jsonl、logs/）
+
+### 决策项（未修，按伤害排序）
+
+- [ ] rewind durable 双全量 parse：rewind_adapter.py 同一次 rewind 里
+      sync_store（82 行）与 durable 提交（151/156 行）各自
+      parse_native_log 整个原生归档；sync_store 已返回解析好的 history，
+      durable 路径可复用（restore_plan 返回值与 store 均已持有树态）。
+      属性能优化非正确性问题，归档大时才可感知
+- [ ] TS 生成契约新鲜度锁：api:generate（package.json:11）产出
+      webui/src/api/generated/schema.ts，但无 CI/测试比对"生成物是否
+      过期"（手改路由不重跑 generate 时 tsc/vitest 仍绿）。建议加一个
+      生成 → diff 为空 断言的测试或 CI 步骤
+- [ ] session coordinator 全局单例归属：routes/sessions.py:43 的模块级
+      `_coordinator` 已有 peek/构造/lifecycle 锁三层纪律，但所有权仍在
+      路由模块——移入 AppServices 可与 agent/feishu/scheduler 的所有权
+      模式对齐；涉及大量测试 seam 搬家，收益是结构一致性而非行为变化
