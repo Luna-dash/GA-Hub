@@ -243,6 +243,12 @@ def create_app() -> FastAPI:
     setup_mode = _paths.GA_ROOT is None
     feishu_autostart_task: asyncio.Task[Any] | None = None
     services = AppServices()
+    # Bind the status registry to the lifespan-owned instances BEFORE startup
+    # so /api/status, /api/health and /api/services/panel all read the exact
+    # objects this app created (no cross-app singleton leakage, no lazy
+    # construction from a status read).
+    from .services.service_registry import ServiceRegistry
+    app_registry = ServiceRegistry(services)
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
@@ -262,6 +268,8 @@ def create_app() -> FastAPI:
         version="0.3.4",
         lifespan=_lifespan,
     )
+    app.state.services = services
+    app.state.service_registry = app_registry
 
     # CORS: browser/server mode is same-origin, while Vite and packaged Tauri
     # assets call the random-port sidecar cross-origin.  Keep both origin sets
@@ -456,8 +464,7 @@ def create_app() -> FastAPI:
                 }],
                 "timestamp": int(time.time()),
             }
-        from .services.service_registry import registry
-        return registry.health_summary()
+        return app_registry.health_summary()
 
     @app.get("/api/health/core-contract")
     async def core_contract_health():

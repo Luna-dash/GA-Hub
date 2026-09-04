@@ -3,12 +3,22 @@
 Adapts in-process GA-Hub services to one stable panel contract.  This mirrors
 the useful registry idea from Bridge without depending on a Bridge process.
 Status reads never instantiate optional/heavy services.
+
+An application-bound registry prefers the lifespan-owned instances recorded
+in ``AppServices`` (agent, feishu, scheduler host) so ``/api/status``,
+``/api/health`` and ``/api/services/panel`` observe the same objects during
+partial startup/teardown. The module-global ``registry`` stays as a
+compatibility seam for tests and unbound callers; services not owned by the
+lifespan (WeChat, Conductor, Goal/Hive) remain singleton observers.
 """
 from __future__ import annotations
 
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle guard for type hints only
+    from .app_services import AppServices
 
 
 @dataclass
@@ -45,11 +55,16 @@ class ServiceRegistry:
         "error": "unknown",
     }
 
-    def __init__(self) -> None:
+    def __init__(self, services: "AppServices | None" = None) -> None:
+        # Lifespan-owned instances win over singleton probes when present.
+        self._services = services
         self._readers: list[Callable[[], ServicePanelItem | None]] = [
             self._agent, self._feishu, self._wechat, self._conductor,
             self._goalhive, self._autonomous, self._tasks,
         ]
+
+    def _owned_services(self) -> "AppServices | None":
+        return self._services
 
     def panel(self) -> dict[str, Any]:
         items: list[ServicePanelItem] = []
@@ -86,10 +101,11 @@ class ServiceRegistry:
             overall = "degraded"
         return {"status": overall, "services": services, "timestamp": snapshot["timestamp"]}
 
-    @staticmethod
-    def _agent() -> ServicePanelItem:
+    def _agent(self) -> ServicePanelItem:
         from .agent_service import AgentService
-        service = AgentService._instance
+        service = getattr(self._owned_services(), "agent", None)
+        if service is None:
+            service = AgentService._instance
         if service is None:
             return ServicePanelItem(
                 "agent", "Agent", "stopped", "服务尚未初始化", "/chat",
@@ -103,11 +119,12 @@ class ServiceRegistry:
             expected_running=True,
         )
 
-    @staticmethod
-    def _feishu() -> ServicePanelItem:
+    def _feishu(self) -> ServicePanelItem:
         from .. import _paths
         from .feishu_service import FeishuService
-        service = FeishuService._instance
+        service = getattr(self._owned_services(), "feishu", None)
+        if service is None:
+            service = FeishuService._instance
         if service is None:
             script = (
                 _paths.GA_ROOT / "frontends" / "fsapp.py"
@@ -188,10 +205,23 @@ class ServiceRegistry:
             {"消息": len(svc.get_messages())},
         )
 
-    @staticmethod
-    def _autonomous() -> ServicePanelItem:
+    def _scheduler_service(self, domain: str):
+        """Resolve a scheduler-domain service from the owned host or singleton.
+
+        The lifespan owns the host; its registrations hold the started
+        instances. Unbound callers (tests, standalone tools) fall back to the
+        class singletons exactly as before.
+        """
+        host = getattr(self._owned_services(), "scheduler_host", None)
+        if host is not None:
+            for item in getattr(host, "_registrations", ()):
+                if item.name == domain and item.service is not None:
+                    return item.service
+        return None
+
+    def _autonomous(self) -> ServicePanelItem:
         from .autonomous_scheduler import AutonomousScheduler
-        svc = AutonomousScheduler._instance
+        svc = self._scheduler_service("autonomous") or AutonomousScheduler._instance
         if svc is None:
             return ServicePanelItem("autonomous", "自主进化", "stopped", "调度器尚未初始化", "/autonomous")
         running = bool(svc._sched.running and not svc._stop_event.is_set())
@@ -207,10 +237,9 @@ class ServiceRegistry:
             expected_running=expected,
         )
 
-    @staticmethod
-    def _tasks() -> ServicePanelItem:
+    def _tasks(self) -> ServicePanelItem:
         from .task_scheduler import TaskScheduler
-        svc = TaskScheduler._instance
+        svc = self._scheduler_service("tasks") or TaskScheduler._instance
         if svc is None:
             return ServicePanelItem("task_scheduler", "定时任务", "stopped", "调度器尚未初始化", "/tasks")
         running = bool(svc._sched.running)
