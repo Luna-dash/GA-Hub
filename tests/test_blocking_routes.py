@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from server.routes import agent, autonomous, conductor, mykey, sessions, tasks, wechat
+from server.services import mykey_service
 
 
 async def _run_with_probe(awaitable):
@@ -30,8 +31,8 @@ def test_mykey_sync_runs_in_worker_thread(tmp_path) -> None:
     path.write_text("# fixture\n", encoding="utf-8")
 
     with (
-        mock.patch.object(mykey, "_mykey_path", return_value=path),
-        mock.patch.object(mykey, "_run_mykey_sync", side_effect=lambda _args: _slow_result({
+        mock.patch.object(mykey_service, "_mykey_path", return_value=path),
+        mock.patch.object(mykey_service, "_run_mykey_sync", side_effect=lambda _args: _slow_result({
             "returncode": 0,
             "stdout": "ok",
             "stderr": "",

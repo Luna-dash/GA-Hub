@@ -15,7 +15,7 @@ import types
 from types import SimpleNamespace
 from unittest import mock
 
-from server.routes import mykey
+from server.services import mykey_service
 
 
 class _RecordingClient:
@@ -33,11 +33,11 @@ class _RecordingClient:
 
 def test_mykey_probe_silences_log_and_restores_it(monkeypatch) -> None:
     client = _RecordingClient(initial_log=None)
-    monkeypatch.setattr(mykey, "_classify", lambda _var: "oai")
+    monkeypatch.setattr(mykey_service, "_classify", lambda _var: "oai")
     fake_llmcore = types.ModuleType("llmcore")
     fake_llmcore.resolve_client = lambda _var: client
     with mock.patch.dict("sys.modules", {"llmcore": fake_llmcore}):
-        result = mykey._test_session_sync("test_oai_config")
+        result = mykey_service.test_session_sync("test_oai_config")
 
     assert result["ok"] is True
     assert client.seen_log_paths == [False], "chat must run with log_path=False"
