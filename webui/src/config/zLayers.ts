@@ -11,6 +11,8 @@
  - tooltip — transient hover tooltips (never stack-fight an open modal)
  - contextMenu — portal context menus (above tooltips, below toasts)
  - toast  — transient notifications (always on top)
+ - gate   — desktop runtime failure fallback; full-screen and must cover
+            every other registry consumer (was a stray z-[10001])
 */
 export const Z_LAYERS = {
   modal: 50,
@@ -19,4 +21,5 @@ export const Z_LAYERS = {
   tooltip: 62,
   contextMenu: 65,
   toast: 70,
+  gate: 80,
 } as const

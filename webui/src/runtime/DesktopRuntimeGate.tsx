@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { queryDesktopBackendReadiness } from './desktopBootstrap'
 import { isTauriRuntime } from './runtimeConfig'
+import { Z_LAYERS } from '@/config/zLayers'
 
 const READY_POLL_MS = 150
 
@@ -65,7 +66,7 @@ export function DesktopRuntimeGate({ children }: { children: ReactNode }) {
 
   if (state.phase === 'failed') {
     return (
-      <div className="relative z-[10001] flex h-screen w-screen items-center justify-center bg-bg">
+      <div className="relative flex h-screen w-screen items-center justify-center bg-bg" style={{ zIndex: Z_LAYERS.gate }}>
         <div className="max-w-md text-center space-y-4 px-6">
           <div className="text-status-danger text-base font-medium">桌面后端启动失败</div>
           <div className="text-slate-400 text-sm break-all whitespace-pre-wrap font-mono bg-bg-card border border-line rounded-lg p-3">

@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { Schedule, ScheduleType } from '@/api/types'
-import { MarkdownView } from '@/components/MarkdownView'
+import { MessageContent } from '@/components/MessageContent'
 import { PageShell } from '@/components/PageShell'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { relTime } from '@/utils/foldTurns'
@@ -252,7 +252,7 @@ function ReportDrawer({ name, content, onClose }: { name: string; content: strin
           <h3 className="text-sm font-mono text-slate-300">{name}</h3>
           <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
         </div>
-        <MarkdownView>{content}</MarkdownView>
+        <MessageContent content={content} format="markdown" />
     </ModalOverlay>
   )
 }

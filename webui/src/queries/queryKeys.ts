@@ -3,6 +3,10 @@
  * Keeping key construction in one place prevents an invalidate call from
  * silently targeting a different cache entry than the query it intends to
  * refresh. Parameterized keys remain functions so their identity is explicit.
+ *
+ * Sanctioned exception: `queries/conversations.ts` owns its `conversationKeys`
+ * alongside the cache-mutation helpers that operate on them — the keys and the
+ * only code that touches those entries live (and are tested) together.
  */
 export const queryKeys = {
   setup: ['setup'] as const,

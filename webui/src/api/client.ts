@@ -16,10 +16,8 @@ import type {
   ConductorStatus,
   ConductorSubagentActionResponse,
   ConductorSubagentListResponse,
-  ConductorTextResponse,
   ConductorWorkflowListResponse,
   TokenStatsResponse,
-  TokenHistoryResponse,
   ServicePanelResponse,
   ConductorSubagent,
   Conversation,
@@ -113,7 +111,6 @@ type HttpOptions = RequestInit & {
 }
 export type ApiComponents = GeneratedApiComponents
 type GeneratedHubSession = ApiComponents['schemas']['HubSession']
-type AppStatusResponse = ApiComponents['schemas']['AppStatusResp']
 type NavigationPreferences = ApiComponents['schemas']['NavPreferencesResp']
 type SessionList = ApiComponents['schemas']['SessionListResp']
 type AbortSource = 'timeout' | 'external' | null
@@ -198,9 +195,6 @@ async function http<T>(method: string, path: string, body?: unknown, init?: Http
 }
 
 export const api = {
-  // ── status ───────────────────────────────────────────
-  status: () => http<AppStatusResponse>('GET', '/api/status'),
-
   // ── setup (always available, even in setup mode) ────
   setupStatus: () => http<SetupStatus>('GET', '/api/setup/status'),
   setupValidate: (ga_root: string) =>
@@ -225,7 +219,6 @@ export const api = {
   // ── agent ────────────────────────────────────────────
   agentStatus: (init?: Pick<RequestInit, 'signal'>) =>
     http<AgentStatus>('GET', '/api/agent/status', undefined, init),
-  agentAbort: () => http<{ ok: boolean }>('POST', '/api/agent/abort'),
   agentNew: () => http<{ ok: boolean; message: string }>('POST', '/api/agent/new'),
   chatRetryConfig: () => http<ChatRetryConfig>('GET', '/api/agent/chat-retry-config'),
   saveChatRetryConfig: (cfg: ChatRetryConfig) =>
@@ -352,10 +345,6 @@ export const api = {
 
 
   // ── conductor ────────────────────────────────────────
-  conductorReadme: (topic = 'api') =>
-    topic === 'api'
-      ? http<ConductorTextResponse>('GET', '/api/conductor/readme')
-      : http<ConductorTextResponse>('GET', `/api/conductor/readme/${topic}`),
   conductorChat: (last = 50) => http<ConductorChatListResponse>('GET', `/api/conductor/chat?last=${last}`),
   conductorSendChat: (
     msg: string,
@@ -399,7 +388,6 @@ export const api = {
       force,
     }),
   tokenStats: () => http<TokenStatsResponse>('GET', '/api/tokens/stats'),
-  tokenHistory: (hours = 24) => http<TokenHistoryResponse>('GET', `/api/tokens/history?hours=${hours}`),
   servicePanel: () => http<ServicePanelResponse>('GET', '/api/services/panel'),
   conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),
   conductorSettings: (autoAccept: boolean) =>
