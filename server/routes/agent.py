@@ -15,10 +15,8 @@ from ..schemas import (
     RewindReq,
     RewindResp,
 )
-from ..event_topics import CHAT_RESET
 from ..services.agent_service import AgentService
 from ..services.chat_retry import load_chat_retry_config, save_chat_retry_config
-from ..services.event_bus import bus
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -124,9 +122,7 @@ async def restore_session(idx: int):
     msg, full = restored
     # Reset live chat snapshots — the agent's history is now a different
     # conversation, so any in-flight UI bubbles would be misleading.
-    with s._lock:
-        s._snapshots.clear()
-    bus.publish(CHAT_RESET, {"reason": "session_restored"})
+    s.reset_live_snapshots("session_restored")
     return {"ok": True, "message": msg, "full": full}
 
 

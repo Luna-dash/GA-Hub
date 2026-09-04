@@ -1022,6 +1022,16 @@ class AgentService:
                 return
 
     # ── conversation control ────────────────────────────────────
+    def reset_live_snapshots(self, reason: str) -> None:
+        """Wipe per-stream UI snapshots and tell clients to reset bubbles.
+
+        Single home for the "history changed under the clients" broadcast —
+        the restore endpoints and new_conversation must stay in lockstep.
+        """
+        with self._lock:
+            self._snapshots.clear()
+        bus.publish(CHAT_RESET, {"reason": reason})
+
     def new_conversation(self) -> str:
         # Automatic archive-to-chat_history.json on /new is disabled: GA-Hub
         # reads GA's raw session archives (temp/model_responses/*.txt)
@@ -1030,10 +1040,8 @@ class AgentService:
         # "don't mutate GA" boundary.
         # Wipe per-stream UI snapshots so a reconnecting WS doesn't replay
         # stale bubbles from the previous conversation.
-        with self._lock:
-            self._snapshots.clear()
+        self.reset_live_snapshots("new_conversation")
         self.set_title("")
-        bus.publish(CHAT_RESET, {"reason": "new_conversation"})
         return reset_conversation(self.agent)
 
     def get_history(self) -> list[str]:

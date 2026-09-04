@@ -157,7 +157,7 @@ def test_detail_and_export_parsing_do_not_block_event_loop(tmp_path, monkeypatch
 
     monkeypatch.setattr(
         conversations,
-        "_session_by_id",
+        "archive_session_by_id",
         lambda cid: (str(archive), 0.0, "preview", 1),
     )
     monkeypatch.setattr(conversations._metadata, "title_for_archive", lambda path: "title")
@@ -198,11 +198,13 @@ def test_restore_archive_work_does_not_block_event_loop(tmp_path, monkeypatch):
         agent = object()
         _lock = threading.Lock()
         _snapshots = {"stale": object()}
+        # Bind the real facade so the route's reset path is exercised as-is.
+        reset_live_snapshots = AgentService.reset_live_snapshots
 
     service = Service()
     monkeypatch.setattr(
         conversations,
-        "_session_by_id",
+        "archive_session_by_id",
         lambda cid: (str(archive), 0.0, "preview", 1),
     )
     monkeypatch.setattr(conversations._metadata, "title_for_archive", lambda path: "Title")
@@ -243,7 +245,7 @@ def test_repeated_detail_and_export_requests_are_consistent(tmp_path, monkeypatc
     messages = [{"role": "user", "content": "body"}]
     monkeypatch.setattr(
         conversations,
-        "_session_by_id",
+        "archive_session_by_id",
         lambda cid: (str(archive), 7.0, "preview", 1),
     )
     monkeypatch.setattr(conversations._metadata, "title_for_archive", lambda path: "Title")

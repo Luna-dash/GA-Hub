@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 import time
 from types import SimpleNamespace
 from unittest import mock
@@ -113,21 +112,17 @@ def test_conductor_stop_runs_in_worker_thread() -> None:
 
 
 def test_session_restore_runs_in_worker_thread() -> None:
-    service = SimpleNamespace(
-        agent=object(),
-        _lock=threading.Lock(),
-        _snapshots=[{"id": "old"}],
-    )
+    reset = mock.Mock()
+    service = SimpleNamespace(agent=object(), reset_live_snapshots=reset)
 
     with (
         mock.patch.object(agent, "svc", return_value=service),
         mock.patch.object(agent, "_restore_session_sync", side_effect=lambda *_args: _slow_result(("ok", "full"))),
-        mock.patch.object(agent.bus, "publish"),
     ):
         result = asyncio.run(_run_with_probe(agent.restore_session(0)))
 
     assert result == {"ok": True, "message": "ok", "full": "full"}
-    assert service._snapshots == []
+    reset.assert_called_once_with("session_restored")
 
 
 def test_archive_page_projection_runs_in_worker_thread() -> None:
@@ -253,7 +248,7 @@ def test_conversation_delete_release_runs_in_worker_thread(tmp_path) -> None:
         delete_by_archive=mock.Mock(),
     )
     with (
-        mock.patch.object(conversations, "_session_by_id", return_value=(str(archive),)),
+        mock.patch.object(conversations, "archive_session_by_id", return_value=(str(archive),)),
         mock.patch.object(conversations, "_metadata", metadata),
         mock.patch.object(sessions, "_coordinator", coordinator),
         mock.patch.object(conversations, "invalidate_archive_catalogue", mock.Mock()),

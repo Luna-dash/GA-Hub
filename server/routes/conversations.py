@@ -26,9 +26,9 @@ from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from .. import _paths
-from ..event_topics import CHAT_RESET
 from ..services.archive_messages import (
     archive_contains,
+    archive_session_by_id,
     first_user_preview,
     invalidate_archive_catalogue,
     list_archive_sessions,
@@ -156,11 +156,6 @@ def run_legacy_title_migration_once() -> None:
             log.exception("legacy conversation title migration failed")
 
 
-def _session_by_id(cid: str):
-    """Find a GA session tuple by its basename id (catalogue lookup)."""
-    return refresh_archive_catalogue().get(cid)
-
-
 def _ga_extract(path: str):
     """Extract UI messages through the shared GA archive adapter."""
     return read_ui_messages(path)
@@ -234,7 +229,7 @@ async def list_conversations(
 @router.get("/api/conversations/{cid}", response_model=ConversationDetailResp)
 async def get_conversation(cid: str):
     # Catalogue refresh stats/scans the archive dir — keep it off the loop.
-    s = await asyncio.to_thread(_session_by_id, cid)
+    s = await asyncio.to_thread(archive_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = s[0]
@@ -252,7 +247,7 @@ async def get_conversation(cid: str):
 )
 async def update_conversation(cid: str, req: ConversationUpdate):
     # Catalogue refresh stats/scans the archive dir — keep it off the loop.
-    s = await asyncio.to_thread(_session_by_id, cid)
+    s = await asyncio.to_thread(archive_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     title = req.title.strip()
@@ -266,14 +261,16 @@ async def update_conversation(cid: str, req: ConversationUpdate):
 )
 async def delete_conversation(cid: str):
     # Catalogue refresh stats/scans the archive dir — keep it off the loop.
-    s = await asyncio.to_thread(_session_by_id, cid)
+    s = await asyncio.to_thread(archive_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = Path(s[0]).resolve()
     bound_session = _metadata.find_by_archive(path)
     if bound_session is not None:
         from ..routes import sessions as session_routes
-        coordinator = session_routes._coordinator
+        # Peek (never construct) and keep the shutdown admission gate — same
+        # refusal semantics as every other runtime-touching endpoint.
+        coordinator = session_routes.peek_coordinator()
         if coordinator is not None:
             def _delete_archive() -> None:
                 # The binding was resolved before this session reservation was
@@ -342,19 +339,16 @@ async def restore_conversation(cid: str):
     clients don't replay stale bubbles.
     """
     from ..services.agent_service import AgentService
-    from ..services.event_bus import bus
 
     # Catalogue refresh stats/scans the archive dir — keep it off the loop.
-    s = await asyncio.to_thread(_session_by_id, cid)
+    s = await asyncio.to_thread(archive_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = s[0]
 
     svc = AgentService.instance()
     messages = await asyncio.to_thread(_restore_archive, svc.agent, path)
-    with svc._lock:
-        svc._snapshots.clear()
-    bus.publish(CHAT_RESET, {"reason": "restore_conversation"})
+    svc.reset_live_snapshots("restore_conversation")
 
     return {
         "ok": True,
@@ -367,7 +361,7 @@ async def restore_conversation(cid: str):
 @router.get("/api/conversations/{cid}/export")
 async def export_conversation(cid: str, format: str = Query("md", pattern="^(md|json)$")):
     # Catalogue refresh stats/scans the archive dir — keep it off the loop.
-    s = await asyncio.to_thread(_session_by_id, cid)
+    s = await asyncio.to_thread(archive_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = s[0]

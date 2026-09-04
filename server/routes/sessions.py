@@ -126,6 +126,21 @@ def _get_coordinator() -> SessionCoordinator:
         return _coordinator
 
 
+def peek_coordinator() -> SessionCoordinator | None:
+    """Current coordinator without constructing one (peek-only callers).
+
+    Applies the same shutdown admission gate as :func:`_get_coordinator` —
+    callers must not touch a coordinator that is being torn down — but never
+    constructs one. Runtime-touching work should use the full accessor.
+    """
+    with _coordinator_lifecycle_lock:
+        if _coordinator_stopping:
+            raise SessionCoordinatorStoppedError(
+                "session runtime lifecycle is stopping"
+            )
+        return _coordinator
+
+
 def prepare_session_runtime_lifecycle() -> None:
     """Allow a fresh lifespan to construct runtimes after clean teardown."""
     global _coordinator_stopping

@@ -70,8 +70,8 @@ def test_route_point_lookup_uses_the_archive_catalogue(monkeypatch):
     )
     _reset_index()
 
-    assert conversations._session_by_id("a.txt")[0] == "/sessions/a.txt"
-    assert conversations._session_by_id("a.txt")[0] == "/sessions/a.txt"
+    assert conversations.archive_session_by_id("a.txt")[0] == "/sessions/a.txt"
+    assert conversations.archive_session_by_id("a.txt")[0] == "/sessions/a.txt"
     assert len(scans) == 1
 
 
@@ -153,7 +153,7 @@ def test_delete_conversation_invalidates_catalogue_after_unlink(tmp_path, monkey
     events = []
     monkeypatch.setattr(
         conversations,
-        "_session_by_id",
+        "archive_session_by_id",
         lambda cid: _row(str(archive), 1),
     )
     monkeypatch.setattr(

@@ -222,7 +222,7 @@ def test_deleting_bound_archive_releases_session_runtime_before_unlink(tmp_path,
     monkeypatch.setattr(conversations, "_metadata", sessions_store)
     monkeypatch.setattr(
         conversations,
-        "_session_by_id",
+        "archive_session_by_id",
         lambda cid: (str(archive), 0, "", 1),
     )
 
