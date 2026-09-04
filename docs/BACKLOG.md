@@ -110,9 +110,10 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
 
 - [x] Skills.tsx 是孤儿页面（253 行，无路由/无导航/无测试）——【已定：
       删除】已删（ba75acd）；Memory 页在用的 skill API/类型/queryKeys 保留
-- [ ] 双调度器（autonomous/task）~70% 逐行克隆（持久化/装 job/fire/守卫），
-      已咬过一次（misfire 只补了一边）——抽 SchedulerDomainBase，测试收缩
-      到差异面
+- [x] 双调度器（autonomous/task）~70% 逐行克隆（持久化/装 job/fire/守卫），
+      已咬过一次（misfire 只补了一边）——已抽 scheduler_domain_base.py 的
+      SchedulerDomainBase 模板方法基类（06f819f），骨架单份、差异成钩子；
+      测试无需收缩（既有用例已按双域参数化，全部原样通过，继续当契约锁）
 - [ ] routes/mykey.py 674 行是"穿着路由皮的服务"（备份轮转/原子写/解释器
       探测/子进程编排内联）——抽 services/mykey_service.py
 - [x] LLM ping——【2026-09-04 分析修正】UI 入口只有一个：MyKey 卡片"测 ping"
