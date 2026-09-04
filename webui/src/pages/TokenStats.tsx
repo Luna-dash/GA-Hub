@@ -122,7 +122,7 @@ export default function TokenStats() {
   })
   return <PageShell title="用量统计">
     {stats.isLoading && <div className="rounded-xl border border-line bg-bg-card p-10 text-center text-sm text-slate-400">正在加载用量数据…</div>}
-    {stats.isError && <div className="rounded-xl border border-rose-500/25 bg-rose-500/5 p-4 text-sm text-rose-300">用量数据读取失败，请稍后重试。</div>}
+    {stats.isError && <div className="rounded-xl border border-status-danger-line bg-status-danger-soft p-4 text-sm text-status-danger">用量数据读取失败，请稍后重试。</div>}
     {stats.data && <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard label="累计请求" value={stats.data.all_time.requests} hint={`${exact(stats.data.all_time.requests)} 次`} tone="bg-[#718a80]" />

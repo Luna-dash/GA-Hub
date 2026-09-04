@@ -631,7 +631,7 @@ export default function Conductor() {
                 aria-valuemax={workflowSubagents.length}
               >
                 <div
-                  className="h-full rounded-full bg-[#3C8A52] transition-[width] duration-500"
+                  className="h-full rounded-full bg-status-success-strong transition-[width] duration-500"
                   style={{ width: `${Math.round((acceptedCount / workflowSubagents.length) * 100)}%` }}
                 />
               </div>
@@ -641,7 +641,7 @@ export default function Conductor() {
           {pendingReview.length > 0 && (
             <button
               type="button"
-              className="shrink-0 rounded-xl border border-[#D7E4EE] bg-[#EAF2F8] px-3 py-2 text-left text-xs leading-5 text-[#285A78]"
+              className="shrink-0 rounded-xl border border-status-info-line bg-status-info-soft px-3 py-2 text-left text-xs leading-5 text-status-info"
               onClick={() => setSelectedSid(pendingReview[0].id)}
             >
               有 {pendingReview.length} 个子任务等你拍板
@@ -700,7 +700,7 @@ export default function Conductor() {
             )}
             {isChatError && visibleChat.length === 0 && (
               <div className="px-4 py-8 text-center">
-                <p className="text-sm text-[#9E3328]">历史暂时无法加载，Conductor 引擎可能未连接。</p>
+                <p className="text-sm text-status-danger">历史暂时无法加载，Conductor 引擎可能未连接。</p>
                 <button type="button" className="ga-btn mt-3" onClick={() => void refetchChat()}>重试</button>
               </div>
             )}
@@ -877,10 +877,10 @@ function WorkflowBadge({
     <span
       className={clsx(
         'shrink-0 rounded px-2 py-0.5 text-[11px] font-medium',
-        tone === 'active' && 'bg-[#FFF3D8] text-[#7A4F08]',
-        tone === 'review' && 'bg-[#EAF2F8] text-[#285A78]',
-        tone === 'done' && 'bg-[#E8F4EA] text-[#2D6A3F]',
-        tone === 'error' && 'bg-[#FFF0ED] text-[#9E3328]',
+        tone === 'active' && 'bg-status-warning-soft text-status-warning',
+        tone === 'review' && 'bg-status-info-soft text-status-info',
+        tone === 'done' && 'bg-status-success-soft text-status-success',
+        tone === 'error' && 'bg-status-danger-soft text-status-danger',
         tone === 'idle' && 'bg-bg-soft text-ink-muted',
       )}
     >
@@ -891,10 +891,10 @@ function WorkflowBadge({
 
 function phaseTone(phase: SubagentPhase): string {
   return clsx(
-    phase === 'running' && 'text-[#7A4F08]',
-    phase === 'reworking' && 'text-[#9A5315]',
-    phase === 'reviewing' && 'text-[#285A78]',
-    phase === 'accepted' && 'text-[#2D6A3F]',
+    phase === 'running' && 'text-status-warning',
+    phase === 'reworking' && 'text-status-warning-strong',
+    phase === 'reviewing' && 'text-status-info',
+    phase === 'accepted' && 'text-status-success',
     phase === 'stopped' && 'text-ink-muted',
   )
 }
@@ -903,9 +903,9 @@ function phaseDot(phase: SubagentPhase): string {
   return clsx(
     'h-1.5 w-1.5 shrink-0 rounded-full',
     phase === 'running' && 'bg-[#B47A16]',
-    phase === 'reworking' && 'bg-[#C4681C]',
+    phase === 'reworking' && 'bg-status-warning-hot',
     phase === 'reviewing' && 'bg-[#3E7C9E]',
-    phase === 'accepted' && 'bg-[#3C8A52]',
+    phase === 'accepted' && 'bg-status-success-strong',
     phase === 'stopped' && 'bg-[#9A8E7D]',
   )
 }
@@ -949,11 +949,11 @@ function WorkerListRow({
           <span className={phaseDot(view.phase)} />
           {view.label}
         </span>
-        {sub.attempt > 1 && <span className="shrink-0 text-[11px] text-[#9A5315]">第 {sub.attempt} 次</span>}
+        {sub.attempt > 1 && <span className="shrink-0 text-[11px] text-status-warning-strong">第 {sub.attempt} 次</span>}
       </div>
       <p className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-ink">{workerTitle(sub)}</p>
       {issueCount > 0 && (
-        <p className="mt-0.5 text-[11px] leading-4 text-[#9E3328]">
+        <p className="mt-0.5 text-[11px] leading-4 text-status-danger">
           {missing > 0 ? `${missing} 项缺失` : ''}
           {stale > 0 ? `${missing > 0 ? ' · ' : ''}${stale} 项未更新` : ''}
           {failed > 0 ? `${missing + stale > 0 ? ' · ' : ''}${failed} 项检查失败` : ''}
@@ -1004,7 +1004,7 @@ function WorkerDossier({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-sm leading-6 text-ink">
         {isLoading && <p className="mb-3 text-xs text-ink-muted">正在拉取完整回复…</p>}
-        {error && <p className="mb-3 text-xs text-[#9E3328]">完整结果暂时拉不到，先显示列表里已有的摘要。</p>}
+        {error && <p className="mb-3 text-xs text-status-danger">完整结果暂时拉不到，先显示列表里已有的摘要。</p>}
 
         {detail.manifest?.done_when && (
           <section className="mb-4">
@@ -1022,13 +1022,13 @@ function WorkerDossier({
                 const gone = missing.has(path)
                 const untouched = stale.has(path)
                 return (
-                  <li key={path} className={clsx('break-all', gone && 'text-[#9E3328]', untouched && !gone && 'text-[#9A5315]')}>
+                  <li key={path} className={clsx('break-all', gone && 'text-status-danger', untouched && !gone && 'text-status-warning-strong')}>
                     {gone ? '✗ 缺失' : untouched ? '△ 未更新' : '✓'} {path}
                     {item.desc ? ` · ${item.desc}` : ''}
                     {item.path && (
                       <button
                         type="button"
-                        className="ml-2 text-[11px] text-[#285A78] underline-offset-2 hover:underline"
+                        className="ml-2 text-[11px] text-status-info underline-offset-2 hover:underline"
                         onClick={() => void copyPath(item.path!)}
                       >
                         复制路径
@@ -1046,7 +1046,7 @@ function WorkerDossier({
             <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">机器检查</h3>
             <ul className="mt-1 space-y-1 text-xs" aria-label="机器检查">
               {checks.map((check, index) => (
-                <li key={`${check.kind}-${index}`} className={check.passed === false ? 'text-[#9E3328]' : ''}>
+                <li key={`${check.kind}-${index}`} className={check.passed === false ? 'text-status-danger' : ''}>
                   {check.passed === false ? '✗' : '✓'} {check.kind}
                   {check.path ? ` · ${basenamePath(check.path)}` : ''}
                   {check.detail ? ` — ${check.detail}` : ''}
@@ -1098,7 +1098,7 @@ function WorkerDossier({
           {abortable && (
             <button
               type="button"
-              className="ga-btn px-3 py-1 text-xs text-[#9E3328]"
+              className="ga-btn px-3 py-1 text-xs text-status-danger"
               disabled={control.busy}
               onClick={control.onAbort}
             >
@@ -1133,10 +1133,10 @@ function WorkerDossier({
           <div
             role="alert"
             data-testid={`subagent-evidence-${sub.id}`}
-            className="mt-2 rounded-lg border border-[#E8CFC7] bg-[#FFF7F5] px-3 py-2 text-xs leading-5 text-[#6B3A30]"
+            className="mt-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-xs leading-5 text-status-danger-muted"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-medium text-[#9E3328]">机器验收未通过 · 证据</span>
+              <span className="font-medium text-status-danger">机器验收未通过 · 证据</span>
               <button
                 type="button"
                 className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-bg-soft"

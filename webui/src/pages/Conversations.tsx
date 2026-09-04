@@ -408,8 +408,8 @@ function RoundView({
               <div className="space-y-3.5">
                 {r.user && (
                   <div className="flex justify-end">
-                    <div className="w-[70%] rounded-[18px] border border-emerald-900/30 bg-emerald-800/70 px-4 py-3 shadow-sm">
-                      <div className="whitespace-pre-wrap text-sm leading-6 text-white">{r.user.content || ''}</div>
+                    <div className={`w-[70%] rounded-[18px] px-4 py-3 shadow-sm ${bubbleTone('user').surfaceClass}`}>
+                      <div className="whitespace-pre-wrap text-sm leading-6">{r.user.content || ''}</div>
                     </div>
                   </div>
                 )}

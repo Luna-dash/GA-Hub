@@ -17,13 +17,34 @@ export default {
           DEFAULT: 'var(--c-accent)',
           soft: 'var(--c-accent-soft)',
         },
-        // Text tones: the ONLY sanctioned text colors. Hardcoding hex
-        // text-[#...] values is what let three slightly different "muted
-        // grays" (#665741/#7B6D5A/#8A7B65) drift across pages.
+        // Text tones: sanctioned for prose/UI text. Hardcoding hex text-[#...]
+        // values is what let three slightly different "muted grays"
+        // (#665741/#7B6D5A/#8A7B65) drift across pages.
         ink: {
           DEFAULT: 'var(--c-text)',
           muted: 'var(--c-text-muted)',
           faint: 'var(--c-text-faint)',
+        },
+        // Semantic status palette: the sanctioned vocabulary for state color
+        // (badges, dots, banners, evidence panels). Values are fixed hex on
+        // purpose — status meaning must not flip with the theme. One-off
+        // neutrals used once or twice (empty-state headings, italic notes,
+        // chart series colors) may stay inline literals.
+        status: {
+          danger: {
+            DEFAULT: '#9E3328',
+            soft: '#FFF7F5',
+            line: '#E8CFC7',
+            muted: '#6B3A30',
+          },
+          info: { DEFAULT: '#285A78', soft: '#EAF2F8', line: '#D7E4EE' },
+          success: { DEFAULT: '#2D6A3F', soft: '#E8F4EA', strong: '#3C8A52' },
+          warning: {
+            DEFAULT: '#7A4F08',
+            soft: '#FFF3D8',
+            strong: '#9A5315',
+            hot: '#C4681C',
+          },
         },
       },
       fontFamily: {
