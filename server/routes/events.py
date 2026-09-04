@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from ..origin_policy import is_allowed_ui_origin
 from ..schemas import EventRecentResp
 from ..services.event_bus import Event, bus
+from ..services.event_cursor import subscribe_with_cursor
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -70,23 +71,13 @@ async def ws_events(ws: WebSocket):
                 pass
         return
 
-    after_event_id: int | None = None
-    invalid_cursor = False
-    if raw_after is not None:
-        try:
-            after_event_id = int(raw_after)
-            invalid_cursor = after_event_id < 0
-        except ValueError:
-            invalid_cursor = True
-
-    subscription = await bus.subscribe_after(
-        prefix_filter,
-        after_event_id=None if invalid_cursor else after_event_id,
+    subscription = await subscribe_with_cursor(
+        bus,
+        raw_after,
+        prefix=prefix_filter,
         epoch=ws.query_params.get("epoch"),
-        replay=0 if invalid_cursor else replay_n,
+        replay=replay_n,
     )
-    if invalid_cursor:
-        subscription.resync_reason = "invalid_cursor"
 
     try:
         if subscription.resync_reason is not None:

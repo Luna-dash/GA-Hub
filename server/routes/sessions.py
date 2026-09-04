@@ -20,6 +20,7 @@ from ..schemas import BtwReq, BtwResp, RewindReq, RewindResp
 from ..services.archive_messages import HistoryUnavailableError, read_archive_messages
 from ..services.session_runtime_status import STATUS_ERROR, STATUS_IDLE
 from ..services.event_bus import Event, bus
+from ..services.event_cursor import parse_event_cursor, subscribe_with_cursor
 from ..services.llm_preference_store import LlmPreferenceStore
 from ..services.llm_registry import LlmUnavailableError, LlmRegistryError
 from ..services.session_coordinator import (
@@ -836,23 +837,10 @@ async def session_events(ws: WebSocket, session_id: str):
 
     raw_after = ws.query_params.get("after_event_id")
     client_epoch = ws.query_params.get("epoch")
-    after_event_id: int | None = None
-    invalid_cursor = False
-    if raw_after is not None:
-        try:
-            after_event_id = int(raw_after)
-            invalid_cursor = after_event_id < 0
-        except ValueError:
-            invalid_cursor = True
+    after_event_id, _ = parse_event_cursor(raw_after)
 
     connection_id = uuid.uuid4().hex
-    subscription = await bus.subscribe_after(
-        "chat:",
-        after_event_id=None if invalid_cursor else after_event_id,
-        epoch=client_epoch,
-    )
-    if invalid_cursor:
-        subscription.resync_reason = "invalid_cursor"
+    subscription = await subscribe_with_cursor(bus, raw_after, prefix="chat:", epoch=client_epoch)
     log.info(
         "session_ws_connected session_id=%s ws_connection_id=%s "
         "resume_after=%s replay_count=%s boundary_event_id=%s",
