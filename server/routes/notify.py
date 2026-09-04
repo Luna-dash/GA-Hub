@@ -9,6 +9,8 @@ the backend has its own 800ms throttle as a backstop.
 """
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
@@ -25,7 +27,8 @@ class NotifyReq(BaseModel):
 @router.post("")
 async def post_notify(req: NotifyReq):
     """Fire an OS notification. Always 200 — failures are reported in body."""
-    return notify_service.send(req.title, req.body)
+    # send() waits on the notifier subprocess (1-4s); keep it off the loop.
+    return await asyncio.to_thread(notify_service.send, req.title, req.body)
 
 
 @router.get("/info")

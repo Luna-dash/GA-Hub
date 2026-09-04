@@ -52,16 +52,17 @@ def migrate_legacy_titles(
 
     Idempotent: when the sidecar file is absent this is a no-op.  The file
     is unlinked only after the whole sweep succeeded, so a crashed run is
-    simply retried by a later process.
+    simply retried by a later process. The once-flag also moves only on
+    success — never before the work it claims to have done.
     """
     global _migrated
     with _migrate_lock:
         if _migrated:
             return 0
-        _migrated = True
         sidecar = sidecar or legacy_titles_path()
         titles = _read_legacy_titles(sidecar)
         if not titles:
+            _migrated = True
             return 0
         migrated = 0
         for sid, title in titles.items():
@@ -74,6 +75,7 @@ def migrate_legacy_titles(
             sidecar.unlink(missing_ok=True)
         except OSError:
             log.warning("could not remove legacy titles sidecar", exc_info=True)
+        _migrated = True
         if migrated:
             log.info("migrated %d legacy conversation titles", migrated)
         return migrated

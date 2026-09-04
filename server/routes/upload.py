@@ -334,7 +334,7 @@ async def get_file(fname: str):
     if "/" in fname or "\\" in fname or ".." in fname or os.sep in fname:
         raise HTTPException(400, "bad name")
     p = os.path.join(_upload_dir(), fname)
-    if not os.path.isfile(p):
+    if not await asyncio.to_thread(os.path.isfile, p):
         raise HTTPException(404, "not found")
     ext = Path(fname).suffix.lower()
     if ext in _INLINE_IMAGE_EXT:
@@ -430,5 +430,7 @@ def _resolve_file_by_path(raw_path: str) -> str:
 @router.get("/api/files-by-path")
 async def get_file_by_path(path: str):
     """Serve any file under GA's temp/ or admin's uploads/ for previewing."""
-    resolved = _resolve_file_by_path(path)
+    # realpath() on a user-supplied path can touch dead UNC/drive targets and
+    # block for seconds on Windows — resolve in a worker thread.
+    resolved = await asyncio.to_thread(_resolve_file_by_path, path)
     return FileResponse(resolved)

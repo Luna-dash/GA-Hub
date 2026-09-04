@@ -6,8 +6,8 @@ import time
 from types import SimpleNamespace
 from unittest import mock
 
-from server.routes import agent, autonomous, conductor, conversations, memory, mykey, sessions, tasks, upload, wechat
-from server.schemas import TextWrite
+from server.routes import agent, autonomous, conductor, conversations, memory, mykey, notify, sessions, tasks, upload, wechat
+from server.schemas import ChatRetryConfigReq, RewindReq, TextWrite
 from server.services import mykey_service
 
 
@@ -258,3 +258,108 @@ def test_conversation_delete_release_runs_in_worker_thread(tmp_path) -> None:
         )
 
     assert result == {"ok": True, "id": "conv.txt"}
+
+
+def test_notify_send_runs_in_worker_thread() -> None:
+    with mock.patch.object(
+        notify.notify_service,
+        "send",
+        side_effect=lambda *_args: _slow_result({"ok": True, "backend": "test"}),
+    ):
+        result = asyncio.run(
+            _run_with_probe(notify.post_notify(notify.NotifyReq(title="t", body="b")))
+        )
+
+    assert result == {"ok": True, "backend": "test"}
+
+
+def test_agent_rewind_runs_in_worker_thread() -> None:
+    service = SimpleNamespace(rewind_turns=lambda *_a, **_k: _slow_result({"ok": True}))
+    with mock.patch.object(agent, "svc", return_value=service):
+        result = asyncio.run(_run_with_probe(agent.rewind(RewindReq(n=1))))
+
+    assert result == {"ok": True}
+
+
+def test_agent_llms_reload_runs_in_worker_thread() -> None:
+    service = SimpleNamespace(list_llms=lambda: _slow_result([]))
+    with mock.patch.object(agent, "svc", return_value=service):
+        result = asyncio.run(_run_with_probe(agent.list_llms()))
+
+    assert result == {"llms": []}
+
+
+def test_agent_chat_retry_config_write_runs_in_worker_thread() -> None:
+    config = SimpleNamespace(to_dict=lambda: {"enabled": True})
+    with mock.patch.object(
+        agent, "save_chat_retry_config", side_effect=lambda _d: _slow_result(config)
+    ):
+        result = asyncio.run(
+            _run_with_probe(agent.put_chat_retry_config(ChatRetryConfigReq()))
+        )
+
+    assert result == {"enabled": True}
+
+
+def test_session_llm_reload_runs_in_worker_thread() -> None:
+    entries = [("key-a", 3)]
+    with (
+        mock.patch.object(sessions, "_store", SimpleNamespace(update=mock.Mock(return_value={"id": "s1"}))),
+        mock.patch("server.services.agent_service.get_agent_service"),
+        mock.patch(
+            "server.services.llm_registry.LlmRegistry.reload_and_snapshot",
+            side_effect=lambda _agent: _slow_result(entries),
+        ),
+    ):
+        result = asyncio.run(
+            _run_with_probe(
+                sessions.update_session_model(
+                    "s1", sessions.SessionModelUpdate(llm_index=3)
+                )
+            )
+        )
+
+    assert result == {"id": "s1"}
+
+
+def test_project_prepare_runs_in_worker_thread() -> None:
+    prepared = {"ok": True, "name": "p1", "path": "D:/proj"}
+    with mock.patch.object(
+        sessions.workspace_cmd, "prepare", side_effect=lambda _p: _slow_result(prepared)
+    ):
+        result = asyncio.run(
+            _run_with_probe(sessions.create_project(sessions.ProjectCreate(path="D:/proj")))
+        )
+
+    assert result.name == "p1"
+
+
+def test_session_sidecar_list_runs_in_worker_thread() -> None:
+    store = SimpleNamespace(list=lambda: _slow_result([]))
+    with mock.patch.object(sessions, "_store", store):
+        result = asyncio.run(_run_with_probe(sessions.list_sessions()))
+
+    assert result.total == 0
+
+
+def test_scheduled_chat_create_runs_in_worker_thread() -> None:
+    service = SimpleNamespace(create=lambda **_k: _slow_result({"id": "t1"}))
+    request = sessions.ScheduledChatCreate(text="hi", scheduled_for=time.time() + 60)
+    with (
+        mock.patch.object(sessions, "_session", return_value={"id": "s1"}),
+        mock.patch.object(sessions, "_get_scheduled_chats", return_value=service),
+    ):
+        result = asyncio.run(
+            _run_with_probe(sessions.create_scheduled_chat("s1", request))
+        )
+
+    assert result == {"id": "t1"}
+
+
+def test_upload_resolve_by_path_runs_in_worker_thread() -> None:
+    with mock.patch.object(
+        upload, "_resolve_file_by_path", side_effect=lambda _p: _slow_result("D:/tmp/x")
+    ):
+        result = asyncio.run(_run_with_probe(upload.get_file_by_path(path="x")))
+
+    assert result.path == "D:/tmp/x"

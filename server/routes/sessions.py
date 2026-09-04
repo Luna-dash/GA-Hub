@@ -447,7 +447,8 @@ def _busy_error(exc: AgentBusyError) -> HTTPException:
 
 @router.get("/api/projects", response_model_exclude_unset=True)
 async def list_projects() -> ProjectListResp:
-    items = workspace_cmd.registry_list()
+    # registry_list opens workspaces.json plus one memory file per entry.
+    items = await asyncio.to_thread(workspace_cmd.registry_list)
     return ProjectListResp(total=len(items), items=items)
 
 
@@ -457,7 +458,9 @@ async def list_projects() -> ProjectListResp:
     response_model_exclude_unset=True,
 )
 async def create_project(req: ProjectCreate) -> ProjectItem:
-    result = workspace_cmd.prepare(req.path.strip())
+    # prepare() shells out to `cmd /c mklink` and creates directories — a
+    # subprocess wait has no business on the event loop.
+    result = await asyncio.to_thread(workspace_cmd.prepare, req.path.strip())
     if not result.get("ok"):
         raise _api_error(400, "project_prepare_failed", result.get("error") or "项目创建失败。")
     return ProjectItem(
@@ -470,11 +473,11 @@ async def create_project(req: ProjectCreate) -> ProjectItem:
 
 @router.delete("/api/projects/{project_name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_project(project_name: str):
-    projects = workspace_cmd.registry_list()
+    projects = await asyncio.to_thread(workspace_cmd.registry_list)
     if not any(item.get("name") == project_name for item in projects):
         raise _api_error(404, "project_not_found", "项目索引不存在")
     bound_sessions = [
-        row for row in _store.list()
+        row for row in await asyncio.to_thread(_store.list)
         if row.get("project_name") == project_name
     ]
     if bound_sessions:
@@ -484,7 +487,7 @@ async def delete_project(project_name: str):
             "仍有其他会话绑定此项目，请先在这些会话中取消绑定。",
             session_ids=[row["id"] for row in bound_sessions],
         )
-    result = workspace_cmd.remove(project_name)
+    result = await asyncio.to_thread(workspace_cmd.remove, project_name)
     if not result.get("ok"):
         raise _api_error(
             500,
@@ -495,10 +498,10 @@ async def delete_project(project_name: str):
 
 @router.put("/api/sessions/{session_id}/project")
 async def bind_session_project(session_id: str, req: SessionProjectUpdate) -> HubSession:
-    _session(session_id)
+    await asyncio.to_thread(_session, session_id)
     project = next(
         (
-            item for item in workspace_cmd.registry_list()
+            item for item in await asyncio.to_thread(workspace_cmd.registry_list)
             if item.get("name") == req.name and item.get("path") == req.path
         ),
         None,
@@ -515,14 +518,18 @@ async def bind_session_project(session_id: str, req: SessionProjectUpdate) -> Hu
         })
 
     try:
-        return _get_coordinator().configure_if_idle(session_id, configure)
+        # configure_if_idle runs the callback on the caller's thread; hand the
+        # whole thing (runtime activation + sidecar write) to a worker.
+        return await asyncio.to_thread(
+            _get_coordinator().configure_if_idle, session_id, configure
+        )
     except AgentBusyError as exc:
         raise _busy_error(exc)
 
 
 @router.delete("/api/sessions/{session_id}/project")
 async def unbind_session_project(session_id: str) -> HubSession:
-    _session(session_id)
+    await asyncio.to_thread(_session, session_id)
 
     def configure(runtime):
         if runtime is not None:
@@ -533,14 +540,18 @@ async def unbind_session_project(session_id: str) -> HubSession:
         })
 
     try:
-        return _get_coordinator().configure_if_idle(session_id, configure)
+        return await asyncio.to_thread(
+            _get_coordinator().configure_if_idle, session_id, configure
+        )
     except AgentBusyError as exc:
         raise _busy_error(exc)
 
 
 @router.get("/api/sessions")
 async def list_sessions(include_system: bool = False) -> SessionListResp:
-    rows = _store.list()
+    # Full-file JSON read of the sidecar — keep it off the loop, like every
+    # other blocking call in this file.
+    rows = await asyncio.to_thread(_store.list)
     if not include_system:
         # System channels (wechat / autonomous / scheduled tasks) are hub
         # plumbing, not user chats: hide them unless explicitly asked for.
@@ -550,13 +561,15 @@ async def list_sessions(include_system: bool = False) -> SessionListResp:
 
 @router.post("/api/sessions", status_code=status.HTTP_201_CREATED)
 async def create_session(req: SessionCreate) -> HubSession:
-    return _store.create(title=req.title, llm_key=req.llm_key, llm_index=req.llm_index)
+    return await asyncio.to_thread(
+        _store.create, title=req.title, llm_key=req.llm_key, llm_index=req.llm_index
+    )
 
 
 @router.get("/api/sessions/{session_id}")
 async def get_session(session_id: str) -> HubSession:
     try:
-        return _store.get(session_id)
+        return await asyncio.to_thread(_store.get, session_id)
     except SessionNotFoundError:
         raise _not_found()
 
@@ -568,7 +581,7 @@ async def get_session_messages(
     limit: int | None = Query(default=None, ge=1, le=200),
     max_chars: int | None = Query(default=None, ge=10_000, le=2_000_000),
 ) -> SessionMessagesResp:
-    row = _session(session_id)
+    row = await asyncio.to_thread(_session, session_id)
     try:
         projection = await asyncio.to_thread(
             read_archive_messages,
@@ -596,7 +609,7 @@ async def update_session(session_id: str, req: SessionUpdate) -> HubSession:
     if changes.get("title") is None:
         changes.pop("title", None)
     try:
-        return _store.update(session_id, changes)
+        return await asyncio.to_thread(_store.update, session_id, changes)
     except SessionNotFoundError:
         raise _not_found()
 
@@ -604,7 +617,7 @@ async def update_session(session_id: str, req: SessionUpdate) -> HubSession:
 @router.put("/api/sessions/{session_id}/model")
 async def update_session_model(session_id: str, req: SessionModelUpdate) -> HubSession:
     if req.llm_key is None and req.llm_index is None:
-        return _clear_session_llm_binding(session_id)
+        return await _clear_session_llm_binding(session_id)
     if req.llm_key is not None and req.llm_index is not None:
         raise _api_error(400, "llm_conflict", "llm_key 与 llm_index 不能同时提交。")
     if req.llm_key is not None:
@@ -613,7 +626,10 @@ async def update_session_model(session_id: str, req: SessionModelUpdate) -> HubS
         try:
             from ..services.agent_service import get_agent_service
             from ..services.llm_registry import LlmRegistry
-            entries = LlmRegistry.reload_and_snapshot(get_agent_service().agent)
+            # reload_and_snapshot re-execs mykey.py and rebuilds clients.
+            entries = await asyncio.to_thread(
+                LlmRegistry.reload_and_snapshot, get_agent_service().agent
+            )
             key = dict((index, assignment) for assignment, index in entries).get(req.llm_index)
             if not key:
                 raise LlmUnavailableError(f"llm index has no assignment: {req.llm_index}")
@@ -621,14 +637,18 @@ async def update_session_model(session_id: str, req: SessionModelUpdate) -> HubS
             raise _api_error(409, "llm_unavailable", f"当前模型不可用，请重新选择。{exc}")
         index = req.llm_index
     try:
-        return _store.update(session_id, {"llm_key": key, "llm_index": index})
+        return await asyncio.to_thread(
+            _store.update, session_id, {"llm_key": key, "llm_index": index}
+        )
     except SessionNotFoundError:
         raise _not_found()
 
 
-def _clear_session_llm_binding(session_id: str) -> HubSession:
+async def _clear_session_llm_binding(session_id: str) -> HubSession:
     try:
-        return _store.update(session_id, {"llm_key": None, "llm_index": None})
+        return await asyncio.to_thread(
+            _store.update, session_id, {"llm_key": None, "llm_index": None}
+        )
     except SessionNotFoundError:
         raise _not_found()
 
@@ -639,7 +659,7 @@ def _clear_session_llm_binding(session_id: str) -> HubSession:
     response_model_exclude_unset=True,
 )
 async def submit_run(session_id: str, req: RunSubmit) -> SessionRuntimeResp:
-    row = _session(session_id)
+    row = await asyncio.to_thread(_session, session_id)
     try:
         llm_key = _effective_llm_key(row)
     except LlmUnconfirmedError:
@@ -666,14 +686,14 @@ async def submit_run(session_id: str, req: RunSubmit) -> SessionRuntimeResp:
             "restore_failed",
             "会话运行环境恢复失败，请稍后重试。",
         )
-    _store.touch(session_id)
+    await asyncio.to_thread(_store.touch, session_id)
     return SessionRuntimePayload.from_state(state)
 
 
 @router.post("/api/sessions/{session_id}/btw", response_model=BtwResp)
 async def session_btw(session_id: str, req: BtwReq):
     """Run a side question against the selected session runtime."""
-    _session(session_id)
+    await asyncio.to_thread(_session, session_id)
     question = (req.text or "").strip()
     if not question:
         raise _api_error(400, "invalid_btw", "BTW 问题不能为空。")
@@ -681,7 +701,7 @@ async def session_btw(session_id: str, req: BtwReq):
         content = await asyncio.to_thread(
             _get_coordinator().side_question, session_id, question
         )
-        _store.touch(session_id)
+        await asyncio.to_thread(_store.touch, session_id)
         return BtwResp(ok=True, content=content)
     except SessionControlBusyError as exc:
         raise _api_error(
@@ -704,7 +724,7 @@ async def session_btw(session_id: str, req: BtwReq):
 @router.post("/api/sessions/{session_id}/rewind", response_model=RewindResp)
 async def session_rewind(session_id: str, req: RewindReq):
     """Exclusively rewind one session and its GA-native archive."""
-    _session(session_id)
+    await asyncio.to_thread(_session, session_id)
     if not req.sid and req.n is None:
         raise _api_error(400, "invalid_rewind", "必须提供 sid 或 n。")
     try:
@@ -733,14 +753,14 @@ async def session_rewind(session_id: str, req: RewindReq):
         raise _api_error(400, "invalid_rewind", str(exc))
     except RuntimeError as exc:
         raise _api_error(409, "rewind_unavailable", str(exc))
-    _store.touch(session_id)
+    await asyncio.to_thread(_store.touch, session_id)
     return result
 
 
 @router.get("/api/sessions/{session_id}/scheduled-chats")
 async def list_scheduled_chats(session_id: str) -> ScheduledChatListResp:
-    _session(session_id)
-    items = _get_scheduled_chats().list(session_id)
+    await asyncio.to_thread(_session, session_id)
+    items = await asyncio.to_thread(_get_scheduled_chats().list, session_id)
     return {"total": len(items), "items": items}
 
 
@@ -751,18 +771,23 @@ async def list_scheduled_chats(session_id: str) -> ScheduledChatListResp:
 async def create_scheduled_chat(
     session_id: str, req: ScheduledChatCreate
 ) -> ScheduledChatResp:
-    _session(session_id)
+    await asyncio.to_thread(_session, session_id)
     now = time.time()
     if req.scheduled_for <= now:
         raise _api_error(422, "invalid_schedule", "定时时间必须晚于当前时间。")
     if req.scheduled_for > now + 48 * 60 * 60:
         raise _api_error(422, "invalid_schedule", "定时时间不能超过未来48小时。")
-    return _get_scheduled_chats().create(
-        session_id=session_id,
-        text=req.text,
-        images=req.images,
-        scheduled_for=req.scheduled_for,
-    )
+    try:
+        return await asyncio.to_thread(
+            _get_scheduled_chats().create,
+            session_id=session_id,
+            text=req.text,
+            images=req.images,
+            scheduled_for=req.scheduled_for,
+        )
+    except ValueError as exc:
+        # Service-side guard; the route's own 422 checks above run first.
+        raise _api_error(422, "invalid_schedule", str(exc))
 
 
 @router.delete(
@@ -770,8 +795,9 @@ async def create_scheduled_chat(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def cancel_scheduled_chat(session_id: str, task_id: str):
-    _session(session_id)
-    if not _get_scheduled_chats().cancel(session_id, task_id):
+    await asyncio.to_thread(_session, session_id)
+    ok = await asyncio.to_thread(_get_scheduled_chats().cancel, session_id, task_id)
+    if not ok:
         raise _api_error(409, "not_cancellable", "定时消息不存在或已无法取消。")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -783,7 +809,7 @@ async def list_session_runtimes() -> dict[str, SessionRuntimeResp]:
         row["id"]: SessionRuntimePayload.from_state(
             coordinator.runtime_state(row["id"])
         )
-        for row in _store.list()
+        for row in await asyncio.to_thread(_store.list)
     }
 
 
@@ -792,7 +818,7 @@ async def list_session_runtimes() -> dict[str, SessionRuntimeResp]:
     response_model_exclude_unset=True,
 )
 async def get_runtime(session_id: str) -> SessionRuntimeResp:
-    _session(session_id)
+    await asyncio.to_thread(_session, session_id)
     return SessionRuntimePayload.from_state(
         _get_coordinator().runtime_state(session_id)
     )
@@ -803,7 +829,7 @@ async def get_runtime(session_id: str) -> SessionRuntimeResp:
     response_model_exclude_unset=True,
 )
 async def abort_run(session_id: str) -> SessionRuntimeResp:
-    _session(session_id)
+    await asyncio.to_thread(_session, session_id)
     coordinator = _get_coordinator()
     current = coordinator.abort_if_current(session_id=session_id)
     return SessionRuntimePayload.from_state(current, ok=True)
@@ -844,7 +870,7 @@ async def session_events(ws: WebSocket, session_id: str):
         await ws.close(code=1008, reason="Forbidden origin")
         return
     try:
-        _session(session_id)
+        await asyncio.to_thread(_session, session_id)
     except HTTPException:
         await ws.close(code=4404, reason="session not found")
         return
@@ -962,7 +988,7 @@ async def session_events(ws: WebSocket, session_id: str):
 @router.delete("/api/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(session_id: str):
     try:
-        row = _store.get(session_id)
+        row = await asyncio.to_thread(_store.get, session_id)
     except SessionNotFoundError:
         raise _not_found()
 
@@ -971,7 +997,7 @@ async def delete_session(session_id: str):
 
     try:
         if _coordinator is None:
-            _delete()
+            await asyncio.to_thread(_delete)
         else:
             # Go through the accessor so the shutdown admission gate applies
             # to delete like every other runtime-touching endpoint.
@@ -986,8 +1012,10 @@ async def delete_session(session_id: str):
     except AgentBusyError as exc:
         raise _busy_error(exc)
     except SessionControlBusyError as exc:
-        raise HTTPException(409, {
-            "code": "session_control_active",
-            "operation": exc.operation,
-        })
+        raise _api_error(
+            409,
+            "session_control_active",
+            "当前会话正在执行互斥控制操作，请稍后重试。",
+            operation=exc.operation,
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -73,7 +73,9 @@ async def rewind(req: RewindReq):
     if not req.sid and not req.n:
         raise HTTPException(status_code=400, detail="provide sid or n")
     try:
-        return svc().rewind_turns(sid=req.sid, n=req.n)
+        # rewind_turns parses the whole native archive — worker thread, same
+        # as the session-scoped rewind route.
+        return await asyncio.to_thread(svc().rewind_turns, sid=req.sid, n=req.n)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
@@ -87,12 +89,12 @@ async def history():
 
 @router.get("/api/agent/chat-retry-config")
 async def get_chat_retry_config():
-    return load_chat_retry_config().to_dict()
+    return await asyncio.to_thread(lambda: load_chat_retry_config().to_dict())
 
 
 @router.put("/api/agent/chat-retry-config")
 async def put_chat_retry_config(req: ChatRetryConfigReq):
-    return save_chat_retry_config(req.model_dump()).to_dict()
+    return await asyncio.to_thread(lambda: save_chat_retry_config(req.model_dump()).to_dict())
 
 
 @router.get("/api/agent/sessions")
@@ -140,13 +142,14 @@ def _restore_session_sync(service: AgentService, idx: int) -> tuple[str, str] | 
 # ── LLMs ─────────────────────────────────────────────────────────
 @router.get("/api/llms")
 async def list_llms():
-    return {"llms": svc().list_llms()}
+    # list_llms reloads mykey.py and rebuilds LLM clients — worker thread.
+    return {"llms": await asyncio.to_thread(svc().list_llms)}
 
 
 @router.post("/api/llms/switch")
 async def switch_llm(req: LLMSwitch):
     try:
-        return svc().switch_llm(req.index)
+        return await asyncio.to_thread(svc().switch_llm, req.index)
     except RuntimeError as e:
         raise HTTPException(409, str(e))
 

@@ -1,9 +1,10 @@
 """Conversation history routes — read GA's raw session archives
 (temp/model_responses/*.txt) and browse memory/L4_raw_sessions/ archives.
 
-Read-only with respect to GA: we never write back to GA's files. The only
-mutating action is `restore`, which loads a chosen archive into the agent's
-in-memory working history via GA's own `restore()` helper.
+Mostly read-only with respect to GA: `restore` loads a chosen archive into
+the agent's in-memory working history via GA's own `restore()` helper, and
+`delete` unlinks the archive file itself (which lives under GA's temp/
+through the sessions junction). Nothing else writes into GA's files.
 
 GA enumeration/signature/lookup mechanics live in the archive service
 (`services/archive_messages.py`); this route keeps HTTP shaping, title
@@ -134,8 +135,9 @@ def run_legacy_title_migration_once() -> None:
 
     The sid→path map doubles as the resolver for the migration: sessions
     absent from the catalogue no longer exist, so their stale titles are
-    dropped with the sidecar file. Never raises — a failed sweep is simply
-    not marked done, and the next lookup retries it.
+    dropped with the sidecar file. Never raises — a failed sweep stays
+    unmarked so the next process retries it (the flag moves only on the
+    success paths, never before the work).
     """
     global _legacy_titles_migrated
     if _legacy_titles_migrated:
@@ -146,12 +148,14 @@ def run_legacy_title_migration_once() -> None:
         try:
             index = refresh_archive_catalogue()
             if not index:
+                # Nothing to resolve; count as done so boots stop rescanning.
+                _legacy_titles_migrated = True
                 return
-            _legacy_titles_migrated = True
             migrate_legacy_titles(
                 _metadata,
                 lambda sid: (index.get(sid) or (None,))[0],
             )
+            _legacy_titles_migrated = True
         except Exception:
             log.exception("legacy conversation title migration failed")
 
@@ -234,9 +238,10 @@ async def get_conversation(cid: str):
         raise HTTPException(404, "conversation not found")
     path = s[0]
     messages = await asyncio.to_thread(_ga_extract, path)
+    title = await asyncio.to_thread(_metadata.title_for_archive, path)
     return {
         "id": cid,
-        "title": _metadata.title_for_archive(path),
+        "title": title,
         "messages": messages,
     }
 
@@ -251,7 +256,7 @@ async def update_conversation(cid: str, req: ConversationUpdate):
     if s is None:
         raise HTTPException(404, "conversation not found")
     title = req.title.strip()
-    _metadata.set_title_for_archive(s[0], title)
+    await asyncio.to_thread(_metadata.set_title_for_archive, s[0], title)
     return {"ok": True, "id": cid, "title": title}
 
 
@@ -265,7 +270,7 @@ async def delete_conversation(cid: str):
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = Path(s[0]).resolve()
-    bound_session = _metadata.find_by_archive(path)
+    bound_session = await asyncio.to_thread(_metadata.find_by_archive, path)
     if bound_session is not None:
         from ..routes import sessions as session_routes
         # Peek (never construct) and keep the shutdown admission gate — same
@@ -309,7 +314,7 @@ async def delete_conversation(cid: str):
             invalidate_archive_catalogue()
             return {"ok": True, "id": cid}
 
-    _unlink_archive(cid, path)
+    await asyncio.to_thread(_unlink_archive, cid, path)
     invalidate_archive_catalogue()
     return {"ok": True, "id": cid}
 
@@ -353,7 +358,7 @@ async def restore_conversation(cid: str):
     return {
         "ok": True,
         "id": cid,
-        "title": _metadata.title_for_archive(path),
+        "title": await asyncio.to_thread(_metadata.title_for_archive, path),
         "restored_lines": len(messages),
     }
 
@@ -366,7 +371,7 @@ async def export_conversation(cid: str, format: str = Query("md", pattern="^(md|
         raise HTTPException(404, "conversation not found")
     path = s[0]
     messages = await asyncio.to_thread(_ga_extract, path)
-    title = _metadata.title_for_archive(path)
+    title = await asyncio.to_thread(_metadata.title_for_archive, path)
 
     if format == "json":
         payload = {"id": cid, "title": title, "messages": messages}
