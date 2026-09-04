@@ -109,6 +109,8 @@ def _config_int(key: str, default: int) -> int:
             return int(value)
     except Exception:
         pass
+    # Env override GAHUB_<KEY.upper()> — the doubled-prefix result names are
+    # hand-registered in constants.py (dynamic build beats the scan).
     env = os.environ.get(f"GAHUB_{key.upper()}")
     if env and env.isdigit():
         return int(env)

@@ -73,12 +73,18 @@ CONDUCTOR_SUBAGENTS = "conductor:subagents"
 CONDUCTOR_LOG = "conductor:log"
 CONDUCTOR_REQUEST_OUTCOME = "conductor:request_outcome"
 CONDUCTOR_REQUEST_YIELD_REQUESTED = "conductor:request_yield_requested"
+# Terminal workflow transitions are built as (topic, payload) tuples inside
+# the WorkflowTracker and published later via _publish_workflow_transition —
+# they must be constants, not inline strings, or the publish-site scan
+# cannot see who owns them.
+CONDUCTOR_WORKFLOW_COMPLETED = "conductor:workflow_completed"
+CONDUCTOR_WORKFLOW_FAILED = "conductor:workflow_failed"
+CONDUCTOR_WORKER_FAILED = "conductor:worker_failed"
 
 # ── dynamic sub-topic families ──────────────────────────────────
 # Published as f-strings whose suffix is named at publish time (engine worker
 # events, engine event types). The family prefix is the registered contract;
 # the scan test accepts any f-string topic under one of these prefixes.
 DYNAMIC_FAMILIES = (
-    "conductor:subagent_",
     "conductor:",
 )

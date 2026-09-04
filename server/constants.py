@@ -52,6 +52,14 @@ ENV_GAHUB_ALLOWED_HOSTS = "GAHUB_ALLOWED_HOSTS"
 ENV_MYKEY_SYNC_URL = "GA_MYKEY_SYNC_URL"
 ENV_MYKEY_SYNC_PASSPHRASE = "GA_MYKEY_SYNC_PASSPHRASE"
 ENV_MYKEY_UPLOAD_TOKEN = "GA_MYKEY_UPLOAD_TOKEN"
+# gahub_app engine overrides (conductor_client): config keys gahub_python/
+# gahub_port/gahub_token resolve to env GAHUB_<KEY.upper()> — the doubled
+# prefix is historical and wire-compatible. Built dynamically by
+# _config_int/_config_str, so the env-name scan cannot see them; they are
+# registered here by hand.
+ENV_GAHUB_GAHUB_PYTHON = "GAHUB_GAHUB_PYTHON"
+ENV_GAHUB_GAHUB_PORT = "GAHUB_GAHUB_PORT"
+ENV_GAHUB_GAHUB_TOKEN = "GAHUB_GAHUB_TOKEN"
 SESSION_RUN_CAPACITY_DEFAULT = 10
 SESSION_RUN_CAPACITY_MAX = 10
 

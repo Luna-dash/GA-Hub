@@ -6,6 +6,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from ..event_topics import (
+    CONDUCTOR_WORKER_FAILED,
+    CONDUCTOR_WORKFLOW_COMPLETED,
+    CONDUCTOR_WORKFLOW_FAILED,
+)
 from .conductor_vocabulary import (
     CLOSED_WORKER_STATES,
     COMPLETION_WORKER_EVENTS,
@@ -210,7 +215,7 @@ class WorkflowTracker:
                 worker.state = WORKER_FAILED
                 workflow.state = WORKFLOW_FAILED
                 return owner, (
-                    "conductor:worker_failed",
+                    CONDUCTOR_WORKER_FAILED,
                     self._payload(workflow, error=error, failed_agent_id=agent_id),
                 )
             elif event in TERMINAL_FAILURE_EVENTS:
@@ -221,13 +226,13 @@ class WorkflowTracker:
                 workflow.error = error or None
                 workflow.failed_agent_id = agent_id or None
                 return owner, (
-                    "conductor:workflow_failed",
+                    CONDUCTOR_WORKFLOW_FAILED,
                     self._payload(workflow, error=error, failed_agent_id=agent_id),
                 )
 
             completed = self._complete_if_ready(workflow)
             if completed is not None:
-                return owner, ("conductor:workflow_completed", completed)
+                return owner, (CONDUCTOR_WORKFLOW_COMPLETED, completed)
             return owner, None
 
     def record_final(
@@ -240,7 +245,7 @@ class WorkflowTracker:
             completed = self._complete_if_ready(workflow)
             if completed is None:
                 return None
-            return "conductor:workflow_completed", completed
+            return CONDUCTOR_WORKFLOW_COMPLETED, completed
 
     def assert_ready_for_final(self, request_id: str) -> None:
         with self._lock:
@@ -259,7 +264,7 @@ class WorkflowTracker:
             workflow.phase = phase or None
             workflow.error = error or None
             return (
-                "conductor:workflow_failed",
+                CONDUCTOR_WORKFLOW_FAILED,
                 self._payload(workflow, phase=phase, error=error),
             )
 
@@ -325,7 +330,7 @@ class WorkflowTracker:
                 workflow.phase = "stopped_by_user"
                 workflow.error = reason or None
                 transitions.append((
-                    "conductor:workflow_failed",
+                    CONDUCTOR_WORKFLOW_FAILED,
                     self._payload(workflow, phase="stopped_by_user",
                                   error=reason),
                 ))

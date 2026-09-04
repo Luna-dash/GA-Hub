@@ -15,7 +15,9 @@ from server import event_topics
 
 ROOT = Path(__file__).resolve().parents[1]
 
-PUBLISH_RE = re.compile(r'bus\.publish\(\s*(f?)"([^"]+)"')
+# Match every ``.publish(`` variant (``bus.publish``/``self.publish``/…), not
+# just the bare-bus spelling: wrapper callers build topics too.
+PUBLISH_RE = re.compile(r'\.publish\(\s*(f?)"([^"]+)"')
 
 
 def _registry_values() -> list[str]:

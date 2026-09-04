@@ -39,6 +39,11 @@ def _registered_names() -> set[str]:
         constants.ENV_MYKEY_SYNC_URL,
         constants.ENV_MYKEY_SYNC_PASSPHRASE,
         constants.ENV_MYKEY_UPLOAD_TOKEN,
+        # conductor_client builds these dynamically (GAHUB_ + config key
+        # upper-cased); registration is by hand, the scan cannot see them.
+        constants.ENV_GAHUB_GAHUB_PYTHON,
+        constants.ENV_GAHUB_GAHUB_PORT,
+        constants.ENV_GAHUB_GAHUB_TOKEN,
     }
 
 

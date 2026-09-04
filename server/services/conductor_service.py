@@ -44,6 +44,8 @@ from ..event_topics import (
     CONDUCTOR_REQUEST_OUTCOME,
     CONDUCTOR_REQUEST_YIELD_REQUESTED,
     CONDUCTOR_SUBAGENTS,
+    CONDUCTOR_WORKFLOW_COMPLETED,
+    CONDUCTOR_WORKFLOW_FAILED,
 )
 
 log = logging.getLogger(__name__)
@@ -782,7 +784,7 @@ class ConductorService:
         """Publish one terminal workflow event and its visible failure report."""
         topic, payload = transition
         request_id = payload["request_id"]
-        if topic == "conductor:workflow_failed":
+        if topic == CONDUCTOR_WORKFLOW_FAILED:
             item = self._record_workflow_failure_message(
                 request_id,
                 phase=str(payload.get("phase") or "subagent"),
@@ -1424,7 +1426,7 @@ class ConductorService:
             completed = tracker.bind_subagent(request_id, sid, generation)
             if completed is not None:
                 self._publish_workflow_transition(
-                    ("conductor:workflow_completed", completed)
+                    (CONDUCTOR_WORKFLOW_COMPLETED, completed)
                 )
             # gahub_app auto-yields the supervisor turn on dispatch.
             bound_request_id = request_id
