@@ -104,28 +104,33 @@ API 封装，而服务端无开机自启（`WeChatService.instance()` 仅由 `/a
 
 需要决策的大件（按伤害排序）。2026-09-04 已定四项方向（条目内【已定】标注）：
 Skills.tsx 删除、折叠解析走策略 b、暗色确认废弃；LLM ping 分析修正（原
-"双实现"实为"一活一死"，无需新抽象）。
+"双实现"实为"一活一死"，无需新抽象）。**批次 A（快赢七项）已完成**：
+e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
+50bbdf3（+ 9687bbf legacy 帧形回退）。剩余大件归入批次 B/C/D。
 
-- [ ] Skills.tsx 是孤儿页面（253 行，无路由/无导航/无测试）——【已定：
-      删除】页面文件直接清掉，不留存档
+- [x] Skills.tsx 是孤儿页面（253 行，无路由/无导航/无测试）——【已定：
+      删除】已删（ba75acd）；Memory 页在用的 skill API/类型/queryKeys 保留
 - [ ] 双调度器（autonomous/task）~70% 逐行克隆（持久化/装 job/fire/守卫），
       已咬过一次（misfire 只补了一边）——抽 SchedulerDomainBase，测试收缩
       到差异面
 - [ ] routes/mykey.py 674 行是"穿着路由皮的服务"（备份轮转/原子写/解释器
       探测/子进程编排内联）——抽 services/mykey_service.py
-- [ ] LLM ping——【2026-09-04 分析修正】UI 入口只有一个：MyKey 卡片"测 ping"
+- [x] LLM ping——【2026-09-04 分析修正】UI 入口只有一个：MyKey 卡片"测 ping"
       （MyKey.tsx:374 → api.testMyKeySession → /api/mykey/sessions/{var}/test），
       routes/mykey.py:_test_session_sync 是唯一活实现。/api/llms/{idx}/test
       （routes/agent.py:_test_llm_sync）+ 前端 api.testLLM 死包装
       （client.ts:239）+ LLMTestResult 类型均无任何调用方（webui/桌面壳/
       脚本/服务端内部全查过）。原"抽 llm_probe 合并双实现"不再需要：
-      删除死端点整链并重生成 OpenAPI/TS 契约即可，mykey 侧保持单实现
-- [ ] 归档折叠解析 `_extract_ui_messages_from_text` fork 了 GA 的
+      已删死端点整链并重生成 OpenAPI/TS 契约（06cad0e），死链测试清理
+      （6498211），mykey 侧保持单实现
+- [x] 归档折叠解析 `_extract_ui_messages_from_text` fork 了 GA 的
       extract_ui_messages（分页回退路径）——【已定：策略 b】保留 fork、
-      不动 GA；补双路径一致性守护测试（hub 切片折叠结果 == GA 整文件
-      extract_ui_messages 结果），让格式漂移从无声变有声
-- [ ] 点查路由在事件循环内做目录刷新+迁移副作用——迁移挪到 lifespan
-      启动钩子，`_session_by_id` 进 to_thread
+      不动 GA；守护测试已补（50bbdf3）：合成归档驱动续跑分支，断言
+      hub 切片折叠 == GA 整文件 extract_ui_messages，无 GA checkout 的
+      机器自动跳过
+- [x] 点查路由在事件循环内做目录刷新+迁移副作用——迁移已挪到 lifespan
+      启动钩子（永不抛出、失败可重试），5 处点查 `_session_by_id` 进
+      to_thread（d6ab384）
 - [ ] 事件主题 ~70 处内联字符串（"chat:reset" 三处发布）——建
       event_topics.py 常量表，仿 test_env_registry 扫描
 - [ ] 生产代码携带测试回填脚手架（ConductorService 五个 _ensure_* hasattr
@@ -140,8 +145,9 @@ Skills.tsx 删除、折叠解析走策略 b、暗色确认废弃；LLM ping 分�
       仍会生效、tailwind darkMode:'class' 配置
 - [ ] WS 游标管线（events.py 与 sessions.py）重复 invalid-cursor 解析 +
       replay/ping 生命周期——抽可恢复 WS 会话助手
-- [ ] runtime-state payload 三处手拼（sessions.py bus/WS/REST）——全部走
-      SessionRuntimePayload.from_state
+- [x] runtime-state payload 三处手拼（sessions.py bus/WS/REST）——已全部走
+      SessionRuntimePayload.from_state（cdb1664）；bus 帧刻意保留 error 恒在
+      的差异（test_session_websocket.py 锁定，注释已说明）
 - [ ] conductor 路由内联服务级业务（subagent 镜像合并、动词分派、指令文案）
       ——下沉 ConductorService；顺带修 accept/rework/input 未透传 tracker
       owner 的不一致
@@ -150,10 +156,13 @@ Skills.tsx 删除、折叠解析走策略 b、暗色确认废弃；LLM ping 分�
       16b4f08 模式的最后一角）
 - [ ] tests/ 无 conftest.py；smoke 测试靠 importlib.reload 制造分叉模块态
       （xdist 不安全）；wechat 测试隐式依赖本机 GA checkout 布局
-- [ ] README 存储目录表过期（缺 conversations_v2/gahub_journal/
-      tasks_schedules.json/mykey-backups 等）；routes/agent.py "legacy 全局
-      路由"注释误导（除 /ws/chat 外全部在用，勿删）
-- [ ] 剩余小块：RewindResp 缺 removed_history_entries 字段（response_model
-      静默剥离，需重生成 TS）；时间格式化四处各异（formatDateTime 助手）；
-      PasteAttachment 从 components 挪 api/types；重定向 cwd 跑 api:generate
-      会把输出生成到 webui/webui/（--output 锚定脚本位置）
+- [x] README 存储目录表过期——已补全 13 行（e99bf6c，含 conversations_v2/
+      gahub_journal/tasks_schedules.json/mykey-backups 等），_paths.py
+      ADMIN_DATA docstring 同步并注明与 README 保持一致；routes/agent.py
+      "legacy 全局路由"注释已改为准确的 chat WebSocket tombstone 表述，
+      并注明其余路由全部在用勿删
+- [x] 剩余小块（06cad0e、be03131、ea67753）：RewindResp 补
+      removed_history_entries（FakeCoordinator 同步对齐）；formatDateTime
+      助手统一四处完整日期时间显示（气泡时钟/紧凑卡/datetime-local/日期
+      分桶各有不同需求，不迁移）；PasteAttachment 挪 api/types；
+      api:generate 输出锚定脚本位置（import.meta.dirname 先例）
