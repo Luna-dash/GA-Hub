@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "tsc -b --noEmit",
-    "api:generate": "openapi-typescript ../docs/api/openapi.json --output src/api/generated/schema.d.ts",
+    "api:generate": "node scripts/generate-api-schema.mjs",
     "api:check": "node scripts/check-api-contract.mjs",
     "test": "vitest run",
     "test:watch": "vitest"

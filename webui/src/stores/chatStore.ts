@@ -25,7 +25,7 @@ import type {
   SessionMessageProjection,
 } from '@/api/types'
 import { api, ChatSocket } from '@/api/client'
-import type { PasteAttachment } from '@/components/ImagePasteInput'
+import type { PasteAttachment } from '@/api/types'
 
 export type ChatMsgRole = 'user' | 'assistant' | 'system'
 

@@ -24,7 +24,7 @@ import { CHAT_FONT_SCALE_EVENT, getChatFontScale } from '@/utils/chatAppearance'
 import { FILE_HINT } from '@/utils/sessionPrompt'
 import { MessageContent } from './MessageContent'
 import { bubbleTone } from './bubbleTone'
-import type { PasteAttachment } from './ImagePasteInput'
+import type { PasteAttachment } from '@/api/types'
 import { api } from '@/api/client'
 
 interface Props {

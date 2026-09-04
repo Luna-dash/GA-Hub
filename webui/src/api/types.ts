@@ -143,6 +143,10 @@ export type EmailTestResponse = ApiSchemas['EmailTestResp']
 
 // ── Upload ────────────────────────────────────────────────
 export type UploadResult = ApiSchemas['UploadResp']
+
+export interface PasteAttachment extends UploadResult {
+  preview?: string
+}
 export type RevealFileResponse = ApiSchemas['RevealFileResp']
 export type ResolveFileResponse = ApiSchemas['ResolveFileResp']
 

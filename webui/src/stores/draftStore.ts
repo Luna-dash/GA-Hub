@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { PasteAttachment } from '@/components/ImagePasteInput'
+import type { PasteAttachment } from '@/api/types'
 
 interface DraftState {
   texts: Record<string, string>

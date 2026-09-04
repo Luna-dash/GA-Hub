@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
-import { ImagePasteInput, type PasteAttachment } from './ImagePasteInput'
+import { ImagePasteInput } from './ImagePasteInput'
+import type { PasteAttachment } from '@/api/types'
 import type { SlashCommand } from './slashCommands'
 import { useDraftStore } from '@/stores/draftStore'
 

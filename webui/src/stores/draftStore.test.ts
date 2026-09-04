@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { PasteAttachment } from '@/components/ImagePasteInput'
+import type { PasteAttachment } from '@/api/types'
 import { useDraftStore } from './draftStore'
 
 const attachment = (path: string): PasteAttachment => ({

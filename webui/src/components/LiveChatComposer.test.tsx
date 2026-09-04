@@ -3,7 +3,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { PasteAttachment } from './ImagePasteInput'
+import type { PasteAttachment } from '@/api/types'
 import { LiveChatComposer } from './LiveChatComposer'
 import { useDraftStore } from '@/stores/draftStore'
 

@@ -8,17 +8,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { api } from '@/api/client'
-import type { UploadResult } from '@/api/types'
+import type { PasteAttachment, UploadResult } from '@/api/types'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import {
   filterSlashCommands,
   handleSlashMenuKey,
   type SlashCommand,
 } from '@/components/slashCommands'
-
-export interface PasteAttachment extends UploadResult {
-  preview?: string
-}
 
 interface Props {
   text: string
