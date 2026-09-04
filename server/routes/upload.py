@@ -6,6 +6,7 @@ previewing files inside GA's ``temp/`` (e.g. wechat-received media).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import mimetypes
 import os
@@ -270,6 +271,11 @@ _UPLOAD_MAX_SIZE = 50 * 1024 * 1024
 _UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 
+def _write_chunk(output, chunk: bytes) -> None:
+    # Module-level so the blocking-contract probe can patch the disk write.
+    output.write(chunk)
+
+
 async def _save_upload_stream(file: UploadFile, path: Path, *, max_size: int) -> int:
     """Save an upload without materialising its whole body in memory."""
     size = 0
@@ -282,7 +288,9 @@ async def _save_upload_stream(file: UploadFile, path: Path, *, max_size: int) ->
                 size += len(chunk)
                 if size > max_size:
                     raise UploadTooLarge
-                output.write(chunk)
+                # Disk writes must not run on the event loop; reads stay async
+                # so backpressure and cancellation keep their existing shape.
+                await asyncio.to_thread(_write_chunk, output, chunk)
     except BaseException:
         # Cancellation is a BaseException on supported Python versions; never
         # leave a partial file behind when the request task is cancelled.

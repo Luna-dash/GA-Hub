@@ -1,6 +1,7 @@
 """Memory & Skill routes — global_mem, insight, SOP markdown, skill catalog."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -49,32 +50,32 @@ def _write(path: str, content: str) -> None:
 
 @router.get("/api/memory/global", response_model=MemoryTextResp)
 async def get_global():
-    return {"content": _read(_global_mem())}
+    # File IO stays off the event loop — same contract as every other route.
+    return {"content": await asyncio.to_thread(_read, _global_mem())}
 
 
 @router.put("/api/memory/global", response_model=MemoryWriteResp)
 async def put_global(req: TextWrite):
-    _write(_global_mem(), req.content)
+    await asyncio.to_thread(_write, _global_mem(), req.content)
     return {"ok": True, "size": len(req.content)}
 
 
 @router.get("/api/memory/insight", response_model=MemoryTextResp)
 async def get_insight():
-    return {"content": _read(_insight())}
+    return {"content": await asyncio.to_thread(_read, _insight())}
 
 
 @router.put("/api/memory/insight", response_model=MemoryWriteResp)
 async def put_insight(req: TextWrite):
-    _write(_insight(), req.content)
+    await asyncio.to_thread(_write, _insight(), req.content)
     return {"ok": True, "size": len(req.content)}
 
 
-@router.get("/api/memory/sops", response_model=SOPListResp)
-async def list_sops():
-    out = []
+def _list_sops() -> list[dict]:
+    out: list[dict] = []
     md = _mem_dir()
     if not os.path.isdir(md):
-        return {"sops": []}
+        return out
     for name in sorted(os.listdir(md)):
         if name.endswith("_sop.md") or name.endswith(".md"):
             p = os.path.join(md, name)
@@ -85,7 +86,12 @@ async def list_sops():
                 out.append(SOPItem(name=name, size=st.st_size, mtime=int(st.st_mtime)).model_dump())
             except OSError:
                 pass
-    return {"sops": out}
+    return out
+
+
+@router.get("/api/memory/sops", response_model=SOPListResp)
+async def list_sops():
+    return {"sops": await asyncio.to_thread(_list_sops)}
 
 
 def _safe_sop_path(name: str) -> str:
@@ -94,25 +100,27 @@ def _safe_sop_path(name: str) -> str:
     return os.path.join(_mem_dir(), name)
 
 
-@router.get("/api/memory/sops/{name}", response_model=SOPDetailResp)
-async def read_sop(name: str):
+def _read_sop(name: str) -> dict:
     p = _safe_sop_path(name)
     if not os.path.isfile(p):
         raise HTTPException(404, "sop not found")
     return {"name": name, "content": _read(p)}
 
 
+@router.get("/api/memory/sops/{name}", response_model=SOPDetailResp)
+async def read_sop(name: str):
+    return await asyncio.to_thread(_read_sop, name)
+
+
 @router.put("/api/memory/sops/{name}", response_model=MemoryWriteResp)
 async def write_sop(name: str, req: TextWrite):
     p = _safe_sop_path(name)
-    _write(p, req.content)
+    await asyncio.to_thread(_write, p, req.content)
     return {"ok": True, "size": len(req.content)}
 
 
 # ── skills ──────────────────────────────────────────────────────
-@router.get("/api/memory/skills", response_model=SkillListResp)
-async def list_skills(limit: int = Query(default=200, ge=1, le=1000)):
-    """Lightweight skill listing. Walks memory/skill_search/ for *.md / *.json / *.py."""
+def _list_skills(limit: int) -> dict:
     sd = _skill_dir()
     if not os.path.isdir(sd):
         return {"skills": [], "count": 0}
@@ -143,8 +151,13 @@ async def list_skills(limit: int = Query(default=200, ge=1, le=1000)):
     return {"skills": out, "count": len(out)}
 
 
-@router.get("/api/memory/skills/read", response_model=SkillDetailResp)
-async def read_skill(path: str):
+@router.get("/api/memory/skills", response_model=SkillListResp)
+async def list_skills(limit: int = Query(default=200, ge=1, le=1000)):
+    """Lightweight skill listing. Walks memory/skill_search/ for *.md / *.json / *.py."""
+    return await asyncio.to_thread(_list_skills, limit)
+
+
+def _read_skill(path: str) -> dict:
     if ".." in path or path.startswith("/"):
         raise HTTPException(400, "bad path")
     # Restrict to extensions we list (defensive — caller can't path-traverse,
@@ -158,23 +171,12 @@ async def read_skill(path: str):
     return {"path": path, "content": _read(p)}
 
 
-@router.get("/api/memory/skills/search", response_model=SkillSearchResp)
-async def search_skills(q: str, limit: int = Query(default=60, ge=1, le=200)):
-    """Full-text grep over memory/skill_search/*.
+@router.get("/api/memory/skills/read", response_model=SkillDetailResp)
+async def read_skill(path: str):
+    return await asyncio.to_thread(_read_skill, path)
 
-    Walks the skill tree, scans every text file (.md/.json/.py/.txt/no-ext)
-    line by line, returns matches with surrounding line numbers. Case
-    insensitive substring match — keeps the implementation portable across
-    OSes (no system grep dependency) and predictable.
 
-    Response shape::
-
-        {"hits": [{"path": "...", "matches": [{"line": 42, "text": "..."}, ...]}, ...],
-         "scanned": <int>, "truncated": <bool>}
-    """
-    q = (q or "").strip()
-    if not q:
-        return {"hits": [], "scanned": 0, "truncated": False}
+def _search_skills(q: str, limit: int) -> dict:
     needle = q.lower()
     sd = _skill_dir()
     if not os.path.isdir(sd):
@@ -223,3 +225,23 @@ async def search_skills(q: str, limit: int = Query(default=60, ge=1, le=200)):
             break
 
     return {"hits": hits, "scanned": scanned, "truncated": truncated, "query": q}
+
+
+@router.get("/api/memory/skills/search", response_model=SkillSearchResp)
+async def search_skills(q: str, limit: int = Query(default=60, ge=1, le=200)):
+    """Full-text grep over memory/skill_search/*.
+
+    Walks the skill tree, scans every text file (.md/.json/.py/.txt/no-ext)
+    line by line, returns matches with surrounding line numbers. Case
+    insensitive substring match — keeps the implementation portable across
+    OSes (no system grep dependency) and predictable.
+
+    Response shape::
+
+        {"hits": [{"path": "...", "matches": [{"line": 42, "text": "..."}, ...]}, ...],
+         "scanned": <int>, "truncated": <bool>}
+    """
+    q = (q or "").strip()
+    if not q:
+        return {"hits": [], "scanned": 0, "truncated": False}
+    return await asyncio.to_thread(_search_skills, q, limit)

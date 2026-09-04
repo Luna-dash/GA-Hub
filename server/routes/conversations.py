@@ -288,7 +288,9 @@ async def delete_conversation(cid: str):
                 _unlink_archive(cid, path)
 
             try:
-                coordinator.release_runtime(
+                # runtime.shutdown() joins worker threads — keep it off the loop.
+                await asyncio.to_thread(
+                    coordinator.release_runtime,
                     bound_session["id"],
                     shutdown=lambda runtime: runtime.shutdown(),
                     operation="archive_delete",
@@ -414,6 +416,15 @@ async def list_archive_zips():
     return {"zips": zips}
 
 
+def _list_zip_entries_sync(path: str) -> dict:
+    with zipfile.ZipFile(path) as z:
+        return {"entries": [
+            {"name": i.filename, "size": i.file_size, "date": list(i.date_time)}
+            for i in z.infolist()
+            if not i.is_dir()
+        ]}
+
+
 @router.get(
     "/api/archive/zips/{name}/entries",
     response_model=ArchiveZipEntryListResp,
@@ -425,14 +436,19 @@ async def list_zip_entries(name: str):
     if not os.path.isfile(p):
         raise HTTPException(404, "zip not found")
     try:
-        with zipfile.ZipFile(p) as z:
-            return {"entries": [
-                {"name": i.filename, "size": i.file_size, "date": list(i.date_time)}
-                for i in z.infolist()
-                if not i.is_dir()
-            ]}
+        # Zip listing reads the central directory — keep it off the loop.
+        return await asyncio.to_thread(_list_zip_entries_sync, p)
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+def _read_zip_entry_sync(path: str, entry: str) -> bytes:
+    with zipfile.ZipFile(path) as z:
+        info = z.getinfo(entry)
+        if info.file_size > _ZIP_ENTRY_MAX_SIZE:
+            raise ZipEntryTooLarge
+        with z.open(entry) as f:
+            return _read_zip_entry_limited(f)
 
 
 @router.get("/api/archive/zips/{name}/read")
@@ -445,20 +461,16 @@ async def read_zip_entry(name: str, entry: str):
     if not os.path.isfile(p):
         raise HTTPException(404, "zip not found")
     try:
-        with zipfile.ZipFile(p) as z:
-            info = z.getinfo(entry)
-            if info.file_size > _ZIP_ENTRY_MAX_SIZE:
-                raise ZipEntryTooLarge
-            with z.open(entry) as f:
-                data = _read_zip_entry_limited(f)
-        try:
-            text = data.decode("utf-8")
-            return PlainTextResponse(content=text, media_type="text/plain; charset=utf-8")
-        except UnicodeDecodeError:
-            return Response(content=data, media_type="application/octet-stream")
+        # Decompression is bounded but still disk IO — keep it off the loop.
+        data = await asyncio.to_thread(_read_zip_entry_sync, p, entry)
     except KeyError:
         raise HTTPException(404, "entry not found")
     except ZipEntryTooLarge:
         raise HTTPException(413, "zip entry too large")
     except Exception as e:
         raise HTTPException(500, str(e))
+    try:
+        text = data.decode("utf-8")
+        return PlainTextResponse(content=text, media_type="text/plain; charset=utf-8")
+    except UnicodeDecodeError:
+        return Response(content=data, media_type="application/octet-stream")

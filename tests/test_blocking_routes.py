@@ -7,7 +7,8 @@ import time
 from types import SimpleNamespace
 from unittest import mock
 
-from server.routes import agent, autonomous, conductor, mykey, sessions, tasks, wechat
+from server.routes import agent, autonomous, conductor, conversations, memory, mykey, sessions, tasks, upload, wechat
+from server.schemas import TextWrite
 from server.services import mykey_service
 
 
@@ -159,3 +160,106 @@ def test_archive_page_projection_runs_in_worker_thread() -> None:
 
     assert result.total == 0
     assert result.items == []
+
+
+def test_memory_read_write_run_in_worker_thread(tmp_path) -> None:
+    target = tmp_path / "global_mem.txt"
+    with (
+        mock.patch.object(memory, "_global_mem", return_value=str(target)),
+        mock.patch.object(memory, "_write", side_effect=lambda _p, _c: _slow_result(None)),
+        mock.patch.object(memory, "_read", side_effect=lambda _p: _slow_result("body")),
+    ):
+        written = asyncio.run(_run_with_probe(memory.put_global(TextWrite(content="x"))))
+        read = asyncio.run(_run_with_probe(memory.get_global()))
+
+    assert written == {"ok": True, "size": 1}
+    assert read == {"content": "body"}
+
+
+def test_memory_skill_search_runs_in_worker_thread() -> None:
+    payload = {"hits": [], "scanned": 0, "truncated": False}
+    with mock.patch.object(
+        memory,
+        "_search_skills",
+        side_effect=lambda *_args: _slow_result(payload),
+    ):
+        result = asyncio.run(_run_with_probe(memory.search_skills(q="x")))
+
+    assert result == payload
+
+
+def test_archive_zip_reads_run_in_worker_thread(tmp_path) -> None:
+    (tmp_path / "a.zip").write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+    with (
+        mock.patch.object(conversations, "_archive_dir", return_value=str(tmp_path)),
+        mock.patch.object(
+            conversations,
+            "_list_zip_entries_sync",
+            side_effect=lambda _p: _slow_result({"entries": []}),
+        ),
+        mock.patch.object(
+            conversations,
+            "_read_zip_entry_sync",
+            side_effect=lambda _p, _e: _slow_result(b"data"),
+        ),
+    ):
+        entries = asyncio.run(_run_with_probe(conversations.list_zip_entries("a.zip")))
+        body = asyncio.run(_run_with_probe(conversations.read_zip_entry("a.zip", "x.txt")))
+
+    assert entries == {"entries": []}
+    assert body.body == b"data"
+
+
+def test_upload_write_runs_in_worker_thread(tmp_path) -> None:
+    class _FakeUpload:
+        def __init__(self) -> None:
+            self._chunks = [b"hello", b""]
+
+        async def read(self, _size: int) -> bytes:
+            return self._chunks.pop(0)
+
+    writer = mock.Mock(side_effect=lambda _out, _c: _slow_result(None))
+    with mock.patch.object(upload, "_write_chunk", writer):
+        size = asyncio.run(
+            _run_with_probe(
+                upload._save_upload_stream(_FakeUpload(), tmp_path / "u.bin", max_size=100)
+            )
+        )
+
+    assert size == 5
+    assert writer.call_args_list[0].args[1] == b"hello"
+
+
+def test_session_delete_release_runs_in_worker_thread() -> None:
+    coordinator = SimpleNamespace(release_runtime=lambda *_a, **_k: _slow_result(None))
+    store = SimpleNamespace(get=lambda _sid: {"id": "s1"}, delete=mock.Mock())
+    with (
+        mock.patch.object(sessions, "_store", store),
+        mock.patch.object(sessions, "_coordinator", coordinator),
+        mock.patch.object(sessions, "_get_coordinator", return_value=coordinator),
+    ):
+        result = asyncio.run(_run_with_probe(sessions.delete_session("s1")))
+
+    assert result.status_code == 204
+
+
+def test_conversation_delete_release_runs_in_worker_thread(tmp_path) -> None:
+    archive = tmp_path / "conv.txt"
+    archive.write_text("x", encoding="utf-8")
+    binding = {"id": "s1"}
+    coordinator = SimpleNamespace(release_runtime=lambda *_a, **_k: _slow_result(None))
+    metadata = SimpleNamespace(
+        find_by_archive=lambda _p: binding,
+        delete_by_archive=mock.Mock(),
+    )
+    with (
+        mock.patch.object(conversations, "_session_by_id", return_value=(str(archive),)),
+        mock.patch.object(conversations, "_metadata", metadata),
+        mock.patch.object(sessions, "_coordinator", coordinator),
+        mock.patch.object(conversations, "invalidate_archive_catalogue", mock.Mock()),
+    ):
+        result = asyncio.run(
+            _run_with_probe(conversations.delete_conversation("conv.txt"))
+        )
+
+    assert result == {"ok": True, "id": "conv.txt"}
