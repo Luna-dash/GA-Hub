@@ -68,6 +68,7 @@ CLOSED_WORKER_STATES = frozenset({WORKER_ACCEPTED, WORKER_REJECTED})
 RUNNING_WORKER_EVENTS = frozenset({"spawned", "started", "running", "reworked"})
 # Events that hand the finished attempt to the review queue.
 WORKER_EVENT_RUNNING = "running"
+WORKER_EVENT_REWORKED = "reworked"
 WORKER_EVENT_PENDING_REVIEW = "pending_review"
 COMPLETION_WORKER_EVENTS = frozenset({"completed", WORKER_EVENT_PENDING_REVIEW})
 WORKER_EVENT_ACCEPTED = "accepted"

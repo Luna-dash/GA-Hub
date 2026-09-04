@@ -36,29 +36,34 @@ def _service(
     return service
 
 
+def _resolve(service, requested=None):
+    return service._resolve_subagent_model_from_snapshot(
+        requested, service.model_policy_snapshot())
+
+
 def test_default_policy_allows_explicit_dispatch_override():
     service = _service(worker=5, policy="default")
 
-    assert service.resolve_subagent_model(3) == 3
-    assert service.resolve_subagent_model() == 5
+    assert _resolve(service, 3) == 3
+    assert _resolve(service) == 5
 
 
 def test_locked_policy_ignores_explicit_dispatch_override():
     service = _service(worker=5, policy="locked")
 
-    assert service.resolve_subagent_model(3) == 5
+    assert _resolve(service, 3) == 5
 
 
 def test_follow_main_policy_uses_conductor_then_global_preference():
     service = _service(main=1)
-    assert service.resolve_subagent_model() == 1
+    assert _resolve(service) == 1
 
     service._conductor_llm_index = None
     with patch(
         "server.services.conductor_service._get_preferred_llm",
         return_value=7,
     ):
-        assert service.resolve_subagent_model() == 7
+        assert _resolve(service) == 7
 
 
 def test_omitted_configuration_does_not_reset_existing_default():
@@ -79,7 +84,7 @@ def test_explicit_follow_main_clears_default_worker_model():
     service.configure_models(subagent_model_policy="follow_main")
 
     assert service.model_policy_snapshot()["subagent_llm_index"] is None
-    assert service.resolve_subagent_model() == 1
+    assert _resolve(service) == 1
 
 
 def test_follow_main_switch_pushes_explicit_engine_clear():

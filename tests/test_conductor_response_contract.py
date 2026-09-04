@@ -85,7 +85,8 @@ def test_workflow_payload_carries_the_hub_decided_stage():
 
 
 def test_fill_dispatch_defaults_fills_only_missing_fields():
-    """All four dispatch verbs route through _fill_dispatch_defaults; the
+    """The dispatch verbs (start/input/rework) route through
+    _fill_dispatch_defaults; accept only forwards the tracker owner. The
     helper must fill hub-resolved context without clobbering engine values,
     and must not invent a request_id when no owner was bound."""
     fill = ConductorService._fill_dispatch_defaults

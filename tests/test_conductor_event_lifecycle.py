@@ -71,7 +71,7 @@ def test_conductor_success_outcome_publishes_turn_event_without_completion_item(
 def test_running_subagent_event_is_swallowed_without_publish():
     """SSE running 事件刻意为 no-op：快照只由 subagents 事件推送。"""
     service = ConductorService.for_tests()
-    service.pool = SimpleNamespace(snapshot=lambda: [])
+    service.pool = SimpleNamespace(snapshot=lambda: [], get=lambda _sid: None)
     callbacks = HubConductorCallbacks(service)
 
     with patch("server.services.conductor_service.push_subagent_cards") as snapshot:
@@ -99,7 +99,7 @@ def test_running_subagent_event_is_swallowed_without_publish():
 def test_subagent_state_transitions_publish_authoritative_snapshot(event):
     items = [{"id": "sid", "status": "stopped"}]
     service = ConductorService.for_tests()
-    service.pool = SimpleNamespace(snapshot=lambda: items)
+    service.pool = SimpleNamespace(snapshot=lambda: items, get=lambda _sid: None)
     callbacks = HubConductorCallbacks(service)
 
     with patch("server.services.conductor_service.push_subagent_cards") as snapshot:
@@ -124,7 +124,7 @@ def test_identical_subagent_transitions_keep_typed_events_without_second_snapsho
     first, second
 ):
     service = ConductorService.for_tests()
-    service.pool = SimpleNamespace(snapshot=lambda: [])
+    service.pool = SimpleNamespace(snapshot=lambda: [], get=lambda _sid: None)
     callbacks = HubConductorCallbacks(service)
 
     with patch("server.services.conductor_service.push_subagent_cards") as snapshot:
@@ -142,7 +142,7 @@ def test_identical_subagent_transitions_keep_typed_events_without_second_snapsho
 def test_completed_output_defers_to_single_completed_snapshot():
     items = [{"id": "sid", "status": "stopped", "review_status": "pending"}]
     service = ConductorService.for_tests()
-    service.pool = SimpleNamespace(snapshot=lambda: items)
+    service.pool = SimpleNamespace(snapshot=lambda: items, get=lambda _sid: None)
     callbacks = HubConductorCallbacks(service)
 
     with patch("server.services.conductor_service.push_subagent_cards") as snapshot:
@@ -196,7 +196,7 @@ def test_conductor_log_publish_failure_is_observer_only():
 def test_subagent_snapshot_publish_failure_is_retried():
     items = [{"id": "sid", "status": "running"}]
     service = ConductorService.for_tests()
-    service.pool = SimpleNamespace(snapshot=lambda: items)
+    service.pool = SimpleNamespace(snapshot=lambda: items, get=lambda _sid: None)
     callbacks = HubConductorCallbacks(service)
 
     with patch(
@@ -212,7 +212,7 @@ def test_subagent_snapshot_publish_failure_is_retried():
 def test_subagent_lifecycle_publish_failure_still_attempts_snapshot():
     items = [{"id": "sid", "status": "stopped"}]
     service = ConductorService.for_tests()
-    service.pool = SimpleNamespace(snapshot=lambda: items)
+    service.pool = SimpleNamespace(snapshot=lambda: items, get=lambda _sid: None)
     callbacks = HubConductorCallbacks(service)
 
     with patch(
@@ -432,7 +432,7 @@ def _service() -> ConductorService:
     service._subagent_llm_index = None
     service._subagent_model_policy = "follow_main"
     service._model_lock = threading.RLock()
-    service.pool = SimpleNamespace(snapshot=lambda: [])
+    service.pool = SimpleNamespace(snapshot=lambda: [], get=lambda _sid: None)
     service.client = Mock()
     service.client.status.return_value = {"started": True}
     service.client.start.return_value = {"started": True}

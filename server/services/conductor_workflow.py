@@ -12,6 +12,7 @@ from ..event_topics import (
     CONDUCTOR_WORKFLOW_FAILED,
 )
 from .conductor_vocabulary import (
+    WORKER_EVENT_REWORKED,
     CLOSED_WORKER_STATES,
     COMPLETION_WORKER_EVENTS,
     RECOVERABLE_FAILURE_STATE,
@@ -191,7 +192,7 @@ class WorkflowTracker:
             if event in RUNNING_WORKER_EVENTS:
                 worker.state = WORKER_RUNNING
                 workflow.state = (WORKFLOW_REWORKING
-                                  if event == "reworked" else WORKFLOW_SUPERVISING)
+                                  if event == WORKER_EVENT_REWORKED else WORKFLOW_SUPERVISING)
             elif event in COMPLETION_WORKER_EVENTS:
                 worker.state = WORKER_PENDING
                 workflow.state = WORKFLOW_AWAITING_REVIEW

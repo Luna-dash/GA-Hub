@@ -9,8 +9,13 @@ from __future__ import annotations
 
 import typing
 
-from server.schemas import ConductorSubagent, ConductorWorkflow, ConductorWorkflowWorker
-from server.services import conductor_vocabulary as vocab
+from server.schemas import (
+    ConductorSubagent,
+    ConductorSubagentAction,
+    ConductorWorkflow,
+    ConductorWorkflowWorker,
+)
+from server.services import conductor_service, conductor_vocabulary as vocab
 from server.services.conductor_workflow import workflow_stage
 from server.services.conductor_workflow import (
     WorkerState,
@@ -30,6 +35,16 @@ def test_workflow_status_literal_matches_vocabulary():
 
 def test_worker_state_literal_matches_vocabulary():
     assert _literal_args(ConductorWorkflowWorker, "state") == set(vocab.WORKER_STATES)
+
+
+def test_subagent_action_literal_matches_service_verbs():
+    """The request Literal and the service dispatcher's verb set are one
+    vocabulary: schema allowing a verb the service rejects (422) — or the
+    service accepting one the schema blocks (400) — used to be drift-invisible.
+    """
+    assert _literal_args(ConductorSubagentAction, "action") == set(
+        conductor_service.SUBAGENT_VERBS
+    )
 
 
 def test_vocabulary_sets_are_coherent():

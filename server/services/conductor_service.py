@@ -325,7 +325,7 @@ class HubConductorCallbacks:
         latest = next(
             (
                 item
-                for item in reversed(getattr(self.service, "chat_messages", ()))
+                for item in reversed(self.service.chat_messages)
                 if item.get("role") == "conductor"
                 and item.get("request_id") == request_id
                 and item.get("kind") == ("final" if status == "ok" else "error")
@@ -424,8 +424,7 @@ class HubConductorCallbacks:
             payload = dict(getattr(payload, "__dict__", {}) or {})
         service = self.service
         tracker = service.workflow_tracker
-        getter = getattr(getattr(service, "pool", None), "get", None)
-        state = getter(agent_id) if callable(getter) else None
+        state = service.pool.get(agent_id)
         if state is not None and "generation" not in payload:
             payload["generation"] = int(getattr(state, "active_generation", 0) or 0)
         if not payload.get("request_id"):
@@ -519,22 +518,29 @@ class HubConductorCallbacks:
                 detail = str(payload.get("error", "")).strip()
                 if not detail:
                     return
-                latest = next(
-                    (
-                        item
-                        for item in reversed(getattr(self.service, "chat_messages", ()))
-                        if item.get("kind") == "error"
-                    ),
-                    None,
-                )
-                if latest is None or detail not in latest.get("msg", ""):
-                    latest = add_chat(
-                        f"Conductor reply failed: {detail}",
-                        "error",
-                        self.service.chat_messages,
-                        kind="error",
+                # The relay thread lands here while route threads append via
+                # add_chat_message — read+append under the same chat lock
+                # those writers hold.
+                with self.service._chat_lock:
+                    latest = next(
+                        (
+                            item
+                            for item in reversed(self.service.chat_messages)
+                            if item.get("kind") == "error"
+                        ),
+                        None,
                     )
-                    bus.publish(CONDUCTOR_CHAT, {"item": latest})
+                    added = None
+                    if latest is None or detail not in latest.get("msg", ""):
+                        added = add_chat(
+                            f"Conductor reply failed: {detail}",
+                            "error",
+                            self.service.chat_messages,
+                            kind="error",
+                        )
+                if added is not None:
+                    bus.publish(CONDUCTOR_CHAT, {"item": added})
+                    latest = added
                 payload = {**payload, "item": latest}
             bus.publish(f"conductor:{event_type}", payload)
         except Exception:
@@ -616,6 +622,7 @@ class ConductorService:
         # can keep the double relay from reaching the engine).
         self._cold_start_lock = threading.Lock()
         self._relayed_chat_ids: set[str] = set()
+        self._relayed_ids_lock = threading.Lock()
         self._lifecycle_cache: dict = {}
         # Journal replay cursor (P2-A reconcile): seq of the last journal
         # event this relay processed.  ``seq=None`` means "never connected" —
@@ -646,11 +653,6 @@ class ConductorService:
     @auto_accept.setter
     def auto_accept(self, value: bool) -> None:
         self._auto_accept = bool(value)
-
-    @staticmethod
-    def _stop_result(result: object) -> bool:
-        """Treat legacy best-effort ``None`` stop helpers as success."""
-        return result is not False
 
     def shutdown(self, timeout: float = 2.0) -> bool:
         """Terminally close the engine session and monitor under one deadline."""
@@ -700,28 +702,20 @@ class ConductorService:
 
             # Always attempt the monitor, even when the engine raised or used
             # up the whole deadline; one atomic time envelope for both.
-            monitor = getattr(self, "timeout_monitor", None)
+            monitor = self.timeout_monitor
             if not monitor_ok:
-                if monitor is None:
-                    monitor_ok = True
-                else:
-                    try:
-                        stop = getattr(monitor, "stop", None)
-                        monitor_ok = (
-                            True
-                            if not callable(stop)
-                            else self._stop_result(
-                                stop(
-                                    timeout=min(
-                                        float(timeout),
-                                        max(0.0, deadline - time.monotonic()),
-                                    )
-                                )
-                            )
+                try:
+                    # ``is not False`` keeps dict/None stub returns truthy the
+                    # way the old best-effort helper did.
+                    monitor_ok = monitor.stop(
+                        timeout=min(
+                            float(timeout),
+                            max(0.0, deadline - time.monotonic()),
                         )
-                    except Exception:
-                        monitor_ok = False
-                        log.exception("conductor timeout monitor shutdown failed")
+                    ) is not False
+                except Exception:
+                    monitor_ok = False
+                    log.exception("conductor timeout monitor shutdown failed")
                 self._shutdown_monitor_stopped = monitor_ok
         finally:
             with self._shutdown_lock:
@@ -760,7 +754,7 @@ class ConductorService:
         supervisor: a stopped conductor must not gain workers it cannot
         supervise (2026-09 audit P1)."""
         self._assert_open()
-        manager = getattr(self, "_process_manager", None)
+        manager = self._process_manager
         if manager is not None:
             try:
                 manager.ensure_running()
@@ -889,9 +883,7 @@ class ConductorService:
 
     def _push_models_to_engine(self, snapshot: Optional[dict] = None) -> None:
         """Best-effort sync of the policy snapshot to gahub_app."""
-        client = getattr(self, "client", None)
-        if client is None:
-            return
+        client = self.client
         snapshot = snapshot or self.model_policy_snapshot()
         # follow_main clears the local default worker model; the engine needs
         # the explicit clear signal or its "null = keep" semantics leave the
@@ -918,14 +910,6 @@ class ConductorService:
                 "subagent_llm_index": self._subagent_llm_index,
                 "subagent_model_policy": self._subagent_model_policy,
             }
-
-    def resolve_subagent_model(
-        self, requested_llm_index: Optional[int] = None
-    ) -> Optional[int]:
-        """Resolve one dispatch using the Hub policy priority chain."""
-        return self._resolve_subagent_model_from_snapshot(
-            requested_llm_index, self.model_policy_snapshot()
-        )
 
     def _resolve_subagent_model_from_snapshot(
         self,
@@ -975,7 +959,7 @@ class ConductorService:
         # The SSE relay spawns gahub_app asynchronously; a first message raced
         # that cold start and failed on connection refused. Wait for the
         # process here (idempotent, shared lock with the relay's spawn).
-        manager = getattr(self, "_process_manager", None)
+        manager = self._process_manager
         if manager is not None:
             try:
                 manager.ensure_running()
@@ -1118,9 +1102,12 @@ class ConductorService:
     def _remember_relayed(self, ga_id) -> None:
         if not ga_id:
             return
-        self._relayed_chat_ids.add(ga_id)
-        if len(self._relayed_chat_ids) > 500:
-            self._relayed_chat_ids = set(list(self._relayed_chat_ids)[-250:])
+        # The relay thread and route threads race here; keep the dedupe set's
+        # check-add cycle single-threaded (membership reads stay advisory).
+        with self._relayed_ids_lock:
+            self._relayed_chat_ids.add(ga_id)
+            if len(self._relayed_chat_ids) > 500:
+                self._relayed_chat_ids = set(list(self._relayed_chat_ids)[-250:])
 
     def notify(self, event: dict) -> Optional[dict]:
         """Admit a user message into the gahub_app conductor inbox.
@@ -1344,12 +1331,13 @@ class ConductorService:
         # D4: the engine id is the authoritative chat identity — the mirror
         # keeps it verbatim so live events and the engine-proxy hydration
         # dedupe against each other instead of duplicating messages.
-        hub_item = add_chat(
-            item.get("msg", ""), role, self.chat_messages,
-            request_id=item.get("request_id"),
-            kind=("final" if final else None),
-            item_id=item.get("id"),
-        )
+        with self._chat_lock:
+            hub_item = add_chat(
+                item.get("msg", ""), role, self.chat_messages,
+                request_id=item.get("request_id"),
+                kind=("final" if final else None),
+                item_id=item.get("id"),
+            )
         bus.publish(CONDUCTOR_CHAT, {"item": hub_item})
         if role == "conductor" and final and item.get("request_id"):
             tracker = self.workflow_tracker
@@ -1452,9 +1440,10 @@ class ConductorService:
     ) -> None:
         """Fill the resolved model context the UI renders on dispatch results.
 
-        Engine responses omit these hub-resolved fields; every dispatch verb
-        (start/input/rework/accept) fills the same trio, so the defaulting
-        lives here once instead of per action.
+        Engine responses omit these hub-resolved fields; the dispatch verbs
+        (start/input/rework) fill the same trio here instead of per action.
+        accept only fills request_id — its response carries no model
+        context, so it forwards the tracker owner without this helper.
         """
         if request_id:
             result.setdefault("request_id", request_id)
@@ -1475,9 +1464,7 @@ class ConductorService:
         只改一份的漂移）；模型策略优先级链只在此一处实现。
         """
         self._assert_engine_ready()
-        tracker = self.workflow_tracker
-        if request_id is not None and not tracker.has_request(request_id):
-            raise ValueError(f"unknown conductor request_id: {request_id}")
+        tracker = self._assert_action_request(request_id)
         models = self.configure_models(
             llm_index=conductor_llm_index,
             subagent_llm_index=subagent_llm_index,
@@ -1485,6 +1472,18 @@ class ConductorService:
         )
         selected = self._resolve_subagent_model_from_snapshot(llm_index, models)
         return tracker, models, selected
+
+    def _assert_action_request(self, request_id: Optional[str]) -> "WorkflowTracker":
+        """Engine-readiness + request validation, shared by every verb.
+
+        accept duplicates none of it: without the model section it still
+        must refuse the same way start/input/rework do.
+        """
+        self._assert_engine_ready()
+        tracker = self.workflow_tracker
+        if request_id is not None and not tracker.has_request(request_id):
+            raise ValueError(f"unknown conductor request_id: {request_id}")
+        return tracker
 
     def _resume_subagent_action(
         self,
@@ -1571,10 +1570,7 @@ class ConductorService:
         replayed = self._replay_action_operation(operation_id)
         if replayed is not None:
             return replayed
-        self._assert_engine_ready()
-        tracker = self.workflow_tracker
-        if request_id is not None and not tracker.has_request(request_id):
-            raise ValueError(f"unknown conductor request_id: {request_id}")
+        tracker = self._assert_action_request(request_id)
         if request_id is None:
             # Owner parity (P0-B): keyinfo/abort already forward the
             # tracker-resolved owner so the engine's request_mismatch guard
@@ -1666,6 +1662,9 @@ class ConductorService:
         """
         action = action.lower().strip()
         if action == "keyinfo":
+            # Controlled idempotency exception: keyinfo/abort carry no
+            # operation_id replay (the engine's once-per-attempt budget 409
+            # bounds retries instead of a cached 200 replay).
             result = self.pool.keyinfo_subagent(
                 sid, msg,
                 request_id=self.workflow_tracker.request_for_subagent(sid))
@@ -1735,13 +1734,16 @@ class ConductorService:
         if kind == "final" and request_id:
             tracker.assert_ready_for_final(request_id)
         admitted_request_id = uuid.uuid4().hex if role == "user" else request_id
-        item = add_chat(
-            msg,
-            role,
-            self.chat_messages,
-            request_id=admitted_request_id,
-            kind=kind,
-        )
+        # The SSE relay thread appends engine mirrors concurrently; every
+        # add_chat caller holds the chat lock (RLock, so nested use is fine).
+        with self._chat_lock:
+            item = add_chat(
+                msg,
+                role,
+                self.chat_messages,
+                request_id=admitted_request_id,
+                kind=kind,
+            )
         if role == "user" and admitted_request_id:
             tracker.admit(admitted_request_id)
             try:

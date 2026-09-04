@@ -61,7 +61,7 @@ class TimeoutMonitor:
             if key[:2] in live_generations
         }
         for state in states:
-            if getattr(state, "status", None) != "running":
+            if getattr(state, "status", None) != SUBAGENT_RUNNING:
                 continue
             agent_id = str(state.id)
             generation = int(getattr(state, "active_generation", 0))
