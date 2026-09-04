@@ -3,10 +3,9 @@
 来源：2026-09-03 全量架构复审（四路并行）+ GPT 交叉复审的合并结论。按"用户可感知伤害"排序。
 修复后请条目化勾销，不要整段删除。
 
-**2026-09-04 进度**：P0 全部、SessionRail 排序、P1 全部、P2 全部、P3 的死 API/
-GAHUB_*/stale 注释/语义色令牌已完成（dac6a10、4e89e76、3df23a3、143ac57、
-e972ea7、ab591ab、6faffd1、beaaef6）。剩余项集中在渲染收敛与最后三个
-"半个收敛"。
+**2026-09-04 进度**：P0 全部、SessionRail 排序、P1 全部、P2 全部、P3 全部
+（dac6a10、4e89e76、3df23a3、143ac57、e972ea7、ab591ab、6faffd1、beaaef6、
+bbed3cf、d63f98a、7572e21、ea68615、16b4f08）。
 
 ## P0 — 功能回归（无声失败）✅ 已全部完成
 
@@ -50,7 +49,7 @@ API 封装，而服务端无开机自启（`WeChatService.instance()` 仅由 `/a
 - [x] bubbleTone 表驱动测试 + 死字段裁剪（e972ea7）
 - [x] `_fill_dispatch_defaults` 直测（e972ea7）
 
-## P3 — 收尾与降噪（部分完成）
+## P3 — 收尾与降噪 ✅ 已全部完成
 
 - [x] 前端死 API 清理 + 孤儿键 queryKeys.conductor.log（ab591ab）
 - [x] 语义状态令牌（beaaef6：danger/info/success/warning 进 tailwind.config；
@@ -58,10 +57,13 @@ API 封装，而服务端无开机自启（`WeChatService.instance()` 仅由 `/a
 - [x] 主题漏洞修复（beaaef6：Conversations 翡翠绿气泡改用 bubbleTone user 面；
       TokenStats 错误态 rose-300 换 danger 令牌）
 - [x] GAHUB_* env 族入 constants 注册表 + 3 处 stale `/ws/chat` 注释（6faffd1）
-- [ ] 错误提示收口：22 处手抄 `e?.body?.detail || e?.message` 改用
-      `errorMessageFromError`；统一 toast/pushSystem/dialog.alert 的使用场景
-- [ ] 消息渲染收敛：剩余 4 套实现（MessageBubble / Conversations MessageBlock /
-      Conductor 内联 / GoalHive 裸 `<pre>`）收敛到参数化 MessageBubble
-- [ ] 服务端"半个收敛"三项：conversations.py 自建归档索引/标题解析并入
-      archive_messages；rewind_adapter 双路径合并；service_registry 单例读 vs
-      AppServices 所有权双真相源
+- [x] 错误提示收口（bbed3cf：13 处 LiveChat + 15 处各页手抄错误链统一到
+      `errorMessageFromError`；capacityConflict 先行分支、409 专文案、stderr 合并、
+      行号列号诊断等特化行为保留；嵌套 detail 优先级有测试锁定）
+- [x] 消息渲染收敛（d63f98a：收敛为内容原语 `MessageContent`（text/markdown/pre）
+      而非万能气泡——页面保留自己的 chrome/对齐/标签/虚拟化，只选内容格式；
+      flat 视图用户内容有意统一为字面文本，与 Round 视图/实时聊天一致）
+- [x] 服务端"半个收敛"三项（7572e21、ea68615、16b4f08）：归档目录/标题/
+      preview/搜索下沉 archive_messages（路由只留 HTTP 编排）；rewind 双策略
+      保留独立提交但共享规划/收尾助手；ServiceRegistry 绑定 app 所有权
+      （owned 优先、单例回退，跨端点单一真相源）
