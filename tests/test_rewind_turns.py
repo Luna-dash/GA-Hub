@@ -368,5 +368,78 @@ class RewindTurnsTests(unittest.TestCase):
         fake_bus.publish.assert_not_called()
 
 
+class RewindAdapterSharedPlanningTests(unittest.TestCase):
+    """Direct tests for the shared planner/finalizer extracted from the two
+    rewind commit strategies (selection semantics must stay identical while
+    the commits stay distinct)."""
+
+    def _adapter(self) -> tuple:
+        from server.services.rewind_adapter import RewindAdapter
+
+        adapter = object.__new__(RewindAdapter)
+        adapter.agent = types.SimpleNamespace(is_running=False)
+        adapter.session_id = "session-1"
+        adapter.snapshots = types.SimpleNamespace()
+        adapter.lock = threading.RLock()
+        adapter._checkpoint_lock = threading.RLock()
+        adapter.store = None
+        bus = mock.MagicMock()
+        adapter._bus = bus
+        return adapter, bus
+
+    @staticmethod
+    def _done_items(*sids: str) -> list[tuple]:
+        return [(sid, types.SimpleNamespace(done=True)) for sid in sids]
+
+    def test_resolve_turn_count_by_sid_counts_trailing_turns(self):
+        adapter, _ = self._adapter()
+        done = self._done_items("s1", "s2", "s3")
+        self.assertEqual(
+            adapter._resolve_turn_count(sid="s2", n=None, done_items=done, scope="done turns"),
+            2,
+        )
+
+    def test_resolve_turn_count_rejects_unknown_sid_low_n_and_missing_request(self):
+        adapter, _ = self._adapter()
+        done = self._done_items("s1")
+        with self.assertRaisesRegex(ValueError, "not found among done turns"):
+            adapter._resolve_turn_count(sid="gone", n=None, done_items=done, scope="done turns")
+        with self.assertRaisesRegex(ValueError, "at least 1"):
+            adapter._resolve_turn_count(sid=None, n=0, done_items=done, scope="done turns")
+        with self.assertRaisesRegex(ValueError, "either sid or n"):
+            adapter._resolve_turn_count(sid=None, n=None, done_items=done, scope="done turns")
+
+    def test_finalize_publishes_the_shared_success_event_shape(self):
+        adapter, bus = self._adapter()
+        result = adapter._finalize_rewind(
+            turn_count=2,
+            removed_sids=["s2", "s3"],
+            result={
+                "kept": 1,
+                "history_lines": 4,
+                "removed_history_entries": 6,
+            },
+            label="session rewind",
+        )
+        self.assertEqual(
+            result,
+            {
+                "removed_sids": ["s2", "s3"],
+                "kept": 1,
+                "history_lines": 4,
+                "removed_history_entries": 6,
+            },
+        )
+        bus.publish.assert_called_once_with(
+            "chat:rewound",
+            {
+                "removed_sids": ["s2", "s3"],
+                "kept": 1,
+                "history_lines": 4,
+                "session_id": "session-1",
+            },
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

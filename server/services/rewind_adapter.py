@@ -195,6 +195,72 @@ class RewindAdapter:
                     removed_sids.append(stream_id)
         return removed_sids
 
+    # ── shared planning / finalization (pure mechanics) ────────────
+    # Both rewind strategies select turns from completed stream snapshots the
+    # same way and publish the same success event; only the COMMIT differs
+    # (durable archive/worldline rewrite vs in-memory history truncation).
+    # Upper-bound validation stays per-strategy: durable counts come from the
+    # worldline after archive reconciliation, legacy counts from snapshots.
+
+    @staticmethod
+    def _completed_items(
+        all_items: list[tuple[str, Any]],
+    ) -> list[tuple[str, Any]]:
+        return [(s, snap) for s, snap in all_items if snap.done]
+
+    @staticmethod
+    def _resolve_turn_count(
+        *,
+        sid: str | None,
+        n: int | None,
+        done_items: list[tuple[str, Any]],
+        scope: str,
+    ) -> int:
+        """Resolve a sid/n rewind request to a turn count (shared semantics)."""
+        if sid:
+            matches = [
+                index
+                for index, (stream_id, _snap) in enumerate(done_items)
+                if stream_id == sid
+            ]
+            if not matches:
+                raise ValueError(f"sid {sid!r} not found among {scope}")
+            return len(done_items) - matches[0]
+        if n is not None:
+            if n < 1:
+                raise ValueError("n must be at least 1")
+            return n
+        raise ValueError("either sid or n required")
+
+    def _drop_snapshots(self, removed_sids: list[str]) -> None:
+        for stream_id in removed_sids:
+            self.snapshots.pop(stream_id, None)
+
+    def _finalize_rewind(
+        self,
+        *,
+        turn_count: int,
+        removed_sids: list[str],
+        result: dict,
+        label: str,
+    ) -> dict:
+        """Publish the shared success event and log line after either commit."""
+        out = {"removed_sids": removed_sids, **result}
+        self._bus.publish("chat:rewound", {
+            "removed_sids": removed_sids,
+            "kept": out["kept"],
+            "history_lines": out["history_lines"],
+            "session_id": self.session_id,
+        })
+        log.info(
+            "%s: dropped %d turn(s), removed %d history entries, sids=%s",
+            label,
+            turn_count,
+            out["removed_history_entries"],
+            removed_sids,
+        )
+        return out
+
     def rewind_session_turns(
         self, *, sid: str | None = None, n: int | None = None
     ) -> dict:
@@ -211,28 +277,13 @@ class RewindAdapter:
                 self.lock = lock
             with lock:
                 all_items = self.snapshots.items()
-                done_items = [
-                    (stream_id, snap)
-                    for stream_id, snap in all_items
-                    if snap.done
-                ]
-                if sid:
-                    matches = [
-                        index
-                        for index, (stream_id, _snap) in enumerate(done_items)
-                        if stream_id == sid
-                    ]
-                    if not matches:
-                        raise ValueError(
-                            f"sid {sid!r} not found among current runtime turns"
-                        )
-                    turn_count = len(done_items) - matches[0]
-                elif n is not None:
-                    if n < 1:
-                        raise ValueError("n must be at least 1")
-                    turn_count = n
-                else:
-                    raise ValueError("either sid or n required")
+                done_items = self._completed_items(all_items)
+                turn_count = self._resolve_turn_count(
+                    sid=sid,
+                    n=n,
+                    done_items=done_items,
+                    scope="current runtime turns",
+                )
 
             store = self.store
             if store is None:
@@ -241,24 +292,14 @@ class RewindAdapter:
 
             with lock:
                 removed_sids = self._removed_sids_after(all_items, done_items, turn_count)
-                for stream_id in removed_sids:
-                    self.snapshots.pop(stream_id, None)
+                self._drop_snapshots(removed_sids)
 
-            result = {"removed_sids": removed_sids, **result}
-
-        self._bus.publish("chat:rewound", {
-            "removed_sids": removed_sids,
-            "kept": result["kept"],
-            "history_lines": result["history_lines"],
-            "session_id": self.session_id,
-        })
-        log.info(
-            "session rewind: dropped %d turn(s), removed %d history entries, sids=%s",
-            turn_count,
-            result["removed_history_entries"],
-            removed_sids,
+        return self._finalize_rewind(
+            turn_count=turn_count,
+            removed_sids=removed_sids,
+            result=result,
+            label="session rewind",
         )
-        return result
 
     def rewind_turns(self, *, sid: str | None = None, n: int | None = None) -> dict:
         """Drop completed turns from the live or durable GA history."""
@@ -272,21 +313,18 @@ class RewindAdapter:
                 )
 
             all_items = self.snapshots.items()
-            done_items = [(s, snap) for s, snap in all_items if snap.done]
+            done_items = self._completed_items(all_items)
             if not done_items:
                 raise ValueError("no completed turns to rewind")
 
-            if sid:
-                idxs = [i for i, (s, _) in enumerate(done_items) if s == sid]
-                if not idxs:
-                    raise ValueError(f"sid {sid!r} not found among done turns")
-                turn_count = len(done_items) - idxs[0]
-            elif n is not None:
-                if n < 1 or n > len(done_items):
-                    raise ValueError(f"n out of range 1..{len(done_items)}")
-                turn_count = n
-            else:
-                raise ValueError("either sid or n required")
+            turn_count = self._resolve_turn_count(
+                sid=sid,
+                n=n,
+                done_items=done_items,
+                scope="done turns",
+            )
+            if n is not None and n > len(done_items):
+                raise ValueError(f"n out of range 1..{len(done_items)}")
 
             backend_history = self.agent.llmclient.backend.history
             user_turn_idxs: list[int] = []
@@ -323,8 +361,7 @@ class RewindAdapter:
             backend_history[:] = backend_history[:cut_at]
 
             removed_sids = self._removed_sids_after(all_items, done_items, turn_count)
-            for stream_id in removed_sids:
-                self.snapshots.pop(stream_id, None)
+            self._drop_snapshots(removed_sids)
 
             try:
                 self.agent.history.append(f"[USER]: /rewind {turn_count}")
@@ -335,22 +372,14 @@ class RewindAdapter:
                 )
 
             result = {
-                "removed_sids": removed_sids,
                 "kept": len(self.snapshots.values()),
                 "history_lines": len(backend_history),
                 "removed_history_entries": removed_lines,
             }
 
-        self._bus.publish("chat:rewound", {
-            "removed_sids": removed_sids,
-            "kept": result["kept"],
-            "history_lines": result["history_lines"],
-            "session_id": self.session_id,
-        })
-        log.info(
-            "rewind: dropped %d turn(s), removed %d history entries, sids=%s",
-            turn_count,
-            removed_lines,
-            removed_sids,
+        return self._finalize_rewind(
+            turn_count=turn_count,
+            removed_sids=removed_sids,
+            result=result,
+            label="rewind",
         )
-        return result
