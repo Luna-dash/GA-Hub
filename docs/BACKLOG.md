@@ -114,8 +114,14 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
       已咬过一次（misfire 只补了一边）——已抽 scheduler_domain_base.py 的
       SchedulerDomainBase 模板方法基类（06f819f），骨架单份、差异成钩子；
       测试无需收缩（既有用例已按双域参数化，全部原样通过，继续当契约锁）
-- [ ] routes/mykey.py 674 行是"穿着路由皮的服务"（备份轮转/原子写/解释器
-      探测/子进程编排内联）——抽 services/mykey_service.py
+- [x] routes/mykey.py 674 行是"穿着路由皮的服务"（备份轮转/原子写/解释器
+      探测/子进程编排内联）——已抽 services/mykey_service.py（分支 D-4）。
+      路由缩为 HTTP 适配层：pydantic 请求模型 + to_thread 线程投递 +
+      MykeyHttpError→HTTPException 一对一翻译；服务层零 fastapi 依赖
+      （家规）。四处 API docstring 留在路由上，OpenAPI 契约逐字节不变；
+      死 codec 别名（_render_dict/_render_value/_render_assign）删除，
+      test_render_dict 直连 mykey_codec；测试的模块级 patch 全部改指服务
+      模块（与 BackgroundScheduler/bus 同一条 seam 规则）
 - [x] LLM ping——【2026-09-04 分析修正】UI 入口只有一个：MyKey 卡片"测 ping"
       （MyKey.tsx:374 → api.testMyKeySession → /api/mykey/sessions/{var}/test），
       routes/mykey.py:_test_session_sync 是唯一活实现。/api/llms/{idx}/test
