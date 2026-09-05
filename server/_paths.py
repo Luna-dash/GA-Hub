@@ -44,6 +44,9 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 
 from .constants import ENV_ENABLE_EXTERNAL_SITE_PATHS
@@ -98,6 +101,29 @@ def save_config(cfg: dict) -> None:
     tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), "utf-8")
     tmp.replace(CONFIG_FILE)
     reset_config_cache()
+
+
+# config.json read→mutate→write sequences need one process-wide lock:
+# load_config alone is cache-served and concurrency-safe, but two unlocked
+# RMW writers (llm preference vs chat retry vs GA root) could otherwise
+# clobber each other's fields with their own stale full-file snapshot.
+_config_rmw_lock = threading.RLock()
+
+
+@contextmanager
+def config_rmw_lock():
+    """Serialize read→mutate→write sequences on config.json."""
+    with _config_rmw_lock:
+        yield
+
+
+def update_config(mutate: Callable[[dict], None]) -> dict:
+    """Locked config.json read-modify-write; ``mutate`` edits the dict in place."""
+    with config_rmw_lock():
+        cfg = load_config()
+        mutate(cfg)
+        save_config(cfg)
+        return cfg
 
 
 # ── GA root validation & discovery ──────────────────────────────
@@ -394,14 +420,15 @@ def set_ga_root(path: str, python_path: str | None | object = _UNSET) -> Path:
     normalized_python = None
     if python_path is not _UNSET:
         normalized_python = validate_python_path(python_path if isinstance(python_path, str) else None)
-    cfg = load_config()
-    cfg["ga_root"] = str(p)
-    if python_path is not _UNSET:
-        if normalized_python:
-            cfg["python_path"] = normalized_python
-        else:
-            cfg.pop("python_path", None)
-    save_config(cfg)
+    def _apply(cfg: dict) -> None:
+        cfg["ga_root"] = str(p)
+        if python_path is not _UNSET:
+            if normalized_python:
+                cfg["python_path"] = normalized_python
+            else:
+                cfg.pop("python_path", None)
+
+    update_config(_apply)
     return p
 
 

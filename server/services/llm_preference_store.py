@@ -73,7 +73,7 @@ class LlmPreferenceStore:
         key = key.strip()
         if not key:
             raise ValueError("preferred llm key cannot be empty")
-        with self._lock:
+        with self._lock, _paths.config_rmw_lock():
             if self._key_cache == key:
                 return
             config = dict(self._load_config())
@@ -87,7 +87,7 @@ class LlmPreferenceStore:
 
     def set(self, index: int) -> None:
         index = int(index)
-        with self._lock:
+        with self._lock, _paths.config_rmw_lock():
             if self._cache == index:
                 return
             config = dict(self._load_config())
@@ -105,7 +105,7 @@ class LlmPreferenceStore:
         if not key:
             raise ValueError("preferred llm key cannot be empty")
         index = int(index)
-        with self._lock:
+        with self._lock, _paths.config_rmw_lock():
             if self._key_cache == key and self._cache == index:
                 return
             config = dict(self._load_config())

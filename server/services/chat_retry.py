@@ -305,10 +305,12 @@ def load_chat_retry_config() -> ChatRetryConfig:
 
 
 def save_chat_retry_config(payload: Mapping[str, Any] | None) -> ChatRetryConfig:
-    cfg = _paths.load_config()
     normalized = normalize_chat_retry_config(payload)
-    cfg[CONFIG_KEY] = normalized.to_dict()
-    _paths.save_config(cfg)
+
+    def _apply(cfg: dict) -> None:
+        cfg[CONFIG_KEY] = normalized.to_dict()
+
+    _paths.update_config(_apply)
     return normalized
 
 
