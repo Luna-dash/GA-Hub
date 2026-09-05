@@ -221,30 +221,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/agent/rewind": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Rewind
-         * @description Drop the most-recent completed turn(s) from live LLM history.
-         *
-         *     Body: ``{"sid": "..."}`` (preferred) or ``{"n": 1}``.
-         *     Refuses while agent is running. Broadcasts ``chat:rewound`` on the bus
-         *     for multi-tab sync.
-         */
-        post: operations["rewind_api_agent_rewind_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/agent/history": {
         parameters: {
             query?: never;
@@ -4294,39 +4270,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BtwResp"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rewind_api_agent_rewind_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RewindReq"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RewindResp"];
                 };
             };
             /** @description Validation Error */

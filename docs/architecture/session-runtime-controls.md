@@ -18,7 +18,8 @@ GA-Hub 当前同时存在两种 `AgentService` 实例域：
 - 普通消息：`POST /api/sessions/{session_id}/runs`
 - BTW：`POST /api/sessions/{session_id}/btw`
 - rewind：`POST /api/sessions/{session_id}/rewind`
-- legacy `/api/agent/btw` 和 `/api/agent/rewind` 保留兼容，但 LiveChat 不再使用。
+- legacy `/api/agent/btw` 保留兼容，但 LiveChat 不再使用；`/api/agent/rewind`
+  已删除（2026-09-05）——rewind 只保留会话级持久化路径。
 
 ## 2. 运行时所有权
 

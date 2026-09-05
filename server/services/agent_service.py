@@ -1091,16 +1091,18 @@ class AgentService:
 
     # ── rewind ───────────────────────────────────────────────────
     def rewind_turns(self, *, sid: str | None = None, n: int | None = None) -> dict:
-        """Drop the most-recent completed turn(s) from the live LLM history.
+        """Durably drop the most-recent completed turn(s) from this session.
 
         If ``sid`` is given, that turn AND all later turns are removed.
         Else ``n`` last done turns are removed (1 = undo last).
 
-        Mirrors GA TUI ``/rewind`` (frontends/tuiapp.py:_cmd_rewind) but
-        operates on GA-Hub's per-stream snapshots so the frontend can sync
-        precisely by stream_id. Refuses while the agent is running.
+        Session-scoped by design: the GA archive and worldline are rewritten
+        for THIS runtime only. The old global-agent in-memory rewind path is
+        gone (2026-09-05 decision — no caller since the session merge).
         """
-        return self._rewind().rewind_turns(sid=sid, n=n)
+        if not str(self.session_id or ""):
+            raise RuntimeError("rewind requires a session-scoped runtime")
+        return self._rewind().rewind_session_turns(sid=sid, n=n)
 
     # ── hooks ────────────────────────────────────────────────────
     def _on_turn_end(self, ctx: dict) -> None:

@@ -241,11 +241,10 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
 
 ### 决策项（未修，按伤害排序）
 
-- [ ] rewind durable 双全量 parse：rewind_adapter.py 同一次 rewind 里
-      sync_store（82 行）与 durable 提交（151/156 行）各自
-      parse_native_log 整个原生归档；sync_store 已返回解析好的 history，
-      durable 路径可复用（restore_plan 返回值与 store 均已持有树态）。
-      属性能优化非正确性问题，归档大时才可感知
+- [x] rewind "双全量 parse 可复用"——【已核实否决】restore_plan（GA fork）
+      内部就会重写投影日志，durable 提交里的第二次 parse 是"重写后验证"，
+      与 sync_store 的"重写前树校对"内容不同，复用会废掉原子性保证；
+      两个 parse 各司其职，非冗余（2026-09-05 亲读 fork 源码确认）
 - [ ] TS 生成契约新鲜度锁：api:generate（package.json:11）产出
       webui/src/api/generated/schema.ts，但无 CI/测试比对"生成物是否
       过期"（手改路由不重跑 generate 时 tsc/vitest 仍绿）。建议加一个

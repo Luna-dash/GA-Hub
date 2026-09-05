@@ -12,8 +12,6 @@ from ..schemas import (
     BtwResp,
     ChatRetryConfigReq,
     LLMSwitch,
-    RewindReq,
-    RewindResp,
 )
 from ..services.agent_service import AgentService
 from ..services.chat_retry import load_chat_retry_config, save_chat_retry_config
@@ -62,24 +60,6 @@ async def btw(req: BtwReq):
         return BtwResp(ok=False, error=str(e))
 
 
-@router.post("/api/agent/rewind", response_model=RewindResp)
-async def rewind(req: RewindReq):
-    """Drop the most-recent completed turn(s) from live LLM history.
-
-    Body: ``{"sid": "..."}`` (preferred) or ``{"n": 1}``.
-    Refuses while agent is running. Broadcasts ``chat:rewound`` on the bus
-    for multi-tab sync.
-    """
-    if not req.sid and not req.n:
-        raise HTTPException(status_code=400, detail="provide sid or n")
-    try:
-        # rewind_turns parses the whole native archive — worker thread, same
-        # as the session-scoped rewind route.
-        return await asyncio.to_thread(svc().rewind_turns, sid=req.sid, n=req.n)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=409, detail=str(e))
 
 
 @router.get("/api/agent/history")

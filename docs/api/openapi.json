@@ -329,45 +329,6 @@
         }
       }
     },
-    "/api/agent/rewind": {
-      "post": {
-        "summary": "Rewind",
-        "description": "Drop the most-recent completed turn(s) from live LLM history.\n\nBody: ``{\"sid\": \"...\"}`` (preferred) or ``{\"n\": 1}``.\nRefuses while agent is running. Broadcasts ``chat:rewound`` on the bus\nfor multi-tab sync.",
-        "operationId": "rewind_api_agent_rewind_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RewindReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RewindResp"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/agent/history": {
       "get": {
         "summary": "History",

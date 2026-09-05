@@ -93,6 +93,7 @@ class RewindTurnsTests(unittest.TestCase):
         AgentService = self.svc_mod.AgentService
         svc = object.__new__(AgentService)  # bypass __init__
         svc._lock = threading.RLock()
+        svc.session_id = ""
         svc._snapshots = OrderedDict()
         for sid, done in snapshots:
             snap = types.SimpleNamespace(done=done)
@@ -107,112 +108,28 @@ class RewindTurnsTests(unittest.TestCase):
         )
         return svc
 
-    # ── happy paths ────────────────────────────────────────────────
+    # ── session-path guards (the only rewind path since the legacy
+    #    global-agent in-memory branch was removed, 2026-09-05) ───────
 
-    def test_rewind_by_n_drops_last_turn(self):
-        history = [
-            _make_user_msg("u1"), _make_assistant("a1"),
-            _make_user_msg("u2"), _make_assistant("a2"),
-        ]
-        svc = self._make_svc(history, [("s1", True), ("s2", True)])
-
-        # Patch the module-level ``bus`` so publish doesn't spam a real bus.
-        with mock.patch.object(self.svc_mod, "bus", mock.MagicMock()) as fake_bus:
-            result = svc.rewind_turns(n=1)
-
-        self.assertEqual(result["removed_sids"], ["s2"])
-        self.assertEqual(result["kept"], 1)
-        self.assertEqual(result["history_lines"], 2)  # u1 + a1 only
-        self.assertEqual(result["removed_history_entries"], 2)
-        self.assertNotIn("s2", svc._snapshots)
-        self.assertIn("s1", svc._snapshots)
-        self.assertEqual(svc.agent.history, ["[USER]: /rewind 1"])
-        fake_bus.publish.assert_called_once()
-        topic, payload = fake_bus.publish.call_args[0]
-        self.assertEqual(topic, "chat:rewound")
-        self.assertEqual(payload["removed_sids"], ["s2"])
-
-    def test_rewind_by_sid_drops_that_turn_and_all_after(self):
-        history = [
-            _make_user_msg("u1"), _make_assistant("a1"),
-            _make_user_msg("u2"), _make_assistant("a2"),
-            _make_user_msg("u3"), _make_assistant("a3"),
-        ]
-        svc = self._make_svc(history, [
-            ("s1", True), ("s2", True), ("s3", True),
-        ])
-        with mock.patch.object(self.svc_mod, "bus", mock.MagicMock()):
-            result = svc.rewind_turns(sid="s2")
-
-        # s2 and s3 both gone, s1 kept.
-        self.assertEqual(result["removed_sids"], ["s2", "s3"])
-        self.assertEqual(list(svc._snapshots.keys()), ["s1"])
-        self.assertEqual(result["history_lines"], 2)
-
-    def test_rewind_skips_tool_result_messages(self):
-        # Real shape: u1, assistant-with-tool-use, tool_result (user role!), assistant final, u2, a2
-        # Only u1 and u2 should count as "real" user turns.
-        history = [
-            _make_user_msg("u1"),
-            _make_assistant("calling tool"),
-            _make_tool_result(),                     # role=user but tool_result → skip
-            _make_assistant("after tool"),
-            _make_user_msg("u2"),
-            _make_assistant("a2"),
-        ]
-        svc = self._make_svc(history, [("s1", True), ("s2", True)])
-
-        with mock.patch.object(self.svc_mod, "bus", mock.MagicMock()):
-            result = svc.rewind_turns(n=1)
-
-        # Cut at u2 (index 4) → keep first 4 entries.
-        self.assertEqual(result["history_lines"], 4)
-        self.assertEqual(result["removed_history_entries"], 2)
-        self.assertEqual(result["removed_sids"], ["s2"])
-
-    # ── error paths ────────────────────────────────────────────────
-
-    def test_rewind_refuses_while_running(self):
-        svc = self._make_svc([_make_user_msg("u1"), _make_assistant("a1")],
-                             [("s1", True)])
+    def test_session_rewind_refuses_while_running(self):
+        svc = self._make_svc(
+            [_make_user_msg("u1"), _make_assistant("a1")],
+            [("s1", True)],
+        )
+        svc.session_id = "session-A"
         svc.agent.is_running = True
         with self.assertRaises(RuntimeError) as cm:
             svc.rewind_turns(n=1)
         self.assertIn("running", str(cm.exception).lower())
 
-    def test_rewind_with_no_done_turns_raises(self):
-        svc = self._make_svc([], [("s1", False)])  # snapshot exists but not done
-        with self.assertRaises(ValueError) as cm:
+    def test_global_runtime_rewind_is_refused(self):
+        svc = self._make_svc(
+            [_make_user_msg("u1"), _make_assistant("a1")],
+            [("s1", True)],
+        )
+        with self.assertRaises(RuntimeError) as cm:
             svc.rewind_turns(n=1)
-        self.assertIn("no completed turns", str(cm.exception).lower())
-
-    def test_rewind_n_out_of_range(self):
-        svc = self._make_svc(
-            [_make_user_msg("u1"), _make_assistant("a1")],
-            [("s1", True)],
-        )
-        with mock.patch.object(self.svc_mod, "bus", mock.MagicMock()):
-            with self.assertRaises(ValueError):
-                svc.rewind_turns(n=2)
-            with self.assertRaises(ValueError):
-                svc.rewind_turns(n=0)
-
-    def test_rewind_unknown_sid_raises(self):
-        svc = self._make_svc(
-            [_make_user_msg("u1"), _make_assistant("a1")],
-            [("s1", True)],
-        )
-        with self.assertRaises(ValueError) as cm:
-            svc.rewind_turns(sid="nope")
-        self.assertIn("not found", str(cm.exception).lower())
-
-    def test_rewind_requires_sid_or_n(self):
-        svc = self._make_svc(
-            [_make_user_msg("u1"), _make_assistant("a1")],
-            [("s1", True)],
-        )
-        with self.assertRaises(ValueError):
-            svc.rewind_turns()
+        self.assertIn("session-scoped", str(cm.exception))
 
     def test_session_rewind_rewrites_archive_and_working_memory(self):
         history = [
@@ -442,13 +359,13 @@ class RewindAdapterSharedPlanningTests(unittest.TestCase):
 
 
 class RewindWithRealProjectionTests(unittest.TestCase):
-    """Regression: the shared snapshot-drop helper must work against the real
+    """Regression: the rewind flow must work against the real
     ``ChatStreamProjection`` store, not only plain dicts.
 
     ``ChatStreamProjection.pop(stream_id)`` takes no default argument — a
-    ``pop(sid, None)`` call raised ``TypeError`` in production, killing both
-    rewind endpoints *after* history truncation (legacy) or worldline rewrite
-    (durable) but *before* the ``chat:rewound`` event.
+    ``pop(sid, None)`` call raised ``TypeError`` in production, killing the
+    rewind endpoint *after* the worldline rewrite but *before* the
+    ``chat:rewound`` event.
     """
 
     @classmethod
@@ -461,6 +378,7 @@ class RewindWithRealProjectionTests(unittest.TestCase):
         AgentService = self.svc_mod.AgentService
         svc = object.__new__(AgentService)
         svc._lock = threading.RLock()
+        svc.session_id = ""
         svc._snapshots = ChatStreamProjection()
         for sid, done in snapshots:
             svc._snapshots.add(
@@ -472,7 +390,10 @@ class RewindWithRealProjectionTests(unittest.TestCase):
             is_running=False,
             llmclient=types.SimpleNamespace(backend=backend),
             history=[],
+            log_path="/tmp/model_responses_session-real.txt",
+            handler=types.SimpleNamespace(history_info=[], working={}),
         )
+        svc._rewind_lock = threading.RLock()
         return svc
 
     def test_rewind_by_n_drops_last_turn_against_real_projection(self):
@@ -481,14 +402,58 @@ class RewindWithRealProjectionTests(unittest.TestCase):
             _make_user_msg("u2"), _make_assistant("a2"),
         ]
         svc = self._make_svc(history, [("s1", True), ("s2", True)])
+        svc.session_id = "session-real"
 
-        with mock.patch.object(self.svc_mod, "bus", mock.MagicMock()):
+        class FakeStore:
+            head = "turn-2"
+
+            def __init__(self):
+                self.reconciled = None
+                self.saved = 0
+
+            def linear_path(self):
+                return ["turn-1", "turn-2"]
+
+            def first_user_message(self, node_id):
+                return {"text": node_id}
+
+            def _msg_user_text(self, message):
+                return message["text"]
+
+            def reconcile(self, rows):
+                self.reconciled = rows
+
+            def save(self):
+                self.saved += 1
+
+            def rewind_head(self, node_id):
+                pass
+
+        store = FakeStore()
+        svc._rewind_store = store
+        planned = history[:2]
+        fake_continue = types.ModuleType("frontends.continue_cmd")
+        fake_continue.parse_native_log = lambda _path, allow_empty: list(planned)
+        fake_worldline = types.ModuleType("frontends.worldline")
+        fake_worldline.restore_plan = lambda *_args, **_kwargs: {
+            "history": list(planned), "hist_info": None, "key_info": None,
+            "target": "turn-1",
+        }
+        fake_worldline.rewrite_projection = mock.MagicMock()
+        modules = {
+            "frontends": types.ModuleType("frontends"),
+            "frontends.continue_cmd": fake_continue,
+            "frontends.worldline": fake_worldline,
+        }
+        with mock.patch.dict(sys.modules, modules),              mock.patch.object(self.svc_mod, "bus", mock.MagicMock()):
             result = svc.rewind_turns(n=1)
 
         self.assertEqual(result["removed_sids"], ["s2"])
         self.assertEqual(result["kept"], 1)
         self.assertIsNone(svc._snapshots.get("s2"))
         self.assertIsNotNone(svc._snapshots.get("s1"))
+        self.assertEqual(svc.agent.llmclient.backend.history, planned)
+        fake_worldline.rewrite_projection.assert_not_called()
 
     def test_drop_snapshots_tolerates_missing_ids_on_real_projection(self):
         from server.services.chat_stream_projection import ChatStreamProjection

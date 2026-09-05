@@ -273,12 +273,22 @@ def test_notify_send_runs_in_worker_thread() -> None:
     assert result == {"ok": True, "backend": "test"}
 
 
-def test_agent_rewind_runs_in_worker_thread() -> None:
-    service = SimpleNamespace(rewind_turns=lambda *_a, **_k: _slow_result({"ok": True}))
-    with mock.patch.object(agent, "svc", return_value=service):
-        result = asyncio.run(_run_with_probe(agent.rewind(RewindReq(n=1))))
+def test_session_rewind_runs_in_worker_thread() -> None:
+    coordinator = SimpleNamespace(
+        rewind=lambda *_a, **_k: _slow_result({"kept": 1, "history_lines": 2,
+                                               "removed_history_entries": 2,
+                                               "removed_sids": ["s2"]}))
+    with (
+        mock.patch.object(sessions, "_session", return_value={"id": "s1"}),
+        mock.patch.object(sessions, "_coordinator", coordinator),
+        mock.patch.object(sessions, "_get_coordinator", return_value=coordinator),
+        mock.patch.object(sessions, "_store", SimpleNamespace(touch=mock.Mock())),
+    ):
+        result = asyncio.run(
+            _run_with_probe(sessions.session_rewind("s1", RewindReq(n=1)))
+        )
 
-    assert result == {"ok": True}
+    assert result["kept"] == 1
 
 
 def test_agent_llms_reload_runs_in_worker_thread() -> None:
