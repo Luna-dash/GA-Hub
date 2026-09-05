@@ -46,16 +46,17 @@ log = logging.getLogger(__name__)
 
 _AUTO_CONTINUE_MAX = 2
 
-# Unattended-producer source vocabulary, kept side by side so the asymmetry
-# stays visible: retries treat both scheduled spellings equally
-# (SCHEDULED_RETRY_SOURCES), auto-continue only knows "scheduled_task" —
-# scheduled-chat runs (source="scheduled") do NOT auto-continue past
-# truncation markers today. Unifying that is a product decision (BACKLOG).
+# Unattended-producer source vocabulary — one set serves both auto-resume
+# mechanisms (error retry and truncation auto-continue). 2026-09-05 product
+# decision: scheduled messages and scheduled tasks get equal treatment; an
+# unattended producer's output must be complete, and "the user will come
+# back and continue manually" is exactly what a scheduled run exists to
+# avoid. Cost is bounded by the auto-continue cap below.
 RETRY_ELIGIBLE_SOURCES = frozenset({
     "user", "webui", "chat_error_retry", "auto_continue",
     "scheduled_task", "scheduled", "autonomous", "reflect",
 })
-AUTO_CONTINUE_SOURCES = RETRY_ELIGIBLE_SOURCES - {"scheduled"}
+AUTO_CONTINUE_SOURCES = RETRY_ELIGIBLE_SOURCES
 _STREAM_MIRROR_QUEUE_CAPACITY = 2
 _AUTO_CONTINUE_MARKERS = ("[!!! 流异常中断", "[!!! Response truncated: max_tokens")
 _AUTO_CONTINUE_PROMPT = "继续上一条回复，从中断处继续，不要重复已经完成的内容。"
@@ -736,6 +737,10 @@ class AgentService:
                 if "done" in item:
                     content = item["done"]
                     h.final_text = content
+                    # Snapshot writes use AgentService._lock; readers on the
+                    # rewind path hold a different lock and are only safe
+                    # because rewind is gated to idle sessions (see
+                    # RewindAdapter.rewind_session_turns).
                     with self._lock:
                         snap.content = content
                         snap.done = True

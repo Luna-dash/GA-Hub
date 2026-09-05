@@ -280,6 +280,13 @@ class RewindAdapter:
                 lock = threading.RLock()
                 self.lock = lock
             with lock:
+                # Concurrency contract (2026-09-05 decision): snapshot objects
+                # are written by fanout threads under AgentService._lock while
+                # this reader holds a DIFFERENT lock — that is safe only
+                # because the is_running check above (backed by the
+                # coordinator's exclusive rewind gate) guarantees no stream
+                # is live here. Any future "rewind while running" feature
+                # must first unify the two locks.
                 all_items = self.snapshots.items()
                 done_items = self._completed_items(all_items)
                 turn_count = self._resolve_turn_count(

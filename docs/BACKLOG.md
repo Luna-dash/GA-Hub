@@ -308,9 +308,10 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
 - [ ] conductor final POST 不吃 operation_id 重放：重试一条已成功的
       final 撞 assert_ready_for_final → 422（engine 侧 1360 已优雅忽略，
       hub 侧没有）；修法是 final 分支复用 _action_operations 缓存
-- [ ] source="scheduled"（定时消息）不参与 auto-continue，而
-      scheduled_task/autonomous 参与——retry 侧两者同权，语义不对称；
-      统一与否是产品决策（无人值守会话是否自动续传/消耗 token）
+- [x] source="scheduled"（定时消息）不参与 auto-continue——【已定：放开】
+      2026-09-05 决策：定时消息与定时任务同权，续传与重试覆盖全部无人
+      值守 source（无人值守的产出必须完整，"用户可手动续"正是定时消息
+      要避免的）；成本由续传上限兜底（agent_service 词汇注释注明）
 - [ ] AgentService 仍有 6 处 object.__new__ 测试实例 + shutdown/_fanout/
       _rewind 的 getattr 回填 shim——比照 conductor for_tests() 先例
       （a3eefde）做正规测试构造器迁移，触及 5 个测试文件
@@ -320,8 +321,9 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
 - [ ] _paths config 读-改-写无进程内锁：llm_preference 与 chat-retry
       配置并发写可互相覆盖字段；修法是提供 update_config(mutator)
       锁内组合读改写
-- [ ] ChatSnapshot 写侧（AgentService._lock）与读侧
-      （ChatStreamProjection._lock）分属两把锁，当前仅靠 rewind 的
-      coordinator 互斥兜底；观察项，如 rewind 并发化需先统一锁域
+- [x] ChatSnapshot 双锁域——【已定：维持现状 + 显性契约】2026-09-05
+      决策：无"边跑边撤回"计划，双锁由 rewind 的 is_running 门 +
+      coordinator 互斥兜底即可；读侧与写侧注释声明"流式期间禁止无锁
+      访问，做并发撤回前必须先统一锁域"
 - [ ] conductor 多个路由端点无 docstring（OpenAPI description 缺失，
       agent.py 等同样稀疏，repo 现象非 conductor 独有）
