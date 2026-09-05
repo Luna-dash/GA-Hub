@@ -34,6 +34,7 @@ from ..services.archive_messages import (
     invalidate_archive_catalogue,
     list_archive_sessions,
     read_ui_messages,
+    restore_ga_archive,
     refresh_archive_catalogue,
 )
 from ..services.conversation_titles import migrate_legacy_titles
@@ -167,9 +168,7 @@ def _ga_extract(path: str):
 
 def _restore_archive(agent, path: str):
     """Run GA's blocking restore and archive projection off the event loop."""
-    from frontends.continue_cmd import restore
-
-    restore(agent, path)
+    restore_ga_archive(agent, path)
     return _ga_extract(path)
 
 

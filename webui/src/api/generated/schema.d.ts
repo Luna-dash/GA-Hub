@@ -827,7 +827,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Readme */
+        /**
+         * Get Readme
+         * @description Return the conductor API README (OpenAPI-documented).
+         */
         get: operations["get_readme_api_conductor_readme_get"];
         put?: never;
         post?: never;
@@ -864,7 +867,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Readme Topic */
+        /**
+         * Get Readme Topic
+         * @description Return one conductor README topic (OpenAPI-documented).
+         */
         get: operations["get_readme_topic_api_conductor_readme__topic__get"];
         put?: never;
         post?: never;
@@ -881,10 +887,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Chat */
+        /**
+         * Get Chat
+         * @description Return the last N conductor chat messages for hydration.
+         */
         get: operations["get_chat_api_conductor_chat_get"];
         put?: never;
-        /** Post Chat */
+        /**
+         * Post Chat
+         * @description Admit one chat message for the conductor and broadcast it.
+         */
         post: operations["post_chat_api_conductor_chat_post"];
         delete?: never;
         options?: never;
@@ -899,10 +911,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Subagents */
+        /**
+         * List Subagents
+         * @description Return the subagent pool snapshot the UI renders.
+         */
         get: operations["list_subagents_api_conductor_subagent_get"];
         put?: never;
-        /** Start Subagent */
+        /**
+         * Start Subagent
+         * @description Dispatch a new subagent through the service policy boundary.
+         */
         post: operations["start_subagent_api_conductor_subagent_post"];
         delete?: never;
         options?: never;
@@ -917,7 +935,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Workflows */
+        /**
+         * List Workflows
+         * @description Return the workflow tracker snapshot for the UI board.
+         */
         get: operations["list_workflows_api_conductor_workflow_get"];
         put?: never;
         post?: never;
@@ -940,7 +961,10 @@ export interface paths {
          */
         get: operations["get_subagent_api_conductor_subagent__sid__get"];
         put?: never;
-        /** Subagent Action */
+        /**
+         * Subagent Action
+         * @description Apply one verb (keyinfo/accept/rework/input/abort/...) to a worker.
+         */
         post: operations["subagent_action_api_conductor_subagent__sid__post"];
         delete?: never;
         options?: never;
@@ -955,7 +979,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Conductor Log */
+        /**
+         * Get Conductor Log
+         * @description Return the conductor engine event log.
+         */
         get: operations["get_conductor_log_api_conductor_log_get"];
         put?: never;
         post?: never;
@@ -996,7 +1023,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Status */
+        /**
+         * Get Status
+         * @description Return the conductor lifecycle plus pool counters.
+         */
         get: operations["get_status_api_conductor_status_get"];
         put?: never;
         post?: never;

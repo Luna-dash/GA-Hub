@@ -567,6 +567,18 @@ def _archive_contains_query(
         return False
 
 
+def restore_ga_archive(agent, path: str):
+    """Run GA's blocking archive restore — the single GA-frontend seam.
+
+    Both restore routes (agent sessions/{idx} and conversations/{cid}) go
+    through here so "which GA helper mutates the working history" has one
+    home next to the archive read/enumerate helpers.
+    """
+    from frontends.continue_cmd import restore
+
+    return restore(agent, path)
+
+
 def archive_contains(archive_path: str | Path, query: str) -> bool:
     """Bounded chunked raw-text search with a per-revision cache."""
     path = os.path.abspath(str(archive_path))

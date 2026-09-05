@@ -107,6 +107,7 @@ def _status_payload(service: ConductorService) -> dict:
 # ── readme / docs ────────────────────────────────────────────────────────────
 @router.get("/api/conductor/readme")
 async def get_readme() -> ConductorTextResp:
+    """Return the conductor API README (OpenAPI-documented)."""
     return {"content": svc().get_readme("api")}
 
 
@@ -122,6 +123,7 @@ async def update_conductor_settings(
 
 @router.get("/api/conductor/readme/{topic}")
 async def get_readme_topic(topic: str) -> ConductorTextResp:
+    """Return one conductor README topic (OpenAPI-documented)."""
     content = svc().get_readme(topic)
     if content is None:
         available = ", ".join(svc().get_readmes().keys())
@@ -132,11 +134,13 @@ async def get_readme_topic(topic: str) -> ConductorTextResp:
 # ── chat ─────────────────────────────────────────────────────────────────────
 @router.get("/api/conductor/chat")
 async def get_chat(last: int = Query(default=20, ge=1, le=200)) -> ConductorChatListResp:
+    """Return the last N conductor chat messages for hydration."""
     return {"items": svc().get_chat_messages(last=last)}
 
 
 @router.post("/api/conductor/chat")
 async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
+    """Admit one chat message for the conductor and broadcast it."""
     workflow = {}
     if body.request_id is not None:
         workflow["request_id"] = body.request_id
@@ -157,6 +161,7 @@ async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
 # ── subagents ────────────────────────────────────────────────────────────────
 @router.get("/api/conductor/subagent")
 async def list_subagents() -> ConductorSubagentListResp:
+    """Return the subagent pool snapshot the UI renders."""
     return {"items": svc().get_subagent_snapshot()}
 
 
@@ -164,6 +169,7 @@ async def list_subagents() -> ConductorSubagentListResp:
 async def list_workflows(
     last: int = Query(default=20, ge=1, le=100),
 ) -> ConductorWorkflowListResp:
+    """Return the workflow tracker snapshot for the UI board."""
     return {"items": svc().get_workflow_snapshot(limit=last)}
 
 
@@ -177,6 +183,7 @@ async def get_subagent(
 
 @router.post("/api/conductor/subagent")
 async def start_subagent(body: ConductorStartSubagent) -> ConductorSubagentInstructionResp:
+    """Dispatch a new subagent through the service policy boundary."""
     workflow = {"request_id": body.request_id} if body.request_id is not None else {}
     result = await _dispatch_through_engine(
         svc().start_subagent,
@@ -204,6 +211,7 @@ async def start_subagent(body: ConductorStartSubagent) -> ConductorSubagentInstr
 async def subagent_action(
     sid: str, body: ConductorSubagentAction
 ) -> ConductorSubagentActionResp:
+    """Apply one verb (keyinfo/accept/rework/input/abort/...) to a worker."""
     service = svc()
     if not service.pool.get(sid):
         raise HTTPException(404, "subagent not found")
@@ -237,6 +245,7 @@ async def subagent_action(
 # ── status / log ─────────────────────────────────────────────────────────────
 @router.get("/api/conductor/log")
 async def get_conductor_log() -> ConductorLogResp:
+    """Return the conductor engine event log."""
     return {"log": svc().get_conductor_log()}
 
 
@@ -257,6 +266,7 @@ async def get_conductor_journal(
 
 @router.get("/api/conductor/status")
 async def get_status() -> ConductorStatusResp:
+    """Return the conductor lifecycle plus pool counters."""
     service = svc()
     return _status_payload(service)
 

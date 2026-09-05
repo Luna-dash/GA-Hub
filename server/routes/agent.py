@@ -109,14 +109,12 @@ async def restore_session(idx: int):
 
 
 def _restore_session_sync(service: AgentService, idx: int) -> tuple[str, str] | None:
-    from frontends.continue_cmd import restore
-
-    from ..services.archive_messages import list_archive_sessions
+    from ..services.archive_messages import list_archive_sessions, restore_ga_archive
 
     sessions = list_archive_sessions()
     if idx < 0 or idx >= len(sessions):
         return None
-    return restore(service.agent, sessions[idx][0])
+    return restore_ga_archive(service.agent, sessions[idx][0])
 
 
 # ── LLMs ─────────────────────────────────────────────────────────

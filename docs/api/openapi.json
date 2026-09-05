@@ -1683,6 +1683,7 @@
     "/api/conductor/readme": {
       "get": {
         "summary": "Get Readme",
+        "description": "Return the conductor API README (OpenAPI-documented).",
         "operationId": "get_readme_api_conductor_readme_get",
         "responses": {
           "200": {
@@ -1740,6 +1741,7 @@
     "/api/conductor/readme/{topic}": {
       "get": {
         "summary": "Get Readme Topic",
+        "description": "Return one conductor README topic (OpenAPI-documented).",
         "operationId": "get_readme_topic_api_conductor_readme__topic__get",
         "parameters": [
           {
@@ -1779,6 +1781,7 @@
     "/api/conductor/chat": {
       "get": {
         "summary": "Get Chat",
+        "description": "Return the last N conductor chat messages for hydration.",
         "operationId": "get_chat_api_conductor_chat_get",
         "parameters": [
           {
@@ -1819,6 +1822,7 @@
       },
       "post": {
         "summary": "Post Chat",
+        "description": "Admit one chat message for the conductor and broadcast it.",
         "operationId": "post_chat_api_conductor_chat_post",
         "requestBody": {
           "required": true,
@@ -1857,6 +1861,7 @@
     "/api/conductor/subagent": {
       "get": {
         "summary": "List Subagents",
+        "description": "Return the subagent pool snapshot the UI renders.",
         "operationId": "list_subagents_api_conductor_subagent_get",
         "responses": {
           "200": {
@@ -1873,6 +1878,7 @@
       },
       "post": {
         "summary": "Start Subagent",
+        "description": "Dispatch a new subagent through the service policy boundary.",
         "operationId": "start_subagent_api_conductor_subagent_post",
         "requestBody": {
           "content": {
@@ -1911,6 +1917,7 @@
     "/api/conductor/workflow": {
       "get": {
         "summary": "List Workflows",
+        "description": "Return the workflow tracker snapshot for the UI board.",
         "operationId": "list_workflows_api_conductor_workflow_get",
         "parameters": [
           {
@@ -2003,6 +2010,7 @@
       },
       "post": {
         "summary": "Subagent Action",
+        "description": "Apply one verb (keyinfo/accept/rework/input/abort/...) to a worker.",
         "operationId": "subagent_action_api_conductor_subagent__sid__post",
         "parameters": [
           {
@@ -2052,6 +2060,7 @@
     "/api/conductor/log": {
       "get": {
         "summary": "Get Conductor Log",
+        "description": "Return the conductor engine event log.",
         "operationId": "get_conductor_log_api_conductor_log_get",
         "responses": {
           "200": {
@@ -2122,6 +2131,7 @@
     "/api/conductor/status": {
       "get": {
         "summary": "Get Status",
+        "description": "Return the conductor lifecycle plus pool counters.",
         "operationId": "get_status_api_conductor_status_get",
         "responses": {
           "200": {

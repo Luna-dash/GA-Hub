@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import runpy
+import shutil
+import subprocess
 import sys
 import unittest
 from tempfile import TemporaryDirectory
@@ -25,6 +28,24 @@ class GeneratedApiContractTests(unittest.TestCase):
             checked_in = json.load(handle)
 
         self.assertEqual(app.openapi(), checked_in)
+
+    def test_generated_typescript_contract_is_fresh(self) -> None:
+        """schema.d.ts must match docs/api/openapi.json (webui checker)."""
+        webui = ROOT / "webui"
+        npm = shutil.which("npm")
+        if npm is None or not (webui / "node_modules" / "openapi-typescript").exists():
+            self.skipTest("webui toolchain not installed")
+        run = subprocess.run(
+            [npm, "run", "api:check"],
+            cwd=webui,
+            capture_output=True,
+            text=True,
+            shell=os.name == "nt",
+            encoding="utf-8",
+            errors="replace",
+        )
+        detail = "api contract stale:" + chr(10) + run.stdout + run.stderr
+        self.assertEqual(run.returncode, 0, detail)
 
     def test_exporter_refuses_setup_mode_document(self) -> None:
         script = runpy.run_path(str(ROOT / "scripts" / "export_openapi.py"))
