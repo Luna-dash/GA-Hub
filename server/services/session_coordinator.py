@@ -267,6 +267,11 @@ class SessionCoordinator:
         """
         def _release() -> bool:
             runtime = self._runtimes.pop(session_id, None)
+            # The terminal state goes with the runtime: without this,
+            # completed/failed states accumulate for every session ever run
+            # in the process (session_snapshot re-defaults on the miss).
+            with self._lock:
+                self._states.pop(session_id, None)
             if runtime is not None and shutdown is not None:
                 shutdown(runtime)
             if after_release is not None:

@@ -39,6 +39,21 @@ def _shared_store_lock(path: Path) -> threading.RLock:
         return _store_locks.setdefault(key, threading.RLock())
 
 
+# Per-path parsed-document cache shared by every store instance on the same
+# file: sessions.json is read on every submit/list/touch, and a full
+# json.loads per call is the last uncached hot read in the hub. Keyed on
+# (mtime_ns, size); single-process writes keep it coherent (all writers go
+# through _write under the shared lock, which refreshes the cache in place).
+_store_cache_guard = threading.Lock()
+_store_caches: dict[str, dict[str, Any]] = {}
+
+
+def _cache_slot(path: Path) -> dict[str, Any]:
+    key = os.path.normcase(str(path.resolve()))
+    with _store_cache_guard:
+        return _store_caches.setdefault(key, {"sig": None, "data": None})
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -52,12 +67,27 @@ class SessionMetadataStore:
         self.path = self.base_dir / "sessions.json"
         self._lock = _shared_store_lock(self.path)
 
+    def _signature(self) -> tuple[int, int] | None:
+        try:
+            st = self.path.stat()
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
     def _read(self) -> dict[str, Any]:
+        cache = _cache_slot(self.path)
+        sig = self._signature()
+        if sig is not None and cache["sig"] == sig and cache["data"] is not None:
+            return cache["data"]
         if not self.path.exists():
+            cache["sig"] = None
+            cache["data"] = None
             return {"schema_version": 1, "sessions": []}
         data = json.loads(self.path.read_text("utf-8"))
         if data.get("schema_version") not in {1, 2} or not isinstance(data.get("sessions"), list):
             raise ValueError("unsupported session metadata format")
+        cache["sig"] = sig
+        cache["data"] = data
         return data
 
     def _write(self, data: dict[str, Any]) -> None:
@@ -69,6 +99,19 @@ class SessionMetadataStore:
                 encoding="utf-8",
             )
             os.replace(tmp, self.path)
+            # Refresh the shared cache with what we just wrote so the next
+            # read (this store or a sibling instance) skips the re-parse.
+            cache = _cache_slot(self.path)
+            cache["sig"] = self._signature()
+            cache["data"] = data
+        except BaseException:
+            # _read hands out the cached dict and callers mutate it in place
+            # before writing — a failed write must not leave the mutated
+            # document serving as truth.
+            cache = _cache_slot(self.path)
+            cache["sig"] = None
+            cache["data"] = None
+            raise
         finally:
             try:
                 tmp.unlink(missing_ok=True)
