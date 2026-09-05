@@ -284,6 +284,7 @@ async def delete_conversation(cid: str):
                 if current_binding and current_binding["id"] != bound_session["id"]:
                     raise HTTPException(409, {
                         "code": "archive_binding_changed",
+                        "detail": "该归档的绑定会话已变化，请刷新后重试。",
                         "session_id": current_binding["id"],
                     })
                 _unlink_archive(cid, path)

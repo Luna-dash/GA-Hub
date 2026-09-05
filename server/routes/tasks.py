@@ -38,7 +38,12 @@ async def list_schedules():
 @router.post("/schedules", response_model=TaskScheduleResp)
 async def upsert_schedule(req: TaskScheduleUpsert):
     payload = req.model_dump()
-    s = await asyncio.to_thread(lambda: svc().upsert(payload))
+    try:
+        s = await asyncio.to_thread(lambda: svc().upsert(payload))
+    except ValueError as exc:
+        # Invalid cron expressions are rejected before persistence (they
+        # used to answer 200 and then never fire).
+        raise HTTPException(422, str(exc)) from exc
     return s.to_dict()
 
 

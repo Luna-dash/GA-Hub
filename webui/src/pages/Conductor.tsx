@@ -19,7 +19,7 @@ import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
 import { toast } from '@/stores/toastStore'
 import { writeClipboard } from '@/utils/clipboard'
-import { structuredErrorDetailFromError } from '@/utils/sessionUi'
+import { errorMessageFromError, structuredErrorDetailFromError } from '@/utils/sessionUi'
 
 const scrollMemory: { chatTop: number | null } = {
   chatTop: null,
@@ -457,7 +457,9 @@ export default function Conductor() {
       toast.success('Conductor 已启动，可继续处理任务')
     } catch (err) {
       console.error('startConductor failed', err)
-      toast.error('启动 Conductor 失败，请稍后重试。')
+      // The backend sends actionable detail (bad llm index 422, engine
+      // 502/503) — surface it instead of a fixed retry line.
+      toast.error(errorMessageFromError(err, '启动 Conductor 失败，请稍后重试。'))
     } finally {
       setIsSending(false)
     }
@@ -488,7 +490,9 @@ export default function Conductor() {
         toast.error('机器验收未通过，已展示证据；可人工核对后强制通过。')
       } else {
         console.error('subagent action failed', action, sid, err)
-        toast.error(detail?.error || '操作失败，请稍后重试。')
+        // rework's 409 carries the engine reason as a STRING detail;
+        // structuredErrorDetailFromError only unwraps objects.
+        toast.error(errorMessageFromError(err, '操作失败，请稍后重试。'))
       }
     } finally {
       setBusySid(null)

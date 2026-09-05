@@ -357,6 +357,13 @@ class SchedulerDomainBase:
             allowed = {f.name for f in self.schedule_cls.__dataclass_fields__.values()}
             clean = {k: v for k, v in base.items() if k in allowed}
             sch = self.schedule_cls(**clean)
+            if sch.enabled and sch.type == "cron":
+                # Validate BEFORE persisting: a silently uninstalled cron job
+                # used to answer 200 and then never fire.
+                try:
+                    CronTrigger.from_crontab(sch.cron, timezone=self._tz) if self._tz else CronTrigger.from_crontab(sch.cron)
+                except Exception as exc:
+                    raise ValueError(f"invalid cron expression {sch.cron!r}: {exc}") from exc
             self.schedules[sid] = sch
             self._persist()
             self._install_job(sch)

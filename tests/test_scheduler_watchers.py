@@ -304,3 +304,12 @@ def test_timed_out_shutdown_keeps_inflight_fire_admissible(
             time.sleep(0.01)
         assert service._watchers.active_count == 0
         assert service.shutdown(timeout=1) is True
+
+def test_upsert_rejects_invalid_cron_before_persisting(tmp_path):
+    from server.services.task_scheduler import TaskScheduler
+
+    sched = TaskScheduler(channel=mock.Mock(), scheduler_runtime=mock.Mock())
+    with pytest.raises(ValueError, match="invalid cron"):
+        sched.upsert({"name": "bad", "type": "cron", "cron": "not-a-cron", "prompt": "x"})
+    # Seeded defaults exist; the rejected schedule must not be among them.
+    assert all(row["name"] != "bad" for row in sched.list())
