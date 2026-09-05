@@ -246,6 +246,18 @@ def _llm_membership_metadata(backends: list[object | None]) -> list[dict]:
     return rows
 
 
+class _InertAgent:
+    """Stand-in for GA's agent inside for_tests(); tests swap in their own."""
+
+    def __init__(self) -> None:
+        self.inc_out = False
+        self.verbose = False
+        self.last_reply_time = int(time.time())
+        self._turn_end_hooks: dict = {}
+        self.history: list = []
+        self.is_running = False
+
+
 class AgentService:
     _instance: "AgentService | None" = None
     _SNAPSHOT_CAP = 20  # keep last N submissions for reconnect replay
@@ -259,6 +271,7 @@ class AgentService:
     ) -> None:
         # Patch /continue and /new before instantiating
         install_continue(GeneraticAgent)
+        self._init_fields()
         self.agent = agent if agent is not None else GeneraticAgent()
         LlmRegistry.mark_agent_current(self.agent)
         self.session_id = session_id
@@ -266,6 +279,39 @@ class AgentService:
         # Default to incremental output for WS streaming
         self.agent.inc_out = False
         self.agent.verbose = False
+
+        # last_reply_time may be missing on older agentmain.py — patch defensively.
+        if not hasattr(self.agent, "last_reply_time"):
+            self.agent.last_reply_time = int(time.time())
+
+        # Wire turn_end_hook to broadcast events
+        if not hasattr(self.agent, "_turn_end_hooks"):
+            self.agent._turn_end_hooks = {}
+        self.agent._turn_end_hooks["webui"] = self._on_turn_end
+
+        if self._manage_global_preference:
+            self._wrap_next_llm_with_persistence()
+            self._restore_preferred_llm()
+
+    @classmethod
+    def for_tests(cls) -> "AgentService":
+        """Fully-initialized service with an inert stub agent — no GA wiring.
+
+        The real __init__ installs GA's /continue patch, marks the LLM
+        registry, wraps next_llm and restores the persisted preference.
+        Tests that exercise service mechanics use this instead of
+        ``object.__new__`` so production code never needs getattr backfills
+        for missing fields (same contract as ConductorService.for_tests).
+        """
+        service = cls.__new__(cls)
+        service.agent = _InertAgent()
+        service._init_fields()
+        return service
+
+    def _init_fields(self) -> None:
+        """Every instance field except ``self.agent`` (constructor-injected)."""
+        self.session_id = ""
+        self._manage_global_preference = False
         self._streams: dict[str, StreamHandle] = {}
         # Per-stream UI snapshot (LRU-capped) for replay on reconnect
         self._snapshots = ChatStreamProjection(capacity=self._SNAPSHOT_CAP)
@@ -280,23 +326,10 @@ class AgentService:
         self._run_thread: threading.Thread | None = None
         # ── conversation title ────────────────────────────────────
         self._current_title: str = ""
-
-        # last_reply_time may be missing on older agentmain.py — patch defensively.
-        if not hasattr(self.agent, "last_reply_time"):
-            self.agent.last_reply_time = int(time.time())
-
-        # Wire turn_end_hook to broadcast events
-        if not hasattr(self.agent, "_turn_end_hooks"):
-            self.agent._turn_end_hooks = {}
-        self.agent._turn_end_hooks["webui"] = self._on_turn_end
-
-        # User-preferred LLM. Persisted to admin config so it survives restarts;
-        # also used to detect (and log) drift caused by other call sites
-        # (autonomous tasks, /llm wechat command, code_run inline_eval, etc.)
+        # User-preferred LLM. Persisted to admin config so it survives
+        # restarts; also used to detect (and log) drift caused by other call
+        # sites (autonomous tasks, /llm wechat command, inline_eval, etc.)
         self._llm_preferences = LlmPreferenceStore()
-        if self._manage_global_preference:
-            self._wrap_next_llm_with_persistence()
-            self._restore_preferred_llm()
 
     # ── lifecycle ────────────────────────────────────────────────
     @classmethod
@@ -321,26 +354,21 @@ class AgentService:
     def shutdown(self, timeout: float = 5.0) -> bool:
         """Stop the GA run loop and fanout workers before releasing singleton."""
         deadline = time.monotonic() + max(0.0, timeout)
-        fanout_stop = getattr(self, "_fanout_stop_event", None)
-        if fanout_stop is not None:
-            fanout_stop.set()
-        submit_lock = getattr(self, "_submit_admission_lock", None)
-        submission_stopped = True
-        if submit_lock is not None:
-            submission_stopped = submit_lock.acquire(
-                timeout=max(0.0, deadline - time.monotonic())
-            )
-            if submission_stopped:
-                submit_lock.release()
-        thread = getattr(self, "_run_thread", None)
+        self._fanout_stop_event.set()
+        submission_stopped = self._submit_admission_lock.acquire(
+            timeout=max(0.0, deadline - time.monotonic())
+        )
+        if submission_stopped:
+            self._submit_admission_lock.release()
+        thread = self._run_thread
         if thread is not None and thread.is_alive():
             if getattr(self.agent, "is_running", False):
                 self.agent.abort()
             self.agent.task_queue.put("__shutdown__")
             thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
-        fanout_threads = getattr(self, "_fanout_threads", None)
-        if fanout_threads is None:
+        fanout_threads = self._fanout_threads
+        if not fanout_threads:
             fanouts_stopped = True
         else:
             with self._lock:
@@ -682,14 +710,13 @@ class AgentService:
           - publish chat:next / chat:done to the bus.
         """
         terminal_committed = False
-        fanout_stop = getattr(self, "_fanout_stop_event", None)
         heartbeat_deadline = time.monotonic() + 300
         try:
             while True:
                 try:
-                    item = src_q.get(timeout=1 if fanout_stop is not None else 300)
+                    item = src_q.get(timeout=1)
                 except _q.Empty:
-                    if fanout_stop is not None and fanout_stop.is_set():
+                    if self._fanout_stop_event.is_set():
                         content = h.last_chunk or snap.content or ""
                         error_content = (
                             f"{content}\n[stream aborted: service shutdown]"
@@ -711,7 +738,7 @@ class AgentService:
                         bus.publish(CHAT_HEARTBEAT, {"stream_id": h.stream_id})
                         heartbeat_deadline = time.monotonic() + 300
                     continue
-                if fanout_stop is not None and fanout_stop.is_set() and "done" not in item:
+                if self._fanout_stop_event.is_set() and "done" not in item:
                     continue
                 if "next" in item:
                     # Mirror without back-pressuring the sole GA queue drainer.
@@ -772,13 +799,7 @@ class AgentService:
                 log.exception("post-terminal fanout failed for %s: %s", h.stream_id, e)
                 return
             log.exception("fanout crashed for %s: %s", h.stream_id, e)
-            # Keep the cleanup path usable for lightweight/test instances created
-            # without __init__; normal service instances always have _lock.
-            lock = getattr(self, "_lock", None)
-            if lock is None:
-                lock = threading.Lock()
-                self._lock = lock
-            with lock:
+            with self._lock:
                 error_content = snap.content + f"\n[stream error: {e}]"
                 snap.content = error_content
                 snap.done = True
@@ -789,15 +810,10 @@ class AgentService:
             self._mirror_stream_item(out_q, {"done": error_content, "source": snap.source})
             bus.publish(CHAT_DONE, _chat_done_payload(h, snap, error_content))
         finally:
-            lock = getattr(self, "_lock", None)
-            streams = getattr(self, "_streams", None)
-            fanout_threads = getattr(self, "_fanout_threads", None)
-            if lock is not None:
-                with lock:
-                    if streams is not None and streams.get(h.stream_id) is h:
-                        streams.pop(h.stream_id, None)
-                    if fanout_threads is not None:
-                        fanout_threads.discard(threading.current_thread())
+            with self._lock:
+                if self._streams.get(h.stream_id) is h:
+                    self._streams.pop(h.stream_id, None)
+                self._fanout_threads.discard(threading.current_thread())
 
     @staticmethod
     def _mirror_stream_item(out_q: "_q.Queue", item: dict) -> None:
@@ -925,26 +941,21 @@ class AgentService:
         Returns True once ``delay_seconds`` elapsed; False when the user
         aborted this snapshot or the service fanout is shutting down.
         """
-        stop_event = getattr(self, "_fanout_stop_event", None)
         deadline = time.monotonic() + max(0.0, float(delay_seconds))
         while True:
-            if getattr(snap, "aborted", False):
+            if snap.aborted:
                 return False
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return True
             step = min(0.25, remaining)
-            if stop_event is not None and stop_event.wait(step):
+            if self._fanout_stop_event.wait(step):
                 return False
 
     def _error_retry_still_alone(self, h: StreamHandle) -> bool:
         """True when no newer live stream took over during the backoff wait."""
-        lock = getattr(self, "_lock", None)
-        streams = getattr(self, "_streams", None)
-        if lock is None or streams is None:
-            return True
-        with lock:
-            for other_id, other in list(streams.items()):
+        with self._lock:
+            for other_id, other in list(self._streams.items()):
                 if other_id == h.stream_id or other is h:
                     continue
                 if getattr(other, "finished", True):
@@ -1051,22 +1062,22 @@ class AgentService:
         return list(getattr(self.agent, "history", []))
 
     def _rewind(self) -> RewindAdapter:
-        adapter = getattr(self, "_rewind_adapter", None)
+        adapter = self._rewind_adapter
         if adapter is None:
             adapter = RewindAdapter(
                 agent=self.agent,
-                session_id=str(getattr(self, "session_id", "") or ""),
+                session_id=str(self.session_id or ""),
                 snapshots=self._snapshots,
-                lock=getattr(self, "_lock", None) or threading.RLock(),
-                checkpoint_lock=getattr(self, "_rewind_lock", None),
+                lock=self._lock,
+                checkpoint_lock=self._rewind_lock,
                 event_bus=bus,
             )
-            adapter.store = getattr(self, "_rewind_store", None)
+            adapter.store = self._rewind_store
             self._rewind_adapter = adapter
         else:
-            adapter.session_id = str(getattr(self, "session_id", "") or "")
+            adapter.session_id = str(self.session_id or "")
             if adapter.store is None:
-                adapter.store = getattr(self, "_rewind_store", None)
+                adapter.store = self._rewind_store
         return adapter
 
     def bind_rewind_store(self):

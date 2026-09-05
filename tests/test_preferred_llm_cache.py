@@ -80,11 +80,10 @@ class _StubAgent:
 
 
 def _make_service(svc_mod, agent: _StubAgent):
-    """Build an AgentService instance without running ``__init__``."""
-    service = object.__new__(svc_mod.AgentService)
+    """Fully-initialized service with the test's stub agent swapped in."""
+    service = svc_mod.AgentService.for_tests()
     service.agent = agent
     service._manage_global_preference = True
-    service._llm_preferences = svc_mod.LlmPreferenceStore()
     return service
 
 

@@ -54,11 +54,7 @@ def _load_agent_service_module():
 
 
 def _make_svc(mod):
-    svc = object.__new__(mod.AgentService)
-    svc._lock = threading.Lock()
-    svc._streams = {}
-    svc._fanout_stop_event = threading.Event()
-    return svc
+    return mod.AgentService.for_tests()
 
 
 def _make_handle(**overrides):

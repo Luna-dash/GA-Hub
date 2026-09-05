@@ -90,10 +90,7 @@ class RewindTurnsTests(unittest.TestCase):
 
         ``snapshots`` is a list of ``(sid, done)`` pairs in insertion order.
         """
-        AgentService = self.svc_mod.AgentService
-        svc = object.__new__(AgentService)  # bypass __init__
-        svc._lock = threading.RLock()
-        svc.session_id = ""
+        svc = self.svc_mod.AgentService.for_tests()
         svc._snapshots = OrderedDict()
         for sid, done in snapshots:
             snap = types.SimpleNamespace(done=done)
@@ -375,10 +372,7 @@ class RewindWithRealProjectionTests(unittest.TestCase):
     def _make_svc(self, history: list[dict], snapshots: list[tuple[str, bool]]):
         from server.services.chat_stream_projection import ChatSnapshot, ChatStreamProjection
 
-        AgentService = self.svc_mod.AgentService
-        svc = object.__new__(AgentService)
-        svc._lock = threading.RLock()
-        svc.session_id = ""
+        svc = self.svc_mod.AgentService.for_tests()
         svc._snapshots = ChatStreamProjection()
         for sid, done in snapshots:
             svc._snapshots.add(

@@ -31,8 +31,8 @@ class OnTurnEndTests(unittest.TestCase):
         cls.svc_mod = _load_agent_service_module()
 
     def _make_svc(self):
-        """Bypass ``__init__``; the hook uses no instance state."""
-        return object.__new__(self.svc_mod.AgentService)  # type: ignore[arg-type]
+        """Full field set without GA wiring; the hook uses no extra state."""
+        return self.svc_mod.AgentService.for_tests()
 
     def test_publishes_agent_turn_topic(self):
         svc = self._make_svc()

@@ -85,8 +85,7 @@ def test_fanout_crash_finishes_handle_and_keeps_identity() -> None:
         def get(self, timeout):
             raise RuntimeError("queue broke")
 
-    service = object.__new__(svc_mod.AgentService)
-    service._lock = threading.Lock()
+    service = svc_mod.AgentService.for_tests()
     handle = svc_mod.StreamHandle(
         "stream-1", queue.Queue(), session_id="session-A", run_id="run-1"
     )
@@ -115,9 +114,7 @@ def test_fanout_crash_finishes_handle_and_keeps_identity() -> None:
 
 
 def test_done_postprocessing_failure_emits_one_consistent_terminal() -> None:
-    service = object.__new__(svc_mod.AgentService)
-    service._lock = threading.Lock()
-    service._streams = {}
+    service = svc_mod.AgentService.for_tests()
     handle = svc_mod.StreamHandle(
         "stream-1", queue.Queue(), session_id="session-A", run_id="run-1"
     )
