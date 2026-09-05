@@ -290,6 +290,15 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
 - [x] webui navigation.ts 伪装 config（08c6513）：有状态半边归位
       stores/navPreferenceStore.ts，config 只留纯词汇（NAV_ITEMS/
       归一化器/事件名），config 层恢复零 api 依赖
+- [ ] P1·conductor 引擎无 journal（GA 侧缺口，2026-09-05 鹈鹕事件实证）：
+      gahub_app 完全没有 GAHUB_JOURNAL_PATH 写盘实现（GA 仓 grep 零命中），
+      hub 的断线补放网因此生产上空转——SSE 任何一次掉线窗口内的事件永久
+      丢失（现场实证：引擎 chat_count=4 vs hub 镜像 3）。修法二选一：
+      GA 侧实现 journal 写盘；或 hub 侧重连后做快照对账（GET /subagents
+      + /chat + 工作流终态按 id 合并）。另：worker 总超时后的恢复流里，
+      监督者 LLM 会以"磁盘核验交付物已存在"为由收编旧文件——交付物校验
+      需按次锚定（引擎已产出 deliverables_stale，hub 已拦自动验收
+      d2ad1c0，但人工强制验收仍可放行旧文件）
 - [ ] chatStore 活跃会话 msgs 无上限（后台缓存有界 MAX_CACHED_SESSION_
       VIEWS=3，当前打开的视图随历史翻页无限增长）——若要做需同时保留
       historyBefore 再取路径，属产品级内存取舍
