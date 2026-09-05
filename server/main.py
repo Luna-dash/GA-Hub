@@ -268,6 +268,11 @@ def create_app() -> FastAPI:
     app.state.services = services
     app.state.service_registry = app_registry
 
+    # Semantic service exceptions become their HTTP shape here, once, unless
+    # a route translated them first (routes raise HTTPException, which wins).
+    from .error_mapping import install_error_handlers
+    install_error_handlers(app)
+
     # CORS: browser/server mode is same-origin, while Vite and packaged Tauri
     # assets call the random-port sidecar cross-origin.  Keep both origin sets
     # explicit so arbitrary external pages cannot script the local API.

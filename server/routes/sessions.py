@@ -49,7 +49,11 @@ from ..services.session_runtime_status import STATUS_ERROR, STATUS_IDLE
 from ..services.event_bus import Event, bus
 from ..services.event_cursor import parse_event_cursor, subscribe_with_cursor
 from ..services.llm_preference_store import LlmPreferenceStore
-from ..services.llm_registry import LlmUnavailableError, LlmRegistryError
+from ..services.llm_registry import (
+    LlmRegistryError,
+    LlmUnavailableError,
+    LlmUnconfirmedError,
+)
 from ..services.session_coordinator import (
     AgentBusyError,
     RuntimeState,
@@ -208,10 +212,6 @@ def _dispatch_scheduled_chat(task: ScheduledChat) -> None:
         llm_key=llm_key,
     )
     _store.touch(task.session_id)
-
-
-class LlmUnconfirmedError(RuntimeError):
-    """A legacy session still stores only a positional LLM reference."""
 
 
 def _effective_llm_key(row: dict) -> str | None:

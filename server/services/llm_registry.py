@@ -9,6 +9,14 @@ from typing import Any
 from contextlib import contextmanager
 
 
+class LlmUnconfirmedError(RuntimeError):
+    """A session still stores a positional llm_index whose key is unknown.
+
+    Raised when the persisted (llm_index-only) binding cannot be re-confirmed
+    against the current mykey snapshot; the UI re-binds the session model.
+    """
+
+
 class LlmUnavailableError(LookupError):
     """Raised when a stable MyKey assignment is no longer selectable."""
 
