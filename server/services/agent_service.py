@@ -260,6 +260,7 @@ class _InertAgent:
 
 class AgentService:
     _instance: "AgentService | None" = None
+    _instance_creation_lock = threading.Lock()
     _SNAPSHOT_CAP = 20  # keep last N submissions for reconnect replay
 
     def __init__(
@@ -335,7 +336,9 @@ class AgentService:
     @classmethod
     def instance(cls) -> "AgentService":
         if cls._instance is None:
-            cls._instance = cls()
+            with cls._instance_creation_lock:
+                if cls._instance is None:
+                    cls._instance = cls()
         return cls._instance
 
     def start_run_thread(self) -> None:

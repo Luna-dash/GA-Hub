@@ -225,7 +225,7 @@ def _open_in_default_app(path: Path) -> None:
             try:
                 os.startfile(str(path))  # type: ignore[attr-defined]
             except OSError as exc:
-                log.warning("Cannot open %s: %s", path, exc)
+                log.warning("file_open_failed path=%s error=%s", path, exc)
                 raise HTTPException(500, "default application is unavailable") from exc
             return
         elif system == "Darwin":
@@ -235,7 +235,7 @@ def _open_in_default_app(path: Path) -> None:
         try:
             subprocess.Popen(args, **hidden_process_kwargs())
         except OSError as exc:
-            log.warning("Cannot open %s: %s", path, exc)
+            log.warning("file_open_failed path=%s error=%s", path, exc)
             raise HTTPException(500, "default application is unavailable") from exc
         return
 
@@ -247,7 +247,7 @@ def _open_in_default_app(path: Path) -> None:
         else:
             subprocess.Popen(["xdg-open", str(path)], **hidden_process_kwargs())
     except OSError as exc:
-        log.warning("Cannot open %s: %s", path, exc)
+        log.warning("file_open_failed path=%s error=%s", path, exc)
         raise HTTPException(500, "default application is unavailable") from exc
 
 
@@ -373,7 +373,7 @@ def _show_in_file_manager(path: Path) -> None:
         args = ["open", str(parent)] if system == "Darwin" else ["xdg-open", str(parent)]
         subprocess.Popen(args, **hidden_process_kwargs())
     except OSError as exc:
-        log.warning("Cannot reveal %s: %s", path, exc)
+        log.warning("file_reveal_failed path=%s error=%s", path, exc)
         raise HTTPException(500, "file manager is unavailable") from exc
 
 

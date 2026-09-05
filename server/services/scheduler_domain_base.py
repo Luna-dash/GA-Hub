@@ -60,6 +60,10 @@ class SchedulerDomainBase:
     # Per-subclass singleton: ``instance()`` assigns ``cls._instance`` on the
     # concrete class, so both domains keep independent singletons.
     _instance: "SchedulerDomainBase | None" = None
+    # Shared by both domains: creation is the only critical section, and the
+    # domains never construct concurrently in practice — serializing them is
+    # harmless and keeps one lock to reason about.
+    _instance_creation_lock = threading.Lock()
 
     # ── subclass contract ────────────────────────────────────────
     schedule_cls: type          # dataclass of one schedule row
@@ -160,8 +164,10 @@ class SchedulerDomainBase:
             if not cls._instance.shutdown(timeout=0):
                 raise RuntimeError(f"previous {cls.display_name} is still shutting down")
         if cls._instance is None:
-            assert channel is not None
-            cls._instance = cls(channel, scheduler_runtime=scheduler_runtime)
+            with cls._instance_creation_lock:
+                if cls._instance is None:
+                    assert channel is not None
+                    cls._instance = cls(channel, scheduler_runtime=scheduler_runtime)
         return cls._instance
 
     # ── persistence ──────────────────────────────────────────────

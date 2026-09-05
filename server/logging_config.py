@@ -1,4 +1,11 @@
-"""Bounded application logging for the GA-Hub backend."""
+"""Bounded application logging for the GA-Hub backend.
+
+Message convention: operational warning/error paths use the
+machine-parseable ``snake_case_event key=value`` style (e.g.
+``session_ws_connected ws_connection_id=...``) so logs can be grepped and
+monitored; free prose remains fine for incidental info lines — new
+warning/error logs should follow the event style.
+"""
 from __future__ import annotations
 
 import logging

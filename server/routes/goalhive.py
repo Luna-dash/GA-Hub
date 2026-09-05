@@ -27,7 +27,7 @@ async def ws_goalhive(ws: WebSocket):
     """
     origin = ws.headers.get("origin")
     if not is_allowed_ui_origin(origin):
-        log.warning("Rejected GoalHive WebSocket from origin %r", origin)
+        log.warning("goalhive_ws_rejected origin=%r", origin)
         await ws.close(code=1008, reason="Forbidden origin")
         return
     await ws.accept()

@@ -210,7 +210,7 @@ class GahubProcessManager:
                    "--port", str(self.port)]
             if self.token:
                 cmd += ["--token", self.token]
-            log.info("Spawning gahub_app: %s", " ".join(cmd))
+            log.info("gahub_app_spawn cmd=%s", " ".join(cmd))
             self._proc = subprocess.Popen(
                 cmd, cwd=self.ga_root,
                 stdout=log_file, stderr=subprocess.STDOUT,
@@ -283,7 +283,7 @@ class GahubProcessManager:
                 proc.wait(timeout=2.0)
                 return True
         except Exception:
-            log.exception("Failed to stop the gahub_app subprocess")
+            log.exception("gahub_app_stop_failed")
             return False
 
 

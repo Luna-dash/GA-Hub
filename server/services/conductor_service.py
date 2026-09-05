@@ -309,7 +309,7 @@ class HubConductorCallbacks:
                 self._last_subagent_snapshot = snapshot
             except Exception:
                 # Observer failures must not change an already committed pool action.
-                log.exception("Failed to publish conductor subagent snapshot")
+                log.exception("conductor_subagent_snapshot_publish_failed")
 
     # request lifecycle ------------------------------------------------------
     def _publish_request_outcome(
@@ -521,7 +521,7 @@ class HubConductorCallbacks:
             bus.publish(CONDUCTOR_LOG, {"item": dict(frame)})
         except Exception:
             # Logging is an observer path and must not fail a conductor request.
-            log.exception("Failed to publish conductor log frame")
+            log.exception("conductor_log_frame_publish_failed")
 
     def on_conductor_event(self, event_type: str, payload) -> None:
         try:

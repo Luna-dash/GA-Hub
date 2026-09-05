@@ -190,6 +190,11 @@ class _ExternalGaWebTools:
             if not req_id:
                 continue
             with self._cond:
+                if self._proc is not proc:
+                    # Stale reader from a killed/replaced worker: its output
+                    # must never land in the live request table (a leftover
+                    # entry would also never be popped).
+                    return
                 self._responses[str(req_id)] = msg
                 self._cond.notify_all()
 

@@ -240,6 +240,7 @@ def _compact_log(file: Path, entries: list[WxLogEntry]) -> None:
 # ── service ──────────────────────────────────────────────────────
 class WeChatService:
     _instance: "WeChatService | None" = None
+    _instance_creation_lock = threading.Lock()
 
     def __init__(self, channel: SystemChannel, *, allowlist: list[str] | None = None,
                  log_capacity: int = 2000):
@@ -306,8 +307,10 @@ class WeChatService:
     @classmethod
     def instance(cls, channel: SystemChannel | None = None) -> "WeChatService":
         if cls._instance is None:
-            assert channel is not None, "first call must pass the wechat system channel"
-            cls._instance = cls(channel)
+            with cls._instance_creation_lock:
+                if cls._instance is None:
+                    assert channel is not None, "first call must pass the wechat system channel"
+                    cls._instance = cls(channel)
         return cls._instance
 
     # ── status ───────────────────────────────────────────────────
