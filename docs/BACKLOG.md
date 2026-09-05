@@ -293,10 +293,11 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
 - [ ] chatStore 活跃会话 msgs 无上限（后台缓存有界 MAX_CACHED_SESSION_
       VIEWS=3，当前打开的视图随历史翻页无限增长）——若要做需同时保留
       historyBefore 再取路径，属产品级内存取舍
-- [ ] 低优先抛光：双调度器 instance()/懒单例无 double-checked 锁
-      （启动期单线程，现网无害）；ga_external_worker 旧 reader 回写
-      陈旧响应（极小泄漏）；日志事件名两种风格（snake_case 事件 vs
-      自由散文）
+- [x] 低优先抛光（344a681）：三个懒单例补 double-checked 锁（封住
+      潜在窗口而非修现行竞态）；ga_external_worker 的 stdout reader
+      拒绝替已被替换/杀掉的进程记录响应（不再泄漏永不弹出的条目）；
+      日志约定写入 logging_config.py 并收编 10 处 Title Case 离群点
+      为 snake_case_event key=value 风格
 
 ### 决策项（未修，按伤害排序）
 
