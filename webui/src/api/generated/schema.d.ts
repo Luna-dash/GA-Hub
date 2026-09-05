@@ -2566,6 +2566,10 @@ export interface components {
             request_id?: string | null;
             /** Stage */
             stage?: string | null;
+            /** Plan Milestones */
+            plan_milestones?: {
+                [key: string]: unknown;
+            }[] | null;
         } & {
             [key: string]: unknown;
         };

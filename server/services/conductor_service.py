@@ -83,6 +83,7 @@ SUBAGENT_MIRROR_FIELDS = (
     "completed_at", "accepted_at", "deliverables_missing",
     "deliverables_stale", "done_marker", "quality_checks",
     "manifest", "forced_accept", "force_reason", "forced_at",
+    "plan_milestones",
 )
 
 

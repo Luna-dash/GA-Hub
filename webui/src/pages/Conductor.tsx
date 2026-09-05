@@ -978,6 +978,12 @@ async function copyPath(path: string) {
   else toast.error('复制失败，请手动选中路径')
 }
 
+type WorkerMilestone = { id: string; desc: string; status: string }
+
+function milestonesOf(sub: ConductorSubagent): WorkerMilestone[] {
+  return ((sub as { plan_milestones?: WorkerMilestone[] | null }).plan_milestones) ?? []
+}
+
 function WorkerListRow({
   sub,
   selected,
@@ -988,6 +994,7 @@ function WorkerListRow({
   onSelect: () => void
 }) {
   const view = subagentPhase(sub)
+  const milestones = milestonesOf(sub)
   const facts = reviewFacts(sub)
   const missing = facts.deliverables_missing?.length ?? 0
   const stale = facts.deliverables_stale?.length ?? 0
@@ -1011,6 +1018,32 @@ function WorkerListRow({
         {sub.attempt > 1 && <span className="shrink-0 text-[11px] text-status-warning-strong">第 {sub.attempt} 次</span>}
       </div>
       <p className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-ink">{workerTitle(sub)}</p>
+      {milestones.length > 0 && (
+        <div className="mt-1 space-y-0.5" aria-label="里程碑进度">
+          {milestones.map((ms) => (
+            <div key={ms.id} className="flex items-center gap-1.5 text-[11px] leading-4">
+              <span
+                className={clsx(
+                  'h-1 w-1 shrink-0 rounded-full',
+                  ms.status === 'reached' ? 'bg-status-success-strong' : ms.status === 'missed' ? 'bg-status-danger' : 'bg-status-warning',
+                )}
+                aria-hidden="true"
+              />
+              <span
+                className={clsx(
+                  'min-w-0 flex-1 truncate',
+                  ms.status === 'reached' ? 'text-ink-faint' : 'text-ink-muted',
+                )}
+              >
+                {ms.desc}
+              </span>
+              <span className="shrink-0 text-[10px] text-ink-faint">
+                {ms.status === 'reached' ? '已达成' : ms.status === 'missed' ? '超时' : '进行中'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {issueCount > 0 && (
         <p className="mt-0.5 text-[11px] leading-4 text-status-danger">
           {missing > 0 ? `${missing} 项缺失` : ''}

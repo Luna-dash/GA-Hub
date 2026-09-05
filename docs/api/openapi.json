@@ -5817,6 +5817,21 @@
               }
             ],
             "title": "Stage"
+          },
+          "plan_milestones": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Milestones"
           }
         },
         "additionalProperties": true,

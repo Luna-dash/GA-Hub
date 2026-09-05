@@ -758,6 +758,10 @@ class ConductorSubagent(BaseModel):
     # Hub-decided UI stage (conductor_vocabulary.subagent_stage); the page
     # maps it to label/tone instead of re-deriving tracker semantics.
     stage: str | None = None
+    # Mid-run progress anchors (2026-09-05): engine-evaluated checkpoints
+    # {id, desc, check, status, reached_at, missed_at}. None = pre-milestone
+    # engine snapshot.
+    plan_milestones: list[dict] | None = None
 
 
 class ConductorSubagentListResp(BaseModel):
