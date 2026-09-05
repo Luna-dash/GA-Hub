@@ -35,7 +35,7 @@ from . import _paths
 from .constants import ENV_GAHUB_ALLOWED_HOSTS
 from .origin_policy import LOOPBACK_HTTP_ORIGIN_REGEX, TAURI_UI_ORIGINS
 from .routes import events as event_routes  # safe to import in setup mode
-from .schemas import AppStatusResp
+from .schemas import AppStatusResp, SetupReq
 from .services.app_services import AppServices
 from .services.event_bus import bus
 
@@ -135,11 +135,6 @@ for _ext, _mime in (
     mimetypes.add_type(_mime, _ext)
 
 WEBUI_DIST = _paths.ADMIN_ROOT / "webui" / "dist"
-
-
-class SetupReq(BaseModel):
-    ga_root: str
-    python_path: str | None = None
 
 
 def _setup_router() -> APIRouter:

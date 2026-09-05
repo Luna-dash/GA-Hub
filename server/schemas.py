@@ -1,9 +1,14 @@
 """Pydantic request/response schemas for the web admin API."""
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
+
+from .services.session_runtime_status import STATUS_IDLE
+
+if TYPE_CHECKING:  # SessionRuntimePayload.from_state annotation only
+    from .services.session_coordinator import RuntimeState
 
 
 class BtwReq(BaseModel):
@@ -210,6 +215,60 @@ class WxAllowlistWriteResp(BaseModel):
 
 
 # ── conversations ────────────────────────────────────────────────
+class ConversationUpdate(BaseModel):
+    title: str = Field(default="", max_length=200)
+
+class ConversationSummaryResp(BaseModel):
+    id: str
+    title: str
+    message_count: int
+    last_user_preview: str
+    original_user_preview: str
+
+class ConversationListResp(BaseModel):
+    total: int
+    offset: int
+    limit: int
+    items: list[ConversationSummaryResp]
+
+class ConversationMessageResp(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+class ConversationDetailResp(BaseModel):
+    id: str
+    title: str
+    messages: list[ConversationMessageResp]
+
+class ConversationMutationResp(BaseModel):
+    ok: bool
+    id: str
+
+class ConversationUpdateResp(ConversationMutationResp):
+    title: str
+
+class ConversationRestoreResp(ConversationMutationResp):
+    title: str
+    restored_lines: int
+    full: bool = True
+
+class ArchiveZipResp(BaseModel):
+    name: str
+    size: int
+    mtime: int
+
+class ArchiveZipListResp(BaseModel):
+    zips: list[ArchiveZipResp]
+
+class ArchiveZipEntryResp(BaseModel):
+    name: str
+    size: int
+    date: tuple[int, int, int, int, int, int]
+
+class ArchiveZipEntryListResp(BaseModel):
+    entries: list[ArchiveZipEntryResp]
+
+
 # ── memory ───────────────────────────────────────────────────────
 class TextWrite(BaseModel):
     content: str
@@ -338,6 +397,129 @@ class AutonomousReportDetailResp(BaseModel):
     name: str
     content: str
 
+
+# ── sessions / projects / scheduled chats / runtimes ────────────
+
+class SessionCreate(BaseModel):
+    title: str = Field(default="", max_length=200)
+    llm_key: str | None = Field(default=None, min_length=1, max_length=200)
+    llm_index: int | None = Field(default=None, ge=0)
+
+class SessionUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+    llm_key: str | None = Field(default=None, min_length=1, max_length=200)
+    llm_index: int | None = Field(default=None, ge=0)
+
+class SessionModelUpdate(BaseModel):
+    llm_key: str | None = Field(default=None, min_length=1, max_length=200)
+    llm_index: int | None = Field(default=None, ge=0)
+
+class HubSession(BaseModel):
+    id: str
+    title: str
+    kind: str = "user"
+    llm_key: str | None = None
+    llm_index: int | None
+    archive_path: str | None
+    status: str = STATUS_IDLE
+    project_name: str | None = None
+    project_path: str | None = None
+    created_at: str
+    updated_at: str
+
+class SessionListResp(BaseModel):
+    total: int
+    items: list[HubSession]
+
+class ProjectItem(BaseModel):
+    name: str
+    path: str
+    last_used: int = 0
+    mem_lines: int = 0
+    memory_path: str | None = None
+    source: str | None = None
+    dangling: bool = False
+
+class ProjectListResp(BaseModel):
+    total: int
+    items: list[ProjectItem]
+
+class ProjectCreate(BaseModel):
+    path: str = Field(min_length=1, max_length=1000)
+
+class SessionProjectUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    path: str = Field(min_length=1, max_length=1000)
+
+class RunSubmit(BaseModel):
+    text: str = Field(min_length=1)
+    images: list[str] = Field(default_factory=list)
+    source: str = Field(default="webui", min_length=1, max_length=50)
+
+class ScheduledChatCreate(BaseModel):
+    text: str = Field(min_length=1)
+    images: list[str] = Field(default_factory=list)
+    scheduled_for: float
+
+class ScheduledChatResp(BaseModel):
+    id: str
+    session_id: str
+    text: str
+    images: list[str]
+    scheduled_for: float
+    created_at: float
+    status: Literal["pending", "dispatching", "sent", "cancelled"]
+    sent_at: float | None
+    cancelled_at: float | None
+    last_error: str | None
+    retry_at: float | None
+
+class ScheduledChatListResp(BaseModel):
+    total: int
+    items: list[ScheduledChatResp]
+
+class SessionRuntimeResp(BaseModel):
+    session_id: str
+    status: str
+    run_id: str | None
+    stream_id: str | None
+    completed_run_id: str | None = None
+    error: str | None = None
+    ok: bool | None = None
+
+class SessionRuntimePayload(SessionRuntimeResp):
+    @classmethod
+    def from_state(
+        cls, state: RuntimeState, *, ok: bool | None = None
+    ) -> "SessionRuntimePayload":
+        fields = {
+            "session_id": state.session_id,
+            "status": state.status,
+            "run_id": state.run_id,
+            "stream_id": state.stream_id,
+            "completed_run_id": state.completed_run_id,
+        }
+        if state.error is not None:
+            fields["error"] = state.error
+        if ok is not None:
+            fields["ok"] = ok
+        return cls(**fields)
+
+class SessionMessageProjection(BaseModel):
+    id: str
+    role: Literal["user", "assistant"]
+    content: str
+    ordinal: int
+    timestamp: str | None = None
+
+class SessionMessagesResp(BaseModel):
+    session_id: str
+    archive_bound: bool
+    revision: str | None
+    items: list[SessionMessageProjection]
+    total: int = 0
+    has_more: bool = False
+    next_before: int | None = None
 
 # ── scheduled tasks ──────────────────────────────────────────────
 class TaskScheduleUpsert(BaseModel):
@@ -881,3 +1063,32 @@ class FsSendResp(BaseModel):
     returncode: int | None = None
     raw: str | None = None
     message_id: str | None = None
+
+class RawWriteReq(BaseModel):
+    raw: str
+
+class SessionUpsertReq(BaseModel):
+    var: str
+    type: str  # native_claude | native_oai | claude | oai | mixin
+    fields: dict[str, Any]
+
+# ── preferences / notify / setup ─────────────────────────────────
+
+class NavPreference(BaseModel):
+    id: str
+    visible: bool
+
+class NavPreferencesReq(BaseModel):
+    preferences: list[NavPreference]
+
+class NavPreferencesResp(BaseModel):
+    configured: bool
+    preferences: list[NavPreference]
+
+class NotifyReq(BaseModel):
+    title: str = Field("", max_length=120)
+    body: str = Field("", max_length=400)
+
+class SetupReq(BaseModel):
+    ga_root: str
+    python_path: str | None = None

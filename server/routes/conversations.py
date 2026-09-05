@@ -27,6 +27,20 @@ from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from .. import _paths
+from ..schemas import (
+    ConversationUpdate,
+    ConversationSummaryResp,
+    ConversationListResp,
+    ConversationMessageResp,
+    ConversationDetailResp,
+    ConversationMutationResp,
+    ConversationUpdateResp,
+    ConversationRestoreResp,
+    ArchiveZipResp,
+    ArchiveZipListResp,
+    ArchiveZipEntryResp,
+    ArchiveZipEntryListResp,
+)
 from ..services.archive_messages import (
     archive_contains,
     archive_session_by_id,
@@ -63,71 +77,6 @@ def _read_zip_entry_limited(entry) -> bytes:
         if len(data) + len(chunk) > _ZIP_ENTRY_MAX_SIZE:
             raise ZipEntryTooLarge
         data.extend(chunk)
-
-
-class ConversationUpdate(BaseModel):
-    title: str = Field(default="", max_length=200)
-
-
-class ConversationSummaryResp(BaseModel):
-    id: str
-    title: str
-    message_count: int
-    last_user_preview: str
-    original_user_preview: str
-
-
-class ConversationListResp(BaseModel):
-    total: int
-    offset: int
-    limit: int
-    items: list[ConversationSummaryResp]
-
-
-class ConversationMessageResp(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str
-
-
-class ConversationDetailResp(BaseModel):
-    id: str
-    title: str
-    messages: list[ConversationMessageResp]
-
-
-class ConversationMutationResp(BaseModel):
-    ok: bool
-    id: str
-
-
-class ConversationUpdateResp(ConversationMutationResp):
-    title: str
-
-
-class ConversationRestoreResp(ConversationMutationResp):
-    title: str
-    restored_lines: int
-    full: bool = True
-
-
-class ArchiveZipResp(BaseModel):
-    name: str
-    size: int
-    mtime: int
-
-
-class ArchiveZipListResp(BaseModel):
-    zips: list[ArchiveZipResp]
-
-
-class ArchiveZipEntryResp(BaseModel):
-    name: str
-    size: int
-    date: tuple[int, int, int, int, int, int]
-
-
-class ArchiveZipEntryListResp(BaseModel):
-    entries: list[ArchiveZipEntryResp]
 
 
 # ── GA archive helpers ────────────────────────────────────────────

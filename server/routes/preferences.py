@@ -4,7 +4,8 @@ from __future__ import annotations
 import threading
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+
+from ..schemas import NavPreference, NavPreferencesReq, NavPreferencesResp
 
 from ..services.ui_preferences_store import PreferencesFormatError, UiPreferencesStore
 
@@ -16,20 +17,6 @@ _ALLOWED_NAV_IDS = {
     "dashboard", "chat", "conversations", "memory", "conductor",
     "goal-hive", "mykey", "tasks", "autonomous", "tokens",
 }
-
-
-class NavPreference(BaseModel):
-    id: str
-    visible: bool
-
-
-class NavPreferencesReq(BaseModel):
-    preferences: list[NavPreference]
-
-
-class NavPreferencesResp(BaseModel):
-    configured: bool
-    preferences: list[NavPreference]
 
 
 def _validate_navigation(preferences: list[NavPreference]) -> list[dict]:

@@ -19,6 +19,8 @@ from ..schemas import (
     MyKeySessionTestResp,
     MyKeySyncResultResp,
     MyKeyWriteResp,
+    RawWriteReq,
+    SessionUpsertReq,
 )
 from ..services import mykey_service
 
@@ -26,14 +28,6 @@ router = APIRouter(prefix="/api/mykey", tags=["mykey"])
 
 
 # ── pydantic models ────────────────────────────────────────────────────
-class RawWriteReq(BaseModel):
-    raw: str
-
-
-class SessionUpsertReq(BaseModel):
-    var: str
-    type: str  # native_claude | native_oai | claude | oai | mixin
-    fields: dict[str, Any]
 
 
 def _translated(fn):

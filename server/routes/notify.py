@@ -12,16 +12,11 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
 
+from ..schemas import NotifyReq
 from ..services import notify_service
 
 router = APIRouter(prefix="/api/notify", tags=["notify"])
-
-
-class NotifyReq(BaseModel):
-    title: str = Field("", max_length=120)
-    body: str = Field("", max_length=400)
 
 
 @router.post("")

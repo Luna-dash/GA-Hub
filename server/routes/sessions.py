@@ -21,7 +21,29 @@ from frontends import workspace_cmd
 from .. import constants
 from ..event_topics import CHAT_ERROR, SESSION_RUNTIME
 from ..origin_policy import is_allowed_ui_origin
-from ..schemas import BtwReq, BtwResp, RewindReq, RewindResp
+from ..schemas import (
+    BtwReq,
+    BtwResp,
+    RewindReq,
+    RewindResp,
+    SessionCreate,
+    SessionUpdate,
+    SessionModelUpdate,
+    HubSession,
+    SessionListResp,
+    ProjectItem,
+    ProjectListResp,
+    ProjectCreate,
+    SessionProjectUpdate,
+    RunSubmit,
+    ScheduledChatCreate,
+    ScheduledChatResp,
+    ScheduledChatListResp,
+    SessionRuntimeResp,
+    SessionRuntimePayload,
+    SessionMessageProjection,
+    SessionMessagesResp,
+)
 from ..services.archive_messages import HistoryUnavailableError, read_archive_messages
 from ..services.session_runtime_status import STATUS_ERROR, STATUS_IDLE
 from ..services.event_bus import Event, bus
@@ -258,144 +280,6 @@ def stop_session_runtimes(
     if not stopped:
         log.warning("session runtime shutdown exceeded its graceful deadline")
     return stopped
-
-
-class SessionCreate(BaseModel):
-    title: str = Field(default="", max_length=200)
-    llm_key: str | None = Field(default=None, min_length=1, max_length=200)
-    llm_index: int | None = Field(default=None, ge=0)
-
-
-class SessionUpdate(BaseModel):
-    title: str | None = Field(default=None, max_length=200)
-    llm_key: str | None = Field(default=None, min_length=1, max_length=200)
-    llm_index: int | None = Field(default=None, ge=0)
-
-
-class SessionModelUpdate(BaseModel):
-    llm_key: str | None = Field(default=None, min_length=1, max_length=200)
-    llm_index: int | None = Field(default=None, ge=0)
-
-
-class HubSession(BaseModel):
-    id: str
-    title: str
-    kind: str = "user"
-    llm_key: str | None = None
-    llm_index: int | None
-    archive_path: str | None
-    status: str = STATUS_IDLE
-    project_name: str | None = None
-    project_path: str | None = None
-    created_at: str
-    updated_at: str
-
-
-class SessionListResp(BaseModel):
-    total: int
-    items: list[HubSession]
-
-
-class ProjectItem(BaseModel):
-    name: str
-    path: str
-    last_used: int = 0
-    mem_lines: int = 0
-    memory_path: str | None = None
-    source: str | None = None
-    dangling: bool = False
-
-
-class ProjectListResp(BaseModel):
-    total: int
-    items: list[ProjectItem]
-
-
-class ProjectCreate(BaseModel):
-    path: str = Field(min_length=1, max_length=1000)
-
-
-class SessionProjectUpdate(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    path: str = Field(min_length=1, max_length=1000)
-
-
-class RunSubmit(BaseModel):
-    text: str = Field(min_length=1)
-    images: list[str] = Field(default_factory=list)
-    source: str = Field(default="webui", min_length=1, max_length=50)
-
-
-class ScheduledChatCreate(BaseModel):
-    text: str = Field(min_length=1)
-    images: list[str] = Field(default_factory=list)
-    scheduled_for: float
-
-
-class ScheduledChatResp(BaseModel):
-    id: str
-    session_id: str
-    text: str
-    images: list[str]
-    scheduled_for: float
-    created_at: float
-    status: Literal["pending", "dispatching", "sent", "cancelled"]
-    sent_at: float | None
-    cancelled_at: float | None
-    last_error: str | None
-    retry_at: float | None
-
-
-class ScheduledChatListResp(BaseModel):
-    total: int
-    items: list[ScheduledChatResp]
-
-
-class SessionRuntimeResp(BaseModel):
-    session_id: str
-    status: str
-    run_id: str | None
-    stream_id: str | None
-    completed_run_id: str | None = None
-    error: str | None = None
-    ok: bool | None = None
-
-
-class SessionRuntimePayload(SessionRuntimeResp):
-    @classmethod
-    def from_state(
-        cls, state: RuntimeState, *, ok: bool | None = None
-    ) -> "SessionRuntimePayload":
-        fields = {
-            "session_id": state.session_id,
-            "status": state.status,
-            "run_id": state.run_id,
-            "stream_id": state.stream_id,
-            "completed_run_id": state.completed_run_id,
-        }
-        if state.error is not None:
-            fields["error"] = state.error
-        if ok is not None:
-            fields["ok"] = ok
-        return cls(**fields)
-
-
-class SessionMessageProjection(BaseModel):
-    id: str
-    role: Literal["user", "assistant"]
-    content: str
-    ordinal: int
-    timestamp: str | None = None
-
-
-class SessionMessagesResp(BaseModel):
-    session_id: str
-    archive_bound: bool
-    revision: str | None
-    items: list[SessionMessageProjection]
-    total: int = 0
-    has_more: bool = False
-    next_before: int | None = None
 
 
 def _state_payload(state: RuntimeState, *, ok: bool | None = None) -> dict:
