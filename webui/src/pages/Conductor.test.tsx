@@ -687,26 +687,26 @@ describe('Conductor chat scroll restoration', () => {
       () => new Promise((resolve) => { resolveSend = resolve }),
     )
     renderPage()
-    await flushQueries()
+    // The composer needs the llms query + model selection to have resolved;
+    // under parallel-suite load one flushQueries() can lose that race.
+    await waitFor(() => expect(host.querySelector('form textarea')).toBeTruthy())
 
     typeMessage('分析这个任务')
     act(() => button('发送').click())
-    await flushQueries()
-
-    // Double-submit guard: the in-flight request keeps the button busy.
-    const pending = button('发送中…')
-    expect(pending.disabled).toBe(true)
-    expect(mocks.conductorSendChat).toHaveBeenCalledTimes(1)
+    await waitFor(() => {
+      // Double-submit guard: the in-flight request keeps the button busy.
+      expect(button('发送中…').disabled).toBe(true)
+      expect(mocks.conductorSendChat).toHaveBeenCalledTimes(1)
+    })
 
     // Whatever the user types while the request is in flight survives.
     typeMessage('补充：还包括启动流程')
     await act(async () => {
       resolveSend({ id: 'u1', role: 'user', msg: '分析这个任务', ts: 1 })
     })
-    await flushQueries()
+    await waitFor(() => expect(button('发送').disabled).toBe(false))
     runAnimationFrames()
 
-    expect(button('发送').disabled).toBe(false)
     expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
       .toBe('补充：还包括启动流程')
     expect(useToastStore.getState().items).toHaveLength(0)
@@ -715,17 +715,17 @@ describe('Conductor chat scroll restoration', () => {
   it('restores the draft and warns instead of silently dropping a failed task', async () => {
     mocks.conductorSendChat.mockRejectedValueOnce(new Error('boom'))
     renderPage()
-    await flushQueries()
+    await waitFor(() => expect(host.querySelector('form textarea')).toBeTruthy())
 
     typeMessage('分析这个任务')
     act(() => button('发送').click())
-    await flushQueries()
-
-    expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
-      .toBe('分析这个任务')
-    expect(lastToast()?.kind).toBe('error')
-    expect(lastToast()?.message)
-      .toBe('任务发送失败，内容已恢复，请检查 Conductor 状态后重试。')
+    await waitFor(() => {
+      expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
+        .toBe('分析这个任务')
+      expect(lastToast()?.kind).toBe('error')
+      expect(lastToast()?.message)
+        .toBe('任务发送失败，内容已恢复，请检查 Conductor 状态后重试。')
+    })
 
     // Timeouts carry a distinct warning: the task may already be admitted,
     // so an immediate resend would duplicate it.
@@ -733,18 +733,20 @@ describe('Conductor chat scroll restoration', () => {
     mocks.conductorSendChat.mockRejectedValueOnce(timeout)
     typeMessage('重试任务')
     act(() => button('发送').click())
-    await flushQueries()
-
-    expect(lastToast()?.message)
-      .toBe('任务请求超时。任务可能仍在启动或已被受理，请勿立即重复发送。')
-    expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
-      .toBe('重试任务')
+    await waitFor(() => {
+      expect(lastToast()?.message)
+        .toBe('任务请求超时。任务可能仍在启动或已被受理，请勿立即重复发送。')
+      expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
+        .toBe('重试任务')
+    })
   })
 
   it('reports when the conductor could not be stopped instead of faking success', async () => {
     mocks.conductorStop.mockResolvedValueOnce({ ok: false })
     renderPage()
-    await flushQueries()
+    // 停止 renders only after the status query reports started; one
+    // flushQueries() raced that under load (button not found: 停止).
+    await waitFor(() => expect(button('停止').disabled).toBe(false))
 
     act(() => button('停止').click())
     await waitFor(() => expect(lastToast()?.message).toBe('Conductor 未能停止，请检查引擎状态。'))
