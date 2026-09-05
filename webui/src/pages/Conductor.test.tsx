@@ -770,6 +770,52 @@ describe('Conductor chat scroll restoration', () => {
     }
   }
 
+  it('keeps finished tasks reachable: the board can pin a previous workflow', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [
+        {
+          request_id: 'request-old',
+          status: 'completed',
+          stage: 'completed',
+          subagents: { old: { generation: 1, state: 'accepted' } },
+          created_at: 1,
+          completed_at: 2,
+        },
+        {
+          request_id: 'request-new',
+          status: 'supervising',
+          stage: 'supervising',
+          subagents: { new: { generation: 1, state: 'running' } },
+          created_at: 3,
+          completed_at: null,
+        },
+      ],
+    })
+    mocks.conductorSubagents.mockResolvedValue({ items: [] })
+    mocks.conductorChat.mockResolvedValue({
+      items: [
+        { id: 'c1', role: 'user', msg: '旧任务：整理归档', ts: 1, request_id: 'request-old' },
+        { id: 'c2', role: 'user', msg: '新任务：画一个 pelican', ts: 3, request_id: 'request-new' },
+      ],
+    })
+    renderPage()
+    await waitFor(() => expect(host.textContent).toContain('新任务：画一个 pelican'))
+
+    // The new open task auto-follows; the finished one stays reachable.
+    expect(host.textContent).toContain('旧任务：整理归档')
+    const pinOld = host.querySelector(
+      'button[aria-label="切换到任务：旧任务：整理归档"]',
+    ) as HTMLButtonElement
+    expect(pinOld).toBeTruthy()
+    act(() => pinOld.click())
+    await waitFor(() => expect(host.textContent).toContain('旧任务：整理归档'))
+    // Pinned view: the board header follows the pinned workflow only
+    // (the history nav legitimately still lists the new task).
+    const board = host.querySelector('section[aria-label="当前任务"]')
+    expect(board?.textContent).toContain('旧任务：整理归档')
+    expect(board?.textContent).not.toContain('新任务')
+  })
+
   it('presents a recoverable worker failure as open, not as a closed workflow', async () => {
     mocks.conductorWorkflows.mockResolvedValue({
       items: [failedWorkflowFixture(null)],

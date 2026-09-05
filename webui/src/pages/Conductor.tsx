@@ -206,6 +206,9 @@ export default function Conductor() {
   const [evidenceBySid, setEvidenceBySid] = useState<Record<string, SubagentEvidence>>({})
   const [busySid, setBusySid] = useState<string | null>(null)
   const [selectedSid, setSelectedSid] = useState<string | null>(null)
+  // Task-history pin: null = auto-follow the newest open workflow. Pinned
+  // views survive new task arrivals until the user switches back.
+  const [pinnedRequestId, setPinnedRequestId] = useState<string | null>(null)
   const [draftSubagentLlmKey, setDraftSubagentLlmKey] = useState<string | null>(null)
   const [draftSubagentModelLocked, setDraftSubagentModelLocked] = useState(false)
   const [draftAutoAccept, setDraftAutoAccept] = useState(true)
@@ -512,11 +515,35 @@ export default function Conductor() {
 
   const workflows = workflowSnapshot?.items ?? []
   const currentWorkflow = useMemo(() => {
+    if (pinnedRequestId) {
+      const pinned = workflows.find((workflow) => workflow.request_id === pinnedRequestId)
+      if (pinned) return pinned
+    }
     const active = [...workflows].reverse().find((workflow) => (
       !WORKFLOW_STAGE_CLOSED.has(workflow.stage ?? '')
     ))
     return active ?? workflows.at(-1)
-  }, [workflows])
+  }, [workflows, pinnedRequestId])
+
+  // One task title per request, oldest user message wins (the task origin).
+  const taskTitleByRequest = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const item of [...chatMessages].reverse()) {
+      if (item.role === 'user' && item.request_id && !map.has(item.request_id)) {
+        map.set(item.request_id, compactTaskText(item.msg))
+      }
+    }
+    return map
+  }, [chatMessages])
+
+  const workflowHistory = useMemo(() => (
+    [...workflows].reverse().map((workflow) => ({
+      request_id: workflow.request_id,
+      title: taskTitleByRequest.get(workflow.request_id) || '未命名任务',
+      stage: workflow.stage ?? '',
+      presentation: workflowPresentation(workflow, status?.started ?? false),
+    }))
+  ), [workflows, taskTitleByRequest, status?.started])
   const workflowSubagents = useMemo(() => {
     if (!currentWorkflow) return subagents.slice(-5).reverse()
     const workerIds = new Set(Object.keys(currentWorkflow.subagents))
@@ -607,6 +634,41 @@ export default function Conductor() {
     >
       <div className="flex h-full min-h-0 gap-3 p-4">
         <div className="flex w-64 min-w-0 shrink-0 flex-col gap-3">
+          {workflowHistory.length > 1 && (
+            <nav aria-label="任务历史" className="shrink-0">
+              <div className="flex flex-col gap-1">
+                {workflowHistory.map((entry) => {
+                  const isCurrent = entry.request_id === currentWorkflow?.request_id
+                  return (
+                    <button
+                      key={entry.request_id}
+                      type="button"
+                      onClick={() => setPinnedRequestId(
+                        pinnedRequestId === entry.request_id ? null : entry.request_id,
+                      )}
+                      aria-pressed={isCurrent}
+                      aria-label={`切换到任务：${entry.title}`}
+                      className={clsx(
+                        'flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs transition',
+                        isCurrent
+                          ? 'border-accent bg-accent-soft text-ink'
+                          : 'border-line bg-bg-card text-ink-muted hover:border-line hover:text-ink',
+                      )}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                          WORKFLOW_STAGE_CLOSED.has(entry.stage) ? 'bg-ink-faint' : 'bg-status-success-strong'
+                        }`}
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 flex-1 truncate">{entry.title}</span>
+                      <span className="shrink-0 text-[10px] text-ink-faint">{entry.presentation.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </nav>
+          )}
           <section aria-label="当前任务" className="shrink-0 rounded-2xl border border-line bg-bg-card px-3.5 py-3 shadow-sm">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-ink">当前任务</h2>
