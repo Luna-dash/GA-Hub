@@ -12,6 +12,10 @@ from fastapi import APIRouter, HTTPException, Query, Response, WebSocket, WebSoc
 from typing import Literal
 from pydantic import BaseModel, Field
 
+# _paths must be imported before `frontends`: its module-level bootstrap
+# puts the GA checkout on sys.path, and a fresh process importing this
+# route directly (e.g. test_sessions_api alone) otherwise fails here.
+from .. import _paths as _ga_paths_bootstrap  # noqa: F401  (bootstrap order)
 from frontends import workspace_cmd
 
 from .. import constants
@@ -668,7 +672,11 @@ async def submit_run(session_id: str, req: RunSubmit) -> SessionRuntimeResp:
     except LlmUnconfirmedError:
         raise _api_error(409, "llm_unconfirmed", "该会话的模型绑定需要重新确认。")
     try:
-        state = _get_coordinator().submit(
+        # submit_stream may cold-start the runtime (birth lock + GA restore)
+        # inside its admission critical section — worker thread, like every
+        # other runtime touch in this file.
+        state = await asyncio.to_thread(
+            _get_coordinator().submit,
             req.text,
             session_id=session_id,
             source=req.source,
@@ -683,6 +691,13 @@ async def submit_run(session_id: str, req: RunSubmit) -> SessionRuntimeResp:
         # Same-session busy (run still aborting) vs. genuine capacity overflow
         # are now distinct codes so the UI can tell the user the right thing.
         raise _busy_error(exc)
+    except SessionControlBusyError as exc:
+        raise _api_error(
+            409,
+            "session_control_active",
+            "当前会话正在执行互斥控制操作，请稍后重试。",
+            operation=exc.operation,
+        )
     except RuntimeRestoreError:
         raise _api_error(
             409,
@@ -799,8 +814,13 @@ async def create_scheduled_chat(
 )
 async def cancel_scheduled_chat(session_id: str, task_id: str):
     await asyncio.to_thread(_session, session_id)
-    ok = await asyncio.to_thread(_get_scheduled_chats().cancel, session_id, task_id)
-    if not ok:
+    try:
+        # The service signals by exception (missing id -> KeyError, non-
+        # pending -> ValueError); it never returns a falsy value.
+        await asyncio.to_thread(_get_scheduled_chats().cancel, session_id, task_id)
+    except KeyError:
+        raise _api_error(404, "scheduled_chat_not_found", "定时消息不存在。")
+    except ValueError:
         raise _api_error(409, "not_cancellable", "定时消息不存在或已无法取消。")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

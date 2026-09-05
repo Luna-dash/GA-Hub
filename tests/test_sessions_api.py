@@ -262,6 +262,28 @@ def test_archive_messages_support_bounded_backwards_paging(
         assert older["next_before"] == 2
 
 
+def test_cancel_scheduled_chat_maps_service_exceptions(tmp_path, monkeypatch) -> None:
+    """The service signals by exception; the route must translate, not 500."""
+    from server.routes import sessions
+
+    class _CancelRaising:
+        def cancel(self, session_id, task_id):
+            if task_id == "missing":
+                raise KeyError(task_id)
+            raise ValueError("only pending scheduled chats can be cancelled")
+
+    monkeypatch.setattr(sessions, "_get_scheduled_chats", lambda: _CancelRaising())
+
+    client = _client(tmp_path, monkeypatch)
+    sid = sessions._store.create(title="Has tasks", llm_key="native_oai_config")["id"]
+    gone = client.delete(f"/api/sessions/{sid}/scheduled-chats/missing")
+    assert gone.status_code == 404
+    assert gone.json()["detail"]["code"] == "scheduled_chat_not_found"
+    stuck = client.delete(f"/api/sessions/{sid}/scheduled-chats/sent")
+    assert stuck.status_code == 409
+    assert stuck.json()["detail"]["code"] == "not_cancellable"
+
+
 def test_scheduled_dispatch_matches_coordinator_submit_contract(
     tmp_path: Path, monkeypatch
 ) -> None:

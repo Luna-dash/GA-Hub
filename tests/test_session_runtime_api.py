@@ -35,6 +35,8 @@ class FakeCoordinator:
     def submit(self, text: str, **kwargs):
         if self.restore_error:
             raise RuntimeRestoreError("internal restore path")
+        if self.control_error:
+            raise SessionControlBusyError(kwargs["session_id"], self.control_error)
         if self.active is not None:
             raise AgentBusyError(self.active.session_id, self.active.run_id or "")
         state = RuntimeState(kwargs["session_id"], "running", "run-1", "stream-1")
@@ -244,6 +246,20 @@ def test_submit_run_rejects_legacy_positional_llm_binding(
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "llm_unconfirmed"
     assert coordinator.submissions == []
+
+
+def test_submit_run_maps_control_busy_to_409(tmp_path: Path, monkeypatch) -> None:
+    client, store, coordinator = _client(tmp_path, monkeypatch)
+    sid = store.create(title="Busy")["id"]
+    coordinator.control_error = "rewind"
+
+    with client:
+        response = client.post(f"/api/sessions/{sid}/runs", json={"text": "hello"})
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "session_control_active"
+    assert detail["operation"] == "rewind"
 
 
 def test_unbound_session_run_inherits_preferred_llm_key(
