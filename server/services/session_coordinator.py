@@ -383,7 +383,22 @@ class SessionCoordinator:
             self._watchers[run_id] = watcher
             # Register and start atomically with respect to shutdown.  Once a
             # watcher is visible to ``shutdown()``, joining it must be valid.
-            watcher.start()
+            try:
+                watcher.start()
+            except BaseException:
+                # Thread exhaustion: without rollback the admitted run would
+                # occupy its capacity slot forever (nobody watches completion).
+                self._watchers.pop(run_id, None)
+                active = self._active_by_session.get(session_id)
+                if active is not None and active.run_id == run_id:
+                    self._active_by_session.pop(session_id, None)
+                    self._states[session_id] = RuntimeState(session_id)
+                try:
+                    runtime.abort()
+                except Exception:
+                    log.exception(
+                        "watcher start rollback: abort failed for %s", session_id)
+                raise
         return replace(running), handle
 
     def ensure_runtime(self, session_id: str) -> SessionRuntime:

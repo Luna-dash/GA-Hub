@@ -458,6 +458,8 @@ class GoalHiveService:
     def reset(self) -> None:
         """Clear message history (and agent conversation state)."""
         with self._lock:
+            if self._active_stream_id is not None:
+                raise RuntimeError("goalhive is running; stop it before resetting")
             self.messages.clear()
             self._active_stream_id = None
         if self.agent:

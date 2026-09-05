@@ -86,7 +86,7 @@ def test_agent_service_shutdown_aborts_active_agent_before_sentinel() -> None:
     assert agent.exited.is_set()
 
 
-def test_agent_shutdown_releases_only_a_stopped_singleton() -> None:
+def test_agent_shutdown_releases_singleton_even_when_deadline_missed() -> None:
     stopped = AgentService(agent=_FakeAgent(), manage_global_preference=False)
     AgentService._instance = stopped
     stopped.shutdown(timeout=0)
@@ -98,7 +98,10 @@ def test_agent_shutdown_releases_only_a_stopped_singleton() -> None:
     AgentService._instance = live
     try:
         live.shutdown(timeout=0)
-        assert AgentService._instance is live
+        # Conductor parity (2026-09-05): a missed deadline must not leave a
+        # poisoned singleton whose stop event is set forever — the lingering
+        # threads are daemons bounded by the GA queue sentinel.
+        assert AgentService._instance is None
         live._run_thread.join.assert_called_once_with(timeout=0.0)
     finally:
         AgentService._instance = None

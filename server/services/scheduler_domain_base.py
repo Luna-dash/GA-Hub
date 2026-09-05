@@ -341,7 +341,10 @@ class SchedulerDomainBase:
 
     # ── CRUD ─────────────────────────────────────────────────────
     def list(self) -> list[dict]:
-        return [s.to_dict() for s in sorted(self.schedules.values(), key=lambda s: s.id)]
+        # Concurrent upsert/delete mutate self.schedules under _lock; an
+        # unlocked sorted(values()) can hit "dictionary changed size".
+        with self._lock:
+            return [s.to_dict() for s in sorted(self.schedules.values(), key=lambda s: s.id)]
 
     def upsert(self, payload: dict) -> Any:
         sid = payload.get("id") or f"{self.id_prefix}{uuid.uuid4().hex[:8]}"

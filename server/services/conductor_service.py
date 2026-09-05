@@ -327,16 +327,19 @@ class HubConductorCallbacks:
         }
         if error:
             payload["error"] = error
-        latest = next(
-            (
-                item
-                for item in reversed(self.service.chat_messages)
-                if item.get("role") == "conductor"
-                and item.get("request_id") == request_id
-                and item.get("kind") == ("final" if status == "ok" else "error")
-            ),
-            None,
-        )
+        # Scanning a list that writers truncate (>200) under _chat_lock:
+        # an unlocked reversed() iteration can hit the resize and IndexError.
+        with self.service._chat_lock:
+            latest = next(
+                (
+                    item
+                    for item in reversed(self.service.chat_messages)
+                    if item.get("role") == "conductor"
+                    and item.get("request_id") == request_id
+                    and item.get("kind") == ("final" if status == "ok" else "error")
+                ),
+                None,
+            )
         if latest is not None:
             payload["item"] = latest
         bus.publish(CONDUCTOR_REQUEST_OUTCOME, payload)
@@ -486,11 +489,15 @@ class HubConductorCallbacks:
                     agent_id, result.get("error"),
                 )
 
-        threading.Thread(
+        thread = threading.Thread(
             target=_accept,
             daemon=True,
             name=f"conductor-auto-accept-{agent_id[:8]}",
-        ).start()
+        )
+        # Registered so shutdown can wait them out instead of letting them
+        # race a closing engine client with unattributable exceptions.
+        self.service._auto_accept_threads.add(thread)
+        thread.start()
 
     def on_conductor_log_frame(self, frame: object) -> None:
         """Bridge gahub_app log frames to the Hub event bus.
@@ -626,6 +633,10 @@ class ConductorService:
         # (each redispatch carries a fresh operation_id, so only this lock
         # can keep the double relay from reaching the engine).
         self._cold_start_lock = threading.Lock()
+        # Serializes relay startup: chat admission and subagent verbs race
+        # here on cold start, and two relays double-process every event.
+        self._relay_lock = threading.Lock()
+        self._auto_accept_threads: set[threading.Thread] = set()
         self._relayed_chat_ids: set[str] = set()
         self._relayed_ids_lock = threading.Lock()
         self._lifecycle_cache: dict = {}
@@ -722,6 +733,17 @@ class ConductorService:
                     monitor_ok = False
                     log.exception("conductor timeout monitor shutdown failed")
                 self._shutdown_monitor_stopped = monitor_ok
+
+            # Background helpers must not outlive the closing engine client:
+            # the relay would keep publishing into a retired loop, and
+            # auto-accept threads would race _assert_open with noise.
+            helpers: list[threading.Thread] = []
+            if self._relay_thread is not None:
+                helpers.append(self._relay_thread)
+            helpers.extend(list(self._auto_accept_threads))
+            for helper in helpers:
+                if helper.is_alive():
+                    helper.join(timeout=max(0.0, deadline - time.monotonic()))
         finally:
             with self._shutdown_lock:
                 self._shutdown_core_stopped = bool(core_ok)
@@ -942,20 +964,24 @@ class ConductorService:
     # ===== engine session (gahub_app over HTTP) =====
 
     def _ensure_relay(self) -> None:
-        thread = self._relay_thread
-        if thread is not None and thread.is_alive():
-            return
-        self._relay_stop.clear()
-        self._relay_thread = threading.Thread(
-            target=self.client.stream_events,
-            args=(self._on_sse_event, self._relay_stop.is_set),
-            # P2-A reconcile: replay missed journal events after every
-            # (re)connect, before any live frame is read.
-            kwargs={"on_reconnect": self._replay_journal},
-            name="conductor-sse-relay",
-            daemon=True,
-        )
-        self._relay_thread.start()
+        # Check-then-start must be atomic: ensure_started (chat admission)
+        # and _assert_engine_ready (subagent verbs) race here on cold start,
+        # and a second relay thread would double-process every SSE event.
+        with self._relay_lock:
+            thread = self._relay_thread
+            if thread is not None and thread.is_alive():
+                return
+            self._relay_stop.clear()
+            self._relay_thread = threading.Thread(
+                target=self.client.stream_events,
+                args=(self._on_sse_event, self._relay_stop.is_set),
+                # P2-A reconcile: replay missed journal events after every
+                # (re)connect, before any live frame is read.
+                kwargs={"on_reconnect": self._replay_journal},
+                name="conductor-sse-relay",
+                daemon=True,
+            )
+            self._relay_thread.start()
 
     def ensure_started(self, exclude_request_id: str | None = None) -> bool:
         with self._shutdown_lock:
@@ -1199,7 +1225,16 @@ class ConductorService:
             cache = self._action_operations
             cache[operation_id] = _ACTION_OPERATION_IN_FLIGHT
             while len(cache) > self._ACTION_OPERATION_CACHE_SIZE:
-                cache.popitem(last=False)
+                # Evict the oldest COMPLETED entry; a live reservation must
+                # survive (losing it would let a duplicate double-fire).
+                oldest = next(
+                    (k for k, v in cache.items()
+                     if v is not _ACTION_OPERATION_IN_FLIGHT),
+                    None,
+                )
+                if oldest is None:
+                    break
+                del cache[oldest]
             return None
 
     def _release_action_operation(self, operation_id: str | None) -> None:
@@ -1781,88 +1816,94 @@ class ConductorService:
             raise ValueError("request_id is required for a final conductor message")
         if role != "user" and request_id and not tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")
-        if kind == "final" and request_id:
-            # A retried final replays the recorded item instead of tripping
-            # assert_ready_for_final ("already terminal") as a 422 — the
-            # engine side has ignored duplicate finals since P0.
-            replayed = self._replay_action_operation(operation_id)
+        reserve_final = kind == "final" and request_id is not None
+        if reserve_final:
+            # Reserve-first: a retried final replays the recorded item (no
+            # 422 from assert_ready_for_final), and a concurrent duplicate
+            # with the same id is refused instead of double-committing.
+            replayed = self._reserve_action_operation(operation_id)
             if replayed is not None:
                 return replayed
-            tracker.assert_ready_for_final(request_id)
-        admitted_request_id = uuid.uuid4().hex if role == "user" else request_id
-        # The SSE relay thread appends engine mirrors concurrently; every
-        # add_chat caller holds the chat lock (RLock, so nested use is fine).
-        with self._chat_lock:
-            item = add_chat(
-                msg,
-                role,
-                self.chat_messages,
-                request_id=admitted_request_id,
-                kind=kind,
-            )
-        if role == "user" and admitted_request_id:
-            tracker.admit(admitted_request_id)
-            try:
-                self.configure_models(
-                    llm_index=llm_index,
-                    subagent_llm_index=subagent_llm_index,
-                    subagent_model_policy=subagent_model_policy,
+        try:
+            if reserve_final:
+                tracker.assert_ready_for_final(request_id)
+            admitted_request_id = uuid.uuid4().hex if role == "user" else request_id
+            # The SSE relay thread appends engine mirrors concurrently; every
+            # add_chat caller holds the chat lock (RLock, so nested use is fine).
+            with self._chat_lock:
+                item = add_chat(
+                    msg,
+                    role,
+                    self.chat_messages,
+                    request_id=admitted_request_id,
+                    kind=kind,
                 )
-                # Exclude the just-admitted request: it is admitted but
-                # workerless right now (the supervisor has not even woken),
-                # which is exactly the "stranded" shape. Re-relaying it here
-                # delivered the user's message to the engine twice (live
-                # 2026-09-01: duplicated user_message batch, same request_id).
-                self.ensure_started(exclude_request_id=admitted_request_id)
-            except Exception as exc:
-                transition = tracker.fail_supervisor(
-                    admitted_request_id,
-                    phase="start",
-                    error=f"conductor start failed: {str(exc)[:200]}",
-                )
+            if role == "user" and admitted_request_id:
+                tracker.admit(admitted_request_id)
+                try:
+                    self.configure_models(
+                        llm_index=llm_index,
+                        subagent_llm_index=subagent_llm_index,
+                        subagent_model_policy=subagent_model_policy,
+                    )
+                    # Exclude the just-admitted request: it is admitted but
+                    # workerless right now (the supervisor has not even woken),
+                    # which is exactly the "stranded" shape. Re-relaying it here
+                    # delivered the user's message to the engine twice (live
+                    # 2026-09-01: duplicated user_message batch, same request_id).
+                    self.ensure_started(exclude_request_id=admitted_request_id)
+                except Exception as exc:
+                    transition = tracker.fail_supervisor(
+                        admitted_request_id,
+                        phase="start",
+                        error=f"conductor start failed: {str(exc)[:200]}",
+                    )
+                    if transition is not None:
+                        self._publish_workflow_transition(transition)
+                    raise
+                try:
+                    engine_item = self.notify({
+                        "type": "user_message",
+                        "msg": msg,
+                        "request_id": admitted_request_id,
+                        # One id per logical admission (P0): a retried POST /chat
+                        # replays the first engine answer instead of double-admitting.
+                        "operation_id": operation_id or uuid.uuid4().hex,
+                    })
+                    if engine_item is None:
+                        raise RuntimeError("conductor stopped before event admission")
+                    engine_id = (
+                        engine_item.get("id")
+                        if isinstance(engine_item, dict) else None
+                    )
+                    if engine_id and engine_id != item["id"]:
+                        # D4: adopt the engine id as the authoritative identity so
+                        # the page's optimistic add and the later hydration merge.
+                        item["id"] = engine_id
+                except Exception:
+                    transition = tracker.fail_supervisor(
+                        admitted_request_id,
+                        phase="admission",
+                        error="conductor event admission failed",
+                    )
+                    if transition is not None:
+                        self._publish_workflow_transition(transition)
+                    raise
+                bus.publish(CONDUCTOR_CHAT, {"item": item})
+            elif role == "conductor" and kind == "final" and admitted_request_id:
+                bus.publish(CONDUCTOR_CHAT, {"item": item})
+                transition = tracker.record_final(admitted_request_id, item)
                 if transition is not None:
                     self._publish_workflow_transition(transition)
-                raise
-            try:
-                engine_item = self.notify({
-                    "type": "user_message",
-                    "msg": msg,
-                    "request_id": admitted_request_id,
-                    # One id per logical admission (P0): a retried POST /chat
-                    # replays the first engine answer instead of double-admitting.
-                    "operation_id": operation_id or uuid.uuid4().hex,
-                })
-                if engine_item is None:
-                    raise RuntimeError("conductor stopped before event admission")
-                engine_id = (
-                    engine_item.get("id")
-                    if isinstance(engine_item, dict) else None
-                )
-                if engine_id and engine_id != item["id"]:
-                    # D4: adopt the engine id as the authoritative identity so
-                    # the page's optimistic add and the later hydration merge.
-                    item["id"] = engine_id
-            except Exception:
-                transition = tracker.fail_supervisor(
-                    admitted_request_id,
-                    phase="admission",
-                    error="conductor event admission failed",
-                )
-                if transition is not None:
-                    self._publish_workflow_transition(transition)
-                raise
-            bus.publish(CONDUCTOR_CHAT, {"item": item})
-        elif role == "conductor" and kind == "final" and admitted_request_id:
-            bus.publish(CONDUCTOR_CHAT, {"item": item})
-            transition = tracker.record_final(admitted_request_id, item)
-            if transition is not None:
-                self._publish_workflow_transition(transition)
-            # Recorded only after the final fully commits (no minting: a
-            # fresh id per call could never replay) so an engine retry of a
-            # delivered final gets the recorded item back.
-            self._record_action_operation(operation_id, item)
-        else:
-            bus.publish(CONDUCTOR_CHAT, {"item": item})
+                # Recorded only after the final fully commits (no minting: a
+                # fresh id per call could never replay) so an engine retry of a
+                # delivered final gets the recorded item back.
+                self._record_action_operation(operation_id, item)
+        except BaseException:
+            # Release the final's reservation so a genuine retry is not
+            # poisoned; no-op for callers that never reserved.
+            self._release_action_operation(operation_id)
+            raise
         return item
 
     def get_readmes(self) -> dict:

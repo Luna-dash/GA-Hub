@@ -44,6 +44,7 @@ _coordinator: SessionCoordinator | None = None
 _coordinator_lifecycle_lock = threading.Lock()
 _coordinator_stopping = False
 _scheduled_chats: ScheduledChatService | None = None
+_scheduled_chats_lock = threading.Lock()
 _system_channels: SystemChannels | None = None
 
 
@@ -199,7 +200,9 @@ def _effective_llm_key(row: dict) -> str | None:
 def _get_scheduled_chats() -> ScheduledChatService:
     global _scheduled_chats
     if _scheduled_chats is None:
-        _scheduled_chats = ScheduledChatService(_dispatch_scheduled_chat)
+        with _scheduled_chats_lock:
+            if _scheduled_chats is None:
+                _scheduled_chats = ScheduledChatService(_dispatch_scheduled_chat)
     return _scheduled_chats
 
 

@@ -256,6 +256,7 @@ class WeChatService:
         self._qr_thread: threading.Thread | None = None
         self._qr_state: dict = {"status": "idle"}
         self._qr_lock = threading.Lock()
+        self._poll_lock = threading.Lock()
 
         # Persistence: load tail of the on-disk JSONL into the in-memory
         # deque, then compact the file if it has grown unboundedly large.
@@ -338,8 +339,10 @@ class WeChatService:
         with self._qr_lock:
             if self._qr_thread and self._qr_thread.is_alive():
                 return dict(self._qr_state)
-        self._qr_thread = threading.Thread(target=self._qr_login_run, daemon=True, name="wx-qr")
-        self._qr_thread.start()
+            # Creation stays inside the lock: two concurrent calls would
+            # otherwise both pass the liveness check and start wx-qr twice.
+            self._qr_thread = threading.Thread(target=self._qr_login_run, daemon=True, name="wx-qr")
+            self._qr_thread.start()
         time.sleep(0.4)  # give it a moment to fetch the QR
         with self._qr_lock:
             return dict(self._qr_state)
@@ -372,17 +375,36 @@ class WeChatService:
     def start_polling(self) -> bool:
         if not self.bot.has_token:
             return False
-        if self._poll_thread and self._poll_thread.is_alive():
-            return True
-        self._stop_flag = False
-        self._poll_thread = threading.Thread(target=self._poll_run, daemon=True, name="wx-poll")
-        self._poll_thread.start()
+        with self._poll_lock:
+            if self._poll_thread and self._poll_thread.is_alive():
+                return True
+            self._stop_flag = False
+            self._poll_thread = threading.Thread(target=self._poll_run, daemon=True, name="wx-poll")
+            self._poll_thread.start()
         bus.publish(WECHAT_POLLING, {"running": True, "bot_id": self.bot.bot_id})
         return True
 
     def stop_polling(self) -> None:
         self._stop_flag = True
         bus.publish(WECHAT_POLLING, {"running": False})
+
+    def shutdown(self, timeout: float = 2.0) -> None:
+        """Stop polling/QR threads and join them (AppServices teardown)."""
+        self.stop_polling()
+        for thread in (self._qr_thread, self._poll_thread):
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=timeout)
+
+    @classmethod
+    def shutdown_existing(cls, timeout: float = 2.0) -> None:
+        """Close the wx threads if this process ever built the service.
+
+        WeChat is lazily constructed on first /api/wechat/login, so the
+        lifespan teardown cannot rely on an AppServices slot being filled.
+        """
+        service = cls._instance
+        if service is not None:
+            service.shutdown(timeout=timeout)
 
     def _poll_run(self) -> None:
         try:

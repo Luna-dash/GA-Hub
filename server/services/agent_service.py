@@ -384,10 +384,15 @@ class AgentService:
 
         run_stopped = thread is None or not thread.is_alive()
         stopped = submission_stopped and run_stopped and fanouts_stopped
+        # Release the singleton unconditionally: on a failed shutdown the
+        # stop event stays set forever, and retaining the instance would
+        # poison every later submit with "agent service is shutting down"
+        # (same contract as ConductorService.shutdown). Lingering threads
+        # are daemons bounded by the GA queue sentinel.
+        if type(self)._instance is self:
+            type(self)._instance = None
         if stopped:
             self._run_thread = None
-            if type(self)._instance is self:
-                type(self)._instance = None
             # Release the archive lock only after the run loop truly stopped:
             # GA's lock liveness is heartbeat-based, so an unreleased lock keeps
             # "occupying" its session for 30s after this process exits and the

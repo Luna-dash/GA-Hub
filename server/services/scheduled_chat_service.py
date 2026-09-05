@@ -69,7 +69,10 @@ class ScheduledChatService:
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=5)
-        self._thread = None
+        # Keep the reference when the join timed out: blanking it would let
+        # the next start() spawn a second worker alongside the live one.
+        if thread is None or not thread.is_alive():
+            self._thread = None
 
     def create(self, *, session_id: str, text: str, images: list[str], scheduled_for: float) -> dict:
         now = self._clock()
@@ -154,12 +157,14 @@ class ScheduledChatService:
 
     def _run(self) -> None:
         while not self._stop.is_set():
+            # Clear BEFORE the sweep: a wake set during run_due_once must
+            # survive, or a freshly created task waits a full poll period.
+            self._wake.clear()
             try:
                 self.run_due_once()
             except Exception:
                 log.exception("scheduled chat worker iteration failed")
             self._wake.wait(self._poll_seconds)
-            self._wake.clear()
 
     def _load(self) -> None:
         if not self._path.is_file():
