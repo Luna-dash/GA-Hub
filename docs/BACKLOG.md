@@ -249,10 +249,14 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
       webui/src/api/generated/schema.ts，但无 CI/测试比对"生成物是否
       过期"（手改路由不重跑 generate 时 tsc/vitest 仍绿）。建议加一个
       生成 → diff 为空 断言的测试或 CI 步骤
-- [ ] session coordinator 全局单例归属：routes/sessions.py:43 的模块级
-      `_coordinator` 已有 peek/构造/lifecycle 锁三层纪律，但所有权仍在
-      路由模块——移入 AppServices 可与 agent/feishu/scheduler 的所有权
-      模式对齐；涉及大量测试 seam 搬家，收益是结构一致性而非行为变化
+- [x] session coordinator 全局单例归属——【已核实否决】coordinator 是
+      lifespan 级状态：准入门协议（keep_admission_closed 的 abort 路径、
+      prepare/begin/finish 三段式）与 main.py 的异常关停共享模块级标志，
+      定时消息派发线程等非请求上下文也直接调用；而 AppServices 实例随
+      create_app 每次新建（多 app 测试生命周期依赖这一点），迁移会把
+      lifespan 级状态错挂成 app 级。路由模块全局 + 显式门禁在此是受控
+      设计（2026-09-05 分析），与 agent/feishu/scheduler 的差异是合理
+      例外而非漂移
 
 ## 2026-09-05 结构整合度重扫描（第四轮，四路并行）
 
@@ -301,28 +305,28 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
 
 ### 决策项（未修，按伤害排序）
 
-- [ ] action 幂等缓存无在途预留：_replay/_record 夹着整个 engine 调用，
-      同 operation_id 的并发重试双双 cache-miss 而重复投递（accept 同构）；
-      修法是 engine 调用前在锁内做 sentinel 占位
-- [ ] conductor final POST 不吃 operation_id 重放：重试一条已成功的
-      final 撞 assert_ready_for_final → 422（engine 侧 1360 已优雅忽略，
-      hub 侧没有）；修法是 final 分支复用 _action_operations 缓存
+- [x] action 幂等缓存无在途预留——已修（8690c60）：_reserve/_release
+      占位信封覆盖 start/input/rework/accept，并发同 id 拒绝（422）、
+      失败释放不毒化重试；final POST 补 operation_id 重放（重试已投递
+      的 final 不再 422）
+- [x] conductor final POST 重放——已修（8690c60，与上条同批）
 - [x] source="scheduled"（定时消息）不参与 auto-continue——【已定：放开】
       2026-09-05 决策：定时消息与定时任务同权，续传与重试覆盖全部无人
       值守 source（无人值守的产出必须完整，"用户可手动续"正是定时消息
       要避免的）；成本由续传上限兜底（agent_service 词汇注释注明）
-- [ ] AgentService 仍有 6 处 object.__new__ 测试实例 + shutdown/_fanout/
-      _rewind 的 getattr 回填 shim——比照 conductor for_tests() 先例
-      （a3eefde）做正规测试构造器迁移，触及 5 个测试文件
-- [ ] restore 编排双写：conversations.py 与 agent.py 各自手写
-      "restore + reset_live_snapshots(reason)"（docstring 自认 mirror），
-      可抽服务层共用 helper
-- [ ] _paths config 读-改-写无进程内锁：llm_preference 与 chat-retry
-      配置并发写可互相覆盖字段；修法是提供 update_config(mutator)
-      锁内组合读改写
+- [x] AgentService 测试脚手架——已修（b686f93）：for_tests() +
+      _init_fields 全字段化，生产代码 8 处 getattr 回填清零（含 fanout
+      崩溃路径），5 个测试文件 6 处 object.__new__ 全部迁移
+- [x] restore 编排双写——已修（dcfb4e5）：restore_ga_archive 收进
+      archive_messages（与其它 GA-frontend seam 同居），两条 restore
+      路由共用；reset_live_snapshots 保留在路由（reason 语义各自不同）
+- [x] _paths config 读-改-写无锁——已修（57aaab8）：进程级
+      config_rmw_lock + update_config(mutate)；set_ga_root、chat-retry、
+      LlmPreferenceStore 三写方全部迁移，双线程锤击测试锁无字段丢失
 - [x] ChatSnapshot 双锁域——【已定：维持现状 + 显性契约】2026-09-05
       决策：无"边跑边撤回"计划，双锁由 rewind 的 is_running 门 +
       coordinator 互斥兜底即可；读侧与写侧注释声明"流式期间禁止无锁
       访问，做并发撤回前必须先统一锁域"
-- [ ] conductor 多个路由端点无 docstring（OpenAPI description 缺失，
-      agent.py 等同样稀疏，repo 现象非 conductor 独有）
+- [x] conductor 路由端点 docstring——已修（dcfb4e5）：十个端点补一句话
+      描述并重导出契约；agent.py 等其余路由的稀疏处随下次契约触碰顺手
+      补（repo 现象，非阻塞）
