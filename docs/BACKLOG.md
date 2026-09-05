@@ -239,6 +239,44 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
       README 存储表补 6 条（scheduled_chats.json、session_metadata/、
       conversation_metadata/、ui_preferences.json、wechat_log.jsonl、logs/）
 
+### 2026-09-05 结构优化深度扫描（第五轮：分层/并发/错误词汇/测试面）
+
+四路新角度深扫（分层依赖图、并发与线程生命周期、错误处理语义、测试面
+结构+热路径），全部发现经主线程逐项核实后分类处理。已修：
+
+- [x] 并发 P1+P2（68052bf）：_ensure_relay 双入口竞态（chat 准入与
+      subagent 动词冷启动可起双 relay 线程、引擎事件全量双份）加专用
+      锁；AgentService.shutdown 失败不再保留毒化单例（对齐 conductor，
+      AppServices 对 False 补 warning）；WeChatService 纳入关停序
+      （shutdown + shutdown_existing）并修两处无锁起线程；submit_stream
+      的 watcher.start 失败回滚准入并 abort 运行时（原先永久占坑）；
+      scheduler list / request-outcome 扫描补锁；scheduled-chat 懒初始化
+      双检 + wake 先清后扫 + 关停超时保留线程引用；goalhive reset 运行
+      中拒绝；幂等淘汰不逐出 in-flight 占位；conductor 关停 join relay
+      与已登记的 auto-accept 线程
+- [x] 错误路径 P1×3（8c4fbde）：POST runs 漏映射
+      SessionControlBusyError → 500（补 409）；submit 冷启动 restore 在
+      事件循环上（第四轮清扫唯一漏网，补 to_thread）；定时消息 cancel
+      的服务异常按 404/409 翻译（原 `if not ok` 是死代码、失败全 500）。
+      附带真 bug：sessions.py 模块级 import frontends 先于 _paths
+      bootstrap——单文件跑 test_sessions_api 必挂，全靠别的测试先导入
+      才侥幸通过
+- [x] 性能与界（319d79b）：sessions.json 全文件解析加共享签名缓存
+      （全 hub 最后一个无缓存热读；写失败即失效防脏读）；
+      SessionCoordinator._states 随 release_runtime 释放（原来进程内存
+      活期内无界累积）
+- [x] 错误词汇（f360894）：conversations 三个 409 补中文 detail（前端
+      原样显示机器码）；Conductor 启动/打回失败改用
+      errorMessageFromError（后端 422/502 detail 与字符串形态的打回
+      原因被吞）；坏 cron 在持久化前校验、路由 422（原来 200 后永不
+      触发）
+- [x] 分层与测试面（32adc2b）：新增 tests/test_import_direction.py
+      静态扫描（services 零 fastapi/pydantic/不上探 routes；routes 兄弟
+      import 只许函数内）——本轮人工 grep 的纪律固化为契约；两处
+      TYPE_CHECKING"环保护"注释改述真实理由；hooks 归位（utils 层两个
+      消费 store 的 hook 迁 hooks/）；四个假 GA 装载器保存/恢复
+      sys.modules（桩版 agent_service 不再泄漏给后续测试文件）
+
 ### 决策项（未修，按伤害排序）
 
 - [x] rewind "双全量 parse 可复用"——【已核实否决】restore_plan（GA fork）
