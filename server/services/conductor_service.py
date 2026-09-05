@@ -64,6 +64,11 @@ INSTR_KEYINFO = (
     "You MUST to do other task or end your reply."
 )
 
+# Idempotency-cache placeholder: the operation_id is claimed while its engine
+# call is in flight, so a concurrent duplicate is refused instead of
+# double-fired. Replaced by the recorded response on completion.
+_ACTION_OPERATION_IN_FLIGHT = object()
+
 # Verbs served by apply_subagent_action (the single dispatcher behind
 # POST /api/conductor/subagent/{sid}).
 SUBAGENT_VERBS = frozenset({
@@ -1166,7 +1171,44 @@ class ConductorService:
         if not operation_id:
             return None
         with self._action_operation_lock:
-            return self._action_operations.get(operation_id)
+            recorded = self._action_operations.get(operation_id)
+        if recorded is None or recorded is _ACTION_OPERATION_IN_FLIGHT:
+            return None
+        return recorded
+
+    def _reserve_action_operation(self, operation_id: str | None) -> dict | None:
+        """Replay a completed operation, or claim the id for execution.
+
+        Returns the recorded response when this operation_id already
+        completed (caller returns it as-is). Raises when the same id is
+        still executing in another thread — the "completed-then-registered"
+        cache alone let two concurrent duplicates both miss and double-fire
+        the engine. Claims are released on failure (see
+        _release_action_operation) so a genuine retry is not poisoned.
+        """
+        if not operation_id:
+            return None
+        with self._action_operation_lock:
+            recorded = self._action_operations.get(operation_id)
+            if recorded is not None and recorded is not _ACTION_OPERATION_IN_FLIGHT:
+                return recorded
+            if recorded is _ACTION_OPERATION_IN_FLIGHT:
+                raise ValueError(
+                    f"operation {operation_id} is already executing; wait for it to finish"
+                )
+            cache = self._action_operations
+            cache[operation_id] = _ACTION_OPERATION_IN_FLIGHT
+            while len(cache) > self._ACTION_OPERATION_CACHE_SIZE:
+                cache.popitem(last=False)
+            return None
+
+    def _release_action_operation(self, operation_id: str | None) -> None:
+        """Drop an in-flight reservation after a failed execution."""
+        if not operation_id:
+            return
+        with self._action_operation_lock:
+            if self._action_operations.get(operation_id) is _ACTION_OPERATION_IN_FLIGHT:
+                del self._action_operations[operation_id]
 
     def _record_action_operation(self, operation_id: str | None, result: dict) -> None:
         if not operation_id:
@@ -1503,35 +1545,39 @@ class ConductorService:
         两个动作此前是逐字复制的双胞胎（断言/校验/配置/解析/绑定/setdefault
         六段全同）；动作差异只剩 verb 字符串。
         """
-        replayed = self._replay_action_operation(operation_id)
+        replayed = self._reserve_action_operation(operation_id)
         if replayed is not None:
             return replayed
-        tracker, models, selected = self._admit_action_models(
-            llm_index,
-            request_id,
-            conductor_llm_index,
-            subagent_llm_index,
-            subagent_model_policy,
-        )
-        # Owner parity (P0-B): forward the tracker-resolved owner so the
-        # engine's request_mismatch guard applies even when the caller
-        # omitted the request (keyinfo/abort already behave this way).
-        owner = request_id or tracker.request_for_subagent(sid)
-        result = self.client.subagent_action(
-            sid, action, msg, request_id=owner, llm_index=selected
-        )
-        bound_request_id: str | None = None
-        if "error" not in result and owner:
-            generation = int(result.get("active_generation", 0) or 0)
-            tracker.bind_subagent(owner, sid, generation)
-            bound_request_id = owner
-        # gahub_app auto-yields the supervisor turn on resume/rework.
-        self._fill_dispatch_defaults(
-            result,
-            llm_index=selected,
-            model_policy=models["subagent_model_policy"],
-            request_id=bound_request_id,
-        )
+        try:
+            tracker, models, selected = self._admit_action_models(
+                llm_index,
+                request_id,
+                conductor_llm_index,
+                subagent_llm_index,
+                subagent_model_policy,
+            )
+            # Owner parity (P0-B): forward the tracker-resolved owner so the
+            # engine's request_mismatch guard applies even when the caller
+            # omitted the request (keyinfo/abort already behave this way).
+            owner = request_id or tracker.request_for_subagent(sid)
+            result = self.client.subagent_action(
+                sid, action, msg, request_id=owner, llm_index=selected
+            )
+            bound_request_id: str | None = None
+            if "error" not in result and owner:
+                generation = int(result.get("active_generation", 0) or 0)
+                tracker.bind_subagent(owner, sid, generation)
+                bound_request_id = owner
+            # gahub_app auto-yields the supervisor turn on resume/rework.
+            self._fill_dispatch_defaults(
+                result,
+                llm_index=selected,
+                model_policy=models["subagent_model_policy"],
+                request_id=bound_request_id,
+            )
+        except BaseException:
+            self._release_action_operation(operation_id)
+            raise
         self._record_action_operation(operation_id, result)
         return result
 
@@ -1567,29 +1613,33 @@ class ConductorService:
         deterministic verification verdict is not clean (the UI surfaces the
         evidence before offering it).
         """
-        replayed = self._replay_action_operation(operation_id)
+        replayed = self._reserve_action_operation(operation_id)
         if replayed is not None:
             return replayed
-        tracker = self._assert_action_request(request_id)
-        if request_id is None:
-            # Owner parity (P0-B): keyinfo/abort already forward the
-            # tracker-resolved owner so the engine's request_mismatch guard
-            # applies; plain accepts must not be the loophole.
-            request_id = tracker.request_for_subagent(sid)
-        result = self.client.subagent_action(
-            sid, "accept", msg, request_id=request_id, force=force)
-        if "error" not in result:
-            generation = int(result.get("active_generation", 0) or 0)
-            owner, transition = tracker.record_subagent_event(
-                sid,
-                "accepted",
-                generation=generation,
-                request_id=request_id,
-            )
-            if owner:
-                result.setdefault("request_id", owner)
-            if transition is not None:
-                self._publish_workflow_transition(transition)
+        try:
+            tracker = self._assert_action_request(request_id)
+            if request_id is None:
+                # Owner parity (P0-B): keyinfo/abort already forward the
+                # tracker-resolved owner so the engine's request_mismatch guard
+                # applies; plain accepts must not be the loophole.
+                request_id = tracker.request_for_subagent(sid)
+            result = self.client.subagent_action(
+                sid, "accept", msg, request_id=request_id, force=force)
+            if "error" not in result:
+                generation = int(result.get("active_generation", 0) or 0)
+                owner, transition = tracker.record_subagent_event(
+                    sid,
+                    "accepted",
+                    generation=generation,
+                    request_id=request_id,
+                )
+                if owner:
+                    result.setdefault("request_id", owner)
+                if transition is not None:
+                    self._publish_workflow_transition(transition)
+        except BaseException:
+            self._release_action_operation(operation_id)
+            raise
         self._record_action_operation(operation_id, result)
         return result
 
@@ -1732,6 +1782,12 @@ class ConductorService:
         if role != "user" and request_id and not tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")
         if kind == "final" and request_id:
+            # A retried final replays the recorded item instead of tripping
+            # assert_ready_for_final ("already terminal") as a 422 — the
+            # engine side has ignored duplicate finals since P0.
+            replayed = self._replay_action_operation(operation_id)
+            if replayed is not None:
+                return replayed
             tracker.assert_ready_for_final(request_id)
         admitted_request_id = uuid.uuid4().hex if role == "user" else request_id
         # The SSE relay thread appends engine mirrors concurrently; every
@@ -1801,6 +1857,10 @@ class ConductorService:
             transition = tracker.record_final(admitted_request_id, item)
             if transition is not None:
                 self._publish_workflow_transition(transition)
+            # Recorded only after the final fully commits (no minting: a
+            # fresh id per call could never replay) so an engine retry of a
+            # delivered final gets the recorded item back.
+            self._record_action_operation(operation_id, item)
         else:
             bus.publish(CONDUCTOR_CHAT, {"item": item})
         return item

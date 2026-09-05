@@ -10,7 +10,8 @@ import io
 import subprocess
 import threading
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest import mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -253,6 +254,65 @@ def test_start_subagent_attaches_dispatch_instruction() -> None:
     # Dispatched responses carry the instruction from the service itself,
     # the same contract as apply_subagent_action's rework/input verbs.
     assert result["instruction"] == cs.INSTR_DISPATCHED
+
+
+def test_duplicate_operation_id_in_flight_is_refused() -> None:
+    service = _dispatch_service()
+    # Reserve manually to simulate a concurrent duplicate mid-engine-call.
+    assert service._reserve_action_operation("op-x") is None
+    with pytest.raises(ValueError, match="already executing"):
+        service._reserve_action_operation("op-x")
+
+
+def test_failed_action_releases_reservation_for_retry() -> None:
+    service = _dispatch_service()
+    service.input_subagent = Mock(side_effect=RuntimeError("engine down"))
+
+    with pytest.raises(RuntimeError):
+        service.apply_subagent_action("w1", "input", "msg", operation_id="op-y")
+
+    # The reservation was released, so the genuine retry reaches the engine.
+    service.input_subagent = Mock(return_value={"id": "w1"})
+    result = service.apply_subagent_action("w1", "input", "msg", operation_id="op-y")
+    assert result["instruction"] == cs.INSTR_DISPATCHED
+
+
+def test_retried_final_replays_recorded_item() -> None:
+    service = _bare_service()
+    tracker = Mock()
+    tracker.has_request.return_value = True
+    # Plain Mocks forbid assert_* attribute names; wire it explicitly.
+    tracker.assert_ready_for_final = Mock()
+    service.workflow_tracker = tracker
+    service.chat_messages = []
+    recorded = {"id": "c1", "role": "conductor", "kind": "final", "msg": "done"}
+    service._record_action_operation("op-final", recorded)
+
+    result = service.add_chat_message(
+        "done", role="conductor", request_id="req-1",
+        kind="final", operation_id="op-final",
+    )
+
+    assert result == recorded
+    tracker.assert_ready_for_final.assert_not_called()
+
+
+def test_delivered_final_is_recorded_for_replay() -> None:
+    service = _bare_service()
+    tracker = Mock()
+    tracker.has_request.return_value = True
+    tracker.assert_ready_for_final = Mock()  # Mocks reject assert_* names
+    tracker.record_final.return_value = None
+    service.workflow_tracker = tracker
+    service.chat_messages = []
+
+    with mock.patch.object(cs, "bus", mock.MagicMock()):
+        item = service.add_chat_message(
+            "done", role="conductor", request_id="req-1",
+            kind="final", operation_id="op-f2",
+        )
+
+    assert service._replay_action_operation("op-f2") == item
 
 
 def test_apply_accept_forwards_request_force_and_operation_id() -> None:
