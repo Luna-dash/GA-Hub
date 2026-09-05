@@ -1,4 +1,3 @@
-import { api } from '@/api/client'
 import { storageKeys } from '@/config/storageKeys'
 
 export type NavIconName =
@@ -22,7 +21,6 @@ export const NAV_ITEMS: NavItem[] = [
 ]
 
 export const NAV_PREFERENCES_EVENT = 'gahub:nav-preferences'
-const STORAGE_KEY = storageKeys.navPreferences
 
 export const defaultNavPreferences = (): NavPreference[] => NAV_ITEMS.map(({ id }) => ({ id, visible: true }))
 
@@ -41,60 +39,5 @@ export function normalizeNavPreferences(value: unknown): NavPreference[] {
   return result
 }
 
-export function getNavPreferences(): NavPreference[] {
-  try { return normalizeNavPreferences(JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null')) }
-  catch { return defaultNavPreferences() }
-}
-
-let localRevision = 0
-let saveQueue = Promise.resolve()
-
-function applyNavPreferences(value: NavPreference[]): NavPreference[] {
-  const normalized = normalizeNavPreferences(value)
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized))
-  window.dispatchEvent(new CustomEvent(NAV_PREFERENCES_EVENT, { detail: normalized }))
-  return normalized
-}
-
-function queueServerSave(preferences: NavPreference[]): void {
-  saveQueue = saveQueue
-    .catch(() => undefined)
-    .then(() => api.saveNavigationPreferences(preferences))
-    .then(() => undefined)
-    .catch(() => undefined)
-}
-
-export function setNavPreferences(value: NavPreference[]): NavPreference[] {
-  localRevision += 1
-  const normalized = applyNavPreferences(value)
-  queueServerSave(normalized)
-  return normalized
-}
-
-export async function hydrateNavPreferences(): Promise<NavPreference[]> {
-  const revisionAtStart = localRevision
-  try {
-    const remote = await api.navigationPreferences()
-    if (localRevision !== revisionAtStart) return getNavPreferences()
-    if (remote.configured) {
-      const normalized = applyNavPreferences(remote.preferences)
-      if (JSON.stringify(normalized) !== JSON.stringify(remote.preferences)) {
-        queueServerSave(normalized)
-      }
-      return normalized
-    }
-    const local = getNavPreferences()
-    queueServerSave(local)
-    return local
-  } catch {
-    return getNavPreferences()
-  }
-}
-
-export function getVisibleNavItems(preferences = getNavPreferences()): NavItem[] {
-  const byId = new Map(NAV_ITEMS.map((item) => [item.id, item]))
-  return preferences.flatMap(({ id, visible }) => {
-    const item = byId.get(id)
-    return visible && item ? [item] : []
-  })
-}
+// Stateful half (localStorage + server sync + change events) lives in
+// stores/navPreferenceStore.ts — config stays a leaf of pure constants.

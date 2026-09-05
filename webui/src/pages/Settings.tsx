@@ -21,11 +21,10 @@ import {
 } from '@/utils/railAppearance'
 import {
   defaultNavPreferences,
-  getNavPreferences,
   NAV_ITEMS,
-  setNavPreferences,
   type NavPreference,
 } from '@/config/navigation'
+import { getNavPreferences, setNavPreferences } from '@/stores/navPreferenceStore'
 import { isTauriDesktop, restartDesktopBackend, selectDirectory } from '@/utils/desktop'
 import { waitForDesktopRestart } from '@/utils/backendRestart'
 import { getMyKeyShowUpload, setMyKeyShowUpload } from '@/utils/mykeySyncUi'

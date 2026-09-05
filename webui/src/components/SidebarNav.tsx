@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { preloadRoute } from '@/routes/routeLoaders'
 import clsx from 'clsx'
+import { getNavPreferences, getVisibleNavItems } from '@/stores/navPreferenceStore'
 import {
-  getNavPreferences,
-  getVisibleNavItems,
   NAV_PREFERENCES_EVENT,
   type NavIconName,
   type NavItem,

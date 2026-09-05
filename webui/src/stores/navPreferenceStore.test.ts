@@ -7,12 +7,12 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('@/api/client', () => ({ api: apiMock }))
 
+import { defaultNavPreferences } from '@/config/navigation'
 import {
-  defaultNavPreferences,
   getNavPreferences,
   hydrateNavPreferences,
   setNavPreferences,
-} from './navigation'
+} from './navPreferenceStore'
 
 const customized = () => {
   const value = defaultNavPreferences().reverse()
