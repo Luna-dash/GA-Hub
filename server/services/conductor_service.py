@@ -474,6 +474,26 @@ class HubConductorCallbacks:
 
         def _accept() -> None:
             try:
+                state = service.pool.get(agent_id)
+                stale = list(getattr(state, "deliverables_stale", None) or [])
+                missing = list(getattr(state, "deliverables_missing", None) or [])
+            except Exception:
+                log.exception("auto-accept staleness lookup failed for %s", agent_id)
+                return
+            if stale or missing:
+                # Never auto-accept on the strength of deliverables that did
+                # not come from this attempt: path_exists/file_contains pass
+                # for any pre-existing file (live 2026-09-05 case — a 9-day-
+                # old pelican SVG from an earlier test satisfied both checks
+                # and got "accepted" after a timeout rework). Leave the worker
+                # pending for a human; force-accept stays the escape hatch.
+                log.warning(
+                    "auto-accept withheld for %s: deliverables not produced "
+                    "by this attempt (stale=%s missing=%s)",
+                    agent_id, stale, missing,
+                )
+                return
+            try:
                 result = service.accept_subagent(
                     agent_id,
                     "自动验收：机器检查全部通过。",

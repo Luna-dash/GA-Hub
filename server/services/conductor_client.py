@@ -476,7 +476,18 @@ class GaConductorClient:
                         except json.JSONDecodeError:
                             log.debug("Ignoring malformed SSE frame: %r", raw[:120])
                             continue
-                        on_event(event)
+                        try:
+                            on_event(event)
+                        except Exception:
+                            # A handler bug must never kill the relay thread —
+                            # it is the only live event path, and its death
+                            # silences the conductor UI until the next user
+                            # action restarts it. Losing ONE frame is strictly
+                            # better than losing all subsequent ones.
+                            log.exception(
+                                "gahub_app SSE on_event handler failed; frame dropped: %r",
+                                str(event)[:200],
+                            )
             except requests.RequestException as exc:
                 log.warning("gahub_app SSE stream dropped: %s", exc)
             except GahubProcessError as exc:

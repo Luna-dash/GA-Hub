@@ -256,6 +256,47 @@ def test_start_subagent_attaches_dispatch_instruction() -> None:
     assert result["instruction"] == cs.INSTR_DISPATCHED
 
 
+def _callbacks_with_worker(service: cs.ConductorService, worker: SimpleNamespace):
+    callbacks = cs.HubConductorCallbacks(service)
+    original = callbacks._maybe_auto_accept
+
+    def _join_after(agent_id, payload):
+        original(agent_id, payload)
+        for thread in list(service._auto_accept_threads):
+            thread.join(timeout=2)
+
+    return callbacks, _join_after
+
+
+def test_auto_accept_withholds_on_stale_deliverables() -> None:
+    """A deliverable that predates the attempt (path_exists/file_contains
+    pass for any old file) must never be machine-accepted."""
+    service = _bare_service()
+    service.auto_accept = True
+    service.accept_subagent = Mock()
+    stale_worker = SimpleNamespace(
+        id="w1", deliverables_stale=["D:/old/pelican.svg"], deliverables_missing=[])
+    service.pool = SimpleNamespace(get=lambda sid: stale_worker)
+
+    callbacks, joined = _callbacks_with_worker(service, stale_worker)
+    joined("w1", {"request_id": "req-1"})
+
+    service.accept_subagent.assert_not_called()
+
+
+def test_auto_accept_proceeds_when_deliverables_are_fresh() -> None:
+    service = _bare_service()
+    service.auto_accept = True
+    service.accept_subagent = Mock(return_value={"id": "w1"})
+    fresh_worker = SimpleNamespace(id="w1", deliverables_stale=[], deliverables_missing=[])
+    service.pool = SimpleNamespace(get=lambda sid: fresh_worker)
+
+    callbacks, joined = _callbacks_with_worker(service, fresh_worker)
+    joined("w1", {"request_id": "req-1"})
+
+    service.accept_subagent.assert_called_once()
+
+
 def test_duplicate_operation_id_in_flight_is_refused() -> None:
     service = _dispatch_service()
     # Reserve manually to simulate a concurrent duplicate mid-engine-call.
