@@ -277,6 +277,27 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
       消费 store 的 hook 迁 hooks/）；四个假 GA 装载器保存/恢复
       sys.modules（桩版 agent_service 不再泄漏给后续测试文件）
 
+第五轮决策项（同日处理完毕，逐项有提交）：
+
+- [x] schemas 归属分裂（32f1a88）：36 个路由级 BaseModel 全部迁入
+      schemas.py 对应域段（conversations 空段标补齐），路由保留 import
+      名（sessions.ProjectCreate 式引用不变）；OpenAPI/TS 契约逐字节不变
+- [x] HTTP 错误词汇双轨（4f062e0）：app 级统一异常映射器
+      server/error_mapping.py（六个语义异常族 → 409/503 标准形状），
+      路由本地翻译优先、映射器兜底——"漏一条 except 就 500"的结构性
+      问题绝根；LlmUnconfirmedError 归位 llm_registry；KeyError/
+      ValueError 刻意不做全局映射（避免掩盖真 bug）
+- [x] webui navigation.ts 伪装 config（08c6513）：有状态半边归位
+      stores/navPreferenceStore.ts，config 只留纯词汇（NAV_ITEMS/
+      归一化器/事件名），config 层恢复零 api 依赖
+- [ ] chatStore 活跃会话 msgs 无上限（后台缓存有界 MAX_CACHED_SESSION_
+      VIEWS=3，当前打开的视图随历史翻页无限增长）——若要做需同时保留
+      historyBefore 再取路径，属产品级内存取舍
+- [ ] 低优先抛光：双调度器 instance()/懒单例无 double-checked 锁
+      （启动期单线程，现网无害）；ga_external_worker 旧 reader 回写
+      陈旧响应（极小泄漏）；日志事件名两种风格（snake_case 事件 vs
+      自由散文）
+
 ### 决策项（未修，按伤害排序）
 
 - [x] rewind "双全量 parse 可复用"——【已核实否决】restore_plan（GA fork）
