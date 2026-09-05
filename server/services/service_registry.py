@@ -17,7 +17,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
-if TYPE_CHECKING:  # pragma: no cover - import cycle guard for type hints only
+if TYPE_CHECKING:  # pragma: no cover - runtime imports stay minimal
     from .app_services import AppServices
 
 

@@ -1,8 +1,8 @@
 import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { hubEventClient } from '@/runtime/hubEventClient'
-import { useDesktopNotifyEffects } from '@/utils/useDesktopNotifyEffects'
-import { useDocumentTitle } from '@/utils/useDocumentTitle'
+import { useDesktopNotifyEffects } from '@/hooks/useDesktopNotifyEffects'
+import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 import { useConductorStore } from '@/stores/conductorStore'
 
 /** Long-lived effects isolated from the visual application shell. */

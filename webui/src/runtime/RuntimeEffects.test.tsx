@@ -23,11 +23,11 @@ vi.mock('@/runtime/hubEventClient', () => ({
   },
 }))
 
-vi.mock('@/utils/useDesktopNotifyEffects', () => ({
+vi.mock('@/hooks/useDesktopNotifyEffects', () => ({
   useDesktopNotifyEffects: vi.fn(),
 }))
 
-vi.mock('@/utils/useDocumentTitle', () => ({
+vi.mock('@/hooks/useDocumentTitle', () => ({
   useDocumentTitle: vi.fn(),
 }))
 

@@ -17,7 +17,7 @@ vi.mock('@/runtime/hubEventClient', () => ({
   hubEventClient: { subscribe: mocks.subscribe },
 }))
 
-vi.mock('./notify', () => ({ notify: mocks.notify }))
+vi.mock('@/utils/notify', () => ({ notify: mocks.notify }))
 
 import { useChatStore } from '@/stores/chatStore'
 import { useDesktopNotifyEffects } from './useDesktopNotifyEffects'

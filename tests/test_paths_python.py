@@ -223,8 +223,17 @@ class AgentServiceWebToolPatchTests(unittest.TestCase):
         with mock.patch.object(_paths, "GA_ROOT", ga_root), \
              mock.patch.object(_paths, "discover_user_python", return_value=python_path), \
              mock.patch.dict(sys.modules, modules):
+            # Same leak guard as the other fake-GA loaders: later files must
+            # see the genuine agent_service, not a stub-bound class.
+            saved = sys.modules.get("server.services.agent_service")
             sys.modules.pop("server.services.agent_service", None)
-            svc = importlib.import_module("server.services.agent_service")
+            try:
+                svc = importlib.import_module("server.services.agent_service")
+            finally:
+                if saved is not None:
+                    sys.modules["server.services.agent_service"] = saved
+                else:
+                    sys.modules.pop("server.services.agent_service", None)
         return svc, fake_ga
 
     def test_patch_ga_web_tools_proxies_calls_to_external_worker(self):

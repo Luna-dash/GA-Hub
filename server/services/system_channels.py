@@ -22,7 +22,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
-if TYPE_CHECKING:  # pragma: no cover - import cycle guard for type hints only
+# Under TYPE_CHECKING not for a cycle but so this lightweight module
+# never pulls the agent_service GA-bootstrap chain into its importers.
+if TYPE_CHECKING:  # pragma: no cover
     from .agent_service import StreamHandle
     from .session_coordinator import RuntimeState, SessionCoordinator
     from .session_metadata import SessionMetadataStore

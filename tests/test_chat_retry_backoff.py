@@ -48,9 +48,18 @@ def _load_agent_service_module():
         with mock.patch.object(_paths, "GA_ROOT", Path(td)), \
              mock.patch.object(_paths, "discover_user_python", return_value="/tmp/py"), \
              mock.patch.dict(sys.modules, modules):
+            # The stub-bound module must not leak into later test files:
+            # save the genuine entry and put it back once the class is built.
+            saved = sys.modules.get("server.services.agent_service")
             sys.modules.pop("server.services.agent_service", None)
-            import importlib
-            return importlib.import_module("server.services.agent_service")
+            try:
+                import importlib
+                return importlib.import_module("server.services.agent_service")
+            finally:
+                if saved is not None:
+                    sys.modules["server.services.agent_service"] = saved
+                else:
+                    sys.modules.pop("server.services.agent_service", None)
 
 
 def _make_svc(mod):

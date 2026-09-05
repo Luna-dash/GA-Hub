@@ -10,7 +10,7 @@
 import { useEffect } from 'react'
 import { useChatStore } from '@/stores/chatStore'
 import { hubEventClient } from '@/runtime/hubEventClient'
-import { notify } from './notify'
+import { notify } from '@/utils/notify'
 
 export function useDesktopNotifyEffects() {
   useEffect(() => {
