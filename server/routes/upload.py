@@ -26,14 +26,6 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _is_within(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
-
-
 # Open-with-default-app allowlist: documents / images / media / common text
 # & source (viewed, not executed by the server). Rejects installers/scripts
 # that would be dangerous if a random page could POST /api/files/reveal.

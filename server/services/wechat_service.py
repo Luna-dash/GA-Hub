@@ -24,7 +24,6 @@ import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
 
 from .. import _paths
 

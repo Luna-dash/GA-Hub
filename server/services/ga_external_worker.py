@@ -210,7 +210,7 @@ class _ExternalGaWebTools:
             # context (missing GA deps, ga import errors). Surface it once at
             # WARNING so packaged Admin operators can see it without DEBUG.
             if first:
-                log.warning("GA web worker stderr (first line): %s", text)
+                log.warning("ga web worker stderr (first line): %s", text)
                 first = False
             else:
                 log.debug("GA web worker: %s", text)

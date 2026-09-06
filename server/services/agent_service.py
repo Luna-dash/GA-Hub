@@ -12,19 +12,12 @@ in that case (see server.main).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import queue as _q
-import re as _re
-import subprocess
-import sys
 import threading
 import time
-import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
 from typing import Any, AsyncIterator
 
 from .. import _paths
@@ -539,7 +532,7 @@ class AgentService:
         LlmPreferenceStore.set_selection); this wrapper only logs so the user
         can spot unexpected drift from other callers.
         """
-        import inspect, traceback
+        import traceback
         original = self.agent.next_llm
         # Already wrapped (singleton may be re-init'd in tests)
         if getattr(original, "_admin_wrapped", False):
@@ -1101,12 +1094,6 @@ class AgentService:
         store = adapter.sync_store(strict=strict)
         self._rewind_store = adapter.store
         return store
-
-    def _rewind_session_turns(
-        self, *, sid: str | None = None, n: int | None = None
-    ) -> dict:
-        """Durably rewind one Hub session without trusting UI snapshots."""
-        return self._rewind().rewind_session_turns(sid=sid, n=n)
 
     # ── rewind ───────────────────────────────────────────────────
     def rewind_turns(self, *, sid: str | None = None, n: int | None = None) -> dict:

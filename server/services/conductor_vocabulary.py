@@ -15,16 +15,12 @@ from __future__ import annotations
 
 # ── engine subagent lifecycle (GET /subagent snapshot `status`) ─────────
 SUBAGENT_RUNNING = "running"
-SUBAGENT_STOPPED = "stopped"
 
 # ── hub-side review verdicts (review_status) ────────────────────────────
 REVIEW_NONE = "none"
 REVIEW_PENDING = "pending"
 REVIEW_ACCEPTED = "accepted"
 REVIEW_REJECTED = "rejected"
-# Verdicts that close a worker for good; the rejected delivery still needs
-# the request to be delivered via a fresh dispatch.
-REVIEW_CLOSED = frozenset({REVIEW_ACCEPTED, REVIEW_REJECTED})
 
 # ── workflow status (WorkflowTracker workflow.state) ────────────────────
 WORKFLOW_ADMITTED = "admitted"

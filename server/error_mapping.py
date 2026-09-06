@@ -33,8 +33,8 @@ def _payload(code: str, message: str, **context) -> dict:
 
 
 def _agent_busy_payload(exc: AgentBusyError) -> dict:
-    # Same-shape contract as routes/sessions._busy_error: the *same* session
-    # being busy is a serial guard, not a capacity overflow.
+    # The *same* session being busy is a serial guard, not a capacity
+    # overflow — the route layer relies on this mapper for that shape.
     if exc.reason == AgentBusyError.REASON_SESSION_ACTIVE:
         return _payload(
             "session_active",

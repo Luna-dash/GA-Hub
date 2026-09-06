@@ -7,10 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import functools
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
 from ..schemas import (
     MyKeyBackupListResp,

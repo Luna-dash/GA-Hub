@@ -7,6 +7,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from server.error_mapping import install_error_handlers
+
 from server.services.session_coordinator import (
     AgentBusyError,
     RuntimeState,
@@ -108,6 +110,7 @@ def _client(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(sessions, "_store", store)
     monkeypatch.setattr(sessions, "_coordinator", coordinator)
     app = FastAPI()
+    install_error_handlers(app)
     app.include_router(sessions.router)
     return TestClient(app), store, coordinator
 

@@ -105,7 +105,7 @@ class GoalHiveService:
                 # up its own llmclients from mykey.
                 self.agent = self._agent_factory()
                 self.agent.inc_out = False  # web mode: queue carries cumulative text
-                log.info("GoalHive agent initialized (separate instance)")
+                log.info("goalhive agent initialized (separate instance)")
             self._ensure_runner_locked(self.agent)
             return self.agent
 
@@ -287,7 +287,7 @@ class GoalHiveService:
                 if 0 <= int(llm_index) < len(clients):
                     if int(getattr(agent, "llm_no", -1)) != int(llm_index):
                         agent.next_llm(int(llm_index))
-                        log.info("GoalHive switched to LLM %d (%s)", llm_index, agent.get_llm_name())
+                        log.info("goalhive switched to llm %d (%s)", llm_index, agent.get_llm_name())
             except Exception as e:
                 log.warning("failed to switch GoalHive LLM=%s: %s", llm_index, e)
 
@@ -452,7 +452,7 @@ class GoalHiveService:
                 try:
                     agent.abort()
                 except Exception as e:
-                    log.warning("GoalHive abort failed: %s", e)
+                    log.warning("goalhive abort failed: %s", e)
             self._finish_active_messages()
 
     def reset(self) -> None:

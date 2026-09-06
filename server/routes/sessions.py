@@ -9,8 +9,6 @@ import time
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
-from typing import Literal
-from pydantic import BaseModel, Field
 
 # _paths must be imported before `frontends`: its module-level bootstrap
 # puts the GA checkout on sys.path, and a fresh process importing this
@@ -41,11 +39,10 @@ from ..schemas import (
     ScheduledChatListResp,
     SessionRuntimeResp,
     SessionRuntimePayload,
-    SessionMessageProjection,
     SessionMessagesResp,
 )
 from ..services.archive_messages import HistoryUnavailableError, read_archive_messages
-from ..services.session_runtime_status import STATUS_ERROR, STATUS_IDLE
+from ..services.session_runtime_status import STATUS_ERROR
 from ..services.event_bus import Event, bus
 from ..services.event_cursor import parse_event_cursor, subscribe_with_cursor
 from ..services.llm_preference_store import LlmPreferenceStore
@@ -55,7 +52,6 @@ from ..services.llm_registry import (
     LlmUnconfirmedError,
 )
 from ..services.session_coordinator import (
-    AgentBusyError,
     RuntimeState,
     SessionControlBusyError,
     SessionCoordinator,
@@ -311,31 +307,6 @@ def _not_found() -> HTTPException:
     return HTTPException(404, "session not found")
 
 
-def _busy_error(exc: AgentBusyError) -> HTTPException:
-    # configure_if_idle path: the *same* session is busy, which is a serial
-    # guard, not a capacity overflow. Surface it with a distinct code so the
-    # UI can explain "stop this session's task" rather than "capacity full".
-    if exc.reason == AgentBusyError.REASON_SESSION_ACTIVE:
-        return _api_error(
-            409,
-            "session_active",
-            "当前会话仍有任务运行中（或正在停止中），请等待结束后重试。",
-            active_session_id=exc.active_session_id,
-            active_run_id=exc.active_run_id,
-            capacity=exc.capacity,
-            active_count=exc.active_count,
-        )
-    return _api_error(
-        409,
-        "agent_busy",
-        "会话正在运行，请等待当前任务结束后重试。",
-        active_session_id=exc.active_session_id,
-        active_run_id=exc.active_run_id,
-        capacity=exc.capacity,
-        active_count=exc.active_count,
-    )
-
-
 @router.get("/api/projects", response_model_exclude_unset=True)
 async def list_projects() -> ProjectListResp:
     # registry_list opens workspaces.json plus one memory file per entry.
@@ -408,14 +379,13 @@ async def bind_session_project(session_id: str, req: SessionProjectUpdate) -> Hu
             "project_path": req.path,
         })
 
-    try:
-        # configure_if_idle runs the callback on the caller's thread; hand the
-        # whole thing (runtime activation + sidecar write) to a worker.
-        return await asyncio.to_thread(
-            _get_coordinator().configure_if_idle, session_id, configure
-        )
-    except AgentBusyError as exc:
-        raise _busy_error(exc)
+    # configure_if_idle runs the callback on the caller's thread; hand the
+    # whole thing (runtime activation + sidecar write) to a worker.
+    # AgentBusyError propagates to the app-level mapper (409
+    # session_active/agent_busy).
+    return await asyncio.to_thread(
+        _get_coordinator().configure_if_idle, session_id, configure
+    )
 
 
 @router.delete("/api/sessions/{session_id}/project")
@@ -430,12 +400,9 @@ async def unbind_session_project(session_id: str) -> HubSession:
             "project_path": None,
         })
 
-    try:
-        return await asyncio.to_thread(
-            _get_coordinator().configure_if_idle, session_id, configure
-        )
-    except AgentBusyError as exc:
-        raise _busy_error(exc)
+    return await asyncio.to_thread(
+        _get_coordinator().configure_if_idle, session_id, configure
+    )
 
 
 @router.get("/api/sessions")
@@ -551,43 +518,22 @@ async def _clear_session_llm_binding(session_id: str) -> HubSession:
 )
 async def submit_run(session_id: str, req: RunSubmit) -> SessionRuntimeResp:
     row = await asyncio.to_thread(_session, session_id)
-    try:
-        llm_key = _effective_llm_key(row)
-    except LlmUnconfirmedError:
-        raise _api_error(409, "llm_unconfirmed", "该会话的模型绑定需要重新确认。")
-    try:
-        # submit_stream may cold-start the runtime (birth lock + GA restore)
-        # inside its admission critical section — worker thread, like every
-        # other runtime touch in this file.
-        state = await asyncio.to_thread(
-            _get_coordinator().submit,
-            req.text,
-            session_id=session_id,
-            source=req.source,
-            images=req.images,
-            llm_key=llm_key,
-        )
-    except LlmUnavailableError:
-        raise _api_error(409, "llm_unavailable", "该会话绑定的 LLM 已不存在，请重新选择。")
-    except LlmRegistryError:
-        raise _api_error(409, "llm_registry_error", "LLM 配置映射校验失败，请检查 MyKey 配置。")
-    except AgentBusyError as exc:
-        # Same-session busy (run still aborting) vs. genuine capacity overflow
-        # are now distinct codes so the UI can tell the user the right thing.
-        raise _busy_error(exc)
-    except SessionControlBusyError as exc:
-        raise _api_error(
-            409,
-            "session_control_active",
-            "当前会话正在执行互斥控制操作，请稍后重试。",
-            operation=exc.operation,
-        )
-    except RuntimeRestoreError:
-        raise _api_error(
-            409,
-            "restore_failed",
-            "会话运行环境恢复失败，请稍后重试。",
-        )
+    # LlmUnconfirmedError/AgentBusyError/SessionControlBusyError/
+    # RuntimeRestoreError/LlmUnavailableError/LlmRegistryError all carry the
+    # same-session serial-guard semantics and propagate to the app-level
+    # mapper (409 with their stable codes).
+    llm_key = _effective_llm_key(row)
+    # submit_stream may cold-start the runtime (birth lock + GA restore)
+    # inside its admission critical section — worker thread, like every
+    # other runtime touch in this file.
+    state = await asyncio.to_thread(
+        _get_coordinator().submit,
+        req.text,
+        session_id=session_id,
+        source=req.source,
+        images=req.images,
+        llm_key=llm_key,
+    )
     await asyncio.to_thread(_store.touch, session_id)
     return SessionRuntimePayload.from_state(state)
 
@@ -605,19 +551,10 @@ async def session_btw(session_id: str, req: BtwReq):
         )
         await asyncio.to_thread(_store.touch, session_id)
         return BtwResp(ok=True, content=content)
-    except SessionControlBusyError as exc:
-        raise _api_error(
-            409,
-            "session_control_active",
-            "当前会话正在执行互斥控制操作，请稍后重试。",
-            operation=exc.operation,
-        )
-    except RuntimeRestoreError:
-        raise _api_error(
-            409,
-            "restore_failed",
-            "会话运行环境恢复失败，请稍后重试。",
-        )
+    except (SessionControlBusyError, RuntimeRestoreError):
+        # Explicit: the blanket catch below must not swallow these into
+        # ok=False — they are 409 refusals (app-level mapper shapes).
+        raise
     except Exception as exc:
         log.exception("session BTW failed for %s: %s", session_id, exc)
         return BtwResp(ok=False, error=str(exc))
@@ -635,21 +572,6 @@ async def session_rewind(session_id: str, req: RewindReq):
             session_id,
             sid=req.sid,
             n=req.n,
-        )
-    except AgentBusyError as exc:
-        raise _busy_error(exc)
-    except SessionControlBusyError as exc:
-        raise _api_error(
-            409,
-            "session_control_active",
-            "当前会话正在执行互斥控制操作，请稍后重试。",
-            operation=exc.operation,
-        )
-    except RuntimeRestoreError:
-        raise _api_error(
-            409,
-            "restore_failed",
-            "会话运行环境恢复失败，请稍后重试。",
         )
     except ValueError as exc:
         raise _api_error(400, "invalid_rewind", str(exc))
@@ -894,35 +816,27 @@ async def session_events(ws: WebSocket, session_id: str):
 
 @router.delete("/api/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(session_id: str):
+    # Existence check only: get() raises SessionNotFoundError -> 404.
     try:
-        row = await asyncio.to_thread(_store.get, session_id)
+        await asyncio.to_thread(_store.get, session_id)
     except SessionNotFoundError:
         raise _not_found()
 
     def _delete() -> None:
         _store.delete(session_id)
 
-    try:
-        if _coordinator is None:
-            await asyncio.to_thread(_delete)
-        else:
-            # Go through the accessor so the shutdown admission gate applies
-            # to delete like every other runtime-touching endpoint.
-            # runtime.shutdown() joins worker threads — keep it off the loop.
-            await asyncio.to_thread(
-                _get_coordinator().release_runtime,
-                session_id,
-                shutdown=lambda runtime: runtime.shutdown(),
-                operation="delete",
-                after_release=_delete,
-            )
-    except AgentBusyError as exc:
-        raise _busy_error(exc)
-    except SessionControlBusyError as exc:
-        raise _api_error(
-            409,
-            "session_control_active",
-            "当前会话正在执行互斥控制操作，请稍后重试。",
-            operation=exc.operation,
+    if _coordinator is None:
+        await asyncio.to_thread(_delete)
+    else:
+        # Go through the accessor so the shutdown admission gate applies
+        # to delete like every other runtime-touching endpoint.  The mapper
+        # turns AgentBusyError/SessionControlBusyError into 409s.
+        # runtime.shutdown() joins worker threads — keep it off the loop.
+        await asyncio.to_thread(
+            _get_coordinator().release_runtime,
+            session_id,
+            shutdown=lambda runtime: runtime.shutdown(),
+            operation="delete",
+            after_release=_delete,
         )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

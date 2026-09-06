@@ -9,6 +9,7 @@ import { PageShell } from '@/components/PageShell'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { relTime } from '@/utils/foldTurns'
 import { dialog } from '@/stores/dialogStore'
+import { errorMessageFromError } from '@/utils/sessionUi'
 import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 import { CronCardLine, CronPreview } from '@/components/CronPreview'
@@ -57,8 +58,12 @@ export default function Autonomous() {
       { confirmText: '触发' },
     )
     if (!ok) return
-    await api.triggerSchedule(id)
-    qc.invalidateQueries({ queryKey: queryKeys.autonomous.runs })
+    try {
+      await api.triggerSchedule(id)
+      qc.invalidateQueries({ queryKey: queryKeys.autonomous.runs })
+    } catch (e: any) {
+      await dialog.alert('触发失败', errorMessageFromError(e))
+    }
   }
 
   return (
@@ -137,8 +142,12 @@ export default function Autonomous() {
 function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; onFire: () => void }) {
   const qc = useQueryClient()
   const toggle = async () => {
-    await api.upsertSchedule({ ...s, type: s.type as ScheduleType, enabled: !s.enabled })
-    qc.invalidateQueries({ queryKey: queryKeys.schedules })
+    try {
+      await api.upsertSchedule({ ...s, type: s.type as ScheduleType, enabled: !s.enabled })
+      qc.invalidateQueries({ queryKey: queryKeys.schedules })
+    } catch (e: any) {
+      await dialog.alert('切换失败', errorMessageFromError(e))
+    }
   }
   const remove = async () => {
     const ok = await dialog.confirm('删除该计划？', s.name || s.id, {
@@ -146,8 +155,12 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
       tone: 'danger',
     })
     if (!ok) return
-    await api.deleteSchedule(s.id)
-    qc.invalidateQueries({ queryKey: queryKeys.schedules })
+    try {
+      await api.deleteSchedule(s.id)
+      qc.invalidateQueries({ queryKey: queryKeys.schedules })
+    } catch (e: any) {
+      await dialog.alert('删除失败', errorMessageFromError(e))
+    }
   }
   return (
     <div className={`rounded-xl border p-4 ${s.enabled ? 'border-accent/60 bg-accent-soft/20' : 'border-line bg-bg-card'}`}>
@@ -187,9 +200,13 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
     ...initial,
   })
   const save = async () => {
-    await api.upsertSchedule({ ...s, type: (s.type ?? 'idle') as ScheduleType })
-    qc.invalidateQueries({ queryKey: queryKeys.schedules })
-    onClose()
+    try {
+      await api.upsertSchedule({ ...s, type: (s.type ?? 'idle') as ScheduleType })
+      qc.invalidateQueries({ queryKey: queryKeys.schedules })
+      onClose()
+    } catch (e: any) {
+      await dialog.alert('保存失败', errorMessageFromError(e))
+    }
   }
   return (
     <ModalOverlay onClose={onClose} labelledBy="autonomous-schedule-title" panelClassName="p-6 w-[34rem] max-w-[90vw]">

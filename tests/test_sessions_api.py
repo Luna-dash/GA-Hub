@@ -6,6 +6,7 @@ GeneraticAgent runtimes remain the only conversation truth sources.
 from __future__ import annotations
 
 import hashlib
+
 import json
 import logging
 import threading
@@ -15,6 +16,8 @@ from unittest import mock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from server.error_mapping import install_error_handlers
+
 
 def _client(tmp_path: Path, monkeypatch) -> TestClient:
     from server.routes import sessions
@@ -22,6 +25,7 @@ def _client(tmp_path: Path, monkeypatch) -> TestClient:
 
     monkeypatch.setattr(sessions, "_store", SessionMetadataStore(tmp_path))
     app = FastAPI()
+    install_error_handlers(app)
     app.include_router(sessions.router)
     return TestClient(app)
 
@@ -33,6 +37,7 @@ def test_session_list_hides_system_channels_unless_asked(tmp_path: Path, monkeyp
     store = SessionMetadataStore(tmp_path)
     monkeypatch.setattr(sessions, "_store", store)
     app = FastAPI()
+    install_error_handlers(app)
     app.include_router(sessions.router)
     with TestClient(app) as client:
         visible = client.post("/api/sessions", json={"title": "用户会话"}).json()
@@ -394,6 +399,7 @@ def test_project_registry_create_and_session_binding_api(tmp_path: Path, monkeyp
     monkeypatch.setattr(sessions.LlmPreferenceStore, "get_key", lambda _self: None)
 
     app = FastAPI()
+    install_error_handlers(app)
     app.include_router(sessions.router)
     with TestClient(app) as client:
         listed = client.get("/api/projects")
@@ -499,6 +505,7 @@ def test_project_binding_rejects_unknown_or_running_session(tmp_path: Path, monk
     monkeypatch.setattr(sessions, "_coordinator", coordinator)
 
     app = FastAPI()
+    install_error_handlers(app)
     app.include_router(sessions.router)
     with TestClient(app) as client:
         unknown_project = client.put(

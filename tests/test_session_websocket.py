@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+
 import logging
 import time
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from server.error_mapping import install_error_handlers
 
 from server.services.event_bus import Event, EventBus
 from server.services.session_coordinator import RuntimeState
@@ -94,6 +97,7 @@ def _app(tmp_path, monkeypatch) -> tuple[FastAPI, str]:
     event_bus = EventBus()
     monkeypatch.setattr(sessions, "bus", event_bus)
     app = FastAPI()
+    install_error_handlers(app)
 
     @app.on_event("startup")
     async def attach_event_loop() -> None:

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from .. import _paths
-from .session_metadata import SessionMetadataStore, stable_archive_id
+from .session_metadata import SessionMetadataStore
 
 log = logging.getLogger(__name__)
 

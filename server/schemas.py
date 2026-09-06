@@ -927,7 +927,7 @@ class MyKeyOpenResp(BaseModel):
     path: str
 
 
-# Observability / services
+# ── events / service panel / file reveal & upload ────────────────
 class LogLinesResp(BaseModel):
     lines: list[str]
     file: str | None = None
@@ -993,7 +993,7 @@ class RevealFileResp(BaseModel):
     path: str
 
 
-# Feishu bot
+# ── feishu bot ───────────────────────────────────────────────────
 class FsSendReq(BaseModel):
     receive_id: str
     text: str
@@ -1068,6 +1068,8 @@ class FsSendResp(BaseModel):
     raw: str | None = None
     message_id: str | None = None
 
+
+# ── mykey raw editor ─────────────────────────────────────────────
 class RawWriteReq(BaseModel):
     raw: str
 
