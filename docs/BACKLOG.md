@@ -399,3 +399,44 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
 - [x] conductor 路由端点 docstring——已修（dcfb4e5）：十个端点补一句话
       描述并重导出契约；agent.py 等其余路由的稀疏处随下次契约触碰顺手
       补（repo 现象，非阻塞）
+
+## 2026-09-07 结构整合度扫描（第六轮：统一性/简洁性/里程碑端到端）
+
+三路并行（里程碑端到端 / 统一性普查 / 简洁性死代码）。基线 hub 4726803 +
+GA 32f4d5e。**已修**：
+
+- [x] 里程碑 P1×3（GA 1324d73）：①archive_contains 只在 `=== Response ===`
+      节匹配——简报原文含全部 marker，全文搜索使里程碑在 worker 首次
+      LLM 调用即秒达成；②谓词评估补捕 ValueError（>16MB 文件读取、
+      Windows 空字节路径），不再把读失败上升成 worker FAILED；③monitor
+      里程碑转换后推 snapshot——静默 worker 永远不产出帧，hub 卡片
+      此前不会更新。随修 P2/P3：MilestoneCheck 路径按 deliverable 同规
+      校验（绝对+根内+非空 needle）、简报措辞改累计预算、doctrine 事件
+      名改 subagent_milestone、notified 落笔、评估移出 pool 锁、rework
+      re-arm 共享助手 + 回滚快照覆盖里程碑
+- [x] hub 统一性（036df9d）：20 个死导入（模型迁移尾巴）、
+      _rewind_session_turns 孤儿、conversations_v2_dir、upload._is_within、
+      3 个死词汇常量、delete_session 死赋值；sessions 路由不再手工翻译
+      六个语义异常族（app 级 mapper 同形状接管，_busy_error 删除，
+      5 个测试夹具补装 mapper 镜像生产接线）；schemas 段标归一；4 处
+      Title Case 日志；Autonomous 页 4 处 mutation 补 dialog.alert
+
+### 决策项（未修，按伤害排序）
+
+- [ ] HTTP 错误词汇收编（普查：34 结构化 vs 64 裸串 raise）：杠杆最高
+      是 routes 内 `_not_found` 类 helper 升级为 coded `_api_error`
+      （一处改 6 调用点）；改前需逐路由核对前端是否字符串匹配 detail。
+      errorMessageFromError 已兼容两种形状，属机械改造但量大
+- [ ] create_app（main.py ~295 行）内联端点外迁 routes/system.py；
+      Conductor.tsx（~1280 行）拆历史栏/转录/设置 Modal 三块——
+      均为纯结构搬移，下次触碰对应页面时顺手做
+- [ ] 测试面：conftest 零共享 fixture（def _client ×5 各自为政）、
+      double 命名三轨（Fake/Mock/_Stub）、TestCase vs 函数式无规律
+      分界——统一需一次性大接触面，建议随下一轮专项做
+- [ ] 转录双轨（chatStore vs conductor transcript 引擎）维持现状：
+      Round-4 已定 conductor 单独引擎（单任务视口 + 里程碑条带字段
+      不同），合并收益低于耦合成本；chatStore:892/960、Settings:568、
+      App:66 裸 .message 为运行时边界（round-4 决策维持）
+- [ ] 误报备查（核实后否决）：api/types.ts 无死类型（全部有引用）；
+      navigation.ts storageKeys 导入在用；dailyUsage 有测试引用；
+      MISFIRE_GRACE_SECONDS 是 noqa 测试 seam 重导出
