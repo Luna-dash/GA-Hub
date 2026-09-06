@@ -1004,6 +1004,23 @@ class ConductorService:
             )
             self._relay_thread.start()
 
+    def start(
+        self,
+        llm_index: Optional[int] = None,
+        subagent_llm_index: Optional[int] = None,
+        subagent_model_policy: Optional[SubagentModelPolicy] = None,
+    ) -> bool:
+        """Compatibility facade behind POST /api/conductor/start: configure
+        models, then ensure the lifecycle. da97cf8 dropped it as "dead code"
+        and the start button 500'd (AttributeError) for a week — the sweep
+        grepped service callers but missed the route's dynamic reference."""
+        self.configure_models(
+            llm_index=llm_index,
+            subagent_llm_index=subagent_llm_index,
+            subagent_model_policy=subagent_model_policy,
+        )
+        return self.ensure_started()
+
     def ensure_started(self, exclude_request_id: str | None = None) -> bool:
         with self._shutdown_lock:
             if self._closed:

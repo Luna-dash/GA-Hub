@@ -268,6 +268,21 @@ def _callbacks_with_worker(service: cs.ConductorService, worker: SimpleNamespace
     return callbacks, _join_after
 
 
+def test_start_facade_configures_models_then_ensures_lifecycle() -> None:
+    """POST /api/conductor/start regression: da97cf8 dropped the `start`
+    facade as dead code and the start button 500'd (AttributeError) for a
+    week — the dead-code sweep grepped service callers but missed the
+    route's dynamic reference."""
+    service = _bare_service()
+    service.configure_models = Mock(return_value={})
+    service.ensure_started = Mock(return_value=True)
+
+    assert service.start(llm_index=1, subagent_llm_index=2) is True
+    service.configure_models.assert_called_once_with(
+        llm_index=1, subagent_llm_index=2, subagent_model_policy=None)
+    service.ensure_started.assert_called_once_with()
+
+
 def test_auto_accept_withholds_on_stale_deliverables() -> None:
     """A deliverable that predates the attempt (path_exists/file_contains
     pass for any old file) must never be machine-accepted."""

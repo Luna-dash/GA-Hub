@@ -184,6 +184,19 @@ def test_chat_route_forwards_model_policy(monkeypatch):
     )]
 
 
+def test_start_route_uses_service_facade(monkeypatch):
+    service = FakeService(STOPPED)
+    service.start = Mock(return_value=True)
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    result = asyncio.run(conductor_routes.start_conductor(
+        conductor_routes.ConductorStartReq(llm_index=1)))
+
+    assert result["ok"] is True
+    service.start.assert_called_once_with(
+        llm_index=1, subagent_llm_index=None, subagent_model_policy=None)
+
+
 def test_subagent_detail_route_delegates_to_service_dossier(monkeypatch):
     """The engine+mirror merge lives in ConductorService; the route only
     forwards (the merge matrix is covered at service level)."""
