@@ -90,9 +90,18 @@ def test_probe_interpreter_passes_clean_child_env(monkeypatch, tmp_path) -> None
     class FakeProc:
         returncode = 0
 
+        def poll(self):
+            # Simulate the resident child: marker lands in the output file.
+            out = captured.get("stdout")
+            if out is not None and hasattr(out, "name"):
+                with open(out.name, "ab") as f:
+                    f.write(b"PROBE_OK\n")
+            return None
+
+        def kill(self):
+            pass
+
         def wait(self, timeout=None):
-            if captured.get("stdout") is not None and hasattr(captured["stdout"], "write"):
-                captured["stdout"].write(b"PROBE_OK\n")
             return 0
 
     def fake_venv_popener(cmd, **kwargs):
@@ -118,15 +127,17 @@ def test_probe_interpreter_passes_clean_child_env(monkeypatch, tmp_path) -> None
     assert env is not None
     assert all("_MEI" not in item for item in env["PATH"].split(chr(59)))
     assert "_PYI_ARCHIVE" not in env
-    # The probe must mirror the real engine spawn shape: stdout to a file
-    # handle. AV suspended exactly the pipe-stdout children of the frozen
-    # sidecar (live 2026-09-07), so a pipe probe blocked healthy engines.
+    # The probe child must be resident (print + sleep), not print-and-exit:
+    # an immediately-exiting child deadlocks with the AV reputation scan
+    # (live 2026-09-07, two rounds of frozen-sidecar diagnosis).
+    assert "time.sleep" in captured["cmd"][3]
     assert captured["stdout_is_pipe"] is False
 
 
 def test_probe_hang_kills_child_and_names_condition(monkeypatch, tmp_path) -> None:
-    """A hung probe child must be killed (no zombie leak) and the raised
-    error must name the AV-suspension condition with the interpreter path."""
+    """A probe child that never produces the marker must be killed (no
+    zombie leak) and the raised error must name the AV-suspension condition
+    with the interpreter path."""
     import subprocess as real_subprocess
 
     killed: list = []
@@ -134,12 +145,15 @@ def test_probe_hang_kills_child_and_names_condition(monkeypatch, tmp_path) -> No
     class HungProc:
         returncode = None
 
-        def wait(self, timeout=None):
-            if timeout is not None:
-                raise real_subprocess.TimeoutExpired("python", timeout)
+        def poll(self):
+            return None
 
         def kill(self):
             killed.append(True)
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise real_subprocess.TimeoutExpired("python", timeout)
 
     def fake_popener(cmd, **kwargs):
         return HungProc()
@@ -153,9 +167,36 @@ def test_probe_hang_kills_child_and_names_condition(monkeypatch, tmp_path) -> No
     with pytest.raises(GahubProcessError) as raised:
         manager._probe_interpreter(io.BytesIO())
     assert killed, "hung probe child must be killed"
-    assert "hung" in str(raised.value)
+    assert "no output in 15s" in str(raised.value)
     assert "conda-python.exe" in str(raised.value)
     assert "security software" in str(raised.value)
+
+
+def test_probe_early_exit_without_marker_reports_rc(monkeypatch, tmp_path) -> None:
+    """A child that dies before printing the marker must surface its exit
+    code instead of waiting out the full deadline."""
+    import subprocess as real_subprocess
+
+    class DeadProc:
+        returncode = 3
+
+        def poll(self):
+            return 3
+
+        def kill(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kw: DeadProc())
+    monkeypatch.setattr("server.services.conductor_client.tempfile.gettempdir",
+                        lambda: str(tmp_path))
+
+    manager = GahubProcessManager(python_exe="conda-python.exe")
+    with pytest.raises(GahubProcessError) as raised:
+        manager._probe_interpreter(io.BytesIO())
+    assert "no output in 15s" in str(raised.value)
 
 
 def test_engine_spawn_env_injects_hub_journal_path(monkeypatch, tmp_path) -> None:
