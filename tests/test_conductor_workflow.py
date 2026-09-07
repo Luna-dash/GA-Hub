@@ -139,6 +139,25 @@ def test_tracker_prunes_old_terminal_workflows_but_keeps_active_ones():
     assert tracker.snapshot("request-3") is not None
 
 
+def test_tracker_is_open_distinguishes_active_recoverable_and_terminal():
+    """Recoverable worker failures stay open: a user follow-up must still be
+    able to wake the supervisor for a rework or a fresh dispatch."""
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("request-open")
+    tracker.admit("request-recovering")
+    tracker.admit("request-closed")
+
+    tracker.fail_supervisor("request-closed", phase="dispatch", error="boom")
+    # Worker failure without a terminal event = recoverable, not closed.
+    tracker.bind_subagent("request-recovering", "worker-1", 1)
+    tracker.record_subagent_event("worker-1", "failed", generation=1)
+
+    assert tracker.is_open("request-open") is True
+    assert tracker.is_open("request-recovering") is True
+    assert tracker.is_open("request-closed") is False
+    assert tracker.is_open("never-admitted") is False
+
+
 def test_tracker_lists_recent_workflows_in_creation_order():
     now = iter([1.0, 2.0, 3.0])
     tracker = WorkflowTracker(clock=lambda: next(now))

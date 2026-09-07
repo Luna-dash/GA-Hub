@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   conductorSubagentAction: vi.fn(),
   conductorSubagent: vi.fn(),
   conductorSettings: vi.fn(),
+  revealFile: vi.fn(),
   llms: vi.fn(),
   selectMainLlm: vi.fn(),
   selectSubagentLlm: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock('@/api/client', () => ({
     conductorSubagentAction: mocks.conductorSubagentAction,
     conductorSubagent: mocks.conductorSubagent,
     conductorSettings: mocks.conductorSettings,
+    revealFile: mocks.revealFile,
     llms: mocks.llms,
   },
 }))
@@ -712,6 +714,77 @@ describe('Conductor chat scroll restoration', () => {
     expect(useToastStore.getState().items).toHaveLength(0)
   })
 
+  it('sends a follow-up to the open workflow instead of forking a new task', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1',
+        status: 'supervising',
+        stage: 'supervising',
+        subagents: { live: { generation: 1, state: 'running' } },
+        created_at: 1,
+        completed_at: null,
+      }],
+    })
+    mocks.conductorSendChat.mockResolvedValue({
+      id: 'u1', role: 'user', msg: '补充：还要覆盖登录场景', ts: 1, request_id: 'request-1',
+    })
+    renderPage()
+    await waitFor(() => expect(host.querySelector('form textarea')).toBeTruthy())
+    await waitFor(() => expect(host.textContent).toContain('不会另开新任务'))
+
+    typeMessage('补充：还要覆盖登录场景')
+    act(() => button('发送补充').click())
+    await waitFor(() => expect(mocks.conductorSendChat).toHaveBeenCalledTimes(1))
+    expect(mocks.conductorSendChat).toHaveBeenCalledWith(
+      '补充：还要覆盖登录场景', 'user', expect.anything(), 'request-1',
+    )
+  })
+
+  it('offers an explicit new-task submit that omits the request id', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1',
+        status: 'supervising',
+        stage: 'supervising',
+        subagents: { live: { generation: 1, state: 'running' } },
+        created_at: 1,
+        completed_at: null,
+      }],
+    })
+    mocks.conductorSendChat.mockResolvedValue({
+      id: 'u2', role: 'user', msg: '另起一个独立任务', ts: 2,
+    })
+    renderPage()
+    await waitFor(() => expect(host.querySelector('form textarea')).toBeTruthy())
+    await waitFor(() => expect(host.textContent).toContain('新任务'))
+
+    typeMessage('另起一个独立任务')
+    act(() => button('新任务').click())
+    await waitFor(() => expect(mocks.conductorSendChat).toHaveBeenCalledTimes(1))
+    expect(mocks.conductorSendChat).toHaveBeenCalledWith(
+      '另起一个独立任务', 'user', expect.anything(), undefined,
+    )
+  })
+
+  it('falls back to fresh-task wording when the viewed workflow is closed', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1',
+        status: 'completed',
+        stage: 'completed',
+        subagents: {},
+        created_at: 1,
+        completed_at: 2,
+      }],
+    })
+    renderPage()
+    await waitFor(() => expect(host.querySelector('form textarea')).toBeTruthy())
+    await waitFor(() => expect(
+      (host.querySelector('form textarea') as HTMLTextAreaElement).placeholder,
+    ).toBe('描述一个新任务…'))
+    expect(host.textContent).not.toContain('不会另开新任务')
+  })
+
   it('restores the draft and warns instead of silently dropping a failed task', async () => {
     mocks.conductorSendChat.mockRejectedValueOnce(new Error('boom'))
     renderPage()
@@ -814,6 +887,14 @@ describe('Conductor chat scroll restoration', () => {
     const board = host.querySelector('section[aria-label="当前任务"]')
     expect(board?.textContent).toContain('旧任务：整理归档')
     expect(board?.textContent).not.toContain('新任务')
+
+    // 回到最新 releases the pin and follows the newest workflow again.
+    expect(host.textContent).toContain('回到最新')
+    act(() => button('回到最新').click())
+    await waitFor(() => {
+      const latest = host.querySelector('section[aria-label="当前任务"]')
+      expect(latest?.textContent).toContain('新任务：画一个 pelican')
+    })
   })
 
   it('presents a recoverable worker failure as open, not as a closed workflow', async () => {
@@ -864,5 +945,209 @@ describe('Conductor chat scroll restoration', () => {
       expect(text).toContain('失败原因：conductor start failed: gahub_app unavailable')
       expect(text).not.toContain('原因已写入本轮对话')
     })
+  })
+
+  it('offers a one-click retry that prefills the composer with the failed task', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({ items: [failedWorkflowFixture('workflow_failed')] })
+    mocks.conductorSubagents.mockResolvedValue({ items: [] })
+    mocks.conductorChat.mockResolvedValue({
+      items: [{ id: 'u1', role: 'user', msg: '整理归档目录并生成索引', ts: 1, request_id: 'request-1' }],
+    })
+
+    renderPage()
+    await waitFor(() => expect(host.textContent).toContain('重新发起这个任务'))
+
+    act(() => button('重新发起这个任务（按原任务措辞重开）').click())
+    expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
+      .toBe('整理归档目录并生成索引')
+  })
+
+  it('guides first use with example tasks when nothing has happened yet', async () => {
+    mocks.conductorChat.mockResolvedValue({ items: [] })
+    mocks.conductorWorkflows.mockResolvedValue({ items: [] })
+
+    renderPage()
+    await waitFor(() => expect(host.textContent).toContain('把一件事交给指挥'))
+
+    const chips = Array.from(
+      host.querySelectorAll('[data-testid="conductor-example-task"]'),
+    ) as HTMLButtonElement[]
+    expect(chips).toHaveLength(3)
+
+    act(() => chips[0].click())
+    expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
+      .toContain('整理下载目录')
+  })
+
+  it('renders captured lifecycle events in the activity timeline', async () => {
+    setSubagentFixtures()
+    act(() => {
+      useConductorStore.getState().addWorkerActivity({
+        id: 'ev:1', name: 'spawned', request_id: 'request-1',
+        at: 1_700_000_000, text: '子代理已派出', worker_id: 'reviewing',
+      })
+      useConductorStore.getState().addWorkflowActivity({
+        request_id: 'request-1', kind: 'workflow_completed', at: 1_700_000_060, text: '任务完成',
+      })
+    })
+
+    renderPage()
+    await waitFor(() => {
+      const timeline = host.querySelector('section[aria-label="任务动态"]')
+      expect(timeline?.textContent).toContain('子代理已派出')
+      expect(timeline?.textContent).toContain('任务完成')
+    })
+  })
+
+  it('exposes deliverable reveal actions and the previous review note', async () => {
+    setSubagentFixtures()
+    mocks.conductorSubagent.mockResolvedValue({
+      id: 'reviewing', prompt: '检查桌面启动流程', reply: 'done',
+      status: 'stopped', created_at: 3, updated_at: 3, review_status: 'pending',
+      review_note: '上一轮意见：路径指向旧文件', attempt: 1, generation: 1,
+      request_id: 'request-1',
+      manifest: {
+        goal: '核对桌面启动路径',
+        deliverables: [{ path: 'D:/out/report.md', desc: '终稿' }],
+      },
+    })
+    mocks.revealFile.mockResolvedValue({ ok: true })
+
+    renderPage()
+    await waitFor(() => expect(host.textContent).toContain('上一轮意见：路径指向旧文件'))
+
+    act(() => button('打开').click())
+    expect(mocks.revealFile).toHaveBeenCalledWith('D:/out/report.md', 'open')
+    act(() => button('所在位置').click())
+    expect(mocks.revealFile).toHaveBeenCalledWith('D:/out/report.md', 'folder')
+  })
+
+  it('collapses and restores both side rails from the chat header toggles', async () => {
+    setSubagentFixtures()
+    renderPage()
+    await waitFor(() => expect(host.textContent).toContain('工人卷宗'))
+
+    const toggle = (label: string) => {
+      const element = host.querySelector(`button[aria-label="${label}"]`)
+      if (!(element instanceof HTMLButtonElement)) throw new Error(`toggle not found: ${label}`)
+      return element
+    }
+
+    act(() => toggle('收起左侧栏').click())
+    expect(host.querySelector('section[aria-label="当前任务"]')).toBeNull()
+    act(() => toggle('展开左侧栏').click())
+    await waitFor(() => expect(host.querySelector('section[aria-label="当前任务"]')).toBeTruthy())
+
+    act(() => toggle('收起详情面板').click())
+    expect(host.textContent).not.toContain('工人卷宗')
+    act(() => toggle('展开详情面板').click())
+    await waitFor(() => expect(host.textContent).toContain('工人卷宗'))
+  })
+
+  it('moves worker selection with j/k and accepts the selected worker with a', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1',
+        status: 'awaiting_review',
+        stage: 'awaiting_review',
+        subagents: {
+          reviewing: { generation: 1, state: 'pending' },
+          accepted: { generation: 1, state: 'accepted' },
+        },
+        created_at: 1,
+        completed_at: null,
+      }],
+    })
+    mocks.conductorSubagents.mockResolvedValue({
+      items: [
+        {
+          id: 'reviewing', prompt: '检查桌面启动流程', reply: 'done', status: 'stopped',
+          created_at: 3, updated_at: 3, review_status: 'pending', review_note: '',
+          attempt: 1, completed_at: 3, accepted_at: null, generation: 1,
+          request_id: 'request-1', stage: 'reviewing',
+        },
+        {
+          id: 'accepted', prompt: '验证历史会话加载速度', reply: 'done', status: 'stopped',
+          created_at: 4, updated_at: 4, review_status: 'accepted', review_note: '',
+          attempt: 1, completed_at: 4, accepted_at: 4, generation: 1,
+          request_id: 'request-1', stage: 'accepted',
+        },
+      ],
+    })
+    mocks.conductorSubagentAction.mockResolvedValue({ id: 'reviewing', status: 'stopped' })
+
+    renderPage()
+    await waitFor(() => expect(host.textContent).toContain('工人卷宗'))
+    const aside = () => {
+      const element = host.querySelector('aside')
+      if (!element) throw new Error('dossier aside not found')
+      return element
+    }
+    // The reviewable worker is auto-selected on mount.
+    expect(aside().textContent).toContain('检查桌面启动流程')
+
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'j' })))
+    expect(aside().textContent).toContain('验证历史会话加载速度')
+    expect(aside().textContent).not.toContain('检查桌面启动流程')
+
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k' })))
+    expect(aside().textContent).toContain('检查桌面启动流程')
+
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' })))
+    await flushQueries()
+    expect(mocks.conductorSubagentAction).toHaveBeenCalledWith(
+      'reviewing', 'accept', '', null, {}, false,
+    )
+  })
+
+  it('advances selection to the next reviewable worker after a decision', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1',
+        status: 'awaiting_review',
+        stage: 'awaiting_review',
+        subagents: {
+          first: { generation: 1, state: 'pending' },
+          second: { generation: 1, state: 'pending' },
+        },
+        created_at: 1,
+        completed_at: null,
+      }],
+    })
+    mocks.conductorSubagents.mockResolvedValue({
+      items: [
+        {
+          id: 'first', prompt: '第一个工人任务', reply: 'ok', status: 'stopped',
+          created_at: 1, updated_at: 1, review_status: 'pending', review_note: '',
+          attempt: 1, completed_at: 1, accepted_at: null, generation: 1,
+          request_id: 'request-1', stage: 'reviewing',
+        },
+        {
+          id: 'second', prompt: '第二个工人任务', reply: 'ok', status: 'stopped',
+          created_at: 2, updated_at: 2, review_status: 'pending', review_note: '',
+          attempt: 1, completed_at: 2, accepted_at: null, generation: 1,
+          request_id: 'request-1', stage: 'reviewing',
+        },
+      ],
+    })
+    mocks.conductorSubagentAction.mockResolvedValue({ id: 'first', status: 'stopped' })
+
+    renderPage()
+    await waitFor(() => expect(host.textContent).toContain('工人卷宗'))
+    expect((host.querySelector('aside') as HTMLElement).textContent).toContain('第一个工人任务')
+
+    act(() => button('通过').click())
+    await flushQueries()
+    expect(mocks.conductorSubagentAction).toHaveBeenNthCalledWith(
+      1, 'first', 'accept', '', null, {}, false,
+    )
+
+    // The dossier now shows the second worker without a manual click.
+    expect((host.querySelector('aside') as HTMLElement).textContent).toContain('第二个工人任务')
+    act(() => button('通过').click())
+    await flushQueries()
+    expect(mocks.conductorSubagentAction).toHaveBeenNthCalledWith(
+      2, 'second', 'accept', '', null, {}, false,
+    )
   })
 })

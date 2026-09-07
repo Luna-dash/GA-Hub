@@ -1822,7 +1822,7 @@
       },
       "post": {
         "summary": "Post Chat",
-        "description": "Admit one chat message for the conductor and broadcast it.",
+        "description": "Admit one chat message for the conductor and broadcast it.\n\nA user message whose ``request_id`` names an open workflow appends to\nthat workflow (conversation continuity); unknown or closed ids fall back\nto admitting a fresh task.",
         "operationId": "post_chat_api_conductor_chat_post",
         "requestBody": {
           "required": true,

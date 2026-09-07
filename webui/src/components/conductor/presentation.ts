@@ -1,0 +1,189 @@
+// presentation.ts — shared Conductor presentation helpers.
+//
+// Pure decisions only: task-text compaction, stage/copy mapping, tone
+// classes, and the review-facts view of an engine subagent snapshot. No
+// React and no fetching, so the page and every component under
+// components/conductor/ agree on exactly one source of truth.
+
+import clsx from 'clsx'
+import type { ConductorSubagent, ConductorWorkflow } from '@/api/types'
+
+export function compactTaskText(text: string): string {
+  const compact = text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/^\s*(?:#{1,6}|[-*])\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!compact) return '未提供任务说明'
+  return compact.length > 180 ? `${compact.slice(0, 180)}…` : compact
+}
+
+/** Engine verification payload from a 409 completion_unverified accept. */
+export type SubagentEvidence = {
+  error?: string
+  checks_ok?: boolean
+  deliverables_missing?: string[]
+  deliverables_stale?: string[]
+  quality_checks?: {
+    checks?: Array<{
+      kind?: string
+      path?: string
+      passed?: boolean
+      status?: string
+      severity?: string
+      detail?: string
+    }>
+    checks_ok?: boolean
+  }
+  verification?: { verified?: boolean }
+  [key: string]: unknown
+}
+
+/** Snapshot fields the engine already sends; OpenAPI extra:allow. */
+export type SubagentManifest = {
+  goal?: string
+  done_when?: string
+  deliverables?: Array<{ path?: string; desc?: string }>
+}
+
+export type SubagentReviewFacts = ConductorSubagent & {
+  deliverables_missing?: string[]
+  deliverables_stale?: string[]
+  done_marker?: boolean
+  quality_checks?: SubagentEvidence['quality_checks']
+  manifest?: SubagentManifest
+  verification?: { verified?: boolean; done_marker?: boolean }
+}
+
+export function reviewFacts(sub: ConductorSubagent): SubagentReviewFacts {
+  return sub as SubagentReviewFacts
+}
+
+export function basenamePath(path: string): string {
+  const parts = path.replace(/\\/g, '/').split('/')
+  return parts[parts.length - 1] || path
+}
+
+export function isReviewable(sub: ConductorSubagent): boolean {
+  return sub.status === 'stopped' && !['accepted', 'rejected'].includes(sub.review_status)
+}
+
+export function workerTitle(sub: ConductorSubagent): string {
+  const facts = reviewFacts(sub)
+  return compactTaskText(facts.manifest?.goal || sub.prompt)
+}
+
+/** Rail-safe title for one-line CTAs; the dossier shows the full text. */
+export function shortWorkerTitle(sub: ConductorSubagent): string {
+  const title = workerTitle(sub)
+  return title.length > 28 ? `${title.slice(0, 28)}…` : title
+}
+
+/** Actions the review row can offer; the page supplies the implementations. */
+export type SubagentRowControl = {
+  evidence?: SubagentEvidence
+  busy: boolean
+  reworkOpen: boolean
+  reworkReason: string
+  onAccept: () => void
+  onForceAccept: () => void
+  onAbort: () => void
+  onReworkOpen: () => void
+  onReworkReasonChange: (value: string) => void
+  onReworkCancel: () => void
+  onReworkSubmit: () => void
+  onEvidenceDismiss: () => void
+}
+
+export type SubagentPhase = 'running' | 'reworking' | 'reviewing' | 'accepted' | 'stopped'
+
+// The hub decides each worker's stage (conductor_vocabulary.subagent_stage);
+// the page only maps stage -> label/tone copy.
+export const WORKER_STAGE_VIEW: Record<string, { phase: SubagentPhase; label: string; detail: string }> = {
+  running: { phase: 'running', label: '执行中', detail: '子代理正在处理这项任务' },
+  reworking: { phase: 'reworking', label: '返工中', detail: '正在按验收意见重新处理' },
+  reviewing: { phase: 'reviewing', label: '待你验收', detail: '工人已交活，请看右侧卷宗后决定通过或打回' },
+  accepted: { phase: 'accepted', label: '已通过', detail: '结果已通过验收' },
+  stopped: { phase: 'stopped', label: '已停止', detail: '这项任务当前没有继续执行' },
+}
+
+export function subagentPhase(sub: ConductorSubagent): {
+  phase: SubagentPhase
+  label: string
+  detail: string
+} {
+  return WORKER_STAGE_VIEW[sub.stage ?? 'stopped'] ?? WORKER_STAGE_VIEW.stopped
+}
+
+export type WorkflowTone = 'active' | 'review' | 'done' | 'error' | 'idle'
+
+// Terminal stages: nothing further will happen on this workflow.
+export const WORKFLOW_STAGE_CLOSED = new Set(['completed', 'failed'])
+// Stages that stall while the conductor itself is stopped.
+export const WORKFLOW_STAGE_PAUSABLE = new Set([
+  'planning', 'supervising', 'reworking', 'awaiting_review', 'aggregating',
+])
+
+export const WORKFLOW_STAGE_VIEW: Record<string, { label: string; detail: string; tone: WorkflowTone }> = {
+  planning: { label: '正在规划', detail: 'Conductor 正在理解需求并准备分派。', tone: 'active' },
+  supervising: { label: '执行中', detail: 'Conductor 已完成分派，子代理正在处理。', tone: 'active' },
+  reworking: { label: '返工中', detail: '未通过的部分已交回子代理继续处理。', tone: 'active' },
+  awaiting_review: { label: '待你验收', detail: '子代理已交活，请查看右侧卷宗后决定通过或打回。', tone: 'review' },
+  aggregating: { label: '正在汇总', detail: '子任务均已通过，Conductor 正在整理最终交付。', tone: 'review' },
+  recoverable_failure: { label: '子代理失败', detail: '子代理处理失败，Conductor 正在决定返工或补派。', tone: 'active' },
+  completed: { label: '已完成', detail: '所有子任务已通过验收，交付结果已发送。', tone: 'done' },
+  failed: { label: '执行失败', detail: '工作流未能完成，原因已写入本轮对话。', tone: 'error' },
+}
+
+export function workflowPresentation(
+  workflow: ConductorWorkflow | undefined,
+  started = true,
+): { label: string; detail: string; tone: WorkflowTone } {
+  if (!workflow) {
+    return { label: '等待任务', detail: '发送任务后，这里会显示分派和执行进度。', tone: 'idle' }
+  }
+  const view = WORKFLOW_STAGE_VIEW[workflow.stage ?? 'planning'] ?? WORKFLOW_STAGE_VIEW.planning
+  if (!started && WORKFLOW_STAGE_PAUSABLE.has(workflow.stage ?? '')) {
+    return { label: '已暂停', detail: 'Conductor 已停止；点击“启动 / 恢复”后可继续处理。', tone: 'idle' }
+  }
+  // Surface the tracker-persisted reason directly: a page opened after the
+  // failure never saw the live transition, so the reason must come from the
+  // workflow snapshot itself.
+  if (view === WORKFLOW_STAGE_VIEW.failed && workflow.error) {
+    return { ...view, detail: `失败原因：${workflow.error}` }
+  }
+  return view
+}
+
+export function isNearScrollBottom(el: HTMLDivElement | null): boolean {
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 96
+}
+
+export function phaseTone(phase: SubagentPhase): string {
+  return clsx(
+    phase === 'running' && 'text-status-warning',
+    phase === 'reworking' && 'text-status-warning-strong',
+    phase === 'reviewing' && 'text-status-info',
+    phase === 'accepted' && 'text-status-success',
+    phase === 'stopped' && 'text-ink-muted',
+  )
+}
+
+export function phaseDot(phase: SubagentPhase): string {
+  return clsx(
+    'h-1.5 w-1.5 shrink-0 rounded-full',
+    phase === 'running' && 'bg-status-warning-strong',
+    phase === 'reworking' && 'bg-status-warning-hot',
+    phase === 'reviewing' && 'bg-status-info',
+    phase === 'accepted' && 'bg-status-success-strong',
+    // stopped: one-off neutral, sanctioned by the palette comment
+    phase === 'stopped' && 'bg-[#9A8E7D]',
+  )
+}
+
+export type WorkerMilestone = { id: string; desc: string; status: string }
+
+export function milestonesOf(sub: ConductorSubagent): WorkerMilestone[] {
+  return ((sub as { plan_milestones?: WorkerMilestone[] | null }).plan_milestones) ?? []
+}

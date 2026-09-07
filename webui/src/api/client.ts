@@ -341,6 +341,10 @@ export const api = {
     msg: string,
     role: 'user' | 'assistant' = 'user',
     models: ConductorModelSettings = {},
+    // Continuity: when set to the request id of an open workflow, the hub
+    // appends to that workflow instead of admitting a new task. Undefined or
+    // unknown ids keep the legacy fresh-admission behavior.
+    requestId?: string,
   ) =>
     // Cold-starting gahub_app can legitimately take longer than the generic
     // 30s request budget. The server cannot cancel admission after a client
@@ -348,6 +352,7 @@ export const api = {
     http<ConductorChatMessage>('POST', '/api/conductor/chat', {
       msg,
       role,
+      ...(requestId ? { request_id: requestId } : {}),
       // One id per logical admission: a retried submit must not admit the
       // task twice (the engine replays the first terminal answer).
       operation_id: newOperationId(),

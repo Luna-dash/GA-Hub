@@ -162,3 +162,63 @@ def test_user_chat_adopts_engine_id_and_publishes_once():
                    if topic == "conductor:chat"]
     assert chat_events == [{"item": item}]
     assert service.chat_messages[-1]["id"] == "engine-9"
+
+
+def _service_for_followup_test():
+    service = ConductorService.for_tests()
+    service.chat_messages = []
+    service._started = True
+    service.configure_models = Mock()
+    service.ensure_started = Mock()
+    service.notify = Mock(return_value=True)
+    return service
+
+
+def test_user_followup_appends_to_an_open_workflow_without_forking_a_task():
+    """Conversation continuity: a user message naming the request id of an
+    open workflow stays on that workflow — the engine wakes the supervisor
+    under the same id, so the UI thread never forks. 2026-09 UI audit."""
+    service = _service_for_followup_test()
+    service.workflow_tracker.admit("req-open")
+    before = service.workflow_tracker.snapshot("req-open")
+
+    with patch("server.services.conductor_service.bus.publish"):
+        item = service.add_chat_message(
+            "补充说明", role="user", request_id="req-open",
+            operation_id="op-followup",
+        )
+
+    assert item["request_id"] == "req-open"
+    # No second admission: the workflow keeps its original snapshot.
+    assert service.workflow_tracker.snapshot("req-open") == before
+    # The stranded redispatch exclusion still guards the direct notify below.
+    service.ensure_started.assert_called_once_with(exclude_request_id="req-open")
+    service.notify.assert_called_once_with({
+        "type": "user_message", "msg": "补充说明", "request_id": "req-open",
+        "operation_id": "op-followup",
+    })
+
+
+def test_user_followup_on_a_closed_workflow_admits_a_new_task():
+    service = _service_for_followup_test()
+    service.workflow_tracker.admit("req-dead")
+    service.workflow_tracker.fail_supervisor(
+        "req-dead", phase="finish", error="closed")
+
+    with patch("server.services.conductor_service.bus.publish"):
+        item = service.add_chat_message("再来一次", role="user", request_id="req-dead")
+
+    assert item["request_id"] != "req-dead"
+    assert service.workflow_tracker.has_request(item["request_id"])
+
+
+def test_user_followup_on_an_unknown_request_id_admits_a_new_task():
+    service = _service_for_followup_test()
+
+    with patch("server.services.conductor_service.bus.publish"):
+        item = service.add_chat_message("新任务", role="user", request_id="req-ghost")
+
+    assert item["request_id"] != "req-ghost"
+    assert service.workflow_tracker.has_request(item["request_id"])
+    event = service.notify.call_args.args[0]
+    assert event["request_id"] == item["request_id"]

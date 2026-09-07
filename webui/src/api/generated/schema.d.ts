@@ -896,6 +896,10 @@ export interface paths {
         /**
          * Post Chat
          * @description Admit one chat message for the conductor and broadcast it.
+         *
+         *     A user message whose ``request_id`` names an open workflow appends to
+         *     that workflow (conversation continuity); unknown or closed ids fall back
+         *     to admitting a fresh task.
          */
         post: operations["post_chat_api_conductor_chat_post"];
         delete?: never;

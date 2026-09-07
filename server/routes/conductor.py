@@ -140,7 +140,12 @@ async def get_chat(last: int = Query(default=20, ge=1, le=200)) -> ConductorChat
 
 @router.post("/api/conductor/chat")
 async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
-    """Admit one chat message for the conductor and broadcast it."""
+    """Admit one chat message for the conductor and broadcast it.
+
+    A user message whose ``request_id`` names an open workflow appends to
+    that workflow (conversation continuity); unknown or closed ids fall back
+    to admitting a fresh task.
+    """
     workflow = {}
     if body.request_id is not None:
         workflow["request_id"] = body.request_id

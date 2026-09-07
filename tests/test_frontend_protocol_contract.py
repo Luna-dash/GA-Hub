@@ -76,11 +76,14 @@ def test_chat_store_session_socket_is_receive_only():
 
 def test_conductor_renders_request_scoped_semantic_worker_progress():
     source = _read("pages/Conductor.tsx")
+    # Worker/workflow stage labels live in the presentation module since the
+    # 2026-09 Conductor page split; the page itself keeps the request filter.
+    presentation = _read("components/conductor/presentation.ts")
 
     assert "sub.request_id === currentWorkflow.request_id" in source
     assert "sub.review_status === 'accepted'" in source
-    assert "label: '待你验收'" in source
-    assert "label: '返工中'" in source
+    assert "label: '待你验收'" in presentation
+    assert "label: '返工中'" in presentation
     assert "T{item.turn}" not in source
     assert "api.conductorLog()" not in source
     # Non-user rows render plain markdown through the shared content primitive.

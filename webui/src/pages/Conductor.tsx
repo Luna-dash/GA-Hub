@@ -4,22 +4,32 @@ import clsx from 'clsx'
 import { api, type ConductorSubagentModelPolicy } from '@/api/client'
 import { storageKeys } from '@/config/storageKeys'
 import { useConductorStore } from '@/stores/conductorStore'
-import type {
-  ConductorSubagent,
-  ConductorWorkflow,
-} from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { MessageContent } from '@/components/MessageContent'
 import { bubbleTone } from '@/components/bubbleTone'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
+import { ActivityTimeline } from '@/components/conductor/ActivityTimeline'
+import {
+  compactTaskText,
+  isNearScrollBottom,
+  isReviewable,
+  shortWorkerTitle,
+  workflowPresentation,
+  WORKFLOW_STAGE_CLOSED,
+  type SubagentEvidence,
+} from '@/components/conductor/presentation'
+import { WorkflowBadge } from '@/components/conductor/WorkflowBadge'
+import { WorkerListRow } from '@/components/conductor/WorkerListRow'
+import { WorkerDossier } from '@/components/conductor/WorkerDossier'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useHubEvent } from '@/hooks/useHubEvent'
+import { useNowTick } from '@/hooks/useNowTick'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
 import { toast } from '@/stores/toastStore'
-import { writeClipboard } from '@/utils/clipboard'
 import { errorMessageFromError, structuredErrorDetailFromError } from '@/utils/sessionUi'
+import { formatDurationSeconds, formatRelativeTime } from '@/utils/timeFormat'
 
 const scrollMemory: { chatTop: number | null } = {
   chatTop: null,
@@ -40,158 +50,6 @@ function writeSubagentModelLock(locked: boolean): void {
   } catch {}
 }
 
-function compactTaskText(text: string): string {
-  const compact = text
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/^\s*(?:#{1,6}|[-*])\s+/gm, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (!compact) return '未提供任务说明'
-  return compact.length > 180 ? `${compact.slice(0, 180)}…` : compact
-}
-
-/** Engine verification payload from a 409 completion_unverified accept. */
-type SubagentEvidence = {
-  error?: string
-  checks_ok?: boolean
-  deliverables_missing?: string[]
-  deliverables_stale?: string[]
-  quality_checks?: {
-    checks?: Array<{
-      kind?: string
-      path?: string
-      passed?: boolean
-      status?: string
-      severity?: string
-      detail?: string
-    }>
-    checks_ok?: boolean
-  }
-  verification?: { verified?: boolean }
-  [key: string]: unknown
-}
-
-/** Snapshot fields the engine already sends; OpenAPI extra:allow. */
-type SubagentManifest = {
-  goal?: string
-  done_when?: string
-  deliverables?: Array<{ path?: string; desc?: string }>
-}
-
-type SubagentReviewFacts = ConductorSubagent & {
-  deliverables_missing?: string[]
-  deliverables_stale?: string[]
-  done_marker?: boolean
-  quality_checks?: SubagentEvidence['quality_checks']
-  manifest?: SubagentManifest
-  verification?: { verified?: boolean; done_marker?: boolean }
-}
-
-function reviewFacts(sub: ConductorSubagent): SubagentReviewFacts {
-  return sub as SubagentReviewFacts
-}
-
-function basenamePath(path: string): string {
-  const parts = path.replace(/\\/g, '/').split('/')
-  return parts[parts.length - 1] || path
-}
-
-function isReviewable(sub: ConductorSubagent): boolean {
-  return sub.status === 'stopped' && !['accepted', 'rejected'].includes(sub.review_status)
-}
-
-function workerTitle(sub: ConductorSubagent): string {
-  const facts = reviewFacts(sub)
-  return compactTaskText(facts.manifest?.goal || sub.prompt)
-}
-
-/** Rail-safe title for one-line CTAs; the dossier shows the full text. */
-function shortWorkerTitle(sub: ConductorSubagent): string {
-  const title = workerTitle(sub)
-  return title.length > 14 ? `${title.slice(0, 14)}…` : title
-}
-
-/** Actions the review row can offer; the page supplies the implementations. */
-type SubagentRowControl = {
-  evidence?: SubagentEvidence
-  busy: boolean
-  reworkOpen: boolean
-  reworkReason: string
-  onAccept: () => void
-  onForceAccept: () => void
-  onAbort: () => void
-  onReworkOpen: () => void
-  onReworkReasonChange: (value: string) => void
-  onReworkCancel: () => void
-  onReworkSubmit: () => void
-  onEvidenceDismiss: () => void
-}
-
-type SubagentPhase = 'running' | 'reworking' | 'reviewing' | 'accepted' | 'stopped'
-
-// The hub decides each worker's stage (conductor_vocabulary.subagent_stage);
-// this page only maps stage -> label/tone copy.
-const WORKER_STAGE_VIEW: Record<string, { phase: SubagentPhase; label: string; detail: string }> = {
-  running: { phase: 'running', label: '执行中', detail: '子代理正在处理这项任务' },
-  reworking: { phase: 'reworking', label: '返工中', detail: '正在按验收意见重新处理' },
-  reviewing: { phase: 'reviewing', label: '待你验收', detail: '工人已交活，请看右侧卷宗后决定通过或打回' },
-  accepted: { phase: 'accepted', label: '已通过', detail: '结果已通过验收' },
-  stopped: { phase: 'stopped', label: '已停止', detail: '这项任务当前没有继续执行' },
-}
-
-function subagentPhase(sub: ConductorSubagent): {
-  phase: SubagentPhase
-  label: string
-  detail: string
-} {
-  return WORKER_STAGE_VIEW[sub.stage ?? 'stopped'] ?? WORKER_STAGE_VIEW.stopped
-}
-
-type WorkflowTone = 'active' | 'review' | 'done' | 'error' | 'idle'
-
-// Terminal stages: nothing further will happen on this workflow.
-const WORKFLOW_STAGE_CLOSED = new Set(['completed', 'failed'])
-// Stages that stall while the conductor itself is stopped.
-const WORKFLOW_STAGE_PAUSABLE = new Set([
-  'planning', 'supervising', 'reworking', 'awaiting_review', 'aggregating',
-])
-
-const WORKFLOW_STAGE_VIEW: Record<string, { label: string; detail: string; tone: WorkflowTone }> = {
-  planning: { label: '正在规划', detail: 'Conductor 正在理解需求并准备分派。', tone: 'active' },
-  supervising: { label: '执行中', detail: 'Conductor 已完成分派，子代理正在处理。', tone: 'active' },
-  reworking: { label: '返工中', detail: '未通过的部分已交回子代理继续处理。', tone: 'active' },
-  awaiting_review: { label: '待你验收', detail: '子代理已交活，请查看右侧卷宗后决定通过或打回。', tone: 'review' },
-  aggregating: { label: '正在汇总', detail: '子任务均已通过，Conductor 正在整理最终交付。', tone: 'review' },
-  recoverable_failure: { label: '子代理失败', detail: '子代理处理失败，Conductor 正在决定返工或补派。', tone: 'active' },
-  completed: { label: '已完成', detail: '所有子任务已通过验收，交付结果已发送。', tone: 'done' },
-  failed: { label: '执行失败', detail: '工作流未能完成，原因已写入本轮对话。', tone: 'error' },
-}
-
-function workflowPresentation(
-  workflow: ConductorWorkflow | undefined,
-  started = true,
-): { label: string; detail: string; tone: WorkflowTone } {
-  if (!workflow) {
-    return { label: '等待任务', detail: '发送任务后，这里会显示分派和执行进度。', tone: 'idle' }
-  }
-  const view = WORKFLOW_STAGE_VIEW[workflow.stage ?? 'planning'] ?? WORKFLOW_STAGE_VIEW.planning
-  if (!started && WORKFLOW_STAGE_PAUSABLE.has(workflow.stage ?? '')) {
-    return { label: '已暂停', detail: 'Conductor 已停止；点击“启动 / 恢复”后可继续处理。', tone: 'idle' }
-  }
-  // Surface the tracker-persisted reason directly: a page opened after the
-  // failure never saw the live transition, so the reason must come from the
-  // workflow snapshot itself.
-  if (view === WORKFLOW_STAGE_VIEW.failed && workflow.error) {
-    return { ...view, detail: `失败原因：${workflow.error}` }
-  }
-  return view
-}
-
-function isNearScrollBottom(el: HTMLDivElement | null): boolean {
-  if (!el) return true
-  return el.scrollHeight - el.scrollTop - el.clientHeight < 96
-}
-
 export default function Conductor() {
   const qc = useQueryClient()
   const [userMsg, setUserMsg] = usePageState('conductor.userMsg', '')
@@ -209,6 +67,11 @@ export default function Conductor() {
   // Task-history pin: null = auto-follow the newest open workflow. Pinned
   // views survive new task arrivals until the user switches back.
   const [pinnedRequestId, setPinnedRequestId] = useState<string | null>(null)
+  const [historyOpen, setHistoryOpen] = usePageState('conductor.historyOpen', true)
+  // Rail collapse (2026-09 UI audit): both side columns can be hidden to give
+  // the conversation the full width; toggles live in the chat header.
+  const [leftCollapsed, setLeftCollapsed] = usePageState('conductor.leftCollapsed', false)
+  const [dossierCollapsed, setDossierCollapsed] = usePageState('conductor.dossierCollapsed', false)
   const [draftSubagentLlmKey, setDraftSubagentLlmKey] = useState<string | null>(null)
   const [draftSubagentModelLocked, setDraftSubagentModelLocked] = useState(false)
   const [draftAutoAccept, setDraftAutoAccept] = useState(true)
@@ -345,12 +208,24 @@ export default function Conductor() {
     if (
       event.topic === 'conductor:workflow_completed'
       || event.topic === 'conductor:workflow_failed'
-      || (
-        event.topic.startsWith('conductor:subagent_')
-        && !event.topic.endsWith('_running')
-      )
+      || event.topic === 'conductor:workflow_cancelled'
+      || event.topic === 'conductor:workflow_killed'
     ) {
       void qc.invalidateQueries({ queryKey: queryKeys.conductor.workflows })
+      // A terminal transition also flips the badge (started workers freed).
+      void qc.invalidateQueries({ queryKey: queryKeys.conductor.status })
+    }
+    if (
+      event.topic.startsWith('conductor:subagent_')
+      && !event.topic.endsWith('_running')
+    ) {
+      void qc.invalidateQueries({ queryKey: queryKeys.conductor.workflows })
+      // The mounted dossier must show the worker's freshest snapshot the
+      // moment its lifecycle changes (delivery, acceptance, failure).
+      const workerId = event.payload?.id
+      if (typeof workerId === 'string') {
+        void qc.invalidateQueries({ queryKey: queryKeys.conductor.subagent(workerId) })
+      }
     }
   })
 
@@ -385,8 +260,27 @@ export default function Conductor() {
     }
   }, [chatMessages])
 
-  const sendChat = async (e: FormEvent) => {
-    e.preventDefault()
+  const workflows = workflowSnapshot?.items ?? []
+  const currentWorkflow = useMemo(() => {
+    if (pinnedRequestId) {
+      const pinned = workflows.find((workflow) => workflow.request_id === pinnedRequestId)
+      if (pinned) return pinned
+    }
+    const active = [...workflows].reverse().find((workflow) => (
+      !WORKFLOW_STAGE_CLOSED.has(workflow.stage ?? '')
+    ))
+    return active ?? workflows.at(-1)
+  }, [workflows, pinnedRequestId])
+  // Conversation continuity (2026-09 UI audit): while the viewed workflow is
+  // still open, the composer APPENDS to it (same request id) instead of
+  // forking a new task — previously every message minted a fresh request id
+  // and the "本轮对话" filter made the running task's thread vanish.
+  const appendTargetRequestId = currentWorkflow
+    && !WORKFLOW_STAGE_CLOSED.has(currentWorkflow.stage ?? '')
+    ? currentWorkflow.request_id
+    : null
+
+  const submitChat = async (targetRequestId: string | null) => {
     if (!userMsg.trim() || effectiveLlmIndex === null || isSending) return
     const msg = userMsg.trim()
     setUserMsg('')
@@ -395,7 +289,7 @@ export default function Conductor() {
     // Send and use returned item (with real id) for instant display.
     // The EventBus and snapshot bootstrap merge by id, so this stays unique.
     try {
-      const item = await api.conductorSendChat(msg, 'user', conductorModelSettings)
+      const item = await api.conductorSendChat(msg, 'user', conductorModelSettings, targetRequestId ?? undefined)
       shouldFollowChatRef.current = true
       addChatMessage({
         id: item.id,
@@ -422,6 +316,13 @@ export default function Conductor() {
     } finally {
       setIsSending(false)
     }
+  }
+
+  // Form submit handler: default target is the open workflow (append). The
+  // composer's explicit 新任务 button submits with a null target instead.
+  const sendChat = (e: FormEvent) => {
+    e.preventDefault()
+    void submitChat(appendTargetRequestId)
   }
 
   const stopConductor = async () => {
@@ -486,6 +387,15 @@ export default function Conductor() {
       setReworkSid((prev) => (prev === sid ? null : prev))
       setReworkReason('')
       toast.success(action === 'accept' ? '已通过验收' : action === 'rework' ? '已打回子代理' : '已终止子代理')
+      // Review efficiency: after a decision, jump straight to the next worker
+      // that still needs one (review queue order, else the next in list).
+      if (action !== 'abort') {
+        const rest = workflowSubagents.filter((sub) => sub.id !== sid)
+        const next = rest.find(isReviewable)
+          ?? rest.find((sub) => sub.status === 'running')
+          ?? rest[rest.length - 1]
+        if (next) setSelectedSid(next.id)
+      }
     } catch (err) {
       const detail = structuredErrorDetailFromError<SubagentEvidence>(err)
       if (action === 'accept' && detail?.error === 'completion_unverified') {
@@ -513,18 +423,6 @@ export default function Conductor() {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }, [userMsg])
 
-  const workflows = workflowSnapshot?.items ?? []
-  const currentWorkflow = useMemo(() => {
-    if (pinnedRequestId) {
-      const pinned = workflows.find((workflow) => workflow.request_id === pinnedRequestId)
-      if (pinned) return pinned
-    }
-    const active = [...workflows].reverse().find((workflow) => (
-      !WORKFLOW_STAGE_CLOSED.has(workflow.stage ?? '')
-    ))
-    return active ?? workflows.at(-1)
-  }, [workflows, pinnedRequestId])
-
   // One task title per request, oldest user message wins (the task origin).
   const taskTitleByRequest = useMemo(() => {
     const map = new Map<string, string>()
@@ -541,9 +439,15 @@ export default function Conductor() {
       request_id: workflow.request_id,
       title: taskTitleByRequest.get(workflow.request_id) || '未命名任务',
       stage: workflow.stage ?? '',
+      startedAt: workflow.created_at,
       presentation: workflowPresentation(workflow, status?.started ?? false),
     }))
   ), [workflows, taskTitleByRequest, status?.started])
+  // Pinning the newest workflow is the same view as auto-following, so the
+  // "回到最新" reset only matters when an older task is pinned.
+  const viewingLatest = pinnedRequestId === null
+    || pinnedRequestId === workflows.at(-1)?.request_id
+  const backToLatest = () => setPinnedRequestId(null)
   const workflowSubagents = useMemo(() => {
     if (!currentWorkflow) return subagents.slice(-5).reverse()
     const workerIds = new Set(Object.keys(currentWorkflow.subagents))
@@ -563,6 +467,24 @@ export default function Conductor() {
     return chatMessages.filter((item) => item.request_id === currentWorkflow.request_id)
   }, [chatMessages, currentWorkflow])
   const workflowView = workflowPresentation(currentWorkflow, status?.started ?? false)
+  const workflowOpen = currentWorkflow !== undefined
+    && !WORKFLOW_STAGE_CLOSED.has(currentWorkflow.stage ?? '')
+  // Ticks only while an open workflow is on screen; closed workflows show a
+  // fixed created→completed duration and need no clock.
+  const nowMs = useNowTick(workflowOpen ? 30_000 : null)
+  const workflowDuration = (() => {
+    if (!currentWorkflow) return ''
+    const started = currentWorkflow.created_at
+    if (!Number.isFinite(started) || started <= 0) return ''
+    if (workflowOpen) {
+      return `已进行 ${formatDurationSeconds(nowMs / 1000 - started)}`
+    }
+    const finished = currentWorkflow.completed_at
+    if (typeof finished === 'number' && finished > started) {
+      return `用时 ${formatDurationSeconds(finished - started)}`
+    }
+    return ''
+  })()
   const acceptedCount = workflowSubagents.filter((sub) => sub.review_status === 'accepted').length
   const activeSubagents = workflowSubagents.filter((sub) => sub.status === 'running')
   const pendingReview = workflowSubagents.filter(isReviewable)
@@ -571,6 +493,17 @@ export default function Conductor() {
     || (sub.status === 'stopped' && !['accepted', 'rejected'].includes(sub.review_status))
   )).length
   const selectedWorker = workflowSubagents.find((sub) => sub.id === selectedSid) ?? null
+
+  // Retry entry for a failed workflow: prefill the composer with the task's
+  // original wording so the user can adjust it and dispatch a fresh task.
+  const retryCurrentWorkflow = () => {
+    if (!currentWorkflow) return
+    const origin = [...chatMessages].reverse().find((item) => (
+      item.role === 'user' && item.request_id === currentWorkflow.request_id
+    ))
+    setUserMsg(origin ? origin.msg : currentTask)
+    chatInputRef.current?.focus()
+  }
 
   useEffect(() => {
     if (workflowSubagents.length === 0) {
@@ -585,6 +518,44 @@ export default function Conductor() {
       return next.id
     })
   }, [workflowSubagents])
+
+  // Keyboard review shortcuts (2026-09 UI audit): j/k move between workers,
+  // A accepts the selected worker, R opens its rework input. They stay off
+  // while typing in any field or while the settings dialog is open.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return
+      if (subagentSettingsOpen || reworkSid) return
+      const target = event.target
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return
+      if (target instanceof HTMLElement && (target.isContentEditable || target.tagName === 'BUTTON')) return
+      const key = event.key.toLowerCase()
+      if (key !== 'j' && key !== 'k' && key !== 'a' && key !== 'r') return
+      if (workflowSubagents.length === 0) return
+      const index = workflowSubagents.findIndex((sub) => sub.id === selectedSid)
+      if (key === 'j' || key === 'k') {
+        event.preventDefault()
+        const step = key === 'j' ? 1 : -1
+        const nextIndex = index === -1
+          ? (step === 1 ? 0 : workflowSubagents.length - 1)
+          : (index + step + workflowSubagents.length) % workflowSubagents.length
+        setSelectedSid(workflowSubagents[nextIndex]?.id ?? null)
+        return
+      }
+      const selected = selectedWorker
+      if (!selected || !isReviewable(selected)) return
+      if (key === 'a') {
+        event.preventDefault()
+        void runSubagentAction(selected.id, 'accept')
+      } else {
+        event.preventDefault()
+        setReworkSid(selected.id)
+        setReworkReason('')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [workflowSubagents, selectedSid, selectedWorker, subagentSettingsOpen, reworkSid, runSubagentAction])
 
   return (
     <PageShell
@@ -633,20 +604,42 @@ export default function Conductor() {
       }
     >
       <div className="flex h-full min-h-0 gap-3 p-4">
+        {!leftCollapsed && (
         <div className="flex w-64 min-w-0 shrink-0 flex-col gap-3">
-          {workflowHistory.length > 1 && (
-            <nav aria-label="任务历史" className="shrink-0">
+          <nav
+            aria-label="任务历史"
+            className={clsx('min-h-0 shrink-0 flex-col', historyOpen ? 'flex' : 'hidden')}
+          >
+            <div className="flex items-center justify-between px-1 pb-1">
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(!historyOpen)}
+                aria-expanded={historyOpen}
+                className="text-[11px] font-medium uppercase tracking-wide text-ink-muted hover:text-ink"
+              >
+                任务历史（{workflowHistory.length}）
+              </button>
+              {!viewingLatest && (
+                <button
+                  type="button"
+                  onClick={backToLatest}
+                  className="rounded px-1.5 py-0.5 text-[11px] text-status-info hover:bg-bg-soft"
+                >
+                  回到最新
+                </button>
+              )}
+            </div>
+            <div className="max-h-44 min-h-0 overflow-y-auto pr-0.5">
               <div className="flex flex-col gap-1">
                 {workflowHistory.map((entry) => {
                   const isCurrent = entry.request_id === currentWorkflow?.request_id
+                  const failed = entry.presentation.tone === 'error'
                   return (
                     <button
                       key={entry.request_id}
                       type="button"
-                      onClick={() => setPinnedRequestId(
-                        pinnedRequestId === entry.request_id ? null : entry.request_id,
-                      )}
-                      aria-pressed={isCurrent}
+                      onClick={() => setPinnedRequestId(entry.request_id)}
+                      aria-current={isCurrent ? 'true' : undefined}
                       aria-label={`切换到任务：${entry.title}`}
                       className={clsx(
                         'flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs transition',
@@ -656,18 +649,31 @@ export default function Conductor() {
                       )}
                     >
                       <span
-                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                          WORKFLOW_STAGE_CLOSED.has(entry.stage) ? 'bg-ink-faint' : 'bg-status-success-strong'
-                        }`}
+                        className={clsx(
+                          'h-1.5 w-1.5 shrink-0 rounded-full',
+                          failed
+                            ? 'bg-status-danger'
+                            : WORKFLOW_STAGE_CLOSED.has(entry.stage) ? 'bg-ink-faint' : 'bg-status-success-strong',
+                        )}
                         aria-hidden="true"
                       />
                       <span className="min-w-0 flex-1 truncate">{entry.title}</span>
-                      <span className="shrink-0 text-[10px] text-ink-faint">{entry.presentation.label}</span>
+                      <span className="shrink-0 text-[10px] text-ink-faint">{formatRelativeTime(entry.startedAt)}</span>
                     </button>
                   )
                 })}
               </div>
-            </nav>
+            </div>
+          </nav>
+          {workflowHistory.length > 0 && !historyOpen && (
+            <button
+              type="button"
+              onClick={() => setHistoryOpen(true)}
+              aria-expanded={historyOpen}
+              className="shrink-0 rounded-lg border border-line bg-bg-card px-2.5 py-1.5 text-left text-[11px] text-ink-muted hover:text-ink"
+            >
+              任务历史（{workflowHistory.length}）
+            </button>
           )}
           <section aria-label="当前任务" className="shrink-0 rounded-2xl border border-line bg-bg-card px-3.5 py-3 shadow-sm">
             <div className="flex items-center justify-between gap-2">
@@ -683,6 +689,18 @@ export default function Conductor() {
                 ? '尚未指派'
                 : `${acceptedCount}/${workflowSubagents.length} 已通过${activeSubagents.length > 0 ? ` · ${activeSubagents.length} 执行中` : ''}`}
             </p>
+            {workflowDuration && (
+              <p className="mt-0.5 text-[11px] text-ink-faint" aria-label="任务耗时">{workflowDuration}</p>
+            )}
+            {workflowView.tone === 'error' && (
+              <button
+                type="button"
+                className="mt-2 w-full rounded-lg border border-status-danger-line bg-status-danger-soft px-2.5 py-1.5 text-left text-xs text-status-danger-muted hover:border-status-danger/40"
+                onClick={retryCurrentWorkflow}
+              >
+                重新发起这个任务（按原任务措辞重开）
+              </button>
+            )}
             {workflowSubagents.length > 0 && (
               <div
                 className="mt-1.5 h-1 overflow-hidden rounded-full bg-bg-soft"
@@ -698,6 +716,8 @@ export default function Conductor() {
               </div>
             )}
           </section>
+
+          <ActivityTimeline requestId={currentWorkflow?.request_id ?? null} />
 
           {pendingReview.length > 0 && (
             <button
@@ -742,11 +762,34 @@ export default function Conductor() {
             </div>
           </section>
         </div>
+        )}
 
         <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
           <div className="flex items-center justify-between gap-3 border-b border-line/70 px-4 py-2.5">
             <h2 className="text-sm font-semibold text-ink">本轮对话</h2>
-            <span className="text-[11px] text-ink-muted">只显示当前任务这一轮</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setLeftCollapsed(!leftCollapsed)}
+                aria-pressed={leftCollapsed}
+                aria-label={leftCollapsed ? '展开左侧栏' : '收起左侧栏'}
+                title={leftCollapsed ? '展开左侧栏' : '收起左侧栏'}
+                className="ga-btn px-2 py-1 text-xs"
+              >
+                {leftCollapsed ? '显示侧栏 ⇤' : '收起侧栏 ⇤'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setDossierCollapsed(!dossierCollapsed)}
+                aria-pressed={dossierCollapsed}
+                aria-label={dossierCollapsed ? '展开详情面板' : '收起详情面板'}
+                title={dossierCollapsed ? '展开详情面板' : '收起详情面板'}
+                className="ga-btn px-2 py-1 text-xs"
+              >
+                {dossierCollapsed ? '显示详情 ⇥' : '收起详情 ⇥'}
+              </button>
+              <span className="text-[11px] text-ink-muted">只显示当前任务这一轮</span>
+            </div>
           </div>
           <div
             ref={chatScrollRef}
@@ -768,7 +811,36 @@ export default function Conductor() {
               </div>
             )}
             {!isChatLoading && !isChatError && visibleChat.length === 0 && (
-              <div className="px-4 py-8 text-center text-sm text-ink-muted">还没有任务，先向指挥描述你要完成的工作。</div>
+              workflows.length === 0 && chatMessages.length === 0 ? (
+                <div className="px-6 py-10 text-center">
+                  <p className="text-sm font-medium text-[#4E4233]">把一件事交给指挥</p>
+                  <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-ink-muted">
+                    描述目标即可：指挥会拆分子任务、派发工人并汇总结果。试试下面的例子，或直接输入你的任务。
+                  </p>
+                  <div className="mt-4 flex flex-col items-center gap-2">
+                    {[
+                      '整理下载目录里的 PDF 资料，按主题归档并生成索引',
+                      '调研两个候选技术方案，输出对比结论与推荐',
+                      '检查这个仓库里未使用的依赖并给出清理建议',
+                    ].map((example) => (
+                      <button
+                        key={example}
+                        type="button"
+                        data-testid="conductor-example-task"
+                        className="max-w-md rounded-lg border border-line bg-bg px-3 py-1.5 text-xs text-ink-muted hover:border-accent hover:text-ink"
+                        onClick={() => {
+                          setUserMsg(example)
+                          chatInputRef.current?.focus()
+                        }}
+                      >
+                        {example}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="px-4 py-8 text-center text-sm text-ink-muted">这一轮还没有对话内容。</div>
+              )
             )}
             {visibleChat.map((msg) => (
               msg.role === 'user' ? (
@@ -791,6 +863,22 @@ export default function Conductor() {
             <div ref={chatEndRef} />
           </div>
           <form onSubmit={sendChat} className="border-t border-line bg-bg-soft/75 p-3">
+            {appendTargetRequestId && (
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="truncate text-xs text-ink-muted">
+                  将补充给当前任务，不会另开新任务
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void submitChat(null)}
+                  disabled={!userMsg.trim() || effectiveLlmIndex === null || isSending}
+                  className="ga-btn shrink-0 px-2.5 py-1 text-xs"
+                  title="忽略当前任务，另开一个新任务"
+                >
+                  新任务
+                </button>
+              </div>
+            )}
             <div className="flex items-end gap-2">
               <textarea
                 ref={chatInputRef}
@@ -803,7 +891,7 @@ export default function Conductor() {
                 }}
                 rows={1}
                 wrap="soft"
-                placeholder="向指挥补充一句，或开一个新任务…"
+                placeholder={appendTargetRequestId ? '将作为补充发送给当前任务…' : '描述一个新任务…'}
                 className="min-h-10 max-h-40 min-w-0 flex-1 resize-none overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-line bg-bg px-3 py-2 text-sm leading-6 text-ink placeholder:text-[#8A7A63] [overflow-wrap:anywhere] focus:border-accent focus:outline-none"
               />
               <button
@@ -811,12 +899,13 @@ export default function Conductor() {
                 disabled={!userMsg.trim() || effectiveLlmIndex === null || isSending}
                 className="shrink-0 rounded bg-accent px-4 py-2 text-sm text-white hover:bg-accent/90 disabled:opacity-50"
               >
-                {isSending ? '发送中…' : '发送'}
+                {isSending ? '发送中…' : (appendTargetRequestId ? '发送补充' : '发送')}
               </button>
             </div>
           </form>
         </section>
 
+        {!dossierCollapsed && (
         <aside className="flex w-[24rem] max-w-[42%] shrink-0 flex-col overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
           {selectedWorker ? (
             <WorkerDossier
@@ -852,6 +941,7 @@ export default function Conductor() {
             </div>
           )}
         </aside>
+        )}
       </div>
 
       {subagentSettingsOpen && (
@@ -924,357 +1014,5 @@ export default function Conductor() {
         </ModalOverlay>
       )}
     </PageShell>
-  )
-}
-
-function WorkflowBadge({
-  tone,
-  label,
-}: {
-  tone: 'active' | 'review' | 'done' | 'error' | 'idle'
-  label: string
-}) {
-  return (
-    <span
-      className={clsx(
-        'shrink-0 rounded px-2 py-0.5 text-[11px] font-medium',
-        tone === 'active' && 'bg-status-warning-soft text-status-warning',
-        tone === 'review' && 'bg-status-info-soft text-status-info',
-        tone === 'done' && 'bg-status-success-soft text-status-success',
-        tone === 'error' && 'bg-status-danger-soft text-status-danger',
-        tone === 'idle' && 'bg-bg-soft text-ink-muted',
-      )}
-    >
-      {label}
-    </span>
-  )
-}
-
-function phaseTone(phase: SubagentPhase): string {
-  return clsx(
-    phase === 'running' && 'text-status-warning',
-    phase === 'reworking' && 'text-status-warning-strong',
-    phase === 'reviewing' && 'text-status-info',
-    phase === 'accepted' && 'text-status-success',
-    phase === 'stopped' && 'text-ink-muted',
-  )
-}
-
-function phaseDot(phase: SubagentPhase): string {
-  return clsx(
-    'h-1.5 w-1.5 shrink-0 rounded-full',
-    phase === 'running' && 'bg-status-warning-strong',
-    phase === 'reworking' && 'bg-status-warning-hot',
-    phase === 'reviewing' && 'bg-status-info',
-    phase === 'accepted' && 'bg-status-success-strong',
-    // stopped: one-off neutral, sanctioned by the palette comment
-    phase === 'stopped' && 'bg-[#9A8E7D]',
-  )
-}
-
-async function copyPath(path: string) {
-  const ok = await writeClipboard(path)
-  if (ok) toast.success('已复制路径')
-  else toast.error('复制失败，请手动选中路径')
-}
-
-type WorkerMilestone = { id: string; desc: string; status: string }
-
-function milestonesOf(sub: ConductorSubagent): WorkerMilestone[] {
-  return ((sub as { plan_milestones?: WorkerMilestone[] | null }).plan_milestones) ?? []
-}
-
-function WorkerListRow({
-  sub,
-  selected,
-  onSelect,
-}: {
-  sub: ConductorSubagent
-  selected: boolean
-  onSelect: () => void
-}) {
-  const view = subagentPhase(sub)
-  const milestones = milestonesOf(sub)
-  const facts = reviewFacts(sub)
-  const missing = facts.deliverables_missing?.length ?? 0
-  const stale = facts.deliverables_stale?.length ?? 0
-  const failed = (facts.quality_checks?.checks ?? []).filter((check) => check.passed === false).length
-  const issueCount = missing + stale + failed
-
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={clsx(
-        'block w-full border-b border-line/70 px-3.5 py-2.5 text-left last:border-b-0',
-        selected ? 'bg-[#F4EDE3]' : 'hover:bg-bg-soft',
-      )}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className={clsx('flex items-center gap-1.5 text-[11px] font-medium', phaseTone(view.phase))}>
-          <span className={phaseDot(view.phase)} />
-          {view.label}
-        </span>
-        {sub.attempt > 1 && <span className="shrink-0 text-[11px] text-status-warning-strong">第 {sub.attempt} 次</span>}
-      </div>
-      <p className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-ink">{workerTitle(sub)}</p>
-      {milestones.length > 0 && (
-        <div className="mt-1 space-y-0.5" aria-label="里程碑进度">
-          {milestones.map((ms) => (
-            <div key={ms.id} className="flex items-center gap-1.5 text-[11px] leading-4">
-              <span
-                className={clsx(
-                  'h-1 w-1 shrink-0 rounded-full',
-                  ms.status === 'reached' ? 'bg-status-success-strong' : ms.status === 'missed' ? 'bg-status-danger' : 'bg-status-warning',
-                )}
-                aria-hidden="true"
-              />
-              <span
-                className={clsx(
-                  'min-w-0 flex-1 truncate',
-                  ms.status === 'reached' ? 'text-ink-faint' : 'text-ink-muted',
-                )}
-              >
-                {ms.desc}
-              </span>
-              <span className="shrink-0 text-[10px] text-ink-faint">
-                {ms.status === 'reached' ? '已达成' : ms.status === 'missed' ? '超时' : '进行中'}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-      {issueCount > 0 && (
-        <p className="mt-0.5 text-[11px] leading-4 text-status-danger">
-          {missing > 0 ? `${missing} 项缺失` : ''}
-          {stale > 0 ? `${missing > 0 ? ' · ' : ''}${stale} 项未更新` : ''}
-          {failed > 0 ? `${missing + stale > 0 ? ' · ' : ''}${failed} 项检查失败` : ''}
-        </p>
-      )}
-    </button>
-  )
-}
-
-function WorkerDossier({
-  sub,
-  control,
-}: {
-  sub: ConductorSubagent
-  control: SubagentRowControl
-}) {
-  const view = subagentPhase(sub)
-  const facts = reviewFacts(sub)
-  const { data, isLoading, error } = useQuery({
-    queryKey: queryKeys.conductor.subagent(sub.id),
-    queryFn: () => api.conductorSubagent(sub.id, 20_000),
-  })
-  const detail = reviewFacts(data ?? sub)
-  const deliverables = detail.manifest?.deliverables ?? facts.manifest?.deliverables ?? []
-  const missing = new Set(detail.deliverables_missing ?? facts.deliverables_missing ?? [])
-  const stale = new Set(detail.deliverables_stale ?? facts.deliverables_stale ?? [])
-  const checks = detail.quality_checks?.checks ?? facts.quality_checks?.checks ?? []
-  const reply = (detail.reply || sub.reply || '').trim()
-  const reviewable = isReviewable(sub)
-  const abortable = sub.status === 'running' || reviewable
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 border-b border-line/70 px-4 py-3">
-        <div className="mb-1 flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-ink">工人卷宗</h2>
-          <span className={clsx('flex items-center gap-1.5 text-[11px] font-medium', phaseTone(view.phase))}>
-            <span className={phaseDot(view.phase)} />
-            {view.label}
-          </span>
-        </div>
-        <p className="text-sm font-medium leading-5 text-ink">{workerTitle(sub)}</p>
-        <p className="mt-1 text-xs leading-5 text-ink-muted">
-          {view.detail}{sub.attempt > 1 ? ` · 第 ${sub.attempt} 次处理` : ''}
-          {detail.done_marker === false && sub.status === 'stopped' ? ' · 未确认完成' : ''}
-        </p>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-sm leading-6 text-ink">
-        {isLoading && <p className="mb-3 text-xs text-ink-muted">正在拉取完整回复…</p>}
-        {error && <p className="mb-3 text-xs text-status-danger">完整结果暂时拉不到，先显示列表里已有的摘要。</p>}
-
-        {detail.manifest?.done_when && (
-          <section className="mb-4">
-            <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">完成条件</h3>
-            <p className="mt-1 whitespace-pre-wrap text-xs leading-5">{detail.manifest.done_when}</p>
-          </section>
-        )}
-
-        {deliverables.length > 0 && (
-          <section className="mb-4">
-            <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">约定交付物</h3>
-            <ul className="mt-1 space-y-1 text-xs" aria-label="约定交付物">
-              {deliverables.map((item, index) => {
-                const path = item.path || `交付物 ${index + 1}`
-                const gone = missing.has(path)
-                const untouched = stale.has(path)
-                return (
-                  <li key={path} className={clsx('break-all', gone && 'text-status-danger', untouched && !gone && 'text-status-warning-strong')}>
-                    {gone ? '✗ 缺失' : untouched ? '△ 未更新' : '✓'} {path}
-                    {item.desc ? ` · ${item.desc}` : ''}
-                    {item.path && (
-                      <button
-                        type="button"
-                        className="ml-2 text-[11px] text-status-info underline-offset-2 hover:underline"
-                        onClick={() => void copyPath(item.path!)}
-                      >
-                        复制路径
-                      </button>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
-          </section>
-        )}
-
-        {checks.length > 0 && (
-          <section className="mb-4">
-            <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">机器检查</h3>
-            <ul className="mt-1 space-y-1 text-xs" aria-label="机器检查">
-              {checks.map((check, index) => (
-                <li key={`${check.kind}-${index}`} className={check.passed === false ? 'text-status-danger' : ''}>
-                  {check.passed === false ? '✗' : '✓'} {check.kind}
-                  {check.path ? ` · ${basenamePath(check.path)}` : ''}
-                  {check.detail ? ` — ${check.detail}` : ''}
-                  {check.severity === 'advisory' ? '（提示项）' : ''}
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-
-        <section>
-          <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">
-            {sub.status === 'running' ? '进行中摘要' : '文字结果'}
-          </h3>
-          {reply ? (
-            <div className="mt-1 whitespace-pre-wrap break-words text-xs leading-5">{reply}</div>
-          ) : (
-            <p className="mt-1 text-xs text-ink-muted">
-              {sub.status === 'running'
-                ? '还没有可展示的中间结果。'
-                : '没有文字结果。请对照上面的交付物路径直接打开文件核对。'}
-            </p>
-          )}
-        </section>
-      </div>
-
-      <div className="shrink-0 border-t border-line/70 px-4 py-3">
-        <div className="flex flex-wrap items-center gap-2">
-          {reviewable && !control.reworkOpen && (
-            <>
-              <button
-                type="button"
-                className="ga-btn ga-btn-primary px-3 py-1 text-xs"
-                disabled={control.busy}
-                onClick={control.onAccept}
-              >
-                通过
-              </button>
-              <button
-                type="button"
-                className="ga-btn px-3 py-1 text-xs"
-                disabled={control.busy}
-                onClick={control.onReworkOpen}
-              >
-                打回返工
-              </button>
-            </>
-          )}
-          {abortable && (
-            <button
-              type="button"
-              className="ga-btn px-3 py-1 text-xs text-status-danger"
-              disabled={control.busy}
-              onClick={control.onAbort}
-            >
-              终止
-            </button>
-          )}
-          {control.busy && <span className="text-xs text-ink-muted">处理中…</span>}
-        </div>
-        {control.reworkOpen && (
-          <div className="mt-2 rounded-lg border border-line bg-bg-soft px-3 py-2">
-            <textarea
-              aria-label="打回原因"
-              value={control.reworkReason}
-              placeholder="说明打回原因与整改要求（必填）"
-              className="min-h-16 w-full resize-none rounded border border-line bg-bg px-2 py-1.5 text-xs leading-5 text-ink placeholder:text-[#8A7A63] focus:border-accent focus:outline-none"
-              onChange={(event) => control.onReworkReasonChange(event.target.value)}
-            />
-            <div className="mt-1.5 flex justify-end gap-2">
-              <button type="button" className="ga-btn px-3 py-1 text-xs" onClick={control.onReworkCancel}>取消</button>
-              <button
-                type="button"
-                className="ga-btn ga-btn-primary px-3 py-1 text-xs"
-                disabled={!control.reworkReason.trim() || control.busy}
-                onClick={control.onReworkSubmit}
-              >
-                确认打回
-              </button>
-            </div>
-          </div>
-        )}
-        {control.evidence && (
-          <div
-            role="alert"
-            data-testid={`subagent-evidence-${sub.id}`}
-            className="mt-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-xs leading-5 text-status-danger-muted"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-medium text-status-danger">机器验收未通过 · 证据</span>
-              <button
-                type="button"
-                className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-ink-muted hover:bg-bg-soft"
-                onClick={control.onEvidenceDismiss}
-              >
-                收起
-              </button>
-            </div>
-            <ul className="mt-1 space-y-0.5">
-              {(control.evidence.deliverables_missing ?? []).map((path) => (
-                <li key={`missing-${path}`}>✗ 交付物缺失：{path}</li>
-              ))}
-              {(control.evidence.deliverables_stale ?? []).map((path) => (
-                <li key={`stale-${path}`}>✗ 交付物未更新：{path}</li>
-              ))}
-              {(control.evidence.quality_checks?.checks ?? [])
-                .filter((check) => check.passed === false)
-                .map((check, checkIndex) => (
-                  <li key={`check-${checkIndex}`}>
-                    ✗ {check.kind}{check.path ? ` · ${check.path}` : ''}
-                    {check.detail ? ` — ${check.detail}` : ''}
-                    {check.severity === 'advisory' ? '（提示项，不阻塞）' : ''}
-                  </li>
-                ))}
-            </ul>
-            <div className="mt-1.5 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="ga-btn px-3 py-1 text-xs"
-                disabled={control.busy}
-                onClick={control.onForceAccept}
-              >
-                强制通过（人工核对后）
-              </button>
-              <button
-                type="button"
-                className="ga-btn px-3 py-1 text-xs"
-                disabled={control.busy}
-                onClick={control.onReworkOpen}
-              >
-                打回返工
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
   )
 }

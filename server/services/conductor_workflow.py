@@ -120,6 +120,16 @@ class WorkflowTracker:
         with self._lock:
             return request_id in self._workflows
 
+    def is_open(self, request_id: str) -> bool:
+        """True when the workflow exists and has not reached a terminal event.
+
+        Recoverable failures count as open: the workflow can still gain a
+        rework or fresh dispatch, so a user follow-up belongs to it.
+        """
+        with self._lock:
+            workflow = self._workflows.get(request_id)
+            return workflow is not None and workflow.terminal_event is None
+
     def request_for_subagent(self, agent_id: str) -> str | None:
         with self._lock:
             return self._owners.get(agent_id)
