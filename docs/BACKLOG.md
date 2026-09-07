@@ -441,16 +441,26 @@ GA 32f4d5e。**已修**：
       navigation.ts storageKeys 导入在用；dailyUsage 有测试引用；
       MISFIRE_GRACE_SECONDS 是 noqa 测试 seam 重导出
 
-## 2026-09-07 conductor 启动失败链（活体事故修复，694b689）
+## 2026-09-07 conductor 启动失败链（活体事故修复，694b689→9d989f0）
 
-桌面重建后 conductor 启动全部 500。根因链：McAfee 挂起 frozen sidecar 的
-**PIPE-stdout** 子进程（3 个僵尸探针实锤：CPU≈0、线程 Waiting、20 分钟
-零输出），而同父进程的文件句柄子进程（fsapp.py）一直正常——探针恰好用
-PIPE，把本可成功的引擎 spawn（文件句柄）全部挡在门外。随修：
+桌面重建后 conductor 启动全部 500。经三轮"假设→修复→重建→活体证伪"循环，
+**最终定性**：McAfee 对 frozen sidecar（未签名，每次重建产生新哈希 → 信誉
+从零重评）spawn 的子进程做信誉扫描挂起。早期观察到的"仅 PIPE 子进程被挂 /
+长驻子进程总被放行"是**旧哈希 exe 已积累信誉**的效应，不是普遍规律——
+终版桌面实测（12:04，11:26:44 新哈希）：引擎（长驻、文件句柄 stdout）同样
+被挂（Win32_Thread.ThreadState=5 Suspended、CPU=0、日志零字节），两次 spawn
+双挂。**预检探针本身就是疾病**：它是短驻形态，永远第一个死、还泄漏僵尸；
+已整体删除，引擎 spawn 自身即探针（健康轮询报告失败方式）。随修：
 
-- [x] 探针镜像真实 spawn 形态（stdout→临时文件，结果/rc 留痕引擎日志）；
-      挂起子进程超时 kill + reap（不再泄漏僵尸）；报错点名 AV 条件与解释器路径
+- [x] 删除 `_probe_interpreter` 预检探针（含挂起 kill/reap 逻辑，随之不再
+      需要）；spawn 前仅留痕上下文行 `[spawn] python=... frozen=... PATH_head=...`
 - [x] GahubProcessError 从 ensure_started/_assert_engine_ready 类型化穿透；
-      POST /api/conductor/start 映射 503 + 诊断（原为裸 500 无任何线索）
-- [ ] 环境项（用户侧）：若再次出现引擎拉不起，往 McAfee 排除项加
-      ga-hub-sidecar.exe 与 conda python.exe，或以计划任务方式启动引擎
+      POST /api/conductor/start 映射 503 + 诊断（原为裸 500 无任何线索）；
+      诊断含 log_tail + AV 指引文案（实测已按此返回）
+- [x] `_clean_child_env()` 剥离 PATH 的 _MEI 条目与 _PYI*/PYINSTALLER* 变量
+- [ ] 环境项（用户侧，**尚未执行**）： McAfee 排除项加入
+      ga-hub-sidecar.exe 与 D:\APP\anaconda3\envs\ga\python.exe；或将引擎
+      改为计划任务启动（绕过"未知父进程"信誉评估）。**新哈希桌面在排除项
+      落地前无法拉起引擎**——这不是代码缺陷，503 诊断已如实报告
+- [ ] 观察项：信誉判定若在数分钟后放行挂起进程，可考虑加长 health 等待
+      （当前 60s）；本轮实测挂起 8 分钟未释放，暂不加码
