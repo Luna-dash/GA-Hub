@@ -440,3 +440,17 @@ GA 32f4d5e。**已修**：
 - [ ] 误报备查（核实后否决）：api/types.ts 无死类型（全部有引用）；
       navigation.ts storageKeys 导入在用；dailyUsage 有测试引用；
       MISFIRE_GRACE_SECONDS 是 noqa 测试 seam 重导出
+
+## 2026-09-07 conductor 启动失败链（活体事故修复，694b689）
+
+桌面重建后 conductor 启动全部 500。根因链：McAfee 挂起 frozen sidecar 的
+**PIPE-stdout** 子进程（3 个僵尸探针实锤：CPU≈0、线程 Waiting、20 分钟
+零输出），而同父进程的文件句柄子进程（fsapp.py）一直正常——探针恰好用
+PIPE，把本可成功的引擎 spawn（文件句柄）全部挡在门外。随修：
+
+- [x] 探针镜像真实 spawn 形态（stdout→临时文件，结果/rc 留痕引擎日志）；
+      挂起子进程超时 kill + reap（不再泄漏僵尸）；报错点名 AV 条件与解释器路径
+- [x] GahubProcessError 从 ensure_started/_assert_engine_ready 类型化穿透；
+      POST /api/conductor/start 映射 503 + 诊断（原为裸 500 无任何线索）
+- [ ] 环境项（用户侧）：若再次出现引擎拉不起，往 McAfee 排除项加
+      ga-hub-sidecar.exe 与 conda python.exe，或以计划任务方式启动引擎
