@@ -81,122 +81,78 @@ def test_replayed_final_for_unknown_request_is_downgraded(monkeypatch) -> None:
     assert any(m["msg"] == "已完成：历史请求的最终回复" for m in service.chat_messages)
 
 
-def test_probe_interpreter_passes_clean_child_env(monkeypatch, tmp_path) -> None:
-    """The probe must launch its child with the _MEI-stripped environment —
-    a regression here previously died on an undefined `env` name before any
-    diagnostic could be produced."""
+def test_engine_spawn_uses_mei_stripped_env_and_no_preflight_probe(monkeypatch, tmp_path) -> None:
+    """The engine spawn must launch with the _MEI-stripped environment, and
+    ensure_running must NOT run a pre-flight probe child: the AV suspends
+    every short-lived child (probe hung 3/3, 4/4, 12/12 across sessions)
+    while the long-lived engine spawn succeeds right beside it (live
+    2026-09-07, three rounds). The engine spawn is its own probe."""
     captured: dict = {}
 
     class FakeProc:
-        returncode = 0
-
-        def poll(self):
-            # Simulate the resident child: marker lands in the output file.
-            out = captured.get("stdout")
-            if out is not None and hasattr(out, "name"):
-                with open(out.name, "ab") as f:
-                    f.write(b"PROBE_OK\n")
-            return None
-
-        def kill(self):
-            pass
-
-        def wait(self, timeout=None):
-            return 0
-
-    def fake_venv_popener(cmd, **kwargs):
-        captured["cmd"] = cmd
-        captured["env"] = kwargs.get("env")
-        captured["stdout"] = kwargs.get("stdout")
-        captured["stdout_is_pipe"] = kwargs.get("stdout") == subprocess.PIPE
-        return FakeProc()
-
-    monkeypatch.setattr(subprocess, "Popen", fake_venv_popener)
-    monkeypatch.setattr("server.services.conductor_client.tempfile.gettempdir",
-                        lambda: str(tmp_path))
-
-    manager = GahubProcessManager(python_exe="python-does-not-matter")
-    polluted_path = f"C:\\Temp\\_MEI12345\\bin{chr(59)}C:\\Windows"
-    monkeypatch.setattr("server.services.conductor_client.os.environ", {
-        "PATH": polluted_path,
-        "_PYI_ARCHIVE": "1",
-    })
-    manager._probe_interpreter(io.BytesIO())
-
-    env = captured["env"]
-    assert env is not None
-    assert all("_MEI" not in item for item in env["PATH"].split(chr(59)))
-    assert "_PYI_ARCHIVE" not in env
-    # The probe child must be resident (print + sleep), not print-and-exit:
-    # an immediately-exiting child deadlocks with the AV reputation scan
-    # (live 2026-09-07, two rounds of frozen-sidecar diagnosis).
-    assert "time.sleep" in captured["cmd"][3]
-    assert captured["stdout_is_pipe"] is False
-
-
-def test_probe_hang_kills_child_and_names_condition(monkeypatch, tmp_path) -> None:
-    """A probe child that never produces the marker must be killed (no
-    zombie leak) and the raised error must name the AV-suspension condition
-    with the interpreter path."""
-    import subprocess as real_subprocess
-
-    killed: list = []
-
-    class HungProc:
         returncode = None
 
         def poll(self):
             return None
 
-        def kill(self):
-            killed.append(True)
-
-        def wait(self, timeout=None):
-            if timeout is not None:
-                raise real_subprocess.TimeoutExpired("python", timeout)
-
     def fake_popener(cmd, **kwargs):
-        return HungProc()
+        captured["cmd"] = cmd
+        captured["env"] = kwargs.get("env")
+        return FakeProc()
 
-    # _probe_interpreter imports subprocess locally; patch the real module.
     monkeypatch.setattr(subprocess, "Popen", fake_popener)
     monkeypatch.setattr("server.services.conductor_client.tempfile.gettempdir",
                         lambda: str(tmp_path))
 
-    manager = GahubProcessManager(python_exe="conda-python.exe")
+    manager = GahubProcessManager(
+        python_exe="python-does-not-matter",
+        ga_root=str(tmp_path),
+    )
+    (tmp_path / "frontends").mkdir()
+    (tmp_path / "frontends" / "gahub_app.py").write_text("# engine\n")
+
+    polluted_path = f"C:\\Temp\\_MEI12345\\bin{chr(59)}C:\\Windows"
+    monkeypatch.setattr("server.services.conductor_client.os.environ", {
+        "PATH": polluted_path,
+        "_PYI_ARCHIVE": "1",
+    })
+    # Health never turns true; cap the wait so the test stays fast.
+    monkeypatch.setattr(manager, "is_healthy", lambda timeout=1.0: False)
+
     with pytest.raises(GahubProcessError) as raised:
-        manager._probe_interpreter(io.BytesIO())
-    assert killed, "hung probe child must be killed"
-    assert "no output in 15s" in str(raised.value)
-    assert "conda-python.exe" in str(raised.value)
+        manager.ensure_running(startup_timeout=0.5)
+
+    env = captured["env"]
+    assert env is not None
+    assert all("_MEI" not in item for item in env["PATH"].split(chr(59)))
+    assert "_PYI_ARCHIVE" not in env
+    # Exactly one child process: the engine itself, no probe child.
+    assert captured["cmd"][1:3] == ["-u", str(tmp_path / "frontends" / "gahub_app.py")]
+    # The timeout diagnostic names the AV condition for the operator.
     assert "security software" in str(raised.value)
 
 
-def test_probe_early_exit_without_marker_reports_rc(monkeypatch, tmp_path) -> None:
-    """A child that dies before printing the marker must surface its exit
-    code instead of waiting out the full deadline."""
-    import subprocess as real_subprocess
-
-    class DeadProc:
-        returncode = 3
-
-        def poll(self):
-            return 3
-
-        def kill(self):
-            pass
-
-        def wait(self, timeout=None):
-            return 0
-
-    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kw: DeadProc())
+def test_engine_spawn_context_is_logged(monkeypatch, tmp_path) -> None:
+    """ensure_running records the spawn context (python path, frozen state)
+    into the engine log before spawning — the only pre-flight diagnostic
+    that does not itself spawn a short-lived child."""
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kw: SimpleNamespace(
+        returncode=None, poll=lambda: None))
     monkeypatch.setattr("server.services.conductor_client.tempfile.gettempdir",
                         lambda: str(tmp_path))
 
-    manager = GahubProcessManager(python_exe="conda-python.exe")
-    with pytest.raises(GahubProcessError) as raised:
-        manager._probe_interpreter(io.BytesIO())
-    assert "no output in 15s" in str(raised.value)
+    manager = GahubProcessManager(
+        python_exe="conda-python.exe", ga_root=str(tmp_path))
+    (tmp_path / "frontends").mkdir()
+    (tmp_path / "frontends" / "gahub_app.py").write_text("# engine\n")
+    monkeypatch.setattr(manager, "is_healthy", lambda timeout=1.0: False)
+
+    log_buf = io.BytesIO()
+    manager._log_spawn_context(log_buf)
+    text = log_buf.getvalue().decode("utf-8", "replace")
+    assert "[spawn]" in text
+    assert "conda-python.exe" in text
+    assert "frozen=False" in text
 
 
 def test_engine_spawn_env_injects_hub_journal_path(monkeypatch, tmp_path) -> None:

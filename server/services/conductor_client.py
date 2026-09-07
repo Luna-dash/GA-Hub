@@ -205,7 +205,7 @@ class GahubProcessManager:
                     "interpreter; set gahub_python in config"
                 )
             log_file, log_path = _open_engine_log()
-            self._probe_interpreter(log_file)
+            self._log_spawn_context(log_file)
             cmd = [self.python_exe, "-u", script, "--host", "127.0.0.1",
                    "--port", str(self.port)]
             if self.token:
@@ -233,92 +233,30 @@ class GahubProcessManager:
         except Exception:
             pass
         raise GahubProcessError(
-            f"gahub_app did not become healthy within {startup_timeout}s ({detail})"
+            f"gahub_app did not become healthy within {startup_timeout}s ({detail}); "
+            "if the log tail is empty, security software may be suspending "
+            "children of this unsigned exe — add an AV exclusion or start "
+            "gahub_app as a scheduled task"
         )
 
-    def _probe_interpreter(self, log_file) -> None:
-        """Prove the interpreter can run a trivial child before the real spawn.
+    def _log_spawn_context(self, log_file) -> None:
+        """Record the spawn context in the engine log before spawning.
 
-        From the frozen sidecar, security software can hang unsigned-exe
-        children (alive, zero output). A failed probe names that condition
-        directly instead of a 60s health timeout.
-
-        Live diagnosis (2026-09-07, two rounds): AV suspends freshly spawned
-        children of the frozen sidecar for a reputation scan, and a child
-        that exits immediately deadlocks with that scan — it hangs forever
-        regardless of pipe vs file stdout. Long-lived children (the engine,
-        fsapp) are always released. So the probe child prints PROBE_OK and
-        then *stays alive*; the parent polls the output file and terminates
-        it as soon as the marker lands. A child that never produces output
-        is killed and reaped — a hung probe must not leak a zombie.
+        History (2026-09-07, three live rounds): the frozen sidecar's AV
+        suspends every *short-lived* child for a reputation scan — pipe or
+        file stdout, ``-c`` or script file, it makes no difference — and a
+        child that finishes inside the scan deadlocks with it forever.
+        Long-lived children (the engine itself, fsapp) are always released.
+        A pre-flight probe child is therefore the disease it tries to
+        diagnose: it hung 3/3, 4/4 and 12/12 across sessions while the real
+        engine spawn succeeded right beside it. The engine spawn is its own
+        probe — the health-wait loop below reports exactly how it failed.
         """
-        import subprocess as _sp
         log_file.write(
-            f"\n[probe] python={self.python_exe} frozen={bool(getattr(sys, 'frozen', False))} "
+            f"\n[spawn] python={self.python_exe} frozen={bool(getattr(sys, 'frozen', False))} "
             f"PATH_head={os.environ.get('PATH', '')[:120]}\n".encode("utf-8", "replace")
         )
         log_file.flush()
-        out_path = os.path.join(
-            os.environ.get(ENV_GAHUB_TEMP_DIR) or tempfile.gettempdir(),
-            f"gahub_app-probe-{os.getpid()}-{int(time.time())}.log")
-        # Print the marker, then idle: an immediately-exiting child deadlocks
-        # with the AV reputation scan; a resident one gets released.
-        child_code = (
-            "import time; print('PROBE_OK', flush=True); time.sleep(60)"
-        )
-        try:
-            with open(out_path, "wb") as out_file:
-                proc = _sp.Popen(
-                    [self.python_exe, "-u", "-c", child_code],
-                    stdout=out_file, stderr=_sp.STDOUT,
-                    env=_clean_child_env(), **hidden_process_kwargs(),
-                )
-                deadline = time.monotonic() + 15.0
-                marker = b""
-                while time.monotonic() < deadline:
-                    try:
-                        with open(out_path, "rb") as f:
-                            marker = f.read()
-                    except OSError:
-                        marker = b""
-                    if b"PROBE_OK" in marker:
-                        break
-                    if proc.poll() is not None:
-                        break  # died early; report its rc below
-                    time.sleep(0.25)
-                if b"PROBE_OK" not in marker:
-                    proc.kill()
-                    try:
-                        proc.wait(timeout=5)
-                    except _sp.TimeoutExpired:
-                        pass  # unreapable; the hang diagnostic still raises
-                    log_file.write(b"[probe] no marker in 15s; child killed\n")
-                    log_file.flush()
-                    raise GahubProcessError(
-                        f"interpreter probe produced no output in 15s and was "
-                        f"killed (python={self.python_exe}): security software "
-                        "may be suspending children of this unsigned exe; add "
-                        "an AV exclusion or start gahub_app as a scheduled task"
-                    )
-                proc.kill()  # marker seen; release the resident child
-                try:
-                    proc.wait(timeout=5)
-                except _sp.TimeoutExpired:
-                    pass
-            log_file.write(
-                f"[probe] rc={proc.returncode} out={marker[:80]!r}\n".encode("utf-8", "replace"))
-            log_file.flush()
-        except GahubProcessError:
-            raise
-        except Exception as exc:
-            raise GahubProcessError(
-                f"interpreter probe failed to run {self.python_exe}: {exc}"
-            ) from exc
-        finally:
-            try:
-                os.unlink(out_path)
-            except OSError:
-                pass
 
     def stop(self, timeout: float = 5.0) -> bool:
         with self._lock:
