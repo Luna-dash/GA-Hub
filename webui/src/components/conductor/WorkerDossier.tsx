@@ -1,18 +1,24 @@
 // WorkerDossier — the right-hand detail panel for one selected subagent.
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { api } from '@/api/client'
 import type { ConductorSubagent } from '@/api/types'
+import { MessageContent } from '@/components/MessageContent'
 import { queryKeys } from '@/queries/queryKeys'
 import { toast } from '@/stores/toastStore'
 import { writeClipboard } from '@/utils/clipboard'
+import { formatClock } from '@/utils/timeFormat'
 import type { SubagentRowControl } from './presentation'
 import {
   basenamePath,
   isReviewable,
+  milestoneCheckSummary,
+  milestonesOf,
   phaseDot,
   phaseTone,
   reviewFacts,
+  splitReplyByMilestones,
+  stripContractTail,
   subagentPhase,
   workerTitle,
 } from './presentation'
@@ -56,7 +62,10 @@ export function WorkerDossier({
   const missing = new Set(detail.deliverables_missing ?? facts.deliverables_missing ?? [])
   const stale = new Set(detail.deliverables_stale ?? facts.deliverables_stale ?? [])
   const checks = detail.quality_checks?.checks ?? facts.quality_checks?.checks ?? []
-  const reply = (detail.reply || sub.reply || '').trim()
+  const detailMilestones = milestonesOf(detail)
+  const milestones = detailMilestones.length > 0 ? detailMilestones : milestonesOf(sub)
+  const reply = stripContractTail((detail.reply || sub.reply || '').trim())
+  const replySegments = splitReplyByMilestones(reply, milestones)
   const reviewable = isReviewable(sub)
   const abortable = sub.status === 'running' || reviewable
 
@@ -160,12 +169,75 @@ export function WorkerDossier({
           </section>
         )}
 
+        {milestones.length > 0 && (
+          <section className="mb-4">
+            <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">进度里程碑</h3>
+            <ul className="mt-1 space-y-1.5 text-xs" aria-label="进度里程碑">
+              {milestones.map((ms) => {
+                const reached = Boolean(ms.reached_at)
+                const missed = !reached && Boolean(ms.missed_at)
+                return (
+                  <li key={ms.id} className="flex items-start gap-2 leading-5">
+                    <span
+                      className={clsx(
+                        'mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
+                        reached ? 'bg-status-success-strong' : missed ? 'bg-status-danger' : 'bg-status-warning',
+                      )}
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className={clsx('break-words', reached ? 'text-ink' : missed ? 'text-status-danger' : 'text-ink-muted')}>
+                        {ms.desc}
+                      </span>
+                      <span className="ml-1.5 whitespace-nowrap text-[10px] text-ink-faint">
+                        {reached && ms.reached_at
+                          ? `已达成 ${formatClock(ms.reached_at)}`
+                          : missed
+                            ? '已超时，等待指挥处理'
+                            : '进行中'}
+                      </span>
+                      <span className="block text-[10px] leading-4 text-ink-faint">
+                        {milestoneCheckSummary(ms.check)}
+                      </span>
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+        )}
+
         <section>
           <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">
             {sub.status === 'running' ? '进行中摘要' : '文字结果'}
           </h3>
           {reply ? (
-            <div className="mt-1 whitespace-pre-wrap break-words text-xs leading-5">{reply}</div>
+            <div className="mt-1 space-y-2">
+              {replySegments.map((segment, index) => (
+                segment.kind === 'milestone' ? (
+                  <div
+                    key={`ms-${segment.milestone.id}-${index}`}
+                    data-testid="dossier-milestone-anchor"
+                    className="flex items-center gap-2 rounded-lg border border-status-success-line bg-status-success-soft px-2.5 py-1.5 text-xs text-status-success"
+                  >
+                    <span className="font-medium">✓ 里程碑达成</span>
+                    <span className="min-w-0 flex-1 truncate">{segment.milestone.desc}</span>
+                    {segment.milestone.reached_at && (
+                      <span className="shrink-0 text-[10px] text-status-success-muted">{formatClock(segment.milestone.reached_at)}</span>
+                    )}
+                  </div>
+                ) : (
+                  // Chat-grade rendering: the same markdown pipeline the
+                  // conductor conversation uses, minus the protocol tail.
+                  <MessageContent
+                    key={`text-${index}`}
+                    content={segment.text}
+                    format="markdown"
+                    markdownMode="plain"
+                  />
+                )
+              ))}
+            </div>
           ) : (
             <p className="mt-1 text-xs text-ink-muted">
               {sub.status === 'running'

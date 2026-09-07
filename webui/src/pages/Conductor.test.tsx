@@ -1100,6 +1100,50 @@ describe('Conductor chat scroll restoration', () => {
     )
   })
 
+  it('renders the worker reply chat-style and anchors reached milestones inline', async () => {
+    setSubagentFixtures()
+    mocks.conductorSubagent.mockResolvedValue({
+      id: 'reviewing',
+      prompt: '整理归档目录',
+      reply: '## 处理结果\n归档目录已建立，索引见下。\n【里程碑】归档已建立\n后续步骤已写入 plan.md。\n\n[DONE] <summary>归档完成</summary>',
+      status: 'stopped', created_at: 3, updated_at: 3, review_status: 'pending',
+      review_note: '', attempt: 1, generation: 1, request_id: 'request-1',
+      plan_milestones: [
+        {
+          id: 'ms-file', desc: '索引文件生成', status: 'reached', reached_at: 1_700_000_050,
+          check: { kind: 'file_exists', path: 'D:/out/plan.md' },
+        },
+        {
+          id: 'ms-archive', desc: '归档目录建立', status: 'reached', reached_at: 1_700_000_100,
+          check: { kind: 'archive_contains', contains: '【里程碑】归档已建立' },
+        },
+        {
+          id: 'ms-pending', desc: '交叉验证抽检', status: 'pending',
+          check: { kind: 'archive_contains', contains: '【里程碑】交叉验证完成' },
+        },
+      ],
+    })
+
+    renderPage()
+    await waitFor(() => expect(host.textContent).toContain('进度里程碑'))
+
+    const panel = host.querySelector('[aria-label="进度里程碑"]')
+    expect(panel?.textContent).toContain('索引文件生成')
+    expect(panel?.textContent).toContain('文件存在 · plan.md')
+    expect(panel?.textContent).toContain('归档目录建立')
+    expect(panel?.textContent).toContain('输出标记检查')
+    expect(panel?.textContent).toContain('已达成')
+
+    // The reached archive marker becomes an inline anchor chip in the reply…
+    const anchor = host.querySelector('[data-testid="dossier-milestone-anchor"]')
+    expect(anchor?.textContent).toContain('归档目录建立')
+    // …and the raw marker line no longer leaks into the rendered output.
+    expect(host.textContent).not.toContain('【里程碑】归档已建立')
+    // The [DONE] protocol tail is stripped as well.
+    expect(host.textContent).not.toContain('[DONE]')
+    expect(host.textContent).toContain('后续步骤已写入 plan.md。')
+  })
+
   it('advances selection to the next reviewable worker after a decision', async () => {
     mocks.conductorWorkflows.mockResolvedValue({
       items: [{

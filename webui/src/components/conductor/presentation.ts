@@ -182,8 +182,92 @@ export function phaseDot(phase: SubagentPhase): string {
   )
 }
 
-export type WorkerMilestone = { id: string; desc: string; status: string }
+export type WorkerMilestoneCheck = {
+  kind?: string
+  path?: string
+  contains?: string
+  after_epoch?: number
+}
+
+export type WorkerMilestone = {
+  id: string
+  desc: string
+  status?: string
+  check?: WorkerMilestoneCheck | null
+  reached_at?: number | null
+  missed_at?: number | null
+  budget_seconds?: number
+}
 
 export function milestonesOf(sub: ConductorSubagent): WorkerMilestone[] {
   return ((sub as { plan_milestones?: WorkerMilestone[] | null }).plan_milestones) ?? []
+}
+
+/** One-line human hint for a milestone's mechanical check. */
+export function milestoneCheckSummary(check?: WorkerMilestoneCheck | null): string {
+  const kind = check?.kind ?? ''
+  if (kind === 'archive_contains') return '输出标记检查'
+  const base = check?.path ? basenamePath(check.path) : ''
+  if (kind === 'file_exists') return base ? `文件存在 · ${base}` : '文件存在检查'
+  if (kind === 'file_contains') return base ? `内容检查 · ${base}` : '内容检查'
+  if (kind === 'file_modified_after') return base ? `更新检查 · ${base}` : '更新检查'
+  return '机械检查'
+}
+
+/**
+ * The engine's completion contract appends `[DONE] <summary>…</summary>` to
+ * the final reply (conductor_core._DONE_TAIL_RE). That is protocol noise for
+ * a human reader — strip it before rendering.
+ */
+export function stripContractTail(reply: string): string {
+  return reply.replace(/\[DONE\]\s*<summary>[\s\S]*?<\/summary>\s*$/i, '').trimEnd()
+}
+
+export type ReplySegment =
+  | { kind: 'text'; text: string }
+  | { kind: 'milestone'; milestone: WorkerMilestone }
+
+/**
+ * Split a worker reply at reached archive_contains milestones: the marker
+ * line the worker emitted is lifted out of the prose and rendered as an
+ * inline anchor chip, so a reader can see WHERE each milestone completed.
+ * Cuts happen at line boundaries to keep surrounding markdown intact, and
+ * each milestone anchors at most once (its first marker occurrence).
+ */
+export function splitReplyByMilestones(reply: string, milestones: WorkerMilestone[]): ReplySegment[] {
+  if (!reply) return []
+  const anchored = milestones.filter((ms) => (
+    ms.check?.kind === 'archive_contains'
+    && Boolean(ms.check.contains)
+    && Boolean(ms.reached_at)
+  ))
+  if (anchored.length === 0) return [{ kind: 'text', text: reply }]
+
+  type Cut = { start: number; end: number; milestone: WorkerMilestone }
+  const cuts: Cut[] = []
+  for (const ms of anchored) {
+    const marker = ms.check!.contains as string
+    const first = reply.indexOf(marker)
+    if (first === -1) continue
+    const lineStart = reply.lastIndexOf('\n', first)
+    const start = lineStart === -1 ? 0 : lineStart + 1
+    const lineEnd = reply.indexOf('\n', first + marker.length)
+    const end = lineEnd === -1 ? reply.length : lineEnd + 1
+    cuts.push({ start, end, milestone: ms })
+  }
+  if (cuts.length === 0) return [{ kind: 'text', text: reply }]
+  cuts.sort((left, right) => left.start - right.start)
+
+  const segments: ReplySegment[] = []
+  let cursor = 0
+  for (const cut of cuts) {
+    if (cut.start < cursor) continue // overlapping marker line (dedupe)
+    const before = reply.slice(cursor, cut.start)
+    if (before.trim()) segments.push({ kind: 'text', text: before })
+    segments.push({ kind: 'milestone', milestone: cut.milestone })
+    cursor = cut.end
+  }
+  const tail = reply.slice(cursor)
+  if (tail.trim()) segments.push({ kind: 'text', text: tail })
+  return segments
 }
