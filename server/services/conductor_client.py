@@ -22,7 +22,12 @@ from typing import Any, Callable, Optional
 import requests
 
 from .. import _paths
-from ..constants import CONDUCTOR_ENGINE_PORT, ENV_GAHUB_JOURNAL_PATH, ENV_GAHUB_TEMP_DIR
+from ..constants import (
+    CONDUCTOR_ENGINE_PORT,
+    ENV_GAHUB_DELIVERABLE_ROOTS,
+    ENV_GAHUB_JOURNAL_PATH,
+    ENV_GAHUB_TEMP_DIR,
+)
 from ..process_utils import hidden_process_kwargs
 
 log = logging.getLogger(__name__)
@@ -81,10 +86,20 @@ def _engine_spawn_env() -> dict:
 
     GAHUB_JOURNAL_PATH points the engine's durable run journal (P2-A,
     append-only JSONL truth stream) at a hub-owned file under ADMIN_DATA.
-    An operator-provided value in the environment wins (setdefault).
+    GAHUB_DELIVERABLE_ROOTS widens the engine's dispatch allow-list with a
+    user-facing deliverables folder: the engine default is the GA repo root
+    only, so a task naming any outside path (e.g. ``D:\\some\\folder``) is
+    rejected with 422 before a worker is ever spawned and the workflow
+    strands in planning. The GA repo root stays on the list for backwards
+    compatibility. An operator-provided value in the environment wins
+    (setdefault).
     """
     env = _clean_child_env()
     env.setdefault(ENV_GAHUB_JOURNAL_PATH, str(_paths.gahub_journal_file()))
+    env.setdefault(ENV_GAHUB_DELIVERABLE_ROOTS, ",".join((
+        str(_paths.GA_ROOT) if _paths.GA_ROOT else "",
+        str(_paths.conductor_deliverables_dir()),
+    )))
     return env
 
 

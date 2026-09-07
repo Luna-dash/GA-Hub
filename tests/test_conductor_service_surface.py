@@ -181,6 +181,36 @@ def test_engine_spawn_env_respects_operator_journal_path(monkeypatch) -> None:
     assert env["GAHUB_JOURNAL_PATH"] == "D:\\custom\\journal.jsonl"
 
 
+def test_engine_spawn_env_injects_deliverable_roots(monkeypatch) -> None:
+    """The spawned engine must accept deliverables outside the GA repo:
+    the default allow-list is GA root + the user GA-Deliverables folder,
+    otherwise tasks naming an outside path strand before dispatch (422)."""
+    from pathlib import Path
+
+    from server.services import conductor_client as cc
+
+    monkeypatch.setattr("server.services.conductor_client.os.environ", {
+        "PATH": f"C:\\Temp\\_MEI12345\\bin{chr(59)}C:\\Windows",
+    })
+    monkeypatch.setattr(cc._paths, "GA_ROOT", Path("D:/study/GA"))
+    monkeypatch.setattr(
+        cc._paths, "conductor_deliverables_dir", lambda: Path("D:/user-outputs"))
+
+    env = cc._engine_spawn_env()
+
+    roots = env["GAHUB_DELIVERABLE_ROOTS"].split(",")
+    assert str(Path("D:/study/GA")) in roots
+    assert str(Path("D:/user-outputs")) in roots
+
+
+def test_engine_spawn_env_respects_operator_deliverable_roots(monkeypatch) -> None:
+    from server.services import conductor_client as cc
+
+    monkeypatch.setenv("GAHUB_DELIVERABLE_ROOTS", "D:\\my-outputs")
+    env = cc._engine_spawn_env()
+    assert env["GAHUB_DELIVERABLE_ROOTS"] == "D:\\my-outputs"
+
+
 # ── subagent dossier: engine reply + hub mirror merge ────────────────────────
 
 def test_subagent_dossier_merges_engine_reply_with_mirror_facts() -> None:

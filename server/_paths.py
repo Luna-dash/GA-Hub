@@ -58,6 +58,16 @@ log = logging.getLogger(__name__)
 ADMIN_ROOT = Path(__file__).resolve().parent.parent             # the admin checkout
 ADMIN_DATA = Path(os.environ.get("GA_ADMIN_DATA") or (Path.home() / ".genericagent-admin")).resolve()
 CONFIG_FILE = ADMIN_DATA / "config.json"
+# User-facing conductor deliverables root (conductor_client injects it into
+# the engine's GAHUB_DELIVERABLE_ROOTS). Lives outside any repo so users can
+# find outputs easily; resolved at call time. Falls back to an ADMIN_DATA
+# subfolder when the home directory cannot be determined (stripped test
+# environments, broken profiles) — spawn-env composition must never raise.
+def conductor_deliverables_dir() -> Path:
+    try:
+        return Path.home() / "GA-Deliverables"
+    except (RuntimeError, OSError):
+        return ADMIN_DATA / "deliverables"
 _UNSET = object()
 
 

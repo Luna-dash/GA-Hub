@@ -44,6 +44,10 @@ ENV_SESSION_RUN_CAPACITY = "GAHUB_SESSION_RUN_CAPACITY"
 # gahub_app engine (conductor_client): engine temp/journal locations.
 ENV_GAHUB_TEMP_DIR = "GAHUB_TEMP_DIR"
 ENV_GAHUB_JOURNAL_PATH = "GAHUB_JOURNAL_PATH"
+# gahub_app engine (conductor_client): comma-separated deliverable allow-list.
+# Without it the engine only accepts deliverable paths under the GA repo root,
+# so any user task naming an outside folder strands before dispatch (422).
+ENV_GAHUB_DELIVERABLE_ROOTS = "GAHUB_DELIVERABLE_ROOTS"
 # UI origin allowlist beyond localhost (main.py).
 ENV_GAHUB_ALLOWED_HOSTS = "GAHUB_ALLOWED_HOSTS"
 # mykey sync (routes/mykey.py): sync-site root URL and the credential env
