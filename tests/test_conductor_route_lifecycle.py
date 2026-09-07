@@ -118,6 +118,25 @@ def test_start_route_returns_live_lifecycle_and_remains_idempotent(monkeypatch):
     assert service.start_calls == [(None, None, None)]
 
 
+def test_start_route_engine_spawn_failure_maps_to_503(monkeypatch):
+    """A spawn/probe/health failure must reach the UI as 503 with the
+    diagnostics, never a blind 500 (live 2026-09-07: a hung interpreter
+    probe surfaced as "Internal Server Error" with no log hint)."""
+    service = FakeService(STOPPED)
+    service.start = Mock(side_effect=GahubProcessError(
+        "interpreter probe hung for 10s and was killed (python=conda): "
+        "security software may be suspending children of this unsigned exe",
+    ))
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+
+    with pytest.raises(conductor_routes.HTTPException) as raised:
+        asyncio.run(conductor_routes.start_conductor())
+
+    assert raised.value.status_code == 503
+    assert "interpreter probe hung" in str(raised.value.detail)
+    assert "gahub_app.log" in str(raised.value.detail)
+
+
 def test_start_route_forwards_main_and_subagent_models(monkeypatch):
     service = FakeService(STOPPED)
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)

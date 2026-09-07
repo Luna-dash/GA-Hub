@@ -26,7 +26,11 @@ from typing import Any, Dict, Literal, Optional
 
 from .. import _paths
 
-from .conductor_client import GaConductorClient, GahubProcessManager
+from .conductor_client import (
+    GaConductorClient,
+    GahubProcessError,
+    GahubProcessManager,
+)
 from .conductor_ext_timeout import TimeoutMonitor
 from .conductor_vocabulary import (
     SUBAGENT_RUNNING,
@@ -806,6 +810,11 @@ class ConductorService:
         if manager is not None:
             try:
                 manager.ensure_running()
+            except GahubProcessError:
+                # Typed passthrough: the route layer maps this to 503 with
+                # the probe/health diagnostics; wrapping it here erased the
+                # status_code and turned a start attempt into a blind 500.
+                raise
             except Exception as exc:
                 raise RuntimeError(
                     rf"gahub_app unavailable (see %TEMP%\gahub_app.log): {exc}"
@@ -1032,6 +1041,9 @@ class ConductorService:
         if manager is not None:
             try:
                 manager.ensure_running()
+            except GahubProcessError:
+                # Typed passthrough — see _assert_engine_ready.
+                raise
             except Exception as exc:
                 raise RuntimeError(
                     rf"gahub_app unavailable (see %TEMP%\gahub_app.log): {exc}"

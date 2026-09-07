@@ -242,6 +242,13 @@ class GahubProcessManager:
         From the frozen sidecar, security software can hang unsigned-exe
         children (alive, zero output). A failed probe names that condition
         directly instead of a 60s health timeout.
+
+        The probe mirrors the real engine spawn shape — stdout to a file
+        handle, never a pipe. Live diagnosis (2026-09-07): AV suspended
+        exactly the pipe-stdout children of the frozen sidecar while
+        file-stdout children from the same parent ran fine, so a pipe
+        probe blocked every healthy engine start. The child is killed and
+        reaped on timeout; a hung probe must not leak a zombie.
         """
         import subprocess as _sp
         log_file.write(
@@ -249,24 +256,55 @@ class GahubProcessManager:
             f"PATH_head={os.environ.get('PATH', '')[:120]}\n".encode("utf-8", "replace")
         )
         log_file.flush()
+        out_path = os.path.join(
+            os.environ.get(ENV_GAHUB_TEMP_DIR) or tempfile.gettempdir(),
+            f"gahub_app-probe-{os.getpid()}-{int(time.time())}.log")
         try:
-            proc = _sp.Popen(
-                [self.python_exe, "-u", "-c", "print('PROBE_OK', flush=True)"],
-                stdout=_sp.PIPE, stderr=_sp.STDOUT,
-                env=_clean_child_env(), **hidden_process_kwargs(),
-            )
-            out, _ = proc.communicate(timeout=10)
+            with open(out_path, "wb") as out_file:
+                proc = _sp.Popen(
+                    [self.python_exe, "-u", "-c", "print('PROBE_OK', flush=True)"],
+                    stdout=out_file, stderr=_sp.STDOUT,
+                    env=_clean_child_env(), **hidden_process_kwargs(),
+                )
+                try:
+                    proc.wait(timeout=10)
+                except _sp.TimeoutExpired:
+                    proc.kill()
+                    try:
+                        proc.wait(timeout=5)
+                    except _sp.TimeoutExpired:
+                        pass  # unreapable; the hang diagnostic still raises
+                    log_file.write(b"[probe] hung>10s and was killed\n")
+                    log_file.flush()
+                    raise GahubProcessError(
+                        f"interpreter probe hung for 10s and was killed "
+                        f"(python={self.python_exe}): security software may "
+                        "be suspending children of this unsigned exe; add an "
+                        "AV exclusion or start gahub_app as a scheduled task"
+                    )
+            with open(out_path, "rb") as f:
+                out = f.read()
+            log_file.write(
+                f"[probe] rc={proc.returncode} out={out[:80]!r}\n".encode("utf-8", "replace"))
+            log_file.flush()
+            if proc.returncode != 0 or b"PROBE_OK" not in out:
+                raise GahubProcessError(
+                    f"interpreter probe unhealthy (rc={proc.returncode}, "
+                    f"out={out!r}): security software may be blocking children of "
+                    "this unsigned exe; add an exclusion or start gahub_app as a "
+                    "scheduled task"
+                )
+        except GahubProcessError:
+            raise
         except Exception as exc:
             raise GahubProcessError(
                 f"interpreter probe failed to run {self.python_exe}: {exc}"
             ) from exc
-        if proc.returncode != 0 or b"PROBE_OK" not in (out or b""):
-            raise GahubProcessError(
-                f"interpreter probe unhealthy (rc={proc.returncode}, "
-                f"out={out!r}): security software may be blocking children of "
-                "this unsigned exe; add an exclusion or start gahub_app as a "
-                "scheduled task"
-            )
+        finally:
+            try:
+                os.unlink(out_path)
+            except OSError:
+                pass
 
     def stop(self, timeout: float = 5.0) -> bool:
         with self._lock:

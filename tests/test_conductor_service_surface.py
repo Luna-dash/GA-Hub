@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 
 from server.services import conductor_service as cs
-from server.services.conductor_client import GahubProcessManager
+from server.services.conductor_client import GahubProcessError, GahubProcessManager
 
 
 def _bare_service() -> cs.ConductorService:
@@ -81,7 +81,7 @@ def test_replayed_final_for_unknown_request_is_downgraded(monkeypatch) -> None:
     assert any(m["msg"] == "已完成：历史请求的最终回复" for m in service.chat_messages)
 
 
-def test_probe_interpreter_passes_clean_child_env(monkeypatch) -> None:
+def test_probe_interpreter_passes_clean_child_env(monkeypatch, tmp_path) -> None:
     """The probe must launch its child with the _MEI-stripped environment —
     a regression here previously died on an undefined `env` name before any
     diagnostic could be produced."""
@@ -90,15 +90,21 @@ def test_probe_interpreter_passes_clean_child_env(monkeypatch) -> None:
     class FakeProc:
         returncode = 0
 
-        def communicate(self, timeout=None):
-            return b"PROBE_OK\n", b""
+        def wait(self, timeout=None):
+            if captured.get("stdout") is not None and hasattr(captured["stdout"], "write"):
+                captured["stdout"].write(b"PROBE_OK\n")
+            return 0
 
     def fake_venv_popener(cmd, **kwargs):
         captured["cmd"] = cmd
         captured["env"] = kwargs.get("env")
+        captured["stdout"] = kwargs.get("stdout")
+        captured["stdout_is_pipe"] = kwargs.get("stdout") == subprocess.PIPE
         return FakeProc()
 
     monkeypatch.setattr(subprocess, "Popen", fake_venv_popener)
+    monkeypatch.setattr("server.services.conductor_client.tempfile.gettempdir",
+                        lambda: str(tmp_path))
 
     manager = GahubProcessManager(python_exe="python-does-not-matter")
     polluted_path = f"C:\\Temp\\_MEI12345\\bin{chr(59)}C:\\Windows"
@@ -112,6 +118,44 @@ def test_probe_interpreter_passes_clean_child_env(monkeypatch) -> None:
     assert env is not None
     assert all("_MEI" not in item for item in env["PATH"].split(chr(59)))
     assert "_PYI_ARCHIVE" not in env
+    # The probe must mirror the real engine spawn shape: stdout to a file
+    # handle. AV suspended exactly the pipe-stdout children of the frozen
+    # sidecar (live 2026-09-07), so a pipe probe blocked healthy engines.
+    assert captured["stdout_is_pipe"] is False
+
+
+def test_probe_hang_kills_child_and_names_condition(monkeypatch, tmp_path) -> None:
+    """A hung probe child must be killed (no zombie leak) and the raised
+    error must name the AV-suspension condition with the interpreter path."""
+    import subprocess as real_subprocess
+
+    killed: list = []
+
+    class HungProc:
+        returncode = None
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise real_subprocess.TimeoutExpired("python", timeout)
+
+        def kill(self):
+            killed.append(True)
+
+    def fake_popener(cmd, **kwargs):
+        return HungProc()
+
+    # _probe_interpreter imports subprocess locally; patch the real module.
+    monkeypatch.setattr(subprocess, "Popen", fake_popener)
+    monkeypatch.setattr("server.services.conductor_client.tempfile.gettempdir",
+                        lambda: str(tmp_path))
+
+    manager = GahubProcessManager(python_exe="conda-python.exe")
+    with pytest.raises(GahubProcessError) as raised:
+        manager._probe_interpreter(io.BytesIO())
+    assert killed, "hung probe child must be killed"
+    assert "hung" in str(raised.value)
+    assert "conda-python.exe" in str(raised.value)
+    assert "security software" in str(raised.value)
 
 
 def test_engine_spawn_env_injects_hub_journal_path(monkeypatch, tmp_path) -> None:

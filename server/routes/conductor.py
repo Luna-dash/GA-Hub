@@ -69,7 +69,7 @@ def _engine_http_error(exc: "conductor_client_module.GahubProcessError") -> HTTP
         return HTTPException(
             503,
             "gahub_app engine unreachable — it will be respawned on demand "
-            "(see %TEMP%\\gahub_app.log)",
+            f"(see %TEMP%\\gahub_app.log): {exc}",
         )
     if status == 503:
         detail = exc.detail
@@ -284,6 +284,11 @@ async def start_conductor(body: ConductorStartReq | None = None) -> ConductorLif
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    except conductor_client_module.GahubProcessError as exc:
+        # Spawn/probe/health failures must reach the UI as 503 + diagnostics,
+        # not a blind 500 (live 2026-09-07: a hung interpreter probe surfaced
+        # as "Internal Server Error" with no hint at %TEMP%\gahub_app.log).
+        raise _engine_http_error(exc) from exc
     status = _status_payload(service)
     return {"ok": started or status["started"], **status}
 
