@@ -22,8 +22,18 @@ describe('stripContractTail', () => {
     expect(stripContractTail(reply)).toBe('正文内容')
   })
 
+  it('removes the canonical [[GAHUB_TASK_DONE]] summary pair (2026-09-08 contract)', () => {
+    const reply = '正文内容\n\n[[GAHUB_TASK_DONE]]\n<summary>任务完成</summary>'
+    expect(stripContractTail(reply)).toBe('正文内容')
+  })
+
   it('keeps a [DONE] that is not at the tail (mid-text mention)', () => {
     const reply = '提到 [DONE] <summary>x</summary> 之后继续\n结尾'
+    expect(stripContractTail(reply)).toBe(reply)
+  })
+
+  it('keeps a canonical marker that is not at the tail (mid-text mention)', () => {
+    const reply = '提到 [[GAHUB_TASK_DONE]] <summary>x</summary> 之后继续\n结尾'
     expect(stripContractTail(reply)).toBe(reply)
   })
 

@@ -215,12 +215,16 @@ export function milestoneCheckSummary(check?: WorkerMilestoneCheck | null): stri
 }
 
 /**
- * The engine's completion contract appends `[DONE] <summary>…</summary>` to
- * the final reply (conductor_core._DONE_TAIL_RE). That is protocol noise for
- * a human reader — strip it before rendering.
+ * The engine's completion contract appends a marker pair to the final reply
+ * (conductor_core._DONE_TAIL_RE): the canonical `[[GAHUB_TASK_DONE]]
+ * <summary>…</summary>` since 2026-09-08, or the legacy `[DONE]
+ * <summary>…</summary>`. That is protocol noise for a human reader — strip
+ * it before rendering.
  */
 export function stripContractTail(reply: string): string {
-  return reply.replace(/\[DONE\]\s*<summary>[\s\S]*?<\/summary>\s*$/i, '').trimEnd()
+  return reply
+    .replace(/(?:\[\[GAHUB_TASK_DONE\]\]|\[DONE\])\s*<summary>[\s\S]*?<\/summary>\s*$/i, '')
+    .trimEnd()
 }
 
 export type ReplySegment =
