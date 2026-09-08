@@ -540,3 +540,71 @@ def test_resume_forwards_tracker_owner_to_engine() -> None:
 
     service.client.subagent_action.assert_called_once_with(
         "w1", "input", "continue", request_id="rid-owner", llm_index=None)
+
+
+class _FakeProc:
+    """Popen stand-in that never exits (AV-suspended-at-birth child)."""
+
+    def __init__(self):
+        self.terminated = False
+        self.killed = False
+
+    def poll(self):
+        return None
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_ensure_running_reaps_hung_children(tmp_path, monkeypatch) -> None:
+    """2026-09-08 zombie-farm regression: children that never become healthy
+    (AV-suspended at birth) must be reaped by the manager — both when the
+    spawn times out and before the next spawn attempt — instead of leaking
+    until an unrelated job teardown happens to collect them."""
+    from server.services import conductor_client as cc
+
+    (tmp_path / "frontends").mkdir()
+    (tmp_path / "frontends" / "gahub_app.py").write_text("# engine stub",
+                                                         encoding="utf-8")
+    manager = GahubProcessManager(ga_root=str(tmp_path), spawn_enabled=True)
+    monkeypatch.setattr(manager, "is_healthy", lambda timeout=1.0: False)
+    monkeypatch.setattr(cc, "_open_engine_log",
+                        lambda: (io.BytesIO(), str(tmp_path / "engine.log")))
+    monkeypatch.setattr(cc, "hidden_process_kwargs", lambda: {})
+
+    spawned: list[_FakeProc] = []
+
+    def fake_popen(*args, **kwargs):
+        proc = _FakeProc()
+        spawned.append(proc)
+        return proc
+
+    monkeypatch.setattr(cc.subprocess, "Popen", fake_popen)
+
+    # Phase 1: the spawn never becomes healthy -> the manager reaps the hung
+    # child before reporting the failure.
+    with pytest.raises(GahubProcessError):
+        manager.ensure_running(startup_timeout=0.3)
+    assert len(spawned) == 1
+    assert spawned[0].terminated is True
+    assert manager._proc is None
+
+    # Phase 2: a stale child from an earlier failed cycle is reaped before
+    # the next spawn attempt (even when that attempt itself is refused).
+    stale = _FakeProc()
+    manager._proc = stale
+
+    def refused(*args, **kwargs):
+        raise OSError("spawn refused")
+
+    monkeypatch.setattr(cc.subprocess, "Popen", refused)
+    with pytest.raises(OSError):
+        manager.ensure_running(startup_timeout=0.3)
+    assert stale.terminated is True
+    assert manager._proc is None

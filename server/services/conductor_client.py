@@ -195,6 +195,25 @@ class GahubProcessManager:
     def _headers(self) -> dict:
         return {"X-GAHub-Token": self.token} if self.token else {}
 
+    def _terminate_child(self, proc: subprocess.Popen, timeout: float = 3.0) -> None:
+        """Best-effort teardown of a child this manager spawned.
+
+        The spawn-failure paths must not leak the child: one that never became
+        healthy (e.g. AV-suspended at birth) keeps running indefinitely and —
+        if it got as far as binding — holds the engine's singleton lock, so
+        every later start attempt would stack another process on top of it
+        (2026-09-08 zombie-farm diagnosis: 8 leaked children in one morning).
+        """
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=2.0)
+        except Exception:
+            log.exception("gahub_app_child_reap_failed")
+
     def ensure_running(self, startup_timeout: float = 60.0) -> None:
         """Spawn gahub_app when unhealthy and wait for /health."""
         if self.is_healthy():
@@ -202,6 +221,13 @@ class GahubProcessManager:
         with self._lock:
             if self.is_healthy():
                 return
+            if self._proc is not None:
+                # A child we spawned earlier and never reaped (unhealthy or
+                # hung). Reap it first so the fresh spawn starts clean; a
+                # recovered child would have been adopted by the health
+                # checks above instead of reaching this point.
+                self._terminate_child(self._proc)
+                self._proc = None
             script = os.path.join(self.ga_root or "", "frontends", "gahub_app.py")
             if not os.path.isfile(script):
                 raise GahubProcessError(
@@ -247,6 +273,12 @@ class GahubProcessManager:
             detail += f" log_tail={tail}"
         except Exception:
             pass
+        if self._proc is not None:
+            # Do not leak the child that failed to become healthy: reap it
+            # before reporting so the next start attempt begins from a clean
+            # slate (TerminateProcess also works on AV-suspended children).
+            self._terminate_child(self._proc)
+            self._proc = None
         raise GahubProcessError(
             f"gahub_app did not become healthy within {startup_timeout}s ({detail}); "
             "if the log tail is empty, security software may be suspending "
