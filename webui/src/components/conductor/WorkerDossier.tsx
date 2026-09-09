@@ -49,7 +49,7 @@ export function WorkerDossier({
   const facts = reviewFacts(sub)
   const running = sub.status === 'running'
   const { data, isLoading, error } = useQuery({
-    queryKey: queryKeys.conductor.subagent(sub.id),
+    queryKey: [...queryKeys.conductor.subagent(sub.id), sub.boot_id, sub.active_generation, sub.command_revision],
     queryFn: () => api.conductorSubagent(sub.id, 20_000),
     // Running workers stream partial results; refresh quietly so the dossier
     // reflects the latest reply without a manual refetch. Lifecycle SSE also

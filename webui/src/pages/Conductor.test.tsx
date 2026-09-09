@@ -230,7 +230,7 @@ describe('Conductor chat scroll restoration', () => {
 
   function button(label: string): HTMLButtonElement {
     const match = Array.from(host.querySelectorAll('button')).find(
-      (item) => item.textContent?.trim() === label,
+      (item) => (item.getAttribute('aria-label') || item.textContent?.trim()) === label,
     )
     if (!(match instanceof HTMLButtonElement)) throw new Error(`button not found: ${label}`)
     return match
@@ -325,14 +325,14 @@ describe('Conductor chat scroll restoration', () => {
     expect(text).toContain('返工中')
     expect(text).toContain('待你验收')
     expect(text).toContain('已通过')
-    expect(text).toContain('有 1 个子任务等你拍板')
+    expect(text).toContain('1 个待验收')
     expect(text).not.toContain('T1')
     expect(text).not.toContain('Reply (')
     expect(mocks.conductorLog).not.toHaveBeenCalled()
 
     const headings = Array.from(host.querySelectorAll('h2')).map((item) => item.textContent)
     expect(headings).toContain('当前任务')
-    expect(headings).toContain('工人')
+    expect(host.querySelectorAll('.conductor-worker-card')).toHaveLength(4)
     expect(headings).toContain('工人卷宗')
     expect(host.querySelector('[aria-label="子代理状态跟踪"]')?.textContent).toContain('1/4 已通过')
     const titleBadge = host.querySelector('header .ga-badge')
@@ -345,7 +345,7 @@ describe('Conductor chat scroll restoration', () => {
     renderPage()
     await flushQueries()
 
-    expect(host.textContent).toContain('子代理设置')
+    expect(button('子代理设置').getAttribute('aria-haspopup')).toBe('dialog')
     expect(host.textContent).not.toContain('默认模型')
     expect(host.textContent).not.toContain('固定使用所选模型')
 
@@ -492,7 +492,7 @@ describe('Conductor chat scroll restoration', () => {
     act(() => button('通过').click())
     await flushQueries()
     expect(mocks.conductorSubagentAction).toHaveBeenCalledWith(
-      'reviewing', 'accept', '', null, {}, false,
+      'reviewing', 'accept', '', null, {}, false, undefined,
     )
     expect(lastToast()?.kind).toBe('success')
   })
@@ -545,7 +545,7 @@ describe('Conductor chat scroll restoration', () => {
     const text = host.textContent || ''
     expect(text).toContain('核对桌面启动路径')
     expect(text).toContain('report.md')
-    expect(text).toContain('有 1 个子任务等你拍板')
+    expect(text).toContain('1 个待验收')
     for (let attempt = 0; attempt < 6; attempt += 1) await flushQueries()
     expect(mocks.conductorSubagent).toHaveBeenCalledWith('reviewing', 20_000)
     expect(host.textContent).toContain('完整回复：启动路径已核对。')
@@ -584,7 +584,7 @@ describe('Conductor chat scroll restoration', () => {
     act(() => button('强制通过（人工核对后）').click())
     await flushQueries()
     expect(mocks.conductorSubagentAction).toHaveBeenLastCalledWith(
-      'reviewing', 'accept', '人工核对证据后强制通过', null, {}, true,
+      'reviewing', 'accept', '人工核对证据后强制通过', null, {}, true, undefined,
     )
     expect(host.querySelector('[data-testid="subagent-evidence-reviewing"]')).toBeNull()
   })
@@ -613,7 +613,7 @@ describe('Conductor chat scroll restoration', () => {
     await flushQueries()
 
     expect(mocks.conductorSubagentAction).toHaveBeenLastCalledWith(
-      'reviewing', 'rework', '补充失败场景的回归证据', null, {}, false,
+      'reviewing', 'rework', '补充失败场景的回归证据', null, {}, false, undefined,
     )
     expect(host.querySelector('[aria-label="打回原因"]')).toBeNull()
   })
@@ -679,7 +679,7 @@ describe('Conductor chat scroll restoration', () => {
     act(() => button('终止').click())
     await flushQueries()
     expect(mocks.conductorSubagentAction).toHaveBeenCalledWith(
-      'live', 'abort', '', null, {}, false,
+      'live', 'abort', '', null, {}, false, undefined,
     )
   })
 
@@ -697,7 +697,7 @@ describe('Conductor chat scroll restoration', () => {
     act(() => button('发送').click())
     await waitFor(() => {
       // Double-submit guard: the in-flight request keeps the button busy.
-      expect(button('发送中…').disabled).toBe(true)
+      expect(button('发送中').disabled).toBe(true)
       expect(mocks.conductorSendChat).toHaveBeenCalledTimes(1)
     })
 
@@ -730,7 +730,7 @@ describe('Conductor chat scroll restoration', () => {
     })
     renderPage()
     await waitFor(() => expect(host.querySelector('form textarea')).toBeTruthy())
-    await waitFor(() => expect(host.textContent).toContain('不会另开新任务'))
+    await waitFor(() => expect(button('发送补充')).toBeTruthy())
 
     typeMessage('补充：还要覆盖登录场景')
     act(() => button('发送补充').click())
@@ -782,7 +782,7 @@ describe('Conductor chat scroll restoration', () => {
     await waitFor(() => expect(
       (host.querySelector('form textarea') as HTMLTextAreaElement).placeholder,
     ).toBe('描述一个新任务…'))
-    expect(host.textContent).not.toContain('不会另开新任务')
+    expect(button('发送')).toBeTruthy()
   })
 
   it('restores the draft and warns instead of silently dropping a failed task', async () => {
@@ -889,7 +889,7 @@ describe('Conductor chat scroll restoration', () => {
     expect(board?.textContent).not.toContain('新任务')
 
     // 回到最新 releases the pin and follows the newest workflow again.
-    expect(host.textContent).toContain('回到最新')
+    expect(button('回到最新').title).toBe('回到最新任务')
     act(() => button('回到最新').click())
     await waitFor(() => {
       const latest = host.querySelector('section[aria-label="当前任务"]')
@@ -942,7 +942,7 @@ describe('Conductor chat scroll restoration', () => {
     await waitFor(() => {
       const text = host.textContent || ''
       expect(text).toContain('执行失败')
-      expect(text).toContain('失败原因：conductor start failed: gahub_app unavailable')
+      expect(text).toContain('conductor start failed: gahub_app unavailable')
       expect(text).not.toContain('原因已写入本轮对话')
     })
   })
@@ -957,26 +957,21 @@ describe('Conductor chat scroll restoration', () => {
     renderPage()
     await waitFor(() => expect(host.textContent).toContain('重新发起这个任务'))
 
-    act(() => button('重新发起这个任务（按原任务措辞重开）').click())
+    act(() => button('重新发起这个任务').click())
     expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
       .toBe('整理归档目录并生成索引')
   })
 
-  it('guides first use with example tasks when nothing has happened yet', async () => {
+  it('opens a usable composer from an empty task board', async () => {
     mocks.conductorChat.mockResolvedValue({ items: [] })
     mocks.conductorWorkflows.mockResolvedValue({ items: [] })
-
     renderPage()
-    await waitFor(() => expect(host.textContent).toContain('把一件事交给指挥'))
-
-    const chips = Array.from(
-      host.querySelectorAll('[data-testid="conductor-example-task"]'),
-    ) as HTMLButtonElement[]
-    expect(chips).toHaveLength(3)
-
-    act(() => chips[0].click())
-    expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
-      .toContain('整理下载目录')
+    await waitFor(() => expect(host.textContent).toContain('暂无任务'))
+    act(() => button('对话').click())
+    expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('context')
+    expect(host.querySelector('#conductor-panel-chat')?.hasAttribute('hidden')).toBe(false)
+    expect(host.querySelector('textarea[aria-label="任务内容"]')).toBeTruthy()
+    expect(button('发送').disabled).toBe(true)
   })
 
   it('renders captured lifecycle events in the activity timeline', async () => {
@@ -1022,26 +1017,49 @@ describe('Conductor chat scroll restoration', () => {
     expect(mocks.revealFile).toHaveBeenCalledWith('D:/out/report.md', 'folder')
   })
 
-  it('collapses and restores both side rails from the chat header toggles', async () => {
+  it('switches context tabs and mobile views without losing the selected worker', async () => {
     setSubagentFixtures()
     renderPage()
-    await waitFor(() => expect(host.textContent).toContain('工人卷宗'))
+    await waitFor(() => expect(host.querySelector('.conductor-worker-card')).toBeTruthy())
+    const worker = host.querySelector('.conductor-worker-card') as HTMLButtonElement
+    act(() => worker.click())
+    expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('context')
+    expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(false)
+    expect(host.querySelector('#conductor-panel-chat')?.hasAttribute('hidden')).toBe(true)
+    act(() => button('动态').click())
+    expect(host.querySelector('#conductor-panel-activity')?.hasAttribute('hidden')).toBe(false)
+    expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(true)
+    act(() => button('任务看板').click())
+    expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('board')
+    expect(worker.getAttribute('aria-pressed')).toBe('true')
+  })
 
-    const toggle = (label: string) => {
-      const element = host.querySelector(`button[aria-label="${label}"]`)
-      if (!(element instanceof HTMLButtonElement)) throw new Error(`toggle not found: ${label}`)
-      return element
-    }
-
-    act(() => toggle('收起左侧栏').click())
-    expect(host.querySelector('section[aria-label="当前任务"]')).toBeNull()
-    act(() => toggle('展开左侧栏').click())
-    await waitFor(() => expect(host.querySelector('section[aria-label="当前任务"]')).toBeTruthy())
-
-    act(() => toggle('收起详情面板').click())
-    expect(host.textContent).not.toContain('工人卷宗')
-    act(() => toggle('展开详情面板').click())
-    await waitFor(() => expect(host.textContent).toContain('工人卷宗'))
+  it('filters and searches task cards and preserves the original task title', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({ items: [
+      { request_id: 'old', stage: 'completed', status: 'completed', subagents: {}, created_at: 1 },
+      { request_id: 'new', stage: 'awaiting_review', status: 'awaiting_review', subagents: {}, created_at: 2 },
+    ] })
+    mocks.conductorChat.mockResolvedValue({ items: [
+      { id: 'u1', role: 'user', msg: '归档资料', request_id: 'old', ts: 1 },
+      { id: 'u2', role: 'user', msg: '核对接口', request_id: 'new', ts: 2 },
+      { id: 'u3', role: 'user', msg: '补充性能测试', request_id: 'new', ts: 3 },
+    ] })
+    renderPage()
+    await waitFor(() => expect(host.querySelectorAll('.conductor-task-card')).toHaveLength(2))
+    const tabs = Array.from(host.querySelectorAll('[aria-label="任务状态"] button')) as HTMLButtonElement[]
+    act(() => tabs[2].click())
+    expect(host.querySelectorAll('.conductor-task-card')).toHaveLength(1)
+    expect(host.querySelector('.conductor-task-card h3')?.textContent).toBe('核对接口')
+    act(() => tabs[3].click())
+    expect(host.querySelector('.conductor-task-card h3')?.textContent).toBe('归档资料')
+    act(() => tabs[0].click())
+    const search = host.querySelector('input[aria-label="搜索任务"]') as HTMLInputElement
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(search, '归档')
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(host.querySelectorAll('.conductor-task-card')).toHaveLength(1)
+    expect(host.querySelector('.conductor-task-card h3')?.textContent).toBe('归档资料')
   })
 
   it('moves worker selection with j/k and accepts the selected worker with a', async () => {
@@ -1096,7 +1114,7 @@ describe('Conductor chat scroll restoration', () => {
     act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' })))
     await flushQueries()
     expect(mocks.conductorSubagentAction).toHaveBeenCalledWith(
-      'reviewing', 'accept', '', null, {}, false,
+      'reviewing', 'accept', '', null, {}, false, undefined,
     )
   })
 
@@ -1183,7 +1201,7 @@ describe('Conductor chat scroll restoration', () => {
     act(() => button('通过').click())
     await flushQueries()
     expect(mocks.conductorSubagentAction).toHaveBeenNthCalledWith(
-      1, 'first', 'accept', '', null, {}, false,
+      1, 'first', 'accept', '', null, {}, false, undefined,
     )
 
     // The dossier now shows the second worker without a manual click.
@@ -1191,7 +1209,7 @@ describe('Conductor chat scroll restoration', () => {
     act(() => button('通过').click())
     await flushQueries()
     expect(mocks.conductorSubagentAction).toHaveBeenNthCalledWith(
-      2, 'second', 'accept', '', null, {}, false,
+      2, 'second', 'accept', '', null, {}, false, undefined,
     )
   })
 })

@@ -38,6 +38,8 @@ export type ConductorActivityEvent = {
 
 const ACTIVITY_LIMIT = 300
 
+type SnapshotVersion = { boot_id?: string | null; snapshot_revision?: number }
+
 const WORKER_EVENT_KIND: Record<string, ConductorActivityEvent['kind'] | undefined> = {
   spawned: 'worker_spawned',
   completed: 'worker_completed',
@@ -58,13 +60,16 @@ interface ConductorState {
   chatMessages: ConductorChatMessage[]
   subagents: ConductorSubagent[]
   subagentsRevision: number
+  engineBootId: string | null
+  engineSnapshotRevision: number
+  retiredBootIds: string[]
   generation: number
   /** Recent lifecycle events across workflows; sorted by atMs ascending. */
   activity: ConductorActivityEvent[]
   addChatMessage: (msg: ConductorChatMessage) => void
   hydrateChatMessages: (msgs: ConductorChatMessage[], generation: number) => void
-  replaceSubagents: (items: ConductorSubagent[]) => void
-  hydrateSubagents: (items: ConductorSubagent[], expectedRevision: number) => void
+  replaceSubagents: (items: ConductorSubagent[], version?: SnapshotVersion) => void
+  hydrateSubagents: (items: ConductorSubagent[], expectedRevision: number, version?: SnapshotVersion) => void
   addWorkerActivity: (event: { id: string; name: string; request_id?: string; at?: number; atMs?: number; text: string; worker_id?: string }) => void
   addWorkflowActivity: (event: { request_id: string; kind: 'workflow_completed' | 'workflow_failed' | 'workflow_cancelled' | 'workflow_killed'; at?: number; atMs?: number; text?: string }) => void
   addTurnActivity: (event: { request_id: string; status: string; at?: number; atMs?: number }) => void
@@ -105,6 +110,9 @@ export const useConductorStore = create<ConductorState>((set) => ({
   chatMessages: [],
   subagents: [],
   subagentsRevision: 0,
+  engineBootId: null,
+  engineSnapshotRevision: -1,
+  retiredBootIds: [],
   generation: 0,
   activity: [],
 
@@ -121,17 +129,12 @@ export const useConductorStore = create<ConductorState>((set) => ({
       return chatMessages === state.chatMessages ? state : { chatMessages }
     }),
 
-  replaceSubagents: (items) => set((state) => ({
-    subagents: items,
-    subagentsRevision: state.subagentsRevision + 1,
-  })),
+  replaceSubagents: (items, version) => set((state) => applySnapshot(state, items, version)),
 
-  hydrateSubagents: (items, expectedRevision) => set((state) => {
-    if (state.subagentsRevision !== expectedRevision) return state
-    return {
-      subagents: items,
-      subagentsRevision: state.subagentsRevision + 1,
-    }
+  hydrateSubagents: (items, expectedRevision, version) => set((state) => {
+    if (state.subagentsRevision !== expectedRevision && version?.boot_id !== state.engineBootId) return state
+    if (!version?.boot_id && state.subagentsRevision !== expectedRevision) return state
+    return applySnapshot(state, items, version)
   }),
 
   addWorkerActivity: ({ id, name, request_id, at, atMs, text, worker_id }) =>
@@ -187,7 +190,28 @@ export const useConductorStore = create<ConductorState>((set) => ({
     chatMessages: [],
     subagents: [],
     subagentsRevision: state.subagentsRevision + 1,
+    engineBootId: null,
+    engineSnapshotRevision: -1,
+    retiredBootIds: [],
     generation: state.generation + 1,
     activity: [],
   })),
 }))
+
+function applySnapshot(state: ConductorState, items: ConductorSubagent[], version?: SnapshotVersion): Partial<ConductorState> {
+  const boot = version?.boot_id
+  const revision = version?.snapshot_revision
+  if (!boot) {
+    return state.engineBootId ? state : { subagents: items, subagentsRevision: state.subagentsRevision + 1 }
+  }
+  if (!Number.isInteger(revision) || revision! < 0 || state.retiredBootIds.includes(boot)) return state
+  if (boot === state.engineBootId && revision! <= state.engineSnapshotRevision) return state
+  return {
+    subagents: items,
+    subagentsRevision: state.subagentsRevision + 1,
+    engineBootId: boot,
+    engineSnapshotRevision: revision!,
+    retiredBootIds: state.engineBootId && boot !== state.engineBootId
+      ? [...state.retiredBootIds, state.engineBootId] : state.retiredBootIds,
+  }
+}

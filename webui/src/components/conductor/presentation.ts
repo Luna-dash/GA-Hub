@@ -102,7 +102,7 @@ export type SubagentPhase = 'running' | 'reworking' | 'reviewing' | 'accepted' |
 export const WORKER_STAGE_VIEW: Record<string, { phase: SubagentPhase; label: string; detail: string }> = {
   running: { phase: 'running', label: '执行中', detail: '子代理正在处理这项任务' },
   reworking: { phase: 'reworking', label: '返工中', detail: '正在按验收意见重新处理' },
-  reviewing: { phase: 'reviewing', label: '待你验收', detail: '工人已交活，请看右侧卷宗后决定通过或打回' },
+  reviewing: { phase: 'reviewing', label: '待你验收', detail: '执行完成，等待验收' },
   accepted: { phase: 'accepted', label: '已通过', detail: '结果已通过验收' },
   stopped: { phase: 'stopped', label: '已停止', detail: '这项任务当前没有继续执行' },
 }
@@ -128,7 +128,7 @@ export const WORKFLOW_STAGE_VIEW: Record<string, { label: string; detail: string
   planning: { label: '正在规划', detail: 'Conductor 正在理解需求并准备分派。', tone: 'active' },
   supervising: { label: '执行中', detail: 'Conductor 已完成分派，子代理正在处理。', tone: 'active' },
   reworking: { label: '返工中', detail: '未通过的部分已交回子代理继续处理。', tone: 'active' },
-  awaiting_review: { label: '待你验收', detail: '子代理已交活，请查看右侧卷宗后决定通过或打回。', tone: 'review' },
+  awaiting_review: { label: '待你验收', detail: '子任务已完成，等待验收。', tone: 'review' },
   aggregating: { label: '正在汇总', detail: '子任务均已通过，Conductor 正在整理最终交付。', tone: 'review' },
   recoverable_failure: { label: '子代理失败', detail: '子代理处理失败，Conductor 正在决定返工或补派。', tone: 'active' },
   completed: { label: '已完成', detail: '所有子任务已通过验收，交付结果已发送。', tone: 'done' },

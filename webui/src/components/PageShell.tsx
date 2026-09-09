@@ -7,20 +7,22 @@ interface Props {
   middleArea?: ReactNode
   actions?: ReactNode
   children: ReactNode
+  layout?: 'panel' | 'workspace'
+  className?: string
 }
 
-export function PageShell({ title, titleExtra, middleArea, actions, children }: Props) {
+export function PageShell({ title, titleExtra, middleArea, actions, children, layout = 'panel', className = '' }: Props) {
   return (
-    <div className="flex flex-col h-full relative overflow-hidden p-3">
-      <section className="relative z-10 flex flex-col flex-1 min-h-0 overflow-hidden rounded-2xl border border-line bg-bg-soft shadow-[0_6px_18px_rgba(45,34,22,0.12)]">
-        <header className="min-h-16 shrink-0 px-4 py-3 flex items-center gap-4 bg-bg-card/75 border-b border-line/70">
+    <div className={`flex min-w-0 flex-col h-full relative overflow-hidden ${layout === 'panel' ? 'p-3' : ''} ${className}`}>
+      <section className={`relative z-10 flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-soft ${layout === 'panel' ? 'rounded-2xl border border-line shadow-[0_6px_18px_rgba(45,34,22,0.12)]' : ''}`}>
+        <header className={`min-h-16 shrink-0 px-4 py-3 flex items-center gap-4 bg-bg-card/75 border-b border-line/70 ${layout === 'workspace' ? 'flex-wrap' : ''}`}>
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
               <h1 className="text-base font-semibold text-ink">{title}</h1>
               {titleExtra}
             </div>
           </div>
-          {middleArea && <div className="flex-1 flex items-center justify-start pl-24">{middleArea}</div>}
+          {middleArea && <div className={`flex-1 flex items-center justify-start ${layout === 'panel' ? 'pl-24' : ''}`}>{middleArea}</div>}
           <div className="flex items-center gap-2 flex-wrap justify-end shrink-0 ml-auto">{actions}</div>
         </header>
         <div className="flex-1 min-h-0 overflow-y-auto bg-bg-soft">{children}</div>

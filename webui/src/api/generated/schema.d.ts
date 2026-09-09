@@ -932,6 +932,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/conductor/operations/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Operation */
+        get: operations["get_operation_api_conductor_operations__operation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/conductor/workflow": {
         parameters: {
             query?: never;
@@ -2386,6 +2403,20 @@ export interface components {
              * @default true
              */
             auto_accept: boolean;
+            /** Boot Id */
+            boot_id?: string | null;
+            /** Protocol Version */
+            protocol_version?: number | null;
+            /** Capabilities */
+            capabilities?: string[];
+            /** Path Policy */
+            path_policy?: {
+                [key: string]: unknown;
+            } | null;
+            /** Recovery */
+            recovery?: {
+                [key: string]: unknown;
+            } | null;
             /** Ok */
             ok: boolean;
         };
@@ -2455,6 +2486,23 @@ export interface components {
              */
             timeout_seconds: number;
         };
+        /** ConductorOperationResp */
+        ConductorOperationResp: {
+            /** Operation Id */
+            operation_id: string;
+            /** Known */
+            known: boolean;
+            /** State */
+            state?: string | null;
+            /** Result */
+            result?: {
+                [key: string]: unknown;
+            } | null;
+            /** Request Id */
+            request_id?: string | null;
+            /** Updated At */
+            updated_at?: number | null;
+        };
         /** ConductorSettingsReq */
         ConductorSettingsReq: {
             /** Auto Accept */
@@ -2516,6 +2564,20 @@ export interface components {
              * @default true
              */
             auto_accept: boolean;
+            /** Boot Id */
+            boot_id?: string | null;
+            /** Protocol Version */
+            protocol_version?: number | null;
+            /** Capabilities */
+            capabilities?: string[];
+            /** Path Policy */
+            path_policy?: {
+                [key: string]: unknown;
+            } | null;
+            /** Recovery */
+            recovery?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** ConductorSubagent */
         ConductorSubagent: {
@@ -2564,6 +2626,18 @@ export interface components {
              * @default 0
              */
             generation: number;
+            /**
+             * Active Generation
+             * @default 0
+             */
+            active_generation: number;
+            /**
+             * Command Revision
+             * @default 0
+             */
+            command_revision: number;
+            /** Boot Id */
+            boot_id?: string | null;
             /** Llm Index */
             llm_index?: number | null;
             /** Request Id */
@@ -2596,6 +2670,12 @@ export interface components {
              * @default false
              */
             force: boolean;
+            /** Expected Boot Id */
+            expected_boot_id?: string | null;
+            /** Expected Generation */
+            expected_generation?: number | null;
+            /** Expected Command Revision */
+            expected_command_revision?: number | null;
             /** Operation Id */
             operation_id?: string | null;
             /** Llm Index */
@@ -2638,6 +2718,13 @@ export interface components {
         ConductorSubagentListResp: {
             /** Items */
             items: components["schemas"]["ConductorSubagent"][];
+            /** Boot Id */
+            boot_id?: string | null;
+            /**
+             * Snapshot Revision
+             * @default -1
+             */
+            snapshot_revision: number;
         };
         /** ConductorTextResp */
         ConductorTextResp: {
@@ -2648,6 +2735,15 @@ export interface components {
         ConductorWorkflow: {
             /** Request Id */
             request_id: string;
+            /** Title */
+            title?: string | null;
+            /**
+             * Admission State
+             * @default admitted
+             */
+            admission_state: string;
+            /** Boot Id */
+            boot_id?: string | null;
             /**
              * Status
              * @enum {string}
@@ -5636,6 +5732,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConductorSubagentInstructionResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_operation_api_conductor_operations__operation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConductorOperationResp"];
                 };
             };
             /** @description Validation Error */

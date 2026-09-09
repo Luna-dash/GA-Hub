@@ -48,7 +48,11 @@ export function RuntimeEffects() {
       addChatMessage(event.payload.item)
     }
     if (event.topic === 'conductor:subagents' && event.payload.items) {
-      replaceSubagents(event.payload.items)
+      replaceSubagents(event.payload.items, event.payload)
+    }
+    if (event.topic === 'conductor:resync_required') {
+      clearConductor()
+      void queryClient.invalidateQueries({ queryKey: ['conductor'] })
     }
 
     // Activity timeline: worker lifecycle + workflow transitions + terminal
@@ -84,7 +88,7 @@ export function RuntimeEffects() {
         at: event.ts,
       })
     }
-  }), [addChatMessage, replaceSubagents, addWorkerActivity, addWorkflowActivity, addTurnActivity])
+  }), [addChatMessage, replaceSubagents, addWorkerActivity, addWorkflowActivity, addTurnActivity, clearConductor, queryClient])
 
   useEffect(() => hubEventClient.subscribeControl((control) => {
     if (control.type === 'resync_required') {

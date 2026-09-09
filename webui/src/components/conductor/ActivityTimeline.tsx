@@ -7,7 +7,6 @@
 import { useMemo } from 'react'
 import clsx from 'clsx'
 import { useConductorStore, type ConductorActivityEvent } from '@/stores/conductorStore'
-import { usePageState } from '@/utils/pageState'
 import { formatClock } from '@/utils/timeFormat'
 
 const KIND_TONE: Record<ConductorActivityEvent['kind'], string> = {
@@ -30,7 +29,6 @@ const VISIBLE_ROWS = 30
 
 export function ActivityTimeline({ requestId }: { requestId: string | null }) {
   const activity = useConductorStore((s) => s.activity)
-  const [open, setOpen] = usePageState('conductor.activityOpen', true)
 
   const rows = useMemo(() => {
     const scoped = requestId
@@ -42,27 +40,21 @@ export function ActivityTimeline({ requestId }: { requestId: string | null }) {
   return (
     <section
       aria-label="任务动态"
-      className="shrink-0 overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm"
+      className="min-h-0 flex-1 overflow-y-auto py-3"
     >
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3.5 py-2 text-left"
-      >
+      <div className="flex w-full items-center gap-2 px-4 py-2">
         <span className="text-sm font-semibold text-ink">动态</span>
         {rows.length > 0 && (
           <span className="text-[11px] text-ink-muted">{rows.length}</span>
         )}
-        <span className="ml-auto text-[11px] text-ink-muted">{open ? '收起' : '展开'}</span>
-      </button>
-      {open && (
+      </div>
+      {(
         rows.length === 0 ? (
           <p className="px-3.5 pb-2.5 text-[11px] leading-4 text-ink-faint">
-            分派、交付、验收与完成事件会出现在这里。
+            暂无动态
           </p>
         ) : (
-          <ol className="max-h-44 overflow-y-auto border-t border-line/70 px-3.5 py-2 text-xs leading-5">
+          <ol className="px-4 py-2 text-xs leading-5">
             {rows.map((event) => (
               <li key={event.id} className="flex items-start gap-2 py-0.5">
                 <span

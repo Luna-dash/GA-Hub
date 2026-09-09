@@ -111,6 +111,11 @@ export interface ConductorModelSettings {
   subagentLlmIndex?: number | null
   subagentModelPolicy?: ConductorSubagentModelPolicy
 }
+export type ConductorActionVersion = {
+  expected_boot_id?: string
+  expected_generation?: number
+  expected_command_revision?: number
+}
 
 function requestAbortContext(externalSignal: AbortSignal | null | undefined, timeoutMs: number) {
   const controller = new AbortController()
@@ -182,6 +187,68 @@ async function http<T>(method: string, path: string, body?: unknown, init?: Http
     throw error
   } finally {
     abortContext.cleanup()
+  }
+}
+
+type ConductorOperation = ApiComponents['schemas']['ConductorOperationResp']
+type PendingConductorOperation = { id: string; body: Record<string, unknown> }
+const pendingConductorOperations = new Map<string, PendingConductorOperation>()
+const pendingOperationStorageKey = 'conductor.pendingOperations.v1'
+
+function persistConductorOperations() {
+  try {
+    sessionStorage.setItem(pendingOperationStorageKey, JSON.stringify([...pendingConductorOperations]))
+  } catch { /* In-memory identities still cover retries when storage is unavailable. */ }
+}
+
+async function conductorWrite<T>(path: string, body: Record<string, unknown>, init?: HttpOptions): Promise<T> {
+  try {
+    const saved: unknown = JSON.parse(sessionStorage.getItem(pendingOperationStorageKey) || '[]')
+    if (Array.isArray(saved)) {
+      for (const entry of saved) {
+        if (Array.isArray(entry) && typeof entry[0] === 'string') {
+          const value = entry[1]
+          if (value && typeof value.id === 'string' && value.body && typeof value.body === 'object') {
+            pendingConductorOperations.set(entry[0], value)
+          } else if (typeof value === 'string') {
+            const [, originalBody] = JSON.parse(entry[0])
+            if (originalBody && typeof originalBody === 'object') {
+              pendingConductorOperations.set(entry[0], { id: value, body: originalBody })
+            }
+          }
+        }
+      }
+    }
+  } catch { /* Storage is optional; invalid data cannot supply an operation id. */ }
+  // Snapshot updates must not change an unconfirmed command's identity or guards.
+  const intent = Object.fromEntries(Object.entries(body).filter(([key]) => !key.startsWith('expected_')))
+  const key = JSON.stringify([resolveApiUrl(path), intent])
+  const pending = pendingConductorOperations.get(key) || { id: newOperationId(), body }
+  const operationId = pending.id
+  pendingConductorOperations.set(key, pending)
+  persistConductorOperations()
+  const complete = (result: T) => {
+    pendingConductorOperations.delete(key)
+    persistConductorOperations()
+    return result
+  }
+  try {
+    return complete(await http<T>('POST', path, { ...pending.body, operation_id: operationId }, init))
+  } catch (error) {
+    const detail = error instanceof HttpError ? error.body?.detail ?? error.body : undefined
+    const uncertain = !(error instanceof HttpError) || error.status >= 500
+      || ['operation_in_progress', 'operation_unknown', 'recovery_pending'].includes(detail?.error)
+      || detail?.operation_state === 'unknown'
+    if (uncertain) {
+      try {
+        const receipt = await http<ConductorOperation>('GET', `/api/conductor/operations/${encodeURIComponent(operationId)}`)
+        if (receipt.state === 'succeeded' && receipt.result) return complete(receipt.result as T)
+        if (receipt.state === 'rejected') complete(undefined as T)
+      } catch { /* Keep the original id and original error for the next retry. */ }
+    } else {
+      complete(undefined as T)
+    }
+    throw error
   }
 }
 
@@ -349,13 +416,10 @@ export const api = {
     // Cold-starting gahub_app can legitimately take longer than the generic
     // 30s request budget. The server cannot cancel admission after a client
     // timeout, so avoid presenting a still-running request as a clean failure.
-    http<ConductorChatMessage>('POST', '/api/conductor/chat', {
+    conductorWrite<ConductorChatMessage>('/api/conductor/chat', {
       msg,
       role,
       ...(requestId ? { request_id: requestId } : {}),
-      // One id per logical admission: a retried submit must not admit the
-      // task twice (the engine replays the first terminal answer).
-      operation_id: newOperationId(),
       llm_index: models.llmIndex,
       subagent_llm_index: models.subagentLlmIndex,
       subagent_model_policy: models.subagentModelPolicy,
@@ -370,19 +434,20 @@ export const api = {
     llm_index?: number | null,
     models: ConductorModelSettings = {},
     force = false,
+    expected: ConductorActionVersion = {},
   ) =>
-    http<ConductorSubagentActionResponse>('POST', `/api/conductor/subagent/${sid}`, {
+    conductorWrite<ConductorSubagentActionResponse>(`/api/conductor/subagent/${sid}`, {
       action,
       msg,
-      // Hub-side replay for actions that re-open or advance a worker (the
-      // engine's operation cache only covers chat/dispatch).
-      operation_id: newOperationId(),
       llm_index,
       conductor_llm_index: models.llmIndex,
       subagent_llm_index: models.subagentLlmIndex,
       subagent_model_policy: models.subagentModelPolicy,
       force,
+      ...expected,
     }),
+  conductorOperation: (operationId: string) =>
+    http<ConductorOperation>('GET', `/api/conductor/operations/${encodeURIComponent(operationId)}`),
   tokenStats: () => http<TokenStatsResponse>('GET', '/api/tokens/stats'),
   servicePanel: () => http<ServicePanelResponse>('GET', '/api/services/panel'),
   conductorStatus: () => http<ConductorStatus>('GET', '/api/conductor/status'),

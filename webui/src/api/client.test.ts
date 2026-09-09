@@ -22,6 +22,51 @@ describe('api request failure handling', () => {
     vi.useRealTimers()
   })
 
+  it('reuses the operation id after an uncertain conductor submission', async () => {
+    const posts: Record<string, unknown>[] = []
+    let failed = false
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      if (init.method === 'GET') return Response.json({ known: false })
+      posts.push(JSON.parse(String(init.body)))
+      if (!failed) {
+        failed = true
+        throw new TypeError('lost response')
+      }
+      return Response.json({ id: 'chat', msg: 'durable-retry', ts: 1, role: 'user' })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(api.conductorSendChat('durable-retry')).rejects.toMatchObject({ name: 'NetworkError' })
+    await api.conductorSendChat('durable-retry')
+    expect(posts[0].operation_id).toBe(posts[1].operation_id)
+    await api.conductorSendChat('durable-retry')
+    expect(posts[2].operation_id).not.toBe(posts[1].operation_id)
+  })
+
+  it('uses a committed receipt when the action response is lost', async () => {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      if (init.method === 'POST') throw new TypeError('lost response')
+      return Response.json({ known: true, state: 'succeeded', result: { id: 'worker', status: 'stopped' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(api.conductorSubagentAction('worker', 'accept', '')).resolves.toEqual({ id: 'worker', status: 'stopped' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps original action guards when a snapshot advances during an uncertain retry', async () => {
+    const posts: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      if (init.method === 'GET') return Response.json({ known: false })
+      posts.push(JSON.parse(String(init.body)))
+      if (posts.length === 1) throw new TypeError('lost response')
+      return Response.json({ id: 'guarded', status: 'stopped' })
+    }))
+    await expect(api.conductorSubagentAction('guarded', 'accept', '', null, {}, false,
+      { expected_boot_id: 'boot', expected_generation: 1, expected_command_revision: 3 })).rejects.toThrow()
+    await api.conductorSubagentAction('guarded', 'accept', '', null, {}, false,
+      { expected_boot_id: 'boot', expected_generation: 2, expected_command_revision: 4 })
+    expect(posts[1]).toEqual(posts[0])
+  })
+
   it('honors a signal that was aborted before the request starts', async () => {
     const fetchMock = pendingFetch()
     vi.stubGlobal('fetch', fetchMock)
