@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react'
-import { AlertCircle, CheckCircle2, Clock3, Layers3, Search } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Clock3, History, Search } from 'lucide-react'
 import type { ConductorWorkflow, ConductorSubagent } from '@/api/types'
 import { formatRelativeTime } from '@/utils/timeFormat'
 import { isReviewable, workflowPresentation, WORKFLOW_STAGE_CLOSED } from './presentation'
@@ -54,9 +54,9 @@ export const TaskBoard = memo(function TaskBoard({ workflows, workers, titles, s
     ? Number(b.needsAttention) - Number(a.needsAttention) || b.workflow.created_at - a.workflow.created_at
     : b.workflow.created_at - a.workflow.created_at)
 
-  return <section aria-label="任务看板" className="conductor-board">
+  return <section aria-label="任务历史" className="conductor-history">
     <div className="conductor-board-heading">
-      <h2><Layers3 size={17} />任务看板 <span>{workflows.length}</span></h2>
+      <h2><History size={17} />历史任务 <span>{workflows.length}</span></h2>
       <select aria-label="任务排序" value={sort} onChange={event => setSort(event.target.value)}>
         <option value="attention">待处理优先</option><option value="recent">最新任务优先</option>
       </select>
@@ -73,25 +73,22 @@ export const TaskBoard = memo(function TaskBoard({ workflows, workers, titles, s
         <input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索任务" aria-label="搜索任务" />
       </label>
     </div>
-    <div className="conductor-task-grid" aria-label="任务历史">
+    <div className="conductor-history-list" aria-label="历史任务列表">
       {visible.map(({ workflow, title, view, total, accepted, needsAttention, owned }) => (
-        <button key={workflow.request_id} type="button" className="conductor-task-card"
+        <button key={workflow.request_id} type="button" className="conductor-history-row"
           data-selected={selectedId === workflow.request_id} aria-current={selectedId === workflow.request_id ? 'true' : undefined}
           onClick={() => onSelect(workflow.request_id)} aria-label={`切换到任务：${title}`}>
-          <div className="conductor-card-top"><WorkflowBadge tone={view.tone} label={view.label} />
+          <div className="conductor-history-status"><WorkflowBadge tone={view.tone} label={view.label} />
             {needsAttention ? <AlertCircle size={15} className="text-status-warning-strong" />
               : workflow.status === 'completed' ? <CheckCircle2 size={15} className="text-status-success" /> : <Clock3 size={15} />}
           </div>
-          <h3>{title}</h3>
-          <p className="conductor-card-summary">{workflow.error || (owned.find(worker => worker.status === 'running')?.reply) || view.detail}</p>
-          <div className="conductor-card-progress" role="progressbar" aria-label={`${title}验收进度`} aria-valuemin={0}
-            aria-valuenow={accepted} aria-valuemax={Math.max(1, total)}><span style={{ width: `${total ? accepted / total * 100 : 0}%` }} /></div>
-          <div className="conductor-card-footer"><span>{total ? `${accepted}/${total} 子任务已通过` : '尚未指派'}</span>
-            <time>{formatRelativeTime(workflow.created_at)}</time></div>
+          <span className="conductor-history-title">{title}</span>
+          <span className="conductor-history-summary">{workflow.error || (owned.find(worker => worker.status === 'running')?.reply) || view.detail}</span>
+          <span className="conductor-history-meta"><span>{total ? `${accepted}/${total} 子任务已通过` : '尚未指派'}</span><time>{formatRelativeTime(workflow.created_at)}</time></span>
         </button>
       ))}
     </div>
-    {visible.length === 0 && <div className="conductor-empty"><Layers3 size={28} strokeWidth={1.4} />
+    {visible.length === 0 && <div className="conductor-empty"><History size={28} strokeWidth={1.4} />
       <p>{rows.length ? '没有匹配的任务' : '暂无任务'}</p></div>}
   </section>
 })

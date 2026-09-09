@@ -1029,7 +1029,7 @@ describe('Conductor chat scroll restoration', () => {
     act(() => button('动态').click())
     expect(host.querySelector('#conductor-panel-activity')?.hasAttribute('hidden')).toBe(false)
     expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(true)
-    act(() => button('任务看板').click())
+    act(() => button('当前任务').click())
     expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('board')
     expect(worker.getAttribute('aria-pressed')).toBe('true')
   })
@@ -1045,21 +1045,21 @@ describe('Conductor chat scroll restoration', () => {
       { id: 'u3', role: 'user', msg: '补充性能测试', request_id: 'new', ts: 3 },
     ] })
     renderPage()
-    await waitFor(() => expect(host.querySelectorAll('.conductor-task-card')).toHaveLength(2))
+    await waitFor(() => expect(host.querySelectorAll('.conductor-history-row')).toHaveLength(2))
     const tabs = Array.from(host.querySelectorAll('[aria-label="任务状态"] button')) as HTMLButtonElement[]
     act(() => tabs[2].click())
-    expect(host.querySelectorAll('.conductor-task-card')).toHaveLength(1)
-    expect(host.querySelector('.conductor-task-card h3')?.textContent).toBe('核对接口')
+    expect(host.querySelectorAll('.conductor-history-row')).toHaveLength(1)
+    expect(host.querySelector('.conductor-history-title')?.textContent).toBe('核对接口')
     act(() => tabs[3].click())
-    expect(host.querySelector('.conductor-task-card h3')?.textContent).toBe('归档资料')
+    expect(host.querySelector('.conductor-history-title')?.textContent).toBe('归档资料')
     act(() => tabs[0].click())
     const search = host.querySelector('input[aria-label="搜索任务"]') as HTMLInputElement
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(search, '归档')
       search.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    expect(host.querySelectorAll('.conductor-task-card')).toHaveLength(1)
-    expect(host.querySelector('.conductor-task-card h3')?.textContent).toBe('归档资料')
+    expect(host.querySelectorAll('.conductor-history-row')).toHaveLength(1)
+    expect(host.querySelector('.conductor-history-title')?.textContent).toBe('归档资料')
   })
 
   it('moves worker selection with j/k and accepts the selected worker with a', async () => {

@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { ArrowUp, CheckCheck, FileCheck2, LayoutGrid, MessageSquare, Play, Plus, RotateCcw, Settings2, Square, X, Activity } from 'lucide-react'
 import '@/styles/conductor.css'
-import gaHubLogo from '@/assets/brand/gahub-logo.png'
 import { api, type ConductorSubagentModelPolicy } from '@/api/client'
 import { storageKeys } from '@/config/storageKeys'
 import { useConductorStore } from '@/stores/conductorStore'
@@ -477,19 +476,12 @@ export default function Conductor() {
   return (
     <PageShell
       title="Conductor"
-      className="conductor-workspace"
       titleExtra={
         <>
-        <img src={gaHubLogo} alt="GA Hub" width={20} height={20} className="h-5 w-5 object-contain" />
         <span className={`ga-badge ${status?.started ? 'ga-badge-connected' : 'ga-badge-offline'}`}>
           {status?.started ? '运行中' : '未运行'}
         </span>
         </>
-      }
-      middleArea={
-        <span className="text-xs text-ink-muted" aria-label="工人占用">
-          {occupiedCount > 0 ? `工人占用 ${occupiedCount}` : '没有占用中的工人'}
-        </span>
       }
       actions={
         <div className="conductor-header-actions flex items-center gap-2">
@@ -533,16 +525,13 @@ export default function Conductor() {
           </div>
         )}
         <div className="conductor-mobile-tabs" role="tablist" aria-label="工作区视图">
-          <button role="tab" aria-selected={mobileView === 'board'} onClick={() => setMobileView('board')}>任务看板</button>
-          <button role="tab" aria-selected={mobileView === 'context'} onClick={() => setMobileView('context')}>任务详情</button>
+          <button role="tab" aria-selected={mobileView === 'board'} onClick={() => setMobileView('board')}>当前任务</button>
+          <button role="tab" aria-selected={mobileView === 'context'} onClick={() => setMobileView('context')}>详情</button>
         </div>
         <div className="conductor-layout" data-mobile-view={mobileView}>
           <main className="conductor-main">
-            <TaskBoard workflows={workflows} workers={subagents} titles={taskTitleByRequest}
-              selectedId={currentWorkflow?.request_id} started={status?.started ?? false}
-              onSelect={id => { setPinnedRequestId(id); setSelectedSid(null) }} />
-            <section aria-label="当前任务" className="conductor-task-detail">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+            <section aria-label="当前任务" className="conductor-current">
+              <div className="conductor-current-heading">
                 <div className="flex min-w-0 items-center gap-2">
                   <h2 className="text-sm font-semibold text-ink">当前任务</h2>
                   <WorkflowBadge tone={workflowView.tone} label={workflowView.label} />
@@ -555,11 +544,16 @@ export default function Conductor() {
                   </button>
                 </div>
               </div>
-              <p className="mt-3 text-sm font-medium leading-6 text-ink [overflow-wrap:anywhere]">{currentTask || '尚未收到任务'}</p>
+              <p className="conductor-current-title">{currentTask || '尚未收到任务'}</p>
               {currentWorkflow?.error && <p className="mt-2 text-xs text-status-danger [overflow-wrap:anywhere]">{currentWorkflow.error}</p>}
-              <div className="my-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-muted">
+              <div className="conductor-metrics" aria-label="当前任务概览">
+                <div className="conductor-metric"><span>子代理</span><strong>{workerCount}</strong><small>{workerCount ? `${acceptedCount} 已通过` : '尚未指派'}</small></div>
+                <div className="conductor-metric"><span>执行中</span><strong>{activeSubagents.length}</strong><small>{occupiedCount ? `${occupiedCount} 个资源占用` : '资源空闲'}</small></div>
+                <div className="conductor-metric"><span>待验收</span><strong>{pendingReview.length}</strong><small>{pendingReview.length ? '需要你的判断' : '暂无待处理'}</small></div>
+                <div className="conductor-metric"><span>任务用时</span><strong>{workflowDuration || '—'}</strong><small>从任务创建开始</small></div>
+              </div>
+              <div className="conductor-current-links">
                 <span aria-label="子代理状态跟踪">{workerCount ? `${acceptedCount}/${workerCount} 已通过` : '尚未指派'}{activeSubagents.length ? ` · ${activeSubagents.length} 执行中` : ''}</span>
-                {workflowDuration && <span aria-label="任务耗时">{workflowDuration}</span>}
                 {pendingReview.length > 0 && <button type="button" className="inline-flex items-center gap-1 text-status-info"
                   onClick={() => { setSelectedSid(pendingReview[0].id); setContextTab('delivery'); setMobileView('context') }}>
                   <CheckCheck size={14} />{pendingReview.length} 个待验收
@@ -567,12 +561,21 @@ export default function Conductor() {
                 {workflowView.tone === 'error' && <button type="button" className="inline-flex items-center gap-1 text-status-danger"
                   onClick={retryCurrentWorkflow}><RotateCcw size={14} />重新发起这个任务</button>}
               </div>
-              <div className="conductor-worker-grid" aria-label="子任务详情">
-                {workflowSubagents.map(sub => <WorkerCard key={sub.id} sub={sub} selected={sub.id === selectedSid}
+              <section className="conductor-process" aria-label="实施过程">
+                <div className="conductor-process-heading">
+                  <div><h3>实施过程</h3><span>按子代理查看当前任务的执行进度</span></div>
+                  <span className="text-xs text-ink-muted">{workflowSubagents.length} 个子代理</span>
+                </div>
+                <div className="conductor-worker-grid" aria-label="子任务详情">
+                {workflowSubagents.map((sub, index) => <WorkerCard key={sub.id} sub={sub} index={index + 1} selected={sub.id === selectedSid}
                   onSelect={() => { setSelectedSid(sub.id); setContextTab('delivery'); setMobileView('context') }} />)}
-              </div>
-              {workflowSubagents.length === 0 && <div className="conductor-empty"><LayoutGrid size={26} strokeWidth={1.4} /><p>尚未指派子任务</p></div>}
+                </div>
+                {workflowSubagents.length === 0 && <div className="conductor-empty"><LayoutGrid size={26} strokeWidth={1.4} /><p>尚未指派子任务</p></div>}
+              </section>
             </section>
+            <TaskBoard workflows={workflows} workers={subagents} titles={taskTitleByRequest}
+              selectedId={currentWorkflow?.request_id} started={status?.started ?? false}
+              onSelect={id => { setPinnedRequestId(id); setSelectedSid(null) }} />
           </main>
           <aside className="conductor-context" aria-label="任务详情">
             <div className="conductor-context-tabs" role="tablist" aria-label="任务内容">
@@ -651,10 +654,10 @@ export default function Conductor() {
                   e.preventDefault()
                   e.currentTarget.form?.requestSubmit()
                 }}
-                rows={1}
+                rows={3}
                 wrap="soft"
                 placeholder={appendTargetRequestId ? '将作为补充发送给当前任务…' : '描述一个新任务…'}
-                className="min-h-10 max-h-40 min-w-0 flex-1 resize-none overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-line bg-bg px-3 py-2 text-sm leading-6 text-ink placeholder:text-[#8A7A63] [overflow-wrap:anywhere] focus:border-accent focus:outline-none"
+                className="min-h-24 max-h-60 min-w-0 flex-1 resize-none overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-line bg-bg px-3 py-2 text-sm leading-6 text-ink placeholder:text-ink-faint [overflow-wrap:anywhere] focus:border-accent focus:outline-none"
               />
               <button
                 type="submit"
