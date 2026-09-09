@@ -581,6 +581,19 @@ def test_forget_workflow_requires_a_terminal_workflow():
     assert "request-1" in tracker.tombstones
 
 
+def test_forget_workflow_allows_active_workflow_when_conductor_paused():
+    # Paused session (conductor stopped): nothing is executing, so a paused
+    # workflow may be deleted directly; the tombstone stops the next start
+    # from re-admitting it.
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("request-paused")
+    tracker.forget_workflow("request-paused", allow_active=True)
+    assert tracker.snapshot("request-paused") is None
+    assert "request-paused" in tracker.tombstones
+    tracker.admit("request-paused")
+    assert tracker.snapshot("request-paused") is None
+
+
 def test_deleted_workflow_cannot_resurrect_from_readmission():
     tracker = WorkflowTracker(clock=lambda: 10.0)
     tracker.admit("request-1")

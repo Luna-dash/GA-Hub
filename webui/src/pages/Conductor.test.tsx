@@ -1031,9 +1031,12 @@ describe('Conductor chat scroll restoration', () => {
     await waitFor(() => expect(host.querySelector('.conductor-worker-toggle')).toBeTruthy())
     const worker = host.querySelector('.conductor-worker-toggle') as HTMLButtonElement
     act(() => worker.click())
+    expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('board')
+    expect(host.querySelector('.conductor-worker-process')).toBeTruthy()
+    expect(host.querySelector('#conductor-panel-chat')?.hasAttribute('hidden')).toBe(false)
+    act(() => button('打开完整卷宗').click())
     expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('context')
     expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(false)
-    expect(host.querySelector('#conductor-panel-chat')?.hasAttribute('hidden')).toBe(true)
     act(() => button('动态').click())
     expect(host.querySelector('#conductor-panel-activity')?.hasAttribute('hidden')).toBe(false)
     expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(true)
@@ -1096,6 +1099,42 @@ describe('Conductor chat scroll restoration', () => {
     await waitFor(() => expect(useToastStore.getState().items.some((toast) => toast.kind === 'success')).toBe(true))
     expect(confirm).toHaveBeenCalled()
     confirm.mockRestore()
+  })
+
+  it('allows deletion of a cancelled task', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({ items: [{
+      request_id: 'cancelled', status: 'cancelled', stage: 'failed',
+      terminal_event: 'workflow_cancelled', subagents: {}, created_at: 1, completed_at: 2,
+    }] })
+    mocks.conductorChat.mockResolvedValue({ items: [
+      { id: 'u1', role: 'user', msg: '中断的资料整理', request_id: 'cancelled', ts: 1 },
+    ] })
+    mocks.conductorDeleteWorkflow.mockResolvedValue({ ok: true, request_id: 'cancelled' })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderPage()
+    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
+    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
+    await waitFor(() => expect(host.querySelector('button[aria-label="删除任务：中断的资料整理"]')).toBeTruthy())
+    act(() => (host.querySelector('button[aria-label="删除任务：中断的资料整理"]') as HTMLButtonElement).click())
+    await waitFor(() => expect(mocks.conductorDeleteWorkflow).toHaveBeenCalledWith('cancelled'))
+    confirm.mockRestore()
+  })
+
+  it('offers delete for paused-session workflows once the conductor stops', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({ items: [
+      { request_id: 'live', stage: 'supervising', status: 'running', subagents: {}, created_at: 2 },
+    ] })
+    mocks.conductorChat.mockResolvedValue({ items: [] })
+    mocks.conductorSubagents.mockResolvedValue({ items: [] })
+    mocks.conductorStatus.mockResolvedValue({ ready: true, started: false })
+
+    renderPage()
+    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
+    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
+    await waitFor(() => expect(
+      host.querySelector('button[aria-label="删除任务：未命名任务"]'),
+    ).toBeTruthy())
   })
 
   it('moves worker selection with j/k and accepts the selected worker with a', async () => {

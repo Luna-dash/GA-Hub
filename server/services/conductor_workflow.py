@@ -177,17 +177,22 @@ class WorkflowTracker:
             )
             self._prune_terminal()
 
-    def forget_workflow(self, request_id: str) -> None:
-        """Drop one terminal workflow from the board at the user's request.
+    def forget_workflow(self, request_id: str, *,
+                        allow_active: bool = False) -> None:
+        """Drop one workflow from the board at the user's request.
 
-        Refuses open workflows: a live run still receives journal events and
-        would immediately re-create the projection. Terminal workflows are
-        tombstoned so late events, engine retries or a consumer-cursor reset
-        cannot resurrect the deleted row (see admit's tombstone guard).
+        Refuses workflows that are still live while the conductor runs: a
+        live run still receives journal events and would immediately
+        re-create the projection. Terminal workflows and paused sessions
+        (conductor stopped — nothing is executing, and the tombstone guard
+        blocks re-admission after the next start) are tombstoned so late
+        events, engine retries or a consumer-cursor reset cannot resurrect
+        the deleted row (see admit's tombstone guard).
         """
         with self.transaction():
             workflow = self._get(request_id)
-            if workflow is not None and workflow.terminal_event is None:
+            if (workflow is not None and workflow.terminal_event is None
+                    and not allow_active):
                 raise ValueError("cannot delete an active workflow; stop it first")
             if self.store is not None:
                 self.store.forget_workflow(request_id)

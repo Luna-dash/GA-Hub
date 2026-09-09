@@ -1,11 +1,12 @@
 // TaskBoard — history compressed into one collapsible bar; each row carries
-// a delete action (terminal workflows only; the backend tombstones them).
+// a delete action. Terminal rows are always deletable; while the conductor
+// runs, live rows stay locked — once it stops (paused session) all are.
 import { memo, useEffect, useMemo, useState } from 'react'
 import { AlertCircle, CheckCircle2, ChevronDown, Clock3, History, Search, Trash2 } from 'lucide-react'
 import type { ConductorWorkflow, ConductorSubagent } from '@/api/types'
 import { storageKeys } from '@/config/storageKeys'
 import { formatRelativeTime } from '@/utils/timeFormat'
-import { isReviewable, workflowPresentation, WORKFLOW_STAGE_CLOSED } from './presentation'
+import { isReviewable, isWorkflowClosed, workflowPresentation } from './presentation'
 import { WorkflowBadge } from './WorkflowBadge'
 
 type Filter = 'all' | 'active' | 'attention' | 'done'
@@ -42,11 +43,12 @@ export const TaskBoard = memo(function TaskBoard({ workflows, workers, titles, s
     const owned = [...new Set([...Object.keys(workflow.subagents).map(id => byId.get(id)),
       ...(byRequest.get(workflow.request_id) ?? [])])].filter((worker): worker is ConductorSubagent => Boolean(worker))
     const view = workflowPresentation(workflow, started)
-    const closed = WORKFLOW_STAGE_CLOSED.has(workflow.stage ?? '')
+    const closed = isWorkflowClosed(workflow)
     const needsAttention = view.tone === 'error' || (!closed && (workflow.stage === 'awaiting_review'
       || workflow.stage === 'recoverable_failure' || owned.some(isReviewable)))
     const accepted = Object.values(workflow.subagents).filter(worker => worker.state === 'accepted').length
     return { workflow, owned, view, needsAttention, closed, accepted,
+      deletable: closed || !started,
       title: titles.get(workflow.request_id) || '未命名任务', total: Object.keys(workflow.subagents).length }
     })
   }, [workflows, workers, titles, started])
@@ -90,7 +92,7 @@ export const TaskBoard = memo(function TaskBoard({ workflows, workers, titles, s
           </select>
         </div>
         <div className="conductor-history-list" aria-label="历史任务列表">
-          {visible.map(({ workflow, title, view, total, accepted, needsAttention, closed }) => (
+          {visible.map(({ workflow, title, view, total, accepted, needsAttention, deletable }) => (
             <div key={workflow.request_id} className="conductor-history-item" data-deleting={deletingIds?.has(workflow.request_id) || undefined}>
               <button type="button" className="conductor-history-row"
                 data-selected={selectedId === workflow.request_id} aria-current={selectedId === workflow.request_id ? 'true' : undefined}
@@ -102,7 +104,7 @@ export const TaskBoard = memo(function TaskBoard({ workflows, workers, titles, s
                 <span className="conductor-history-title">{title}</span>
                 <span className="conductor-history-meta"><span>{total ? `${accepted}/${total} 子任务已通过` : '尚未指派'}</span><time>{formatRelativeTime(workflow.created_at)}</time></span>
               </button>
-              {closed && (
+              {deletable && (
                 <button type="button" className="conductor-history-delete" title="从历史中删除该任务"
                   aria-label={`删除任务：${title}`} disabled={deletingIds?.has(workflow.request_id)}
                   onClick={() => onDelete(workflow.request_id)}>

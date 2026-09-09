@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { ArrowUp, CheckCheck, FileCheck2, LayoutGrid, MessageSquare, Play, Plus, RotateCcw, Settings2, Square, X, Activity } from 'lucide-react'
+import { ArrowUp, CheckCheck, FileCheck2, LayoutGrid, MessageSquare, Plus, RotateCcw, Settings2, Square, X, Activity } from 'lucide-react'
 import '@/styles/conductor.css'
 import { api, type ConductorSubagentModelPolicy } from '@/api/client'
 import { storageKeys } from '@/config/storageKeys'
@@ -17,7 +17,7 @@ import {
   isNearScrollBottom,
   isReviewable,
   workflowPresentation,
-  WORKFLOW_STAGE_CLOSED,
+  isWorkflowClosed,
   type SubagentEvidence,
 } from '@/components/conductor/presentation'
 import { WorkflowBadge } from '@/components/conductor/WorkflowBadge'
@@ -187,7 +187,7 @@ export default function Conductor() {
       if (pinned) return pinned
     }
     const active = [...workflows].reverse().find((workflow) => (
-      !WORKFLOW_STAGE_CLOSED.has(workflow.stage ?? '')
+      !isWorkflowClosed(workflow)
     ))
     return active ?? workflows.at(-1)
   }, [workflows, pinnedRequestId])
@@ -196,7 +196,7 @@ export default function Conductor() {
   // forking a new task — previously every message minted a fresh request id
   // and the "本轮对话" filter made the running task's thread vanish.
   const appendTargetRequestId = currentWorkflow
-    && !WORKFLOW_STAGE_CLOSED.has(currentWorkflow.stage ?? '')
+    && !isWorkflowClosed(currentWorkflow)
     ? currentWorkflow.request_id
     : null
 
@@ -378,7 +378,7 @@ export default function Conductor() {
   }, [chatMessages, currentWorkflow])
   const workflowView = workflowPresentation(currentWorkflow, status?.started ?? false)
   const workflowOpen = currentWorkflow !== undefined
-    && !WORKFLOW_STAGE_CLOSED.has(currentWorkflow.stage ?? '')
+    && !isWorkflowClosed(currentWorkflow)
   // Ticks only while an open workflow is on screen; closed workflows show a
   // fixed created→completed duration and need no clock.
   const nowMs = useNowTick(workflowOpen ? 30_000 : null)
@@ -538,12 +538,12 @@ export default function Conductor() {
             <Settings2 size={17} />
           </button>
           {status?.started ? (
-            <button onClick={stopConductor} disabled={isStopping} className="ga-btn-danger">
+            <button onClick={stopConductor} disabled={isStopping} className="ga-btn-danger whitespace-nowrap">
               <Square size={13} />{isStopping ? '停止中…' : '停止'}
             </button>
           ) : (
-            <button onClick={startConductor} disabled={isSending} className="ga-btn ga-btn-primary">
-              <Play size={13} />{isSending ? '启动中…' : '启动 / 恢复'}
+            <button onClick={startConductor} disabled={isSending} className="ga-btn ga-btn-primary whitespace-nowrap">
+              {isSending ? '启动中…' : '启动 / 恢复'}
             </button>
           )}
         </div>
@@ -603,8 +603,6 @@ export default function Conductor() {
                   expanded={sub.id === expandedSid}
                   onToggle={() => {
                     setSelectedSid(sub.id)
-                    setContextTab('delivery')
-                    setMobileView('context')
                     setExpandedSid((current) => current === sub.id ? null : sub.id)
                   }}
                   onOpenDossier={() => { setSelectedSid(sub.id); setContextTab('delivery'); setMobileView('context') }} />)}

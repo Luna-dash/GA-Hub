@@ -2018,9 +2018,16 @@ class ConductorService:
         return self.workflow_tracker.snapshots(limit=limit)
 
     def forget_workflow(self, request_id: str) -> None:
-        """Delete a terminal workflow from the board at the user's request."""
+        """Delete a workflow from the board at the user's request.
+
+        Terminal workflows are always deletable. While the conductor runs,
+        live workflows stay locked (events would resurrect them); once the
+        conductor is stopped (paused session) every row is deletable — the
+        tombstone keeps the engine from re-admitting it after a restart.
+        """
         self._assert_open()
-        self.workflow_tracker.forget_workflow(request_id)
+        self.workflow_tracker.forget_workflow(
+            request_id, allow_active=not self._started)
 
     def add_chat_message(
         self,
