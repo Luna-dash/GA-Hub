@@ -1996,6 +1996,48 @@
         }
       }
     },
+    "/api/conductor/workflow/{request_id}": {
+      "delete": {
+        "summary": "Delete Workflow",
+        "description": "Remove a terminal workflow from the board (tombstoned, irreversible).",
+        "operationId": "delete_workflow_api_conductor_workflow__request_id__delete",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Workflow Api Conductor Workflow  Request Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/conductor/subagent/{sid}": {
       "get": {
         "summary": "Get Subagent",

@@ -565,3 +565,50 @@ def test_redispatch_empty_history_falls_back_to_engine_chat():
     args, kwargs = service.client.post_chat.call_args
     assert args == ("引擎侧原文", "user", "rid-strand")
     assert kwargs.get("operation_id")
+
+
+# ===== delete: terminal workflows tombstone instead of resurrect =====
+
+def test_forget_workflow_requires_a_terminal_workflow():
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("request-open")
+    with pytest.raises(ValueError, match="active"):
+        tracker.forget_workflow("request-open")
+    tracker.admit("request-1")
+    tracker.record_final("request-1", {"id": "final"})
+    tracker.forget_workflow("request-1")
+    assert tracker.snapshot("request-1") is None
+    assert "request-1" in tracker.tombstones
+
+
+def test_deleted_workflow_cannot_resurrect_from_readmission():
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("request-1")
+    tracker.record_final("request-1", {"id": "final"})
+    tracker.forget_workflow("request-1")
+    # The engine still tracks the request in memory: supervisor retries and
+    # late journal events re-report it, and admit must refuse to resurrect.
+    tracker.admit("request-1")
+    tracker.confirm_admission("request-1", boot_id="boot-1")
+    assert tracker.snapshot("request-1") is None
+    assert tracker.snapshots(limit=20) == []
+
+
+def test_store_persists_tombstones_across_reopen(tmp_path):
+    from server.services.conductor_store import ConductorStore
+
+    tracker1 = WorkflowTracker(clock=lambda: 10.0)
+    store1 = ConductorStore(tmp_path / "wf.db", "engine-a", tracker1)
+    tracker1.admit("request-1")
+    tracker1.record_final("request-1", {"id": "final"})
+    tracker1.forget_workflow("request-1")
+    store1.close()
+
+    tracker2 = WorkflowTracker(clock=lambda: 10.0)
+    store2 = ConductorStore(tmp_path / "wf.db", "engine-a", tracker2)
+    assert tracker2.snapshot("request-1") is None
+    # Even a fresh readmission after a full process restart stays suppressed.
+    tracker2.admit("request-1")
+    assert store2.recent_workflows(20) == []
+    assert tracker2.snapshot("request-1") is None
+    store2.close()

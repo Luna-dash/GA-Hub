@@ -969,6 +969,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/conductor/workflow/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Workflow
+         * @description Remove a terminal workflow from the board (tombstoned, irreversible).
+         */
+        delete: operations["delete_workflow_api_conductor_workflow__request_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/conductor/subagent/{sid}": {
         parameters: {
             query?: never;
@@ -5794,6 +5814,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConductorWorkflowListResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_workflow_api_conductor_workflow__request_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

@@ -185,6 +185,16 @@ async def list_workflows(
     return {"items": svc().get_workflow_snapshot(limit=last)}
 
 
+@router.delete("/api/conductor/workflow/{request_id}")
+async def delete_workflow(request_id: str) -> dict:
+    """Remove a terminal workflow from the board (tombstoned, irreversible)."""
+    try:
+        svc().forget_workflow(request_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True, "request_id": request_id}
+
+
 @router.get("/api/conductor/subagent/{sid}")
 async def get_subagent(
     sid: str, max_len: int = Query(default=5000, ge=1, le=1_000_000)

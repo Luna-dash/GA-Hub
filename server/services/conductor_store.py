@@ -74,6 +74,10 @@ class ConductorStore:
                 item_json TEXT NOT NULL, ts REAL NOT NULL,
                 PRIMARY KEY (engine_key, item_id));
             CREATE INDEX IF NOT EXISTS chat_recent ON chat(engine_key, ts);
+            CREATE TABLE IF NOT EXISTS workflow_tombstones (
+                engine_key TEXT NOT NULL, request_id TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                PRIMARY KEY (engine_key, request_id));
             PRAGMA user_version=2;
             COMMIT;
         """)
@@ -81,6 +85,7 @@ class ConductorStore:
             AND json_extract(state_json, '$.terminal_event') IS NULL""", (engine_key,))
         tracker.restore_state([json.loads(row[0]) for row in active] + self.recent_workflows(tracker._max_workflows))
         tracker.store = self
+        tracker.tombstones.update(self.tombstones())
         tracker._prune_terminal(committed=True)
         if version == 1:
             with self.transaction():
@@ -151,8 +156,36 @@ class ConductorStore:
     def recent_workflows(self, limit: int) -> list[dict]:
         with self.lock:
             return [json.loads(row[0]) for row in self.db.execute("""SELECT state_json FROM workflows
-                WHERE engine_key=? ORDER BY json_extract(state_json, '$.created_at') DESC LIMIT ?""",
+                WHERE engine_key=? AND NOT EXISTS (
+                    SELECT 1 FROM workflow_tombstones t
+                    WHERE t.engine_key=workflows.engine_key AND t.request_id=workflows.request_id)
+                ORDER BY json_extract(state_json, '$.created_at') DESC LIMIT ?""",
                 (self.engine_key, max(1, limit)))]
+
+    def forget_workflow(self, request_id: str) -> None:
+        """Remove one workflow row and leave a tombstone (caller's transaction).
+
+        Must run inside the caller's tracker transaction so the in-memory drop
+        and the row deletion commit or roll back together. The tombstone keeps
+        a deleted request from resurrecting: the engine still tracks the
+        request in memory and late journal events / a cursor reset would
+        re-admit it otherwise.
+        """
+        self.db.execute("DELETE FROM workflows WHERE engine_key=? AND request_id=?",
+                        (self.engine_key, request_id))
+        self.db.execute("INSERT OR REPLACE INTO workflow_tombstones VALUES(?,?,?)",
+                        (self.engine_key, request_id, time.time()))
+
+    def tombstones(self) -> set[str]:
+        with self.lock:
+            return {row[0] for row in self.db.execute(
+                "SELECT request_id FROM workflow_tombstones WHERE engine_key=?", (self.engine_key,))}
+
+    def is_workflow_deleted(self, request_id: str) -> bool:
+        with self.lock:
+            return self.db.execute(
+                "SELECT 1 FROM workflow_tombstones WHERE engine_key=? AND request_id=?",
+                (self.engine_key, request_id)).fetchone() is not None
 
     def worker_owner(self, sid: str) -> str | None:
         with self.lock:

@@ -111,6 +111,7 @@ class WorkflowTracker:
         self._lock = threading.RLock()
         self._workflows: dict[str, WorkflowState] = {}
         self._owners: dict[str, str] = {}
+        self.tombstones: set[str] = set()
         self.store = None
 
     @contextmanager
@@ -158,6 +159,12 @@ class WorkflowTracker:
 
     def admit(self, request_id: str, *, admission_state: str = "admitted",
               boot_id: str | None = None) -> None:
+        if request_id in self.tombstones:
+            # A deleted history row must not resurrect from the engine still
+            # tracking the request in memory (late journal events, a cursor
+            # reset, or a supervisor retry can all re-report it). The set is
+            # seeded from the store on attach and grown by forget_workflow.
+            return
         with self.transaction():
             existing = self._get(request_id)
             if existing is not None:
@@ -170,7 +177,28 @@ class WorkflowTracker:
             )
             self._prune_terminal()
 
+    def forget_workflow(self, request_id: str) -> None:
+        """Drop one terminal workflow from the board at the user's request.
+
+        Refuses open workflows: a live run still receives journal events and
+        would immediately re-create the projection. Terminal workflows are
+        tombstoned so late events, engine retries or a consumer-cursor reset
+        cannot resurrect the deleted row (see admit's tombstone guard).
+        """
+        with self.transaction():
+            workflow = self._get(request_id)
+            if workflow is not None and workflow.terminal_event is None:
+                raise ValueError("cannot delete an active workflow; stop it first")
+            if self.store is not None:
+                self.store.forget_workflow(request_id)
+            self.tombstones.add(request_id)
+            self._workflows.pop(request_id, None)
+            self._owners = {agent_id: owner for agent_id, owner in self._owners.items()
+                            if owner != request_id}
+
     def confirm_admission(self, request_id: str, boot_id: str | None) -> None:
+        if request_id in self.tombstones:
+            return
         with self.transaction():
             self.admit(request_id, boot_id=boot_id)
             workflow = self._require(request_id)
@@ -357,8 +385,9 @@ class WorkflowTracker:
             if self.store is not None:
                 candidates = {item["request_id"]: self._decode_state(item) for item in self.store.recent_workflows(limit)}
             candidates.update(self._workflows)
+            deleted = self.store.tombstones() if self.store is not None else set()
             workflows = sorted(
-                candidates.values(),
+                (workflow for request_id, workflow in candidates.items() if request_id not in deleted),
                 key=lambda workflow: workflow.created_at,
             )[-max(1, limit):]
             return [self._payload(workflow) for workflow in workflows]

@@ -426,6 +426,8 @@ export const api = {
     }, { timeoutMs: 120_000 }),
   conductorSubagents: () => http<ConductorSubagentListResponse>('GET', '/api/conductor/subagent'),
   conductorWorkflows: () => http<ConductorWorkflowListResponse>('GET', '/api/conductor/workflow'),
+  conductorDeleteWorkflow: (requestId: string) =>
+    http<{ ok: boolean; request_id: string }>('DELETE', `/api/conductor/workflow/${requestId}`),
   conductorSubagent: (sid: string, max_len = 5000) => http<ConductorSubagent>('GET', `/api/conductor/subagent/${sid}?max_len=${max_len}`),
   conductorSubagentAction: (
     sid: string,

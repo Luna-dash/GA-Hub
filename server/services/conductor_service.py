@@ -2017,6 +2017,11 @@ class ConductorService:
         """Expose the Hub-owned workflow projection for page reloads."""
         return self.workflow_tracker.snapshots(limit=limit)
 
+    def forget_workflow(self, request_id: str) -> None:
+        """Delete a terminal workflow from the board at the user's request."""
+        self._assert_open()
+        self.workflow_tracker.forget_workflow(request_id)
+
     def add_chat_message(
         self,
         msg: str,
