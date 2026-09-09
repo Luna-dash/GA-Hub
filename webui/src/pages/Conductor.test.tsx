@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   conductorStatus: vi.fn(),
   conductorSubagents: vi.fn(),
   conductorWorkflows: vi.fn(),
+  conductorDeleteWorkflow: vi.fn(),
   conductorChat: vi.fn(),
   conductorLog: vi.fn(),
   conductorSendChat: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock('@/api/client', () => ({
     conductorStatus: mocks.conductorStatus,
     conductorSubagents: mocks.conductorSubagents,
     conductorWorkflows: mocks.conductorWorkflows,
+    conductorDeleteWorkflow: mocks.conductorDeleteWorkflow,
     conductorChat: mocks.conductorChat,
     conductorLog: mocks.conductorLog,
     conductorSendChat: mocks.conductorSendChat,
@@ -872,6 +874,8 @@ describe('Conductor chat scroll restoration', () => {
       ],
     })
     renderPage()
+    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
+    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
     await waitFor(() => expect(host.textContent).toContain('新任务：画一个 pelican'))
 
     // The new open task auto-follows; the finished one stays reachable.
@@ -911,6 +915,8 @@ describe('Conductor chat scroll restoration', () => {
     })
 
     renderPage()
+    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
+    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
     await waitFor(() => {
       const text = host.textContent || ''
       expect(text).toContain('子代理失败')
@@ -966,6 +972,8 @@ describe('Conductor chat scroll restoration', () => {
     mocks.conductorChat.mockResolvedValue({ items: [] })
     mocks.conductorWorkflows.mockResolvedValue({ items: [] })
     renderPage()
+    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
+    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
     await waitFor(() => expect(host.textContent).toContain('暂无任务'))
     act(() => button('对话').click())
     expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('context')
@@ -1020,8 +1028,8 @@ describe('Conductor chat scroll restoration', () => {
   it('switches context tabs and mobile views without losing the selected worker', async () => {
     setSubagentFixtures()
     renderPage()
-    await waitFor(() => expect(host.querySelector('.conductor-worker-card')).toBeTruthy())
-    const worker = host.querySelector('.conductor-worker-card') as HTMLButtonElement
+    await waitFor(() => expect(host.querySelector('.conductor-worker-toggle')).toBeTruthy())
+    const worker = host.querySelector('.conductor-worker-toggle') as HTMLButtonElement
     act(() => worker.click())
     expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('context')
     expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(false)
@@ -1045,6 +1053,8 @@ describe('Conductor chat scroll restoration', () => {
       { id: 'u3', role: 'user', msg: '补充性能测试', request_id: 'new', ts: 3 },
     ] })
     renderPage()
+    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
+    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
     await waitFor(() => expect(host.querySelectorAll('.conductor-history-row')).toHaveLength(2))
     const tabs = Array.from(host.querySelectorAll('[aria-label="任务状态"] button')) as HTMLButtonElement[]
     act(() => tabs[2].click())
@@ -1060,6 +1070,32 @@ describe('Conductor chat scroll restoration', () => {
     })
     expect(host.querySelectorAll('.conductor-history-row')).toHaveLength(1)
     expect(host.querySelector('.conductor-history-title')?.textContent).toBe('归档资料')
+  })
+
+  it('expands the history bar, deletes a finished task and keeps it deleted', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({ items: [
+      { request_id: 'old', stage: 'completed', status: 'completed', subagents: {}, created_at: 1 },
+    ] })
+    mocks.conductorChat.mockResolvedValue({ items: [
+      { id: 'u1', role: 'user', msg: '归档资料', request_id: 'old', ts: 1 },
+    ] })
+    mocks.conductorDeleteWorkflow.mockResolvedValue({ ok: true, request_id: 'old' })
+    mocks.conductorSubagents.mockResolvedValue({ items: [] })
+    mocks.conductorStatus.mockResolvedValue({ ready: true, started: true })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderPage()
+    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
+    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
+    await waitFor(() => expect(host.querySelectorAll('.conductor-history-row')).toHaveLength(1))
+
+    const del = host.querySelector('button[aria-label="删除任务：归档资料"]') as HTMLButtonElement
+    expect(del).toBeTruthy()
+    act(() => del.click())
+    await waitFor(() => expect(mocks.conductorDeleteWorkflow).toHaveBeenCalledWith('old'))
+    await waitFor(() => expect(useToastStore.getState().items.some((toast) => toast.kind === 'success')).toBe(true))
+    expect(confirm).toHaveBeenCalled()
+    confirm.mockRestore()
   })
 
   it('moves worker selection with j/k and accepts the selected worker with a', async () => {

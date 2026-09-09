@@ -406,6 +406,37 @@ export default function Conductor() {
   )).length
   const selectedWorker = workflowSubagents.find((sub) => sub.id === selectedSid) ?? null
 
+  // In-place expansion: at most one subagent card shows its execution
+  // process at a time; switching tasks collapses it.
+  const [expandedSid, setExpandedSid] = useState<string | null>(null)
+  useEffect(() => {
+    setExpandedSid(null)
+  }, [currentWorkflow?.request_id])
+  const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
+  const deleteWorkflow = async (requestId: string) => {
+    if (deletingIds.has(requestId)) return
+    if (!window.confirm('删除这条历史任务记录？此操作不可恢复。')) return
+    setDeletingIds((current) => new Set(current).add(requestId))
+    try {
+      await api.conductorDeleteWorkflow(requestId)
+      toast.success('已删除该任务记录')
+      if (pinnedRequestId === requestId) setPinnedRequestId(null)
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: queryKeys.conductor.workflows }),
+        qc.invalidateQueries({ queryKey: queryKeys.conductor.subagents }),
+      ])
+    } catch (err) {
+      toast.error(errorMessageFromError(err, '删除失败，请稍后重试。'))
+    } finally {
+      setDeletingIds((current) => {
+        const next = new Set(current)
+        next.delete(requestId)
+        return next
+      })
+    }
+  }
+
+
   // Retry entry for a failed workflow: prefill the composer with the task's
   // original wording so the user can adjust it and dispatch a fresh task.
   const retryCurrentWorkflow = () => {
@@ -545,6 +576,7 @@ export default function Conductor() {
                 </div>
               </div>
               <p className="conductor-current-title">{currentTask || '尚未收到任务'}</p>
+              <p className="conductor-current-detail">{workflowView.detail}</p>
               {currentWorkflow?.error && <p className="mt-2 text-xs text-status-danger [overflow-wrap:anywhere]">{currentWorkflow.error}</p>}
               <div className="conductor-metrics" aria-label="当前任务概览">
                 <div className="conductor-metric"><span>子代理</span><strong>{workerCount}</strong><small>{workerCount ? `${acceptedCount} 已通过` : '尚未指派'}</small></div>
@@ -568,14 +600,23 @@ export default function Conductor() {
                 </div>
                 <div className="conductor-worker-grid" aria-label="子任务详情">
                 {workflowSubagents.map((sub, index) => <WorkerCard key={sub.id} sub={sub} index={index + 1} selected={sub.id === selectedSid}
-                  onSelect={() => { setSelectedSid(sub.id); setContextTab('delivery'); setMobileView('context') }} />)}
+                  expanded={sub.id === expandedSid}
+                  onToggle={() => {
+                    setSelectedSid(sub.id)
+                    setContextTab('delivery')
+                    setMobileView('context')
+                    setExpandedSid((current) => current === sub.id ? null : sub.id)
+                  }}
+                  onOpenDossier={() => { setSelectedSid(sub.id); setContextTab('delivery'); setMobileView('context') }} />)}
                 </div>
                 {workflowSubagents.length === 0 && <div className="conductor-empty"><LayoutGrid size={26} strokeWidth={1.4} /><p>尚未指派子任务</p></div>}
               </section>
             </section>
             <TaskBoard workflows={workflows} workers={subagents} titles={taskTitleByRequest}
               selectedId={currentWorkflow?.request_id} started={status?.started ?? false}
-              onSelect={id => { setPinnedRequestId(id); setSelectedSid(null) }} />
+              onSelect={id => { setPinnedRequestId(id); setSelectedSid(null) }}
+              onDelete={(id) => void deleteWorkflow(id)}
+              deletingIds={deletingIds} />
           </main>
           <aside className="conductor-context" aria-label="任务详情">
             <div className="conductor-context-tabs" role="tablist" aria-label="任务内容">
