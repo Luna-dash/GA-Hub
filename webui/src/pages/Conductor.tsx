@@ -477,7 +477,6 @@ export default function Conductor() {
   return (
     <PageShell
       title="Conductor"
-      layout="workspace"
       className="conductor-workspace"
       titleExtra={
         <>

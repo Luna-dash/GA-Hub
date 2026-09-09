@@ -288,7 +288,7 @@ export function WorkerDossier({
               aria-label="打回原因"
               value={control.reworkReason}
               placeholder="说明打回原因与整改要求（必填）"
-              className="min-h-16 w-full resize-none rounded border border-line bg-bg px-2 py-1.5 text-xs leading-5 text-ink placeholder:text-[#8A7A63] focus:border-accent focus:outline-none"
+              className="min-h-16 w-full resize-none rounded border border-line bg-bg px-2 py-1.5 text-xs leading-5 text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
               onChange={(event) => control.onReworkReasonChange(event.target.value)}
             />
             <div className="mt-1.5 flex justify-end gap-2">
