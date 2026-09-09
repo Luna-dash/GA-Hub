@@ -30,7 +30,7 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
   const deliverables = facts.manifest?.deliverables ?? []
   const missing = new Set(facts.deliverables_missing ?? [])
   const stale = new Set(facts.deliverables_stale ?? [])
-  const reply = (sub.reply || '').trim()
+  const reply = stripContractTail((sub.reply || '').trim())
   return <article className="conductor-worker-card" data-expanded={expanded || undefined} data-selected={selected || undefined}>
     <button type="button" className="conductor-worker-toggle" onClick={onToggle}
       aria-expanded={expanded} aria-pressed={selected}

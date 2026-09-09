@@ -1,10 +1,35 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isWorkflowClosed,
   milestoneCheckSummary,
   splitReplyByMilestones,
   stripContractTail,
   type WorkerMilestone,
 } from './presentation'
+
+describe('workflow closure', () => {
+  it('treats cancelled and killed workflows as terminal even with legacy stages', () => {
+    expect(isWorkflowClosed({
+      request_id: 'cancelled', status: 'cancelled', stage: 'supervising',
+      admission_state: 'admitted', subagents: {}, created_at: 1,
+    })).toBe(true)
+    expect(isWorkflowClosed({
+      request_id: 'killed', status: 'killed', stage: 'recoverable_failure',
+      admission_state: 'admitted', subagents: {}, created_at: 1,
+    })).toBe(true)
+  })
+
+  it('keeps a recoverable failure open until the tracker emits a terminal event', () => {
+    expect(isWorkflowClosed({
+      request_id: 'recoverable', status: 'failed', stage: 'recoverable_failure',
+      admission_state: 'admitted', subagents: {}, created_at: 1,
+    })).toBe(false)
+    expect(isWorkflowClosed({
+      request_id: 'terminal', status: 'failed', stage: 'failed',
+      terminal_event: 'workflow_failed', admission_state: 'admitted', subagents: {}, created_at: 1,
+    })).toBe(true)
+  })
+})
 
 function milestone(overrides: Partial<WorkerMilestone>): WorkerMilestone {
   return {

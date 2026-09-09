@@ -66,8 +66,11 @@ export function WorkerDossier({
   const milestones = detailMilestones.length > 0 ? detailMilestones : milestonesOf(sub)
   const reply = stripContractTail((detail.reply || sub.reply || '').trim())
   const replySegments = splitReplyByMilestones(reply, milestones)
-  const reviewable = isReviewable(sub)
-  const abortable = sub.status === 'running' || reviewable
+  // Archived workers (engine pool reset) are historical records: the engine
+  // can no longer apply accept/rework/abort, so only reading is offered.
+  const archived = Boolean((data ?? sub).archived)
+  const reviewable = !archived && isReviewable(sub)
+  const abortable = !archived && (sub.status === 'running' || reviewable)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -249,6 +252,11 @@ export function WorkerDossier({
       </div>
 
       <div className="shrink-0 border-t border-line/70 px-4 py-3">
+        {archived && (
+          <p className="mb-2 text-xs text-ink-muted">
+            存档记录：引擎中已无此工作进程，仅可查看，不能执行验收操作。
+          </p>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           {reviewable && !control.reworkOpen && (
             <>

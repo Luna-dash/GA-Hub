@@ -400,7 +400,7 @@ export default function Conductor() {
     : workflowSubagents.filter((sub) => sub.review_status === 'accepted').length
   const activeSubagents = workflowSubagents.filter((sub) => sub.status === 'running')
   const pendingReview = workflowSubagents.filter(isReviewable)
-  const occupiedCount = subagents.filter((sub) => (
+  const occupiedCount = subagents.filter((sub) => !sub.archived && (
     sub.status === 'running'
     || (sub.status === 'stopped' && !['accepted', 'rejected'].includes(sub.review_status))
   )).length
@@ -488,7 +488,7 @@ export default function Conductor() {
         return
       }
       const selected = selectedWorker
-      if (!selected || !isReviewable(selected)) return
+      if (!selected || !isReviewable(selected) || selected.archived) return
       if (key === 'a') {
         event.preventDefault()
         void runSubagentAction(selected.id, 'accept')

@@ -117,8 +117,18 @@ export function subagentPhase(sub: ConductorSubagent): {
 
 export type WorkflowTone = 'active' | 'review' | 'done' | 'error' | 'idle'
 
-// Terminal stages: nothing further will happen on this workflow.
-export const WORKFLOW_STAGE_CLOSED = new Set(['completed', 'failed'])
+// Terminal stages: nothing further will happen on this workflow. Keep the
+// cancelled/killed states here as a compatibility guard for older snapshots
+// whose `stage` was not normalized to `failed` yet.
+export const WORKFLOW_STAGE_CLOSED = new Set(['completed', 'failed', 'cancelled', 'killed'])
+export const WORKFLOW_STATUS_CLOSED = new Set(['cancelled', 'killed'])
+
+export function isWorkflowClosed(workflow: ConductorWorkflow | undefined): boolean {
+  if (!workflow) return false
+  return Boolean(workflow.terminal_event)
+    || WORKFLOW_STAGE_CLOSED.has(workflow.stage ?? '')
+    || WORKFLOW_STATUS_CLOSED.has(workflow.status)
+}
 // Stages that stall while the conductor itself is stopped.
 export const WORKFLOW_STAGE_PAUSABLE = new Set([
   'planning', 'supervising', 'reworking', 'awaiting_review', 'aggregating',
@@ -133,6 +143,8 @@ export const WORKFLOW_STAGE_VIEW: Record<string, { label: string; detail: string
   recoverable_failure: { label: '子代理失败', detail: '子代理处理失败，Conductor 正在决定返工或补派。', tone: 'active' },
   completed: { label: '已完成', detail: '所有子任务已通过验收，交付结果已发送。', tone: 'done' },
   failed: { label: '执行失败', detail: '工作流未能完成，原因已写入本轮对话。', tone: 'error' },
+  cancelled: { label: '已中断', detail: '任务已被中断，不会继续执行。', tone: 'idle' },
+  killed: { label: '已终止', detail: '任务进程已终止，不会继续执行。', tone: 'idle' },
 }
 
 export function workflowPresentation(
@@ -141,6 +153,9 @@ export function workflowPresentation(
 ): { label: string; detail: string; tone: WorkflowTone } {
   if (!workflow) {
     return { label: '等待任务', detail: '发送任务后，这里会显示分派和执行进度。', tone: 'idle' }
+  }
+  if (workflow.status === 'cancelled' || workflow.status === 'killed') {
+    return WORKFLOW_STAGE_VIEW[workflow.status]
   }
   const view = WORKFLOW_STAGE_VIEW[workflow.stage ?? 'planning'] ?? WORKFLOW_STAGE_VIEW.planning
   if (!started && WORKFLOW_STAGE_PAUSABLE.has(workflow.stage ?? '')) {
