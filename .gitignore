@@ -58,3 +58,5 @@ htmlcov/
 # ── Local scratch / debug artifacts ───────────────────────────
 temp/
 .compare_launch_diff.txt
+.ga-staging/
+.zcode/
