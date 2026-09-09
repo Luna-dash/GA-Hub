@@ -1894,7 +1894,23 @@ class ConductorService:
         any field the engine omits, so the UI can show what was asked, what
         landed, and what the machine thinks.
         """
-        detail = self.client.get_subagent(sid, max_len)
+        try:
+            detail = self.client.get_subagent(sid, max_len)
+        except Exception as exc:
+            status_code = getattr(exc, "status_code", None)
+            archived = None
+            if self.store is not None:
+                try:
+                    found = self.store.archived_subagent_snapshots()
+                    archived = next((item for item in found if item.get("id") == sid), None)
+                except Exception:
+                    log.exception("subagent archive read failed for %s", sid)
+            if archived is None:
+                raise
+            detail = dict(archived)
+            detail.setdefault("archived", True)
+            if status_code is not None:
+                log.info("subagent %s served from archive (engine said %s)", sid, status_code)
         mirrored = self.pool.get(sid)
         if mirrored is not None:
             for key in SUBAGENT_MIRROR_FIELDS:
@@ -1994,15 +2010,53 @@ class ConductorService:
 
     # ===== snapshots & chat product surface =====
 
+    def _archive_subagent_snapshots(self, items: list[dict]) -> None:
+        """Persist pool snapshots so per-worker detail outlives the engine.
+
+        The engine clears its pool on conductor stop (and on engine
+        restarts), while completed workflows keep referencing their workers.
+        Best-effort: archiving must never break the snapshot surface.
+        """
+        if self.store is None or not items:
+            return
+        try:
+            self.store.save_subagent_snapshots(items)
+        except Exception:
+            log.exception("subagent archive write failed")
+
+    def _merge_archived_subagents(self, items: list[dict]) -> list[dict]:
+        """Append archived workers missing from the live pool snapshot."""
+        if self.store is None:
+            return items
+        try:
+            live_ids = {item.get("id") for item in items if item.get("id")}
+            archived = self.store.archived_subagent_snapshots(exclude=live_ids)
+        except Exception:
+            log.exception("subagent archive read failed")
+            return items
+        if not archived:
+            return items
+        for item in archived:
+            item["archived"] = True
+        merged = list(items) + archived
+        merged.sort(key=lambda item: int(item.get("updated_at")
+                                         or item.get("created_at") or 0))
+        return merged
+
     def get_subagent_snapshot(self) -> list[dict]:
-        """Pool snapshot (gahub_app enriches generation/request attribution)."""
-        return self.pool.snapshot()
+        """Pool snapshot (gahub_app enriches generation/request attribution),
+        merged with archived workers whose pool entries no longer exist."""
+        return self._merge_archived_subagents(self.pool.snapshot())
 
     def get_subagent_envelope(self) -> dict:
         envelope = self.pool.envelope()
-        for item in envelope["items"]:
+        items = envelope.get("items") or []
+        self._archive_subagent_snapshots(items)
+        items = self._merge_archived_subagents(items)
+        for item in items:
             item["stage"] = subagent_stage(status=str(item.get("status") or ""),
                 attempt=int(item.get("attempt") or 1), review_status=str(item.get("review_status") or ""))
+        envelope["items"] = items
         return envelope
 
     def get_operation(self, operation_id: str) -> dict:

@@ -42,7 +42,7 @@ class ConductorStore:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2):
+        if version not in (0, 1, 2, 3):
             self.db.close()
             raise RuntimeError(f"unsupported Conductor database version: {version}")
         if version == 1 and str(path) != ":memory:":
@@ -78,7 +78,13 @@ class ConductorStore:
                 engine_key TEXT NOT NULL, request_id TEXT NOT NULL,
                 created_at REAL NOT NULL,
                 PRIMARY KEY (engine_key, request_id));
-            PRAGMA user_version=2;
+            CREATE TABLE IF NOT EXISTS subagent_archive (
+                engine_key TEXT NOT NULL, sid TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL, archived_at REAL NOT NULL,
+                PRIMARY KEY (engine_key, sid));
+            CREATE INDEX IF NOT EXISTS subagent_archive_recent
+                ON subagent_archive(engine_key, json_extract(snapshot_json, '$.updated_at') DESC);
+            PRAGMA user_version=3;
             COMMIT;
         """)
         active = self.db.execute("""SELECT state_json FROM workflows WHERE engine_key=?
@@ -175,6 +181,9 @@ class ConductorStore:
                         (self.engine_key, request_id))
         self.db.execute("INSERT OR REPLACE INTO workflow_tombstones VALUES(?,?,?)",
                         (self.engine_key, request_id, time.time()))
+        self.db.execute("""DELETE FROM subagent_archive WHERE engine_key=?
+            AND json_extract(snapshot_json, '$.request_id')=?""",
+            (self.engine_key, request_id))
 
     def tombstones(self) -> set[str]:
         with self.lock:
@@ -186,6 +195,45 @@ class ConductorStore:
             return self.db.execute(
                 "SELECT 1 FROM workflow_tombstones WHERE engine_key=? AND request_id=?",
                 (self.engine_key, request_id)).fetchone() is not None
+
+    # ── subagent archive ─────────────────────────────────────────────────
+    # Engine pool state is volatile (cleared on conductor stop and lost on
+    # engine restarts), but completed workflows reference their workers by
+    # id forever. The hub therefore archives every pool snapshot it sees so
+    # per-worker detail survives for the board. Bounded: the newest
+    # SUBAGENT_ARCHIVE_CAP rows per engine are kept.
+
+    SUBAGENT_ARCHIVE_CAP = 400
+
+    def save_subagent_snapshots(self, items: list[dict]) -> None:
+        payloads = [(item.get("id"), item) for item in items if item.get("id")]
+        if not payloads:
+            return
+        with self.transaction():
+            now = time.time()
+            for sid, item in payloads:
+                self.db.execute("""INSERT INTO subagent_archive(engine_key, sid, snapshot_json, archived_at)
+                    VALUES(?,?,?,?) ON CONFLICT(engine_key, sid)
+                    DO UPDATE SET snapshot_json=excluded.snapshot_json, archived_at=excluded.archived_at""",
+                    (self.engine_key, sid, json.dumps(item, ensure_ascii=False), now))
+            self.db.execute("""DELETE FROM subagent_archive WHERE engine_key=? AND sid NOT IN (
+                    SELECT sid FROM subagent_archive WHERE engine_key=?
+                    ORDER BY json_extract(snapshot_json, '$.updated_at') DESC, archived_at DESC
+                    LIMIT ?)""",
+                (self.engine_key, self.engine_key, self.SUBAGENT_ARCHIVE_CAP))
+
+    def archived_subagent_snapshots(self, exclude: set[str] | None = None,
+                                    request_id: str | None = None) -> list[dict]:
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT snapshot_json FROM subagent_archive WHERE engine_key=?", (self.engine_key,))
+            items = [json.loads(row[0]) for row in rows]
+        if exclude:
+            items = [item for item in items if item.get("id") not in exclude]
+        if request_id is not None:
+            items = [item for item in items if item.get("request_id") == request_id]
+        items.sort(key=lambda item: int(item.get("updated_at") or item.get("created_at") or 0))
+        return items
 
     def worker_owner(self, sid: str) -> str | None:
         with self.lock:

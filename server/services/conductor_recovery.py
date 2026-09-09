@@ -170,9 +170,108 @@ class ConductorRecovery:
             if self.service._notifications_dirty:
                 self.service._notifications_dirty = False
                 self.service._publish("conductor:resync_required", {"reason": "notification_failed"})
+            self._backfill_subagent_archive()
             self.service.callbacks.publish_subagent_snapshot()
             self.command_wake.set()
             return True
+
+    def _backfill_subagent_archive(self) -> None:
+        """Rebuild archived worker records from the engine journal once.
+
+        Journal replays and the subagent archive share a store transaction
+        ordering, so an empty archive after a catch-up means the boot either
+        predates archiving or its workers were never journaled. Full-scan the
+        journal (bounded pages), fold worker lifecycle events into per-worker
+        records, and seed the archive so completed workflows keep per-worker
+        detail even though the engine cleared its pool.
+        """
+        store = self.service.store
+        if store is None:
+            return
+        try:
+            existing = store.archived_subagent_snapshots()
+        except Exception:
+            log.exception("subagent archive probe failed; skip backfill")
+            return
+        if existing:
+            return
+        try:
+            merged: dict[str, dict] = {}
+            after = 0
+            while True:
+                page = self.service.client.journal(after_seq=after, limit=5000)
+                records = page.get("events") or []
+                if not records:
+                    break
+                for record in records:
+                    kind = record.get("type")
+                    event = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+                    if not (isinstance(kind, str) and kind.startswith("subagent_")):
+                        continue
+                    sid = str(event.get("id") or "")
+                    if not sid:
+                        continue
+                    record_item = merged.setdefault(sid, {
+                        "id": sid, "prompt": "", "reply": "", "status": "stopped",
+                        "review_status": "none", "attempt": 1, "created_at": 0,
+                        "updated_at": 0, "plan_milestones": [],
+                    })
+                    record_item["updated_at"] = int(record.get("ts") or record_item["updated_at"] or 0)
+                    # Delivery-gate evidence rides on completion-class events.
+                    for gate_key in ("deliverables_missing", "deliverables_stale",
+                                     "quality_checks", "done_marker", "manifest"):
+                        if gate_key in event:
+                            record_item[gate_key] = event[gate_key]
+                    if kind == "subagent_spawned":
+                        record_item["prompt"] = str(event.get("prompt") or "")
+                        record_item["created_at"] = int(record.get("ts") or 0)
+                        record_item["status"] = "running"
+                    elif kind in ("subagent_started", "subagent_running"):
+                        record_item["status"] = "running"
+                    elif kind in ("subagent_completed", "subagent_pending_review"):
+                        record_item["status"] = "stopped"
+                        record_item["completed_at"] = int(record.get("ts") or 0)
+                        if kind == "subagent_pending_review":
+                            record_item["review_status"] = "pending"
+                    elif kind == "subagent_accepted":
+                        record_item["status"] = "stopped"
+                        record_item["review_status"] = "accepted"
+                        record_item["accepted_at"] = int(record.get("ts") or 0)
+                    elif kind == "subagent_rejected":
+                        record_item["status"] = "stopped"
+                        record_item["review_status"] = "rejected"
+                    elif kind in ("subagent_failed", "subagent_cancelled", "subagent_timeout_total"):
+                        record_item["status"] = "stopped"
+                        record_item["review_status"] = "none"
+                    elif kind == "subagent_reworked":
+                        record_item["status"] = "running"
+                        record_item["review_status"] = "none"
+                        record_item["attempt"] = int(record_item.get("attempt") or 1) + 1
+                    elif kind == "subagent_milestone":
+                        milestones = record_item.setdefault("plan_milestones", [])
+                        if not any(ms.get("id") == event.get("milestone_id") for ms in milestones):
+                            milestones.append({"id": event.get("milestone_id"), "desc": event.get("desc"),
+                                "status": event.get("status"),
+                                "reached_at": int(record.get("ts") or 0) if event.get("status") == "reached" else None,
+                                "missed_at": int(record.get("ts") or 0) if event.get("status") == "missed" else None})
+                    if event.get("request_id"):
+                        record_item["request_id"] = event["request_id"]
+                    if event.get("generation"):
+                        record_item["generation"] = int(event["generation"])
+                after = int(records[-1].get("seq") or after)
+                if len(records) < 5000:
+                    break
+            if not merged:
+                return
+            # Attach the tombstone filter: deleted workflows keep nothing.
+            tombstones = store.tombstones()
+            items = [item for item in merged.values()
+                     if not (item.get("request_id") and item["request_id"] in tombstones)]
+            if items:
+                store.save_subagent_snapshots(items)
+                log.info("subagent archive backfilled %d workers from journal", len(items))
+        except Exception:
+            log.exception("subagent archive backfill failed")
 
     def _catch_up(self) -> bool:
         cursor = self.store.cursor()

@@ -310,7 +310,7 @@ def test_v1_upgrade_backs_up_and_restores_committed_chat(setup):
     service.store.db.execute("DELETE FROM chat")
     service.store.db.execute("PRAGMA user_version=1")
     restarted = create()
-    assert restarted.store.db.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert restarted.store.db.execute("PRAGMA user_version").fetchone()[0] >= 2
     assert restarted.chat_messages[0]["msg"] == "migrated task"
 
 

@@ -605,3 +605,57 @@ def test_ensure_running_reaps_hung_children(tmp_path, monkeypatch) -> None:
         manager.ensure_running(startup_timeout=0.3)
     assert stale.terminated is True
     assert manager._proc is None
+
+
+# ===== subagent archive: per-worker detail outlives engine pool resets =====
+
+def _archived_item(sid="sid-1", request_id="request-1", **overrides) -> dict:
+    item = {"id": sid, "prompt": "整理归档目录", "reply": "完成", "status": "stopped",
+            "review_status": "accepted", "attempt": 1, "created_at": 10, "updated_at": 20,
+            "request_id": request_id}
+    item.update(overrides)
+    return item
+
+
+def test_subagent_archive_roundtrip_filters_and_cleanup(tmp_path) -> None:
+    service = cs.ConductorService.for_tests(store_path=tmp_path / "wf.db")
+    store = service.store
+    store.save_subagent_snapshots([
+        _archived_item("s1"), _archived_item("s2", request_id="request-2")])
+    assert {item["id"] for item in store.archived_subagent_snapshots()} == {"s1", "s2"}
+    assert [item["id"] for item in store.archived_subagent_snapshots(request_id="request-2")] == ["s2"]
+    assert [item["id"] for item in store.archived_subagent_snapshots(exclude={"s1"})] == ["s2"]
+
+    # Deleting the owning workflow cleans up its archived workers.
+    with service.workflow_tracker.transaction():
+        store.forget_workflow("request-2")
+    assert {item["id"] for item in store.archived_subagent_snapshots()} == {"s1"}
+    store.close()
+
+
+def test_envelope_merges_archived_workers_after_pool_reset(tmp_path) -> None:
+    service = cs.ConductorService.for_tests(store_path=tmp_path / "wf.db")
+    service._archive_subagent_snapshots([_archived_item()])
+    # Simulate a pool reset (conductor stop / engine restart): the live pool
+    # is empty, yet the completed workflow's workers must stay visible.
+    envelope = service.get_subagent_envelope()
+    merged = next(item for item in envelope["items"] if item["id"] == "sid-1")
+    assert merged["archived"] is True
+    assert merged["stage"]
+    service.store.close()
+
+
+def test_dossier_falls_back_to_archive_when_engine_lost_worker(tmp_path) -> None:
+    service = cs.ConductorService.for_tests(store_path=tmp_path / "wf.db")
+    service._archive_subagent_snapshots([_archived_item()])
+
+    def not_found(sid, max_len=5000):
+        raise GahubProcessError("gahub_app /subagent -> 404: not found",
+                                status_code=404)
+
+    service.client = Mock()
+    service.client.get_subagent.side_effect = not_found
+    detail = service.subagent_dossier("sid-1", 5000)
+    assert detail["prompt"] == "整理归档目录"
+    assert detail["archived"] is True
+    service.store.close()
