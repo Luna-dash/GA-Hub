@@ -699,6 +699,9 @@ class ConductorSubagentAction(BaseModel):
     # Accept escape hatch: the engine refuses plain accept while its
     # deterministic verification verdict is not clean; force is audited.
     force: bool = False
+    expected_boot_id: str | None = Field(default=None, max_length=128)
+    expected_generation: int | None = Field(default=None, ge=0)
+    expected_command_revision: int | None = Field(default=None, ge=0)
     # P0 idempotency for actions that re-open or advance a worker (the
     # engine's own operation cache only covers chat/dispatch): the hub
     # replays the recorded response for a retried id instead of waking the
@@ -751,6 +754,9 @@ class ConductorSubagent(BaseModel):
     completed_at: int | None = None
     accepted_at: int | None = None
     generation: int = 0
+    active_generation: int = 0
+    command_revision: int = 0
+    boot_id: str | None = None
     # Requested worker model index (engine-resolved; llm_fallback on the
     # dispatch response covers the degraded case). None for legacy snapshots.
     llm_index: int | None = None
@@ -766,6 +772,8 @@ class ConductorSubagent(BaseModel):
 
 class ConductorSubagentListResp(BaseModel):
     items: list[ConductorSubagent]
+    boot_id: str | None = None
+    snapshot_revision: int = -1
 
 
 class ConductorWorkflowWorker(BaseModel):
@@ -778,6 +786,9 @@ class ConductorWorkflowWorker(BaseModel):
 
 class ConductorWorkflow(BaseModel):
     request_id: str
+    title: str | None = None
+    admission_state: str = "admitted"
+    boot_id: str | None = None
     status: Literal[
         "admitted", "supervising", "reworking", "awaiting_review",
         "completed", "failed", "cancelled", "killed",
@@ -844,6 +855,20 @@ class ConductorStatusResp(BaseModel):
     chat_count: int
     # Automation-first review policy: clean deliveries skip human review.
     auto_accept: bool = True
+    boot_id: str | None = None
+    protocol_version: int | None = None
+    capabilities: list[str] = Field(default_factory=list)
+    path_policy: dict | None = None
+    recovery: dict | None = None
+
+
+class ConductorOperationResp(BaseModel):
+    operation_id: str
+    known: bool
+    state: str | None = None
+    result: dict | None = None
+    request_id: str | None = None
+    updated_at: float | None = None
 
 
 class ConductorSettingsReq(BaseModel):

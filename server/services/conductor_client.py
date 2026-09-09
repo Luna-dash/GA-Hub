@@ -26,6 +26,7 @@ from ..constants import (
     CONDUCTOR_ENGINE_PORT,
     ENV_GAHUB_DELIVERABLE_ROOTS,
     ENV_GAHUB_JOURNAL_PATH,
+    ENV_GAHUB_PATH_POLICY,
     ENV_GAHUB_TEMP_DIR,
 )
 from ..process_utils import hidden_process_kwargs
@@ -86,20 +87,16 @@ def _engine_spawn_env() -> dict:
 
     GAHUB_JOURNAL_PATH points the engine's durable run journal (P2-A,
     append-only JSONL truth stream) at a hub-owned file under ADMIN_DATA.
-    GAHUB_DELIVERABLE_ROOTS widens the engine's dispatch allow-list with a
-    user-facing deliverables folder: the engine default is the GA repo root
-    only, so a task naming any outside path (e.g. ``D:\\some\\folder``) is
-    rejected with 422 before a worker is ever spawned and the workflow
-    strands in planning. The GA repo root stays on the list for backwards
-    compatibility. An operator-provided value in the environment wins
-    (setdefault).
+    An operator-provided GAHUB_DELIVERABLE_ROOTS value is passed through as an
+    optional allow-list. When it is absent, the engine accepts explicit
+    absolute user paths on any drive; the supervisor prompt still uses
+    ``<GA_ROOT>\\temp`` as the default delivery location.
     """
     env = _clean_child_env()
     env.setdefault(ENV_GAHUB_JOURNAL_PATH, str(_paths.gahub_journal_file()))
-    env.setdefault(ENV_GAHUB_DELIVERABLE_ROOTS, ",".join((
-        str(_paths.GA_ROOT) if _paths.GA_ROOT else "",
-        str(_paths.conductor_deliverables_dir()),
-    )))
+    env.setdefault(ENV_GAHUB_PATH_POLICY, "allowed_roots" if
+                   env.get(ENV_GAHUB_DELIVERABLE_ROOTS, "").strip()
+                   else "explicit_absolute")
     return env
 
 
@@ -112,7 +109,7 @@ class GahubProcessError(RuntimeError):
         # HTTP status returned by the engine, when the failure is an engine
         # response rather than a transport/startup failure.
         self.status_code = status_code
-        # Parsed engine error body (JSON detail payload or plain text).
+        # Complete engine error body, separate from the printable message.
         self.detail = detail
 
 
@@ -346,15 +343,20 @@ class GaConductorClient:
         except requests.RequestException as exc:
             raise GahubProcessError(f"gahub_app request failed ({path}): {exc}") from exc
         if resp.status_code >= 400:
-            detail: Any = ""
             try:
-                detail = resp.json().get("error", "") or resp.json().get(
-                    "detail", ""
-                ) or resp.text[:200]
-            except Exception:
+                detail = resp.json()
+            except ValueError:
                 detail = resp.text[:200]
+            message = detail
+            if isinstance(message, dict):
+                message = message.get("error") or message.get("detail") or message
+            if isinstance(message, list):
+                message = "; ".join(
+                    str(item["msg"]) for item in message
+                    if isinstance(item, dict) and item.get("msg")
+                ) or message
             raise GahubProcessError(
-                f"gahub_app {path} -> {resp.status_code}: {detail}",
+                f"gahub_app {path} -> {resp.status_code}: {message}",
                 status_code=resp.status_code,
                 detail=detail,
             )
@@ -363,6 +365,15 @@ class GaConductorClient:
     # -- lifecycle ------------------------------------------------------------
     def status(self) -> dict:
         return self._request("GET", "/status")
+
+    def recovery(self) -> dict:
+        return self._request("GET", "/recovery")
+
+    def get_subagents(self) -> dict:
+        return self._request("GET", "/subagent")
+
+    def operation(self, operation_id: str, scope: str = "worker_action") -> dict:
+        return self._request("GET", f"/operations/{operation_id}", params={"scope": scope})
 
     def start(self, llm_index: Optional[int] = None) -> dict:
         return self._request("POST", "/start", json_body={
@@ -394,7 +405,8 @@ class GaConductorClient:
     # -- chat -------------------------------------------------------------------
     def post_chat(self, msg: str, role: str, request_id: Optional[str] = None,
                   final: bool = False,
-                  operation_id: Optional[str] = None) -> dict:
+                  operation_id: Optional[str] = None,
+                  expected_boot_id: Optional[str] = None) -> dict:
         body: dict = {
             "msg": msg, "role": role, "request_id": request_id, "final": final,
         }
@@ -402,6 +414,8 @@ class GaConductorClient:
             # P0 idempotency: one id per logical admission; the engine
             # replays the first terminal response on retry.
             body["operation_id"] = operation_id
+        if expected_boot_id is not None:
+            body["expected_boot_id"] = expected_boot_id
         return self._request("POST", "/chat", json_body=body)
 
     def get_chat(self, last: int = 20) -> list[dict]:
@@ -415,7 +429,8 @@ class GaConductorClient:
                        deliverables: Optional[list] = None,
                        done_when: Optional[str] = None,
                        checks: Optional[list] = None,
-                       operation_id: Optional[str] = None) -> dict:
+                       operation_id: Optional[str] = None,
+                       expected_boot_id: Optional[str] = None) -> dict:
         """Dispatch one worker; the engine requires the Contract B manifest.
 
         ``goal`` plus at least one absolute ``deliverables`` entry are
@@ -430,6 +445,8 @@ class GaConductorClient:
             # P0 idempotency: a retried dispatch with the same id replays
             # the first answer instead of spawning a second worker.
             body["operation_id"] = operation_id
+        if expected_boot_id is not None:
+            body["expected_boot_id"] = expected_boot_id
         if goal is not None:
             body["goal"] = goal
         if boundaries:
@@ -446,7 +463,10 @@ class GaConductorClient:
                         request_id: Optional[str] = None,
                         llm_index: Optional[int] = None,
                         origin: Optional[str] = None,
-                        force: bool = False) -> dict:
+                        force: bool = False, operation_id: Optional[str] = None,
+                        expected_boot_id: Optional[str] = None,
+                        expected_generation: Optional[int] = None,
+                        expected_command_revision: Optional[int] = None) -> dict:
         """One worker action; ``origin="hub"`` marks user/UI-initiated aborts.
 
         The engine treats a hub-originated abort as a terminal user cancel,
@@ -465,6 +485,11 @@ class GaConductorClient:
             body["origin"] = origin
         if force:
             body["force"] = True
+        for key, value in (("operation_id", operation_id), ("expected_boot_id", expected_boot_id),
+                           ("expected_generation", expected_generation),
+                           ("expected_command_revision", expected_command_revision)):
+            if value is not None:
+                body[key] = value
         return self._request("POST", f"/subagent/{sid}", json_body=body)
 
     def get_subagent(self, sid: str, max_len: int = 5000) -> dict:

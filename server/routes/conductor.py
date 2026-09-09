@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -16,6 +17,7 @@ from ..schemas import (
     ConductorChatMessage,
     ConductorLifecycleResp,
     ConductorLogResp,
+    ConductorOperationResp,
     ConductorSettingsReq,
     ConductorStartReq,
     ConductorStartSubagent,
@@ -29,6 +31,7 @@ from ..schemas import (
     ConductorWorkflowListResp,
 )
 from ..services import conductor_client as conductor_client_module
+from ..services.conductor_store import OperationConflict
 from ..services.conductor_service import (
     SUBAGENT_VERBS,
     ConductorNotRunning,
@@ -55,34 +58,31 @@ def _engine_http_error(exc: "conductor_client_module.GahubProcessError") -> HTTP
       error.
     """
     status = exc.status_code
-    if status is not None and 400 <= status < 500:
-        detail = exc.detail
-        if isinstance(detail, list):
-            # FastAPI validation payload: keep only the human-readable msgs.
-            detail = "; ".join(
-                str(item.get("msg", ""))
-                for item in detail
-                if isinstance(item, dict) and item.get("msg")
-            ) or detail
-        return HTTPException(status, str(detail) or str(exc))
     if status is None:
         return HTTPException(
             503,
-            "gahub_app engine unreachable — it will be respawned on demand "
-            f"(see %TEMP%\\gahub_app.log): {exc}",
+            exc.detail or ("gahub_app engine unreachable - it will be respawned on demand "
+                           f"(see %TEMP%\\gahub_app.log): {exc}"),
         )
-    if status == 503:
-        detail = exc.detail
-        if isinstance(detail, dict):
-            detail = detail.get("error") or detail
-        return HTTPException(503, str(detail) or f"gahub_app engine error: {exc}")
-    return HTTPException(502, f"gahub_app engine error: {exc}")
+    detail = exc.detail
+    if isinstance(detail, dict) and set(detail) == {"detail"}:
+        # Avoid nesting FastAPI's envelope; domain evidence stays intact.
+        detail = detail["detail"]
+    if detail is None or detail == "":
+        detail = str(exc)
+    mapped_status = status if 400 <= status < 500 or status == 503 else 502
+    return HTTPException(mapped_status, detail)
 
 
 async def _dispatch_through_engine(func, /, *args, **kwargs):
     """Run one engine-forwarding service call with engine-aware mapping."""
     try:
         return await asyncio.to_thread(func, *args, **kwargs)
+    except OperationConflict as exc:
+        raise HTTPException(409, {"error": "operation_id_conflict", "message": str(exc)}) from exc
+    except sqlite3.Error as exc:
+        log.exception("Conductor persistence failed")
+        raise HTTPException(503, {"error": "storage_unavailable", "operation_id": kwargs.get("operation_id")}) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except ConductorNotRunning as exc:
@@ -118,7 +118,7 @@ async def update_conductor_settings(
     """Update conductor automation policy (currently: auto-accept)."""
     service = svc()
     service.auto_accept = body.auto_accept
-    return _status_payload(service)
+    return await _dispatch_through_engine(_status_payload, service)
 
 
 @router.get("/api/conductor/readme/{topic}")
@@ -135,7 +135,7 @@ async def get_readme_topic(topic: str) -> ConductorTextResp:
 @router.get("/api/conductor/chat")
 async def get_chat(last: int = Query(default=20, ge=1, le=200)) -> ConductorChatListResp:
     """Return the last N conductor chat messages for hydration."""
-    return {"items": svc().get_chat_messages(last=last)}
+    return {"items": await _dispatch_through_engine(svc().get_chat_messages, last=last)}
 
 
 @router.post("/api/conductor/chat")
@@ -167,7 +167,14 @@ async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
 @router.get("/api/conductor/subagent")
 async def list_subagents() -> ConductorSubagentListResp:
     """Return the subagent pool snapshot the UI renders."""
-    return {"items": svc().get_subagent_snapshot()}
+    service = svc()
+    return (service.get_subagent_envelope() if service.recovery is not None
+            else {"items": service.get_subagent_snapshot()})
+
+
+@router.get("/api/conductor/operations/{operation_id}")
+async def get_operation(operation_id: str) -> ConductorOperationResp:
+    return await _dispatch_through_engine(svc().get_operation, operation_id)
 
 
 @router.get("/api/conductor/workflow")
@@ -218,8 +225,6 @@ async def subagent_action(
 ) -> ConductorSubagentActionResp:
     """Apply one verb (keyinfo/accept/rework/input/abort/...) to a worker."""
     service = svc()
-    if not service.pool.get(sid):
-        raise HTTPException(404, "subagent not found")
     action = body.action.lower().strip()
     if action not in SUBAGENT_VERBS:
         raise HTTPException(400, f"unknown action: {body.action}")
@@ -237,6 +242,11 @@ async def subagent_action(
         subagent_llm_index=body.subagent_llm_index,
         subagent_model_policy=body.subagent_model_policy,
         operation_id=body.operation_id,
+        **{key: value for key, value in {
+            "expected_boot_id": body.expected_boot_id,
+            "expected_generation": body.expected_generation,
+            "expected_command_revision": body.expected_command_revision,
+        }.items() if value is not None},
     )
     if action == "accept" and "error" in result:
         # completion_unverified must carry the verification evidence the
@@ -251,7 +261,7 @@ async def subagent_action(
 @router.get("/api/conductor/log")
 async def get_conductor_log() -> ConductorLogResp:
     """Return the conductor engine event log."""
-    return {"log": svc().get_conductor_log()}
+    return {"log": await _dispatch_through_engine(svc().get_conductor_log)}
 
 
 @router.get("/api/conductor/journal")
@@ -273,7 +283,7 @@ async def get_conductor_journal(
 async def get_status() -> ConductorStatusResp:
     """Return the conductor lifecycle plus pool counters."""
     service = svc()
-    return _status_payload(service)
+    return await _dispatch_through_engine(_status_payload, service)
 
 
 @router.post("/api/conductor/start")
@@ -294,7 +304,7 @@ async def start_conductor(body: ConductorStartReq | None = None) -> ConductorLif
         # not a blind 500 (live 2026-09-07: a hung interpreter probe surfaced
         # as "Internal Server Error" with no hint at %TEMP%\gahub_app.log).
         raise _engine_http_error(exc) from exc
-    status = _status_payload(service)
+    status = await _dispatch_through_engine(_status_payload, service)
     return {"ok": started or status["started"], **status}
 
 
@@ -303,7 +313,7 @@ async def stop_conductor() -> ConductorLifecycleResp:
     """Stop the conductor supervisor."""
     service = svc()
     stopped = await asyncio.to_thread(service.stop)
-    status = _status_payload(service)
+    status = await _dispatch_through_engine(_status_payload, service)
     if not stopped:
         raise HTTPException(503, "Conductor engine could not be stopped; check its health and logs.")
     return {"ok": True, **status}

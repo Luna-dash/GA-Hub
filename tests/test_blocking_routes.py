@@ -6,6 +6,8 @@ import time
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
+
 from server.routes import agent, autonomous, conductor, conversations, memory, mykey, notify, sessions, tasks, upload, wechat
 from server.schemas import ChatRetryConfigReq, RewindReq, TextWrite
 from server.services import mykey_service
@@ -109,6 +111,51 @@ def test_conductor_stop_runs_in_worker_thread() -> None:
         "chat_count": 0,
         "auto_accept": True,
     }
+
+
+@pytest.mark.parametrize("endpoint", ["chat", "log"])
+def test_conductor_remote_reads_run_in_worker_thread(endpoint) -> None:
+    items = [{"id": "item-1"}]
+    service = SimpleNamespace(
+        get_chat_messages=lambda **_kwargs: _slow_result(items),
+        get_conductor_log=lambda: _slow_result(items),
+    )
+    with mock.patch.object(conductor, "svc", return_value=service):
+        if endpoint == "chat":
+            result = asyncio.run(_run_with_probe(conductor.get_chat(last=10)))
+            assert result == {"items": items}
+        else:
+            result = asyncio.run(_run_with_probe(conductor.get_conductor_log()))
+            assert result == {"log": items}
+
+
+@pytest.mark.parametrize("endpoint", ["status", "start", "stop", "settings"])
+def test_conductor_slow_status_tail_runs_in_worker_thread(endpoint) -> None:
+    status = {"started": True, "stopping": False, "admission_open": True}
+    service = SimpleNamespace(
+        start=lambda **_kwargs: True,
+        stop=lambda: True,
+        lifecycle_status=lambda: _slow_result(status),
+        pool=SimpleNamespace(counts=lambda: (1, 2)),
+        chat_messages=[],
+        auto_accept=True,
+    )
+    with mock.patch.object(conductor, "svc", return_value=service):
+        if endpoint == "settings":
+            awaitable = conductor.update_conductor_settings(
+                conductor.ConductorSettingsReq(auto_accept=False))
+        else:
+            route = {
+                "status": conductor.get_status,
+                "start": conductor.start_conductor,
+                "stop": conductor.stop_conductor,
+            }[endpoint]
+            awaitable = route()
+        result = asyncio.run(_run_with_probe(awaitable))
+
+    assert result["started"] is True
+    assert result["subagents"] == {"running": 1, "stopped": 2}
+    assert result["auto_accept"] is (endpoint != "settings")
 
 
 def test_session_restore_runs_in_worker_thread() -> None:

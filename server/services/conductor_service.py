@@ -40,6 +40,9 @@ from .conductor_vocabulary import (
     WORKER_EVENT_RUNNING,
 )
 from .conductor_workflow import WorkflowTracker
+from .conductor_store import ConductorStore
+from .conductor_recovery import ConductorRecovery
+from .conductor_commands import ConductorCommands
 from .event_bus import bus
 from ..event_topics import (
     CONDUCTOR_CHAT,
@@ -230,14 +233,35 @@ class PoolMirror:
         self.lock = threading.Lock()
         self.subagents: Dict[str, _MirrorState] = {}
         self._items: list[dict] = []
+        self.boot_id: str | None = None
+        self.revision = -1
 
-    def update(self, items: list) -> None:
+    def select_boot(self, boot_id: str) -> None:
         with self.lock:
+            if self.boot_id != boot_id:
+                self.boot_id = boot_id
+                self.revision = -1
+                self._items = []
+                self.subagents = {}
+
+    def envelope(self) -> dict:
+        with self.lock:
+            return {"items": [dict(item) for item in self._items],
+                    "boot_id": self.boot_id, "snapshot_revision": self.revision}
+
+    def update(self, items: list, *, boot_id: str | None = None,
+               revision: int | None = None) -> bool:
+        with self.lock:
+            if self.boot_id is not None:
+                if boot_id != self.boot_id or type(revision) is not int or revision <= self.revision:
+                    return False
+                self.revision = revision
             self._items = [dict(item) for item in items if isinstance(item, dict)]
             self.subagents = {
                 item["id"]: _MirrorState(item)
                 for item in self._items if item.get("id")
             }
+            return True
 
     def counts(self) -> tuple[int, int]:
         with self.lock:
@@ -306,10 +330,14 @@ class HubConductorCallbacks:
         """Publish changed pool state without allowing concurrent reordering."""
         with self._snapshot_publish_lock:
             try:
-                snapshot = self.service.get_subagent_snapshot()
+                snapshot = (self.service.get_subagent_envelope() if self.service.recovery is not None
+                            else self.service.get_subagent_snapshot())
                 if snapshot == self._last_subagent_snapshot:
                     return
-                push_subagent_cards(snapshot)
+                if isinstance(snapshot, dict):
+                    self.service._publish(CONDUCTOR_SUBAGENTS, snapshot)
+                else:
+                    push_subagent_cards(snapshot)
                 # Keep the old value when publishing fails so a later event retries.
                 self._last_subagent_snapshot = snapshot
             except Exception:
@@ -605,11 +633,12 @@ class ConductorService:
     _ACTION_OPERATION_CACHE_SIZE = 512
 
     def __init__(self):
-        self._init_fields()
+        self._init_fields(store_path=_paths.ADMIN_DATA / "conductor" / "state.sqlite3")
         self.timeout_monitor.start()
+        self.recovery.start()
 
     @classmethod
-    def for_tests(cls) -> "ConductorService":
+    def for_tests(cls, *, store_path=None) -> "ConductorService":
         """Fully initialized instance without threads or engine side effects.
 
         The unit-test constructor that replaces ``object.__new__`` plus the
@@ -617,10 +646,10 @@ class ConductorService:
         nothing runs.
         """
         obj = cls.__new__(cls)
-        obj._init_fields()
+        obj._init_fields(store_path=store_path)
         return obj
 
-    def _init_fields(self) -> None:
+    def _init_fields(self, *, store_path=None) -> None:
         # Application shutdown is a terminal lifecycle separate from the
         # user-facing ``stop`` route.  Keep the singleton alive while a close
         # is in progress (or after a timeout) so a late request cannot create
@@ -676,6 +705,16 @@ class ConductorService:
         # recorded response); bounded, oldest entries evicted first.
         self._action_operation_lock = threading.Lock()
         self._action_operations: OrderedDict[str, dict] = OrderedDict()
+        self._notifications_dirty = False
+        self.store = (ConductorStore(store_path, self._process_manager.base_url(), self.workflow_tracker)
+                      if store_path is not None else None)
+        self.recovery = ConductorRecovery(self, self.store) if self.store is not None else None
+        self.commands = ConductorCommands(self, self.store, self.recovery) if self.store is not None else None
+        if self.store is not None:
+            self._journal_cursor = self.store.cursor()
+            self.store.notification_failed = lambda: setattr(self, "_notifications_dirty", True)
+            self.chat_messages = self.store.chat_messages()
+            self._relayed_chat_ids.update(item["id"] for item in self.chat_messages)
 
 
     @classmethod
@@ -698,6 +737,10 @@ class ConductorService:
     def shutdown(self, timeout: float = 2.0) -> bool:
         """Terminally close the engine session and monitor under one deadline."""
         self._relay_stop.set()
+        if self.recovery is not None:
+            self.recovery.stop_event.set()
+            self.recovery.wake.set()
+            self.recovery.command_wake.set()
         deadline = time.monotonic() + max(0.0, float(timeout))
 
         with self._shutdown_lock:
@@ -719,6 +762,8 @@ class ConductorService:
             with self._shutdown_lock:
                 return bool(self._shutdown_complete)
 
+        helpers_ok = False
+        store_ok = self.store is None or self.store.closed
         core_ok = self._shutdown_core_stopped
         monitor_ok = self._shutdown_monitor_stopped
         try:
@@ -736,7 +781,8 @@ class ConductorService:
                     log.exception("gahub_app engine shutdown failed")
                 finally:
                     try:
-                        self._process_manager.stop(timeout=2.0)
+                        if self._process_manager is not None:
+                            self._process_manager.stop(timeout=max(0.0, deadline - time.monotonic()))
                     except Exception:
                         log.exception("gahub_app process stop failed")
                 self._shutdown_core_stopped = core_ok
@@ -766,14 +812,22 @@ class ConductorService:
             if self._relay_thread is not None:
                 helpers.append(self._relay_thread)
             helpers.extend(list(self._auto_accept_threads))
+            if self.recovery is not None:
+                helpers.extend(self.recovery.threads)
             for helper in helpers:
-                if helper.is_alive():
+                if helper.is_alive() and helper is not threading.current_thread():
                     helper.join(timeout=max(0.0, deadline - time.monotonic()))
+            helpers_ok = not any(helper.is_alive() for helper in helpers)
+            if self.commands is not None:
+                helpers_ok = self.commands.wait_idle(max(0.0, deadline - time.monotonic())) and helpers_ok
+            if helpers_ok and self.store is not None:
+                self.store.close()
+                store_ok = True
         finally:
             with self._shutdown_lock:
                 self._shutdown_core_stopped = bool(core_ok)
                 self._shutdown_monitor_stopped = bool(monitor_ok)
-                complete = bool(core_ok and monitor_ok)
+                complete = bool(core_ok and monitor_ok and helpers_ok and store_ok)
                 self._shutdown_complete = complete
                 self._shutdown_in_progress = False
                 event.set()
@@ -787,9 +841,11 @@ class ConductorService:
         if not complete:
             log.warning(
                 "Conductor shutdown did not finish before deadline "
-                "(core=%s monitor=%s)",
+                "(core=%s monitor=%s helpers=%s store=%s)",
                 core_ok,
                 monitor_ok,
+                helpers_ok,
+                store_ok,
             )
         return complete
 
@@ -829,7 +885,25 @@ class ConductorService:
                 "start before subagent operations")
         self._ensure_relay()
 
-    def _publish_workflow_transition(
+    def _publish(self, topic: str, payload: dict) -> None:
+        def publish():
+            try:
+                bus.publish(topic, payload)
+            except Exception:
+                self._notifications_dirty = True
+                log.exception("conductor notification failed for %s", topic)
+        if self.store is not None:
+            self.store.defer(publish)
+        else:
+            publish()
+
+    def _publish_workflow_transition(self, transition: tuple[str, dict]) -> None:
+        if self.store is not None:
+            self.store.defer(lambda: self._publish_workflow_transition_now(transition))
+        else:
+            self._publish_workflow_transition_now(transition)
+
+    def _publish_workflow_transition_now(
         self, transition: tuple[str, dict]
     ) -> None:
         """Publish one terminal workflow event and its visible failure report."""
@@ -842,7 +916,7 @@ class ConductorService:
                 error=str(payload.get("error") or ""),
             )
             payload.setdefault("item", item)
-        bus.publish(topic, payload)
+        self._publish(topic, payload)
 
     def _record_workflow_failure_message(
         self, request_id: str, *, phase: str, error: str
@@ -868,7 +942,7 @@ class ConductorService:
                 request_id=request_id,
                 kind="error",
             )
-            bus.publish(CONDUCTOR_CHAT, {"item": item})
+            self._publish(CONDUCTOR_CHAT, {"item": item})
             return item
 
     @staticmethod
@@ -998,6 +1072,10 @@ class ConductorService:
         # and _assert_engine_ready (subagent verbs) race here on cold start,
         # and a second relay thread would double-process every SSE event.
         with self._relay_lock:
+            if self._closed:
+                return
+            if self.recovery is not None:
+                self.recovery.start()
             thread = self._relay_thread
             if thread is not None and thread.is_alive():
                 return
@@ -1007,7 +1085,8 @@ class ConductorService:
                 args=(self._on_sse_event, self._relay_stop.is_set),
                 # P2-A reconcile: replay missed journal events after every
                 # (re)connect, before any live frame is read.
-                kwargs={"on_reconnect": self._replay_journal},
+                kwargs={"on_reconnect": (self.recovery.reconnect if self.recovery is not None
+                                         else self._replay_journal)},
                 name="conductor-sse-relay",
                 daemon=True,
             )
@@ -1090,6 +1169,9 @@ class ConductorService:
         logged, never raised — a resume must not break because one stranded
         request cannot be relayed.
         """
+        if self.recovery is not None:
+            self.recovery.wake.set()
+            return
         tracker = self.workflow_tracker
         stranded = [
             workflow
@@ -1142,6 +1224,8 @@ class ConductorService:
         return None
 
     def stop(self, timeout: float = 5.0) -> bool:
+        if self.recovery is not None:
+            self.commands.suspend_commands()
         try:
             result = self.client.stop(timeout=timeout)
             stopped = bool(result.get("stopped"))
@@ -1178,6 +1262,8 @@ class ConductorService:
             status.setdefault("agent_alive", False)
         self._started = bool(status.get("started"))
         self._lifecycle_cache = status
+        if self.recovery is not None:
+            status["recovery"] = self.recovery.status()
         return status
 
     def _remember_relayed(self, ga_id) -> None:
@@ -1228,10 +1314,19 @@ class ConductorService:
     def get_chat_messages(self, last: int = 20) -> list:
         """Bootstrap chat history for the conductor page (GET /chat proxy).
 
-        The live feed arrives over SSE, so a transport failure here must not
-        break the page — degrade to an empty list and let the stream fill in,
-        mirroring ``get_conductor_log``.
+        With the SQLite store the hub-side log is the durable authority: the
+        engine loses its chat memory on every boot, so hydration must not
+        depend on the engine being alive long enough to have replayed
+        (reliability plan §4.3).
+
+        Without the store (legacy in-memory mode) the live feed arrives over
+        SSE, so a transport failure here must not break the page — degrade to
+        an empty list and let the stream fill in, mirroring
+        ``get_conductor_log``.
         """
+        if self.store is not None:
+            with self._chat_lock:
+                return list(self.chat_messages[-last:])
         try:
             return self.client.get_chat(last=last)
         except Exception:
@@ -1310,7 +1405,7 @@ class ConductorService:
             while len(cache) > self._ACTION_OPERATION_CACHE_SIZE:
                 cache.popitem(last=False)
 
-    def _replay_journal(self) -> None:
+    def _replay_journal(self) -> bool:
         """Catch-up replay after an SSE (re)connect (P2-A reconcile).
 
         The live SSE stream is a hint; the engine journal is the truth.  On
@@ -1331,20 +1426,23 @@ class ConductorService:
                 resp = self.client.journal(after_seq=0, limit=1)
                 info = resp.get("journal") or {}
                 if info.get("disabled"):
-                    return
+                    return True
                 cursor["seq"] = int(info.get("last_seq") or 0)
                 cursor["epoch"] = info.get("epoch")
                 log.info("journal cursor baselined at seq %s (epoch %s)",
                          cursor["seq"], cursor["epoch"])
-                return
+                return True
             fed = 0
+            failed = False
+            self._journal_replaying = True
             while True:
                 page_floor = int(cursor["seq"] or 0)
                 resp = self.client.journal(
                     after_seq=page_floor, limit=self._JOURNAL_REPLAY_BATCH)
                 info = resp.get("journal") or {}
                 if info.get("disabled"):
-                    return
+                    self._journal_replaying = False
+                    return True
                 epoch = info.get("epoch")
                 if epoch and cursor.get("epoch") and epoch != cursor["epoch"]:
                     log.warning(
@@ -1369,24 +1467,44 @@ class ConductorService:
                         continue
                     payload = record.get("payload")
                     if isinstance(payload, dict):
-                        self._on_sse_event(payload)
+                        replay_payload = dict(payload)
+                        replay_payload["jseq"] = seq
+                        result = self._on_sse_event(replay_payload)
+                        # Legacy test doubles may return None; only an
+                        # explicit False means the event was not applied.
+                        if result is False:
+                            failed = True
+                            break
                         fed += 1
                     self._advance_journal_cursor(seq)
                     highest = max(highest, seq)
-                if (len(events) < self._JOURNAL_REPLAY_BATCH
+                if failed or (len(events) < self._JOURNAL_REPLAY_BATCH
                         or highest <= page_floor):
                     break
+            self._journal_replaying = False
             if fed:
                 log.info("journal replay fed %d missed events after reconnect", fed)
+            return not failed
         except Exception:
             # Reconciliation is best-effort: a failed replay never kills the
             # live relay; the next reconnect retries from the same cursor.
             log.exception("journal replay after reconnect failed")
+            self._journal_replaying = False
+            return False
 
-    def _on_sse_event(self, event: dict) -> None:
+    def _on_sse_event(self, event: dict) -> bool:
+        if self.recovery is not None:
+            return self.recovery.on_event(event)
         seq = event.get("jseq")
-        if isinstance(seq, int):
-            self._advance_journal_cursor(seq)
+        current = self._journal_cursor.get("seq")
+        if isinstance(seq, int) and current is not None:
+            if seq <= current:
+                return True
+            # A live sequence is only a hint. Reconcile from the durable
+            # journal first so an earlier dropped/failed event is not skipped.
+            if not getattr(self, "_journal_replaying", False):
+                return (self._replay_journal()
+                        and int(self._journal_cursor.get("seq") or 0) >= seq)
         if "jseq" in event:
             # Internal cursor field: keep it out of downstream payloads.
             event = {k: v for k, v in event.items() if k != "jseq"}
@@ -1407,7 +1525,7 @@ class ConductorService:
                     # Unattributed wakes have no workflow to transition;
                     # forwarding them would publish request_id=None noise.
                     log.debug("ignoring unattributed request_outcome event")
-                    return
+                    return True
                 outcome = SimpleNamespace(
                     status=event.get("status"),
                     phase=event.get("phase"),
@@ -1443,6 +1561,10 @@ class ConductorService:
                 self.callbacks.on_conductor_event("error", payload)
         except Exception:
             log.exception("SSE relay handler failed for %s", kind)
+            return False
+        if isinstance(seq, int):
+            self._advance_journal_cursor(seq)
+        return True
 
     def _on_remote_chat(self, item: dict, *, from_hello: bool = False) -> None:
         """Mirror engine-side chat into the hub log.
@@ -1453,47 +1575,40 @@ class ConductorService:
         snapshot after a hub restart. Live echoes of user messages are always
         skipped; the hello path keeps them to restore history.
         """
-        if not item or item.get("id") in self._relayed_chat_ids:
+        if not item:
             return
-        if item.get("role") == "user" and not from_hello:
+        if item.get("role") == "user" and not from_hello and self.store is None:
             return
-        self._remember_relayed(item.get("id"))
         role = item.get("role") or "conductor"
         final = bool(item.get("final"))
-        # D4: the engine id is the authoritative chat identity — the mirror
-        # keeps it verbatim so live events and the engine-proxy hydration
-        # dedupe against each other instead of duplicating messages.
-        with self._chat_lock:
-            hub_item = add_chat(
-                item.get("msg", ""), role, self.chat_messages,
-                request_id=item.get("request_id"),
-                kind=("final" if final else None),
-                item_id=item.get("id"),
-            )
-        bus.publish(CONDUCTOR_CHAT, {"item": hub_item})
-        if role == "conductor" and final and item.get("request_id"):
-            tracker = self.workflow_tracker
-            try:
-                transition = tracker.record_final(item["request_id"], hub_item)
-                if transition is not None:
-                    self._publish_workflow_transition(transition)
-            except ValueError:
-                # Expected after a hub restart: the engine replays chat
-                # history whose request_ids this tracker never admitted (and
-                # a second hub instance relays finals it does not own). The
-                # chat line itself is already mirrored above; only the
-                # workflow transition is meaningless here. Degrade to a
-                # warning instead of a traceback storm.
-                log.info(
-                    "ignoring replayed conductor final for untracked "
-                    "request_id %s",
-                    item.get("request_id"),
-                )
-            except Exception:
-                log.exception(
-                    "Conductor final message rejected by workflow: %s",
-                    item.get("request_id"),
-                )
+        hub_item = {**item, "role": role, "ts": item.get("ts") or now_ms(),
+                    "read": role != "user", "final": final}
+        if final:
+            hub_item["kind"] = "final"
+        tracker = self.workflow_tracker
+        with tracker.transaction():
+            if role == "user" and item.get("request_id") and tracker.has_request(item["request_id"]):
+                tracker.set_title(item["request_id"], item.get("msg") or "")
+            if role in ("conductor", "system") and final and item.get("request_id"):
+                if tracker.has_request(item["request_id"]):
+                    transition = tracker.record_final(item["request_id"], hub_item)
+                    if transition is not None:
+                        self._publish_workflow_transition(transition)
+
+            def mirror():
+                with self._chat_lock:
+                    if item.get("id") in self._relayed_chat_ids:
+                        return
+                    self.chat_messages.append(hub_item)
+                    del self.chat_messages[:-200]
+                    self._remember_relayed(item.get("id"))
+                self._publish(CONDUCTOR_CHAT, {"item": hub_item})
+
+            if self.store is not None:
+                self.store.save_chat(hub_item)
+                self.store.defer(mirror)
+            else:
+                mirror()
 
     # ===== dispatch / review through the engine =====
 
@@ -1524,6 +1639,13 @@ class ConductorService:
         hub generates it when absent so a transport-level retry can never
         spawn a second worker for the same logical operation.
         """
+        if self.recovery is not None:
+            return self.commands.submit(operation_id, {
+                "kind": "dispatch", "prompt": prompt, "request_id": request_id,
+                "llm_index": llm_index, "conductor_llm_index": conductor_llm_index,
+                "subagent_llm_index": subagent_llm_index, "subagent_model_policy": subagent_model_policy,
+                "goal": goal, "boundaries": boundaries, "deliverables": deliverables,
+                "done_when": done_when, "checks": checks})
         tracker, models, selected = self._admit_action_models(
             llm_index,
             request_id,
@@ -1595,7 +1717,6 @@ class ConductorService:
         start/input/rework 三个动作动词此前各手抄这四段（多次 debug 已现
         只改一份的漂移）；模型策略优先级链只在此一处实现。
         """
-        self._assert_engine_ready()
         tracker = self._assert_action_request(request_id)
         models = self.configure_models(
             llm_index=conductor_llm_index,
@@ -1635,6 +1756,12 @@ class ConductorService:
         两个动作此前是逐字复制的双胞胎（断言/校验/配置/解析/绑定/setdefault
         六段全同）；动作差异只剩 verb 字符串。
         """
+        if self.recovery is not None:
+            return self.commands.submit(operation_id, {
+                "kind": "action", "sid": sid, "action": action, "msg": msg,
+                "request_id": request_id, "llm_index": llm_index,
+                "conductor_llm_index": conductor_llm_index, "subagent_llm_index": subagent_llm_index,
+                "subagent_model_policy": subagent_model_policy})
         replayed = self._reserve_action_operation(operation_id)
         if replayed is not None:
             return replayed
@@ -1703,6 +1830,10 @@ class ConductorService:
         deterministic verification verdict is not clean (the UI surfaces the
         evidence before offering it).
         """
+        if self.recovery is not None:
+            return self.commands.submit(operation_id, {
+                "kind": "action", "sid": sid, "action": "accept", "msg": msg,
+                "request_id": request_id, "force": force})
         replayed = self._reserve_action_operation(operation_id)
         if replayed is not None:
             return replayed
@@ -1791,6 +1922,9 @@ class ConductorService:
         subagent_llm_index: Optional[int] = None,
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
         operation_id: str | None = None,
+        expected_boot_id: str | None = None,
+        expected_generation: int | None = None,
+        expected_command_revision: int | None = None,
     ) -> dict:
         """Dispatch one POST /api/conductor/subagent/{sid} verb.
 
@@ -1801,6 +1935,22 @@ class ConductorService:
         lives here.
         """
         action = action.lower().strip()
+        if self.recovery is not None:
+            action = {"reply": "input", "append": "input", "message": "input",
+                      "msg": "input", "stop": "abort"}.get(action, action)
+            if action not in SUBAGENT_VERBS:
+                raise ValueError(f"unknown conductor action: {action}")
+            intent = {"kind": "action", "sid": sid, "action": action, "msg": msg,
+                      "request_id": request_id, "force": force, "llm_index": llm_index,
+                      "conductor_llm_index": conductor_llm_index, "subagent_llm_index": subagent_llm_index,
+                      "subagent_model_policy": subagent_model_policy}
+            if action == "abort":
+                intent["origin"] = "hub"
+            intent.update({key: value for key, value in {
+                "expected_boot_id": expected_boot_id, "expected_generation": expected_generation,
+                "expected_command_revision": expected_command_revision,
+            }.items() if value is not None})
+            return self.commands.submit(operation_id, intent)
         if action == "keyinfo":
             # Controlled idempotency exception: keyinfo/abort carry no
             # operation_id replay (the engine's once-per-attempt budget 409
@@ -1848,6 +1998,21 @@ class ConductorService:
         """Pool snapshot (gahub_app enriches generation/request attribution)."""
         return self.pool.snapshot()
 
+    def get_subagent_envelope(self) -> dict:
+        envelope = self.pool.envelope()
+        for item in envelope["items"]:
+            item["stage"] = subagent_stage(status=str(item.get("status") or ""),
+                attempt=int(item.get("attempt") or 1), review_status=str(item.get("review_status") or ""))
+        return envelope
+
+    def get_operation(self, operation_id: str) -> dict:
+        command = self.store.command(operation_id) if self.store is not None else None
+        if command is None:
+            return {"operation_id": operation_id, "known": False}
+        return {"operation_id": operation_id, "known": True, "state": command["state"],
+                "result": command["result"], "request_id": command["payload"].get("request_id"),
+                "updated_at": command["updated_at"]}
+
     def get_workflow_snapshot(self, limit: int = 20) -> list[dict]:
         """Expose the Hub-owned workflow projection for page reloads."""
         return self.workflow_tracker.snapshots(limit=limit)
@@ -1871,6 +2036,11 @@ class ConductorService:
             raise ValueError("request_id is required for a final conductor message")
         if role != "user" and request_id and not tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")
+        if self.recovery is not None:
+            return self.commands.submit(operation_id, {
+                "kind": "chat", "msg": msg, "role": role, "request_id": request_id,
+                "final": kind == "final", "llm_index": llm_index,
+                "subagent_llm_index": subagent_llm_index, "subagent_model_policy": subagent_model_policy})
         reserve_final = kind == "final" and request_id is not None
         if reserve_final:
             # Reserve-first: a retried final replays the recorded item (no

@@ -181,10 +181,8 @@ def test_engine_spawn_env_respects_operator_journal_path(monkeypatch) -> None:
     assert env["GAHUB_JOURNAL_PATH"] == "D:\\custom\\journal.jsonl"
 
 
-def test_engine_spawn_env_injects_deliverable_roots(monkeypatch) -> None:
-    """The spawned engine must accept deliverables outside the GA repo:
-    the default allow-list is GA root + the user GA-Deliverables folder,
-    otherwise tasks naming an outside path strand before dispatch (422)."""
+def test_engine_spawn_env_selects_explicit_absolute_paths(monkeypatch) -> None:
+    """Local engines explicitly accept declared absolute paths on other drives."""
     from pathlib import Path
 
     from server.services import conductor_client as cc
@@ -198,9 +196,8 @@ def test_engine_spawn_env_injects_deliverable_roots(monkeypatch) -> None:
 
     env = cc._engine_spawn_env()
 
-    roots = env["GAHUB_DELIVERABLE_ROOTS"].split(",")
-    assert str(Path("D:/study/GA")) in roots
-    assert str(Path("D:/user-outputs")) in roots
+    assert env["GAHUB_PATH_POLICY"] == "explicit_absolute"
+    assert "GAHUB_DELIVERABLE_ROOTS" not in env
 
 
 def test_engine_spawn_env_respects_operator_deliverable_roots(monkeypatch) -> None:

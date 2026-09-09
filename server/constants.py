@@ -48,6 +48,12 @@ ENV_GAHUB_JOURNAL_PATH = "GAHUB_JOURNAL_PATH"
 # Without it the engine only accepts deliverable paths under the GA repo root,
 # so any user task naming an outside folder strands before dispatch (422).
 ENV_GAHUB_DELIVERABLE_ROOTS = "GAHUB_DELIVERABLE_ROOTS"
+# gahub_app engine (conductor_client/conductor_recovery): how declared
+# deliverable paths are interpreted. "allowed_roots" restricts them to
+# GAHUB_DELIVERABLE_ROOTS; "explicit_absolute" accepts declared absolute
+# paths on any drive. The recovery handshake refuses an engine whose policy
+# mode differs from the hub value instead of guessing.
+ENV_GAHUB_PATH_POLICY = "GAHUB_PATH_POLICY"
 # UI origin allowlist beyond localhost (main.py).
 ENV_GAHUB_ALLOWED_HOSTS = "GAHUB_ALLOWED_HOSTS"
 # mykey sync (routes/mykey.py): sync-site root URL and the credential env

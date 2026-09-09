@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 from ..event_topics import (
@@ -57,6 +58,9 @@ class WorkerState:
 @dataclass
 class WorkflowState:
     request_id: str
+    title: str | None = None
+    admission_state: str = "admitted"
+    boot_id: str | None = None
     state: str = WORKFLOW_ADMITTED
     workers: dict[str, WorkerState] = field(default_factory=dict)
     final_item: dict[str, Any] | None = None
@@ -107,18 +111,76 @@ class WorkflowTracker:
         self._lock = threading.RLock()
         self._workflows: dict[str, WorkflowState] = {}
         self._owners: dict[str, str] = {}
+        self.store = None
 
-    def admit(self, request_id: str) -> None:
+    @contextmanager
+    def transaction(self):
+        with self.store.transaction() if self.store is not None else self._lock:
+            yield
+
+    def export_state(self) -> list[dict]:
         with self._lock:
+            return [asdict(workflow) for workflow in self._workflows.values()]
+
+    def _touch(self, request_id: str) -> None:
+        if self.store is not None:
+            self.store.track_workflow(request_id)
+
+    def restore_state(self, items: list[dict]) -> None:
+        with self._lock:
+            self._workflows = {}
+            self._owners = {}
+            for item in items:
+                workflow = self._decode_state(item)
+                self._workflows[workflow.request_id] = workflow
+                for sid in workflow.workers:
+                    self._owners[sid] = workflow.request_id
+
+    @staticmethod
+    def _decode_state(item: dict) -> WorkflowState:
+        data = dict(item)
+        workers = {sid: WorkerState(**value) for sid, value in data.pop("workers", {}).items()}
+        return WorkflowState(**data, workers=workers)
+
+    def _get(self, request_id: str) -> WorkflowState | None:
+        workflow = self._workflows.get(request_id)
+        if workflow is None and self.store is not None:
+            saved = self.store.workflow(request_id)
+            if saved is not None:
+                workflow = self._decode_state(saved)
+        return workflow
+
+    def set_title(self, request_id: str, title: str) -> None:
+        with self.transaction():
+            workflow = self._require(request_id)
+            if not workflow.title:
+                workflow.title = title[:5000]
+
+    def admit(self, request_id: str, *, admission_state: str = "admitted",
+              boot_id: str | None = None) -> None:
+        with self.transaction():
+            existing = self._get(request_id)
+            if existing is not None:
+                self._workflows[request_id] = existing
+            self._touch(request_id)
             self._workflows.setdefault(
                 request_id,
-                WorkflowState(request_id=request_id, created_at=self._clock()),
+                WorkflowState(request_id=request_id, created_at=self._clock(),
+                              admission_state=admission_state, boot_id=boot_id),
             )
             self._prune_terminal()
 
+    def confirm_admission(self, request_id: str, boot_id: str | None) -> None:
+        with self.transaction():
+            self.admit(request_id, boot_id=boot_id)
+            workflow = self._require(request_id)
+            workflow.admission_state = "admitted"
+            if boot_id:
+                workflow.boot_id = boot_id
+
     def has_request(self, request_id: str) -> bool:
         with self._lock:
-            return request_id in self._workflows
+            return self._get(request_id) is not None
 
     def is_open(self, request_id: str) -> bool:
         """True when the workflow exists and has not reached a terminal event.
@@ -127,18 +189,18 @@ class WorkflowTracker:
         rework or fresh dispatch, so a user follow-up belongs to it.
         """
         with self._lock:
-            workflow = self._workflows.get(request_id)
+            workflow = self._get(request_id)
             return workflow is not None and workflow.terminal_event is None
 
     def request_for_subagent(self, agent_id: str) -> str | None:
         with self._lock:
-            return self._owners.get(agent_id)
+            return self._owners.get(agent_id) or (self.store.worker_owner(agent_id) if self.store is not None else None)
 
     def bind_subagent(
         self, request_id: str, agent_id: str, generation: int
     ) -> dict[str, Any] | None:
         """Bind a committed worker generation to one admitted request."""
-        with self._lock:
+        with self.transaction():
             workflow = self._require(request_id)
             if workflow.terminal_event is not None:
                 raise ValueError(f"workflow {request_id} is already terminal")
@@ -163,12 +225,12 @@ class WorkflowTracker:
         error: str = "",
     ) -> tuple[str | None, tuple[str, dict[str, Any]] | None]:
         """Apply one lifecycle event and return an optional workflow bus event."""
-        with self._lock:
-            owner = self._owners.get(agent_id)
+        with self.transaction():
+            owner = self.request_for_subagent(agent_id)
             if request_id is not None:
                 workflow = self._require(request_id)
                 if owner is not None and owner != request_id:
-                    previous = self._workflows.get(owner)
+                    previous = self._get(owner)
                     if previous is None or previous.terminal_event is None:
                         raise ValueError(
                             f"subagent {agent_id} belongs to request {owner}, not {request_id}"
@@ -186,6 +248,7 @@ class WorkflowTracker:
             workflow = self._workflows.get(owner)
             if workflow is None:
                 return None, None
+            self._touch(owner)
             worker = workflow.workers.get(agent_id)
             event_generation = generation if generation is not None else 0
             if worker is None:
@@ -249,8 +312,10 @@ class WorkflowTracker:
     def record_final(
         self, request_id: str, item: dict[str, Any]
     ) -> tuple[str, dict[str, Any]] | None:
-        with self._lock:
+        with self.transaction():
             workflow = self._require(request_id)
+            if workflow.final_item is not None and workflow.final_item.get("id") == item.get("id"):
+                return None
             self._assert_ready_for_final(workflow)
             workflow.final_item = item
             completed = self._complete_if_ready(workflow)
@@ -265,10 +330,11 @@ class WorkflowTracker:
     def fail_supervisor(
         self, request_id: str, *, phase: str, error: str
     ) -> tuple[str, dict[str, Any]] | None:
-        with self._lock:
+        with self.transaction():
             workflow = self._workflows.get(request_id)
             if workflow is None or workflow.terminal_event is not None:
                 return None
+            self._touch(request_id)
             workflow.state = WORKFLOW_FAILED
             workflow.completed_at = self._clock()
             workflow.terminal_event = "workflow_failed"
@@ -281,14 +347,18 @@ class WorkflowTracker:
 
     def snapshot(self, request_id: str) -> dict[str, Any] | None:
         with self._lock:
-            workflow = self._workflows.get(request_id)
+            workflow = self._get(request_id)
             return self._payload(workflow) if workflow is not None else None
 
     def snapshots(self, limit: int = 20) -> list[dict[str, Any]]:
         """Return recent workflows in creation order for UI recovery."""
         with self._lock:
+            candidates = {}
+            if self.store is not None:
+                candidates = {item["request_id"]: self._decode_state(item) for item in self.store.recent_workflows(limit)}
+            candidates.update(self._workflows)
             workflows = sorted(
-                self._workflows.values(),
+                candidates.values(),
                 key=lambda workflow: workflow.created_at,
             )[-max(1, limit):]
             return [self._payload(workflow) for workflow in workflows]
@@ -328,13 +398,14 @@ class WorkflowTracker:
         are swept — supervising/awaiting_review workflows keep their own
         terminal path via worker CANCELLED events.
         """
-        with self._lock:
+        with self.transaction():
             transitions: list[tuple[str, dict[str, Any]]] = []
             for workflow in list(self._workflows.values()):
                 if (workflow.terminal_event is not None
                         or workflow.state != WORKFLOW_ADMITTED
                         or workflow.workers):
                     continue
+                self._touch(workflow.request_id)
                 workflow.state = WORKFLOW_FAILED
                 workflow.completed_at = self._clock()
                 workflow.terminal_event = "workflow_failed"
@@ -348,9 +419,11 @@ class WorkflowTracker:
             return transitions
 
     def _require(self, request_id: str) -> WorkflowState:
-        workflow = self._workflows.get(request_id)
+        workflow = self._get(request_id)
         if workflow is None:
             raise ValueError(f"unknown conductor request_id: {request_id}")
+        self._workflows[request_id] = workflow
+        self._touch(request_id)
         return workflow
 
     @staticmethod
@@ -385,7 +458,9 @@ class WorkflowTracker:
                 "cannot finalize without at least one accepted subagent"
             )
 
-    def _prune_terminal(self) -> None:
+    def _prune_terminal(self, *, committed: bool = False) -> None:
+        if self.store is not None and not committed:
+            return
         overflow = len(self._workflows) - self._max_workflows
         if overflow <= 0:
             return
@@ -435,6 +510,9 @@ class WorkflowTracker:
         }
         payload: dict[str, Any] = {
             "request_id": workflow.request_id,
+            "title": workflow.title,
+            "admission_state": workflow.admission_state,
+            "boot_id": workflow.boot_id,
             "status": workflow.state,
             # UI stage decided by the tracker; the page only renders it.
             "stage": workflow_stage(workflow),

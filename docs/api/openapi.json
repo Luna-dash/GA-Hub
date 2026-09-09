@@ -1914,6 +1914,45 @@
         }
       }
     },
+    "/api/conductor/operations/{operation_id}": {
+      "get": {
+        "summary": "Get Operation",
+        "operationId": "get_operation_api_conductor_operations__operation_id__get",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Operation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorOperationResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/conductor/workflow": {
       "get": {
         "summary": "List Workflows",
@@ -5297,6 +5336,59 @@
             "title": "Auto Accept",
             "default": true
           },
+          "boot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boot Id"
+          },
+          "protocol_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Protocol Version"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Capabilities"
+          },
+          "path_policy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path Policy"
+          },
+          "recovery": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recovery"
+          },
           "ok": {
             "type": "boolean",
             "title": "Ok"
@@ -5471,6 +5563,69 @@
         ],
         "title": "ConductorManifestCheck",
         "description": "One deterministic acceptance probe evaluated by the engine itself.\n\nRead-only probes plus fixed-template run checks (no arbitrary commands,\nno shell — mirrors the engine's ManifestCheck contract)."
+      },
+      "ConductorOperationResp": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "known": {
+            "type": "boolean",
+            "title": "Known"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation_id",
+          "known"
+        ],
+        "title": "ConductorOperationResp"
       },
       "ConductorSettingsReq": {
         "properties": {
@@ -5700,6 +5855,59 @@
             "type": "boolean",
             "title": "Auto Accept",
             "default": true
+          },
+          "boot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boot Id"
+          },
+          "protocol_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Protocol Version"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Capabilities"
+          },
+          "path_policy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path Policy"
+          },
+          "recovery": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recovery"
           }
         },
         "type": "object",
@@ -5784,6 +5992,27 @@
             "type": "integer",
             "title": "Generation",
             "default": 0
+          },
+          "active_generation": {
+            "type": "integer",
+            "title": "Active Generation",
+            "default": 0
+          },
+          "command_revision": {
+            "type": "integer",
+            "title": "Command Revision",
+            "default": 0
+          },
+          "boot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boot Id"
           },
           "llm_index": {
             "anyOf": [
@@ -5881,6 +6110,42 @@
             "type": "boolean",
             "title": "Force",
             "default": false
+          },
+          "expected_boot_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Boot Id"
+          },
+          "expected_generation": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Generation"
+          },
+          "expected_command_revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Command Revision"
           },
           "operation_id": {
             "anyOf": [
@@ -6048,6 +6313,22 @@
             },
             "type": "array",
             "title": "Items"
+          },
+          "boot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boot Id"
+          },
+          "snapshot_revision": {
+            "type": "integer",
+            "title": "Snapshot Revision",
+            "default": -1
           }
         },
         "type": "object",
@@ -6074,6 +6355,33 @@
           "request_id": {
             "type": "string",
             "title": "Request Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "admission_state": {
+            "type": "string",
+            "title": "Admission State",
+            "default": "admitted"
+          },
+          "boot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boot Id"
           },
           "status": {
             "type": "string",

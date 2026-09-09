@@ -14,7 +14,14 @@ rem every stale gahub_app python (a hung one may hold the 18766 singleton
 rem lock) and start a fresh engine. Env matches
 rem server/services/conductor_client.py::_engine_spawn_env().
 setlocal
-set "GAHUB_DELIVERABLE_ROOTS=D:\study\GA,C:\Users\lunagent\GA-Deliverables"
+rem Keep path policy explicit so empty roots cannot change meaning by version.
+if not defined GAHUB_PATH_POLICY (
+    if defined GAHUB_DELIVERABLE_ROOTS (
+        set "GAHUB_PATH_POLICY=allowed_roots"
+    ) else (
+        set "GAHUB_PATH_POLICY=explicit_absolute"
+    )
+)
 set "GAHUB_JOURNAL_PATH=C:\Users\lunagent\.genericagent-admin\gahub_journal\journal.jsonl"
 powershell -NoProfile -Command "try { $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 'http://127.0.0.1:18770/health'; if ($r.StatusCode -eq 200) { exit 0 } } catch { }; Get-CimInstance Win32_Process -Filter \"Name like 'python%%'\" | Where-Object { $_.CommandLine -match 'gahub_app' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; exit 1"
 if %ERRORLEVEL% EQU 0 exit /b 0

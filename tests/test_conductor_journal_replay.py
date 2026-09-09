@@ -280,7 +280,7 @@ def test_replay_journal_handles_engine_restart_with_fresh_epoch():
 
     service._replay_journal()
 
-    assert fed == [{"event": "engine_started"}, {"event": "subagent_started"}]
+    assert fed == [{"event": "engine_started", "jseq": 1}, {"event": "subagent_started", "jseq": 2}]
     assert service._journal_cursor == {"seq": 2, "epoch": "new-epoch"}
     assert service.client.reads == [(3, 5000), (0, 5000)]
 
@@ -323,8 +323,7 @@ def test_replay_journal_paginates_when_backlog_exceeds_one_page():
 
     service._replay_journal()
 
-    assert fed == [{"event": "a"}, {"event": "b"}, {"event": "c"},
-                   {"event": "d"}, {"event": "e"}]
+    assert fed == [{"event": name, "jseq": seq} for seq, name in enumerate("abcde", 1)]
     assert service.client.reads == [(0, 2), (2, 2), (4, 2)]
     assert service._journal_cursor["seq"] == 5
 
