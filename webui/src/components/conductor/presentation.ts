@@ -59,6 +59,77 @@ export function reviewFacts(sub: ConductorSubagent): SubagentReviewFacts {
   return sub as SubagentReviewFacts
 }
 
+/** Engine-verified deliverable checks; plan-milestone checks are excluded. */
+function deliverableChecks(facts: SubagentReviewFacts) {
+  return (facts.quality_checks?.checks ?? []).filter((check) => {
+    const kind = check.kind ?? ''
+    return kind === 'path_exists' || kind === 'file_exists'
+      || kind === 'file_contains' || kind === 'file_modified_after'
+  })
+}
+
+/**
+ * The deliverable list for one worker. The engine snapshot carries a manifest,
+ * but journal-backfilled archive rows do not — their prompt still contains the
+ * contract sections the hub rendered ([Deliverables] "- path -- desc"), and the
+ * machine checks list every delivered path. Reading only the manifest showed a
+ * verified task as "0 交付", so rebuild the list from those two sources.
+ */
+export function deliverablesOf(facts: SubagentReviewFacts): Array<{ path?: string; desc?: string }> {
+  const manifest = facts.manifest?.deliverables
+  if (manifest && manifest.length > 0) return manifest
+  const fromPrompt = parseContractDeliverables(facts.prompt ?? '')
+  if (fromPrompt.length > 0) return fromPrompt
+  const seen = new Set<string>()
+  const paths: Array<{ path: string }> = []
+  for (const check of deliverableChecks(facts)) {
+    const path = check.path
+    if (path && !seen.has(path)) {
+      seen.add(path)
+      paths.push({ path })
+    }
+  }
+  for (const path of [...(facts.deliverables_missing ?? []), ...(facts.deliverables_stale ?? [])]) {
+    if (!seen.has(path)) {
+      seen.add(path)
+      paths.push({ path })
+    }
+  }
+  return paths
+}
+
+/** Extract "[Deliverables]" entries: "- <path>" with optional " -- desc". */
+export function parseContractDeliverables(prompt: string): Array<{ path?: string; desc?: string }> {
+  const match = /\[Deliverables\][^\n]*\n([\s\S]*?)(?=\n\[|$)/.exec(prompt)
+  if (!match) return []
+  const items: Array<{ path?: string; desc?: string }> = []
+  for (const line of match[1].split('\n')) {
+    const entry = /^-\s*(.+)$/.exec(line.trim())?.[1]
+    if (!entry) {
+      // The section ends at the first non-item line (the root-policy note).
+      if (line.trim() && items.length > 0) break
+      continue
+    }
+    const [rawPath, ...rest] = entry.split(' -- ')
+    const path = rawPath.trim()
+    // Guard against the note line sneaking in: only accept path-looking text.
+    if (!path || /[（()）\s]allowed|must resolve/i.test(path)) continue
+    items.push({ path, ...(rest.length > 0 ? { desc: rest.join(' -- ').trim() } : {}) })
+  }
+  return items
+}
+
+/**
+ * Verification badge for one deliverable path: machine checks carry the
+ * truth when a manifest is absent, so a passed check on this path renders ✓
+ * even on archive rows.
+ */
+export function deliverableVerified(facts: SubagentReviewFacts, path: string): boolean | undefined {
+  const relevant = deliverableChecks(facts).filter((check) => check.path === path)
+  if (relevant.length === 0) return undefined
+  return relevant.every((check) => check.passed === true || check.status === 'passed')
+}
+
 export function basenamePath(path: string): string {
   const parts = path.replace(/\\/g, '/').split('/')
   return parts[parts.length - 1] || path

@@ -9,6 +9,8 @@ import { MessageContent } from '@/components/MessageContent'
 import { formatClock } from '@/utils/timeFormat'
 import {
   basenamePath,
+  deliverableVerified,
+  deliverablesOf,
   milestonesOf,
   phaseDot,
   reviewFacts,
@@ -17,9 +19,9 @@ import {
   workerTitle,
 } from './presentation'
 
-export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expanded = false, onToggle, onOpenDossier }: {
+export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expanded = false, onToggle }: {
   sub: ConductorSubagent; index?: number; selected: boolean; expanded?: boolean
-  onToggle: () => void; onOpenDossier: () => void
+  onToggle: () => void
 }) {
   const view = subagentPhase(sub)
   const facts = reviewFacts(sub)
@@ -31,7 +33,7 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
   const reached = milestones.filter(item => Boolean(item.reached_at)).length
   const progress = milestones.length > 0 ? Math.round((reached / milestones.length) * 100) : view.phase === 'accepted' ? 100 : 0
   const StatusIcon = view.phase === 'running' || view.phase === 'reworking' ? LoaderCircle : view.phase === 'accepted' ? CheckCircle2 : CircleDashed
-  const deliverables = facts.manifest?.deliverables ?? []
+  const deliverables = deliverablesOf(facts)
   const missing = new Set(facts.deliverables_missing ?? [])
   const stale = new Set(facts.deliverables_stale ?? [])
   const reply = stripContractTail((sub.reply || '').trim())
@@ -48,7 +50,7 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
       <h3 className="conductor-worker-title">{workerTitle(sub)}</h3>
       {!expanded && <p className="conductor-worker-summary">{summary}</p>}
       <span className="conductor-worker-progress" aria-label={`${workerTitle(sub)}里程碑进度`} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></span>
-      <span className="conductor-worker-meta"><span><FileCheck2 size={13} />{facts.manifest?.deliverables?.length ?? 0} 项交付</span>
+      <span className="conductor-worker-meta"><span><FileCheck2 size={13} />{deliverables.length} 项交付</span>
         <span><ListChecks size={13} />{reached}/{milestones.length} 里程碑</span>
         {sub.attempt > 1 && <span>第 {sub.attempt} 次</span>}</span>
     </button>
@@ -80,10 +82,15 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
                 const path = item.path || `交付物 ${index2 + 1}`
                 const gone = missing.has(path)
                 const untouched = stale.has(path)
+                // Without a live manifest the engine's machine checks are the
+                // only evidence on record; say "已约定" when there are none.
+                const verified = deliverableVerified(facts, path)
+                const state = gone ? '缺失' : untouched ? '未更新' : verified === false ? '未通过'
+                  : verified === true || facts.manifest?.deliverables?.length ? '✓' : '已约定'
                 return <li key={path} className={gone ? 'is-missed' : untouched ? 'is-stale' : 'is-done'}>
                   <span className="conductor-worker-process-dot" aria-hidden="true" />
                   <span className="min-w-0 flex-1 break-all">{basenamePath(path)}</span>
-                  <span className="conductor-worker-process-time">{gone ? '缺失' : untouched ? '未更新' : '✓'}</span>
+                  <span className="conductor-worker-process-time">{state}</span>
                 </li>
               })}
             </ul>
@@ -98,17 +105,16 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
           ) : (
             <p className="conductor-worker-noresult">
               {sub.status === 'running' ? '还没有可展示的中间结果。'
-                : archived ? '存档未保留文字结果；里程碑与机器检查仍可查看。'
-                  : '没有文字结果；完整卷宗里可核对交付物路径。'}
+                : archived ? '存档未保留执行正文，事后无法找回；可对照上方交付物路径直接打开文件核对。'
+                  : '没有文字结果；可对照上方交付物路径直接打开文件核对。'}
             </p>
           )}
         </section>
-        <div className="conductor-worker-process-actions">
-          {sub.review_note && <p className="conductor-worker-review-note">上一轮验收意见：{sub.review_note}</p>}
-          <button type="button" className="ga-btn w-full justify-center px-2 text-xs" onClick={onOpenDossier}>
-            <FileCheck2 size={13} />打开完整卷宗
-          </button>
-        </div>
+        {sub.review_note && (
+          <div className="conductor-worker-process-actions">
+            <p className="conductor-worker-review-note">上一轮验收意见：{sub.review_note}</p>
+          </div>
+        )}
       </div>
     )}
   </article>

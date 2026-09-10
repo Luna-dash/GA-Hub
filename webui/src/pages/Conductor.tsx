@@ -624,10 +624,18 @@ export default function Conductor() {
                 {workflowSubagents.map((sub, index) => <WorkerCard key={sub.id} sub={sub} index={index + 1} selected={sub.id === selectedSid}
                   expanded={sub.id === expandedSid}
                   onToggle={() => {
+                    // One click is "open this worker": it selects the dossier
+                    // AND brings the delivery tab forward, replacing the old
+                    // redundant 打开完整卷宗 button. Collapsing leaves the
+                    // right panel alone.
+                    const willExpand = expandedSid !== sub.id
                     setSelectedSid(sub.id)
-                    setExpandedSid((current) => current === sub.id ? null : sub.id)
-                  }}
-                  onOpenDossier={() => { setSelectedSid(sub.id); setContextTab('delivery'); setMobileView('context') }} />)}
+                    setExpandedSid(willExpand ? sub.id : null)
+                    if (willExpand) {
+                      setContextTab('delivery')
+                      setMobileView('context')
+                    }
+                  }} />)}
                 </div>
                 {workflowSubagents.length === 0 && <div className="conductor-empty"><LayoutGrid size={26} strokeWidth={1.4} /><p>{currentWorkflow && workerCount
                   ? '子代理已从引擎池中清除，且未保留存档明细'

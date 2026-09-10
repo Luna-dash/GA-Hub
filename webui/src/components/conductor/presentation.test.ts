@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  deliverablesOf,
+  deliverableVerified,
   isWorkflowClosed,
   milestoneCheckSummary,
+  parseContractDeliverables,
   splitReplyByMilestones,
   stripContractTail,
+  type SubagentReviewFacts,
   type WorkerMilestone,
 } from './presentation'
 
@@ -124,5 +128,85 @@ describe('milestoneCheckSummary', () => {
   it('falls back to a generic label', () => {
     expect(milestoneCheckSummary(null)).toBe('机械检查')
     expect(milestoneCheckSummary({ kind: 'exotic' })).toBe('机械检查')
+  })
+})
+
+describe('deliverable reconstruction', () => {
+  // The shape the hub renders into every worker prompt; the journal keeps the
+  // prompt but not the manifest, so this is what archive rows must be parsed
+  // from. The trailing root-policy sentence is not a deliverable.
+  const contractPrompt = [
+    '[Task Goal]',
+    '列出 pages 目录的本地 import',
+    '',
+    '[Deliverables] (write each file to its exact absolute path)',
+    '- D:\\study\\GA\\temp\\页面依赖.md',
+    '',
+    'Every deliverable path must resolve under an allowed root (allowed at startup: D:\\study\\GA);',
+    'out-of-root files fail verification with 422.',
+    '',
+    '[Done When]',
+    '文件存在且非空',
+  ].join('\n')
+
+  it('parses the contract deliverables section without the policy note', () => {
+    expect(parseContractDeliverables(contractPrompt)).toEqual([
+      { path: 'D:\\study\\GA\\temp\\页面依赖.md' },
+    ])
+  })
+
+  it('keeps the optional description', () => {
+    expect(parseContractDeliverables('[Deliverables]\n- D:/out/a.md -- 索引文件\n')).toEqual([
+      { path: 'D:/out/a.md', desc: '索引文件' },
+    ])
+  })
+
+  it('returns nothing for prompts without the section', () => {
+    expect(parseContractDeliverables('[Task Goal]\n随手写点东西')).toEqual([])
+    expect(parseContractDeliverables('')).toEqual([])
+  })
+
+  it('prefers the live manifest and falls back to the prompt, then to checks', () => {
+    const withManifest = { manifest: { deliverables: [{ path: 'D:/live.md' }] } } as SubagentReviewFacts
+    expect(deliverablesOf(withManifest)).toEqual([{ path: 'D:/live.md' }])
+
+    const archived = { prompt: contractPrompt } as SubagentReviewFacts
+    expect(deliverablesOf(archived)).toEqual([{ path: 'D:\\study\\GA\\temp\\页面依赖.md' }])
+
+    // No manifest and no contract section: the machine checks name the paths.
+    const checksOnly = {
+      prompt: 'no contract here',
+      quality_checks: { checks: [
+        { kind: 'path_exists', path: 'D:/out/report.md', passed: true },
+        { kind: 'file_contains', path: 'D:/out/report.md', passed: true },
+        { kind: 'python_compile', path: 'D:/out/helper.py', passed: true },
+      ] },
+      deliverables_missing: ['D:/out/gone.md'],
+    } as unknown as SubagentReviewFacts
+    expect(deliverablesOf(checksOnly)).toEqual([
+      { path: 'D:/out/report.md' },
+      { path: 'D:/out/gone.md' },
+    ])
+  })
+
+  it('reports verification truth per path and ignores plan-only check kinds', () => {
+    const facts = {
+      quality_checks: { checks: [
+        { kind: 'path_exists', path: 'D:/out/report.md', passed: true },
+        { kind: 'file_contains', path: 'D:/out/report.md', passed: false },
+        { kind: 'archive_contains', path: 'D:/out/other.md', passed: true },
+      ] },
+    } as unknown as SubagentReviewFacts
+    expect(deliverableVerified(facts, 'D:/out/report.md')).toBe(false)
+    expect(deliverableVerified(facts, 'D:/out/other.md')).toBe(undefined)
+    expect(deliverableVerified(facts, 'D:/out/unknown.md')).toBe(undefined)
+
+    const allPassed = {
+      quality_checks: { checks: [
+        { kind: 'path_exists', path: 'D:/out/report.md', passed: true, status: 'passed' },
+        { kind: 'file_contains', path: 'D:/out/report.md', status: 'passed' },
+      ] },
+    } as unknown as SubagentReviewFacts
+    expect(deliverableVerified(allPassed, 'D:/out/report.md')).toBe(true)
   })
 })

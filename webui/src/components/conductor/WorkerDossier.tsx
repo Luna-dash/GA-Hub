@@ -11,6 +11,8 @@ import { formatClock } from '@/utils/timeFormat'
 import type { SubagentRowControl } from './presentation'
 import {
   basenamePath,
+  deliverablesOf,
+  deliverableVerified,
   isReviewable,
   milestoneCheckSummary,
   milestonesOf,
@@ -63,7 +65,10 @@ export function WorkerDossier({
     enabled: !archived,
   })
   const detail = reviewFacts(data ?? sub)
-  const deliverables = detail.manifest?.deliverables ?? facts.manifest?.deliverables ?? []
+  // Manifest first (live snapshots carry it); archive rows rebuild the list
+  // from the prompt's contract section and the machine checks, so a verified
+  // delivery never shows as "0 交付" just because the journal lacked a manifest.
+  const deliverables = deliverablesOf(detail)
   const missing = new Set(detail.deliverables_missing ?? facts.deliverables_missing ?? [])
   const stale = new Set(detail.deliverables_stale ?? facts.deliverables_stale ?? [])
   const checks = detail.quality_checks?.checks ?? facts.quality_checks?.checks ?? []
@@ -124,9 +129,13 @@ export function WorkerDossier({
                 const path = item.path || `交付物 ${index + 1}`
                 const gone = missing.has(path)
                 const untouched = stale.has(path)
+                const verified = deliverableVerified(detail, path)
+                const mark = gone ? '✗ 缺失' : untouched ? '△ 未更新'
+                  : verified === false ? '✗ 未通过'
+                    : verified === true || detail.manifest?.deliverables?.length ? '✓' : '·'
                 return (
                   <li key={path} className={clsx('break-all', gone && 'text-status-danger', untouched && !gone && 'text-status-warning-strong')}>
-                    {gone ? '✗ 缺失' : untouched ? '△ 未更新' : '✓'} {path}
+                    {mark} {path}
                     {item.desc ? ` · ${item.desc}` : ''}
                     {item.path && (
                       <span className="ml-2 inline-flex gap-2 align-baseline text-[11px] text-status-info">
@@ -249,7 +258,9 @@ export function WorkerDossier({
             <p className="mt-1 text-xs text-ink-muted">
               {sub.status === 'running'
                 ? '还没有可展示的中间结果。'
-                : '没有文字结果。请对照上面的交付物路径直接打开文件核对。'}
+                : archived
+                  ? '存档未保留执行正文（引擎日志只记录长度，事后无法找回）；请对照上方交付物路径直接打开文件核对。'
+                  : '没有文字结果。请对照上面的交付物路径直接打开文件核对。'}
             </p>
           )}
         </section>

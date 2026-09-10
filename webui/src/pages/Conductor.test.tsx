@@ -1033,24 +1033,31 @@ describe('Conductor chat scroll restoration', () => {
     expect(mocks.revealFile).toHaveBeenCalledWith('D:/out/report.md', 'folder')
   })
 
-  it('switches context tabs and mobile views without losing the selected worker', async () => {
+  it('opens the dossier straight from the worker card without a redundant button', async () => {
     setSubagentFixtures()
     renderPage()
     await waitFor(() => expect(host.querySelector('.conductor-worker-toggle')).toBeTruthy())
     const worker = host.querySelector('.conductor-worker-toggle') as HTMLButtonElement
+    expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(true)
     act(() => worker.click())
-    expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('board')
+    // One click is "open this worker": the card expands inline, the dossier
+    // follows, and the delivery tab comes forward — no second button, and
+    // collapsing must not disturb the right panel.
     expect(host.querySelector('.conductor-worker-process')).toBeTruthy()
-    expect(host.querySelector('#conductor-panel-chat')?.hasAttribute('hidden')).toBe(false)
-    act(() => button('打开完整卷宗').click())
-    expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('context')
     expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(false)
+    expect(host.querySelector('#conductor-panel-chat')?.hasAttribute('hidden')).toBe(true)
+    expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('context')
+    expect(worker.getAttribute('aria-pressed')).toBe('true')
+    expect(host.textContent).not.toContain('打开完整卷宗')
     act(() => button('动态').click())
     expect(host.querySelector('#conductor-panel-activity')?.hasAttribute('hidden')).toBe(false)
     expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(true)
     act(() => button('当前任务').click())
     expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('board')
     expect(worker.getAttribute('aria-pressed')).toBe('true')
+    act(() => worker.click())
+    expect(host.querySelector('.conductor-worker-process')).toBe(null)
+    expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(true)
   })
 
   it('filters and searches task cards and preserves the original task title', async () => {
