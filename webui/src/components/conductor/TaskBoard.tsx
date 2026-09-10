@@ -1,15 +1,16 @@
 // TaskBoard — history compressed into one collapsible bar; each row carries
 // a delete action. Terminal rows are always deletable; while the conductor
 // runs, live rows stay locked — once it stops (paused session) all are.
+// Rows are intentionally minimal: title + counts + time, and a single status
+// glyph at the end (✓ done / ✗ failed / ◔ running) — no badges, filters,
+// search or sort; with a handful of tasks those are ceremony, not help.
 import { memo, useEffect, useMemo, useState } from 'react'
-import { AlertCircle, CheckCircle2, ChevronDown, Clock3, History, Search, Trash2 } from 'lucide-react'
+import { CheckCircle2, ChevronDown, History, Loader, Trash2, XCircle } from 'lucide-react'
 import type { ConductorWorkflow, ConductorSubagent } from '@/api/types'
 import { storageKeys } from '@/config/storageKeys'
 import { formatRelativeTime } from '@/utils/timeFormat'
 import { isReviewable, isWorkflowClosed, workflowPresentation } from './presentation'
-import { WorkflowBadge } from './WorkflowBadge'
 
-type Filter = 'all' | 'active' | 'attention' | 'done'
 type Props = {
   workflows: ConductorWorkflow[]
   workers: ConductorSubagent[]
@@ -22,9 +23,6 @@ type Props = {
 }
 
 export const TaskBoard = memo(function TaskBoard({ workflows, workers, titles, selectedId, started, onSelect, onDelete, deletingIds }: Props) {
-  const [filter, setFilter] = useState<Filter>('all')
-  const [search, setSearch] = useState('')
-  const [sort, setSort] = useState('attention')
   const [listOpen, setListOpen] = useState(() => localStorage.getItem(storageKeys.conductorHistoryOpen) === '1')
   useEffect(() => {
     localStorage.setItem(storageKeys.conductorHistoryOpen, listOpen ? '1' : '0')
@@ -60,18 +58,11 @@ export const TaskBoard = memo(function TaskBoard({ workflows, workers, titles, s
       title: titles.get(workflow.request_id) || '未命名任务', total }
     })
   }, [workflows, workers, titles, started])
-  const counts = {
-    all: rows.length, active: rows.filter(row => !row.closed).length,
-    attention: rows.filter(row => row.needsAttention).length,
-    done: rows.filter(row => row.workflow.status === 'completed').length,
-  }
-  const visible = rows.filter(row => (
-    (filter === 'all' || (filter === 'active' && !row.closed)
-      || (filter === 'attention' && row.needsAttention) || (filter === 'done' && row.workflow.status === 'completed'))
-    && `${row.title} ${row.workflow.request_id}`.toLowerCase().includes(search.trim().toLowerCase())
-  )).sort((a, b) => sort === 'attention'
-    ? Number(b.needsAttention) - Number(a.needsAttention) || b.workflow.created_at - a.workflow.created_at
-    : b.workflow.created_at - a.workflow.created_at)
+  const attentionCount = rows.filter(row => row.needsAttention).length
+  // Fixed order: whatever needs a human decision first, then newest first.
+  // A one-glance list does not need a sort control.
+  const visible = [...rows].sort((a, b) =>
+    Number(b.needsAttention) - Number(a.needsAttention) || b.workflow.created_at - a.workflow.created_at)
 
   return <section aria-label="任务历史" className="conductor-history">
     <button type="button" className="conductor-history-bar" aria-expanded={listOpen}
@@ -79,38 +70,24 @@ export const TaskBoard = memo(function TaskBoard({ workflows, workers, titles, s
       onClick={() => setListOpen(value => !value)}>
       <History size={15} />
       <h2>历史任务 <span>{workflows.length}</span></h2>
-      {counts.attention > 0 && <span className="conductor-history-bar-attention">{counts.attention} 待处理</span>}
+      {attentionCount > 0 && <span className="conductor-history-bar-attention">{attentionCount} 待处理</span>}
       <ChevronDown size={15} className="conductor-history-chevron" data-open={listOpen || undefined} />
     </button>
     {listOpen && (
       <div className="conductor-history-body">
-        <div className="conductor-board-tools">
-          <div className="conductor-filters" role="tablist" aria-label="任务状态">
-            {([['all', '全部'], ['active', '进行中'], ['attention', '待处理'], ['done', '已完成']] as const).map(([key, label]) => (
-              <button key={key} role="tab" aria-selected={filter === key} onClick={() => setFilter(key)}>
-                {label}<span>{counts[key]}</span>
-              </button>
-            ))}
-          </div>
-          <label className="conductor-search"><Search size={15} aria-hidden="true" />
-            <input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索任务" aria-label="搜索任务" />
-          </label>
-          <select aria-label="任务排序" value={sort} onChange={event => setSort(event.target.value)}>
-            <option value="attention">待处理优先</option><option value="recent">最新任务优先</option>
-          </select>
-        </div>
         <div className="conductor-history-list" aria-label="历史任务列表">
-          {visible.map(({ workflow, title, view, total, accepted, needsAttention, deletable }) => (
+          {visible.map(({ workflow, title, view, total, accepted, needsAttention, deletable, closed }) => (
             <div key={workflow.request_id} className="conductor-history-item" data-deleting={deletingIds?.has(workflow.request_id) || undefined}>
               <button type="button" className="conductor-history-row"
                 data-selected={selectedId === workflow.request_id} aria-current={selectedId === workflow.request_id ? 'true' : undefined}
                 onClick={() => onSelect(workflow.request_id)} aria-label={`切换到任务：${title}`}>
-                <span className="conductor-history-status"><WorkflowBadge tone={view.tone} label={view.label} />
-                  {needsAttention ? <AlertCircle size={15} className="text-status-warning-strong" />
-                    : workflow.status === 'completed' ? <CheckCircle2 size={15} className="text-status-success" /> : <Clock3 size={15} />}
-                </span>
                 <span className="conductor-history-title">{title}</span>
                 <span className="conductor-history-meta"><span>{total ? `${accepted}/${total} 子任务已通过` : '尚未指派'}</span><time>{formatRelativeTime(workflow.created_at)}</time></span>
+                <span className="conductor-history-status" title={view.label}>
+                  {workflow.status === 'completed' ? <CheckCircle2 size={15} className="text-status-success" />
+                    : closed ? <XCircle size={15} className="text-status-danger" />
+                    : <Loader size={15} className="conductor-history-running" />}
+                </span>
               </button>
               {deletable && (
                 <button type="button" className="conductor-history-delete" title="从历史中删除该任务"
@@ -123,7 +100,7 @@ export const TaskBoard = memo(function TaskBoard({ workflows, workers, titles, s
           ))}
         </div>
         {visible.length === 0 && <div className="conductor-empty"><History size={24} strokeWidth={1.4} />
-          <p>{rows.length ? '没有匹配的任务' : '暂无任务'}</p></div>}
+          <p>暂无任务</p></div>}
       </div>
     )}
   </section>

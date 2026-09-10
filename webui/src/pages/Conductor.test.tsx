@@ -1066,7 +1066,7 @@ describe('Conductor chat scroll restoration', () => {
     expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(true)
   })
 
-  it('filters and searches task cards and preserves the original task title', async () => {
+  it('lists history rows newest-needing-attention-first and preserves the original task title', async () => {
     mocks.conductorWorkflows.mockResolvedValue({ items: [
       { request_id: 'old', stage: 'completed', status: 'completed', subagents: {}, created_at: 1 },
       { request_id: 'new', stage: 'awaiting_review', status: 'awaiting_review', subagents: {}, created_at: 2 },
@@ -1080,20 +1080,14 @@ describe('Conductor chat scroll restoration', () => {
     await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
     act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
     await waitFor(() => expect(host.querySelectorAll('.conductor-history-row')).toHaveLength(2))
-    const tabs = Array.from(host.querySelectorAll('[aria-label="任务状态"] button')) as HTMLButtonElement[]
-    act(() => tabs[2].click())
-    expect(host.querySelectorAll('.conductor-history-row')).toHaveLength(1)
-    expect(host.querySelector('.conductor-history-title')?.textContent).toBe('核对接口')
-    act(() => tabs[3].click())
-    expect(host.querySelector('.conductor-history-title')?.textContent).toBe('归档资料')
-    act(() => tabs[0].click())
-    const search = host.querySelector('input[aria-label="搜索任务"]') as HTMLInputElement
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(search, '归档')
-      search.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    expect(host.querySelectorAll('.conductor-history-row')).toHaveLength(1)
-    expect(host.querySelector('.conductor-history-title')?.textContent).toBe('归档资料')
+    // No filters/search/sort: the list is a flat, attention-first listing.
+    expect(host.querySelector('[aria-label="任务状态"]')).toBeNull()
+    expect(host.querySelector('input[aria-label="搜索任务"]')).toBeNull()
+    expect(host.querySelector('[aria-label="任务排序"]')).toBeNull()
+    const titles = Array.from(host.querySelectorAll('.conductor-history-title')).map((el) => el.textContent)
+    // The awaiting-review row sorts ahead of the completed one, and the
+    // title stays the FIRST user message, not the latest follow-up.
+    expect(titles).toEqual(['核对接口', '归档资料'])
   })
 
   it('expands the history bar, deletes a finished task and keeps it deleted', async () => {
