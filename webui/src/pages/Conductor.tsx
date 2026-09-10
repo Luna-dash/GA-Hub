@@ -607,28 +607,16 @@ export default function Conductor() {
         </div>
         <div className="conductor-layout" data-mobile-view={mobileView}>
           <main className="conductor-main">
+            <TaskBoard workflows={workflows} workers={subagents} titles={taskTitleByRequest}
+              selectedId={currentWorkflow?.request_id} started={status?.started ?? false}
+              onSelect={id => { setPinnedRequestId(pinnedRequestId === id ? null : id); setSelectedSid(null) }}
+              onDelete={(id) => void deleteWorkflow(id)}
+              deletingIds={deletingIds} />
             <section aria-label="当前任务" className="conductor-current">
-              <div className="conductor-current-heading">
-                <div className="flex min-w-0 items-center gap-2">
-                  <h2 className="text-sm font-semibold text-ink">当前任务</h2>
-                  <WorkflowBadge tone={workflowView.tone} label={workflowView.label} />
-                </div>
-                <div className="flex items-center gap-2">
-                  {pinnedRequestId && <button type="button" className="conductor-icon-button" title="回到最新任务" aria-label="回到最新"
-                    onClick={() => setPinnedRequestId(null)}><RotateCcw size={16} /></button>}
-                  {!status?.started && currentWorkflow && !isWorkflowClosed(currentWorkflow) && (
-                    <button type="button" className="ga-btn ga-btn-primary text-xs" disabled={isResuming}
-                      title="只恢复这一个任务：拉起监督者并重放它的原始指令，其他未闭合任务不受影响"
-                      onClick={() => void resumeCurrentWorkflow()}>
-                      <RotateCcw size={14} />{isResuming ? '恢复中…' : '恢复此任务'}
-                    </button>
-                  )}
-                  <button type="button" className="ga-btn text-xs" onClick={() => { setContextTab('chat'); setMobileView('context'); requestAnimationFrame(() => chatInputRef.current?.focus()) }}>
-                    <MessageSquare size={14} />对话
-                  </button>
-                </div>
+              <div className="conductor-current-title-row">
+                <WorkflowBadge tone={workflowView.tone} label={workflowView.label} />
+                <p className="conductor-current-title" title={currentTask || undefined}>{currentTask || '尚未收到任务'}</p>
               </div>
-              <p className="conductor-current-title">{currentTask || '尚未收到任务'}</p>
               <p className="conductor-current-detail">{workflowView.detail}</p>
               {currentWorkflow?.error && <p className="mt-2 text-xs text-status-danger [overflow-wrap:anywhere]">{currentWorkflow.error}</p>}
               {/* Metrics carry the task's live numbers; a brand-new page with
@@ -642,10 +630,18 @@ export default function Conductor() {
                   <div className="conductor-metric"><span>任务用时</span><strong>{workflowDuration || '—'}</strong><small>从任务创建开始</small></div>
                 </div>
               )}
-              {/* Actionable review/retry entries only; the plain numbers live
-                  in the metric cards above, so no status line repeats them. */}
-              {(pendingReview.length > 0 || workflowView.tone === 'error') && (
+              {/* Actionable entries only: resume (stopped with an open task),
+                  pending reviews, retry on failure. The plain numbers live in
+                  the metric cards above, so no status line repeats them. */}
+              {(!status?.started && currentWorkflow && !isWorkflowClosed(currentWorkflow)) || pendingReview.length > 0 || workflowView.tone === 'error' ? (
                 <div className="conductor-current-links">
+                  {!status?.started && currentWorkflow && !isWorkflowClosed(currentWorkflow) && (
+                    <button type="button" className="inline-flex items-center gap-1 text-status-info" disabled={isResuming}
+                      title="只恢复这一个任务：拉起监督者并重放它的原始指令，其他未闭合任务不受影响"
+                      onClick={() => void resumeCurrentWorkflow()}>
+                      <RotateCcw size={14} />{isResuming ? '恢复中…' : '恢复此任务'}
+                    </button>
+                  )}
                   {pendingReview.length > 0 && <button type="button" className="inline-flex items-center gap-1 text-status-info"
                     onClick={() => { setSelectedSid(pendingReview[0].id); setContextTab('delivery'); setMobileView('context') }}>
                     <CheckCheck size={14} />{pendingReview.length} 个待验收
@@ -653,7 +649,7 @@ export default function Conductor() {
                   {workflowView.tone === 'error' && <button type="button" className="inline-flex items-center gap-1 text-status-danger"
                     onClick={retryCurrentWorkflow}><RotateCcw size={14} />重新发起这个任务</button>}
                 </div>
-              )}
+              ) : null}
               <section className="conductor-process" aria-label="实施过程">
                 <div className="conductor-process-heading">
                   <div><h3>实施过程</h3><span>按子代理查看当前任务的执行进度</span></div>
@@ -681,11 +677,6 @@ export default function Conductor() {
                   : '尚未指派子任务'}</p></div>}
               </section>
             </section>
-            <TaskBoard workflows={workflows} workers={subagents} titles={taskTitleByRequest}
-              selectedId={currentWorkflow?.request_id} started={status?.started ?? false}
-              onSelect={id => { setPinnedRequestId(id); setSelectedSid(null) }}
-              onDelete={(id) => void deleteWorkflow(id)}
-              deletingIds={deletingIds} />
           </main>
           <aside className="conductor-context" aria-label="任务详情">
             <div className="conductor-context-tabs" role="tablist" aria-label="任务内容">

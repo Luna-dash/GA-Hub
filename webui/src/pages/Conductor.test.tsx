@@ -340,7 +340,7 @@ describe('Conductor chat scroll restoration', () => {
     expect(mocks.conductorLog).not.toHaveBeenCalled()
 
     const headings = Array.from(host.querySelectorAll('h2')).map((item) => item.textContent)
-    expect(headings).toContain('当前任务')
+    expect(headings).not.toContain('当前任务')
     expect(host.querySelectorAll('.conductor-worker-card')).toHaveLength(4)
     expect(headings).toContain('工人卷宗')
     // The metric grid is the single source of the task's live numbers; the
@@ -902,9 +902,13 @@ describe('Conductor chat scroll restoration', () => {
     expect(board?.textContent).toContain('旧任务：整理归档')
     expect(board?.textContent).not.toContain('新任务')
 
-    // 回到最新 releases the pin and follows the newest workflow again.
-    expect(button('回到最新').title).toBe('回到最新任务')
-    act(() => button('回到最新').click())
+    // Clicking the pinned history row again releases the pin and follows the
+    // newest workflow — the old standalone 回到最新 icon button was removed
+    // as undiscoverable (user could not tell what the refresh glyph did).
+    const unpin = host.querySelector(
+      'button[aria-label="切换到任务：旧任务：整理归档"]',
+    ) as HTMLButtonElement
+    act(() => unpin.click())
     await waitFor(() => {
       const latest = host.querySelector('section[aria-label="当前任务"]')
       expect(latest?.textContent).toContain('新任务：画一个 pelican')
@@ -985,8 +989,8 @@ describe('Conductor chat scroll restoration', () => {
     await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
     act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
     await waitFor(() => expect(host.textContent).toContain('暂无任务'))
-    act(() => button('对话').click())
-    expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('context')
+    // The composer lives in the right panel directly; the old 对话 jump
+    // button on the task card was redundant with the always-visible tabs.
     expect(host.querySelector('#conductor-panel-chat')?.hasAttribute('hidden')).toBe(false)
     expect(host.querySelector('textarea[aria-label="任务内容"]')).toBeTruthy()
     expect(button('发送').disabled).toBe(true)
