@@ -343,10 +343,10 @@ describe('Conductor chat scroll restoration', () => {
     expect(headings).not.toContain('当前任务')
     expect(host.querySelectorAll('.conductor-worker-card')).toHaveLength(4)
     expect(headings).toContain('工人卷宗')
-    // The metric grid is the single source of the task's live numbers; the
+    // The stats strip is the single source of the task's live numbers; the
     // accepted count surfaces there rather than in a duplicate status line.
     const metrics = host.querySelector('[aria-label="当前任务概览"]')
-    expect(metrics?.textContent).toContain('1 已通过')
+    expect(metrics?.textContent).toContain('子任务 1/4')
     const titleBadge = host.querySelector('header .ga-badge')
     expect(titleBadge?.textContent).toBe('运行中')
     expect(titleBadge?.classList.contains('ga-badge-connected')).toBe(true)
@@ -975,9 +975,9 @@ describe('Conductor chat scroll restoration', () => {
     })
 
     renderPage()
-    await waitFor(() => expect(host.textContent).toContain('重新发起这个任务'))
+    await waitFor(() => expect(host.textContent).toContain('重新发起'))
 
-    act(() => button('重新发起这个任务').click())
+    act(() => button('重新发起').click())
     expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
       .toBe('整理归档目录并生成索引')
   })
@@ -1387,7 +1387,9 @@ describe('Conductor chat scroll restoration', () => {
     const text = host.textContent || ''
     expect(text).not.toContain('个待验收')
     expect(host.querySelectorAll('[data-archived="true"]')).toHaveLength(2)
-    expect(host.querySelectorAll('.conductor-worker-archived-badge')).toHaveLength(2)
+    // The archived state surfaces as the status word instead of a pill.
+    expect(Array.from(host.querySelectorAll('.conductor-worker-status')).map((el) => el.textContent))
+      .toEqual(['存档', '存档'])
     // Truncated archive rows say so instead of claiming a live wait.
     expect(text).toContain('存档记录：执行文字结果未随快照保留')
     // The dossier reflects the last worker and stays read-only.

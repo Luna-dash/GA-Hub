@@ -3,7 +3,8 @@
 // execution process (prompt, milestone timeline, deliverable checklist and
 // the live reply stream). Deep review stays in the right-hand dossier.
 import { memo } from 'react'
-import { CheckCircle2, CircleDashed, FileCheck2, ListChecks, LoaderCircle } from 'lucide-react'
+import clsx from 'clsx'
+import { CheckCircle2, CircleDashed, LoaderCircle } from 'lucide-react'
 import type { ConductorSubagent } from '@/api/types'
 import { MessageContent } from '@/components/MessageContent'
 import { formatClock } from '@/utils/timeFormat'
@@ -13,14 +14,15 @@ import {
   deliverablesOf,
   milestonesOf,
   phaseDot,
+  phaseTone,
   reviewFacts,
   stripContractTail,
   subagentPhase,
   workerTitle,
 } from './presentation'
 
-export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expanded = false, onToggle }: {
-  sub: ConductorSubagent; index?: number; selected: boolean; expanded?: boolean
+export const WorkerCard = memo(function WorkerCard({ sub, selected, expanded = false, onToggle }: {
+  sub: ConductorSubagent; selected: boolean; expanded?: boolean
   onToggle: () => void
 }) {
   const view = subagentPhase(sub)
@@ -39,20 +41,22 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
   const reply = stripContractTail((sub.reply || '').trim())
   const summary = reply || sub.review_note
     || (archived ? '存档记录：执行文字结果未随快照保留，交付物与检查仍可查看' : '等待执行结果')
+  // Collapsed-card footnote: the live numbers stay one hover away instead of
+  // claiming a dedicated row on every card.
+  const metaNote = `${deliverables.length} 项交付 · ${reached}/${milestones.length} 里程碑`
+    + (sub.attempt > 1 ? ` · 第 ${sub.attempt} 次` : '')
   return <article className="conductor-worker-card" data-expanded={expanded || undefined} data-selected={selected || undefined} data-archived={archived || undefined}>
     <button type="button" className="conductor-worker-toggle" onClick={onToggle}
       aria-expanded={expanded} aria-pressed={selected}
       aria-label={`查看子任务：${workerTitle(sub)}`}>
       <span className="conductor-worker-card-heading">
-        <span className="conductor-worker-index">{index ? `子代理 ${index}` : '子代理'}</span>
-        <span className="conductor-worker-status">{archived && <span className="conductor-worker-archived-badge">存档</span>}<StatusIcon size={14} className={view.phase === 'running' || view.phase === 'reworking' ? 'animate-spin' : ''} /><span className={phaseDot(view.phase)} />{view.label}</span>
+        <h3 className={clsx('conductor-worker-title', phaseTone(view.phase))}><StatusIcon size={14}
+          className={view.phase === 'running' || view.phase === 'reworking' ? 'animate-spin' : ''}
+          aria-label={view.label} />{workerTitle(sub)}</h3>
+        <span className="conductor-worker-status"><span className={phaseDot(view.phase)} />{archived ? '存档' : view.label}</span>
       </span>
-      <h3 className="conductor-worker-title">{workerTitle(sub)}</h3>
-      {!expanded && <p className="conductor-worker-summary">{summary}</p>}
-      <span className="conductor-worker-progress" aria-label={`${workerTitle(sub)}里程碑进度`} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></span>
-      <span className="conductor-worker-meta"><span><FileCheck2 size={13} />{deliverables.length} 项交付</span>
-        <span><ListChecks size={13} />{reached}/{milestones.length} 里程碑</span>
-        {sub.attempt > 1 && <span>第 {sub.attempt} 次</span>}</span>
+      {!expanded && <p className="conductor-worker-summary" title={metaNote}>{summary}</p>}
+      {!expanded && <span className="conductor-worker-progress" title={metaNote} aria-hidden="true"><span style={{ width: `${progress}%` }} /></span>}
     </button>
     {expanded && (
       <div className="conductor-worker-process" aria-label={`${workerTitle(sub)} 执行过程`}>

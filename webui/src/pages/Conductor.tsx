@@ -442,10 +442,6 @@ export default function Conductor() {
     : trackerWorkers.filter((worker) => worker.state === 'accepted').length
   const activeSubagents = workflowSubagents.filter((sub) => sub.status === 'running')
   const pendingReview = workflowSubagents.filter(isReviewable)
-  const occupiedCount = subagents.filter((sub) => !sub.archived && (
-    sub.status === 'running'
-    || (sub.status === 'stopped' && !['accepted', 'rejected'].includes(sub.review_status))
-  )).length
   const selectedWorker = workflowSubagents.find((sub) => sub.id === selectedSid) ?? null
 
   // In-place expansion: at most one subagent card shows its execution
@@ -616,47 +612,48 @@ export default function Conductor() {
               <div className="conductor-current-title-row">
                 <WorkflowBadge tone={workflowView.tone} label={workflowView.label} />
                 <p className="conductor-current-title" title={currentTask || undefined}>{currentTask || '尚未收到任务'}</p>
-              </div>
-              <p className="conductor-current-detail">{workflowView.detail}</p>
-              {currentWorkflow?.error && <p className="mt-2 text-xs text-status-danger [overflow-wrap:anywhere]">{currentWorkflow.error}</p>}
-              {/* Metrics carry the task's live numbers; a brand-new page with
-                  no workflow would only show four zeros, so skip them until a
-                  task exists. */}
-              {currentWorkflow && (
-                <div className="conductor-metrics" aria-label="当前任务概览">
-                  <div className="conductor-metric"><span>子代理</span><strong>{workerCount}</strong><small>{workerCount ? `${acceptedCount} 已通过` : '尚未指派'}</small></div>
-                  <div className="conductor-metric"><span>执行中</span><strong>{activeSubagents.length}</strong><small>{occupiedCount ? `${occupiedCount} 个资源占用` : '资源空闲'}</small></div>
-                  <div className="conductor-metric"><span>待验收</span><strong>{pendingReview.length}</strong><small>{pendingReview.length ? '需要你的判断' : '暂无待处理'}</small></div>
-                  <div className="conductor-metric"><span>任务用时</span><strong>{workflowDuration || '—'}</strong><small>从任务创建开始</small></div>
-                </div>
-              )}
-              {/* Actionable entries only: resume (stopped with an open task),
-                  pending reviews, retry on failure. The plain numbers live in
-                  the metric cards above, so no status line repeats them. */}
-              {(!status?.started && currentWorkflow && !isWorkflowClosed(currentWorkflow)) || pendingReview.length > 0 || workflowView.tone === 'error' ? (
-                <div className="conductor-current-links">
+                {/* The single most important next actions ride on the title
+                    row itself, where the eye lands first — resume, pending
+                    reviews, retry. Absent actions leave no residue. */}
+                <span className="conductor-current-actions">
                   {!status?.started && currentWorkflow && !isWorkflowClosed(currentWorkflow) && (
-                    <button type="button" className="inline-flex items-center gap-1 text-status-info" disabled={isResuming}
+                    <button type="button" className="ga-btn conductor-action-btn" disabled={isResuming}
                       title="只恢复这一个任务：拉起监督者并重放它的原始指令，其他未闭合任务不受影响"
                       onClick={() => void resumeCurrentWorkflow()}>
                       <RotateCcw size={14} />{isResuming ? '恢复中…' : '恢复此任务'}
                     </button>
                   )}
-                  {pendingReview.length > 0 && <button type="button" className="inline-flex items-center gap-1 text-status-info"
-                    onClick={() => { setSelectedSid(pendingReview[0].id); setContextTab('delivery'); setMobileView('context') }}>
-                    <CheckCheck size={14} />{pendingReview.length} 个待验收
-                  </button>}
-                  {workflowView.tone === 'error' && <button type="button" className="inline-flex items-center gap-1 text-status-danger"
-                    onClick={retryCurrentWorkflow}><RotateCcw size={14} />重新发起这个任务</button>}
-                </div>
-              ) : null}
+                  {pendingReview.length > 0 && (
+                    <button type="button" className="ga-btn conductor-action-btn conductor-action-strong"
+                      title="打开右侧交付详情进行验收"
+                      onClick={() => { setSelectedSid(pendingReview[0].id); setContextTab('delivery'); setMobileView('context') }}>
+                      <CheckCheck size={14} />{pendingReview.length} 个待验收
+                    </button>
+                  )}
+                  {workflowView.tone === 'error' && (
+                    <button type="button" className="ga-btn-danger conductor-action-btn" onClick={retryCurrentWorkflow}>
+                      <RotateCcw size={14} />重新发起
+                    </button>
+                  )}
+                </span>
+              </div>
+              <p className="conductor-current-detail">{workflowView.detail}</p>
+              {currentWorkflow?.error && <p className="mt-2 text-xs text-status-danger [overflow-wrap:anywhere]">{currentWorkflow.error}</p>}
+              {/* The task's live numbers, inlined as one muted strip instead
+                  of a four-card grid: a handful of digits does not need a
+                  card per digit. */}
+              {currentWorkflow && (
+                <p className="conductor-current-stats" aria-label="当前任务概览">
+                  <span>子任务 {acceptedCount}/{workerCount}{workerCount === 0 && '（未指派）'}</span>
+                  {activeSubagents.length > 0 && <span>执行中 {activeSubagents.length}</span>}
+                  {pendingReview.length > 0 && <span className="is-attention">待验收 {pendingReview.length}</span>}
+                  {workflowDuration && <span>用时 {workflowDuration}</span>}
+                </p>
+              )}
               <section className="conductor-process" aria-label="实施过程">
-                <div className="conductor-process-heading">
-                  <div><h3>实施过程</h3><span>按子代理查看当前任务的执行进度</span></div>
-                  <span className="text-xs text-ink-muted">{workflowSubagents.length} 个子代理</span>
-                </div>
+                <h3 className="conductor-process-title">实施过程 <span>· {workflowSubagents.length} 个子任务</span></h3>
                 <div className="conductor-worker-grid" aria-label="子任务详情">
-                {workflowSubagents.map((sub, index) => <WorkerCard key={sub.id} sub={sub} index={index + 1} selected={sub.id === selectedSid}
+                {workflowSubagents.map((sub) => <WorkerCard key={sub.id} sub={sub} selected={sub.id === selectedSid}
                   expanded={sub.id === expandedSid}
                   onToggle={() => {
                     // One click is "open this worker": it selects the dossier
