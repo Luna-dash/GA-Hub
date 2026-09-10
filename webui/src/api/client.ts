@@ -425,7 +425,9 @@ export const api = {
       subagent_model_policy: models.subagentModelPolicy,
     }, { timeoutMs: 120_000 }),
   conductorSubagents: () => http<ConductorSubagentListResponse>('GET', '/api/conductor/subagent'),
-  conductorWorkflows: () => http<ConductorWorkflowListResponse>('GET', '/api/conductor/workflow'),
+  // The history bar lists every retained task, so pull the route's full
+  // window instead of the server's 20-item default.
+  conductorWorkflows: () => http<ConductorWorkflowListResponse>('GET', '/api/conductor/workflow?last=100'),
   conductorDeleteWorkflow: (requestId: string) =>
     http<{ ok: boolean; request_id: string }>('DELETE', `/api/conductor/workflow/${requestId}`),
   conductorSubagent: (sid: string, max_len = 5000) => http<ConductorSubagent>('GET', `/api/conductor/subagent/${sid}?max_len=${max_len}`),

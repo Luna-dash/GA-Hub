@@ -78,7 +78,7 @@
 .conductor-filters button span { color: var(--c-text-faint); font-size: 10px; font-variant-numeric: tabular-nums; }
 .conductor-search { display: flex; align-items: center; gap: 6px; width: 180px; max-width: 100%; padding: 6px 8px; border: 1px solid var(--c-line); border-radius: 5px; color: var(--c-text-muted); background: var(--c-bg); }
 .conductor-search input { width: 100%; min-width: 0; color: var(--c-text); background: transparent; font-size: 11px; outline: none; }
-.conductor-history-list { overflow: hidden; border-top: 1px solid var(--c-line); }
+.conductor-history-list { overflow-y: auto; max-height: 46vh; border-top: 1px solid var(--c-line); }
 .conductor-history-item { display: flex; align-items: stretch; border-bottom: 1px solid color-mix(in srgb, var(--c-line) 68%, transparent); }
 .conductor-history-item[data-deleting="true"] { opacity: .5; }
 .conductor-history-item:hover .conductor-history-delete { opacity: 1; }

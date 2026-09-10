@@ -28,6 +28,11 @@ const mocks = vi.hoisted(() => ({
   llms: vi.fn(),
   selectMainLlm: vi.fn(),
   selectSubagentLlm: vi.fn(),
+  dialogConfirm: vi.fn(),
+}))
+
+vi.mock('@/stores/dialogStore', () => ({
+  dialog: { confirm: mocks.dialogConfirm },
 }))
 
 vi.mock('@/api/client', () => ({
@@ -1085,7 +1090,7 @@ describe('Conductor chat scroll restoration', () => {
     mocks.conductorDeleteWorkflow.mockResolvedValue({ ok: true, request_id: 'old' })
     mocks.conductorSubagents.mockResolvedValue({ items: [] })
     mocks.conductorStatus.mockResolvedValue({ ready: true, started: true })
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mocks.dialogConfirm.mockResolvedValue(true)
 
     renderPage()
     await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
@@ -1097,8 +1102,7 @@ describe('Conductor chat scroll restoration', () => {
     act(() => del.click())
     await waitFor(() => expect(mocks.conductorDeleteWorkflow).toHaveBeenCalledWith('old'))
     await waitFor(() => expect(useToastStore.getState().items.some((toast) => toast.kind === 'success')).toBe(true))
-    expect(confirm).toHaveBeenCalled()
-    confirm.mockRestore()
+    expect(mocks.dialogConfirm).toHaveBeenCalled()
   })
 
   it('allows deletion of a cancelled task', async () => {
@@ -1110,7 +1114,7 @@ describe('Conductor chat scroll restoration', () => {
       { id: 'u1', role: 'user', msg: '中断的资料整理', request_id: 'cancelled', ts: 1 },
     ] })
     mocks.conductorDeleteWorkflow.mockResolvedValue({ ok: true, request_id: 'cancelled' })
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mocks.dialogConfirm.mockResolvedValue(true)
 
     renderPage()
     await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
@@ -1118,7 +1122,6 @@ describe('Conductor chat scroll restoration', () => {
     await waitFor(() => expect(host.querySelector('button[aria-label="删除任务：中断的资料整理"]')).toBeTruthy())
     act(() => (host.querySelector('button[aria-label="删除任务：中断的资料整理"]') as HTMLButtonElement).click())
     await waitFor(() => expect(mocks.conductorDeleteWorkflow).toHaveBeenCalledWith('cancelled'))
-    confirm.mockRestore()
   })
 
   it('offers delete for paused-session workflows once the conductor stops', async () => {

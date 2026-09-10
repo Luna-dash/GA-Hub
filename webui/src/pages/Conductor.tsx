@@ -6,6 +6,7 @@ import '@/styles/conductor.css'
 import { api, type ConductorSubagentModelPolicy } from '@/api/client'
 import { storageKeys } from '@/config/storageKeys'
 import { useConductorStore } from '@/stores/conductorStore'
+import { dialog } from '@/stores/dialogStore'
 import { PageShell } from '@/components/PageShell'
 import { MessageContent } from '@/components/MessageContent'
 import { bubbleTone } from '@/components/bubbleTone'
@@ -316,9 +317,10 @@ export default function Conductor() {
       setReworkReason('')
       toast.success(action === 'accept' ? '已通过验收' : action === 'rework' ? '已打回子代理' : '已终止子代理')
       // Review efficiency: after a decision, jump straight to the next worker
-      // that still needs one (review queue order, else the next in list).
+      // that still needs one. Archived rows are skipped: they have no action
+      // to take, so landing the dossier there would stall the review queue.
       if (action !== 'abort') {
-        const rest = workflowSubagents.filter((sub) => sub.id !== sid)
+        const rest = workflowSubagents.filter((sub) => sub.id !== sid && !sub.archived)
         const next = rest.find(isReviewable)
           ?? rest.find((sub) => sub.status === 'running')
           ?? rest[rest.length - 1]
@@ -395,9 +397,15 @@ export default function Conductor() {
     }
     return ''
   })()
-  const workerCount = currentWorkflow ? Object.keys(currentWorkflow.subagents).length : workflowSubagents.length
-  const acceptedCount = currentWorkflow ? Object.values(currentWorkflow.subagents).filter(sub => sub.state === 'accepted').length
-    : workflowSubagents.filter((sub) => sub.review_status === 'accepted').length
+  // Count from the merged worker set first: archived rows are absent from
+  // the tracker's subagents map, so deriving the totals from the map alone
+  // made a finished-but-archived task read "0 尚未指派" under the same cards
+  // the process grid was showing. The tracker map is the pre-archive fallback.
+  const trackerWorkers = currentWorkflow ? Object.values(currentWorkflow.subagents) : []
+  const workerCount = workflowSubagents.length || trackerWorkers.length
+  const acceptedCount = workflowSubagents.length
+    ? workflowSubagents.filter((sub) => sub.review_status === 'accepted').length
+    : trackerWorkers.filter((worker) => worker.state === 'accepted').length
   const activeSubagents = workflowSubagents.filter((sub) => sub.status === 'running')
   const pendingReview = workflowSubagents.filter(isReviewable)
   const occupiedCount = subagents.filter((sub) => !sub.archived && (
@@ -415,7 +423,10 @@ export default function Conductor() {
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
   const deleteWorkflow = async (requestId: string) => {
     if (deletingIds.has(requestId)) return
-    if (!window.confirm('删除这条历史任务记录？此操作不可恢复。')) return
+    const confirmed = await dialog.confirm('删除历史任务', '删除这条历史任务记录？其对话与子代理存档将一并移除，不可恢复。', {
+      confirmText: '删除', tone: 'danger',
+    })
+    if (!confirmed) return
     setDeletingIds((current) => new Set(current).add(requestId))
     try {
       await api.conductorDeleteWorkflow(requestId)
@@ -509,8 +520,8 @@ export default function Conductor() {
       title="Conductor"
       titleExtra={
         <>
-        <span className={`ga-badge ${status?.started ? 'ga-badge-connected' : 'ga-badge-offline'}`}>
-          {status?.started ? '运行中' : '未运行'}
+        <span className={`ga-badge ${status === undefined ? 'ga-badge-offline' : status.started ? 'ga-badge-connected' : 'ga-badge-offline'}`}>
+          {status === undefined ? '连接中' : status.started ? '运行中' : '未运行'}
         </span>
         </>
       }
