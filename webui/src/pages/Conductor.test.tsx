@@ -341,11 +341,14 @@ describe('Conductor chat scroll restoration', () => {
     expect(headings).toContain('当前任务')
     expect(host.querySelectorAll('.conductor-worker-card')).toHaveLength(4)
     expect(headings).toContain('工人卷宗')
-    expect(host.querySelector('[aria-label="子代理状态跟踪"]')?.textContent).toContain('1/4 已通过')
+    // The metric grid is the single source of the task's live numbers; the
+    // accepted count surfaces there rather than in a duplicate status line.
+    const metrics = host.querySelector('[aria-label="当前任务概览"]')
+    expect(metrics?.textContent).toContain('1 已通过')
     const titleBadge = host.querySelector('header .ga-badge')
     expect(titleBadge?.textContent).toBe('运行中')
     expect(titleBadge?.classList.contains('ga-badge-connected')).toBe(true)
-    expect(host.querySelector('[aria-label="子代理状态跟踪"]')?.textContent).not.toContain('编排服务在线')
+    expect(metrics?.textContent).not.toContain('编排服务在线')
   })
 
   it('keeps subagent controls out of the title bar and defaults the dialog to following the main model', async () => {

@@ -367,7 +367,10 @@ export default function Conductor() {
   }, [chatMessages, workflows])
 
   const workflowSubagents = useMemo(() => {
-    if (!currentWorkflow) return subagents.slice(-5).reverse()
+    // No workflow on screen → no worker cards. The earlier slice(-5) fallback
+    // orphaned pool/archive workers under a "尚未收到任务" header, which reads
+    // as a contradiction now that archived rows persist across engine resets.
+    if (!currentWorkflow) return []
     const workerIds = new Set(Object.keys(currentWorkflow.subagents))
     return subagents
       .filter((sub) => sub.request_id === currentWorkflow.request_id || workerIds.has(sub.id))
@@ -589,21 +592,29 @@ export default function Conductor() {
               <p className="conductor-current-title">{currentTask || '尚未收到任务'}</p>
               <p className="conductor-current-detail">{workflowView.detail}</p>
               {currentWorkflow?.error && <p className="mt-2 text-xs text-status-danger [overflow-wrap:anywhere]">{currentWorkflow.error}</p>}
-              <div className="conductor-metrics" aria-label="当前任务概览">
-                <div className="conductor-metric"><span>子代理</span><strong>{workerCount}</strong><small>{workerCount ? `${acceptedCount} 已通过` : '尚未指派'}</small></div>
-                <div className="conductor-metric"><span>执行中</span><strong>{activeSubagents.length}</strong><small>{occupiedCount ? `${occupiedCount} 个资源占用` : '资源空闲'}</small></div>
-                <div className="conductor-metric"><span>待验收</span><strong>{pendingReview.length}</strong><small>{pendingReview.length ? '需要你的判断' : '暂无待处理'}</small></div>
-                <div className="conductor-metric"><span>任务用时</span><strong>{workflowDuration || '—'}</strong><small>从任务创建开始</small></div>
-              </div>
-              <div className="conductor-current-links">
-                <span aria-label="子代理状态跟踪">{workerCount ? `${acceptedCount}/${workerCount} 已通过` : '尚未指派'}{activeSubagents.length ? ` · ${activeSubagents.length} 执行中` : ''}</span>
-                {pendingReview.length > 0 && <button type="button" className="inline-flex items-center gap-1 text-status-info"
-                  onClick={() => { setSelectedSid(pendingReview[0].id); setContextTab('delivery'); setMobileView('context') }}>
-                  <CheckCheck size={14} />{pendingReview.length} 个待验收
-                </button>}
-                {workflowView.tone === 'error' && <button type="button" className="inline-flex items-center gap-1 text-status-danger"
-                  onClick={retryCurrentWorkflow}><RotateCcw size={14} />重新发起这个任务</button>}
-              </div>
+              {/* Metrics carry the task's live numbers; a brand-new page with
+                  no workflow would only show four zeros, so skip them until a
+                  task exists. */}
+              {currentWorkflow && (
+                <div className="conductor-metrics" aria-label="当前任务概览">
+                  <div className="conductor-metric"><span>子代理</span><strong>{workerCount}</strong><small>{workerCount ? `${acceptedCount} 已通过` : '尚未指派'}</small></div>
+                  <div className="conductor-metric"><span>执行中</span><strong>{activeSubagents.length}</strong><small>{occupiedCount ? `${occupiedCount} 个资源占用` : '资源空闲'}</small></div>
+                  <div className="conductor-metric"><span>待验收</span><strong>{pendingReview.length}</strong><small>{pendingReview.length ? '需要你的判断' : '暂无待处理'}</small></div>
+                  <div className="conductor-metric"><span>任务用时</span><strong>{workflowDuration || '—'}</strong><small>从任务创建开始</small></div>
+                </div>
+              )}
+              {/* Actionable review/retry entries only; the plain numbers live
+                  in the metric cards above, so no status line repeats them. */}
+              {(pendingReview.length > 0 || workflowView.tone === 'error') && (
+                <div className="conductor-current-links">
+                  {pendingReview.length > 0 && <button type="button" className="inline-flex items-center gap-1 text-status-info"
+                    onClick={() => { setSelectedSid(pendingReview[0].id); setContextTab('delivery'); setMobileView('context') }}>
+                    <CheckCheck size={14} />{pendingReview.length} 个待验收
+                  </button>}
+                  {workflowView.tone === 'error' && <button type="button" className="inline-flex items-center gap-1 text-status-danger"
+                    onClick={retryCurrentWorkflow}><RotateCcw size={14} />重新发起这个任务</button>}
+                </div>
+              )}
               <section className="conductor-process" aria-label="实施过程">
                 <div className="conductor-process-heading">
                   <div><h3>实施过程</h3><span>按子代理查看当前任务的执行进度</span></div>

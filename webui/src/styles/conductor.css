@@ -18,7 +18,10 @@
 .conductor-current-heading { min-height: 32px; }
 .conductor-current-title { margin-top: 8px; max-width: 78ch; font-size: 15px; font-weight: 600; line-height: 1.55; color: var(--c-text); overflow-wrap: anywhere; }
 .conductor-current-detail { margin-top: 2px; color: var(--c-text-muted); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
-.conductor-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+/* auto-fit (not a fixed 4-up): the main column narrows to ~600px once the
+   right panel takes its share at mid widths, where four forced columns crush
+   the numerals. Track count now follows the actual card width. */
+.conductor-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 10px; }
 .conductor-metric { min-width: 0; padding: 9px 11px; border: 1px solid var(--c-line); border-radius: 8px; background: var(--c-bg-card); }
 .conductor-metric span, .conductor-metric small { display: block; color: var(--c-text-muted); font-size: 11px; line-height: 1.5; }
 .conductor-metric strong { display: block; margin: 2px 0; color: var(--c-text); font-size: 15px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
