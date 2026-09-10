@@ -23,6 +23,10 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
 }) {
   const view = subagentPhase(sub)
   const facts = reviewFacts(sub)
+  // Archived rows are persisted history (engine pool is gone). They render
+  // read-only and must say so: the badge plus an honest fallback line keep
+  // a finished-but-truncated record from reading like a stalled live worker.
+  const archived = Boolean(sub.archived)
   const milestones = milestonesOf(sub)
   const reached = milestones.filter(item => Boolean(item.reached_at)).length
   const progress = milestones.length > 0 ? Math.round((reached / milestones.length) * 100) : view.phase === 'accepted' ? 100 : 0
@@ -31,16 +35,18 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
   const missing = new Set(facts.deliverables_missing ?? [])
   const stale = new Set(facts.deliverables_stale ?? [])
   const reply = stripContractTail((sub.reply || '').trim())
-  return <article className="conductor-worker-card" data-expanded={expanded || undefined} data-selected={selected || undefined}>
+  const summary = reply || sub.review_note
+    || (archived ? '存档记录：执行文字结果未随快照保留，交付物与检查仍可查看' : '等待执行结果')
+  return <article className="conductor-worker-card" data-expanded={expanded || undefined} data-selected={selected || undefined} data-archived={archived || undefined}>
     <button type="button" className="conductor-worker-toggle" onClick={onToggle}
       aria-expanded={expanded} aria-pressed={selected}
       aria-label={`查看子任务：${workerTitle(sub)}`}>
       <span className="conductor-worker-card-heading">
         <span className="conductor-worker-index">{index ? `子代理 ${index}` : '子代理'}</span>
-        <span className="conductor-worker-status"><StatusIcon size={14} className={view.phase === 'running' || view.phase === 'reworking' ? 'animate-spin' : ''} /><span className={phaseDot(view.phase)} />{view.label}</span>
+        <span className="conductor-worker-status">{archived && <span className="conductor-worker-archived-badge">存档</span>}<StatusIcon size={14} className={view.phase === 'running' || view.phase === 'reworking' ? 'animate-spin' : ''} /><span className={phaseDot(view.phase)} />{view.label}</span>
       </span>
       <h3 className="conductor-worker-title">{workerTitle(sub)}</h3>
-      {!expanded && <p className="conductor-worker-summary">{sub.reply || sub.review_note || '等待执行结果'}</p>}
+      {!expanded && <p className="conductor-worker-summary">{summary}</p>}
       <span className="conductor-worker-progress" aria-label={`${workerTitle(sub)}里程碑进度`} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></span>
       <span className="conductor-worker-meta"><span><FileCheck2 size={13} />{facts.manifest?.deliverables?.length ?? 0} 项交付</span>
         <span><ListChecks size={13} />{reached}/{milestones.length} 里程碑</span>
@@ -91,7 +97,9 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
             </div>
           ) : (
             <p className="conductor-worker-noresult">
-              {sub.status === 'running' ? '还没有可展示的中间结果。' : '没有文字结果；完整卷宗里可核对交付物路径。'}
+              {sub.status === 'running' ? '还没有可展示的中间结果。'
+                : archived ? '存档未保留文字结果；里程碑与机器检查仍可查看。'
+                  : '没有文字结果；完整卷宗里可核对交付物路径。'}
             </p>
           )}
         </section>

@@ -607,7 +607,9 @@ export default function Conductor() {
                   }}
                   onOpenDossier={() => { setSelectedSid(sub.id); setContextTab('delivery'); setMobileView('context') }} />)}
                 </div>
-                {workflowSubagents.length === 0 && <div className="conductor-empty"><LayoutGrid size={26} strokeWidth={1.4} /><p>尚未指派子任务</p></div>}
+                {workflowSubagents.length === 0 && <div className="conductor-empty"><LayoutGrid size={26} strokeWidth={1.4} /><p>{currentWorkflow && workerCount
+                  ? '子代理已从引擎池中清除，且未保留存档明细'
+                  : '尚未指派子任务'}</p></div>}
               </section>
             </section>
             <TaskBoard workflows={workflows} workers={subagents} titles={taskTitleByRequest}

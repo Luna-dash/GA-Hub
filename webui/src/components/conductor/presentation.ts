@@ -65,7 +65,11 @@ export function basenamePath(path: string): string {
 }
 
 export function isReviewable(sub: ConductorSubagent): boolean {
-  return sub.status === 'stopped' && !['accepted', 'rejected'].includes(sub.review_status)
+  // Archived rows are read-only history: the engine can no longer act on
+  // them, so they must never count as awaiting review (attention badges,
+  // review-queue jumps and shortcuts all derive from this single gate).
+  return !sub.archived && sub.status === 'stopped'
+    && !['accepted', 'rejected'].includes(sub.review_status)
 }
 
 export function workerTitle(sub: ConductorSubagent): string {

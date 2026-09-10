@@ -48,6 +48,10 @@ export function WorkerDossier({
   const view = subagentPhase(sub)
   const facts = reviewFacts(sub)
   const running = sub.status === 'running'
+  // Archived workers are persisted history the engine pool no longer knows
+  // about: their list row already carries the full snapshot, so fetching
+  // would only round-trip a 404-and-fallback. Offer reading, never actions.
+  const archived = Boolean(sub.archived)
   const { data, isLoading, error } = useQuery({
     queryKey: [...queryKeys.conductor.subagent(sub.id), sub.boot_id, sub.active_generation, sub.command_revision],
     queryFn: () => api.conductorSubagent(sub.id, 20_000),
@@ -56,6 +60,7 @@ export function WorkerDossier({
     // invalidates this query from the page.
     refetchInterval: running ? 5000 : false,
     refetchIntervalInBackground: false,
+    enabled: !archived,
   })
   const detail = reviewFacts(data ?? sub)
   const deliverables = detail.manifest?.deliverables ?? facts.manifest?.deliverables ?? []
@@ -68,7 +73,6 @@ export function WorkerDossier({
   const replySegments = splitReplyByMilestones(reply, milestones)
   // Archived workers (engine pool reset) are historical records: the engine
   // can no longer apply accept/rework/abort, so only reading is offered.
-  const archived = Boolean((data ?? sub).archived)
   const reviewable = !archived && isReviewable(sub)
   const abortable = !archived && (sub.status === 'running' || reviewable)
 

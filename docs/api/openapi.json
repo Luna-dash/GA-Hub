@@ -6089,6 +6089,11 @@
             ],
             "title": "Stage"
           },
+          "archived": {
+            "type": "boolean",
+            "title": "Archived",
+            "default": false
+          },
           "plan_milestones": {
             "anyOf": [
               {

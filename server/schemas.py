@@ -764,6 +764,9 @@ class ConductorSubagent(BaseModel):
     # Hub-decided UI stage (conductor_vocabulary.subagent_stage); the page
     # maps it to label/tone instead of re-deriving tracker semantics.
     stage: str | None = None
+    # Hub archive marker: the worker is no longer in the engine pool and its
+    # detail comes from the persisted snapshot (read-only for the page).
+    archived: bool = False
     # Mid-run progress anchors (2026-09-05): engine-evaluated checkpoints
     # {id, desc, check, status, reached_at, missed_at}. None = pre-milestone
     # engine snapshot.

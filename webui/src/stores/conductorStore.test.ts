@@ -20,6 +20,7 @@ function subagent(id: string, status: string): ConductorSubagent {
     generation: 1,
     active_generation: 1,
     command_revision: 1,
+    archived: false,
   }
 }
 

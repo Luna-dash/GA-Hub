@@ -46,10 +46,18 @@ export const TaskBoard = memo(function TaskBoard({ workflows, workers, titles, s
     const closed = isWorkflowClosed(workflow)
     const needsAttention = view.tone === 'error' || (!closed && (workflow.stage === 'awaiting_review'
       || workflow.stage === 'recoverable_failure' || owned.some(isReviewable)))
-    const accepted = Object.values(workflow.subagents).filter(worker => worker.state === 'accepted').length
+    // Count from the merged worker list when we have it: archived rows are
+    // in `owned` but absent from the tracker's subagents map, and a history
+    // row saying "尚未指派" while the board shows four cards contradicts
+    // itself. The tracker map stays the fallback for workers already pruned
+    // from both pool and archive.
+    const total = owned.length || Object.keys(workflow.subagents).length
+    const accepted = owned.length
+      ? owned.filter(worker => worker.review_status === 'accepted').length
+      : Object.values(workflow.subagents).filter(worker => worker.state === 'accepted').length
     return { workflow, owned, view, needsAttention, closed, accepted,
       deletable: closed || !started,
-      title: titles.get(workflow.request_id) || '未命名任务', total: Object.keys(workflow.subagents).length }
+      title: titles.get(workflow.request_id) || '未命名任务', total }
     })
   }, [workflows, workers, titles, started])
   const counts = {

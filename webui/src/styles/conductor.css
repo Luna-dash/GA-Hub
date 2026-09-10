@@ -54,6 +54,8 @@
 .conductor-worker-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 20px; }
 .conductor-worker-index { color: var(--c-text-faint); font-size: 11px; }
 .conductor-worker-status { display: inline-flex; align-items: center; gap: 5px; color: var(--c-text-muted); font-size: 11px; }
+.conductor-worker-archived-badge { padding: 0 5px; border: 1px solid var(--c-line); border-radius: 999px; color: var(--c-text-faint); font-size: 10px; line-height: 1.6; }
+.conductor-worker-card[data-archived="true"] { border-style: dashed; }
 .conductor-worker-title { color: var(--c-text); font-size: 13px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .conductor-worker-summary { color: var(--c-text-muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .conductor-worker-progress { margin-top: auto; height: 3px; overflow: hidden; border-radius: 2px; background: var(--c-accent-soft); }

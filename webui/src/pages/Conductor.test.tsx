@@ -1287,4 +1287,52 @@ describe('Conductor chat scroll restoration', () => {
       2, 'second', 'accept', '', null, {}, false, undefined,
     )
   })
+
+  it('treats archived workers as read-only history without review prompts', async () => {
+    // Engine cleared its pool (conductor restart); the archive carries the
+    // workers of a finished task, one still marked pending from its last run.
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1', status: 'completed', stage: 'completed',
+        subagents: {}, created_at: 1, completed_at: 2,
+      }],
+    })
+    mocks.conductorSubagents.mockResolvedValue({
+      items: [
+        {
+          id: 'w1', prompt: '扫描目录结构', reply: '', status: 'stopped',
+          created_at: 1, updated_at: 2, review_status: 'accepted', review_note: '',
+          attempt: 1, completed_at: 2, accepted_at: 2, generation: 1,
+          request_id: 'request-1', stage: 'accepted', archived: true,
+          plan_milestones: [{ id: 'm1', desc: '建立索引', status: 'reached', reached_at: 2 }],
+        },
+        {
+          id: 'w2', prompt: '生成检查清单', reply: '', status: 'stopped',
+          created_at: 2, updated_at: 3, review_status: 'pending', review_note: '',
+          attempt: 1, completed_at: 3, accepted_at: null, generation: 1,
+          request_id: 'request-1', stage: 'reviewing', archived: true,
+        },
+      ],
+    })
+
+    renderPage()
+    await waitFor(() => expect(host.querySelectorAll('.conductor-worker-card')).toHaveLength(2))
+
+    // Archived rows never present themselves as review work.
+    const text = host.textContent || ''
+    expect(text).not.toContain('个待验收')
+    expect(host.querySelectorAll('[data-archived="true"]')).toHaveLength(2)
+    expect(host.querySelectorAll('.conductor-worker-archived-badge')).toHaveLength(2)
+    // Truncated archive rows say so instead of claiming a live wait.
+    expect(text).toContain('存档记录：执行文字结果未随快照保留')
+    // The dossier reflects the last worker and stays read-only.
+    const aside = host.querySelector('aside') as HTMLElement
+    expect(aside.textContent).toContain('存档记录')
+    expect(Array.from(aside.querySelectorAll('button')).map((b) => b.textContent))
+      .not.toContain('通过')
+    // The history row counts archived workers (1/2), not "尚未指派".
+    act(() => button('展开历史任务').click())
+    await flushQueries()
+    expect(host.querySelector('.conductor-history-meta')?.textContent).toContain('1/2 子任务已通过')
+  })
 })

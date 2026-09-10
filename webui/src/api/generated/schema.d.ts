@@ -2664,6 +2664,11 @@ export interface components {
             request_id?: string | null;
             /** Stage */
             stage?: string | null;
+            /**
+             * Archived
+             * @default false
+             */
+            archived: boolean;
             /** Plan Milestones */
             plan_milestones?: {
                 [key: string]: unknown;
