@@ -587,7 +587,7 @@ export default function Conductor() {
               <Square size={13} />{isStopping ? '停止中…' : '停止'}
             </button>
           ) : (
-            <button onClick={startConductor} disabled={isSending} className="ga-btn ga-btn-primary whitespace-nowrap"
+            <button onClick={startConductor} disabled={isSending} className="ga-btn ga-btn-primary inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap"
               title="仅拉起监督者，不会自动重跑任何任务；要续跑某个暂停任务，用任务卡上的“恢复此任务”">
               <Play size={13} />{isSending ? '启动中…' : '启动'}
             </button>
