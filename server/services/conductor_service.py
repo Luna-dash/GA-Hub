@@ -1101,15 +1101,53 @@ class ConductorService:
         """Compatibility facade behind POST /api/conductor/start: configure
         models, then ensure the lifecycle. da97cf8 dropped it as "dead code"
         and the start button 500'd (AttributeError) for a week — the sweep
-        grepped service callers but missed the route's dynamic reference."""
+        grepped service callers but missed the route's dynamic reference.
+
+        Explicit start is a PURE bring-up (2026-09 user ruling): it must not
+        batch-resume any stranded workflow. Resuming is a per-task decision
+        (``resume_workflow``); "stopped" means "not necessarily wanted back",
+        and a single control silently relaying every open task overreaches.
+        The send path keeps the crash redispatch safety net because there the
+        user is demonstrably asking the conductor to work again."""
         self.configure_models(
             llm_index=llm_index,
             subagent_llm_index=subagent_llm_index,
             subagent_model_policy=subagent_model_policy,
         )
-        return self.ensure_started()
+        return self.ensure_started(redispatch_stranded=False)
 
-    def ensure_started(self, exclude_request_id: str | None = None) -> bool:
+    def resume_workflow(self, request_id: str) -> bool:
+        """Bring the supervisor up (if needed) and re-relay exactly ONE task.
+
+        The per-task counterpart of the old batch redispatch: only this
+        workflow's original user message is delivered, every other open
+        workflow is left untouched. Raises ValueError for unknown or
+        already-terminal requests; the route maps it to a clean 422."""
+        tracker = self.workflow_tracker
+        snapshot = tracker.snapshot(request_id)
+        if snapshot is None:
+            raise ValueError(f"unknown conductor request_id: {request_id}")
+        if (snapshot.get("terminal_event")
+                or snapshot.get("status") in TERMINAL_WORKFLOW_STATES):
+            raise ValueError("该任务已经结束，无法恢复")
+        self.ensure_started(redispatch_stranded=False)
+        original = self._original_user_message(request_id)
+        if original is None:
+            raise ValueError("该任务找不到可重放的原始指令，无法恢复")
+        item = self.notify({
+            "type": "user_message",
+            "msg": original,
+            "request_id": request_id,
+        })
+        if item is None:
+            raise RuntimeError("engine refused resume (stopping?)")
+        log.info("resumed workflow %s on explicit request", request_id[:8])
+        return True
+
+    def ensure_started(
+            self,
+            exclude_request_id: str | None = None,
+            redispatch_stranded: bool = True) -> bool:
         with self._shutdown_lock:
             if self._closed:
                 raise RuntimeError("Conductor service is closed")
@@ -1149,9 +1187,12 @@ class ConductorService:
                     # must NOT run — an admitted workflow may be mid-turn
                     # right now. The caller may also exclude the request it
                     # just admitted (it is about to notify the engine itself);
-                    # re-relaying it here duplicated the message.
-                    self._redispatch_stranded_workflows(
-                        exclude_request_id=exclude_request_id)
+                    # re-relaying it here duplicated the message. Explicit
+                    # start passes redispatch_stranded=False: no task may be
+                    # resumed without a per-task user decision.
+                    if redispatch_stranded:
+                        self._redispatch_stranded_workflows(
+                            exclude_request_id=exclude_request_id)
         self.lifecycle_status()
         return True
 

@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { ArrowUp, CheckCheck, FileCheck2, LayoutGrid, MessageSquare, Plus, RotateCcw, Settings2, Square, X, Activity } from 'lucide-react'
+import { ArrowUp, CheckCheck, FileCheck2, LayoutGrid, MessageSquare, Play, Plus, RotateCcw, Settings2, Square, X, Activity } from 'lucide-react'
 import '@/styles/conductor.css'
 import { api, type ConductorSubagentModelPolicy } from '@/api/client'
 import { storageKeys } from '@/config/storageKeys'
@@ -60,6 +60,7 @@ export default function Conductor() {
   const [subagentSettingsOpen, setSubagentSettingsOpen] = useState(false)
   const [isSending, setIsSending] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
+  const [isResuming, setIsResuming] = useState(false)
   // Subagent review surface (roadmap P1-B): inline accept/rework/abort with
   // the engine's verification evidence shown before any forced accept.
   const [reworkSid, setReworkSid] = useState<string | null>(null)
@@ -200,14 +201,9 @@ export default function Conductor() {
     && !isWorkflowClosed(currentWorkflow)
     ? currentWorkflow.request_id
     : null
-  // The explicit start button only exists to resume work: sending a message
-  // cold-starts the engine inside admission anyway, so on an empty page the
-  // button would be a no-semantics switch. Shown only while some workflow is
-  // still open (stranded supervisor, paused mid-task).
-  const resumableWorkflows = useMemo(
-    () => workflows.filter((workflow) => !isWorkflowClosed(workflow)).length,
-    [workflows],
-  )
+  // The explicit start button is a pure bring-up (2026-09 user ruling): it
+  // never batch-resumes stranded workflows. Per-task resume lives on the
+  // workflow card ("恢复此任务") so the user picks which task continues.
 
   const submitChat = async (targetRequestId: string | null) => {
     if (!userMsg.trim() || effectiveLlmIndex === null || isSending) return
@@ -287,14 +283,41 @@ export default function Conductor() {
         return
       }
       await qc.invalidateQueries({ queryKey: queryKeys.conductor.status })
-      toast.success('Conductor 已恢复：可继续验收或追加指令，暂停的任务不会自动重跑')
+      toast.success('Conductor 已启动：不会自动重跑任务，需要续跑时用任务卡上的“恢复此任务”')
     } catch (err) {
       console.error('startConductor failed', err)
       // The backend sends actionable detail (bad llm index 422, engine
       // 502/503) — surface it instead of a fixed retry line.
-      toast.error(errorMessageFromError(err, '恢复 Conductor 失败，请稍后重试。'))
+      toast.error(errorMessageFromError(err, '启动 Conductor 失败，请稍后重试。'))
     } finally {
       setIsSending(false)
+    }
+  }
+
+  // Per-task resume (恢复此任务): the backend brings the supervisor up and
+  // re-relays ONLY this workflow's original message — every other open task
+  // stays untouched. This replaces the old blanket redispatch that one
+  // header click used to trigger for all stranded workflows.
+  const resumeCurrentWorkflow = async () => {
+    if (!currentWorkflow || isResuming || isSending || isStopping) return
+    setIsResuming(true)
+    try {
+      const result = await api.conductorResumeWorkflow(currentWorkflow.request_id)
+      if (!result.ok) {
+        toast.error('该任务未能恢复，请检查引擎状态。')
+        return
+      }
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: queryKeys.conductor.status }),
+        qc.invalidateQueries({ queryKey: queryKeys.conductor.workflows }),
+        qc.invalidateQueries({ queryKey: queryKeys.conductor.subagents }),
+      ])
+      toast.success('已恢复该任务：仅重放这一个任务的原始指令，其他任务不受影响')
+    } catch (err) {
+      console.error('resumeCurrentWorkflow failed', err)
+      toast.error(errorMessageFromError(err, '恢复任务失败，请稍后重试。'))
+    } finally {
+      setIsResuming(false)
     }
   }
 
@@ -563,12 +586,12 @@ export default function Conductor() {
             <button onClick={stopConductor} disabled={isStopping} className="ga-btn-danger whitespace-nowrap">
               <Square size={13} />{isStopping ? '停止中…' : '停止'}
             </button>
-          ) : resumableWorkflows > 0 ? (
+          ) : (
             <button onClick={startConductor} disabled={isSending} className="ga-btn ga-btn-primary whitespace-nowrap"
-              title="恢复监督者以继续验收或返工；暂停的任务不会自动重跑">
-              <RotateCcw size={13} />{isSending ? '恢复中…' : '恢复'}
+              title="仅拉起监督者，不会自动重跑任何任务；要续跑某个暂停任务，用任务卡上的“恢复此任务”">
+              <Play size={13} />{isSending ? '启动中…' : '启动'}
             </button>
-          ) : null}
+          )}
         </div>
       }
     >
@@ -593,6 +616,13 @@ export default function Conductor() {
                 <div className="flex items-center gap-2">
                   {pinnedRequestId && <button type="button" className="conductor-icon-button" title="回到最新任务" aria-label="回到最新"
                     onClick={() => setPinnedRequestId(null)}><RotateCcw size={16} /></button>}
+                  {!status?.started && currentWorkflow && !isWorkflowClosed(currentWorkflow) && (
+                    <button type="button" className="ga-btn ga-btn-primary text-xs" disabled={isResuming}
+                      title="只恢复这一个任务：拉起监督者并重放它的原始指令，其他未闭合任务不受影响"
+                      onClick={() => void resumeCurrentWorkflow()}>
+                      <RotateCcw size={14} />{isResuming ? '恢复中…' : '恢复此任务'}
+                    </button>
+                  )}
                   <button type="button" className="ga-btn text-xs" onClick={() => { setContextTab('chat'); setMobileView('context'); requestAnimationFrame(() => chatInputRef.current?.focus()) }}>
                     <MessageSquare size={14} />对话
                   </button>

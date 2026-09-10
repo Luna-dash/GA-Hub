@@ -567,6 +567,82 @@ def test_redispatch_empty_history_falls_back_to_engine_chat():
     assert kwargs.get("operation_id")
 
 
+# ===== resume_workflow: per-task relay, the explicit 恢复此任务 =====
+
+
+def _resume_service(service=None):
+    """Shared harness: two stranded workflows plus one with a worker, so a
+    per-task resume can prove it relays exactly one original message and
+    leaves the other open workflows untouched."""
+    service = service or ConductorService.for_tests()
+    tracker = WorkflowTracker(clock=lambda: 10.0)
+    tracker.admit("rid-a")
+    tracker.admit("rid-b")
+    tracker.admit("rid-busy")
+    tracker.bind_subagent("rid-busy", "worker-1", 1)
+    service.workflow_tracker = tracker
+    service.chat_messages = [
+        {"id": "c1", "role": "user", "msg": "任务A", "request_id": "rid-a"},
+        {"id": "c2", "role": "user", "msg": "任务B", "request_id": "rid-b"},
+    ]
+    service.client = Mock()
+    service.client.get_chat.return_value = []
+    service.client.post_chat.return_value = {"id": "engine-1"}
+    service.ensure_started = Mock(return_value=True)
+    return service
+
+
+def test_resume_workflow_relays_only_the_named_request():
+    service = _resume_service()
+
+    assert service.resume_workflow("rid-a") is True
+
+    service.ensure_started.assert_called_once_with(redispatch_stranded=False)
+    service.client.post_chat.assert_called_once()
+    args, kwargs = service.client.post_chat.call_args
+    assert args == ("任务A", "user", "rid-a")
+    assert kwargs.get("operation_id")
+
+
+def test_resume_workflow_relay_failure_surfaces_to_the_caller():
+    service = _resume_service()
+    service.client.post_chat.side_effect = RuntimeError("engine down")
+
+    with pytest.raises(RuntimeError, match="engine down"):
+        service.resume_workflow("rid-a")
+
+
+def test_resume_workflow_refused_relay_raises_runtime_error():
+    service = _resume_service()
+    service.client.post_chat.return_value = None
+
+    with pytest.raises(RuntimeError):
+        service.resume_workflow("rid-a")
+
+
+def test_resume_workflow_unknown_request_raises_value_error():
+    service = _resume_service()
+
+    with pytest.raises(ValueError, match="unknown"):
+        service.resume_workflow("rid-missing")
+
+
+def test_resume_workflow_terminal_request_raises_value_error():
+    service = _resume_service()
+    service.workflow_tracker.fail_supervisor("rid-a", phase="drain", error="stopped")
+
+    with pytest.raises(ValueError):
+        service.resume_workflow("rid-a")
+
+
+def test_resume_workflow_missing_original_message_raises_value_error():
+    service = _resume_service()
+    service.chat_messages = []
+
+    with pytest.raises(ValueError, match="原始指令"):
+        service.resume_workflow("rid-a")
+
+
 # ===== delete: terminal workflows tombstone instead of resurrect =====
 
 def test_forget_workflow_requires_a_terminal_workflow():

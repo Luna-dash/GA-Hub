@@ -318,6 +318,31 @@ async def start_conductor(body: ConductorStartReq | None = None) -> ConductorLif
     return {"ok": started or status["started"], **status}
 
 
+@router.post("/api/conductor/workflow/{request_id}/resume")
+async def resume_workflow(request_id: str) -> ConductorLifecycleResp:
+    """Resume exactly ONE open workflow (per-task 恢复此任务).
+
+    The blanket redispatch formerly hidden behind POST /start was removed by
+    user ruling (2026-09: a stopped task is not implicitly wanted back), so
+    this endpoint is the only relay path an explicit click takes — it brings
+    the supervisor up and re-delivers just this request's original message."""
+    service = svc()
+    try:
+        resumed = await asyncio.to_thread(service.resume_workflow, request_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except conductor_client_module.GahubProcessError as exc:
+        # Subclass of RuntimeError — must stay above the bare-RuntimeError
+        # handler or it would lose _engine_http_error's diagnostics mapping.
+        raise _engine_http_error(exc) from exc
+    except RuntimeError as exc:
+        # Engine refused the relay (stopping/unavailable): the click failed
+        # for a reason the user can act on — surface it, not a blind 500.
+        raise HTTPException(503, str(exc)) from exc
+    status = await _dispatch_through_engine(_status_payload, service)
+    return {"ok": resumed or status["started"], **status}
+
+
 @router.post("/api/conductor/stop")
 async def stop_conductor() -> ConductorLifecycleResp:
     """Stop the conductor supervisor."""

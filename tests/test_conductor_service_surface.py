@@ -348,7 +348,11 @@ def test_start_facade_configures_models_then_ensures_lifecycle() -> None:
     assert service.start(llm_index=1, subagent_llm_index=2) is True
     service.configure_models.assert_called_once_with(
         llm_index=1, subagent_llm_index=2, subagent_model_policy=None)
-    service.ensure_started.assert_called_once_with()
+    # Explicit start must be a pure bring-up: the blanket redispatch of
+    # every stranded workflow is what the 2026-09 user ruling removed —
+    # resuming is a per-task decision (resume_workflow), never a side
+    # effect of pressing the header start button.
+    service.ensure_started.assert_called_once_with(redispatch_stranded=False)
 
 
 def test_auto_accept_withholds_on_stale_deliverables() -> None:

@@ -1097,6 +1097,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/conductor/workflow/{request_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Workflow
+         * @description Resume exactly ONE open workflow (per-task 恢复此任务).
+         *
+         *     The blanket redispatch formerly hidden behind POST /start was removed by
+         *     user ruling (2026-09: a stopped task is not implicitly wanted back), so
+         *     this endpoint is the only relay path an explicit click takes — it brings
+         *     the supervisor up and re-delivers just this request's original message.
+         */
+        post: operations["resume_workflow_api_conductor_workflow__request_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/conductor/stop": {
         parameters: {
             query?: never;
@@ -6017,6 +6042,37 @@ export interface operations {
                 "application/json": components["schemas"]["ConductorStartReq"] | null;
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConductorLifecycleResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_workflow_api_conductor_workflow__request_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

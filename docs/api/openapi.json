@@ -2274,6 +2274,46 @@
         }
       }
     },
+    "/api/conductor/workflow/{request_id}/resume": {
+      "post": {
+        "summary": "Resume Workflow",
+        "description": "Resume exactly ONE open workflow (per-task 恢复此任务).\n\nThe blanket redispatch formerly hidden behind POST /start was removed by\nuser ruling (2026-09: a stopped task is not implicitly wanted back), so\nthis endpoint is the only relay path an explicit click takes — it brings\nthe supervisor up and re-delivers just this request's original message.",
+        "operationId": "resume_workflow_api_conductor_workflow__request_id__resume_post",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorLifecycleResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/conductor/stop": {
       "post": {
         "summary": "Stop Conductor",

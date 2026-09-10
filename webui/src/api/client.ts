@@ -463,6 +463,8 @@ export const api = {
       subagent_llm_index: models.subagentLlmIndex,
       subagent_model_policy: models.subagentModelPolicy,
     }),
+  conductorResumeWorkflow: (requestId: string) =>
+    http<ConductorLifecycleResponse>('POST', `/api/conductor/workflow/${encodeURIComponent(requestId)}/resume`),
   sessions: () => http<SessionList>('GET', '/api/sessions'),
   createSession: (req: Partial<ApiComponents['schemas']['SessionCreate']> = {}) =>
     http<GeneratedHubSession>('POST', '/api/sessions', req),

@@ -593,6 +593,18 @@ def test_ensure_started_excludes_the_just_admitted_request():
     rd.assert_called_once_with(exclude_request_id="rid-just-admitted")
 
 
+def test_ensure_started_explicit_start_skips_blanket_redispatch():
+    """The header 启动 button is a pure bring-up (2026-09 user ruling: a
+    stopped task is not implicitly a task to restart). Pressing it must not
+    relay a single stranded workflow — resuming is per-task (恢复此任务)."""
+    service, client = _ensure_started_service(False)
+    with patch.object(ConductorService, "_redispatch_stranded_workflows") as rd:
+        service.ensure_started(redispatch_stranded=False)
+
+    client.start.assert_called_once()
+    rd.assert_not_called()
+
+
 def test_ensure_started_second_admission_rechecks_under_cold_start_lock():
     """Two admissions racing a cold start both observe "not started" before
     either starts the engine. The redispatch carries a fresh operation_id,

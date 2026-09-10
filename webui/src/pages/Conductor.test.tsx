@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   conductorSendChat: vi.fn(),
   conductorStop: vi.fn(),
   conductorStart: vi.fn(),
+  conductorResumeWorkflow: vi.fn(),
   conductorSubagentAction: vi.fn(),
   conductorSubagent: vi.fn(),
   conductorSettings: vi.fn(),
@@ -46,6 +47,7 @@ vi.mock('@/api/client', () => ({
     conductorSendChat: mocks.conductorSendChat,
     conductorStop: mocks.conductorStop,
     conductorStart: mocks.conductorStart,
+    conductorResumeWorkflow: mocks.conductorResumeWorkflow,
     conductorSubagentAction: mocks.conductorSubagentAction,
     conductorSubagent: mocks.conductorSubagent,
     conductorSettings: mocks.conductorSettings,
@@ -1150,36 +1152,56 @@ describe('Conductor chat scroll restoration', () => {
     ).toBeTruthy())
   })
 
-  it('shows the resume button only while an open workflow waits for the conductor', async () => {
+  it('keeps a pure start button visible whenever the conductor is down, without resuming anything', async () => {
+    // 2026-09 user ruling: the header control is a pure bring-up — it must
+    // stay visible even when no open workflow waits, and it must never
+    // imply that pressing it relays tasks.
     mocks.conductorStatus.mockResolvedValue({ ready: true, started: false })
     mocks.conductorStart.mockResolvedValue({ ok: true, started: true })
-    mocks.conductorWorkflows.mockResolvedValue({ items: [
-      { request_id: 'live', stage: 'supervising', status: 'running', subagents: {}, created_at: 2 },
-    ] })
-
-    renderPage()
-    await waitFor(() => expect(button('恢复')).toBeTruthy())
-    expect(host.textContent).not.toContain('启动 / 恢复')
-    act(() => button('恢复').click())
-    await waitFor(() => expect(mocks.conductorStart).toHaveBeenCalled())
-    await waitFor(() => expect(useToastStore.getState().items.some((toast) =>
-      toast.kind === 'success' && toast.message.includes('已恢复'))).toBe(true))
-  })
-
-  it('hides the start control on an idle page: sending a message self-starts', async () => {
-    mocks.conductorStatus.mockResolvedValue({ ready: true, started: false })
-    // Only closed history exists — there is nothing a resume could hand back.
+    // Only closed history exists — a resume would have nothing to hand back.
     mocks.conductorWorkflows.mockResolvedValue({ items: [
       { request_id: 'old', stage: 'completed', status: 'completed', subagents: {}, created_at: 1, completed_at: 2 },
     ] })
 
     renderPage()
     await waitFor(() => expect(host.querySelector('header .ga-badge-offline')).toBeTruthy())
-    const headerButtons = Array.from(host.querySelectorAll('header button')).map((item) => item.textContent)
-    expect(headerButtons).not.toContain('恢复')
-    expect(headerButtons).not.toContain('启动 / 恢复')
-    // The closed history still renders as a finished card, minus any switch.
-    expect(host.textContent).toContain('已完成')
+    const headerButtons = Array.from(host.querySelectorAll('header button'))
+    const start = headerButtons.find((item): item is HTMLButtonElement =>
+      item.textContent?.trim() === '启动')
+    await waitFor(() => expect(start).toBeTruthy())
+    expect(start!.textContent).not.toContain('恢复')
+    const anyResume = Array.from(host.querySelectorAll('button'))
+      .some((item) => item.textContent?.trim() === '恢复此任务')
+    expect(anyResume).toBe(false)
+    act(() => start!.click())
+    await waitFor(() => expect(mocks.conductorStart).toHaveBeenCalled())
+    expect(mocks.conductorResumeWorkflow).not.toHaveBeenCalled()
+    await waitFor(() => expect(useToastStore.getState().items.some((toast) =>
+      toast.kind === 'success' && toast.message.includes('已启动'))).toBe(true))
+  })
+
+  it('resumes exactly the clicked workflow instead of every open task', async () => {
+    // The per-task 恢复此任务 control is the ONLY resume path: it relays
+    // just the selected workflow's original message (backend contract),
+    // never the sibling stranded tasks.
+    mocks.conductorStatus.mockResolvedValue({ ready: true, started: false })
+    mocks.conductorResumeWorkflow.mockResolvedValue({ ok: true, started: true })
+    mocks.conductorWorkflows.mockResolvedValue({ items: [
+      { request_id: 'live', stage: 'supervising', status: 'running', subagents: {}, created_at: 2 },
+      { request_id: 'stranded', stage: 'planning', status: 'admitted', subagents: {}, created_at: 3 },
+    ] })
+    mocks.conductorChat.mockResolvedValue({ items: [] })
+
+    renderPage()
+    await waitFor(() => expect(button('恢复此任务')).toBeTruthy())
+    act(() => button('恢复此任务').click())
+    // The latest open workflow ('stranded', created later) is the pinned
+    // current task — its sibling 'live' must not be swept into the resume.
+    await waitFor(() => expect(mocks.conductorResumeWorkflow).toHaveBeenCalledTimes(1))
+    expect(mocks.conductorResumeWorkflow).toHaveBeenCalledWith('stranded')
+    expect(mocks.conductorStart).not.toHaveBeenCalled()
+    await waitFor(() => expect(useToastStore.getState().items.some((toast) =>
+      toast.kind === 'success' && toast.message.includes('已恢复该任务'))).toBe(true))
   })
 
   it('moves worker selection with j/k and accepts the selected worker with a', async () => {
