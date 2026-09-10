@@ -234,7 +234,7 @@ export function workflowPresentation(
   }
   const view = WORKFLOW_STAGE_VIEW[workflow.stage ?? 'planning'] ?? WORKFLOW_STAGE_VIEW.planning
   if (!started && WORKFLOW_STAGE_PAUSABLE.has(workflow.stage ?? '')) {
-    return { label: '已暂停', detail: 'Conductor 已停止；点击“恢复”后可继续处理。', tone: 'idle' }
+    return { label: '已暂停', detail: 'Conductor 已停止；点击“恢复”可继续验收或追加指令，不会自动重跑任务。', tone: 'idle' }
   }
   // Surface the tracker-persisted reason directly: a page opened after the
   // failure never saw the live transition, so the reason must come from the

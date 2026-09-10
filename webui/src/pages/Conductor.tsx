@@ -287,7 +287,7 @@ export default function Conductor() {
         return
       }
       await qc.invalidateQueries({ queryKey: queryKeys.conductor.status })
-      toast.success('Conductor 已恢复，未完成任务继续处理中')
+      toast.success('Conductor 已恢复：可继续验收或追加指令，暂停的任务不会自动重跑')
     } catch (err) {
       console.error('startConductor failed', err)
       // The backend sends actionable detail (bad llm index 422, engine
@@ -565,7 +565,7 @@ export default function Conductor() {
             </button>
           ) : resumableWorkflows > 0 ? (
             <button onClick={startConductor} disabled={isSending} className="ga-btn ga-btn-primary whitespace-nowrap"
-              title={resumableWorkflows > 1 ? `有 ${resumableWorkflows} 个未完成任务等待继续` : '有未完成任务等待继续'}>
+              title="恢复监督者以继续验收或返工；暂停的任务不会自动重跑">
               <RotateCcw size={13} />{isSending ? '恢复中…' : '恢复'}
             </button>
           ) : null}
