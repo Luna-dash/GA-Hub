@@ -1150,6 +1150,38 @@ describe('Conductor chat scroll restoration', () => {
     ).toBeTruthy())
   })
 
+  it('shows the resume button only while an open workflow waits for the conductor', async () => {
+    mocks.conductorStatus.mockResolvedValue({ ready: true, started: false })
+    mocks.conductorStart.mockResolvedValue({ ok: true, started: true })
+    mocks.conductorWorkflows.mockResolvedValue({ items: [
+      { request_id: 'live', stage: 'supervising', status: 'running', subagents: {}, created_at: 2 },
+    ] })
+
+    renderPage()
+    await waitFor(() => expect(button('恢复')).toBeTruthy())
+    expect(host.textContent).not.toContain('启动 / 恢复')
+    act(() => button('恢复').click())
+    await waitFor(() => expect(mocks.conductorStart).toHaveBeenCalled())
+    await waitFor(() => expect(useToastStore.getState().items.some((toast) =>
+      toast.kind === 'success' && toast.message.includes('已恢复'))).toBe(true))
+  })
+
+  it('hides the start control on an idle page: sending a message self-starts', async () => {
+    mocks.conductorStatus.mockResolvedValue({ ready: true, started: false })
+    // Only closed history exists — there is nothing a resume could hand back.
+    mocks.conductorWorkflows.mockResolvedValue({ items: [
+      { request_id: 'old', stage: 'completed', status: 'completed', subagents: {}, created_at: 1, completed_at: 2 },
+    ] })
+
+    renderPage()
+    await waitFor(() => expect(host.querySelector('header .ga-badge-offline')).toBeTruthy())
+    const headerButtons = Array.from(host.querySelectorAll('header button')).map((item) => item.textContent)
+    expect(headerButtons).not.toContain('恢复')
+    expect(headerButtons).not.toContain('启动 / 恢复')
+    // The closed history still renders as a finished card, minus any switch.
+    expect(host.textContent).toContain('已完成')
+  })
+
   it('moves worker selection with j/k and accepts the selected worker with a', async () => {
     mocks.conductorWorkflows.mockResolvedValue({
       items: [{

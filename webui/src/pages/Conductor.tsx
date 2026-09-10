@@ -200,6 +200,14 @@ export default function Conductor() {
     && !isWorkflowClosed(currentWorkflow)
     ? currentWorkflow.request_id
     : null
+  // The explicit start button only exists to resume work: sending a message
+  // cold-starts the engine inside admission anyway, so on an empty page the
+  // button would be a no-semantics switch. Shown only while some workflow is
+  // still open (stranded supervisor, paused mid-task).
+  const resumableWorkflows = useMemo(
+    () => workflows.filter((workflow) => !isWorkflowClosed(workflow)).length,
+    [workflows],
+  )
 
   const submitChat = async (targetRequestId: string | null) => {
     if (!userMsg.trim() || effectiveLlmIndex === null || isSending) return
@@ -279,12 +287,12 @@ export default function Conductor() {
         return
       }
       await qc.invalidateQueries({ queryKey: queryKeys.conductor.status })
-      toast.success('Conductor 已启动，可继续处理任务')
+      toast.success('Conductor 已恢复，未完成任务继续处理中')
     } catch (err) {
       console.error('startConductor failed', err)
       // The backend sends actionable detail (bad llm index 422, engine
       // 502/503) — surface it instead of a fixed retry line.
-      toast.error(errorMessageFromError(err, '启动 Conductor 失败，请稍后重试。'))
+      toast.error(errorMessageFromError(err, '恢复 Conductor 失败，请稍后重试。'))
     } finally {
       setIsSending(false)
     }
@@ -555,11 +563,12 @@ export default function Conductor() {
             <button onClick={stopConductor} disabled={isStopping} className="ga-btn-danger whitespace-nowrap">
               <Square size={13} />{isStopping ? '停止中…' : '停止'}
             </button>
-          ) : (
-            <button onClick={startConductor} disabled={isSending} className="ga-btn ga-btn-primary whitespace-nowrap">
-              {isSending ? '启动中…' : '启动 / 恢复'}
+          ) : resumableWorkflows > 0 ? (
+            <button onClick={startConductor} disabled={isSending} className="ga-btn ga-btn-primary whitespace-nowrap"
+              title={resumableWorkflows > 1 ? `有 ${resumableWorkflows} 个未完成任务等待继续` : '有未完成任务等待继续'}>
+              <RotateCcw size={13} />{isSending ? '恢复中…' : '恢复'}
             </button>
-          )}
+          ) : null}
         </div>
       }
     >
