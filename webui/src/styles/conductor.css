@@ -47,7 +47,12 @@
 .conductor-worker-process { display: flex; flex-direction: column; gap: 10px; margin-top: 2px; padding-top: 10px; border-top: 1px dashed color-mix(in srgb, var(--c-line) 80%, transparent); }
 .conductor-worker-process-block h4 { color: var(--c-text-faint); font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .conductor-worker-process-block ul { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
-.conductor-worker-process-block li { display: flex; align-items: baseline; gap: 6px; color: var(--c-text-muted); font-size: 11px; line-height: 1.5; }
+/* Flex row is ONLY for checklist rows (dot + text + time). A blanket li rule
+   also caught the markdown reply's own list items — as flex rows their text
+   nodes shrank to min-content (one character, thanks to the inherited
+   overflow-wrap: anywhere), rendering the reply vertically. Checklist rows
+   always carry a state class; reply list items never do. */
+.conductor-worker-process-block ul > li:is(.is-done, .is-missed, .is-stale, .is-pending) { display: flex; align-items: baseline; gap: 6px; color: var(--c-text-muted); font-size: 11px; line-height: 1.5; }
 .conductor-worker-process-block li.is-done > span:first-of-type:not(.conductor-worker-process-dot) { color: var(--c-text); }
 .conductor-worker-process-block li.is-missed { color: var(--c-text); }
 .conductor-worker-process-dot { flex: 0 0 6px; height: 6px; border-radius: 999px; background: var(--c-text-faint); }
@@ -67,8 +72,8 @@
 .conductor-worker-reply ul, .conductor-dossier-reply ul { margin: 4px 0; padding-left: 1.3em; list-style: disc; }
 .conductor-worker-reply ol, .conductor-dossier-reply ol { margin: 4px 0; padding-left: 1.5em; list-style: decimal; }
 .conductor-worker-reply li, .conductor-dossier-reply li { margin: 2px 0; }
-.conductor-worker-reply > div > p, .conductor-dossier-reply p { margin: 4px 0; }
-.conductor-worker-turn-label { margin: 8px 0 2px; color: var(--c-text-faint); font-size: 10px; font-weight: 600; letter-spacing: .06em; }
+.conductor-dossier-reply p { margin: 4px 0; }
+.conductor-worker-reply .conductor-worker-turn-label { margin: 8px 0 2px; color: var(--c-text-faint); font-size: 10px; font-weight: 600; letter-spacing: .06em; }
 /* Dossier section headers: accent-weighted so they read as labels above the
    muted body text instead of blending into it. */
 .conductor-dossier-h { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--c-accent); text-transform: uppercase; }

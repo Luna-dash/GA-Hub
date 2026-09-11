@@ -242,7 +242,7 @@ export function WorkerDossier({
               {replyTurns.map((turn, turnIndex) => (
                 <div key={`turn-${turnIndex}`} className="space-y-2">
                   {replyTurns.length > 1 && (
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
                       {turn.index > 0 ? `第 ${turn.index} 轮` : '前置说明'}
                     </p>
                   )}
