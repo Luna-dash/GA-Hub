@@ -162,6 +162,49 @@ export function collapseBlankLines(text: string): string {
   return text.replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n').replace(/^\n+/, '').replace(/\s+$/, '')
 }
 
+// The engine embeds turn markers and tool chatter inside a worker's reply
+// (frontends/gahub/conductor_core.py `_TURN_SPLIT_RE` / `clean_log_text`).
+// The chat-grade process view splits on the markers and strips the noise.
+const WORKER_TURN_RE = /\**LLM Running \(Turn (\d+)\) \.\.\.\**/g
+
+/** Strip engine noise from worker output: raw 5-backtick dumps, tool-call
+ *  arg blocks, <thinking> blocks, [Status]/[Info] lines, and stray
+ *  angle-bracket tags (e.g. leftover </summary>) that would render as
+ *  nothing or leak as literal markup. */
+export function sanitizeWorkerOutput(text: string): string {
+  if (!text) return ''
+  let s = text
+  s = s.replace(/`{5}\n[\s\S]*?`{5}\n?/g, '')
+  s = s.replace(/🛠️ Tool: `([^`\n]+)`\s*📥 args:\n`{4}[\s\S]*?`{4}\n?/g, '🛠️ `$1`\n')
+  s = s.replace(/<thinking>[\s\S]*?<\/thinking>\s*/gi, '')
+  s = s.replace(/^[ \t]*\[(?:Info|Status)\][^\n]*\n?/gm, '')
+  s = s.replace(/<\/?[a-zA-Z][a-zA-Z0-9_-]*(?:\s[^<>\n]*)?>/g, '')
+  return s
+}
+
+/** One entry per LLM turn, in order: the engine's "LLM Running (Turn N)"
+ *  markers become turn numbers; text before the first marker keeps index 0
+ *  and renders as a "前置说明" segment when turns exist. */
+export function splitWorkerTurns(reply: string): Array<{ index: number; text: string }> {
+  const text = sanitizeWorkerOutput(reply).trim()
+  if (!text) return []
+  const marks: Array<{ start: number; end: number; n: number }> = []
+  const marker = new RegExp(WORKER_TURN_RE.source, 'g')
+  for (let match = marker.exec(text); match; match = marker.exec(text)) {
+    marks.push({ start: match.index, end: match.index + match[0].length, n: Number(match[1]) })
+  }
+  if (marks.length === 0) return [{ index: 1, text }]
+  const turns: Array<{ index: number; text: string }> = []
+  const pre = text.slice(0, marks[0].start).trim()
+  if (pre) turns.push({ index: 0, text: pre })
+  marks.forEach((mark, i) => {
+    const stop = i + 1 < marks.length ? marks[i + 1].start : text.length
+    const body = text.slice(mark.end, stop).trim()
+    if (body) turns.push({ index: mark.n || i + 1, text: body })
+  })
+  return turns
+}
+
 /** Card title: derive a name-sized summary of what this worker is for.
  *  Priority: manifest goal → the dispatch prompt's [Task Goal] section → the
  *  first line that reads like content (contract tags, markdown scaffolding

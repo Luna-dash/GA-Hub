@@ -8,7 +8,9 @@ import {
   isWorkflowClosed,
   milestoneCheckSummary,
   parseContractDeliverables,
+  sanitizeWorkerOutput,
   splitReplyByMilestones,
+  splitWorkerTurns,
   stripContractTail,
   workerNumbers,
   type SubagentReviewFacts,
@@ -298,5 +300,62 @@ describe('collapseBlankLines', () => {
 
   it('keeps normal single blank lines intact', () => {
     expect(collapseBlankLines('第一段\n\n第二段')).toBe('第一段\n\n第二段')
+  })
+})
+
+describe('sanitizeWorkerOutput', () => {
+  it('strips thinking blocks, status lines and stray angle-bracket tags', () => {
+    const raw = [
+      '[Status] LLM warmup',
+      '<thinking>内心推演，不该展示</thinking>',
+      '正文第一行</summary>',
+      '[Info] cost 0.01',
+      '正文第二行 <output> 标记',
+    ].join('\n')
+    const clean = sanitizeWorkerOutput(raw)
+    expect(clean).not.toContain('<thinking>')
+    expect(clean).not.toContain('内心推演')
+    expect(clean).not.toContain('[Status]')
+    expect(clean).not.toContain('[Info]')
+    expect(clean).not.toContain('</summary>')
+    expect(clean).not.toContain('<output>')
+    expect(clean).toContain('正文第一行')
+    expect(clean).toContain('正文第二行')
+  })
+
+  it('collapses tool-call arg dumps to one tool line', () => {
+    const raw = '🛠️ Tool: `read_file`\n📥 args:\n````\n{"path": "x"}\n````\n结果说明'
+    const clean = sanitizeWorkerOutput(raw)
+    expect(clean).toContain('🛠️ `read_file`')
+    expect(clean).not.toContain('"path"')
+    expect(clean).toContain('结果说明')
+  })
+})
+
+describe('splitWorkerTurns', () => {
+  it('splits engine turn markers into numbered turns', () => {
+    const reply = [
+      '**LLM Running (Turn 1) ...**',
+      '第一轮输出',
+      '**LLM Running (Turn 2) ...**',
+      '第二轮输出',
+    ].join('\n')
+    const turns = splitWorkerTurns(reply)
+    expect(turns).toHaveLength(2)
+    expect(turns[0]).toEqual({ index: 1, text: '第一轮输出' })
+    expect(turns[1]).toEqual({ index: 2, text: '第二轮输出' })
+  })
+
+  it('keeps pre-marker text as a 前置说明 segment', () => {
+    const reply = '开场说明\n**LLM Running (Turn 1) ...**\n正式内容'
+    const turns = splitWorkerTurns(reply)
+    expect(turns).toHaveLength(2)
+    expect(turns[0].index).toBe(0)
+    expect(turns[0].text).toBe('开场说明')
+    expect(turns[1].index).toBe(1)
+  })
+
+  it('returns a single unlabeled turn for plain replies', () => {
+    expect(splitWorkerTurns('普通回复')).toEqual([{ index: 1, text: '普通回复' }])
   })
 })

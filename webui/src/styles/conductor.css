@@ -59,9 +59,16 @@
 .conductor-worker-ms-chip { margin: 2px 0; padding: 3px 8px; border: 1px solid #2D6A3F33; border-radius: 6px; background: #2D6A3F14; color: #2D6A3F; font-size: 11px; }
 .conductor-worker-noresult { margin-top: 4px; color: var(--c-text-muted); font-size: 11px; }
 /* Wide tables and code pasted into a worker reply used to squeeze to one
-   character per line ("vertical" text); let them scroll instead. */
+   character per line ("vertical" text); let them scroll instead. Worker
+   replies are list-heavy: give ul/ol the indentation the prose theme
+   assumes, or markers clip against the reply box edge. */
 .conductor-worker-reply table, .conductor-dossier-reply table { display: block; max-width: 100%; overflow-x: auto; }
 .conductor-worker-reply pre, .conductor-dossier-reply pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.conductor-worker-reply ul, .conductor-dossier-reply ul { margin: 4px 0; padding-left: 1.3em; list-style: disc; }
+.conductor-worker-reply ol, .conductor-dossier-reply ol { margin: 4px 0; padding-left: 1.5em; list-style: decimal; }
+.conductor-worker-reply li, .conductor-dossier-reply li { margin: 2px 0; }
+.conductor-worker-reply > div > p, .conductor-dossier-reply p { margin: 4px 0; }
+.conductor-worker-turn-label { margin: 8px 0 2px; color: var(--c-text-faint); font-size: 10px; font-weight: 600; letter-spacing: .06em; }
 /* Dossier section headers: accent-weighted so they read as labels above the
    muted body text instead of blending into it. */
 .conductor-dossier-h { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--c-accent); text-transform: uppercase; }

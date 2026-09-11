@@ -724,10 +724,12 @@ export default function Conductor() {
               msg.role === 'user' ? (
                 <div key={msg.id} className="flex justify-end px-4 py-2">
                   <div className={clsx('max-w-[85%] rounded-lg px-3.5 py-2 text-sm leading-6 [overflow-wrap:anywhere]', bubbleTone('user').surfaceClass)}>
-                    {/* Same markdown pipeline as the conductor voice — only
-                       the alignment and surface differ — and pasted runs of
-                       blank lines collapse instead of rendering as a ladder. */}
-                    <MessageContent content={collapseBlankLines(msg.msg)} format="markdown" markdownMode="plain" />
+                    {/* A user prompt is literal text: emoji, paths and
+                        angle-bracket tokens must survive verbatim, so no
+                        markdown pipeline here. Only the blank-line runs of a
+                        pasted block collapse, and the typography matches the
+                        conductor voice. */}
+                    <MessageContent content={collapseBlankLines(msg.msg)} format="text" />
                   </div>
                 </div>
               ) : (

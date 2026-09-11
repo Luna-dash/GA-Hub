@@ -18,6 +18,7 @@ import {
   phaseTone,
   reviewFacts,
   splitReplyByMilestones,
+  splitWorkerTurns,
   stripContractTail,
   subagentPhase,
   workerTitle,
@@ -41,6 +42,7 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
   const missing = new Set(facts.deliverables_missing ?? [])
   const stale = new Set(facts.deliverables_stale ?? [])
   const reply = stripContractTail((sub.reply || '').trim())
+  const replyTurns = splitWorkerTurns(reply)
   const summary = reply || sub.review_note
     || (archived ? '存档记录：执行文字结果未随快照保留，交付物与检查仍可查看' : '等待执行结果')
   // Collapsed-card footnote: the live numbers stay one hover away instead of
@@ -112,17 +114,27 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
           <h4>{sub.status === 'running' ? '进行中摘要' : '文字结果'}</h4>
           {reply ? (
             <div className="conductor-worker-reply">
-              {/* Chat-grade output, same filtering as the dossier: reached
-                  milestone marker lines lift into chips, protocol tails are
-                  already stripped — raw model chatter never shows here. */}
-              {splitReplyByMilestones(reply, milestones).map((segment, index2) => (
-                segment.kind === 'milestone' ? (
-                  <p key={`ms-${index2}`} className="conductor-worker-ms-chip">
-                    ✓ 里程碑达成 · {segment.milestone.desc}
-                  </p>
-                ) : (
-                  <MessageContent key={`text-${index2}`} content={segment.text} format="markdown" markdownMode="plain" />
-                )
+              {/* Chat-grade output, same filtering as the dossier: engine
+                  turn markers become labeled turns, thinking blocks / tool
+                  dumps / stray tags are stripped, reached milestone marker
+                  lines lift into chips. */}
+              {replyTurns.map((turn, turnIndex) => (
+                <div key={`turn-${turnIndex}`}>
+                  {replyTurns.length > 1 && (
+                    <p className="conductor-worker-turn-label">
+                      {turn.index > 0 ? `第 ${turn.index} 轮` : '前置说明'}
+                    </p>
+                  )}
+                  {splitReplyByMilestones(turn.text, milestones).map((segment, index2) => (
+                    segment.kind === 'milestone' ? (
+                      <p key={`ms-${turnIndex}-${index2}`} className="conductor-worker-ms-chip">
+                        ✓ 里程碑达成 · {segment.milestone.desc}
+                      </p>
+                    ) : (
+                      <MessageContent key={`text-${turnIndex}-${index2}`} content={segment.text} format="markdown" markdownMode="plain" />
+                    )
+                  ))}
+                </div>
               ))}
             </div>
           ) : (

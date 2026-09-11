@@ -20,6 +20,7 @@ import {
   phaseTone,
   reviewFacts,
   splitReplyByMilestones,
+  splitWorkerTurns,
   stripContractTail,
   subagentPhase,
   workerTitle,
@@ -77,7 +78,7 @@ export function WorkerDossier({
   const detailMilestones = milestonesOf(detail)
   const milestones = detailMilestones.length > 0 ? detailMilestones : milestonesOf(sub)
   const reply = stripContractTail((detail.reply || sub.reply || '').trim())
-  const replySegments = splitReplyByMilestones(reply, milestones)
+  const replyTurns = splitWorkerTurns(reply)
   // Archived workers (engine pool reset) are historical records: the engine
   // can no longer apply accept/rework/abort, so only reading is offered.
   const reviewable = !archived && isReviewable(sub)
@@ -237,30 +238,41 @@ export function WorkerDossier({
             {sub.status === 'running' ? '进行中摘要' : '文字结果'}
           </h3>
           {reply ? (
-            <div className="conductor-dossier-reply mt-1 space-y-2">
-              {replySegments.map((segment, index) => (
-                segment.kind === 'milestone' ? (
-                  <div
-                    key={`ms-${segment.milestone.id}-${index}`}
-                    data-testid="dossier-milestone-anchor"
-                    className="flex items-center gap-2 rounded-lg border border-status-success-line bg-status-success-soft px-2.5 py-1.5 text-xs text-status-success"
-                  >
-                    <span className="font-medium">✓ 里程碑达成</span>
-                    <span className="min-w-0 flex-1 truncate">{segment.milestone.desc}</span>
-                    {segment.milestone.reached_at && (
-                      <span className="shrink-0 text-[10px] text-status-success-muted">{formatClock(segment.milestone.reached_at)}</span>
-                    )}
-                  </div>
-                ) : (
-                  // Chat-grade rendering: the same markdown pipeline the
-                  // conductor conversation uses, minus the protocol tail.
-                  <MessageContent
-                    key={`text-${index}`}
-                    content={segment.text}
-                    format="markdown"
-                    markdownMode="plain"
-                  />
-                )
+            <div className="conductor-dossier-reply mt-1 space-y-3">
+              {replyTurns.map((turn, turnIndex) => (
+                <div key={`turn-${turnIndex}`} className="space-y-2">
+                  {replyTurns.length > 1 && (
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+                      {turn.index > 0 ? `第 ${turn.index} 轮` : '前置说明'}
+                    </p>
+                  )}
+                  {splitReplyByMilestones(turn.text, milestones).map((segment, index) => (
+                    segment.kind === 'milestone' ? (
+                      <div
+                        key={`ms-${segment.milestone.id}-${turnIndex}-${index}`}
+                        data-testid="dossier-milestone-anchor"
+                        className="flex items-center gap-2 rounded-lg border border-status-success-line bg-status-success-soft px-2.5 py-1.5 text-xs text-status-success"
+                      >
+                        <span className="font-medium">✓ 里程碑达成</span>
+                        <span className="min-w-0 flex-1 truncate">{segment.milestone.desc}</span>
+                        {segment.milestone.reached_at && (
+                          <span className="shrink-0 text-[10px] text-status-success-muted">{formatClock(segment.milestone.reached_at)}</span>
+                        )}
+                      </div>
+                    ) : (
+                      // Chat-grade rendering: the same markdown pipeline the
+                      // conductor conversation uses, with engine noise (turn
+                      // markers, thinking blocks, tool dumps, stray tags)
+                      // stripped and one labeled block per LLM turn.
+                      <MessageContent
+                        key={`text-${turnIndex}-${index}`}
+                        content={segment.text}
+                        format="markdown"
+                        markdownMode="plain"
+                      />
+                    )
+                  ))}
+                </div>
               ))}
             </div>
           ) : (
