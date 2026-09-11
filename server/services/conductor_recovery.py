@@ -8,6 +8,7 @@ import time
 
 from ..constants import ENV_GAHUB_DELIVERABLE_ROOTS, ENV_GAHUB_PATH_POLICY
 from .conductor_client import GahubProcessError, _engine_spawn_env
+from . import conductor_activity
 
 
 log = logging.getLogger(__name__)
@@ -18,6 +19,11 @@ OBSERVATIONS = frozenset({"chat_read", "request_yield_requested", "request_start
                           "model_fallback", "worker_failed", "worker_timeout", "worker_silent",
                           "subagent_milestone", "subagent_force_accept", "supervisor_followup",
                           "engine_stopped", "error", "output_truncated"})
+# How far back the one-shot activity backfill reads the journal. The store keeps
+# at most ConductorStore.ACTIVITY_CAP rows per engine, so this is a generous
+# multiple of what could ever be stored: it bounds startup work on an old,
+# unrotated journal without ever truncating a reachable row.
+ACTIVITY_BACKFILL_RECORDS = 20_000
 
 
 class ConductorRecovery:
@@ -37,6 +43,10 @@ class ConductorRecovery:
         self._connection_generation = 0
         self._start_lock = threading.Lock()
         self._journal_boot: str | None = None
+        # The activity backfill is a one-shot upgrade step. Without this flag a
+        # journal whose events never earn a timeline row (a chat-only install)
+        # would be re-scanned in full on every sync, forever.
+        self._activity_backfilled = False
 
     def start(self) -> None:
         with self._start_lock:
@@ -171,6 +181,7 @@ class ConductorRecovery:
                 self.service._notifications_dirty = False
                 self.service._publish("conductor:resync_required", {"reason": "notification_failed"})
             self._backfill_subagent_archive()
+            self._backfill_activity()
             self.service.callbacks.publish_subagent_snapshot()
             self.command_wake.set()
             return True
@@ -273,6 +284,94 @@ class ConductorRecovery:
         except Exception:
             log.exception("subagent archive backfill failed")
 
+    def _backfill_activity(self) -> None:
+        """Fold the existing journal into the durable timeline, once per process.
+
+        An install upgrading to durable history already has a journal full of
+        events its cursor has consumed — the catch-up loop will never revisit
+        them. Without this the 动态 tab stays empty for every task that ran
+        before the upgrade, which is precisely the case the feature exists for.
+
+        The guard is a process flag, not "is the table empty": catch-up runs
+        first and writes the handful of records that arrived since the saved
+        checkpoint, so a content-based guard would skip the very history this
+        exists to restore (observed against a real install). Re-folding an
+        already-persisted record is a no-op — rows are keyed by epoch+seq — so
+        scanning again costs a read and cannot duplicate anything.
+        """
+        store = self.service.store
+        if store is None or self._activity_backfilled:
+            return
+        try:
+            head = self.service.client.journal(after_seq=0, limit=1)
+            info = head.get("journal") or {}
+            if info.get("disabled"):
+                # A disabled journal yields nothing to fold and will not come
+                # back within this process; stop rescanning it.
+                self._activity_backfilled = True
+                return
+            # Bounded tail scan: the store keeps at most ACTIVITY_CAP rows per
+            # engine, so folding more history than could ever be stored would
+            # only cost startup time on an old, unrotated journal.
+            after = max(0, int(info.get("last_seq") or 0) - ACTIVITY_BACKFILL_RECORDS)
+        except Exception:
+            log.exception("activity backfill probe failed")
+            return
+        try:
+            rows: list[dict] = []
+            while True:
+                page = self.service.client.journal(after_seq=after, limit=5000)
+                info = page.get("journal") or {}
+                epoch = info.get("epoch")
+                records = page.get("events") or []
+                if not records:
+                    break
+                for record in records:
+                    row = self._activity_for(record, epoch)
+                    if row is not None:
+                        rows.append(row)
+                after = int(records[-1].get("seq") or after)
+                if len(records) < 5000:
+                    break
+            rows.extend(self._terminal_rows(store, rows))
+            tombstones = store.tombstones()
+            items = [row for row in rows if row["request_id"] not in tombstones]
+            if items:
+                store.save_activity(items)
+                log.info("activity backfilled %d rows from journal", len(items))
+            self._activity_backfilled = True
+        except Exception:
+            log.exception("activity backfill failed")
+
+    @staticmethod
+    def _terminal_rows(store, rows: list[dict]) -> list[dict]:
+        """Closing rows for workflows that already finished.
+
+        Terminal transitions are tracker-derived rather than journal events, so
+        `_apply_record` cannot record them after the fact. Their timestamps come
+        from the workflow row; a closed workflow's own created_at/completed_at
+        pair is degenerate (the row is rewritten on close), so the request's
+        last known event clamps the row to sort last instead of first.
+        """
+        latest: dict[str, int] = {}
+        for row in rows:
+            latest[row["request_id"]] = max(latest.get(row["request_id"], 0), row["atMs"])
+        out: list[dict] = []
+        for workflow in store.recent_workflows(store.ACTIVITY_CAP):
+            kind = workflow.get("terminal_event")
+            request_id = workflow.get("request_id")
+            if not kind or not request_id:
+                continue
+            ms = latest.get(request_id, 0)
+            finished = workflow.get("completed_at")
+            if isinstance(finished, (int, float)) and finished > 0:
+                ms = max(ms, int(round(float(finished) * 1000)))
+            row = conductor_activity.workflow_activity(
+                kind, request_id, event_id=f"wf:{request_id}:{kind}", ts=ms / 1000 if ms else 0.0)
+            if row is not None:
+                out.append(row)
+        return out
+
     def _catch_up(self) -> bool:
         cursor = self.store.cursor()
         response = self.service.client.journal(after_seq=cursor["seq"], limit=500)
@@ -300,7 +399,7 @@ class ConductorRecovery:
                 if seq > target:
                     break
                 with self.store.transaction():
-                    self._apply_record(record)
+                    self._apply_record(record, epoch)
                     self.store.checkpoint(epoch, seq, cursor["boot_id"])
                 cursor["seq"] = seq
                 self.service._journal_cursor = {"seq": seq, "epoch": epoch}
@@ -314,7 +413,45 @@ class ConductorRecovery:
             self.store.checkpoint(epoch, target, cursor["boot_id"])
         return True
 
-    def _apply_record(self, record: dict) -> None:
+    @staticmethod
+    def _journal_event_id(record: dict, epoch: str | None) -> str | None:
+        """Stable identity for one journal record.
+
+        The bus assigns a fresh event_id to every publish, so history cannot be
+        keyed off it: a replayed event would then look like a new one and
+        duplicate its own row. Epoch+seq is stable across replays and restarts.
+        """
+        seq = record.get("seq")
+        if type(seq) is not int:
+            return None
+        return f"{epoch or 'journal'}:{seq}"
+
+    @staticmethod
+    def _journal_ts(record: dict) -> float:
+        ts = record.get("ts")
+        return float(ts) if isinstance(ts, (int, float)) and ts > 0 else 0.0
+
+    def _activity_for(self, record: dict, epoch: str | None) -> dict | None:
+        """Timeline row for one journal record, or None when it earns no row."""
+        kind = record.get("type")
+        event = record.get("payload")
+        event_id = self._journal_event_id(record, epoch)
+        if event_id is None or not isinstance(kind, str) or not isinstance(event, dict):
+            return None
+        return conductor_activity.journal_activity(
+            kind, event, event_id=event_id, ts=self._journal_ts(record))
+
+    @staticmethod
+    def _with_activity(event: dict, activity: dict | None) -> dict:
+        """The published payload carries its own timeline row.
+
+        The live path and the hydrated path must hand the page the same id and
+        the same copy, or the row shows up twice with different wording. Both
+        are produced here, from one mapping.
+        """
+        return event if activity is None else {**event, "activity": activity}
+
+    def _apply_record(self, record: dict, epoch: str | None = None) -> None:
         kind = record.get("type")
         if kind == "engine_started":
             self._journal_boot = record.get("boot_id")
@@ -322,6 +459,11 @@ class ConductorRecovery:
         event = record.get("payload")
         if not isinstance(event, dict) or event.get("event") != kind:
             raise ValueError(f"invalid journal payload at seq {record.get('seq')}")
+        # Persist before publishing: the row is the durable truth, the SSE frame
+        # only a live hint for it.
+        activity = self._activity_for(record, epoch)
+        if activity is not None and self.service.store is not None:
+            self.service.store.save_activity([activity])
         tracker = self.service.workflow_tracker
         rid = event.get("request_id")
         boot = event.get("boot_id") or self._journal_boot
@@ -339,7 +481,7 @@ class ConductorRecovery:
                 tracker.confirm_admission(rid, boot)
             owner, transition = tracker.record_subagent_event(event.get("id", ""), kind[9:],
                 request_id=rid, generation=event.get("generation"))
-            self.service._publish("conductor:" + kind, event)
+            self.service._publish("conductor:" + kind, self._with_activity(event, activity))
             if transition:
                 self.service._publish_workflow_transition(transition)
             if kind == "subagent_pending_review" and owner and self.service.auto_accept and boot == self.boot_id:
@@ -352,8 +494,8 @@ class ConductorRecovery:
                                                    error=event.get("error") or "supervisor failed")
                 if transition:
                     self.service._publish_workflow_transition(transition)
-            self.service._publish("conductor:request_outcome", event)
+            self.service._publish("conductor:request_outcome", self._with_activity(event, activity))
         elif kind in OBSERVATIONS:
-            self.service._publish("conductor:" + kind, event)
+            self.service._publish("conductor:" + kind, self._with_activity(event, activity))
         else:
             raise ValueError(f"unsupported journal event: {kind}")

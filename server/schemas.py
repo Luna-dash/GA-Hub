@@ -736,6 +736,31 @@ class ConductorChatListResp(BaseModel):
     items: list[ConductorChatMessage]
 
 
+class ConductorActivityEvent(BaseModel):
+    """One durable row of the Conductor 动态 timeline.
+
+    ``id`` is derived from the engine journal (epoch + seq), so a replay of the
+    same event upserts rather than duplicating. The page keys live SSE rows and
+    hydrated rows off this same value.
+    """
+
+    id: str
+    request_id: str
+    kind: str
+    at: float
+    atMs: int
+    text: str
+    worker_id: str | None = None
+
+
+class ConductorActivityListResp(BaseModel):
+    items: list[ConductorActivityEvent]
+    # True when an older window exists before items[0].atMs.
+    has_more: bool = False
+    # False in legacy no-store mode, where the page must rely on live SSE.
+    durable: bool = True
+
+
 class ConductorSubagent(BaseModel):
     model_config = {"extra": "allow"}
     # extra=allow is deliberate: the hub list snapshot mirrors engine-only

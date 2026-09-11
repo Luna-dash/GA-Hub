@@ -42,7 +42,7 @@ class ConductorStore:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3):
+        if version not in (0, 1, 2, 3, 4):
             self.db.close()
             raise RuntimeError(f"unsupported Conductor database version: {version}")
         if version == 1 and str(path) != ":memory:":
@@ -84,7 +84,15 @@ class ConductorStore:
                 PRIMARY KEY (engine_key, sid));
             CREATE INDEX IF NOT EXISTS subagent_archive_recent
                 ON subagent_archive(engine_key, json_extract(snapshot_json, '$.updated_at') DESC);
-            PRAGMA user_version=3;
+            CREATE TABLE IF NOT EXISTS activity (
+                engine_key TEXT NOT NULL, event_id TEXT NOT NULL,
+                request_id TEXT NOT NULL, kind TEXT NOT NULL,
+                at REAL NOT NULL, at_ms INTEGER NOT NULL,
+                text TEXT NOT NULL, worker_id TEXT,
+                PRIMARY KEY (engine_key, event_id));
+            CREATE INDEX IF NOT EXISTS activity_request
+                ON activity(engine_key, request_id, at_ms);
+            PRAGMA user_version=4;
             COMMIT;
         """)
         active = self.db.execute("""SELECT state_json FROM workflows WHERE engine_key=?
@@ -184,6 +192,8 @@ class ConductorStore:
         self.db.execute("""DELETE FROM subagent_archive WHERE engine_key=?
             AND json_extract(snapshot_json, '$.request_id')=?""",
             (self.engine_key, request_id))
+        self.db.execute("DELETE FROM activity WHERE engine_key=? AND request_id=?",
+                        (self.engine_key, request_id))
 
     def tombstones(self) -> set[str]:
         with self.lock:
@@ -234,6 +244,52 @@ class ConductorStore:
             items = [item for item in items if item.get("request_id") == request_id]
         items.sort(key=lambda item: int(item.get("updated_at") or item.get("created_at") or 0))
         return items
+
+    # ── activity timeline ────────────────────────────────────────────────
+    # The 动态 tab is a durable read, not an SSE-only projection: a task
+    # reopened from history must still show how it reached its result. Rows are
+    # keyed by a journal-derived event id, so a replay upserts instead of
+    # duplicating. Bounded like the archive: the newest ACTIVITY_CAP rows per
+    # engine survive.
+
+    ACTIVITY_CAP = 4000
+
+    def save_activity(self, rows: list[dict]) -> None:
+        payloads = [row for row in rows if row.get("id") and row.get("request_id")]
+        if not payloads:
+            return
+        with self.transaction():
+            for row in payloads:
+                self.db.execute("""INSERT INTO activity(engine_key, event_id, request_id, kind, at, at_ms, text, worker_id)
+                    VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(engine_key, event_id)
+                    DO UPDATE SET request_id=excluded.request_id, kind=excluded.kind, at=excluded.at,
+                    at_ms=excluded.at_ms, text=excluded.text, worker_id=excluded.worker_id""",
+                    (self.engine_key, row["id"], row["request_id"], row["kind"], float(row.get("at") or 0),
+                     int(row.get("atMs") or 0), str(row.get("text") or ""), row.get("worker_id")))
+            self.db.execute("""DELETE FROM activity WHERE engine_key=? AND event_id NOT IN (
+                    SELECT event_id FROM activity WHERE engine_key=?
+                    ORDER BY at_ms DESC, rowid DESC LIMIT ?)""",
+                (self.engine_key, self.engine_key, self.ACTIVITY_CAP))
+
+    def activity_for_request(self, request_id: str, limit: int,
+                             before_ms: int | None = None) -> list[dict]:
+        """One request's newest ``limit`` rows, oldest-first for rendering.
+
+        ``before_ms`` pages backwards: pass the oldest ``atMs`` already held to
+        fetch the window before it.
+        """
+        with self.lock:
+            if before_ms is None:
+                rows = self.db.execute("""SELECT * FROM activity WHERE engine_key=? AND request_id=?
+                    ORDER BY at_ms DESC, rowid DESC LIMIT ?""",
+                    (self.engine_key, request_id, max(1, limit))).fetchall()
+            else:
+                rows = self.db.execute("""SELECT * FROM activity WHERE engine_key=? AND request_id=?
+                    AND at_ms < ? ORDER BY at_ms DESC, rowid DESC LIMIT ?""",
+                    (self.engine_key, request_id, int(before_ms), max(1, limit))).fetchall()
+        return [{"id": row["event_id"], "request_id": row["request_id"], "kind": row["kind"],
+                 "at": row["at"], "atMs": row["at_ms"], "text": row["text"],
+                 "worker_id": row["worker_id"]} for row in reversed(rows)]
 
     def worker_owner(self, sid: str) -> str | None:
         with self.lock:

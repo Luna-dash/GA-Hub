@@ -382,8 +382,8 @@ def test_large_journal_yields_without_skipping_uncommitted_events(setup, monkeyp
     elapsed = [0.0]
     original = service.recovery._apply_record
 
-    def apply(record):
-        original(record)
+    def apply(record, epoch=None):
+        original(record, epoch)
         elapsed[0] += 0.001
 
     monkeypatch.setattr(service.recovery, "_apply_record", apply)
@@ -459,3 +459,148 @@ def test_chat_route_serves_store_history_when_engine_memory_is_gone(setup, monke
 
     assert result.status_code == 200
     assert [item["id"] for item in result.json()["items"]] == ["chat-1"]
+
+
+def test_journal_events_become_a_durable_timeline_and_ship_the_same_row(setup, monkeypatch):
+    """The 动态 tab must survive a reload.
+
+    Two things are asserted together because the feature only works if both
+    hold: the row is persisted (so a task reopened from history can read it) and
+    the live SSE frame carries *that* row (so the page cannot end up with two
+    versions of the same event — one live, one hydrated).
+    """
+    engine, create = setup
+    service = create()
+    published = []
+    monkeypatch.setattr("server.services.conductor_service.bus.publish",
+                        lambda topic, payload: published.append((topic, payload)))
+
+    engine.event("request_admitted", request_id="request")
+    engine.event("subagent_spawned", request_id="request", id="worker", prompt="盘点仓库")
+    engine.event("subagent_milestone", request_id="request", id="worker",
+                 desc="扫描目录", status="reached")
+    engine.event("subagent_killed", request_id="request", id="worker", reason="idle_timeout")
+    assert service.recovery.sync()
+
+    rows = service.store.activity_for_request("request", 20)
+    # request_admitted earns no row; the three worker events do, in journal
+    # order, and the tracker-derived close follows them.
+    assert [item["id"] for item in rows] == [
+        "journal-a:2", "journal-a:3", "journal-a:4", "wf:request:workflow_failed",
+    ]
+    assert [item["kind"] for item in rows] == [
+        "worker_spawned", "worker_milestone", "worker_killed", "workflow_failed",
+    ]
+
+    frames = {topic: payload for topic, payload in published if topic.startswith("conductor:subagent_")}
+    assert frames["conductor:subagent_milestone"]["activity"]["id"] == "journal-a:3"
+    # Byte-for-byte the persisted row: one id, one wording, whichever path the
+    # page reads it through.
+    assert frames["conductor:subagent_milestone"]["activity"] == rows[1]
+
+
+def test_a_replayed_journal_record_does_not_duplicate_its_row(setup, monkeypatch):
+    """Replay is normal (cursor resets, restarts); duplication is not.
+
+    The bus assigns a fresh event id to every publish, so keying history off it
+    would make a replay look like a brand-new event.
+    """
+    engine, create = setup
+    service = create()
+    monkeypatch.setattr("server.services.conductor_service.bus.publish", lambda *args: None)
+    engine.event("subagent_spawned", request_id="request", id="worker")
+    assert service.recovery.sync()
+    record = engine.events[0]
+
+    for _ in range(3):
+        service.recovery._apply_record(copy.deepcopy(record), "journal-a")
+
+    rows = service.store.activity_for_request("request", 20)
+    assert [item["id"] for item in rows] == ["journal-a:1"]
+
+
+def test_upgrade_backfills_history_even_after_catch_up_wrote_a_row(setup, monkeypatch):
+    """The backfill must not be keyed off "the activity table is empty".
+
+    On a real install upgrading to durable history the saved cursor already
+    sits at the end of the journal, so `sync()` runs catch-up first and — the
+    moment any worker event arrives — writes a row. A content-based guard then
+    reads "history exists" and skips the fold, leaving every earlier task with a
+    four-row timeline. This walks that exact sequence.
+    """
+    engine, create = setup
+    service = create()
+    monkeypatch.setattr("server.services.conductor_service.bus.publish", lambda *args: None)
+
+    engine.event("subagent_spawned", request_id="request", id="w1")
+    engine.events[-1]["ts"] = 1000
+    engine.event("subagent_milestone", request_id="request", id="w1",
+                 desc="早先的里程碑", status="reached")
+    engine.events[-1]["ts"] = 1001
+    assert service.recovery.sync()
+
+    # Now pretend the store predates the feature: no activity rows, cursor still
+    # at the end of what it has already consumed, and a fresh process.
+    service.store.db.execute("DELETE FROM activity")
+    service.recovery._activity_backfilled = False
+
+    engine.event("subagent_killed", request_id="request", id="w1", reason="idle_timeout")
+    engine.events[-1]["ts"] = 1002
+    assert service.recovery.sync()
+
+    rows = service.store.activity_for_request("request", 20)
+    assert [item["id"] for item in rows] == [
+        "journal-a:1", "journal-a:2", "journal-a:3", "wf:request:workflow_failed",
+    ]
+    # journal-a:2 was consumed by an older build and is invisible to catch-up;
+    # only the history fold can bring it back, and it must carry its own copy
+    # rather than a placeholder.
+    assert rows[1]["text"] == "里程碑 · 早先的里程碑"
+
+
+def test_activity_route_serves_the_durable_timeline_with_paging(setup, monkeypatch):
+    engine, create = setup
+    service = create()
+    monkeypatch.setattr("server.services.conductor_service.bus.publish", lambda *args: None)
+    for index in range(3):
+        engine.event("subagent_milestone", request_id="request", id="worker",
+                     desc=f"步骤 {index}", status="reached")
+        # Journal records carry a real timestamp; the in-memory transport does
+        # not, and paging by atMs is meaningless without one.
+        engine.events[-1]["ts"] = 1000 + index
+    assert service.recovery.sync()
+
+    monkeypatch.setattr(conductor_routes, "svc", lambda: service)
+    app = FastAPI()
+    app.include_router(conductor_routes.router)
+    with TestClient(app) as client:
+        page = client.get("/api/conductor/activity",
+                          params={"request_id": "request", "limit": 2})
+        # The page pages back with the oldest held atMs + 1, so the boundary
+        # millisecond is re-read rather than skipped. `ts` is in seconds, so the
+        # pivot is the second row's 1_001_000 ms.
+        older = client.get("/api/conductor/activity",
+                           params={"request_id": "request", "limit": 2, "before_ms": 1_001_001})
+
+    assert page.status_code == 200
+    body = page.json()
+    assert body["durable"] is True
+    assert body["has_more"] is True
+    assert [item["text"] for item in body["items"]] == ["里程碑 · 步骤 1", "里程碑 · 步骤 2"]
+
+    assert older.status_code == 200
+    assert older.json()["has_more"] is False
+    assert [item["text"] for item in older.json()["items"]] == [
+        "里程碑 · 步骤 0", "里程碑 · 步骤 1",
+    ]
+
+
+def test_a_task_without_a_store_reports_history_as_unavailable():
+    """Legacy no-store mode keeps working: the page falls back to live SSE
+    instead of showing an empty timeline as if it were the truth."""
+    from server.services.conductor_service import ConductorService
+
+    assert ConductorService.get_activity(SimpleNamespace(store=None), "request") == {
+        "items": [], "has_more": False, "durable": False,
+    }
+

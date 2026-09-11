@@ -42,6 +42,7 @@ from .conductor_vocabulary import (
 from .conductor_workflow import WorkflowTracker
 from .conductor_store import ConductorStore
 from .conductor_recovery import ConductorRecovery
+from . import conductor_activity
 from .conductor_commands import ConductorCommands
 from .event_bus import bus
 from ..event_topics import (
@@ -916,7 +917,19 @@ class ConductorService:
                 error=str(payload.get("error") or ""),
             )
             payload.setdefault("item", item)
-        self._publish(topic, payload)
+        # The closing row belongs to history too. It is tracker-derived, so no
+        # journal record can reproduce it later; recording it at the publish
+        # site is the only chance, and it rides the frame so the live page keys
+        # it identically to the hydrated one.
+        kind = topic.split(":", 1)[1]
+        activity = conductor_activity.workflow_activity(
+            kind, request_id, event_id=f"wf:{request_id}:{kind}", ts=time.time())
+        if activity is not None and self.store is not None:
+            try:
+                self.store.save_activity([activity])
+            except Exception:
+                log.exception("workflow activity could not be recorded")
+        self._publish(topic, payload if activity is None else {**payload, "activity": activity})
 
     def _record_workflow_failure_message(
         self, request_id: str, *, phase: str, error: str
@@ -1373,6 +1386,25 @@ class ConductorService:
         except Exception:
             log.debug("gahub_app chat unavailable", exc_info=True)
             return []
+
+    def get_activity(self, request_id: str, limit: int = 200,
+                     before_ms: int | None = None) -> dict:
+        """Durable 动态 timeline for one workflow (GET /activity).
+
+        Hub-owned read: the timeline has to survive a reload, an app restart
+        and an engine resync, so it reads the store instead of replaying the
+        engine's live feed. ``before_ms`` walks backwards for the page's
+        scroll-up window; ``has_more`` says whether an older window exists.
+
+        Without the store there is no durable history, and the page falls back
+        to its live SSE projection.
+        """
+        if self.store is None:
+            return {"items": [], "has_more": False, "durable": False}
+        rows = self.store.activity_for_request(request_id, limit + 1, before_ms)
+        has_more = len(rows) > limit
+        return {"items": rows[-limit:] if has_more else rows,
+                "has_more": has_more, "durable": True}
 
 
     # ===== SSE relay dispatch =====

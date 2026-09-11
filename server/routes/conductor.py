@@ -12,6 +12,7 @@ import sqlite3
 from fastapi import APIRouter, HTTPException, Query
 
 from ..schemas import (
+    ConductorActivityListResp,
     ConductorChatIn,
     ConductorChatListResp,
     ConductorChatMessage,
@@ -183,6 +184,21 @@ async def list_workflows(
 ) -> ConductorWorkflowListResp:
     """Return the workflow tracker snapshot for the UI board."""
     return {"items": svc().get_workflow_snapshot(limit=last)}
+
+
+@router.get("/api/conductor/activity")
+async def get_activity(
+    request_id: str = Query(min_length=1, max_length=128),
+    limit: int = Query(default=200, ge=1, le=1000),
+    before_ms: int | None = Query(default=None, ge=0),
+) -> ConductorActivityListResp:
+    """Return one workflow's durable 动态 timeline.
+
+    The page's 动态 tab used to be a live-only SSE projection, so a task
+    reopened from history showed nothing. This is the read that makes the
+    timeline durable; ``before_ms`` pages backwards for scroll-up.
+    """
+    return svc().get_activity(request_id, limit=limit, before_ms=before_ms)
 
 
 @router.delete("/api/conductor/workflow/{request_id}")

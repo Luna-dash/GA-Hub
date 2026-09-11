@@ -311,7 +311,17 @@ def test_terminal_workflow_transition_publishes_completion():
             ("conductor:workflow_completed", payload)
         )
 
-    publish.assert_called_once_with("conductor:workflow_completed", payload)
+    publish.assert_called_once()
+    topic, published = publish.call_args.args
+    assert topic == "conductor:workflow_completed"
+    # The timeline row rides the frame so the live page keys it identically to
+    # the hydrated one; everything else is the transition payload untouched.
+    activity = published["activity"]
+    assert {key: value for key, value in published.items() if key != "activity"} == payload
+    assert activity["id"] == "wf:request-1:workflow_completed"
+    assert activity["kind"] == "workflow_completed"
+    assert activity["text"] == "任务完成"
+    assert activity["request_id"] == "request-1"
 
 
 def test_service_rejects_a_final_report_before_acceptance_without_persisting_it():

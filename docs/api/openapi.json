@@ -1996,6 +1996,77 @@
         }
       }
     },
+    "/api/conductor/activity": {
+      "get": {
+        "summary": "Get Activity",
+        "description": "Return one workflow's durable 动态 timeline.\n\nThe page's 动态 tab used to be a live-only SSE projection, so a task\nreopened from history showed nothing. This is the read that makes the\ntimeline durable; ``before_ms`` pages backwards for scroll-up.",
+        "operationId": "get_activity_api_conductor_activity_get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "before_ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Ms"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConductorActivityListResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/conductor/workflow/{request_id}": {
       "delete": {
         "summary": "Delete Workflow",
@@ -5191,6 +5262,82 @@
         },
         "type": "object",
         "title": "ChatRetryConfigReq"
+      },
+      "ConductorActivityEvent": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "at": {
+            "type": "number",
+            "title": "At"
+          },
+          "atMs": {
+            "type": "integer",
+            "title": "Atms"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "worker_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "request_id",
+          "kind",
+          "at",
+          "atMs",
+          "text"
+        ],
+        "title": "ConductorActivityEvent",
+        "description": "One durable row of the Conductor 动态 timeline.\n\n``id`` is derived from the engine journal (epoch + seq), so a replay of the\nsame event upserts rather than duplicating. The page keys live SSE rows and\nhydrated rows off this same value."
+      },
+      "ConductorActivityListResp": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConductorActivityEvent"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More",
+            "default": false
+          },
+          "durable": {
+            "type": "boolean",
+            "title": "Durable",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "ConductorActivityListResp"
       },
       "ConductorChatIn": {
         "properties": {
