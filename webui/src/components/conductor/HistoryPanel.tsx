@@ -36,15 +36,17 @@ export const HistoryPanel = memo(function HistoryPanel({ rows, selectedId, onSel
             <button type="button" className="conductor-history-row"
               data-selected={selectedId === row.requestId} aria-current={selectedId === row.requestId ? 'true' : undefined}
               onClick={() => onSelect(row.requestId)} aria-label={`切换到任务：${row.title}`}>
-              <span className="conductor-history-title">{row.title}</span>
-              <span className="conductor-history-meta">
-                <span>{row.total ? `已通过 ${row.accepted}/${row.total}` : '尚未指派子代理'}</span>
-                <time>{formatRelativeTime(row.createdAt)}</time>
-              </span>
+              {/* Status glyph leads the row: it is the first thing the eye
+                  needs when stepping through tasks in the open dropdown. */}
               <span className="conductor-history-status" title={row.view.label}>
                 {row.view.tone === 'done' ? <CheckCircle2 size={15} className="text-status-success" />
                   : row.closed ? <XCircle size={15} className="text-status-danger" />
                   : <Loader size={15} className="conductor-history-running" />}
+              </span>
+              <span className="conductor-history-title">{row.title}</span>
+              <span className="conductor-history-meta">
+                <span>{row.total ? `已通过 ${row.accepted}/${row.total}` : '尚未指派子代理'}</span>
+                <time>{formatRelativeTime(row.createdAt)}</time>
               </span>
             </button>
             {row.deletable && (
