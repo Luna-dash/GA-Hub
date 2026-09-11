@@ -7,6 +7,8 @@
 import { useMemo } from 'react'
 import clsx from 'clsx'
 import { useConductorStore, type ConductorActivityEvent } from '@/stores/conductorStore'
+import type { ConductorSubagent } from '@/api/types'
+import { briefWorkerTitle, workerNumbers } from './presentation'
 import { formatClock } from '@/utils/timeFormat'
 
 const KIND_TONE: Record<ConductorActivityEvent['kind'], string> = {
@@ -29,6 +31,28 @@ const VISIBLE_ROWS = 30
 
 export function ActivityTimeline({ requestId }: { requestId: string | null }) {
   const activity = useConductorStore((s) => s.activity)
+  const subagents = useConductorStore((s) => s.subagents)
+
+  // "子任务已通过" alone reads as noise: resolve each worker event back to
+  // its stable card number and brief title, using the same dispatch-order
+  // numbering as the worker cards.
+  const workerInfo = useMemo(() => {
+    const byRequest = new Map<string, ConductorSubagent[]>()
+    for (const worker of subagents) {
+      if (!worker.request_id) continue
+      const siblings = byRequest.get(worker.request_id) ?? []
+      siblings.push(worker)
+      byRequest.set(worker.request_id, siblings)
+    }
+    const info = new Map<string, { number: number; title: string }>()
+    for (const siblings of byRequest.values()) {
+      const numbers = workerNumbers(siblings)
+      for (const worker of siblings) {
+        info.set(worker.id, { number: numbers.get(worker.id) ?? 0, title: briefWorkerTitle(worker) })
+      }
+    }
+    return info
+  }, [subagents])
 
   const rows = useMemo(() => {
     const scoped = requestId
@@ -55,16 +79,23 @@ export function ActivityTimeline({ requestId }: { requestId: string | null }) {
           </p>
         ) : (
           <ol className="px-4 py-2 text-xs leading-5">
-            {rows.map((event) => (
-              <li key={event.id} className="flex items-start gap-2 py-0.5">
-                <span
-                  className={clsx('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', KIND_TONE[event.kind])}
-                  aria-hidden="true"
-                />
-                <span className="min-w-0 flex-1 break-words text-ink-muted">{event.text}</span>
-                <span className="shrink-0 text-[10px] text-ink-faint">{formatClock(event.at)}</span>
-              </li>
-            ))}
+            {rows.map((event) => {
+              const worker = event.worker_id ? workerInfo.get(event.worker_id) : undefined
+              const label = worker ? `#${worker.number} ${worker.title}` : ''
+              return (
+                <li key={event.id} className="flex items-start gap-2 py-0.5">
+                  <span
+                    className={clsx('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', KIND_TONE[event.kind])}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 flex-1 break-words text-ink-muted">
+                    {label && <span className="conductor-activity-worker">{label}</span>}
+                    {event.text}
+                  </span>
+                  <span className="shrink-0 text-[10px] text-ink-faint">{formatClock(event.at)}</span>
+                </li>
+              )
+            })}
           </ol>
         )
       )}

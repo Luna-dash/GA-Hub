@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ConductorSubagent } from '@/api/types'
 import {
   briefWorkerTitle,
+  collapseBlankLines,
   deliverablesOf,
   deliverableVerified,
   isWorkflowClosed,
@@ -9,6 +10,7 @@ import {
   parseContractDeliverables,
   splitReplyByMilestones,
   stripContractTail,
+  workerNumbers,
   type SubagentReviewFacts,
   type WorkerMilestone,
 } from './presentation'
@@ -270,5 +272,31 @@ describe('deliverable reconstruction', () => {
       ] },
     } as unknown as SubagentReviewFacts
     expect(deliverableVerified(allPassed, 'D:/out/report.md')).toBe(true)
+  })
+})
+
+describe('workerNumbers', () => {
+  it('numbers workers by dispatch order and keeps ties stable', () => {
+    const a = { id: 'b', created_at: 10 } as never
+    const b = { id: 'a', created_at: 10 } as never
+    const c = { id: 'c', created_at: 5 } as never
+    const numbers = workerNumbers([a, b, c])
+    expect(numbers.get('c')).toBe(1)
+    expect(numbers.get('a')).toBe(2)
+    expect(numbers.get('b')).toBe(3)
+  })
+})
+
+describe('collapseBlankLines', () => {
+  it('collapses runs of blank lines to one', () => {
+    expect(collapseBlankLines('第一段\n\n\n\n\n第二段')).toBe('第一段\n\n第二段')
+  })
+
+  it('trims leading and trailing blank lines', () => {
+    expect(collapseBlankLines('\n\n  \n内容\n\n\n')).toBe('内容')
+  })
+
+  it('keeps normal single blank lines intact', () => {
+    expect(collapseBlankLines('第一段\n\n第二段')).toBe('第一段\n\n第二段')
   })
 })

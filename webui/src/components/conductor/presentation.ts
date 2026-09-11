@@ -148,6 +148,20 @@ export function workerTitle(sub: ConductorSubagent): string {
   return compactTaskText(facts.manifest?.goal || sub.prompt)
 }
 
+/** Stable per-workflow worker numbers (#1, #2, …): dispatch order, ties
+ *  broken by id so parallel spawns never swap positions between polls. */
+export function workerNumbers(subs: ConductorSubagent[]): Map<string, number> {
+  const ordered = [...subs].sort((left, right) =>
+    left.created_at - right.created_at || left.id.localeCompare(right.id))
+  return new Map(ordered.map((sub, index) => [sub.id, index + 1]))
+}
+
+/** User-typed text often arrives with runs of blank lines; collapse them to
+ *  one so a pasted block does not render as a ladder of gaps. */
+export function collapseBlankLines(text: string): string {
+  return text.replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n').replace(/^\n+/, '').replace(/\s+$/, '')
+}
+
 /** Card title: derive a name-sized summary of what this worker is for.
  *  Priority: manifest goal → the dispatch prompt's [Task Goal] section → the
  *  first line that reads like content (contract tags, markdown scaffolding

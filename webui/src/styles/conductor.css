@@ -1,5 +1,5 @@
 /* Conductor uses the same PageShell and paper tokens as the other pages. */
-.conductor-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(500px, 42%); flex: 1; min-height: 0; }
+.conductor-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(540px, 48%); flex: 1; min-height: 0; }
 .conductor-main { min-width: 0; min-height: 0; overflow-y: auto; padding: 20px; }
 .conductor-context { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--c-line); background: var(--c-bg-card); }
 .conductor-context-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
@@ -33,8 +33,11 @@
 .conductor-process-title { margin-bottom: 10px; font-size: 14px; font-weight: 600; color: var(--c-text); }
 .conductor-process-title span { color: var(--c-text-faint); font-size: 11px; font-weight: 400; }
 .conductor-process-empty-note { color: var(--c-text-faint); font-size: 11px; line-height: 1.6; }
-.conductor-worker-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 232px), 1fr)); gap: 8px; }
-.conductor-worker-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 9px 11px; text-align: left; border: 1px solid var(--c-line); border-radius: 8px; background: var(--c-bg-card); transition: border-color .15s, box-shadow .15s; }
+/* One slim row per worker: parallel cards in a multi-column grid swapped
+   positions between polls and squeezed each other; a vertical list keeps
+   dispatch order readable and gives the title room. */
+.conductor-worker-grid { display: flex; flex-direction: column; gap: 6px; }
+.conductor-worker-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 7px 11px; text-align: left; border: 1px solid var(--c-line); border-radius: 8px; background: var(--c-bg-card); transition: border-color .15s, box-shadow .15s; }
 .conductor-worker-card:hover { border-color: var(--c-text-faint); box-shadow: 0 2px 6px rgba(45, 34, 22, .08); }
 .conductor-worker-card[data-selected="true"] { border-color: var(--c-accent); box-shadow: inset 3px 0 var(--c-accent); }
 .conductor-worker-card[data-expanded="true"] { border-color: var(--c-accent); }
@@ -53,11 +56,22 @@
 .conductor-worker-process-block li.is-stale .conductor-worker-process-dot { background: #C4681C; }
 .conductor-worker-process-time { flex: 0 0 auto; color: var(--c-text-faint); font-size: 10px; white-space: nowrap; }
 .conductor-worker-reply { max-height: 220px; overflow-y: auto; margin-top: 4px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--c-line) 70%, transparent); border-radius: 6px; background: var(--c-bg); font-size: 12px; line-height: 1.6; }
+.conductor-worker-ms-chip { margin: 2px 0; padding: 3px 8px; border: 1px solid #2D6A3F33; border-radius: 6px; background: #2D6A3F14; color: #2D6A3F; font-size: 11px; }
 .conductor-worker-noresult { margin-top: 4px; color: var(--c-text-muted); font-size: 11px; }
+/* Wide tables and code pasted into a worker reply used to squeeze to one
+   character per line ("vertical" text); let them scroll instead. */
+.conductor-worker-reply table, .conductor-dossier-reply table { display: block; max-width: 100%; overflow-x: auto; }
+.conductor-worker-reply pre, .conductor-dossier-reply pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Dossier section headers: accent-weighted so they read as labels above the
+   muted body text instead of blending into it. */
+.conductor-dossier-h { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--c-accent); text-transform: uppercase; }
+.conductor-dossier-index { margin-right: 6px; color: var(--c-text-faint); font-variant-numeric: tabular-nums; }
+.conductor-activity-worker { margin-right: 6px; color: var(--c-text); font-weight: 600; }
 .conductor-worker-process-actions { display: flex; flex-direction: column; gap: 6px; }
 .conductor-worker-review-note { color: var(--c-text-muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
-.conductor-worker-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 20px; }
-.conductor-worker-status { display: inline-flex; align-items: center; gap: 5px; color: var(--c-text-muted); font-size: 11px; flex-shrink: 0; }
+.conductor-worker-card-heading { display: flex; align-items: center; justify-content: flex-start; gap: 8px; min-height: 20px; }
+.conductor-worker-index { flex: 0 0 auto; min-width: 22px; color: var(--c-text-faint); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
+.conductor-worker-status { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--c-text-muted); font-size: 11px; flex-shrink: 0; }
 .conductor-worker-card[data-archived="true"] { border-style: dashed; }
 .conductor-worker-title { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--c-text); font-size: 13px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
 .conductor-worker-title > svg { flex-shrink: 0; }
@@ -91,7 +105,7 @@
 .conductor-history-meta { justify-content: flex-end; color: var(--c-text-faint); font-size: 10px; white-space: nowrap; }
 .conductor-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 34px 16px; text-align: center; color: var(--c-text-muted); font-size: 12px; }
 .conductor-mobile-tabs { display: none; }
-@media (min-width: 1600px) { .conductor-layout { grid-template-columns: minmax(0, 1fr) minmax(560px, 40%); } }
+@media (min-width: 1600px) { .conductor-layout { grid-template-columns: minmax(0, 1fr) minmax(600px, 46%); } }
 @media (max-width: 1050px) {
   .conductor-layout { grid-template-columns: minmax(0, 1fr); }
   .conductor-mobile-tabs { display: flex; gap: 22px; padding: 0 18px; height: 42px; align-items: stretch; background: var(--c-bg-card); border-bottom: 1px solid var(--c-line); }

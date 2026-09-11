@@ -17,13 +17,14 @@ import {
   phaseDot,
   phaseTone,
   reviewFacts,
+  splitReplyByMilestones,
   stripContractTail,
   subagentPhase,
   workerTitle,
 } from './presentation'
 
-export const WorkerCard = memo(function WorkerCard({ sub, selected, expanded = false, onToggle }: {
-  sub: ConductorSubagent; selected: boolean; expanded?: boolean
+export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expanded = false, onToggle }: {
+  sub: ConductorSubagent; index?: number; selected: boolean; expanded?: boolean
   onToggle: () => void
 }) {
   const view = subagentPhase(sub)
@@ -50,11 +51,13 @@ export const WorkerCard = memo(function WorkerCard({ sub, selected, expanded = f
     sub.attempt > 1 ? `第 ${sub.attempt} 次` : '',
   ].filter(Boolean)
   const metaNote = metaParts.join(' · ')
+  const numberLabel = index ? `#${index}` : ''
   return <article className="conductor-worker-card" data-expanded={expanded || undefined} data-selected={selected || undefined} data-archived={archived || undefined}>
     <button type="button" className="conductor-worker-toggle" onClick={onToggle}
       aria-expanded={expanded} aria-pressed={selected}
-      aria-label={`查看子任务：${workerTitle(sub)}`}>
+      aria-label={`查看子任务 ${numberLabel}：${workerTitle(sub)}`}>
       <span className="conductor-worker-card-heading">
+        <span className="conductor-worker-index" aria-hidden="true">{numberLabel}</span>
         <h3 className={clsx('conductor-worker-title', phaseTone(view.phase))} title={workerTitle(sub)}><StatusIcon size={14}
           className={view.phase === 'running' || view.phase === 'reworking' ? 'animate-spin' : ''}
           aria-label={view.label} /><span className="conductor-worker-title-text">{briefWorkerTitle(sub)}</span></h3>
@@ -109,7 +112,18 @@ export const WorkerCard = memo(function WorkerCard({ sub, selected, expanded = f
           <h4>{sub.status === 'running' ? '进行中摘要' : '文字结果'}</h4>
           {reply ? (
             <div className="conductor-worker-reply">
-              <MessageContent content={reply} format="markdown" markdownMode="plain" />
+              {/* Chat-grade output, same filtering as the dossier: reached
+                  milestone marker lines lift into chips, protocol tails are
+                  already stripped — raw model chatter never shows here. */}
+              {splitReplyByMilestones(reply, milestones).map((segment, index2) => (
+                segment.kind === 'milestone' ? (
+                  <p key={`ms-${index2}`} className="conductor-worker-ms-chip">
+                    ✓ 里程碑达成 · {segment.milestone.desc}
+                  </p>
+                ) : (
+                  <MessageContent key={`text-${index2}`} content={segment.text} format="markdown" markdownMode="plain" />
+                )
+              ))}
             </div>
           ) : (
             <p className="conductor-worker-noresult">

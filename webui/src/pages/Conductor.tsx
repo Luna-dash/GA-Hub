@@ -14,9 +14,11 @@ import { ModalOverlay } from '@/components/ModalOverlay'
 import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
 import { ActivityTimeline } from '@/components/conductor/ActivityTimeline'
 import {
+  collapseBlankLines,
   compactTaskText,
   isNearScrollBottom,
   isReviewable,
+  workerNumbers,
   workflowPresentation,
   isWorkflowClosed,
   type SubagentEvidence,
@@ -405,8 +407,11 @@ export default function Conductor() {
     const workerIds = new Set(Object.keys(currentWorkflow.subagents))
     return subagents
       .filter((sub) => sub.request_id === currentWorkflow.request_id || workerIds.has(sub.id))
-      .sort((left, right) => left.created_at - right.created_at)
+      // Ties broken by id: parallel spawns share a created_at second, and an
+      // unstable order made the cards swap positions on every poll.
+      .sort((left, right) => left.created_at - right.created_at || left.id.localeCompare(right.id))
   }, [currentWorkflow, subagents])
+  const workerNumberById = useMemo(() => workerNumbers(workflowSubagents), [workflowSubagents])
   const currentTask = currentWorkflow ? taskTitleByRequest.get(currentWorkflow.request_id) || '当前任务' : ''
   const visibleChat = useMemo(() => {
     if (!currentWorkflow) return chatMessages
@@ -661,7 +666,7 @@ export default function Conductor() {
               <section className="conductor-process" aria-label="实施过程">
                 <h3 className="conductor-process-title">实施过程 <span>· {workerCount ? `${workerCount} 个子任务` : '暂无子任务'}</span></h3>
                 <div className="conductor-worker-grid" aria-label="子任务详情">
-                {workflowSubagents.map((sub) => <WorkerCard key={sub.id} sub={sub} selected={sub.id === selectedSid}
+                {workflowSubagents.map((sub) => <WorkerCard key={sub.id} sub={sub} index={workerNumberById.get(sub.id)} selected={sub.id === selectedSid}
                   expanded={sub.id === expandedSid}
                   onToggle={() => {
                     // One click is "open this worker": it selects the dossier
@@ -718,8 +723,11 @@ export default function Conductor() {
             {visibleChat.map((msg) => (
               msg.role === 'user' ? (
                 <div key={msg.id} className="flex justify-end px-4 py-2">
-                  <div className={clsx('max-w-[85%] rounded-lg px-3.5 py-2 text-sm leading-7 [overflow-wrap:anywhere]', bubbleTone('user').surfaceClass)}>
-                    <MessageContent content={msg.msg} format="text" />
+                  <div className={clsx('max-w-[85%] rounded-lg px-3.5 py-2 text-sm leading-6 [overflow-wrap:anywhere]', bubbleTone('user').surfaceClass)}>
+                    {/* Same markdown pipeline as the conductor voice — only
+                       the alignment and surface differ — and pasted runs of
+                       blank lines collapse instead of rendering as a ladder. */}
+                    <MessageContent content={collapseBlankLines(msg.msg)} format="markdown" markdownMode="plain" />
                   </div>
                 </div>
               ) : (
@@ -784,6 +792,7 @@ export default function Conductor() {
           {selectedWorker ? (
             <WorkerDossier
               sub={selectedWorker}
+              workerNumber={workerNumberById.get(selectedWorker.id)}
               control={{
                 evidence: evidenceBySid[selectedWorker.id],
                 busy: busySid !== null,
