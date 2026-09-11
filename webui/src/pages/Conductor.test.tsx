@@ -957,6 +957,12 @@ describe('Conductor chat scroll restoration', () => {
     const failed = { ...failedWorkflowFixture('workflow_failed'), error: 'conductor start failed: gahub_app unavailable' }
     mocks.conductorWorkflows.mockResolvedValue({ items: [failed] })
     mocks.conductorSubagents.mockResolvedValue({ items: [] })
+    // Closed workflows measure 用时 from the chat span: the workflow row is
+    // rewritten on close, so its own timestamps are degenerate.
+    mocks.conductorChat.mockResolvedValue({ items: [
+      { id: 'u1', role: 'user', msg: '整理归档目录并生成索引', ts: 1000, request_id: 'request-1' },
+      { id: 'f1', role: 'conductor', msg: '结论', ts: 3661000, request_id: 'request-1' },
+    ] })
 
     renderPage()
     await waitFor(() => {
@@ -964,6 +970,9 @@ describe('Conductor chat scroll restoration', () => {
       expect(text).toContain('执行失败')
       expect(text).toContain('conductor start failed: gahub_app unavailable')
       expect(text).not.toContain('原因已写入本轮对话')
+      // Duration comes from the chat span, prefixed exactly once.
+      expect(text).toContain('用时 1:01:00')
+      expect(text).not.toContain('用时 用时')
     })
   })
 

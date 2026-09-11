@@ -425,6 +425,14 @@ export default function Conductor() {
     if (workflowOpen) {
       return `已进行 ${formatDurationSeconds(nowMs / 1000 - started)}`
     }
+    // The workflow row is rewritten on close (created_at ≈ completed_at),
+    // so its own timestamps cannot measure a finished task. The chat span
+    // is the honest record: first message → last message.
+    const stamps = visibleChat.map((item) => item.ts).filter((ts) => Number.isFinite(ts) && ts > 0)
+    if (stamps.length >= 2) {
+      const span = (Math.max(...stamps) - Math.min(...stamps)) / 1000
+      if (span > 0) return `用时 ${formatDurationSeconds(span)}`
+    }
     const finished = currentWorkflow.completed_at
     if (typeof finished === 'number' && finished > started) {
       return `用时 ${formatDurationSeconds(finished - started)}`
@@ -647,11 +655,11 @@ export default function Conductor() {
                   <span>子任务 {acceptedCount}/{workerCount}{workerCount === 0 && '（未指派）'}</span>
                   {activeSubagents.length > 0 && <span>执行中 {activeSubagents.length}</span>}
                   {pendingReview.length > 0 && <span className="is-attention">待验收 {pendingReview.length}</span>}
-                  {workflowDuration && <span>用时 {workflowDuration}</span>}
+                  {workflowDuration && <span>{workflowDuration}</span>}
                 </p>
               )}
               <section className="conductor-process" aria-label="实施过程">
-                <h3 className="conductor-process-title">实施过程 <span>· {workflowSubagents.length} 个子任务</span></h3>
+                <h3 className="conductor-process-title">实施过程 <span>· {workerCount ? `${workerCount} 个子任务` : '暂无子任务'}</span></h3>
                 <div className="conductor-worker-grid" aria-label="子任务详情">
                 {workflowSubagents.map((sub) => <WorkerCard key={sub.id} sub={sub} selected={sub.id === selectedSid}
                   expanded={sub.id === expandedSid}
@@ -669,9 +677,12 @@ export default function Conductor() {
                     }
                   }} />)}
                 </div>
-                {workflowSubagents.length === 0 && <div className="conductor-empty"><LayoutGrid size={26} strokeWidth={1.4} /><p>{currentWorkflow && workerCount
-                  ? '子代理已从引擎池中清除，且未保留存档明细'
-                  : '尚未指派子任务'}</p></div>}
+                {workflowSubagents.length === 0 && workerCount > 0 && (
+                  <p className="conductor-process-empty-note">子任务明细已随引擎池清空，仅保留通过数与对话记录。</p>
+                )}
+                {workflowSubagents.length === 0 && workerCount === 0 && (
+                  <div className="conductor-empty"><LayoutGrid size={26} strokeWidth={1.4} /><p>尚未指派子任务</p></div>
+                )}
               </section>
             </section>
           </main>

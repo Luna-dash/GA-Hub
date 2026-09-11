@@ -32,6 +32,7 @@
 .conductor-process { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--c-line); }
 .conductor-process-title { margin-bottom: 10px; font-size: 14px; font-weight: 600; color: var(--c-text); }
 .conductor-process-title span { color: var(--c-text-faint); font-size: 11px; font-weight: 400; }
+.conductor-process-empty-note { color: var(--c-text-faint); font-size: 11px; line-height: 1.6; }
 .conductor-worker-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 232px), 1fr)); gap: 8px; }
 .conductor-worker-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 9px 11px; text-align: left; border: 1px solid var(--c-line); border-radius: 8px; background: var(--c-bg-card); transition: border-color .15s, box-shadow .15s; }
 .conductor-worker-card:hover { border-color: var(--c-text-faint); box-shadow: 0 2px 6px rgba(45, 34, 22, .08); }
