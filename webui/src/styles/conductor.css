@@ -137,10 +137,7 @@
 @media (prefers-reduced-motion: reduce) {
   .conductor-history-pop { animation: none; }
 }
-.conductor-history-head { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px 10px; }
-.conductor-history-head-count { color: var(--c-text-faint); font-size: 11px; font-weight: 400; }
-.conductor-history-note { flex-shrink: 0; padding: 0 16px 10px; color: var(--c-text-faint); font-size: 11px; line-height: 1.5; }
-.conductor-history-list { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow-y: auto; border-top: 1px solid var(--c-line); }
+.conductor-history-list { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow-y: auto; padding-top: 6px; }
 .conductor-history-item { display: flex; align-items: stretch; border-bottom: 1px solid color-mix(in srgb, var(--c-line) 68%, transparent); }
 .conductor-history-item[data-deleting="true"] { opacity: .5; }
 /* The delete affordance stays visible at low emphasis instead of opacity 0:

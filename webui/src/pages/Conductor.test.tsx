@@ -911,16 +911,15 @@ describe('Conductor chat scroll restoration', () => {
       const board = host.querySelector('section[aria-label="当前任务"]')
       expect(board?.textContent).toContain('旧任务：整理归档')
     })
-    // Selecting a row IS the intent, so the drawer closes and the pinned
-    // task is what the reader lands on.
-    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    // The dropdown persists across row clicks: pinning one task doesn't
+    // collapse the list — stepping through tasks is the point of the list.
+    expect(host.querySelector('[role="dialog"]')).toBeTruthy()
     const board = host.querySelector('section[aria-label="当前任务"]')
     expect(board?.textContent).not.toContain('新任务')
+    expect(pinOld.getAttribute('aria-current')).toBe('true')
 
     // Clicking the pinned history row again releases the pin and follows the
-    // newest workflow — the old standalone 回到最新 icon button was removed
-    // as undiscoverable (user could not tell what the refresh glyph did).
-    await openHistory()
+    // newest workflow — still with the dropdown open.
     const unpin = host.querySelector(
       'button[aria-label="切换到任务：旧任务：整理归档"]',
     ) as HTMLButtonElement
@@ -929,6 +928,8 @@ describe('Conductor chat scroll restoration', () => {
       const latest = host.querySelector('section[aria-label="当前任务"]')
       expect(latest?.textContent).toContain('新任务：画一个 pelican')
     })
+    expect(host.querySelector('[role="dialog"]')).toBeTruthy()
+    expect(unpin.getAttribute('aria-current')).toBeNull()
   })
 
   it('opens history as a header drawer and leaves the left column on the running task', async () => {
@@ -985,6 +986,16 @@ describe('Conductor chat scroll restoration', () => {
     expect(dialog.classList.contains('conductor-history-pop')).toBe(true)
     expect(dialog.getAttribute('aria-modal')).toBeNull()
     expect(dialog.querySelectorAll('.conductor-history-row')).toHaveLength(1)
+
+    // The dropdown persists across row clicks: switching tasks is a
+    // compare-and-step flow, so each selection updates the board in place
+    // instead of collapsing the list. (Unpinning needs a second workflow to
+    // fall back to — covered by the keeps-finished-tasks-reachable test.)
+    const row = dialog.querySelector('.conductor-history-row') as HTMLButtonElement
+    act(() => row.click())
+    await waitFor(() => expect(row.getAttribute('aria-current')).toBe('true'))
+    expect(host.querySelector('[role="dialog"]')).toBeTruthy()
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
 
     // The trigger toggles: a second click closes the dropdown in place.
     act(() => trigger.click())

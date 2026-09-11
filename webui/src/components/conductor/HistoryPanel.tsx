@@ -24,22 +24,12 @@ type Props = {
 }
 
 export const HistoryPanel = memo(function HistoryPanel({ rows, selectedId, onSelect, onDelete, deletingIds }: Props) {
-  const attentionCount = rows.filter((row) => row.needsAttention).length
+  // No visible header: the dropdown hangs off the 历史任务 trigger, which
+  // already carries the count and the 待处理 badge — repeating them here is
+  // ceremony. The sr-only heading keeps the dialog labelled for AT.
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="conductor-history-head">
-        <h2 id="conductor-history-title" className="text-sm font-semibold text-ink">
-          历史任务 <span className="conductor-history-head-count">{rows.length}</span>
-        </h2>
-        {attentionCount > 0 && (
-          <span className="rounded-full border border-status-warning-line bg-status-warning-soft px-2 py-0.5 text-[10px] text-status-warning">
-            {attentionCount} 待处理
-          </span>
-        )}
-      </div>
-      <p className="conductor-history-note">
-        点选一条即切换到该任务；再点选同一条回到最新任务。
-      </p>
+      <h2 id="conductor-history-title" className="sr-only">历史任务</h2>
       <div className="conductor-history-list" aria-label="历史任务列表">
         {rows.map((row) => (
           <div key={row.requestId} className="conductor-history-item" data-deleting={deletingIds?.has(row.requestId) || undefined}>

@@ -183,13 +183,13 @@ export default function Conductor() {
     requestAnimationFrame(() => subagentSettingsButtonRef.current?.focus())
   }
 
-  // Selecting a history row IS the intent, so the drawer closes and the
-  // pinned task is what the reader lands on. Deleting keeps it open: the
-  // list is where the user is working.
+  // Selecting a history row switches the pinned task but keeps the dropdown
+  // open: comparing/stepping through several tasks is the whole point of the
+  // list, and closing on every click would force a reopen each time. The
+  // dropdown dismisses on outside press / Escape / trigger toggle.
   const selectHistoryWorkflow = (id: string) => {
     setPinnedRequestId((current) => (current === id ? null : id))
     setSelectedSid(null)
-    setHistoryOpen(false)
   }
 
   const saveSubagentSettings = () => {
