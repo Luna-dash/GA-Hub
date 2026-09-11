@@ -148,16 +148,47 @@ export function workerTitle(sub: ConductorSubagent): string {
   return compactTaskText(facts.manifest?.goal || sub.prompt)
 }
 
-/** One-clause card title: a dispatch prompt is coordination prose, not a
- *  name — the first clause carries the intent and the dossier has the rest. */
+/** Card title: derive a name-sized summary of what this worker is for.
+ *  Priority: manifest goal → the dispatch prompt's [Task Goal] section → the
+ *  first line that reads like content (contract tags, markdown scaffolding
+ *  and list markers are noise, not a name) → hard cap. The full dispatch
+ *  text stays in the dossier and the hover tooltip. */
 export function briefWorkerTitle(sub: ConductorSubagent): string {
-  const full = workerTitle(sub)
-  const firstClause = (full.split(/[，。；：！？、,\n]/, 1)[0] ?? '').trim()
-  if (firstClause.length >= 4 && firstClause.length <= 24 && firstClause.length < full.length) {
-    return firstClause
+  const facts = reviewFacts(sub)
+  const goal = typeof facts.manifest?.goal === 'string' ? facts.manifest.goal.trim() : ''
+  const prompt = String(sub.prompt || '')
+  const source = goal || parseContractGoal(prompt) || firstContentLine(prompt)
+  return capTitle(source || prompt)
+}
+
+/** Extract the dispatch template's "[Task Goal]" section content. */
+function parseContractGoal(prompt: string): string {
+  const match = /\[Task Goal\][^\n]*\n([\s\S]*?)(?=\n\[|$)/i.exec(prompt)
+  if (!match) return ''
+  return match[1].replace(/\s+/g, ' ').trim()
+}
+
+/** First prompt line that reads like content rather than scaffolding. */
+function firstContentLine(prompt: string): string {
+  for (const raw of prompt.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    // Contract tags "[Deliverables] …", markdown headers/lists, 【里程碑】
+    // style markers and numbered items are all structure, none is a name.
+    if (/^(#{1,6}\s|[-*•]\s|\[[^\]]*\]|【[^】]*】|\d+[.、)])/.test(line)) continue
+    if (line.length < 4) continue
+    return line
   }
-  if (full.length <= 24) return full
-  return `${full.slice(0, 24)}…`
+  return ''
+}
+
+function capTitle(source: string): string {
+  const clean = source.replace(/\s+/g, ' ').trim()
+  if (!clean) return '未提供任务说明'
+  if (clean.length <= 24) return clean
+  const clause = (clean.split(/[，。；：！？、,]/, 1)[0] ?? '').trim()
+  if (clause.length >= 4 && clause.length <= 24) return clause
+  return `${clean.slice(0, 24)}…`
 }
 
 /** Rail-safe title for one-line CTAs; the dossier shows the full text. */

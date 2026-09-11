@@ -37,6 +37,40 @@ describe('briefWorkerTitle', () => {
     const long = 'x'.repeat(40)
     expect(briefWorkerTitle(sub({ prompt: long }))).toBe(`${'x'.repeat(24)}…`)
   })
+
+  it('reads the dispatch template\'s [Task Goal] section instead of the tag', () => {
+    const prompt = [
+      '[Task Goal]',
+      '列出 pages 目录的本地 import',
+      '',
+      '[Deliverables] (write each file to its exact absolute path)',
+      '- D:\\study\\GA\\temp\\页面依赖.md',
+      '',
+      'Every deliverable path must resolve under an allowed root.',
+    ].join('\n')
+    expect(briefWorkerTitle(sub({ prompt }))).toBe('列出 pages 目录的本地 import')
+  })
+
+  it('skips markdown and marker scaffolding to the first content line', () => {
+    const prompt = [
+      '## 处理结果',
+      '【里程碑】归档已建立',
+      '扫描 src/ 目录与依赖清单，定位性能热点并汇总成报告',
+    ].join('\n')
+    expect(briefWorkerTitle(sub({ prompt }))).toBe('扫描 src/ 目录与依赖清单')
+  })
+
+  it('never leaks a contract tag into the title', () => {
+    const prompt = [
+      '[Deliverables] (write each file to its exact absolute path)',
+      '- D:/a.md',
+      '',
+      'Every deliverable path must resolve under an allowed root.',
+    ].join('\n')
+    const title = briefWorkerTitle(sub({ prompt }))
+    expect(title.startsWith('Every')).toBe(true)
+    expect(title).not.toContain('[')
+  })
 })
 
 describe('workflow closure', () => {
