@@ -23,8 +23,6 @@ export const storageKeys = {
   sessionRailLegacyRecentActivity: 'gahub.sessionRailRecentActivity',
   /** Conductor: 'true' = subagent model switcher locked to engine default. */
   conductorSubagentModelLocked: 'gahub.conductor.subagentModelLocked.v1',
-  /** Conductor: '1' = task-history section expanded on the board. */
-  conductorHistoryOpen: 'gahub.conductor.historyOpen.v1',
   /** config/navigation.ts: ordering/visibility preferences (JSON). */
   navPreferences: 'gahub.nav.preferences.v1',
   /** useSharedModelSelection: preferred LLM bindings (string keys). */

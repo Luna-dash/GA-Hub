@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   conductorResumeWorkflow: vi.fn(),
   conductorSubagentAction: vi.fn(),
   conductorSubagent: vi.fn(),
+  conductorActivity: vi.fn(),
   conductorSettings: vi.fn(),
   revealFile: vi.fn(),
   llms: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock('@/api/client', () => ({
     conductorResumeWorkflow: mocks.conductorResumeWorkflow,
     conductorSubagentAction: mocks.conductorSubagentAction,
     conductorSubagent: mocks.conductorSubagent,
+    conductorActivity: mocks.conductorActivity,
     conductorSettings: mocks.conductorSettings,
     revealFile: mocks.revealFile,
     llms: mocks.llms,
@@ -148,6 +150,9 @@ describe('Conductor chat scroll restoration', () => {
       review_note: '', attempt: 1, generation: 1, request_id: 'request-1',
     })
     mocks.llms.mockResolvedValue({ llms: [] })
+    // Durable 动态 history: an empty page is the baseline every test that does
+    // not care about the timeline expects.
+    mocks.conductorActivity.mockResolvedValue({ items: [], has_more: false, durable: true })
 
     animationFrames = []
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -243,6 +248,13 @@ describe('Conductor chat scroll restoration', () => {
     )
     if (!(match instanceof HTMLButtonElement)) throw new Error(`button not found: ${label}`)
     return match
+  }
+
+  // History opens from the header trigger as a right-hand drawer; every
+  // history assertion starts here.
+  async function openHistory() {
+    await waitFor(() => expect(host.querySelector('button[aria-label="历史任务"]')).toBeTruthy())
+    act(() => (host.querySelector('button[aria-label="历史任务"]') as HTMLButtonElement).click())
   }
 
   it('opens the first non-empty snapshot at the latest message and restores a later reading position', async () => {
@@ -342,11 +354,11 @@ describe('Conductor chat scroll restoration', () => {
     const headings = Array.from(host.querySelectorAll('h2')).map((item) => item.textContent)
     expect(headings).not.toContain('当前任务')
     expect(host.querySelectorAll('.conductor-worker-card')).toHaveLength(4)
-    expect(headings).toContain('工人卷宗')
+    expect(headings).toContain('子代理卷宗')
     // The stats strip is the single source of the task's live numbers; the
     // accepted count surfaces there rather than in a duplicate status line.
     const metrics = host.querySelector('[aria-label="当前任务概览"]')
-    expect(metrics?.textContent).toContain('子任务 1/4')
+    expect(metrics?.textContent).toContain('已通过 1/4')
     const titleBadge = host.querySelector('header .ga-badge')
     expect(titleBadge?.textContent).toBe('运行中')
     expect(titleBadge?.classList.contains('ga-badge-connected')).toBe(true)
@@ -561,7 +573,7 @@ describe('Conductor chat scroll restoration', () => {
     for (let attempt = 0; attempt < 6; attempt += 1) await flushQueries()
     expect(mocks.conductorSubagent).toHaveBeenCalledWith('reviewing', 20_000)
     expect(host.textContent).toContain('完整回复：启动路径已核对。')
-    expect(host.textContent).toContain('工人卷宗')
+    expect(host.textContent).toContain('子代理卷宗')
   })
 
   it('surfaces verification evidence and offers a force accept on unverified 409', async () => {
@@ -884,8 +896,7 @@ describe('Conductor chat scroll restoration', () => {
       ],
     })
     renderPage()
-    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
-    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
+    await openHistory()
     await waitFor(() => expect(host.textContent).toContain('新任务：画一个 pelican'))
 
     // The new open task auto-follows; the finished one stays reachable.
@@ -895,16 +906,21 @@ describe('Conductor chat scroll restoration', () => {
     ) as HTMLButtonElement
     expect(pinOld).toBeTruthy()
     act(() => pinOld.click())
-    await waitFor(() => expect(host.textContent).toContain('旧任务：整理归档'))
-    // Pinned view: the board header follows the pinned workflow only
-    // (the history nav legitimately still lists the new task).
+    // Pinned view: the board header follows the pinned workflow only.
+    await waitFor(() => {
+      const board = host.querySelector('section[aria-label="当前任务"]')
+      expect(board?.textContent).toContain('旧任务：整理归档')
+    })
+    // Selecting a row IS the intent, so the drawer closes and the pinned
+    // task is what the reader lands on.
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
     const board = host.querySelector('section[aria-label="当前任务"]')
-    expect(board?.textContent).toContain('旧任务：整理归档')
     expect(board?.textContent).not.toContain('新任务')
 
     // Clicking the pinned history row again releases the pin and follows the
     // newest workflow — the old standalone 回到最新 icon button was removed
     // as undiscoverable (user could not tell what the refresh glyph did).
+    await openHistory()
     const unpin = host.querySelector(
       'button[aria-label="切换到任务：旧任务：整理归档"]',
     ) as HTMLButtonElement
@@ -913,6 +929,89 @@ describe('Conductor chat scroll restoration', () => {
       const latest = host.querySelector('section[aria-label="当前任务"]')
       expect(latest?.textContent).toContain('新任务：画一个 pelican')
     })
+  })
+
+  it('opens history as a header drawer and leaves the left column on the running task', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1', status: 'supervising', stage: 'supervising',
+        subagents: {}, created_at: 1, completed_at: null,
+      }],
+    })
+    mocks.conductorChat.mockResolvedValue({
+      items: [{ id: 'u1', role: 'user', msg: '分析项目性能', ts: 1, request_id: 'request-1' }],
+    })
+
+    renderPage()
+    await waitFor(() => expect(host.textContent).toContain('分析项目性能'))
+
+    // History is a look-back surface: the board leads with the running task
+    // instead of a list that pushed it below the fold.
+    const main = host.querySelector('.conductor-main') as HTMLElement
+    expect(main.querySelector('.conductor-history-list')).toBeNull()
+    expect(main.querySelector('section[aria-label="当前任务"]')).toBeTruthy()
+    // An active stage no longer spends a line restating its own badge.
+    expect(host.querySelector('.conductor-current-detail')).toBeNull()
+
+    // …and it opens from the header trigger, which carries the count.
+    const trigger = button('历史任务')
+    expect(trigger.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+    // History is page-level look-back, so it lives in the header's middle
+    // area — not inside the right-hand control cluster, which would make it
+    // read as one more action button.
+    expect(trigger.closest('.conductor-header-history')).toBeTruthy()
+    const headerActions = host.querySelector('.conductor-header-actions') as HTMLElement
+    expect(headerActions.contains(trigger)).toBe(false)
+
+    // The remaining controls are two right-aligned groups — 模型 and 引擎 —
+    // with a deliberate gap between them: run together the select and the
+    // toggle read as one glued strip.
+    const layout = Array.from(headerActions.children).map((el) => (
+      el.classList.contains('conductor-header-engine') ? 'engine' : 'model'
+    ))
+    expect(layout).toEqual(['model', 'engine'])
+    // The engine toggle keeps the right edge.
+    const engineGroup = headerActions.lastElementChild as HTMLElement
+    expect(engineGroup.lastElementChild?.className).toMatch(/ga-btn-danger|ga-btn-primary/)
+
+    act(() => trigger.click())
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    const dialog = host.querySelector('[role="dialog"]') as HTMLElement
+    expect(dialog).toBeTruthy()
+    expect(dialog.querySelectorAll('.conductor-history-row')).toHaveLength(1)
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('states the pause consequence and reads the stats strip as actions taken', async () => {
+    mocks.conductorStatus.mockResolvedValue({ ready: true, started: false })
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1', status: 'awaiting_review', stage: 'awaiting_review',
+        subagents: { w1: { generation: 1, state: 'accepted' } }, created_at: 1, completed_at: null,
+      }],
+    })
+    mocks.conductorChat.mockResolvedValue({
+      items: [{ id: 'u1', role: 'user', msg: '整理归档目录', ts: 1, request_id: 'request-1' }],
+    })
+
+    renderPage()
+    await waitFor(() => expect(host.textContent).toContain('已暂停'))
+    // The paused explanation is the one case that earns the detail line: it
+    // tells the reader which of the two controls continues this task.
+    expect(host.textContent).toContain('恢复此任务')
+    expect(host.textContent).toContain('不会自动重跑其他任务')
+
+    // "已通过 X/Y" reads as a count of work done; the old "子任务 X/Y" read as
+    // a progress fraction sitting next to "执行中".
+    const stats = host.querySelector('[aria-label="当前任务概览"]')
+    expect(stats?.textContent).toContain('已通过 1/1')
+    expect(stats?.textContent).not.toContain('待验收 1')
   })
 
   it('presents a recoverable worker failure as open, not as a closed workflow', async () => {
@@ -929,8 +1028,7 @@ describe('Conductor chat scroll restoration', () => {
     })
 
     renderPage()
-    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
-    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
+    await openHistory()
     await waitFor(() => {
       const text = host.textContent || ''
       expect(text).toContain('子代理失败')
@@ -995,8 +1093,7 @@ describe('Conductor chat scroll restoration', () => {
     mocks.conductorChat.mockResolvedValue({ items: [] })
     mocks.conductorWorkflows.mockResolvedValue({ items: [] })
     renderPage()
-    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
-    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
+    await openHistory()
     await waitFor(() => expect(host.textContent).toContain('暂无任务'))
     // The composer lives in the right panel directly; the old 对话 jump
     // button on the task card was redundant with the always-visible tabs.
@@ -1023,6 +1120,81 @@ describe('Conductor chat scroll restoration', () => {
       expect(timeline?.textContent).toContain('子代理已派出')
       expect(timeline?.textContent).toContain('任务完成')
     })
+  })
+
+  it('rehydrates a finished task’s 动态 from durable history instead of showing it empty', async () => {
+    setSubagentFixtures()
+    // The regression this locks: the tab used to be a live-only SSE projection,
+    // so reopening a completed task showed "暂无动态" even though the hub had
+    // every row — only the result side (dossier) survived.
+    mocks.conductorActivity.mockResolvedValue({
+      items: [
+        {
+          id: 'ep:1', request_id: 'request-1', kind: 'worker_spawned',
+          at: 1_700_000_000, atMs: 1_700_000_000_000, text: '子代理已派出', worker_id: 'reviewing',
+        },
+        {
+          id: 'ep:2', request_id: 'request-1', kind: 'worker_milestone',
+          at: 1_700_000_030, atMs: 1_700_000_030_000, text: '里程碑 · 扫描目录', worker_id: 'reviewing',
+        },
+        {
+          id: 'ep:3', request_id: 'request-1', kind: 'workflow_completed',
+          at: 1_700_000_900, atMs: 1_700_000_900_000, text: '任务完成',
+        },
+      ],
+      has_more: false,
+      durable: true,
+    })
+    renderPage()
+    await waitFor(() => expect(host.querySelector('.conductor-worker-toggle')).toBeTruthy())
+
+    act(() => button('动态').click())
+    await waitFor(() => {
+      const timeline = host.querySelector('section[aria-label="任务动态"]')
+      // '里程碑 · …' is a kind the local label table never knew: it can only be
+      // here because the hub authored it.
+      expect(timeline?.textContent).toContain('里程碑 · 扫描目录')
+      expect(timeline?.textContent).toContain('子代理已派出')
+      expect(timeline?.textContent).toContain('任务完成')
+      expect(timeline?.textContent).not.toContain('暂无动态')
+    })
+    expect(mocks.conductorActivity).toHaveBeenCalledWith('request-1', { limit: 200 })
+  })
+
+  it('pages backwards for older 动态 and keeps one merged timeline', async () => {
+    setSubagentFixtures()
+    mocks.conductorActivity
+      .mockResolvedValueOnce({
+        items: [{
+          id: 'ep:9', request_id: 'request-1', kind: 'workflow_completed',
+          at: 1_700_000_900, atMs: 1_700_000_900_000, text: '任务完成',
+        }],
+        has_more: true,
+        durable: true,
+      })
+      .mockResolvedValueOnce({
+        items: [{
+          id: 'ep:1', request_id: 'request-1', kind: 'worker_spawned',
+          at: 1_700_000_100, atMs: 1_700_000_100_000, text: '子代理已派出', worker_id: 'reviewing',
+        }],
+        has_more: false,
+        durable: true,
+      })
+    renderPage()
+    await waitFor(() => expect(host.querySelector('.conductor-worker-toggle')).toBeTruthy())
+
+    act(() => button('动态').click())
+    await waitFor(() => expect(host.textContent).toContain('任务完成'))
+    expect(host.textContent).not.toContain('子代理已派出')
+
+    act(() => button('加载更早的动态').click())
+    await waitFor(() => expect(host.textContent).toContain('子代理已派出'))
+    // The pivot is the oldest row held (+1ms, so the boundary millisecond is
+    // included rather than skipped; the store dedupes by id).
+    expect(mocks.conductorActivity).toHaveBeenLastCalledWith(
+      'request-1', { limit: 200, beforeMs: 1_700_000_900_001 },
+    )
+    expect(host.querySelector('section[aria-label="任务动态"]')?.textContent).toContain('任务完成')
   })
 
   it('exposes deliverable reveal actions and the previous review note', async () => {
@@ -1065,6 +1237,9 @@ describe('Conductor chat scroll restoration', () => {
     expect(worker.getAttribute('aria-pressed')).toBe('true')
     expect(host.textContent).not.toContain('打开完整卷宗')
     act(() => button('动态').click())
+    // The tab opening also starts the durable-history read; drain it inside
+    // `act` so its state update is not reported as an untracked one.
+    await flushQueries()
     expect(host.querySelector('#conductor-panel-activity')?.hasAttribute('hidden')).toBe(false)
     expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(true)
     act(() => button('当前任务').click())
@@ -1086,8 +1261,7 @@ describe('Conductor chat scroll restoration', () => {
       { id: 'u3', role: 'user', msg: '补充性能测试', request_id: 'new', ts: 3 },
     ] })
     renderPage()
-    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
-    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
+    await openHistory()
     await waitFor(() => expect(host.querySelectorAll('.conductor-history-row')).toHaveLength(2))
     // No filters/search/sort: the list is a flat, attention-first listing.
     expect(host.querySelector('[aria-label="任务状态"]')).toBeNull()
@@ -1112,8 +1286,7 @@ describe('Conductor chat scroll restoration', () => {
     mocks.dialogConfirm.mockResolvedValue(true)
 
     renderPage()
-    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
-    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
+    await openHistory()
     await waitFor(() => expect(host.querySelectorAll('.conductor-history-row')).toHaveLength(1))
 
     const del = host.querySelector('button[aria-label="删除任务：归档资料"]') as HTMLButtonElement
@@ -1136,8 +1309,7 @@ describe('Conductor chat scroll restoration', () => {
     mocks.dialogConfirm.mockResolvedValue(true)
 
     renderPage()
-    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
-    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
+    await openHistory()
     await waitFor(() => expect(host.querySelector('button[aria-label="删除任务：中断的资料整理"]')).toBeTruthy())
     act(() => (host.querySelector('button[aria-label="删除任务：中断的资料整理"]') as HTMLButtonElement).click())
     await waitFor(() => expect(mocks.conductorDeleteWorkflow).toHaveBeenCalledWith('cancelled'))
@@ -1152,8 +1324,7 @@ describe('Conductor chat scroll restoration', () => {
     mocks.conductorStatus.mockResolvedValue({ ready: true, started: false })
 
     renderPage()
-    await waitFor(() => expect(host.querySelector('[aria-label="展开历史任务"]')).toBeTruthy())
-    act(() => (host.querySelector('[aria-label="展开历史任务"]') as HTMLButtonElement).click())
+    await openHistory()
     await waitFor(() => expect(
       host.querySelector('button[aria-label="删除任务：未命名任务"]'),
     ).toBeTruthy())
@@ -1244,7 +1415,7 @@ describe('Conductor chat scroll restoration', () => {
     mocks.conductorSubagentAction.mockResolvedValue({ id: 'reviewing', status: 'stopped' })
 
     renderPage()
-    await waitFor(() => expect(host.textContent).toContain('工人卷宗'))
+    await waitFor(() => expect(host.textContent).toContain('子代理卷宗'))
     const aside = () => {
       const element = host.querySelector('aside')
       if (!element) throw new Error('dossier aside not found')
@@ -1346,7 +1517,7 @@ describe('Conductor chat scroll restoration', () => {
     mocks.conductorSubagentAction.mockResolvedValue({ id: 'first', status: 'stopped' })
 
     renderPage()
-    await waitFor(() => expect(host.textContent).toContain('工人卷宗'))
+    await waitFor(() => expect(host.textContent).toContain('子代理卷宗'))
     expect((host.querySelector('aside') as HTMLElement).textContent).toContain('第一个工人任务')
 
     act(() => button('通过').click())
@@ -1402,15 +1573,15 @@ describe('Conductor chat scroll restoration', () => {
     expect(Array.from(host.querySelectorAll('.conductor-worker-status')).map((el) => el.textContent))
       .toEqual(['存档', '存档'])
     // Truncated archive rows say so instead of claiming a live wait.
-    expect(text).toContain('存档记录：执行文字结果未随快照保留')
+    expect(text).toContain('存档记录：处理结果未随快照保留')
     // The dossier reflects the last worker and stays read-only.
     const aside = host.querySelector('aside') as HTMLElement
     expect(aside.textContent).toContain('存档记录')
     expect(Array.from(aside.querySelectorAll('button')).map((b) => b.textContent))
       .not.toContain('通过')
     // The history row counts archived workers (1/2), not "尚未指派".
-    act(() => button('展开历史任务').click())
+    await openHistory()
     await flushQueries()
-    expect(host.querySelector('.conductor-history-meta')?.textContent).toContain('1/2 子任务已通过')
+    expect(host.querySelector('.conductor-history-meta')?.textContent).toContain('已通过 1/2')
   })
 })

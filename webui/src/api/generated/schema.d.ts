@@ -969,6 +969,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/conductor/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Activity
+         * @description Return one workflow's durable 动态 timeline.
+         *
+         *     The page's 动态 tab used to be a live-only SSE projection, so a task
+         *     reopened from history showed nothing. This is the read that makes the
+         *     timeline durable; ``before_ms`` pages backwards for scroll-up.
+         */
+        get: operations["get_activity_api_conductor_activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/conductor/workflow/{request_id}": {
         parameters: {
             query?: never;
@@ -2364,6 +2388,45 @@ export interface components {
              * @default 600
              */
             scheduled_backoff_max_seconds: number;
+        };
+        /**
+         * ConductorActivityEvent
+         * @description One durable row of the Conductor 动态 timeline.
+         *
+         *     ``id`` is derived from the engine journal (epoch + seq), so a replay of the
+         *     same event upserts rather than duplicating. The page keys live SSE rows and
+         *     hydrated rows off this same value.
+         */
+        ConductorActivityEvent: {
+            /** Id */
+            id: string;
+            /** Request Id */
+            request_id: string;
+            /** Kind */
+            kind: string;
+            /** At */
+            at: number;
+            /** Atms */
+            atMs: number;
+            /** Text */
+            text: string;
+            /** Worker Id */
+            worker_id?: string | null;
+        };
+        /** ConductorActivityListResp */
+        ConductorActivityListResp: {
+            /** Items */
+            items: components["schemas"]["ConductorActivityEvent"][];
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
+            /**
+             * Durable
+             * @default true
+             */
+            durable: boolean;
         };
         /** ConductorChatIn */
         ConductorChatIn: {
@@ -5844,6 +5907,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConductorWorkflowListResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_activity_api_conductor_activity_get: {
+        parameters: {
+            query: {
+                request_id: string;
+                limit?: number;
+                before_ms?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConductorActivityListResp"];
                 };
             };
             /** @description Validation Error */

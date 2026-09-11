@@ -309,12 +309,17 @@ export const WORKFLOW_STAGE_PAUSABLE = new Set([
   'planning', 'supervising', 'reworking', 'awaiting_review', 'aggregating',
 ])
 
+// `detail` is the ONE line under the current-task title. It must earn the
+// space by telling the reader something the badge and the stats strip do not
+// already say: only stages with a non-obvious consequence carry text. The
+// boilerplate sentences ("正在理解需求并准备分派") were removed — they
+// repeated the label verbatim on every task.
 export const WORKFLOW_STAGE_VIEW: Record<string, { label: string; detail: string; tone: WorkflowTone }> = {
-  planning: { label: '正在规划', detail: 'Conductor 正在理解需求并准备分派。', tone: 'active' },
-  supervising: { label: '执行中', detail: 'Conductor 已完成分派，子代理正在处理。', tone: 'active' },
-  reworking: { label: '返工中', detail: '未通过的部分已交回子代理继续处理。', tone: 'active' },
-  awaiting_review: { label: '待你验收', detail: '子任务已完成，等待验收。', tone: 'review' },
-  aggregating: { label: '正在汇总', detail: '子任务均已通过，Conductor 正在整理最终交付。', tone: 'review' },
+  planning: { label: '正在规划', detail: '', tone: 'active' },
+  supervising: { label: '执行中', detail: '', tone: 'active' },
+  reworking: { label: '返工中', detail: '', tone: 'active' },
+  awaiting_review: { label: '待你验收', detail: '', tone: 'review' },
+  aggregating: { label: '正在汇总', detail: '子代理均已通过，Conductor 正在整理最终交付。', tone: 'review' },
   recoverable_failure: { label: '子代理失败', detail: '子代理处理失败，Conductor 正在决定返工或补派。', tone: 'active' },
   completed: { label: '已完成', detail: '所有子任务已通过验收，交付结果已发送。', tone: 'done' },
   failed: { label: '执行失败', detail: '工作流未能完成，原因已写入本轮对话。', tone: 'error' },
@@ -338,11 +343,79 @@ export function workflowPresentation(
   }
   // Surface the tracker-persisted reason directly: a page opened after the
   // failure never saw the live transition, so the reason must come from the
-  // workflow snapshot itself.
+  // workflow snapshot itself. It is the ONLY place the reason renders.
   if (view === WORKFLOW_STAGE_VIEW.failed && workflow.error) {
     return { ...view, detail: `失败原因：${workflow.error}` }
   }
   return view
+}
+
+export type HistoryRow = {
+  requestId: string
+  title: string
+  view: { label: string; detail: string; tone: WorkflowTone }
+  total: number
+  accepted: number
+  needsAttention: boolean
+  deletable: boolean
+  closed: boolean
+  createdAt: number
+}
+
+/**
+ * The history list model: one row per workflow, attention first then newest.
+ * Lives here (not in the panel) because the header trigger needs the same
+ * attention count the list renders — one computation, one truth.
+ */
+export function historyRowsOf(
+  workflows: ConductorWorkflow[],
+  workers: ConductorSubagent[],
+  titles: Map<string, string>,
+  started: boolean,
+): HistoryRow[] {
+  const byId = new Map(workers.map((worker) => [worker.id, worker]))
+  const byRequest = new Map<string, ConductorSubagent[]>()
+  for (const worker of workers) {
+    if (worker.request_id) {
+      const siblings = byRequest.get(worker.request_id) ?? []
+      siblings.push(worker)
+      byRequest.set(worker.request_id, siblings)
+    }
+  }
+  const rows = workflows.map((workflow) => {
+    const owned = [...new Set([
+      ...Object.keys(workflow.subagents).map((id) => byId.get(id)),
+      ...(byRequest.get(workflow.request_id) ?? []),
+    ])].filter((worker): worker is ConductorSubagent => Boolean(worker))
+    const view = workflowPresentation(workflow, started)
+    const closed = isWorkflowClosed(workflow)
+    const needsAttention = view.tone === 'error' || (!closed && (workflow.stage === 'awaiting_review'
+      || workflow.stage === 'recoverable_failure' || owned.some(isReviewable)))
+    // Count from the merged worker list when we have it: archived rows are
+    // in `owned` but absent from the tracker's subagents map, and a history
+    // row saying "尚未指派" while the board shows four cards contradicts
+    // itself. The tracker map stays the fallback for workers already pruned
+    // from both pool and archive.
+    const total = owned.length || Object.keys(workflow.subagents).length
+    const accepted = owned.length
+      ? owned.filter((worker) => worker.review_status === 'accepted').length
+      : Object.values(workflow.subagents).filter((worker) => worker.state === 'accepted').length
+    return {
+      requestId: workflow.request_id,
+      title: titles.get(workflow.request_id) || '未命名任务',
+      view,
+      total,
+      accepted,
+      needsAttention,
+      deletable: closed || !started,
+      closed,
+      createdAt: workflow.created_at,
+    }
+  })
+  // Fixed order: whatever needs a human decision first, then newest first.
+  // A one-glance list does not need a sort control.
+  return rows.sort((a, b) =>
+    Number(b.needsAttention) - Number(a.needsAttention) || b.createdAt - a.createdAt)
 }
 
 export function isNearScrollBottom(el: HTMLDivElement | null): boolean {
@@ -409,11 +482,23 @@ export function milestoneCheckSummary(check?: WorkerMilestoneCheck | null): stri
  * (conductor_core._DONE_TAIL_RE): the canonical `[[GAHUB_TASK_DONE]]
  * <summary>…</summary>` since 2026-09-08, or the legacy `[DONE]
  * <summary>…</summary>`. That is protocol noise for a human reader — strip
- * it before rendering.
+ * it before rendering. Completion is already surfaced as UI state
+ * (done_marker → 阶段/「未确认完成」), so the token carries no information
+ * a reader needs.
+ *
+ * Two shapes are stripped, in order:
+ * 1. the full pair (marker + `<summary>` line);
+ * 2. a bare trailing canonical marker — workers routinely emit the marker
+ *    and drop the summary line (the engine then reports done_marker=false).
+ *    Only the double-bracket form qualifies: a lone legacy `[DONE]` is
+ *    ambiguous with ordinary prose AND the engine refuses to read it as a
+ *    completion signal on its own, so leaving it is the safer default.
+ * Anything mid-text is left alone: only the tail is contract.
  */
 export function stripContractTail(reply: string): string {
   return reply
     .replace(/(?:\[\[GAHUB_TASK_DONE\]\]|\[DONE\])\s*<summary>[\s\S]*?<\/summary>\s*$/i, '')
+    .replace(/\[\[GAHUB_TASK_DONE\]\]\s*$/i, '')
     .trimEnd()
 }
 

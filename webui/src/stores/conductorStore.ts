@@ -21,22 +21,42 @@ import type {
 /**
  * One human-meaningful lifecycle event for a workflow. `at` is epoch
  * seconds; `atMs` disambiguates same-second events for stable sort keys.
+ *
+ * `id` is a wire contract with the hub: rows authored server-side (journal
+ * events folded by `conductor_activity.py`, and the tracker-derived terminal
+ * transition) carry the same id whether they arrive live over SSE or later
+ * from `GET /api/conductor/activity`. That is what lets the two feeds collapse
+ * into one row instead of duplicating it.
  */
+/**
+ * The kinds this page knows how to colour. The hub owns the vocabulary (see
+ * server/services/conductor_activity.py) and may extend it, so a row's `kind`
+ * stays an open string: an unknown kind renders with the neutral dot rather
+ * than a broken one.
+ */
+export type KnownActivityKind =
+  | 'worker_spawned' | 'worker_started' | 'worker_completed' | 'worker_failed'
+  | 'worker_timeout' | 'worker_accepted' | 'worker_rejected'
+  | 'worker_reworked' | 'worker_pending_review' | 'worker_cancelled'
+  | 'worker_killed' | 'worker_milestone' | 'worker_force_accepted'
+  | 'workflow_completed' | 'workflow_failed' | 'workflow_cancelled' | 'workflow_killed'
+  | 'turn_completed' | 'turn_failed' | 'turn_yielded'
+
+export type ConductorActivityKind = KnownActivityKind | (string & {})
+
 export type ConductorActivityEvent = {
   id: string
   request_id: string
-  kind:
-    | 'worker_spawned' | 'worker_completed' | 'worker_failed'
-    | 'worker_timeout' | 'worker_accepted' | 'worker_rejected'
-    | 'workflow_completed' | 'workflow_failed' | 'workflow_cancelled' | 'workflow_killed'
-    | 'turn_completed' | 'turn_failed' | 'turn_yielded'
+  kind: ConductorActivityKind
   at: number
   atMs: number
   text: string
-  worker_id?: string
+  worker_id?: string | null
 }
 
-const ACTIVITY_LIMIT = 300
+// Mirrors the hub's own ACTIVITY_CAP so a hydrated history is never truncated
+// by a smaller client bound than the one that persisted it.
+const ACTIVITY_LIMIT = 4000
 
 type SnapshotVersion = { boot_id?: string | null; snapshot_revision?: number }
 
@@ -73,6 +93,10 @@ interface ConductorState {
   addWorkerActivity: (event: { id: string; name: string; request_id?: string; at?: number; atMs?: number; text: string; worker_id?: string }) => void
   addWorkflowActivity: (event: { request_id: string; kind: 'workflow_completed' | 'workflow_failed' | 'workflow_cancelled' | 'workflow_killed'; at?: number; atMs?: number; text?: string }) => void
   addTurnActivity: (event: { request_id: string; status: string; at?: number; atMs?: number }) => void
+  /** Record a hub-authored row verbatim (SSE `payload.activity`). */
+  upsertActivity: (event: ConductorActivityEvent) => void
+  /** Merge durable rows for one request fetched from `GET /activity`. */
+  hydrateActivity: (rows: ConductorActivityEvent[], requestId: string) => void
   clear: () => void
 }
 
@@ -185,6 +209,24 @@ export const useConductorStore = create<ConductorState>((set) => ({
         text: status === 'ok' ? 'Conductor 完成一轮处理' : 'Conductor 本轮处理失败',
       })
     }),
+
+  upsertActivity: (event) => set((state) => appendActivity(state, event)),
+
+  hydrateActivity: (rows, requestId) => set((state) => {
+    if (rows.length === 0) return state
+    const byId = new Map(state.activity.map((row) => [row.id, row]))
+    let changed = false
+    for (const row of rows) {
+      // Union rather than replace: a row that landed live while this fetch was
+      // in flight must not be dropped by a slightly older answer, and rows held
+      // for other requests must survive so switching tasks cannot wipe a feed.
+      if (row.request_id !== requestId || byId.has(row.id)) continue
+      byId.set(row.id, row)
+      changed = true
+    }
+    if (!changed) return state
+    return { activity: [...byId.values()].sort((a, b) => a.atMs - b.atMs).slice(-ACTIVITY_LIMIT) }
+  }),
 
   clear: () => set((state) => ({
     chatMessages: [],

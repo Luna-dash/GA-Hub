@@ -5,6 +5,7 @@ import {
   collapseBlankLines,
   deliverablesOf,
   deliverableVerified,
+  historyRowsOf,
   isWorkflowClosed,
   milestoneCheckSummary,
   parseContractDeliverables,
@@ -120,6 +121,26 @@ describe('stripContractTail', () => {
   it('removes the canonical [[GAHUB_TASK_DONE]] summary pair (2026-09-08 contract)', () => {
     const reply = '正文内容\n\n[[GAHUB_TASK_DONE]]\n<summary>任务完成</summary>'
     expect(stripContractTail(reply)).toBe('正文内容')
+  })
+
+  it('removes a bare trailing [[GAHUB_TASK_DONE]] marker (workers omit the summary line)', () => {
+    const reply = '正文内容\n\n[[GAHUB_TASK_DONE]]'
+    expect(stripContractTail(reply)).toBe('正文内容')
+  })
+
+  it('removes the bare marker when milestone lines precede it', () => {
+    const reply = '正文内容\n\nMILESTONE-m1-DONE\nMILESTONE-m2-DONE\n\n[[GAHUB_TASK_DONE]]\n'
+    expect(stripContractTail(reply)).toBe('正文内容\n\nMILESTONE-m1-DONE\nMILESTONE-m2-DONE')
+  })
+
+  it('keeps a lone legacy [DONE] — it is not a completion signal on its own', () => {
+    const reply = '正文内容\n\n[DONE]'
+    expect(stripContractTail(reply)).toBe(reply)
+  })
+
+  it('keeps a bare canonical marker that is mid-text', () => {
+    const reply = '提到 [[GAHUB_TASK_DONE]] 之后继续\n结尾'
+    expect(stripContractTail(reply)).toBe(reply)
   })
 
   it('keeps a [DONE] that is not at the tail (mid-text mention)', () => {
@@ -357,5 +378,51 @@ describe('splitWorkerTurns', () => {
 
   it('returns a single unlabeled turn for plain replies', () => {
     expect(splitWorkerTurns('普通回复')).toEqual([{ index: 1, text: '普通回复' }])
+  })
+})
+
+describe('historyRowsOf', () => {
+  const workflow = (overrides: Record<string, unknown>) => ({
+    request_id: 'r1', status: 'supervising', stage: 'supervising',
+    subagents: {}, created_at: 1, ...overrides,
+  }) as never
+
+  it('sorts attention-first, then newest first — no sort control needed', () => {
+    const rows = historyRowsOf([
+      workflow({ request_id: 'done', stage: 'completed', status: 'completed', created_at: 3 }),
+      workflow({ request_id: 'review', stage: 'awaiting_review', created_at: 1 }),
+      workflow({ request_id: 'live', created_at: 2 }),
+    ], [], new Map(), true)
+    expect(rows.map((row) => row.requestId)).toEqual(['review', 'done', 'live'])
+    expect(rows[0].needsAttention).toBe(true)
+    expect(rows[1].needsAttention).toBe(false)
+  })
+
+  it('counts archived workers from the merged list instead of the tracker map', () => {
+    const rows = historyRowsOf(
+      [workflow({ request_id: 'r1', stage: 'completed', status: 'completed' })],
+      [
+        { id: 'w1', request_id: 'r1', archived: true, review_status: 'accepted', created_at: 1 },
+        { id: 'w2', request_id: 'r1', archived: true, review_status: 'pending', created_at: 2 },
+      ] as never,
+      new Map(),
+      true,
+    )
+    // The tracker map is empty: without the merged list this would read
+    // "尚未指派" under two visible cards.
+    expect(rows[0].total).toBe(2)
+    expect(rows[0].accepted).toBe(1)
+  })
+
+  it('locks deletion of a live row while the conductor runs', () => {
+    const running = historyRowsOf([workflow({})], [], new Map(), true)
+    const paused = historyRowsOf([workflow({})], [], new Map(), false)
+    expect(running[0].deletable).toBe(false)
+    expect(paused[0].deletable).toBe(true)
+  })
+
+  it('falls back to a placeholder title when no first message is known', () => {
+    const rows = historyRowsOf([workflow({})], [], new Map(), true)
+    expect(rows[0].title).toBe('未命名任务')
   })
 })

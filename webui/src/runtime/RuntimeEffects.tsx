@@ -3,11 +3,16 @@ import { useQueryClient } from '@tanstack/react-query'
 import { hubEventClient } from '@/runtime/hubEventClient'
 import { useDesktopNotifyEffects } from '@/hooks/useDesktopNotifyEffects'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
-import { useConductorStore } from '@/stores/conductorStore'
+import { useConductorStore, type ConductorActivityEvent } from '@/stores/conductorStore'
 
 // Activity-timeline copy for worker lifecycle events. Keys mirror the engine
 // worker events the hub relays as `conductor:subagent_<name>` (see
 // conductor_vocabulary.WORKER_EVENTS); unknown names are ignored.
+//
+// This table is the *legacy* path: it only runs when the hub did not author a
+// row itself (an older sidecar). Current hubs fold the journal through
+// conductor_activity.py and ship the finished row as `payload.activity`, which
+// also covers events this table never knew about (milestones, force-accept).
 const WORKER_EVENT_LABEL: Record<string, string> = {
   spawned: '子代理已派出',
   started: '子代理开工',
@@ -28,6 +33,37 @@ const WORKFLOW_EVENT_LABEL: Record<string, string> = {
   workflow_killed: '任务已终止',
 }
 
+/**
+ * The hub-authored timeline row riding an SSE frame, if there is one.
+ *
+ * Trusting the hub here is the point: the same dict is persisted, so a row the
+ * page records live and the row it later hydrates from `/activity` carry one
+ * id and one wording. Returns null for older sidecars, which fall back to the
+ * local label tables above.
+ */
+function hubActivity(payload: Record<string, unknown> | undefined): ConductorActivityEvent | null {
+  const raw = payload?.activity
+  if (!raw || typeof raw !== 'object') return null
+  const row = raw as Partial<ConductorActivityEvent>
+  if (
+    typeof row.id !== 'string' || !row.id
+    || typeof row.request_id !== 'string' || !row.request_id
+    || typeof row.kind !== 'string' || typeof row.text !== 'string'
+  ) {
+    return null
+  }
+  const at = typeof row.at === 'number' && row.at > 0 ? row.at : Date.now() / 1000
+  return {
+    id: row.id,
+    request_id: row.request_id,
+    kind: row.kind,
+    at,
+    atMs: typeof row.atMs === 'number' ? row.atMs : Math.round(at * 1000),
+    text: row.text,
+    worker_id: typeof row.worker_id === 'string' ? row.worker_id : undefined,
+  }
+}
+
 /** Long-lived effects isolated from the visual application shell. */
 export function RuntimeEffects() {
   const queryClient = useQueryClient()
@@ -36,6 +72,7 @@ export function RuntimeEffects() {
   const addWorkerActivity = useConductorStore((state) => state.addWorkerActivity)
   const addWorkflowActivity = useConductorStore((state) => state.addWorkflowActivity)
   const addTurnActivity = useConductorStore((state) => state.addTurnActivity)
+  const upsertActivity = useConductorStore((state) => state.upsertActivity)
   const clearConductor = useConductorStore((state) => state.clear)
   useDocumentTitle()
   useDesktopNotifyEffects()
@@ -56,8 +93,17 @@ export function RuntimeEffects() {
     }
 
     // Activity timeline: worker lifecycle + workflow transitions + terminal
-    // turn outcomes. event_id (server-monotonic) is the dedupe key; ts is the
-    // hub-side publish time.
+    // turn outcomes. The hub ships the finished row as `payload.activity`; its
+    // id is derived from the engine journal, so the live row and the one a
+    // later hydration returns are the same row.
+    const authored = hubActivity(event.payload)
+    if (authored) {
+      upsertActivity(authored)
+      return
+    }
+
+    // Legacy sidecar: no authored row, so rebuild one locally. event_id
+    // (server-monotonic) is the dedupe key; ts is the hub-side publish time.
     if (event.topic.startsWith('conductor:subagent_')) {
       const name = event.topic.slice('conductor:subagent_'.length)
       if (!WORKER_EVENT_LABEL[name]) return
@@ -88,7 +134,7 @@ export function RuntimeEffects() {
         at: event.ts,
       })
     }
-  }), [addChatMessage, replaceSubagents, addWorkerActivity, addWorkflowActivity, addTurnActivity, clearConductor, queryClient])
+  }), [addChatMessage, replaceSubagents, addWorkerActivity, addWorkflowActivity, addTurnActivity, upsertActivity, clearConductor, queryClient])
 
   useEffect(() => hubEventClient.subscribeControl((control) => {
     if (control.type === 'resync_required') {

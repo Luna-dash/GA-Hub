@@ -90,7 +90,7 @@ export function WorkerDossier({
         <div className="mb-1 flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-baseline gap-1.5">
             {workerNumber ? <span className="conductor-dossier-index" aria-hidden="true">#{workerNumber}</span> : null}
-            <h2 className="text-sm font-semibold text-ink">工人卷宗</h2>
+            <h2 className="text-sm font-semibold text-ink">子代理卷宗</h2>
           </div>
           <span className={clsx('flex items-center gap-1.5 text-[11px] font-medium', phaseTone(view.phase))}>
             <span className={phaseDot(view.phase)} />
@@ -228,14 +228,14 @@ export function WorkerDossier({
             </ul>
           ) : isLoading ? null : (
             <p className="mt-1 text-xs text-ink-muted" aria-label="进度里程碑">
-              该子任务未设置里程碑；执行推进见右侧「对话」标签。
+              该子代理未设置里程碑；执行推进见右侧「对话」标签。
             </p>
           )}
         </section>
 
         <section>
           <h3 className="conductor-dossier-h">
-            {sub.status === 'running' ? '进行中摘要' : '文字结果'}
+            {sub.status === 'running' ? '进行中摘要' : '处理结果'}
           </h3>
           {reply ? (
             <div className="conductor-dossier-reply mt-1 space-y-3">
@@ -269,7 +269,7 @@ export function WorkerDossier({
                 ? '还没有可展示的中间结果。'
                 : archived
                   ? '存档未保留执行正文（引擎日志只记录长度，事后无法找回）；结论性内容见右侧「对话」标签，交付物路径可直接打开核对。'
-                  : '没有文字结果。请对照上面的交付物路径直接打开文件核对。'}
+                  : '没有处理结果。请对照上面的交付物路径直接打开文件核对。'}
             </p>
           )}
         </section>

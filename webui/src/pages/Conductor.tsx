@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { ArrowUp, CheckCheck, FileCheck2, LayoutGrid, MessageSquare, Play, Plus, RotateCcw, Settings2, Square, X, Activity } from 'lucide-react'
+import { ArrowUp, CheckCheck, FileCheck2, History, LayoutGrid, MessageSquare, Play, Plus, RotateCcw, Settings2, Square, X, Activity } from 'lucide-react'
 import '@/styles/conductor.css'
 import { api, type ConductorSubagentModelPolicy } from '@/api/client'
 import { storageKeys } from '@/config/storageKeys'
@@ -16,6 +16,7 @@ import { ActivityTimeline } from '@/components/conductor/ActivityTimeline'
 import {
   collapseBlankLines,
   compactTaskText,
+  historyRowsOf,
   isNearScrollBottom,
   isReviewable,
   workerNumbers,
@@ -25,7 +26,7 @@ import {
 } from '@/components/conductor/presentation'
 import { WorkflowBadge } from '@/components/conductor/WorkflowBadge'
 import { WorkerCard } from '@/components/conductor/WorkerCard'
-import { TaskBoard } from '@/components/conductor/TaskBoard'
+import { HistoryPanel } from '@/components/conductor/HistoryPanel'
 import { useConductorData } from '@/hooks/useConductorData'
 import { WorkerDossier } from '@/components/conductor/WorkerDossier'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
@@ -41,6 +42,15 @@ const scrollMemory: { chatTop: number | null } = {
 }
 const SUBAGENT_MODEL_LOCK_KEY = storageKeys.conductorSubagentModelLocked
 
+/**
+ * The engine toggle swaps between 启动 and 停止 in the same slot. Both branches
+ * must share this layout: a bare inline button lets the icon and the label break
+ * onto two lines once the header row squeezes, so keep it a single
+ * shrink-proof inline-flex row regardless of which label is showing. Colours
+ * stay per-branch (primary vs danger) — only the layout is shared.
+ */
+const ENGINE_TOGGLE_LAYOUT = 'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap'
+
 function readSubagentModelLock(): boolean {
   try {
     return localStorage.getItem(SUBAGENT_MODEL_LOCK_KEY) === 'true'
@@ -53,6 +63,16 @@ function writeSubagentModelLock(locked: boolean): void {
   try {
     localStorage.setItem(SUBAGENT_MODEL_LOCK_KEY, String(locked))
   } catch {}
+}
+
+/**
+ * Live elapsed time for the open task. The clock ticks in its own component
+ * so a 1s update re-renders one label — the page-level 30s tick used to make
+ * "已进行 12:30" sit frozen long enough to read as stalled.
+ */
+function WorkflowElapsed({ startedAt }: { startedAt: number }) {
+  const nowMs = useNowTick(1000)
+  return <span>已进行 {formatDurationSeconds(nowMs / 1000 - startedAt)}</span>
 }
 
 export default function Conductor() {
@@ -75,6 +95,9 @@ export default function Conductor() {
   const [pinnedRequestId, setPinnedRequestId] = useState<string | null>(null)
   const [contextTab, setContextTab] = useState<'chat' | 'delivery' | 'activity'>('chat')
   const [mobileView, setMobileView] = useState<'board' | 'context'>('board')
+  // History is a look-back surface, so it opens as a header drawer instead of
+  // occupying the first screen of the left column.
+  const [historyOpen, setHistoryOpen] = useState(false)
   const actionInFlightRef = useRef(false)
   const [draftSubagentLlmKey, setDraftSubagentLlmKey] = useState<string | null>(null)
   const [draftSubagentModelLocked, setDraftSubagentModelLocked] = useState(false)
@@ -134,6 +157,15 @@ export default function Conductor() {
   const closeSubagentSettings = () => {
     setSubagentSettingsOpen(false)
     requestAnimationFrame(() => subagentSettingsButtonRef.current?.focus())
+  }
+
+  // Selecting a history row IS the intent, so the drawer closes and the
+  // pinned task is what the reader lands on. Deleting keeps it open: the
+  // list is where the user is working.
+  const selectHistoryWorkflow = (id: string) => {
+    setPinnedRequestId((current) => (current === id ? null : id))
+    setSelectedSid(null)
+    setHistoryOpen(false)
   }
 
   const saveSubagentSettings = () => {
@@ -399,6 +431,14 @@ export default function Conductor() {
     return map
   }, [chatMessages, workflows])
 
+  // The history list model is computed once here: the header trigger needs
+  // the same attention count the drawer list renders.
+  const historyRows = useMemo(
+    () => historyRowsOf(workflows, subagents, taskTitleByRequest, status?.started ?? false),
+    [workflows, subagents, taskTitleByRequest, status?.started],
+  )
+  const historyAttention = historyRows.filter((row) => row.needsAttention).length
+
   const workflowSubagents = useMemo(() => {
     // No workflow on screen → no worker cards. The earlier slice(-5) fallback
     // orphaned pool/archive workers under a "尚未收到任务" header, which reads
@@ -420,16 +460,16 @@ export default function Conductor() {
   const workflowView = workflowPresentation(currentWorkflow, status?.started ?? false)
   const workflowOpen = currentWorkflow !== undefined
     && !isWorkflowClosed(currentWorkflow)
-  // Ticks only while an open workflow is on screen; closed workflows show a
-  // fixed created→completed duration and need no clock.
-  const nowMs = useNowTick(workflowOpen ? 30_000 : null)
-  const workflowDuration = (() => {
-    if (!currentWorkflow) return ''
+  // An open workflow needs a live clock; a closed one shows a fixed duration
+  // and needs none. Handing the ticking case to <WorkflowElapsed> keeps the
+  // 1s re-render scoped to that one label instead of the whole board.
+  const liveStartedAt = (() => {
+    if (!workflowOpen || !currentWorkflow) return null
     const started = currentWorkflow.created_at
-    if (!Number.isFinite(started) || started <= 0) return ''
-    if (workflowOpen) {
-      return `已进行 ${formatDurationSeconds(nowMs / 1000 - started)}`
-    }
+    return Number.isFinite(started) && started > 0 ? started : null
+  })()
+  const finishedDuration = useMemo(() => {
+    if (workflowOpen || !currentWorkflow) return ''
     // The workflow row is rewritten on close (created_at ≈ completed_at),
     // so its own timestamps cannot measure a finished task. The chat span
     // is the honest record: first message → last message.
@@ -438,12 +478,13 @@ export default function Conductor() {
       const span = (Math.max(...stamps) - Math.min(...stamps)) / 1000
       if (span > 0) return `用时 ${formatDurationSeconds(span)}`
     }
+    const started = currentWorkflow.created_at
     const finished = currentWorkflow.completed_at
-    if (typeof finished === 'number' && finished > started) {
+    if (Number.isFinite(started) && typeof finished === 'number' && finished > started) {
       return `用时 ${formatDurationSeconds(finished - started)}`
     }
     return ''
-  })()
+  }, [workflowOpen, currentWorkflow, visibleChat])
   // Count from the merged worker set first: archived rows are absent from
   // the tracker's subagents map, so deriving the totals from the map alone
   // made a finished-but-archived task read "0 尚未指派" under the same cards
@@ -568,39 +609,78 @@ export default function Conductor() {
         </span>
         </>
       }
-      actions={
-        <div className="conductor-header-actions flex items-center gap-2">
-          <span className="text-xs text-ink-muted">主模型</span>
-          <MainModelSelect
-            llms={llms}
-            value={mainLlmKey}
-            onChange={selectMainLlm}
-            className="w-[210px] max-w-full"
-            title="选择 Conductor 使用的主模型"
-            aria-label="Conductor 主模型"
-          />
+      middleArea={
+        /* History is a look-back surface, so it anchors to the middle of the
+           title bar — it reads as page-level navigation, not as one more
+           control in the right-hand cluster. It is centred against the header
+           box (`.conductor-header-history` is absolutely positioned against
+           PageShell's `relative` header), not against the space left over
+           between title and actions: the 210px model select on the right skews
+           that midpoint well left of the true centre. */
+        <div className="conductor-header-history">
           <button
-            ref={subagentSettingsButtonRef}
             type="button"
-            className="conductor-icon-button"
-            title="子代理设置"
-            aria-label="子代理设置"
+            className="ga-btn conductor-history-trigger"
+            aria-label="历史任务"
             aria-haspopup="dialog"
-            aria-expanded={subagentSettingsOpen}
-            onClick={openSubagentSettings}
+            aria-expanded={historyOpen}
+            title="查看历史任务（按需回看）"
+            onClick={() => setHistoryOpen(true)}
           >
-            <Settings2 size={17} />
+            <History size={14} />
+            <span>历史任务</span>
+            <span className="conductor-history-trigger-count">{historyRows.length}</span>
+            {historyAttention > 0 && (
+              <span className="rounded-full border border-status-warning-line bg-status-warning-soft px-1.5 text-[10px] text-status-warning">
+                {historyAttention} 待处理
+              </span>
+            )}
           </button>
-          {status?.started ? (
-            <button onClick={stopConductor} disabled={isStopping} className="ga-btn-danger whitespace-nowrap">
-              <Square size={13} />{isStopping ? '停止中…' : '停止'}
+        </div>
+      }
+      actions={
+        <div className="conductor-header-actions">
+          {/* Right cluster = two groups with a deliberate gap: [主模型 + 子代理
+              模型] ⟷ [启动/停止]. The model-family controls belong together —
+              picking the conductor's model and the subagents' models is one
+              decision — while the engine toggle stands alone on the right edge.
+              Packed at 8px they read as one glued strip; the group gap (22px,
+              in CSS) marks the boundary. */}
+          <div className="flex items-center gap-2">
+            <span className="conductor-header-model-label text-xs text-ink-muted">主模型</span>
+            <MainModelSelect
+              llms={llms}
+              value={mainLlmKey}
+              onChange={selectMainLlm}
+              className="w-[210px] max-w-full"
+              title="选择 Conductor 使用的主模型"
+              aria-label="Conductor 主模型"
+            />
+            <button
+              ref={subagentSettingsButtonRef}
+              type="button"
+              className="conductor-icon-button"
+              title="子代理设置"
+              aria-label="子代理设置"
+              aria-haspopup="dialog"
+              aria-expanded={subagentSettingsOpen}
+              onClick={openSubagentSettings}
+            >
+              <Settings2 size={17} />
             </button>
-          ) : (
-            <button onClick={startConductor} disabled={isSending} className="ga-btn ga-btn-primary inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap"
-              title="仅拉起监督者，不会自动重跑任何任务；要续跑某个暂停任务，用任务卡上的“恢复此任务”">
-              <Play size={13} />{isSending ? '启动中…' : '启动'}
-            </button>
-          )}
+          </div>
+          <div className="conductor-header-engine flex items-center gap-2">
+            {status?.started ? (
+              <button onClick={stopConductor} disabled={isStopping} className={`ga-btn-danger ${ENGINE_TOGGLE_LAYOUT}`}>
+                <Square size={13} />停止
+              </button>
+            ) : (
+              <button onClick={startConductor} disabled={isSending} className={`ga-btn ga-btn-primary ${ENGINE_TOGGLE_LAYOUT}`}
+                title="仅拉起监督者，不会自动重跑任何任务；要续跑某个暂停任务，用任务卡上的“恢复此任务”">
+                <Play size={13} />启动
+              </button>
+            )}
+          </div>
         </div>
       }
     >
@@ -616,11 +696,6 @@ export default function Conductor() {
         </div>
         <div className="conductor-layout" data-mobile-view={mobileView}>
           <main className="conductor-main">
-            <TaskBoard workflows={workflows} workers={subagents} titles={taskTitleByRequest}
-              selectedId={currentWorkflow?.request_id} started={status?.started ?? false}
-              onSelect={id => { setPinnedRequestId(pinnedRequestId === id ? null : id); setSelectedSid(null) }}
-              onDelete={(id) => void deleteWorkflow(id)}
-              deletingIds={deletingIds} />
             <section aria-label="当前任务" className="conductor-current">
               <div className="conductor-current-title-row">
                 <WorkflowBadge tone={workflowView.tone} label={workflowView.label} />
@@ -650,22 +725,26 @@ export default function Conductor() {
                   )}
                 </span>
               </div>
-              <p className="conductor-current-detail">{workflowView.detail}</p>
-              {currentWorkflow?.error && <p className="mt-2 text-xs text-status-danger [overflow-wrap:anywhere]">{currentWorkflow.error}</p>}
+              {/* Only stages whose consequence is not obvious carry a line:
+                  the boilerplate sentences were dropped and the failure
+                  reason renders here ONCE (no second error paragraph). */}
+              {workflowView.detail && <p className="conductor-current-detail">{workflowView.detail}</p>}
               {/* The task's live numbers, inlined as one muted strip instead
                   of a four-card grid: a handful of digits does not need a
-                  card per digit. */}
+                  card per digit. 「待验收」 is deliberately absent — the
+                  title-row button above is the one place it is actionable. */}
               {currentWorkflow && (
                 <p className="conductor-current-stats" aria-label="当前任务概览">
-                  <span>子任务 {acceptedCount}/{workerCount}{workerCount === 0 && '（未指派）'}</span>
+                  <span>已通过 {acceptedCount}/{workerCount}{workerCount === 0 && '（未指派）'}</span>
                   {activeSubagents.length > 0 && <span>执行中 {activeSubagents.length}</span>}
-                  {pendingReview.length > 0 && <span className="is-attention">待验收 {pendingReview.length}</span>}
-                  {workflowDuration && <span>{workflowDuration}</span>}
+                  {liveStartedAt !== null
+                    ? <WorkflowElapsed startedAt={liveStartedAt} />
+                    : finishedDuration && <span>{finishedDuration}</span>}
                 </p>
               )}
               <section className="conductor-process" aria-label="实施过程">
-                <h3 className="conductor-process-title">实施过程 <span>· {workerCount ? `${workerCount} 个子任务` : '暂无子任务'}</span></h3>
-                <div className="conductor-worker-grid" aria-label="子任务详情">
+                <h3 className="conductor-process-title">实施过程 <span>· {workerCount ? `${workerCount} 个子代理` : '暂无子代理'}</span></h3>
+                <div className="conductor-worker-grid" aria-label="子代理详情">
                 {workflowSubagents.map((sub) => <WorkerCard key={sub.id} sub={sub} index={workerNumberById.get(sub.id)} selected={sub.id === selectedSid}
                   expanded={sub.id === expandedSid}
                   onToggle={() => {
@@ -683,10 +762,10 @@ export default function Conductor() {
                   }} />)}
                 </div>
                 {workflowSubagents.length === 0 && workerCount > 0 && (
-                  <p className="conductor-process-empty-note">子任务明细已随引擎池清空，仅保留通过数与对话记录。</p>
+                  <p className="conductor-process-empty-note">子代理明细已随引擎池清空，仅保留通过数与对话记录。</p>
                 )}
                 {workflowSubagents.length === 0 && workerCount === 0 && (
-                  <div className="conductor-empty"><LayoutGrid size={26} strokeWidth={1.4} /><p>尚未指派子任务</p></div>
+                  <div className="conductor-empty"><LayoutGrid size={26} strokeWidth={1.4} /><p>尚未指派子代理</p></div>
                 )}
               </section>
             </section>
@@ -818,15 +897,32 @@ export default function Conductor() {
               }}
             />
           ) : (
-            <div className="conductor-empty"><FileCheck2 size={28} strokeWidth={1.4} /><p>暂无子任务交付</p></div>
+            <div className="conductor-empty"><FileCheck2 size={28} strokeWidth={1.4} /><p>暂无子代理交付</p></div>
           )}
             </section>
             <section role="tabpanel" id="conductor-panel-activity" aria-labelledby="conductor-tab-activity" hidden={contextTab !== 'activity'} className="conductor-context-panel">
-              <ActivityTimeline requestId={currentWorkflow?.request_id ?? null} />
+              <ActivityTimeline requestId={currentWorkflow?.request_id ?? null} active={contextTab === 'activity'} />
             </section>
           </aside>
         </div>
       </div>
+
+      {historyOpen && (
+        <ModalOverlay
+          onClose={() => setHistoryOpen(false)}
+          labelledBy="conductor-history-title"
+          align="right"
+          panelClassName="conductor-history-drawer"
+        >
+          <HistoryPanel
+            rows={historyRows}
+            selectedId={currentWorkflow?.request_id}
+            onSelect={selectHistoryWorkflow}
+            onDelete={(id) => void deleteWorkflow(id)}
+            deletingIds={deletingIds}
+          />
+        </ModalOverlay>
+      )}
 
       {subagentSettingsOpen && (
         <ModalOverlay

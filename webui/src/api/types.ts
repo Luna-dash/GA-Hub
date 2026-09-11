@@ -257,6 +257,8 @@ export type ConductorSubagentActionResponse = ApiSchemas['ConductorSubagentActio
 export type ConductorLifecycleResponse = ApiSchemas['ConductorLifecycleResp']
 export type ConductorWorkflow = ApiSchemas['ConductorWorkflow']
 export type ConductorWorkflowListResponse = ApiSchemas['ConductorWorkflowListResp']
+export type ConductorActivityEvent = ApiSchemas['ConductorActivityEvent']
+export type ConductorActivityListResponse = ApiSchemas['ConductorActivityListResp']
 
 export interface TokenThreadStats {
   thread: string

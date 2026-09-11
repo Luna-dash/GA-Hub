@@ -10,6 +10,7 @@ import type {
   ChatRetryConfig,
   ConductorChatMessage,
   ConductorChatListResponse,
+  ConductorActivityListResponse,
   ConductorLifecycleResponse,
   ConductorStatus,
   ConductorSubagentActionResponse,
@@ -425,6 +426,17 @@ export const api = {
       subagent_model_policy: models.subagentModelPolicy,
     }, { timeoutMs: 120_000 }),
   conductorSubagents: () => http<ConductorSubagentListResponse>('GET', '/api/conductor/subagent'),
+  // Durable 动态 timeline for one task. The tab used to be a live-only SSE
+  // projection, so a task reopened from history showed nothing; this is the
+  // read that survives a reload. `beforeMs` pages backwards for scroll-up.
+  conductorActivity: (requestId: string, opts: { limit?: number; beforeMs?: number } = {}) => {
+    const limit = opts.limit ?? 200
+    const before = typeof opts.beforeMs === 'number' ? `&before_ms=${opts.beforeMs}` : ''
+    return http<ConductorActivityListResponse>(
+      'GET',
+      `/api/conductor/activity?request_id=${encodeURIComponent(requestId)}&limit=${limit}${before}`,
+    )
+  },
   // The history bar lists every retained task, so pull the route's full
   // window instead of the server's 20-item default.
   conductorWorkflows: () => http<ConductorWorkflowListResponse>('GET', '/api/conductor/workflow?last=100'),

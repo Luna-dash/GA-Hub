@@ -44,7 +44,7 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
   const reply = stripContractTail((sub.reply || '').trim())
   const replyTurns = splitWorkerTurns(reply)
   const summary = reply || sub.review_note
-    || (archived ? '存档记录：执行文字结果未随快照保留，交付物与检查仍可查看' : '等待执行结果')
+    || (archived ? '存档记录：处理结果未随快照保留，交付物与检查仍可查看' : '等待执行结果')
   // Collapsed-card footnote: the live numbers stay one hover away instead of
   // claiming a dedicated row on every card. Sections without data drop out.
   const metaParts = [
@@ -57,7 +57,7 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
   return <article className="conductor-worker-card" data-expanded={expanded || undefined} data-selected={selected || undefined} data-archived={archived || undefined}>
     <button type="button" className="conductor-worker-toggle" onClick={onToggle}
       aria-expanded={expanded} aria-pressed={selected}
-      aria-label={`查看子任务 ${numberLabel}：${workerTitle(sub)}`}>
+      aria-label={`查看子代理 ${numberLabel}：${workerTitle(sub)}`}>
       <span className="conductor-worker-card-heading">
         <span className="conductor-worker-index" aria-hidden="true">{numberLabel}</span>
         <h3 className={clsx('conductor-worker-title', phaseTone(view.phase))} title={workerTitle(sub)}><StatusIcon size={14}
@@ -111,7 +111,7 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
           </section>
         )}
         <section className="conductor-worker-process-block">
-          <h4>{sub.status === 'running' ? '进行中摘要' : '文字结果'}</h4>
+          <h4>{sub.status === 'running' ? '进行中摘要' : '处理结果'}</h4>
           {reply ? (
             <div className="conductor-worker-reply">
               {/* Chat-grade output, same filtering as the dossier: engine
@@ -138,7 +138,7 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
             <p className="conductor-worker-noresult">
               {sub.status === 'running' ? '还没有可展示的中间结果。'
                 : archived ? '存档未保留执行正文，事后无法找回；可对照上方交付物路径直接打开文件核对。'
-                  : '没有文字结果；可对照上方交付物路径直接打开文件核对。'}
+                  : '没有处理结果；可对照上方交付物路径直接打开文件核对。'}
             </p>
           )}
         </section>

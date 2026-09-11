@@ -94,4 +94,60 @@ describe('RuntimeEffects', () => {
     onControl({ type: 'resync_required', reason: 'server_restarted' })
     expect(useConductorStore.getState().chatMessages).toEqual([])
   })
+
+  describe('activity timeline projection', () => {
+    function mount() {
+      const queryClient = new QueryClient()
+      const mountedRoot = createRoot(host)
+      root = mountedRoot
+      act(() => mountedRoot.render(
+        <QueryClientProvider client={queryClient}>
+          <RuntimeEffects />
+        </QueryClientProvider>,
+      ))
+      return mocks.subscribe.mock.calls[0][1] as (event: unknown) => void
+    }
+
+    it('records the row the hub authored, including kinds this build cannot name', () => {
+      const onEvent = mount()
+
+      // `milestone`/`force_accept` have never had an entry in the local label
+      // table, so the legacy path dropped them. The hub authors the row, so
+      // they survive.
+      onEvent({
+        topic: 'conductor:subagent_milestone',
+        event_id: 41,
+        ts: 1_700_000_010,
+        payload: {
+          request_id: 'r1', id: 'w1',
+          activity: {
+            id: 'ep:41', request_id: 'r1', kind: 'worker_milestone',
+            at: 1_700_000_010, atMs: 1_700_000_010_000,
+            text: '里程碑 · 扫描目录', worker_id: 'w1',
+          },
+        },
+      })
+
+      expect(useConductorStore.getState().activity).toEqual([{
+        id: 'ep:41', request_id: 'r1', kind: 'worker_milestone',
+        at: 1_700_000_010, atMs: 1_700_000_010_000,
+        text: '里程碑 · 扫描目录', worker_id: 'w1',
+      }])
+    })
+
+    it('falls back to the local label table for a hub without authored rows', () => {
+      const onEvent = mount()
+
+      onEvent({
+        topic: 'conductor:subagent_spawned',
+        event_id: 7,
+        ts: 1_700_000_020,
+        payload: { request_id: 'r1', id: 'w1' },
+      })
+
+      expect(useConductorStore.getState().activity).toHaveLength(1)
+      expect(useConductorStore.getState().activity[0].text).toBe('子代理已派出')
+      expect(useConductorStore.getState().activity[0].kind).toBe('worker_spawned')
+    })
+  })
 })

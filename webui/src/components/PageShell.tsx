@@ -15,7 +15,10 @@ export function PageShell({ title, titleExtra, middleArea, actions, children, la
   return (
     <div className={`flex min-w-0 flex-col h-full relative overflow-hidden ${layout === 'panel' ? 'p-3' : ''} ${className}`}>
       <section className={`relative z-10 flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-soft ${layout === 'panel' ? 'rounded-2xl border border-line shadow-[0_6px_18px_rgba(45,34,22,0.12)]' : ''}`}>
-        <header className={`min-h-16 shrink-0 px-4 py-3 flex items-center gap-4 bg-bg-card/75 border-b border-line/70 ${layout === 'workspace' ? 'flex-wrap' : ''}`}>
+        {/* `relative` so a page can anchor a middle-area element to the header
+            box itself (e.g. Conductor's centred history trigger), instead of to
+            the leftover space between the title and the actions. */}
+        <header className={`relative min-h-16 shrink-0 px-4 py-3 flex items-center gap-4 bg-bg-card/75 border-b border-line/70 ${layout === 'workspace' ? 'flex-wrap' : ''}`}>
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
               <h1 className="text-base font-semibold text-ink">{title}</h1>

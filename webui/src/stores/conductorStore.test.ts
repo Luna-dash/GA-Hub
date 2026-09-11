@@ -119,4 +119,47 @@ describe('conductorStore', () => {
     expect(useConductorStore.getState().subagents).toEqual([])
     expect(useConductorStore.getState().chatMessages).toEqual([])
   })
+
+  describe('activity timeline', () => {
+    const row = (id: string, requestId: string, atMs: number, text = id) => ({
+      id, request_id: requestId, kind: 'worker_spawned' as const, at: atMs / 1000, atMs, text,
+    })
+
+    it('records a hub-authored row verbatim and ignores a replayed duplicate', () => {
+      useConductorStore.getState().upsertActivity(row('ep:1', 'r1', 1000, '子代理已派出'))
+      useConductorStore.getState().upsertActivity(row('ep:1', 'r1', 1000, '子代理已派出'))
+
+      expect(useConductorStore.getState().activity).toEqual([
+        row('ep:1', 'r1', 1000, '子代理已派出'),
+      ])
+    })
+
+    it('merges hydrated history without dropping live rows or other requests', () => {
+      // A row that arrived live while the history fetch was in flight.
+      useConductorStore.getState().upsertActivity(row('ep:9', 'r1', 9000, '验收通过'))
+      // A running task sharing the store.
+      useConductorStore.getState().upsertActivity(row('ep:50', 'r2', 5000, '别的任务'))
+
+      useConductorStore.getState().hydrateActivity(
+        [row('ep:1', 'r1', 1000), row('ep:2', 'r1', 2000)],
+        'r1',
+      )
+
+      expect(useConductorStore.getState().activity.map((item) => item.id)).toEqual([
+        'ep:1', 'ep:2', 'ep:50', 'ep:9',
+      ])
+    })
+
+    it('ignores hydrated rows belonging to another request', () => {
+      useConductorStore.getState().hydrateActivity([row('ep:7', 'other', 7000)], 'r1')
+      expect(useConductorStore.getState().activity).toEqual([])
+    })
+
+    it('is a no-op when the store already holds every hydrated row', () => {
+      useConductorStore.getState().upsertActivity(row('ep:1', 'r1', 1000))
+      const before = useConductorStore.getState().activity
+      useConductorStore.getState().hydrateActivity([row('ep:1', 'r1', 1000)], 'r1')
+      expect(useConductorStore.getState().activity).toBe(before)
+    })
+  })
 })
