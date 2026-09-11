@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import type { ConductorSubagent } from '@/api/types'
 import {
+  briefWorkerTitle,
   deliverablesOf,
   deliverableVerified,
   isWorkflowClosed,
@@ -10,6 +12,32 @@ import {
   type SubagentReviewFacts,
   type WorkerMilestone,
 } from './presentation'
+
+const sub = (overrides: Partial<ConductorSubagent>) => (
+  { prompt: '', status: 'stopped', ...overrides } as ConductorSubagent
+)
+
+describe('briefWorkerTitle', () => {
+  it('prefers a concise manifest goal over the dispatch prompt', () => {
+    const long = '很长的下发指令，包含大量执行细节。'.repeat(10)
+    expect(briefWorkerTitle(sub({ prompt: long, manifest: { goal: '建立索引' } } as never)))
+      .toBe('建立索引')
+  })
+
+  it('keeps a short prompt intact', () => {
+    expect(briefWorkerTitle(sub({ prompt: '扫描主要性能瓶颈' }))).toBe('扫描主要性能瓶颈')
+  })
+
+  it('cuts a long dispatch prompt to its first clause', () => {
+    expect(briefWorkerTitle(sub({ prompt: '扫描项目源码与依赖清单，定位性能热点并输出优化报告与修复补丁' })))
+      .toBe('扫描项目源码与依赖清单')
+  })
+
+  it('hard-caps unpunctuated prompts at 24 chars', () => {
+    const long = 'x'.repeat(40)
+    expect(briefWorkerTitle(sub({ prompt: long }))).toBe(`${'x'.repeat(24)}…`)
+  })
+})
 
 describe('workflow closure', () => {
   it('treats cancelled and killed workflows as terminal even with legacy stages', () => {

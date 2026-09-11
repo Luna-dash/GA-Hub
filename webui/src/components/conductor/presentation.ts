@@ -148,6 +148,18 @@ export function workerTitle(sub: ConductorSubagent): string {
   return compactTaskText(facts.manifest?.goal || sub.prompt)
 }
 
+/** One-clause card title: a dispatch prompt is coordination prose, not a
+ *  name — the first clause carries the intent and the dossier has the rest. */
+export function briefWorkerTitle(sub: ConductorSubagent): string {
+  const full = workerTitle(sub)
+  const firstClause = (full.split(/[，。；：！？、,\n]/, 1)[0] ?? '').trim()
+  if (firstClause.length >= 4 && firstClause.length <= 24 && firstClause.length < full.length) {
+    return firstClause
+  }
+  if (full.length <= 24) return full
+  return `${full.slice(0, 24)}…`
+}
+
 /** Rail-safe title for one-line CTAs; the dossier shows the full text. */
 export function shortWorkerTitle(sub: ConductorSubagent): string {
   const title = workerTitle(sub)

@@ -10,6 +10,7 @@ import { MessageContent } from '@/components/MessageContent'
 import { formatClock } from '@/utils/timeFormat'
 import {
   basenamePath,
+  briefWorkerTitle,
   deliverableVerified,
   deliverablesOf,
   milestonesOf,
@@ -42,21 +43,25 @@ export const WorkerCard = memo(function WorkerCard({ sub, selected, expanded = f
   const summary = reply || sub.review_note
     || (archived ? '存档记录：执行文字结果未随快照保留，交付物与检查仍可查看' : '等待执行结果')
   // Collapsed-card footnote: the live numbers stay one hover away instead of
-  // claiming a dedicated row on every card.
-  const metaNote = `${deliverables.length} 项交付 · ${reached}/${milestones.length} 里程碑`
-    + (sub.attempt > 1 ? ` · 第 ${sub.attempt} 次` : '')
+  // claiming a dedicated row on every card. Sections without data drop out.
+  const metaParts = [
+    deliverables.length > 0 ? `${deliverables.length} 项交付` : '',
+    milestones.length > 0 ? `${reached}/${milestones.length} 里程碑` : '',
+    sub.attempt > 1 ? `第 ${sub.attempt} 次` : '',
+  ].filter(Boolean)
+  const metaNote = metaParts.join(' · ')
   return <article className="conductor-worker-card" data-expanded={expanded || undefined} data-selected={selected || undefined} data-archived={archived || undefined}>
     <button type="button" className="conductor-worker-toggle" onClick={onToggle}
       aria-expanded={expanded} aria-pressed={selected}
       aria-label={`查看子任务：${workerTitle(sub)}`}>
       <span className="conductor-worker-card-heading">
-        <h3 className={clsx('conductor-worker-title', phaseTone(view.phase))}><StatusIcon size={14}
+        <h3 className={clsx('conductor-worker-title', phaseTone(view.phase))} title={workerTitle(sub)}><StatusIcon size={14}
           className={view.phase === 'running' || view.phase === 'reworking' ? 'animate-spin' : ''}
-          aria-label={view.label} />{workerTitle(sub)}</h3>
+          aria-label={view.label} /><span className="conductor-worker-title-text">{briefWorkerTitle(sub)}</span></h3>
         <span className="conductor-worker-status"><span className={phaseDot(view.phase)} />{archived ? '存档' : view.label}</span>
       </span>
       {!expanded && <p className="conductor-worker-summary" title={metaNote}>{summary}</p>}
-      {!expanded && <span className="conductor-worker-progress" title={metaNote} aria-hidden="true"><span style={{ width: `${progress}%` }} /></span>}
+      {!expanded && milestones.length > 0 && <span className="conductor-worker-progress" title={metaNote} aria-hidden="true"><span style={{ width: `${progress}%` }} /></span>}
     </button>
     {expanded && (
       <div className="conductor-worker-process" aria-label={`${workerTitle(sub)} 执行过程`}>

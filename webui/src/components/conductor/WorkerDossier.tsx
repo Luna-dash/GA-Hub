@@ -185,9 +185,9 @@ export function WorkerDossier({
           </section>
         )}
 
-        {milestones.length > 0 && (
-          <section className="mb-4">
-            <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">进度里程碑</h3>
+        <section>
+          <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">进度里程碑</h3>
+          {milestones.length > 0 ? (
             <ul className="mt-1 space-y-1.5 text-xs" aria-label="进度里程碑">
               {milestones.map((ms) => {
                 const reached = Boolean(ms.reached_at)
@@ -220,8 +220,12 @@ export function WorkerDossier({
                 )
               })}
             </ul>
-          </section>
-        )}
+          ) : isLoading ? null : (
+            <p className="mt-1 text-xs text-ink-muted" aria-label="进度里程碑">
+              该子任务未设置里程碑；执行推进见右侧「对话」标签。
+            </p>
+          )}
+        </section>
 
         <section>
           <h3 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">
@@ -259,7 +263,7 @@ export function WorkerDossier({
               {sub.status === 'running'
                 ? '还没有可展示的中间结果。'
                 : archived
-                  ? '存档未保留执行正文（引擎日志只记录长度，事后无法找回）；请对照上方交付物路径直接打开文件核对。'
+                  ? '存档未保留执行正文（引擎日志只记录长度，事后无法找回）；结论性内容见右侧「对话」标签，交付物路径可直接打开核对。'
                   : '没有文字结果。请对照上面的交付物路径直接打开文件核对。'}
             </p>
           )}

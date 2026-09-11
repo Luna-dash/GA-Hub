@@ -1292,7 +1292,9 @@ describe('Conductor chat scroll restoration', () => {
     })
 
     renderPage()
-    await waitFor(() => expect(host.textContent).toContain('进度里程碑'))
+    // The milestone list only exists once the dossier detail has loaded;
+    // waiting on the list itself (not the heading) keeps this honest.
+    await waitFor(() => expect(host.querySelector('[aria-label="进度里程碑"]')?.textContent).toContain('索引文件生成'))
 
     const panel = host.querySelector('[aria-label="进度里程碑"]')
     expect(panel?.textContent).toContain('索引文件生成')
