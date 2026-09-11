@@ -250,7 +250,7 @@ describe('Conductor chat scroll restoration', () => {
     return match
   }
 
-  // History opens from the header trigger as a right-hand drawer; every
+  // History opens from the header trigger as an anchored dropdown; every
   // history assertion starts here.
   async function openHistory() {
     await waitFor(() => expect(host.querySelector('button[aria-label="历史任务"]')).toBeTruthy())
@@ -980,12 +980,24 @@ describe('Conductor chat scroll restoration', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
     const dialog = host.querySelector('[role="dialog"]') as HTMLElement
     expect(dialog).toBeTruthy()
+    // A dropdown, not a modal takeover: no aria-modal, no backdrop dimming —
+    // the page stays operable while the list is open.
+    expect(dialog.classList.contains('conductor-history-pop')).toBe(true)
+    expect(dialog.getAttribute('aria-modal')).toBeNull()
     expect(dialog.querySelectorAll('.conductor-history-row')).toHaveLength(1)
 
+    // The trigger toggles: a second click closes the dropdown in place.
+    act(() => trigger.click())
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+
+    act(() => trigger.click())
+    expect(host.querySelector('[role="dialog"]')).toBeTruthy()
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     })
     expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('states the pause consequence and reads the stats strip as actions taken', async () => {

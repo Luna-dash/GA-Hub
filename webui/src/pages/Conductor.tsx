@@ -95,9 +95,33 @@ export default function Conductor() {
   const [pinnedRequestId, setPinnedRequestId] = useState<string | null>(null)
   const [contextTab, setContextTab] = useState<'chat' | 'delivery' | 'activity'>('chat')
   const [mobileView, setMobileView] = useState<'board' | 'context'>('board')
-  // History is a look-back surface, so it opens as a header drawer instead of
-  // occupying the first screen of the left column.
+  // History is a look-back surface, so it opens as a header dropdown instead
+  // of occupying the first screen of the left column.
   const [historyOpen, setHistoryOpen] = useState(false)
+  const historyPopAreaRef = useRef<HTMLDivElement>(null)
+  const historyTriggerRef = useRef<HTMLButtonElement>(null)
+  // Non-modal dropdown behavior: Escape closes (and returns focus to the
+  // trigger), a pointer press anywhere outside the trigger + panel closes.
+  // No backdrop, no scroll lock, no focus trap — the page stays operable and
+  // the popover reads as an extension of the trigger, not a screen takeover.
+  useEffect(() => {
+    if (!historyOpen) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setHistoryOpen(false)
+      historyTriggerRef.current?.focus()
+    }
+    const onDown = (event: PointerEvent) => {
+      const area = historyPopAreaRef.current
+      if (area && !area.contains(event.target as Node)) setHistoryOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('pointerdown', onDown)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('pointerdown', onDown)
+    }
+  }, [historyOpen])
   const actionInFlightRef = useRef(false)
   const [draftSubagentLlmKey, setDraftSubagentLlmKey] = useState<string | null>(null)
   const [draftSubagentModelLocked, setDraftSubagentModelLocked] = useState(false)
@@ -617,15 +641,17 @@ export default function Conductor() {
            PageShell's `relative` header), not against the space left over
            between title and actions: the 210px model select on the right skews
            that midpoint well left of the true centre. */
-        <div className="conductor-header-history">
+        <div className="conductor-header-history" ref={historyPopAreaRef}>
           <button
             type="button"
+            ref={historyTriggerRef}
             className="ga-btn conductor-history-trigger"
             aria-label="历史任务"
             aria-haspopup="dialog"
+            aria-controls="conductor-history-dropdown"
             aria-expanded={historyOpen}
             title="查看历史任务（按需回看）"
-            onClick={() => setHistoryOpen(true)}
+            onClick={() => setHistoryOpen((open) => !open)}
           >
             <History size={14} />
             <span>历史任务</span>
@@ -636,6 +662,25 @@ export default function Conductor() {
               </span>
             )}
           </button>
+          {/* Anchored dropdown, not a modal: it hangs straight below the
+              trigger, opens with a short pop animation, and never takes over
+              the page — no dimming, no scroll lock, no focus trap. */}
+          {historyOpen && (
+            <div
+              id="conductor-history-dropdown"
+              role="dialog"
+              aria-labelledby="conductor-history-title"
+              className="conductor-history-pop"
+            >
+              <HistoryPanel
+                rows={historyRows}
+                selectedId={currentWorkflow?.request_id}
+                onSelect={selectHistoryWorkflow}
+                onDelete={(id) => void deleteWorkflow(id)}
+                deletingIds={deletingIds}
+              />
+            </div>
+          )}
         </div>
       }
       actions={
@@ -906,23 +951,6 @@ export default function Conductor() {
           </aside>
         </div>
       </div>
-
-      {historyOpen && (
-        <ModalOverlay
-          onClose={() => setHistoryOpen(false)}
-          labelledBy="conductor-history-title"
-          align="right"
-          panelClassName="conductor-history-drawer"
-        >
-          <HistoryPanel
-            rows={historyRows}
-            selectedId={currentWorkflow?.request_id}
-            onSelect={selectHistoryWorkflow}
-            onDelete={(id) => void deleteWorkflow(id)}
-            deletingIds={deletingIds}
-          />
-        </ModalOverlay>
-      )}
 
       {subagentSettingsOpen && (
         <ModalOverlay
