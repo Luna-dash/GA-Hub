@@ -43,9 +43,8 @@ export const HistoryPanel = memo(function HistoryPanel({ rows, selectedId, onSel
                   : row.closed ? <XCircle size={15} className="text-status-danger" />
                   : <Loader size={15} className="conductor-history-running" />}
               </span>
-              <span className="conductor-history-title">{row.title}</span>
+              <span className="conductor-history-title" title={row.title}>{row.title}</span>
               <span className="conductor-history-meta">
-                <span>{row.total ? `已通过 ${row.accepted}/${row.total}` : '尚未指派子代理'}</span>
                 <time>{formatRelativeTime(row.createdAt)}</time>
               </span>
             </button>

@@ -1602,9 +1602,10 @@ describe('Conductor chat scroll restoration', () => {
     expect(aside.textContent).toContain('存档记录')
     expect(Array.from(aside.querySelectorAll('button')).map((b) => b.textContent))
       .not.toContain('通过')
-    // The history row counts archived workers (1/2), not "尚未指派".
+    // The history dropdown shows the archived task with a timestamp; the
+    // per-worker progress counts stayed in the task card's stats strip.
     await openHistory()
     await flushQueries()
-    expect(host.querySelector('.conductor-history-meta')?.textContent).toContain('已通过 1/2')
+    expect(host.querySelector('.conductor-history-meta')?.textContent).toMatch(/^\d/)
   })
 })
