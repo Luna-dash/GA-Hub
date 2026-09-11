@@ -129,6 +129,36 @@ describe('MarkdownView responsive wrapping', () => {
     expect(mocks.toastSuccess).toHaveBeenCalled()
   })
 
+  it.each(['pelican_bicycle_v2.svg', './pelican_bicycle_v2.svg', 'report.pdf?download=1', '报告.svg'])('renders bare file target %s as text without resolving or navigating', async (target) => {
+    act(() => root.render(<MarkdownView mode="chat">{`[文件 **下载**](${target})`}</MarkdownView>))
+    await act(async () => { await Promise.resolve() })
+    expect(host.textContent).toContain('文件 下载')
+    expect(host.querySelector('strong')?.textContent).toBe('下载')
+    expect(host.querySelector('a')).toBeNull()
+    expect(host.querySelector('button')).toBeNull()
+    expect(mocks.resolveFile).not.toHaveBeenCalled()
+    expect(mocks.revealFile).not.toHaveBeenCalled()
+  })
+
+  it('keeps web URLs, app routes and fragments as links', () => {
+    act(() => root.render(<MarkdownView>{'[web](https://example.com/report.svg) [route](/chat) [anchor](#section) [mail](mailto:a@example.com)'}</MarkdownView>))
+    expect([...host.querySelectorAll('a')].map(a => a.getAttribute('href'))).toEqual([
+      'https://example.com/report.svg', '/chat', '#section', 'mailto:a@example.com',
+    ])
+  })
+
+  it('still resolves and opens explicit FILE markers with bare filenames', async () => {
+    const path = 'D:/study/GA/temp/pelican_bicycle_v2.svg'
+    mocks.resolveFile.mockResolvedValue({ raw: 'pelican_bicycle_v2.svg', resolved: path, exists: true, is_dir: false, ambiguous: false })
+    act(() => root.render(<MarkdownView>{'[FILE:pelican_bicycle_v2.svg]'}</MarkdownView>))
+    await act(async () => { await Promise.resolve() })
+    expect(mocks.resolveFile).toHaveBeenCalledWith('pelican_bicycle_v2.svg')
+    expect(host.querySelector('a')).toBeNull()
+    await act(async () => { host.querySelector<HTMLButtonElement>('button')!.click(); await Promise.resolve() })
+    expect(mocks.revealFile).toHaveBeenCalledWith('pelican_bicycle_v2.svg')
+    expect(host.querySelector('button')?.title).toBe(path)
+  })
+
   it('disables open actions when the cited path cannot be resolved', async () => {
     mocks.resolveFile.mockResolvedValue({
       raw: 'temp/ghost.md', resolved: null, exists: false, is_dir: false, ambiguous: false,

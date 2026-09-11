@@ -45,7 +45,13 @@ const MD_COMPONENTS = {
     </div>
   ),
   // External http(s) → OS browser; same-origin stays in WebView.
-  a: ({ href, children, ...props }: any) => (
+  a: ({ href, children, ...props }: any) => {
+    // A bare filename is not a web destination. Deliverables use [FILE:path]
+    // and PathLink's resolver; never navigate the main WebView for these labels.
+    const target = typeof href === 'string' ? href.trim() : ''
+    const bareFile = /^(?:\.\/)?[^/\\:?#]+\.[^/\\:?#]+(?:[?#].*)?$/.test(target)
+    if (bareFile) return <>{children}</>
+    return (
     <a
       href={href}
       {...props}
@@ -59,7 +65,8 @@ const MD_COMPONENTS = {
     >
       {children}
     </a>
-  ),
+    )
+  },
   // Linkify paths in flowing prose
   p: ({ children }: any) => <p>{linkifyChildren(children)}</p>,
   li: ({ children, className, ...props }: any) => (
