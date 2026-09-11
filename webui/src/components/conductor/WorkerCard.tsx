@@ -116,8 +116,9 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
             <div className="conductor-worker-reply">
               {/* Chat-grade output, same filtering as the dossier: engine
                   turn markers become labeled turns, thinking blocks / tool
-                  dumps / stray tags are stripped, reached milestone marker
-                  lines lift into chips. */}
+                  dumps / stray tags are stripped. Reached-milestone marker
+                  lines are lifted OUT of the prose — the 里程碑 block above
+                  already shows that state, chips here would read twice. */}
               {replyTurns.map((turn, turnIndex) => (
                 <div key={`turn-${turnIndex}`}>
                   {replyTurns.length > 1 && (
@@ -126,13 +127,9 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, expan
                     </p>
                   )}
                   {splitReplyByMilestones(turn.text, milestones).map((segment, index2) => (
-                    segment.kind === 'milestone' ? (
-                      <p key={`ms-${turnIndex}-${index2}`} className="conductor-worker-ms-chip">
-                        ✓ 里程碑达成 · {segment.milestone.desc}
-                      </p>
-                    ) : (
+                    segment.kind === 'text' ? (
                       <MessageContent key={`text-${turnIndex}-${index2}`} content={segment.text} format="markdown" markdownMode="plain" />
-                    )
+                    ) : null
                   ))}
                 </div>
               ))}

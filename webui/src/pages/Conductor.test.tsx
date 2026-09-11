@@ -1303,9 +1303,9 @@ describe('Conductor chat scroll restoration', () => {
     expect(panel?.textContent).toContain('输出标记检查')
     expect(panel?.textContent).toContain('已达成')
 
-    // The reached archive marker becomes an inline anchor chip in the reply…
-    const anchor = host.querySelector('[data-testid="dossier-milestone-anchor"]')
-    expect(anchor?.textContent).toContain('归档目录建立')
+    // The reached archive marker line is lifted out of the prose entirely —
+    // milestone state lives in the 里程碑 panel above, not as inline chips.
+    expect(host.querySelector('[data-testid="dossier-milestone-anchor"]')).toBeNull()
     // …and the raw marker line no longer leaks into the rendered output.
     expect(host.textContent).not.toContain('【里程碑】归档已建立')
     // The [DONE] protocol tail is stripped as well.

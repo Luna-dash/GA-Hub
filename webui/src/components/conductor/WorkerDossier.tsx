@@ -246,31 +246,19 @@ export function WorkerDossier({
                       {turn.index > 0 ? `第 ${turn.index} 轮` : '前置说明'}
                     </p>
                   )}
+                  {/* Reached-milestone marker lines are lifted out of the
+                      prose without rendering chips: the 进度里程碑 section
+                      above already carries that state — chips here read as
+                      the same fact twice. */}
                   {splitReplyByMilestones(turn.text, milestones).map((segment, index) => (
-                    segment.kind === 'milestone' ? (
-                      <div
-                        key={`ms-${segment.milestone.id}-${turnIndex}-${index}`}
-                        data-testid="dossier-milestone-anchor"
-                        className="flex items-center gap-2 rounded-lg border border-status-success-line bg-status-success-soft px-2.5 py-1.5 text-xs text-status-success"
-                      >
-                        <span className="font-medium">✓ 里程碑达成</span>
-                        <span className="min-w-0 flex-1 truncate">{segment.milestone.desc}</span>
-                        {segment.milestone.reached_at && (
-                          <span className="shrink-0 text-[10px] text-status-success-muted">{formatClock(segment.milestone.reached_at)}</span>
-                        )}
-                      </div>
-                    ) : (
-                      // Chat-grade rendering: the same markdown pipeline the
-                      // conductor conversation uses, with engine noise (turn
-                      // markers, thinking blocks, tool dumps, stray tags)
-                      // stripped and one labeled block per LLM turn.
+                    segment.kind === 'text' ? (
                       <MessageContent
                         key={`text-${turnIndex}-${index}`}
                         content={segment.text}
                         format="markdown"
                         markdownMode="plain"
                       />
-                    )
+                    ) : null
                   ))}
                 </div>
               ))}
