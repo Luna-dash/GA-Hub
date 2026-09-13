@@ -246,13 +246,16 @@ describe('MessageBubble render isolation', () => {
     expect(copied).not.toContain('执行搜索')
   })
 
-  it('labels system-role bubbles with a system header instead of GA Agent', () => {
+  it('marks system-role bubbles with the left-edge dot and no GA Agent header', () => {
     act(() => root.render(
       <MessageBubble role="system" content="GA-Hub 已重新连接会话。" streaming={false} />,
     ))
 
-    expect(host.textContent).toContain('system')
+    // 2026-09 user ruling: the in-bubble "• system" header row duplicated the
+    // dot marker, so system bubbles carry no header text at all.
     expect(host.textContent).not.toContain('GA Agent')
+    expect(host.textContent).not.toContain('system')
+    expect(host.querySelector('[data-system-dot]')).toBeTruthy()
   })
 
   it('renders a stopped dangling tail as a notice above the previous conclusion', () => {

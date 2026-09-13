@@ -181,15 +181,22 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
           compact ? "px-3 py-2 text-xs" : "px-3.5 py-3",
           tone.surfaceClass
         )}>
+          {/* 2026-09 user ruling: the concentric dot straddling the left border
+              is the sole system marker — the in-bubble "• system" header row
+              duplicated it and was removed. Pure CSS discs (no emoji) so the
+              circles stay concentric. */}
           {isSystem && (
-            <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-status-warning flex items-center justify-center text-sm shadow">
-              🟡
+            <div
+              data-system-dot
+              className="absolute top-1/2 -left-2.5 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full bg-status-warning shadow"
+            >
+              <span className="block h-2.5 w-2.5 rounded-full bg-status-warning-soft" />
             </div>
           )}
-          {!compact && (
-            <div className={clsx("mb-2 flex items-center gap-2 text-[11px] font-medium", isSystem ? "text-status-warning" : "text-ink-muted")}>
-              <span className={clsx("h-1.5 w-1.5 rounded-full", isSystem ? "bg-status-warning" : "bg-[#54735D]")} />
-              {isSystem ? 'system' : 'GA Agent'}
+          {!compact && !isSystem && (
+            <div className="mb-2 flex items-center gap-2 text-[11px] font-medium text-ink-muted">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
+              GA Agent
             </div>
           )}
           {tagLabel && (
