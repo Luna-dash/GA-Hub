@@ -87,4 +87,10 @@ def test_conductor_renders_request_scoped_semantic_worker_progress():
     assert "T{item.turn}" not in source
     assert "api.conductorLog()" not in source
     # Non-user rows render plain markdown through the shared content primitive.
-    assert "format=\"markdown\" markdownMode=\"plain\"" in source
+    # The 2026-09 page split moved that rendering out of the page into the
+    # conversation rows and the worker dossier.
+    task_conversation = _read("components/conductor/TaskConversation.tsx")
+    worker_dossier = _read("components/conductor/WorkerDossier.tsx")
+    plain_markdown = "format=\"markdown\" markdownMode=\"plain\""
+    assert plain_markdown in task_conversation
+    assert plain_markdown in worker_dossier
