@@ -156,10 +156,11 @@ export function workerNumbers(subs: ConductorSubagent[]): Map<string, number> {
   return new Map(ordered.map((sub, index) => [sub.id, index + 1]))
 }
 
-/** User-typed text often arrives with runs of blank lines; collapse them to
- *  one so a pasted block does not render as a ladder of gaps. */
+/** User-typed text often carries blank lines from pasted formatting. In the
+ *  dense work-log rendering every blank line is pure vertical cost, so they
+ *  are dropped entirely — the line structure survives, the gaps don't. */
 export function collapseBlankLines(text: string): string {
-  return text.replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n').replace(/^\n+/, '').replace(/\s+$/, '')
+  return text.split('\n').filter((line) => line.trim().length > 0).join('\n')
 }
 
 // The engine embeds turn markers and tool chatter inside a worker's reply
@@ -168,9 +169,13 @@ export function collapseBlankLines(text: string): string {
 const WORKER_TURN_RE = /\**LLM Running \(Turn (\d+)\) \.\.\.\**/g
 
 /** Strip engine noise from worker output: raw 5-backtick dumps, tool-call
- *  arg blocks, <thinking> blocks, [Status]/[Info] lines, and stray
+ *  arg blocks, <thinking> blocks, [Status]/[Info] lines, stray
  *  angle-bracket tags (e.g. leftover </summary>) that would render as
- *  nothing or leak as literal markup. */
+ *  nothing or leak as literal markup.
+ *
+ *  Milestone marker lines (MILESTONE-m1-DONE, …) are engine protocol — the
+ *  archive_contains scanner consumes them and the 进度里程碑 section shows
+ *  the resulting state — so the bare marker lines never render as content. */
 export function sanitizeWorkerOutput(text: string): string {
   if (!text) return ''
   let s = text
@@ -178,6 +183,7 @@ export function sanitizeWorkerOutput(text: string): string {
   s = s.replace(/🛠️ Tool: `([^`\n]+)`\s*📥 args:\n`{4}[\s\S]*?`{4}\n?/g, '🛠️ `$1`\n')
   s = s.replace(/<thinking>[\s\S]*?<\/thinking>\s*/gi, '')
   s = s.replace(/^[ \t]*\[(?:Info|Status)\][^\n]*\n?/gm, '')
+  s = s.replace(/^[ \t]*MILESTONE-[A-Za-z0-9._-]+-DONE[ \t.!。]*$/gm, '')
   s = s.replace(/<\/?[a-zA-Z][a-zA-Z0-9_-]*(?:\s[^<>\n]*)?>/g, '')
   return s
 }
@@ -248,12 +254,6 @@ function capTitle(source: string): string {
   return `${clean.slice(0, 24)}…`
 }
 
-/** Rail-safe title for one-line CTAs; the dossier shows the full text. */
-export function shortWorkerTitle(sub: ConductorSubagent): string {
-  const title = workerTitle(sub)
-  return title.length > 28 ? `${title.slice(0, 28)}…` : title
-}
-
 /** Actions the review row can offer; the page supplies the implementations. */
 export type SubagentRowControl = {
   evidence?: SubagentEvidence
@@ -309,22 +309,24 @@ export const WORKFLOW_STAGE_PAUSABLE = new Set([
   'planning', 'supervising', 'reworking', 'awaiting_review', 'aggregating',
 ])
 
-// `detail` is the ONE line under the current-task title. It must earn the
-// space by telling the reader something the badge and the stats strip do not
-// already say: only stages with a non-obvious consequence carry text. The
-// boilerplate sentences ("正在理解需求并准备分派") were removed — they
-// repeated the label verbatim on every task.
+// `detail` is the inline text next to the live numbers on the single status
+// line under the task title. The 2026-09 audit ruled it earns its space only
+// when it says something the badge and the numbers cannot: a failure REASON
+// (nowhere else visible at a glance) or a reading correction for an alarming
+// badge (子代理失败 is not terminal). Sentences that restate the badge or the
+// 已通过 numbers were dropped — the board keeps process numbers and
+// post-completion review facts, nothing else.
 export const WORKFLOW_STAGE_VIEW: Record<string, { label: string; detail: string; tone: WorkflowTone }> = {
   planning: { label: '正在规划', detail: '', tone: 'active' },
   supervising: { label: '执行中', detail: '', tone: 'active' },
   reworking: { label: '返工中', detail: '', tone: 'active' },
   awaiting_review: { label: '待你验收', detail: '', tone: 'review' },
-  aggregating: { label: '正在汇总', detail: '子代理均已通过，Conductor 正在整理最终交付。', tone: 'review' },
-  recoverable_failure: { label: '子代理失败', detail: '子代理处理失败，Conductor 正在决定返工或补派。', tone: 'active' },
-  completed: { label: '已完成', detail: '所有子任务已通过验收，交付结果已发送。', tone: 'done' },
-  failed: { label: '执行失败', detail: '工作流未能完成，原因已写入本轮对话。', tone: 'error' },
-  cancelled: { label: '已中断', detail: '任务已被中断，不会继续执行。', tone: 'idle' },
-  killed: { label: '已终止', detail: '任务进程已终止，不会继续执行。', tone: 'idle' },
+  aggregating: { label: '正在汇总', detail: '', tone: 'review' },
+  recoverable_failure: { label: '子代理失败', detail: 'Conductor 正在决定返工或补派。', tone: 'active' },
+  completed: { label: '已完成', detail: '', tone: 'done' },
+  failed: { label: '执行失败', detail: '', tone: 'error' },
+  cancelled: { label: '已中断', detail: '', tone: 'idle' },
+  killed: { label: '已终止', detail: '', tone: 'idle' },
 }
 
 export function workflowPresentation(
@@ -339,7 +341,9 @@ export function workflowPresentation(
   }
   const view = WORKFLOW_STAGE_VIEW[workflow.stage ?? 'planning'] ?? WORKFLOW_STAGE_VIEW.planning
   if (!started && WORKFLOW_STAGE_PAUSABLE.has(workflow.stage ?? '')) {
-    return { label: '已暂停', detail: 'Conductor 已停止；点“恢复此任务”可单独续跑这一个任务，顶部“启动”仅拉起监督者，都不会自动重跑其他任务。', tone: 'idle' }
+    // The 恢复此任务 button on the title row carries the continuation
+    // semantics in its tooltip; a paused task needs no prose here.
+    return { label: '已暂停', detail: '', tone: 'idle' }
   }
   // Surface the tracker-persisted reason directly: a page opened after the
   // failure never saw the live transition, so the reason must come from the

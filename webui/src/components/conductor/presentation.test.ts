@@ -311,16 +311,18 @@ describe('workerNumbers', () => {
 })
 
 describe('collapseBlankLines', () => {
-  it('collapses runs of blank lines to one', () => {
-    expect(collapseBlankLines('第一段\n\n\n\n\n第二段')).toBe('第一段\n\n第二段')
+  it('drops runs of blank lines entirely', () => {
+    expect(collapseBlankLines('第一段\n\n\n\n\n第二段')).toBe('第一段\n第二段')
   })
 
-  it('trims leading and trailing blank lines', () => {
+  it('drops leading and trailing blank lines', () => {
     expect(collapseBlankLines('\n\n  \n内容\n\n\n')).toBe('内容')
   })
 
-  it('keeps normal single blank lines intact', () => {
-    expect(collapseBlankLines('第一段\n\n第二段')).toBe('第一段\n\n第二段')
+  it('drops even single paragraph-gap blank lines (2026-09 user ruling)', () => {
+    expect(collapseBlankLines('第一段\n\n第二段')).toBe('第一段\n第二段')
+    // Indented content lines keep their shape; only empty lines go.
+    expect(collapseBlankLines('要求：\n  - 项目一\n\n  - 项目二')).toBe('要求：\n  - 项目一\n  - 项目二')
   })
 })
 
@@ -350,6 +352,24 @@ describe('sanitizeWorkerOutput', () => {
     expect(clean).toContain('🛠️ `read_file`')
     expect(clean).not.toContain('"path"')
     expect(clean).toContain('结果说明')
+  })
+
+  it('strips bare milestone marker lines (engine protocol, not content)', () => {
+    const raw = [
+      '开始执行盘点。',
+      'MILESTONE-m1-DONE',
+      '配置面整理完成。',
+      '  MILESTONE-m2-DONE  ',
+      'MILESTONE-m3-DONE',
+      '总结：报告已写入。',
+    ].join('\n')
+    const clean = sanitizeWorkerOutput(raw)
+    expect(clean).not.toContain('MILESTONE-m1-DONE')
+    expect(clean).not.toContain('MILESTONE-m2-DONE')
+    expect(clean).not.toContain('MILESTONE-m3-DONE')
+    expect(clean).toContain('开始执行盘点。')
+    expect(clean).toContain('配置面整理完成。')
+    expect(clean).toContain('总结：报告已写入。')
   })
 })
 

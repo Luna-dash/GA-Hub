@@ -1,20 +1,20 @@
-import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import clsx from 'clsx'
-import { ArrowUp, CheckCheck, FileCheck2, History, LayoutGrid, MessageSquare, Play, Plus, RotateCcw, Settings2, Square, X, Activity } from 'lucide-react'
+import { Activity, FileCheck2, Play, Square } from 'lucide-react'
 import '@/styles/conductor.css'
 import { api, type ConductorSubagentModelPolicy } from '@/api/client'
 import { storageKeys } from '@/config/storageKeys'
 import { useConductorStore } from '@/stores/conductorStore'
 import { dialog } from '@/stores/dialogStore'
 import { PageShell } from '@/components/PageShell'
-import { MessageContent } from '@/components/MessageContent'
-import { bubbleTone } from '@/components/bubbleTone'
-import { ModalOverlay } from '@/components/ModalOverlay'
-import { MainModelSelect, SubagentModelSelect } from '@/components/ModelSelect'
+import { MainModelSelect } from '@/components/ModelSelect'
 import { ActivityTimeline } from '@/components/conductor/ActivityTimeline'
+import { HistoryDropdown } from '@/components/conductor/HistoryDropdown'
+import { SubagentSettingsModal, type SubagentSettingsValue } from '@/components/conductor/SubagentSettingsModal'
+import { TaskCard } from '@/components/conductor/TaskCard'
+import { TaskConversation } from '@/components/conductor/TaskConversation'
+import { WorkerDossier } from '@/components/conductor/WorkerDossier'
 import {
-  collapseBlankLines,
   compactTaskText,
   historyRowsOf,
   isNearScrollBottom,
@@ -24,22 +24,14 @@ import {
   isWorkflowClosed,
   type SubagentEvidence,
 } from '@/components/conductor/presentation'
-import { WorkflowBadge } from '@/components/conductor/WorkflowBadge'
-import { WorkerCard } from '@/components/conductor/WorkerCard'
-import { HistoryPanel } from '@/components/conductor/HistoryPanel'
 import { useConductorData } from '@/hooks/useConductorData'
-import { WorkerDossier } from '@/components/conductor/WorkerDossier'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
-import { useNowTick } from '@/hooks/useNowTick'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
 import { toast } from '@/stores/toastStore'
 import { errorMessageFromError, structuredErrorDetailFromError } from '@/utils/sessionUi'
 import { formatDurationSeconds } from '@/utils/timeFormat'
 
-const scrollMemory: { chatTop: number | null } = {
-  chatTop: null,
-}
 const SUBAGENT_MODEL_LOCK_KEY = storageKeys.conductorSubagentModelLocked
 
 /**
@@ -65,16 +57,6 @@ function writeSubagentModelLock(locked: boolean): void {
   } catch {}
 }
 
-/**
- * Live elapsed time for the open task. The clock ticks in its own component
- * so a 1s update re-renders one label — the page-level 30s tick used to make
- * "已进行 12:30" sit frozen long enough to read as stalled.
- */
-function WorkflowElapsed({ startedAt }: { startedAt: number }) {
-  const nowMs = useNowTick(1000)
-  return <span>已进行 {formatDurationSeconds(nowMs / 1000 - startedAt)}</span>
-}
-
 export default function Conductor() {
   const qc = useQueryClient()
   const [userMsg, setUserMsg] = usePageState('conductor.userMsg', '')
@@ -93,46 +75,20 @@ export default function Conductor() {
   // Task-history pin: null = auto-follow the newest open workflow. Pinned
   // views survive new task arrivals until the user switches back.
   const [pinnedRequestId, setPinnedRequestId] = useState<string | null>(null)
-  const [contextTab, setContextTab] = useState<'chat' | 'delivery' | 'activity'>('chat')
+  // The conversation now lives permanently in the left column; the right
+  // column is pure dossier, so its tabs only pick between delivery detail
+  // and the activity timeline.
+  const [contextTab, setContextTab] = useState<'delivery' | 'activity'>('delivery')
   const [mobileView, setMobileView] = useState<'board' | 'context'>('board')
-  // History is a look-back surface, so it opens as a header dropdown instead
-  // of occupying the first screen of the left column.
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const historyPopAreaRef = useRef<HTMLDivElement>(null)
-  const historyTriggerRef = useRef<HTMLButtonElement>(null)
-  // Non-modal dropdown behavior: Escape closes (and returns focus to the
-  // trigger), a pointer press anywhere outside the trigger + panel closes.
-  // No backdrop, no scroll lock, no focus trap — the page stays operable and
-  // the popover reads as an extension of the trigger, not a screen takeover.
-  useEffect(() => {
-    if (!historyOpen) return
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      setHistoryOpen(false)
-      historyTriggerRef.current?.focus()
-    }
-    const onDown = (event: PointerEvent) => {
-      const area = historyPopAreaRef.current
-      if (area && !area.contains(event.target as Node)) setHistoryOpen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    window.addEventListener('pointerdown', onDown)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      window.removeEventListener('pointerdown', onDown)
-    }
-  }, [historyOpen])
+  // The worker queue is a one-line-per-worker module now; collapsing it hands
+  // the freed rows to the conversation below. Remembered per browser session.
+  const [processCollapsed, setProcessCollapsed] = usePageState('conductor.processCollapsed', false)
+  // Bumped to move focus into the composer (retry prefill).
+  const [composerFocusTick, setComposerFocusTick] = useState(0)
   const actionInFlightRef = useRef(false)
-  const [draftSubagentLlmKey, setDraftSubagentLlmKey] = useState<string | null>(null)
-  const [draftSubagentModelLocked, setDraftSubagentModelLocked] = useState(false)
-  const [draftAutoAccept, setDraftAutoAccept] = useState(true)
-  const chatEndRef = useRef<HTMLDivElement>(null)
-  const chatScrollRef = useRef<HTMLDivElement>(null)
-  const chatInputRef = useRef<HTMLTextAreaElement>(null)
-  const subagentSettingsButtonRef = useRef<HTMLButtonElement>(null)
-  const subagentSettingsDialogRef = useRef<HTMLDivElement>(null)
+  const chatEndRef = useRef<HTMLDivElement | null>(null)
+  const chatScrollRef = useRef<HTMLDivElement | null>(null)
   const shouldFollowChatRef = useRef(false)
-  const restoredScrollRef = useRef({ chat: false })
 
   // Extract store actions (stable references) to avoid socket churn
   const addChatMessage = useConductorStore((s) => s.addChatMessage)
@@ -171,18 +127,6 @@ export default function Conductor() {
     subagentModelPolicy,
   }), [effectiveLlmIndex, selectedSubagentLlmIndex, subagentModelPolicy])
 
-  const openSubagentSettings = () => {
-    setDraftSubagentLlmKey(subagentLlmKey)
-    setDraftSubagentModelLocked(subagentLlmKey !== null && subagentModelLocked)
-    setDraftAutoAccept(status?.auto_accept ?? true)
-    setSubagentSettingsOpen(true)
-  }
-
-  const closeSubagentSettings = () => {
-    setSubagentSettingsOpen(false)
-    requestAnimationFrame(() => subagentSettingsButtonRef.current?.focus())
-  }
-
   // Selecting a history row switches the pinned task but keeps the dropdown
   // open: comparing/stepping through several tasks is the whole point of the
   // list, and closing on every click would force a reopen each time. The
@@ -192,54 +136,20 @@ export default function Conductor() {
     setSelectedSid(null)
   }
 
-  const saveSubagentSettings = () => {
-    const locked = draftSubagentLlmKey !== null && draftSubagentModelLocked
-    selectSubagentLlm(draftSubagentLlmKey)
+  const saveSubagentSettings = ({ llmKey, locked, autoAccept }: SubagentSettingsValue) => {
+    selectSubagentLlm(llmKey)
     setSubagentModelLocked(locked)
     writeSubagentModelLock(locked)
-    if (status && draftAutoAccept !== status.auto_accept) {
-      api.conductorSettings(draftAutoAccept)
+    if (status && autoAccept !== status.auto_accept) {
+      api.conductorSettings(autoAccept)
         .then((next) => qc.setQueryData(queryKeys.conductor.status, next))
         .catch(() => toast.error('保存自动验收设置失败，请稍后重试。'))
     }
-    closeSubagentSettings()
   }
-
 
   const { workflows, isChatLoading, isChatError, refetchChat } = useConductorData(() => {
     shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
   })
-
-  useEffect(() => {
-    return () => {
-      if (restoredScrollRef.current.chat) {
-        scrollMemory.chatTop = chatScrollRef.current?.scrollTop ?? scrollMemory.chatTop
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    const el = chatScrollRef.current
-    if (restoredScrollRef.current.chat || !el || chatMessages.length === 0) return
-    const frame = requestAnimationFrame(() => {
-      const rememberedTop = scrollMemory.chatTop
-      el.scrollTop = rememberedTop === null
-        ? el.scrollHeight
-        : Math.min(rememberedTop, el.scrollHeight)
-      shouldFollowChatRef.current = isNearScrollBottom(el)
-      restoredScrollRef.current.chat = true
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [chatMessages.length])
-
-  // Auto-scroll only while the reader is already at the live edge.
-  useEffect(() => {
-    if (shouldFollowChatRef.current) {
-      // Instant scrolling avoids a smooth-scroll/onScroll feedback loop that
-      // could silently disable live following while messages stream in.
-      chatEndRef.current?.scrollIntoView({ behavior: 'auto' })
-    }
-  }, [chatMessages])
 
   const currentWorkflow = useMemo(() => {
     if (pinnedRequestId) {
@@ -299,13 +209,6 @@ export default function Conductor() {
     } finally {
       setIsSending(false)
     }
-  }
-
-  // Form submit handler: default target is the open workflow (append). The
-  // composer's explicit 新任务 button submits with a null target instead.
-  const sendChat = (e: FormEvent) => {
-    e.preventDefault()
-    void submitChat(appendTargetRequestId)
   }
 
   const stopConductor = async () => {
@@ -436,13 +339,6 @@ export default function Conductor() {
     }
   }
 
-  useLayoutEffect(() => {
-    const el = chatInputRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
-  }, [userMsg])
-
   // One task title per request, oldest user message wins (the task origin).
   const taskTitleByRequest = useMemo(() => {
     const map = new Map<string, string>(workflows.filter(workflow => workflow.title)
@@ -461,7 +357,6 @@ export default function Conductor() {
     () => historyRowsOf(workflows, subagents, taskTitleByRequest, status?.started ?? false),
     [workflows, subagents, taskTitleByRequest, status?.started],
   )
-  const historyAttention = historyRows.filter((row) => row.needsAttention).length
 
   const workflowSubagents = useMemo(() => {
     // No workflow on screen → no worker cards. The earlier slice(-5) fallback
@@ -522,12 +417,8 @@ export default function Conductor() {
   const pendingReview = workflowSubagents.filter(isReviewable)
   const selectedWorker = workflowSubagents.find((sub) => sub.id === selectedSid) ?? null
 
-  // In-place expansion: at most one subagent card shows its execution
-  // process at a time; switching tasks collapses it.
-  const [expandedSid, setExpandedSid] = useState<string | null>(null)
-  useEffect(() => {
-    setExpandedSid(null)
-  }, [currentWorkflow?.request_id])
+  // Worker rows are pure selectors now: the dossier owns all execution
+  // detail, so there is no inline expansion state to keep in sync.
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
   const deleteWorkflow = async (requestId: string) => {
     if (deletingIds.has(requestId)) return
@@ -555,7 +446,6 @@ export default function Conductor() {
     }
   }
 
-
   // Retry entry for a failed workflow: prefill the composer with the task's
   // original wording so the user can adjust it and dispatch a fresh task.
   const retryCurrentWorkflow = () => {
@@ -564,9 +454,18 @@ export default function Conductor() {
       item.role === 'user' && item.request_id === currentWorkflow.request_id
     ))
     setUserMsg(origin ? origin.msg : currentTask)
-    setContextTab('chat')
+    // The composer lives in the left column now, so "board" is where the
+    // prefilled draft is.
+    setMobileView('board')
+    setComposerFocusTick((tick) => tick + 1)
+  }
+
+  const selectWorker = (sid: string) => {
+    // One click is "open this worker": it selects the dossier and brings the
+    // delivery tab forward.
+    setSelectedSid(sid)
+    setContextTab('delivery')
     setMobileView('context')
-    requestAnimationFrame(() => chatInputRef.current?.focus())
   }
 
   useEffect(() => {
@@ -583,45 +482,8 @@ export default function Conductor() {
     })
   }, [workflowSubagents])
 
-  // Keyboard review shortcuts (2026-09 UI audit): j/k move between workers,
-  // A accepts the selected worker, R opens its rework input. They stay off
-  // while typing in any field or while the settings dialog is open.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return
-      if (subagentSettingsOpen || reworkSid || actionInFlightRef.current) return
-      const target = event.target
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return
-      if (target instanceof HTMLElement && (target.isContentEditable || target.tagName === 'BUTTON')) return
-      const key = event.key.toLowerCase()
-      if (key !== 'j' && key !== 'k' && key !== 'a' && key !== 'r') return
-      if (workflowSubagents.length === 0) return
-      const index = workflowSubagents.findIndex((sub) => sub.id === selectedSid)
-      if (key === 'j' || key === 'k') {
-        event.preventDefault()
-        const step = key === 'j' ? 1 : -1
-        const nextIndex = index === -1
-          ? (step === 1 ? 0 : workflowSubagents.length - 1)
-          : (index + step + workflowSubagents.length) % workflowSubagents.length
-        setSelectedSid(workflowSubagents[nextIndex]?.id ?? null)
-        return
-      }
-      const selected = selectedWorker
-      if (!selected || !isReviewable(selected) || selected.archived) return
-      if (key === 'a') {
-        event.preventDefault()
-        void runSubagentAction(selected.id, 'accept')
-      } else {
-        event.preventDefault()
-        setContextTab('delivery')
-        setMobileView('context')
-        setReworkSid(selected.id)
-        setReworkReason('')
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [workflowSubagents, selectedSid, selectedWorker, subagentSettingsOpen, reworkSid, runSubagentAction])
+  // Keyboard review shortcuts were removed (2026-09 ruling: feature pages
+  // carry no hotkeys — the command palette is the only keyboard surface).
 
   return (
     <PageShell
@@ -636,52 +498,14 @@ export default function Conductor() {
       middleArea={
         /* History is a look-back surface, so it anchors to the middle of the
            title bar — it reads as page-level navigation, not as one more
-           control in the right-hand cluster. It is centred against the header
-           box (`.conductor-header-history` is absolutely positioned against
-           PageShell's `relative` header), not against the space left over
-           between title and actions: the 210px model select on the right skews
-           that midpoint well left of the true centre. */
-        <div className="conductor-header-history" ref={historyPopAreaRef}>
-          <button
-            type="button"
-            ref={historyTriggerRef}
-            className="ga-btn conductor-history-trigger"
-            aria-label="历史任务"
-            aria-haspopup="dialog"
-            aria-controls="conductor-history-dropdown"
-            aria-expanded={historyOpen}
-            title="查看历史任务（按需回看）"
-            onClick={() => setHistoryOpen((open) => !open)}
-          >
-            <History size={14} />
-            <span>历史任务</span>
-            <span className="conductor-history-trigger-count">{historyRows.length}</span>
-            {historyAttention > 0 && (
-              <span className="rounded-full border border-status-warning-line bg-status-warning-soft px-1.5 text-[10px] text-status-warning">
-                {historyAttention} 待处理
-              </span>
-            )}
-          </button>
-          {/* Anchored dropdown, not a modal: it hangs straight below the
-              trigger, opens with a short pop animation, and never takes over
-              the page — no dimming, no scroll lock, no focus trap. */}
-          {historyOpen && (
-            <div
-              id="conductor-history-dropdown"
-              role="dialog"
-              aria-labelledby="conductor-history-title"
-              className="conductor-history-pop"
-            >
-              <HistoryPanel
-                rows={historyRows}
-                selectedId={currentWorkflow?.request_id}
-                onSelect={selectHistoryWorkflow}
-                onDelete={(id) => void deleteWorkflow(id)}
-                deletingIds={deletingIds}
-              />
-            </div>
-          )}
-        </div>
+           control in the right-hand cluster. */
+        <HistoryDropdown
+          rows={historyRows}
+          selectedId={currentWorkflow?.request_id}
+          onSelect={selectHistoryWorkflow}
+          onDelete={(id) => void deleteWorkflow(id)}
+          deletingIds={deletingIds}
+        />
       }
       actions={
         <div className="conductor-header-actions">
@@ -701,18 +525,15 @@ export default function Conductor() {
               title="选择 Conductor 使用的主模型"
               aria-label="Conductor 主模型"
             />
-            <button
-              ref={subagentSettingsButtonRef}
-              type="button"
-              className="conductor-icon-button"
-              title="子代理设置"
-              aria-label="子代理设置"
-              aria-haspopup="dialog"
-              aria-expanded={subagentSettingsOpen}
-              onClick={openSubagentSettings}
-            >
-              <Settings2 size={17} />
-            </button>
+            <SubagentSettingsModal
+              llms={llms}
+              value={subagentLlmKey}
+              locked={subagentModelLocked}
+              autoAccept={status?.auto_accept ?? true}
+              open={subagentSettingsOpen}
+              onOpenChange={setSubagentSettingsOpen}
+              onSave={saveSubagentSettings}
+            />
           </div>
           <div className="conductor-header-engine flex items-center gap-2">
             {status?.started ? (
@@ -740,210 +561,102 @@ export default function Conductor() {
           <button role="tab" aria-selected={mobileView === 'context'} onClick={() => setMobileView('context')}>详情</button>
         </div>
         <div className="conductor-layout" data-mobile-view={mobileView}>
+          {/* Left column = the task narrative: the board (task card + worker
+              queue) on top, the conversation filling everything below. CSS
+              caps the board's height so a long queue can never squeeze the
+              chat out of the first screen. */}
           <main className="conductor-main">
-            <section aria-label="当前任务" className="conductor-current">
-              <div className="conductor-current-title-row">
-                <WorkflowBadge tone={workflowView.tone} label={workflowView.label} />
-                <p className="conductor-current-title" title={currentTask || undefined}>{currentTask || '尚未收到任务'}</p>
-                {/* The single most important next actions ride on the title
-                    row itself, where the eye lands first — resume, pending
-                    reviews, retry. Absent actions leave no residue. */}
-                <span className="conductor-current-actions">
-                  {!status?.started && currentWorkflow && !isWorkflowClosed(currentWorkflow) && (
-                    <button type="button" className="ga-btn conductor-action-btn" disabled={isResuming}
-                      title="只恢复这一个任务：拉起监督者并重放它的原始指令，其他未闭合任务不受影响"
-                      onClick={() => void resumeCurrentWorkflow()}>
-                      <RotateCcw size={14} />{isResuming ? '恢复中…' : '恢复此任务'}
-                    </button>
-                  )}
-                  {pendingReview.length > 0 && (
-                    <button type="button" className="ga-btn conductor-action-btn conductor-action-strong"
-                      title="打开右侧交付详情进行验收"
-                      onClick={() => { setSelectedSid(pendingReview[0].id); setContextTab('delivery'); setMobileView('context') }}>
-                      <CheckCheck size={14} />{pendingReview.length} 个待验收
-                    </button>
-                  )}
-                  {workflowView.tone === 'error' && (
-                    <button type="button" className="ga-btn-danger conductor-action-btn" onClick={retryCurrentWorkflow}>
-                      <RotateCcw size={14} />重新发起
-                    </button>
-                  )}
-                </span>
-              </div>
-              {/* Only stages whose consequence is not obvious carry a line:
-                  the boilerplate sentences were dropped and the failure
-                  reason renders here ONCE (no second error paragraph). */}
-              {workflowView.detail && <p className="conductor-current-detail">{workflowView.detail}</p>}
-              {/* The task's live numbers, inlined as one muted strip instead
-                  of a four-card grid: a handful of digits does not need a
-                  card per digit. 「待验收」 is deliberately absent — the
-                  title-row button above is the one place it is actionable. */}
-              {currentWorkflow && (
-                <p className="conductor-current-stats" aria-label="当前任务概览">
-                  <span>已通过 {acceptedCount}/{workerCount}{workerCount === 0 && '（未指派）'}</span>
-                  {activeSubagents.length > 0 && <span>执行中 {activeSubagents.length}</span>}
-                  {liveStartedAt !== null
-                    ? <WorkflowElapsed startedAt={liveStartedAt} />
-                    : finishedDuration && <span>{finishedDuration}</span>}
-                </p>
-              )}
-              <section className="conductor-process" aria-label="实施过程">
-                <h3 className="conductor-process-title">实施过程 <span>· {workerCount ? `${workerCount} 个子代理` : '暂无子代理'}</span></h3>
-                <div className="conductor-worker-grid" aria-label="子代理详情">
-                {workflowSubagents.map((sub) => <WorkerCard key={sub.id} sub={sub} index={workerNumberById.get(sub.id)} selected={sub.id === selectedSid}
-                  expanded={sub.id === expandedSid}
-                  onToggle={() => {
-                    // One click is "open this worker": it selects the dossier
-                    // AND brings the delivery tab forward, replacing the old
-                    // redundant 打开完整卷宗 button. Collapsing leaves the
-                    // right panel alone.
-                    const willExpand = expandedSid !== sub.id
-                    setSelectedSid(sub.id)
-                    setExpandedSid(willExpand ? sub.id : null)
-                    if (willExpand) {
-                      setContextTab('delivery')
-                      setMobileView('context')
-                    }
-                  }} />)}
-                </div>
-                {workflowSubagents.length === 0 && workerCount > 0 && (
-                  <p className="conductor-process-empty-note">子代理明细已随引擎池清空，仅保留通过数与对话记录。</p>
-                )}
-                {workflowSubagents.length === 0 && workerCount === 0 && (
-                  <div className="conductor-empty"><LayoutGrid size={26} strokeWidth={1.4} /><p>尚未指派子代理</p></div>
-                )}
-              </section>
-            </section>
+            {/* Whitespace anywhere on the board toggles the dispatch module
+                (fold/unfold) — the flanking strips beside a centred 672px
+                module are narrow, and beside the folded one-line header they
+                are tiny, so the whole board is the hit target. Interactive
+                elements and module content opt out and keep their own
+                behaviour. */}
+            <div
+              className="conductor-board"
+              onClick={(e: ReactMouseEvent<HTMLDivElement>) => {
+                const target = e.target as HTMLElement
+                if (target.closest('button, a, input, textarea, select, .conductor-worker-grid, .conductor-process-empty-note, .conductor-empty')) return
+                setProcessCollapsed((open) => !open)
+              }}
+            >
+              <TaskCard
+                workflow={currentWorkflow}
+                started={status?.started ?? false}
+                view={workflowView}
+                title={currentTask}
+                workerCount={workerCount}
+                acceptedCount={acceptedCount}
+                activeCount={activeSubagents.length}
+                liveStartedAt={liveStartedAt}
+                finishedDuration={finishedDuration}
+                pendingReview={pendingReview}
+                workers={workflowSubagents}
+                workerNumberById={workerNumberById}
+                selectedSid={selectedSid}
+                collapsed={processCollapsed}
+                onToggleCollapsed={() => setProcessCollapsed((open) => !open)}
+                isResuming={isResuming}
+                onResume={() => void resumeCurrentWorkflow()}
+                onRetry={retryCurrentWorkflow}
+                onSelectWorker={selectWorker}
+              />
+            </div>
+            {/* The conversation is the task's running narrative, so it holds
+                the rest of the left column: the scroller flexes, the composer
+                pins to the bottom edge. */}
+            <TaskConversation
+              messages={visibleChat}
+              isLoading={isChatLoading}
+              isError={isChatError}
+              onRetry={() => void refetchChat()}
+              followRef={shouldFollowChatRef}
+              scrollRef={chatScrollRef}
+              endRef={chatEndRef}
+              userMsg={userMsg}
+              onUserMsgChange={setUserMsg}
+              onSubmit={(target) => void submitChat(target === 'append' ? appendTargetRequestId : null)}
+              appendMode={appendTargetRequestId !== null}
+              llmReady={effectiveLlmIndex !== null}
+              sending={isSending}
+              focusSignal={composerFocusTick}
+            />
           </main>
           <aside className="conductor-context" aria-label="任务详情">
             <div className="conductor-context-tabs" role="tablist" aria-label="任务内容">
-              <button id="conductor-tab-chat" role="tab" aria-controls="conductor-panel-chat" aria-selected={contextTab === 'chat'} onClick={() => setContextTab('chat')}><MessageSquare size={14} />对话</button>
               <button id="conductor-tab-delivery" role="tab" aria-controls="conductor-panel-delivery" aria-selected={contextTab === 'delivery'} onClick={() => setContextTab('delivery')}><FileCheck2 size={14} />交付详情</button>
               <button id="conductor-tab-activity" role="tab" aria-controls="conductor-panel-activity" aria-selected={contextTab === 'activity'} onClick={() => setContextTab('activity')}><Activity size={14} />动态</button>
             </div>
-            <section role="tabpanel" id="conductor-panel-chat" aria-labelledby="conductor-tab-chat" hidden={contextTab !== 'chat'} className="conductor-context-panel">
-          <div
-            ref={chatScrollRef}
-            onScroll={() => {
-              if (!isSending) {
-                shouldFollowChatRef.current = isNearScrollBottom(chatScrollRef.current)
-              }
-              scrollMemory.chatTop = chatScrollRef.current?.scrollTop ?? scrollMemory.chatTop
-            }}
-            className="min-h-0 flex-1 overflow-y-auto divide-y divide-line text-sm"
-          >
-            {isChatLoading && visibleChat.length === 0 && (
-              <div className="px-4 py-8 text-center text-sm text-ink-muted">正在加载 Conductor 历史…</div>
-            )}
-            {isChatError && visibleChat.length === 0 && (
-              <div className="px-4 py-8 text-center">
-                <p className="text-sm text-status-danger">历史暂时无法加载，Conductor 引擎可能未连接。</p>
-                <button type="button" className="ga-btn mt-3" onClick={() => void refetchChat()}>重试</button>
-              </div>
-            )}
-            {!isChatLoading && !isChatError && visibleChat.length === 0 && (
-              <div className="conductor-empty"><MessageSquare size={28} strokeWidth={1.4} /><p>暂无对话</p></div>
-            )}
-            {visibleChat.map((msg) => (
-              msg.role === 'user' ? (
-                <div key={msg.id} className="flex justify-end px-4 py-2">
-                  <div className={clsx('max-w-[85%] rounded-lg px-3.5 py-2 text-sm leading-6 [overflow-wrap:anywhere]', bubbleTone('user').surfaceClass)}>
-                    {/* A user prompt is literal text: emoji, paths and
-                        angle-bracket tokens must survive verbatim, so no
-                        markdown pipeline here. Only the blank-line runs of a
-                        pasted block collapse, and the typography matches the
-                        conductor voice. */}
-                    <MessageContent content={collapseBlankLines(msg.msg)} format="text" />
-                  </div>
-                </div>
-              ) : (
-                <div key={msg.id} className="flex gap-3 px-4 py-2">
-                  <span className="w-10 shrink-0 select-none pt-0.5 text-[11px] font-medium uppercase tracking-wide text-ink-muted">
-                    指挥
-                  </span>
-                  <div className="min-w-0 flex-1 text-sm leading-6 text-ink">
-                    <MessageContent content={msg.msg} format="markdown" markdownMode="plain" />
-                  </div>
-                </div>
-              )
-            ))}
-            <div ref={chatEndRef} />
-          </div>
-          <form onSubmit={sendChat} className="border-t border-line bg-bg-soft/75 p-3">
-            {appendTargetRequestId && (
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="truncate text-xs text-ink-muted">
-                  当前任务
-                </span>
-                <button
-                  type="button"
-                  onClick={() => void submitChat(null)}
-                  disabled={!userMsg.trim() || effectiveLlmIndex === null || isSending}
-                  className="ga-btn shrink-0 px-2.5 py-1 text-xs"
-                  title="忽略当前任务，另开一个新任务"
-                >
-                  <Plus size={13} />新任务
-                </button>
-              </div>
-            )}
-            <div className="flex items-end gap-2">
-              <textarea
-                aria-label="任务内容"
-                ref={chatInputRef}
-                value={userMsg}
-                onChange={(e) => setUserMsg(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
-                  e.preventDefault()
-                  e.currentTarget.form?.requestSubmit()
-                }}
-                rows={3}
-                wrap="soft"
-                placeholder={appendTargetRequestId ? '将作为补充发送给当前任务…' : '描述一个新任务…'}
-                className="min-h-24 max-h-60 min-w-0 flex-1 resize-none overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded border border-line bg-bg px-3 py-2 text-sm leading-6 text-ink placeholder:text-ink-faint [overflow-wrap:anywhere] focus:border-accent focus:outline-none"
-              />
-              <button
-                type="submit"
-                disabled={!userMsg.trim() || effectiveLlmIndex === null || isSending}
-                aria-label={isSending ? '发送中' : (appendTargetRequestId ? '发送补充' : '发送')}
-                title={appendTargetRequestId ? '发送补充' : '发送任务'}
-                className="conductor-send-button"
-              >
-                <ArrowUp size={18} />
-              </button>
-            </div>
-          </form>
-            </section>
             <section role="tabpanel" id="conductor-panel-delivery" aria-labelledby="conductor-tab-delivery" hidden={contextTab !== 'delivery'} className="conductor-context-panel">
-          {selectedWorker ? (
-            <WorkerDossier
-              sub={selectedWorker}
-              workerNumber={workerNumberById.get(selectedWorker.id)}
-              control={{
-                evidence: evidenceBySid[selectedWorker.id],
-                busy: busySid !== null,
-                reworkOpen: reworkSid === selectedWorker.id,
-                reworkReason: reworkSid === selectedWorker.id ? reworkReason : '',
-                onAccept: () => void runSubagentAction(selectedWorker.id, 'accept'),
-                onForceAccept: () => void runSubagentAction(selectedWorker.id, 'accept', '人工核对证据后强制通过', true),
-                onAbort: () => void runSubagentAction(selectedWorker.id, 'abort'),
-                onReworkOpen: () => { setReworkSid(selectedWorker.id); setReworkReason('') },
-                onReworkReasonChange: setReworkReason,
-                onReworkCancel: () => setReworkSid((prev) => (prev === selectedWorker.id ? null : prev)),
-                onReworkSubmit: () => {
-                  if (reworkReason.trim()) void runSubagentAction(selectedWorker.id, 'rework', reworkReason.trim())
-                },
-                onEvidenceDismiss: () => setEvidenceBySid((prev) => {
-                  if (!(selectedWorker.id in prev)) return prev
-                  const next = { ...prev }
-                  delete next[selectedWorker.id]
-                  return next
-                }),
-              }}
-            />
-          ) : (
-            <div className="conductor-empty"><FileCheck2 size={28} strokeWidth={1.4} /><p>暂无子代理交付</p></div>
-          )}
+              {selectedWorker ? (
+                <WorkerDossier
+                  sub={selectedWorker}
+                  workerNumber={workerNumberById.get(selectedWorker.id)}
+                  control={{
+                    evidence: evidenceBySid[selectedWorker.id],
+                    busy: busySid !== null,
+                    reworkOpen: reworkSid === selectedWorker.id,
+                    reworkReason: reworkSid === selectedWorker.id ? reworkReason : '',
+                    onAccept: () => void runSubagentAction(selectedWorker.id, 'accept'),
+                    onForceAccept: () => void runSubagentAction(selectedWorker.id, 'accept', '人工核对证据后强制通过', true),
+                    onAbort: () => void runSubagentAction(selectedWorker.id, 'abort'),
+                    onReworkOpen: () => { setReworkSid(selectedWorker.id); setReworkReason('') },
+                    onReworkReasonChange: setReworkReason,
+                    onReworkCancel: () => setReworkSid((prev) => (prev === selectedWorker.id ? null : prev)),
+                    onReworkSubmit: () => {
+                      if (reworkReason.trim()) void runSubagentAction(selectedWorker.id, 'rework', reworkReason.trim())
+                    },
+                    onEvidenceDismiss: () => setEvidenceBySid((prev) => {
+                      if (!(selectedWorker.id in prev)) return prev
+                      const next = { ...prev }
+                      delete next[selectedWorker.id]
+                      return next
+                    }),
+                  }}
+                />
+              ) : (
+                <div className="conductor-empty"><FileCheck2 size={28} strokeWidth={1.4} /><p>暂无子代理交付</p></div>
+              )}
             </section>
             <section role="tabpanel" id="conductor-panel-activity" aria-labelledby="conductor-tab-activity" hidden={contextTab !== 'activity'} className="conductor-context-panel">
               <ActivityTimeline requestId={currentWorkflow?.request_id ?? null} active={contextTab === 'activity'} />
@@ -951,73 +664,6 @@ export default function Conductor() {
           </aside>
         </div>
       </div>
-
-      {subagentSettingsOpen && (
-        <ModalOverlay
-          onClose={closeSubagentSettings}
-          panelRef={subagentSettingsDialogRef}
-          labelledBy="subagent-settings-title"
-          panelClassName="w-full max-w-md"
-        >
-            <div className="flex items-center justify-between border-b border-line/70 px-5 py-4">
-              <h2 id="subagent-settings-title" className="text-base font-semibold text-ink">子代理设置</h2>
-              <button
-                type="button"
-                onClick={closeSubagentSettings}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none text-ink-muted hover:bg-bg-soft hover:text-ink"
-                aria-label="关闭子代理设置"
-                title="关闭"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="space-y-5 px-5 py-5">
-              <label className="block text-sm font-medium text-ink">
-                默认模型
-                <SubagentModelSelect
-                  llms={llms}
-                  value={draftSubagentLlmKey}
-                  onChange={(key) => {
-                    setDraftSubagentLlmKey(key)
-                    if (key === null) setDraftSubagentModelLocked(false)
-                  }}
-                  className="mt-2 w-full"
-                  aria-label="子代理默认模型"
-                  autoFocus
-                />
-              </label>
-              <label
-                className={clsx(
-                  'flex items-center gap-2 text-sm text-[#4E4233]',
-                  draftSubagentLlmKey === null && 'opacity-50',
-                )}
-              >
-                <input
-                  type="checkbox"
-                  checked={draftSubagentModelLocked}
-                  disabled={draftSubagentLlmKey === null}
-                  onChange={(event) => setDraftSubagentModelLocked(event.target.checked)}
-                />
-                固定使用所选模型
-              </label>
-              <div className="border-t border-line/70 pt-4">
-                <label className="flex items-center gap-2 text-sm text-[#4E4233]">
-                  <input
-                    type="checkbox"
-                    checked={draftAutoAccept}
-                    onChange={(event) => setDraftAutoAccept(event.target.checked)}
-                    aria-label="质检通过自动验收"
-                  />
-                  <span className="font-medium text-ink">质检通过自动验收</span>
-                </label>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-line/70 px-5 py-4">
-              <button type="button" className="ga-btn" onClick={closeSubagentSettings}>取消</button>
-              <button type="button" className="ga-btn ga-btn-primary" onClick={saveSubagentSettings}>保存</button>
-            </div>
-        </ModalOverlay>
-      )}
     </PageShell>
   )
 }

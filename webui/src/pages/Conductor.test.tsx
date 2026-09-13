@@ -1025,10 +1025,10 @@ describe('Conductor chat scroll restoration', () => {
 
     renderPage()
     await waitFor(() => expect(host.textContent).toContain('已暂停'))
-    // The paused explanation is the one case that earns the detail line: it
-    // tells the reader which of the two controls continues this task.
+    // The paused stage spends no prose: the 恢复此任务 button on the title row
+    // is the actionable answer, its tooltip carries the semantics.
     expect(host.textContent).toContain('恢复此任务')
-    expect(host.textContent).toContain('不会自动重跑其他任务')
+    expect(host.querySelector('.conductor-current-detail')).toBeNull()
 
     // "已通过 X/Y" reads as a count of work done; the old "子任务 X/Y" read as
     // a progress fraction sitting next to "执行中".
@@ -1118,10 +1118,9 @@ describe('Conductor chat scroll restoration', () => {
     renderPage()
     await openHistory()
     await waitFor(() => expect(host.textContent).toContain('暂无任务'))
-    // The composer lives in the right panel directly; the old 对话 jump
-    // button on the task card was redundant with the always-visible tabs.
-    expect(host.querySelector('#conductor-panel-chat')?.hasAttribute('hidden')).toBe(false)
-    expect(host.querySelector('textarea[aria-label="任务内容"]')).toBeTruthy()
+    // The composer lives in the left column below the board now, always
+    // visible — no tab hop needed to reach it.
+    expect(host.querySelector('.conductor-main-chat textarea[aria-label="任务内容"]')).toBeTruthy()
     expect(button('发送').disabled).toBe(true)
   })
 
@@ -1243,21 +1242,16 @@ describe('Conductor chat scroll restoration', () => {
     expect(mocks.revealFile).toHaveBeenCalledWith('D:/out/report.md', 'folder')
   })
 
-  it('opens the dossier straight from the worker card without a redundant button', async () => {
+  it('opens the dossier straight from the worker row without a redundant button', async () => {
     setSubagentFixtures()
     renderPage()
     await waitFor(() => expect(host.querySelector('.conductor-worker-toggle')).toBeTruthy())
     const worker = host.querySelector('.conductor-worker-toggle') as HTMLButtonElement
-    expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(true)
-    act(() => worker.click())
-    // One click is "open this worker": the card expands inline, the dossier
-    // follows, and the delivery tab comes forward — no second button, and
-    // collapsing must not disturb the right panel.
-    expect(host.querySelector('.conductor-worker-process')).toBeTruthy()
+    // Rows are pure selectors now — no inline expansion survives anywhere.
+    expect(host.querySelector('.conductor-worker-process')).toBe(null)
+    // The delivery tab is the right panel's default, so the auto-selected
+    // worker's dossier is already up; clicking another row hands it over.
     expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(false)
-    expect(host.querySelector('#conductor-panel-chat')?.hasAttribute('hidden')).toBe(true)
-    expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('context')
-    expect(worker.getAttribute('aria-pressed')).toBe('true')
     expect(host.textContent).not.toContain('打开完整卷宗')
     act(() => button('动态').click())
     // The tab opening also starts the durable-history read; drain it inside
@@ -1265,12 +1259,38 @@ describe('Conductor chat scroll restoration', () => {
     await flushQueries()
     expect(host.querySelector('#conductor-panel-activity')?.hasAttribute('hidden')).toBe(false)
     expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(true)
+    // One click is "open this worker": selection moves, the delivery tab
+    // comes forward, and the conversation stays put in the left column.
+    act(() => worker.click())
+    expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(false)
+    expect(host.querySelector('.conductor-main-chat')).toBeTruthy()
+    expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('context')
+    expect(worker.getAttribute('aria-pressed')).toBe('true')
     act(() => button('当前任务').click())
     expect(host.querySelector('.conductor-layout')?.getAttribute('data-mobile-view')).toBe('board')
     expect(worker.getAttribute('aria-pressed')).toBe('true')
+    // Re-clicking the selected row re-opens its dossier — there is no
+    // collapse to fall into.
     act(() => worker.click())
-    expect(host.querySelector('.conductor-worker-process')).toBe(null)
-    expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(true)
+    expect(host.querySelector('#conductor-panel-delivery')?.hasAttribute('hidden')).toBe(false)
+  })
+
+  it('folds the implementation-process queue into a one-line module to widen the chat', async () => {
+    setSubagentFixtures()
+    renderPage()
+    await waitFor(() => expect(host.querySelectorAll('.conductor-worker-card')).toHaveLength(1))
+    const head = host.querySelector('.conductor-process-head') as HTMLButtonElement
+    // Open by default: the queue is the at-a-glance overview.
+    expect(head.getAttribute('aria-expanded')).toBe('true')
+    expect(head.textContent).toContain('1 个子代理')
+    act(() => head.click())
+    expect(head.getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelectorAll('.conductor-worker-card')).toHaveLength(0)
+    // The task card's stats strip keeps carrying the numbers while folded.
+    expect(host.textContent).toContain('已通过')
+    // Re-opening restores the same rows.
+    act(() => head.click())
+    expect(host.querySelectorAll('.conductor-worker-card')).toHaveLength(1)
   })
 
   it('lists history rows newest-needing-attention-first and preserves the original task title', async () => {
@@ -1403,62 +1423,6 @@ describe('Conductor chat scroll restoration', () => {
     expect(mocks.conductorStart).not.toHaveBeenCalled()
     await waitFor(() => expect(useToastStore.getState().items.some((toast) =>
       toast.kind === 'success' && toast.message.includes('已恢复该任务'))).toBe(true))
-  })
-
-  it('moves worker selection with j/k and accepts the selected worker with a', async () => {
-    mocks.conductorWorkflows.mockResolvedValue({
-      items: [{
-        request_id: 'request-1',
-        status: 'awaiting_review',
-        stage: 'awaiting_review',
-        subagents: {
-          reviewing: { generation: 1, state: 'pending' },
-          accepted: { generation: 1, state: 'accepted' },
-        },
-        created_at: 1,
-        completed_at: null,
-      }],
-    })
-    mocks.conductorSubagents.mockResolvedValue({
-      items: [
-        {
-          id: 'reviewing', prompt: '检查桌面启动流程', reply: 'done', status: 'stopped',
-          created_at: 3, updated_at: 3, review_status: 'pending', review_note: '',
-          attempt: 1, completed_at: 3, accepted_at: null, generation: 1,
-          request_id: 'request-1', stage: 'reviewing',
-        },
-        {
-          id: 'accepted', prompt: '验证历史会话加载速度', reply: 'done', status: 'stopped',
-          created_at: 4, updated_at: 4, review_status: 'accepted', review_note: '',
-          attempt: 1, completed_at: 4, accepted_at: 4, generation: 1,
-          request_id: 'request-1', stage: 'accepted',
-        },
-      ],
-    })
-    mocks.conductorSubagentAction.mockResolvedValue({ id: 'reviewing', status: 'stopped' })
-
-    renderPage()
-    await waitFor(() => expect(host.textContent).toContain('子代理卷宗'))
-    const aside = () => {
-      const element = host.querySelector('aside')
-      if (!element) throw new Error('dossier aside not found')
-      return element
-    }
-    // The reviewable worker is auto-selected on mount.
-    expect(aside().textContent).toContain('检查桌面启动流程')
-
-    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'j' })))
-    expect(aside().textContent).toContain('验证历史会话加载速度')
-    expect(aside().textContent).not.toContain('检查桌面启动流程')
-
-    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k' })))
-    expect(aside().textContent).toContain('检查桌面启动流程')
-
-    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' })))
-    await flushQueries()
-    expect(mocks.conductorSubagentAction).toHaveBeenCalledWith(
-      'reviewing', 'accept', '', null, {}, false, undefined,
-    )
   })
 
   it('renders the worker reply chat-style and anchors reached milestones inline', async () => {
@@ -1595,8 +1559,10 @@ describe('Conductor chat scroll restoration', () => {
     // The archived state surfaces as the status word instead of a pill.
     expect(Array.from(host.querySelectorAll('.conductor-worker-status')).map((el) => el.textContent))
       .toEqual(['存档', '存档'])
-    // Truncated archive rows say so instead of claiming a live wait.
-    expect(text).toContain('存档记录：处理结果未随快照保留')
+    // Truncated archive rows say so instead of claiming a live wait: the row
+    // itself only carries the 存档 badge, and the honest "正文未保留" wording
+    // lives in the dossier's result section.
+    expect(text).toContain('存档未保留执行正文')
     // The dossier reflects the last worker and stays read-only.
     const aside = host.querySelector('aside') as HTMLElement
     expect(aside.textContent).toContain('存档记录')

@@ -238,30 +238,28 @@ export function WorkerDossier({
             {sub.status === 'running' ? '进行中摘要' : '处理结果'}
           </h3>
           {reply ? (
-            <div className="conductor-dossier-reply mt-1 space-y-3">
-              {replyTurns.map((turn, turnIndex) => (
-                <div key={`turn-${turnIndex}`} className="space-y-2">
-                  {replyTurns.length > 1 && (
-                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-                      {turn.index > 0 ? `第 ${turn.index} 轮` : '前置说明'}
-                    </p>
-                  )}
-                  {/* Reached-milestone marker lines are lifted out of the
-                      prose without rendering chips: the 进度里程碑 section
-                      above already carries that state — chips here read as
-                      the same fact twice. */}
-                  {splitReplyByMilestones(turn.text, milestones).map((segment, index) => (
-                    segment.kind === 'text' ? (
-                      <MessageContent
-                        key={`text-${turnIndex}-${index}`}
-                        content={segment.text}
-                        format="markdown"
-                        markdownMode="plain"
-                      />
-                    ) : null
-                  ))}
-                </div>
-              ))}
+            <div className="conductor-dossier-reply mt-1 space-y-2">
+              {replyTurns.map((turn, turnIndex) => {
+                // Turn label rides inline at the start of the content (the
+                // old block heading cost a full line per turn); the content
+                // itself keeps its multi-line structure. Marker lines are
+                // gone via sanitize; unreached-milestone chips are covered
+                // by the 进度里程碑 section above.
+                const text = splitReplyByMilestones(turn.text, milestones)
+                  .map((segment) => (segment.kind === 'text' ? segment.text : ''))
+                  .join('\n')
+                  .trim()
+                if (!text) return null
+                const label = replyTurns.length > 1
+                  ? (turn.index > 0 ? `第 ${turn.index} 轮` : '前置')
+                  : ''
+                return (
+                  <div key={`turn-${turnIndex}`} className="conductor-dossier-turn">
+                    {label && <span className="conductor-dossier-turn-label">{label}</span>}
+                    <MessageContent content={text} format="markdown" markdownMode="plain" />
+                  </div>
+                )
+              })}
             </div>
           ) : (
             <p className="mt-1 text-xs text-ink-muted">
