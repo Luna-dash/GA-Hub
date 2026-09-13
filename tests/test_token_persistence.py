@@ -134,5 +134,53 @@ class TokenPersistenceTests(unittest.TestCase):
         self.assertEqual(result["all_time"]["total"], 147)
 
 
+    def test_ledger_row_shape_maps_to_call_count(self) -> None:
+        # 流式调用写严格两行：输入侧行（_record_usage）+ 仅输出行（[Output]
+        # 打印）；非流式调用输入输出同写一行。带输入侧 token 的行即一次调用。
+        streaming_input_row = {"t": 1, "k": "GA-s", "i": 100, "o": 0, "cc": 0, "cr": 50}
+        streaming_output_row = {"t": 2, "k": "GA-s", "i": 0, "o": 640, "cc": 0, "cr": 0}
+        nonstream_row = {"t": 3, "k": "GA-s", "i": 80, "o": 300, "cc": 10, "cr": 0}
+        fully_cached_row = {"t": 4, "k": "GA-s", "i": 0, "o": 0, "cc": 0, "cr": 900}
+        empty_row = {"t": 5, "k": "GA-s", "i": 0, "o": 0, "cc": 0, "cr": 0}
+        legacy_aggregate_row = {"t": 6, "k": "GA-s", "i": 10_000, "o": 900, "n": "旧聚合", "_migrated": True}
+
+        self.assertEqual(tokens._ledger_totals(streaming_input_row)["requests"], 1)
+        self.assertEqual(tokens._ledger_totals(streaming_output_row)["requests"], 0)
+        self.assertEqual(tokens._ledger_totals(nonstream_row)["requests"], 1)
+        self.assertEqual(tokens._ledger_totals(fully_cached_row)["requests"], 1)
+        self.assertEqual(tokens._ledger_totals(empty_row)["requests"], 0)
+        # 压缩/迁移行聚合了多次调用，1 是可证明的下界
+        self.assertEqual(tokens._ledger_totals(legacy_aggregate_row)["requests"], 1)
+
+    def test_token_stats_sums_requests_across_streaming_row_pairs(self) -> None:
+        timestamp = int(datetime(2026, 7, 6, 9, 0).timestamp())
+        ledger = [
+            # 一次流式调用 = 输入侧行 + 仅输出行
+            {"k": "GA-chat-a", "t": timestamp, "i": 10, "o": 0, "cc": 3, "cr": 4},
+            {"k": "GA-chat-a", "t": timestamp, "o": 2},
+            # 另一次流式调用
+            {"k": "GA-chat-a", "t": timestamp + 1, "i": 1, "o": 0, "cc": 0, "cr": 0},
+            {"k": "GA-chat-a", "t": timestamp + 1, "o": 1},
+            # 非流式调用 = 单行
+            {"k": "GA-chat-b", "t": timestamp + 2, "i": 20, "o": 5, "cc": 0, "cr": 7},
+        ]
+        metadata = mock.Mock()
+        metadata.list.return_value = [
+            {"id": "chat-a", "title": "并行会话 A"},
+            {"id": "chat-b", "title": "并行会话 B"},
+        ]
+
+        with mock.patch.object(tokens.cost_tracker, "read_ledger", return_value=ledger), \
+             mock.patch.object(tokens, "_SESSION_METADATA", metadata), \
+             mock.patch.object(tokens.time, "time", return_value=timestamp + 3):
+            result = tokens.token_stats()
+
+        self.assertEqual(result["all_time"]["requests"], 3)
+        self.assertEqual(result["days"][0]["requests"], 3)
+        by_id = {row["thread"]: row for row in result["threads"]}
+        self.assertEqual(by_id["chat-a"]["requests"], 2)
+        self.assertEqual(by_id["chat-b"]["requests"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

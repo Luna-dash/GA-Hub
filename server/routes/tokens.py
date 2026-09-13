@@ -60,9 +60,16 @@ def _ledger_totals(entry: dict[str, Any]) -> dict[str, int]:
         }
     except (TypeError, ValueError):
         return _normalise_totals({})
-    # Native GA's ledger does not persist request counts.  Do not invent one
-    # (a compacted row may represent arbitrarily many calls).
-    values["requests"] = 0
+    # The native ledger carries no call counter, but its rows are shaped by
+    # the call that produced them: a streaming call writes a strict pair —
+    # one input-side row (from the _record_usage patch) plus one output-only
+    # row (from the `[Output]` print) — and a non-stream call writes a single
+    # combined row.  So exactly the rows carrying input-side tokens are one
+    # call each.  Compacted / legacy-migrated rows fold many calls into one;
+    # one is the provable lower bound for those.
+    values["requests"] = 1 if (
+        values["input"] or values["cache_create"] or values["cache_read"]
+    ) else 0
     values["total"] = sum(values[key] for key in ("input", "output", "cache_create", "cache_read"))
     return values
 
