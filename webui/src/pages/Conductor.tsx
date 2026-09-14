@@ -1,4 +1,4 @@
-import { MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, FileCheck2, Play, Square } from 'lucide-react'
 import '@/styles/conductor.css'
@@ -131,10 +131,15 @@ export default function Conductor() {
   // open: comparing/stepping through several tasks is the whole point of the
   // list, and closing on every click would force a reopen each time. The
   // dropdown dismisses on outside press / Escape / trigger toggle.
-  const selectHistoryWorkflow = (id: string) => {
+  //
+  // Stable identity (useCallback) is load-bearing, not decoration: both
+  // `HistoryPanel` and `WorkerCard` are memo'd on top of these handlers, and
+  // an inline closure makes the memo comparison fail on every page render
+  // (i.e. on every composer keystroke).
+  const selectHistoryWorkflow = useCallback((id: string) => {
     setPinnedRequestId((current) => (current === id ? null : id))
     setSelectedSid(null)
-  }
+  }, [])
 
   const saveSubagentSettings = ({ llmKey, locked, autoAccept }: SubagentSettingsValue) => {
     selectSubagentLlm(llmKey)
@@ -420,7 +425,7 @@ export default function Conductor() {
   // Worker rows are pure selectors now: the dossier owns all execution
   // detail, so there is no inline expansion state to keep in sync.
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
-  const deleteWorkflow = async (requestId: string) => {
+  const deleteWorkflow = useCallback(async (requestId: string) => {
     if (deletingIds.has(requestId)) return
     const confirmed = await dialog.confirm('删除历史任务', '删除这条历史任务记录？其对话与子代理存档将一并移除，不可恢复。', {
       confirmText: '删除', tone: 'danger',
@@ -444,7 +449,12 @@ export default function Conductor() {
         return next
       })
     }
-  }
+  }, [deletingIds, pinnedRequestId, qc])
+  // The history panel takes a `void` handler; keeping the promise in here lets
+  // the memo'd panel receive one stable reference instead of an inline arrow.
+  const requestDeleteWorkflow = useCallback((requestId: string) => {
+    void deleteWorkflow(requestId)
+  }, [deleteWorkflow])
 
   // Retry entry for a failed workflow: prefill the composer with the task's
   // original wording so the user can adjust it and dispatch a fresh task.
@@ -460,13 +470,13 @@ export default function Conductor() {
     setComposerFocusTick((tick) => tick + 1)
   }
 
-  const selectWorker = (sid: string) => {
+  const selectWorker = useCallback((sid: string) => {
     // One click is "open this worker": it selects the dossier and brings the
     // delivery tab forward.
     setSelectedSid(sid)
     setContextTab('delivery')
     setMobileView('context')
-  }
+  }, [])
 
   useEffect(() => {
     if (workflowSubagents.length === 0) {
@@ -503,7 +513,7 @@ export default function Conductor() {
           rows={historyRows}
           selectedId={currentWorkflow?.request_id}
           onSelect={selectHistoryWorkflow}
-          onDelete={(id) => void deleteWorkflow(id)}
+          onDelete={requestDeleteWorkflow}
           deletingIds={deletingIds}
         />
       }

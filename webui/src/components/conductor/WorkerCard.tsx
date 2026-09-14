@@ -20,7 +20,9 @@ import {
 
 export const WorkerCard = memo(function WorkerCard({ sub, index, selected, onSelect }: {
   sub: ConductorSubagent; index?: number; selected: boolean
-  onSelect: () => void
+  /** Page-level selector, unchanged between renders: a per-row closure would
+   *  break this component's memo comparison on every parent render. */
+  onSelect: (id: string) => void
 }) {
   const view = subagentPhase(sub)
   const facts = reviewFacts(sub)
@@ -43,7 +45,7 @@ export const WorkerCard = memo(function WorkerCard({ sub, index, selected, onSel
   const metaNote = metaParts.join(' · ')
   const numberLabel = index ? `#${index}` : ''
   return <article className="conductor-worker-card" data-selected={selected || undefined} data-archived={archived || undefined}>
-    <button type="button" className="conductor-worker-toggle" onClick={onSelect}
+    <button type="button" className="conductor-worker-toggle" onClick={() => onSelect(sub.id)}
       aria-pressed={selected}
       aria-label={`查看子代理 ${numberLabel}：${workerTitle(sub)}`}>
       <span className="conductor-worker-index" aria-hidden="true">{numberLabel}</span>

@@ -26,18 +26,43 @@
    marking a boundary. The group gap does that job on its own. */
 .conductor-header-actions { display: flex; align-items: center; gap: 22px; min-width: 0; }
 /* 历史任务 = page-level look-back navigation, so it holds the middle of the
-   title bar instead of a slot in the right-hand cluster. Anchored to
-   PageShell's `relative` header, so it is centred on the bar itself — flex
-   centring inside the middle area would instead centre it on the space left
-   between title and actions, which the 210px model select skews left. */
-.conductor-header-history { position: absolute; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; }
+   title bar instead of a slot in the right-hand cluster. On a wide bar it is
+   anchored to PageShell's `relative` header and centred on the bar itself —
+   flex centring inside the middle area would instead centre it on the space
+   left between title and actions, which the 210px model select skews left.
+
+   That centring only holds while the bar has room to spare. An absolutely
+   positioned box takes no part in flex layout, so it cannot be compressed
+   and it cannot be pushed aside: overlap starts at ~1144px and grows as the
+   window narrows (measured with Chrome/CDP on the built page: 122px of
+   overlap at a 900px viewport, 72px at 1000px). So the absolute anchor is
+   now the wide-bar case only — with a hand-width of margin, switching at
+   1200px rather than at the exact crossover — and narrow widths fall back to
+   a normal flex slot: the trigger travels with the middle area, the page
+   header wraps, and the right-hand cluster drops to its own row instead of
+   being overrun. The slot is shrink-proof on purpose — squeezed to fit one
+   row it breaks mid-label ("历史/任务" plus the counts stacked in a 129px
+   button), which reads as broken; wrapping the row is the honest fallback. */
+.conductor-header-history { position: static; z-index: 5; display: flex; align-items: center; flex-shrink: 0; }
+@media (min-width: 1200px) {
+  .conductor-header-history { position: absolute; left: 50%; transform: translateX(-50%); }
+}
+/* Only this page's header carries the cluster, so these two rules need no
+   page-scoped ancestor — and both are load-bearing:
+   1. the header may wrap, so a squeezed row has somewhere to go;
+   2. the middle area's basis becomes content-sized. PageShell ships it as
+      `flex-1` (i.e. `flex-basis: 0`), which hides the trigger from flex line
+      breaking entirely: every row "fits", the middle area then overflows its
+      own box, and the trigger lands on the 主模型 group instead of the header
+      wrapping (measured: 15px at a 1000px viewport). */
+header:has(.conductor-header-actions) { flex-wrap: wrap; }
+header:has(.conductor-header-history) > div:has(.conductor-header-history) { flex-basis: auto; }
 .conductor-icon-button { width: 32px; height: 32px; flex: 0 0 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; color: var(--c-text-muted); }
 .conductor-icon-button:hover { background: var(--c-accent-soft); color: var(--c-accent); }
 .conductor-send-button { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex: 0 0 40px; border-radius: 5px; color: white; background: var(--c-accent); }
 .conductor-send-button:disabled { opacity: .45; }
 .conductor-recovery { margin: -10px -12px 10px; padding: 9px 12px; border-bottom: 1px solid #EBD8AC; background: #FFF3D8; font-size: 12px; color: #7A4F08; overflow-wrap: anywhere; }
 .conductor-current { min-width: 0; background: var(--c-bg-card); border: 1px solid var(--c-line); border-radius: 12px; padding: 10px 14px 12px; box-shadow: 0 2px 10px rgba(45, 34, 22, 0.06); }
-.conductor-history-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .conductor-current-title-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 /* The request原文 lives in full on the chat log below; here it is a single
    identity line — one line keeps the board a header, not a document. */
@@ -168,6 +193,10 @@
 .conductor-history-running { color: var(--c-text-faint); animation: conductor-spin 1.6s linear infinite; }
 @keyframes conductor-spin { to { transform: rotate(360deg); } }
 .conductor-history-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+/* The row's trailing cell holds one <time> only — the "3/5 已通过" counts were
+   dropped from the row, so no justify-content/gap here (a leftover
+   space-between definition lived in the current-task block and was shadowed
+   by this one anyway). */
 .conductor-history-meta { display: inline-flex; align-items: center; color: var(--c-text-faint); font-size: 10px; white-space: nowrap; }
 .conductor-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 22px 16px; text-align: center; color: var(--c-text-muted); font-size: 12px; }
 /* Chat-grade markdown rhythm: .prose-chat's bubble spacing (leading-7
@@ -208,6 +237,5 @@
   .conductor-recovery { margin: -10px -12px 8px; }
   .conductor-history-row { gap: 8px; }
   .conductor-history-meta { display: block; text-align: right; }
-  .conductor-history-meta span { display: block; }
   .conductor-history-delete { opacity: 1; }
 }

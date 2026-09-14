@@ -60,14 +60,25 @@ const ACTIVITY_LIMIT = 4000
 
 type SnapshotVersion = { boot_id?: string | null; snapshot_revision?: number }
 
+// Legacy sidecar only (a current hub authors the row itself — see
+// conductor_activity.py): engine worker-event name → activity kind. This table
+// and RuntimeEffects.WORKER_EVENT_LABEL must cover the SAME names, and a gap
+// is silent — `addWorkerActivity` drops a row it cannot colour, so
+// started/reworked/cancelled/killed (labels without a kind here) simply never
+// appeared in the timeline on an older sidecar. Keep the two tables' key sets
+// identical; the RuntimeEffects test walks every relayed name for that reason.
 const WORKER_EVENT_KIND: Record<string, ConductorActivityEvent['kind'] | undefined> = {
   spawned: 'worker_spawned',
+  started: 'worker_started',
+  reworked: 'worker_reworked',
   completed: 'worker_completed',
   pending_review: 'worker_completed',
   failed: 'worker_failed',
   timeout_total: 'worker_timeout',
   accepted: 'worker_accepted',
   rejected: 'worker_rejected',
+  cancelled: 'worker_cancelled',
+  killed: 'worker_killed',
 }
 
 function requestOutcomeKind(status: string): ConductorActivityEvent['kind'] {

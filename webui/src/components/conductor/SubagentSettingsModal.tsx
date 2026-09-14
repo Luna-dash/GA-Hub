@@ -96,7 +96,7 @@ export function SubagentSettingsModal({ llms, value, locked, autoAccept, open, o
             </label>
             <label
               className={clsx(
-                'flex items-center gap-2 text-sm text-[#4E4233]',
+                'flex items-center gap-2 text-sm text-ink',
                 draftKey === null && 'opacity-50',
               )}
             >
@@ -109,7 +109,7 @@ export function SubagentSettingsModal({ llms, value, locked, autoAccept, open, o
               固定使用所选模型
             </label>
             <div className="border-t border-line/70 pt-4">
-              <label className="flex items-center gap-2 text-sm text-[#4E4233]">
+              <label className="flex items-center gap-2 text-sm text-ink">
                 <input
                   type="checkbox"
                   checked={draftAutoAccept}

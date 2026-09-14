@@ -50,7 +50,7 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
       el.scrollTop = rememberedTop === null
         ? el.scrollHeight
         : Math.min(rememberedTop, el.scrollHeight)
-      followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96
+      followRef.current = isNearScrollBottom(el)
       restoredRef.current = true
     })
     return () => cancelAnimationFrame(frame)

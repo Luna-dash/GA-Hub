@@ -4,7 +4,7 @@ import { api } from '@/api/client'
 import type { EmailConfig, TaskRun, TaskSchedule, TaskScheduleType } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { ModalOverlay } from '@/components/ModalOverlay'
-import { relTime } from '@/utils/foldTurns'
+import { formatRelativeTime } from '@/utils/timeFormat'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { dialog } from '@/stores/dialogStore'
 import { useHubEvent } from '@/hooks/useHubEvent'
@@ -84,7 +84,7 @@ export default function Tasks() {
               <tbody>
                 {runs.map((r: TaskRun) => (
                   <tr key={r.id} className="border-t border-line/60 align-top">
-                    <td className="p-2.5 text-slate-400 whitespace-nowrap">{relTime(r.fired_at)}</td>
+                    <td className="p-2.5 text-slate-400 whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
                     <td className="p-2.5 text-slate-200">{r.task_name || r.task_id}</td>
                     <td className="p-2.5"><StatusBadge status={r.status} /></td>
                     <td className="p-2.5 text-slate-400 max-w-lg">
@@ -139,7 +139,7 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
         {s.type === 'interval' && `每 ${s.interval_minutes} 分钟`}
       </div>
       <div className="text-xs text-slate-500">邮件 {s.notify_email ? '开启' : '关闭'} · 已触发 {s.fire_count} 次</div>
-      <div className="text-xs text-slate-500 mt-1">上次 {s.last_fired_at ? relTime(s.last_fired_at) : '—'}</div>
+      <div className="text-xs text-slate-500 mt-1">上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
       <div className="flex gap-2 mt-3 flex-wrap">
         <button onClick={onFire} className="text-xs px-2.5 py-1 rounded bg-accent text-white">立即触发</button>
         <button onClick={toggle} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5">{s.enabled ? '禁用' : '启用'}</button>

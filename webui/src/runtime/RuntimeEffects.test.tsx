@@ -149,5 +149,40 @@ describe('RuntimeEffects', () => {
       expect(useConductorStore.getState().activity[0].text).toBe('子代理已派出')
       expect(useConductorStore.getState().activity[0].kind).toBe('worker_spawned')
     })
+
+    it('projects every relayed worker event, not just the ones this build can colour', () => {
+      const onEvent = mount()
+
+      // Mirrors server/services/conductor_activity.WORKER_ACTIVITY: the names a
+      // hub can relay as `conductor:subagent_<name>`. This is a two-table
+      // contract — RuntimeEffects labels a name, conductorStore maps it to an
+      // activity kind — and a name present in only one of them is dropped
+      // without a word. That is how started / reworked / cancelled / killed
+      // went missing from the timeline on older sidecars, so the count
+      // assertion below is the actual regression guard: every relayed name
+      // must end up as a row.
+      const names = [
+        'spawned', 'started', 'reworked', 'pending_review', 'accepted',
+        'rejected', 'timeout_total', 'failed', 'cancelled', 'killed',
+      ]
+      names.forEach((name, index) => {
+        onEvent({
+          topic: `conductor:subagent_${name}`,
+          event_id: 100 + index,
+          ts: 1_700_000_100 + index,
+          payload: { request_id: 'r1', id: `w${index}` },
+        })
+      })
+
+      const rows = useConductorStore.getState().activity
+      expect(rows).toHaveLength(names.length)
+      const kindByText = new Map(rows.map((row) => [row.text, row.kind]))
+      // The four that used to be dropped now record the same kinds the hub
+      // authors for those transitions.
+      expect(kindByText.get('子代理开工')).toBe('worker_started')
+      expect(kindByText.get('按返工意见重新处理')).toBe('worker_reworked')
+      expect(kindByText.get('子代理已取消')).toBe('worker_cancelled')
+      expect(kindByText.get('子代理已终止')).toBe('worker_killed')
+    })
   })
 })

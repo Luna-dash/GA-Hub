@@ -133,6 +133,24 @@ describe('stripContractTail', () => {
     expect(stripContractTail(reply)).toBe('正文内容\n\nMILESTONE-m1-DONE\nMILESTONE-m2-DONE')
   })
 
+  // 2026-09-14 alias: the same prompt injects [Task Goal]/[Status]/[Milestones]/
+  // [Reply Format] in single brackets only, so a worker normalising the doubled
+  // bracket must still be stripped — the engine reads this spelling too.
+  it('removes the single-bracket alias pair', () => {
+    const reply = '正文内容\n\n[GAHUB_TASK_DONE]\n<summary>任务完成</summary>'
+    expect(stripContractTail(reply)).toBe('正文内容')
+  })
+
+  it('removes a bare trailing single-bracket alias marker', () => {
+    const reply = '正文内容\n\n[GAHUB_TASK_DONE]'
+    expect(stripContractTail(reply)).toBe('正文内容')
+  })
+
+  it('keeps a single-bracket alias that is mid-text', () => {
+    const reply = '提到 [GAHUB_TASK_DONE] 之后继续\n结尾'
+    expect(stripContractTail(reply)).toBe(reply)
+  })
+
   it('keeps a lone legacy [DONE] — it is not a completion signal on its own', () => {
     const reply = '正文内容\n\n[DONE]'
     expect(stripContractTail(reply)).toBe(reply)
@@ -418,20 +436,19 @@ describe('historyRowsOf', () => {
     expect(rows[1].needsAttention).toBe(false)
   })
 
-  it('counts archived workers from the merged list instead of the tracker map', () => {
-    const rows = historyRowsOf(
-      [workflow({ request_id: 'r1', stage: 'completed', status: 'completed' })],
-      [
-        { id: 'w1', request_id: 'r1', archived: true, review_status: 'accepted', created_at: 1 },
-        { id: 'w2', request_id: 'r1', archived: true, review_status: 'pending', created_at: 2 },
-      ] as never,
-      new Map(),
-      true,
-    )
-    // The tracker map is empty: without the merged list this would read
-    // "尚未指派" under two visible cards.
-    expect(rows[0].total).toBe(2)
-    expect(rows[0].accepted).toBe(1)
+  it('reads workers from the merged list, not just the tracker map', () => {
+    // The tracker map is empty and the pool row carries no archived flag, so
+    // only the request_id merge can see it. Without it the row would read
+    // "no worker" while the board shows a card waiting for review — and the
+    // attention badge on the header trigger would stay dark.
+    const workers = [
+      { id: 'w1', request_id: 'r1', status: 'stopped', review_status: 'pending', created_at: 1 },
+    ] as never
+    const withWorker = historyRowsOf([workflow({})], workers, new Map(), true)
+    const without = historyRowsOf([workflow({})], [], new Map(), true)
+
+    expect(withWorker[0].needsAttention).toBe(true)
+    expect(without[0].needsAttention).toBe(false)
   })
 
   it('locks deletion of a live row while the conductor runs', () => {

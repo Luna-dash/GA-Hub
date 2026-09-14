@@ -53,13 +53,8 @@ export function previewText(s: string, n = 80): string {
   return flat.length > n ? flat.slice(0, n) + '…' : flat
 }
 
-/** Format a unix epoch (seconds) as relative time, fallback to local string. */
-export function relTime(ts: number): string {
-  if (!ts) return ''
-  const d = Math.floor(Date.now() / 1000) - ts
-  if (d < 60) return `${d}秒前`
-  if (d < 3600) return `${Math.floor(d / 60)}分前`
-  if (d < 86400) return `${Math.floor(d / 86400)}小时前`
-  if (d < 86400 * 30) return `${Math.floor(d / 86400)}天前`
-  return new Date(ts * 1000).toLocaleString()
-}
+// 相对时间曾在此实现过一份 `relTime`（2026-09-14 删除）：它与
+// `utils/timeFormat.ts` 的 `formatRelativeTime` 是同一功能的两套实现，
+// 措辞还不一致（`N分前` vs `N分钟前`），且其小时档曾因除数误写成 86400
+// 而恒显「0小时前」。Autonomous.tsx / Tasks.tsx 已改用 `formatRelativeTime`，
+// 这里不再保留第二份——要加相对时间请用 `utils/timeFormat.ts`。

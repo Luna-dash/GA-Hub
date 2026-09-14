@@ -7,7 +7,7 @@ import type { Schedule, ScheduleType } from '@/api/types'
 import { MessageContent } from '@/components/MessageContent'
 import { PageShell } from '@/components/PageShell'
 import { ModalOverlay } from '@/components/ModalOverlay'
-import { relTime } from '@/utils/foldTurns'
+import { formatRelativeTime } from '@/utils/timeFormat'
 import { dialog } from '@/stores/dialogStore'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { useHubEvent } from '@/hooks/useHubEvent'
@@ -97,7 +97,7 @@ export default function Autonomous() {
               <tbody>
                 {runs.map((r) => (
                   <tr key={r.id} className="border-t border-line/60">
-                    <td className="p-2.5 text-slate-400 whitespace-nowrap">{relTime(r.fired_at)}</td>
+                    <td className="p-2.5 text-slate-400 whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
                     <td className="p-2.5 text-slate-200">{r.schedule_id}</td>
                     <td className="p-2.5 text-slate-400 truncate max-w-md">{r.prompt_preview}</td>
                     <td className="p-2.5">
@@ -176,7 +176,7 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
         {s.type === 'cron' && <CronCardLine expr={s.cron} />}
         {s.type === 'interval' && `每 ${s.interval_minutes} 分钟`}
       </div>
-      <div className="text-xs text-slate-500">已触发 {s.fire_count} 次 · 上次 {s.last_fired_at ? relTime(s.last_fired_at) : '—'}</div>
+      <div className="text-xs text-slate-500">已触发 {s.fire_count} 次 · 上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
       <div className="flex gap-2 mt-3 flex-wrap">
         <button onClick={onFire} className="text-xs px-2.5 py-1 rounded bg-accent text-white">立即触发</button>
         <button onClick={toggle} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5">{s.enabled ? '禁用' : '启用'}</button>

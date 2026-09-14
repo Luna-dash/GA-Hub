@@ -132,13 +132,13 @@ export function TaskCard({
           </h3>
           {!collapsed && (
             <div id="conductor-process-grid" className="conductor-worker-grid" aria-label="子代理详情">
+              {/* The row gets the page-level handler verbatim rather than a
+                  per-row closure: WorkerCard is memo'd, and an inline arrow
+                  allocated here would fail that comparison on every parent
+                  render (every composer keystroke re-renders the page). The
+                  row knows its own id, so it can pass it along itself. */}
               {workers.map((sub) => <WorkerCard key={sub.id} sub={sub} index={workerNumberById.get(sub.id)} selected={sub.id === selectedSid}
-                onSelect={() => {
-                  // One click is "open this worker": it selects the dossier
-                  // and brings the delivery tab forward. The row itself has
-                  // no second state to toggle any more.
-                  onSelectWorker(sub.id)
-                }} />)}
+                onSelect={onSelectWorker} />)}
             </div>
           )}
           {!collapsed && workers.length === 0 && workerCount > 0 && (

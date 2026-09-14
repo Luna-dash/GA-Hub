@@ -358,8 +358,6 @@ export type HistoryRow = {
   requestId: string
   title: string
   view: { label: string; detail: string; tone: WorkflowTone }
-  total: number
-  accepted: number
   needsAttention: boolean
   deletable: boolean
   closed: boolean
@@ -395,21 +393,15 @@ export function historyRowsOf(
     const closed = isWorkflowClosed(workflow)
     const needsAttention = view.tone === 'error' || (!closed && (workflow.stage === 'awaiting_review'
       || workflow.stage === 'recoverable_failure' || owned.some(isReviewable)))
-    // Count from the merged worker list when we have it: archived rows are
-    // in `owned` but absent from the tracker's subagents map, and a history
-    // row saying "尚未指派" while the board shows four cards contradicts
-    // itself. The tracker map stays the fallback for workers already pruned
-    // from both pool and archive.
-    const total = owned.length || Object.keys(workflow.subagents).length
-    const accepted = owned.length
-      ? owned.filter((worker) => worker.review_status === 'accepted').length
-      : Object.values(workflow.subagents).filter((worker) => worker.state === 'accepted').length
+    // `owned` merges the tracker's subagents map with the pool/archive rows
+    // tagged with this request: archived workers are absent from the tracker
+    // map, and a row that reads "no worker" while the board shows four cards
+    // contradicts itself. (It used to also feed a "N/M 已通过" counter in the
+    // row; that was never rendered, so the counter is gone.)
     return {
       requestId: workflow.request_id,
       title: titles.get(workflow.request_id) || '未命名任务',
       view,
-      total,
-      accepted,
       needsAttention,
       deletable: closed || !started,
       closed,
@@ -483,26 +475,45 @@ export function milestoneCheckSummary(check?: WorkerMilestoneCheck | null): stri
 
 /**
  * The engine's completion contract appends a marker pair to the final reply
- * (conductor_core._DONE_TAIL_RE): the canonical `[[GAHUB_TASK_DONE]]
- * <summary>…</summary>` since 2026-09-08, or the legacy `[DONE]
- * <summary>…</summary>`. That is protocol noise for a human reader — strip
- * it before rendering. Completion is already surfaced as UI state
+ * (conductor_core._DONE_TAIL_RE). That is protocol noise for a human reader
+ * — strip it before rendering. Completion is already surfaced as UI state
  * (done_marker → 阶段/「未确认完成」), so the token carries no information
  * a reader needs.
  *
+ * Three marker spellings are recognised, in lockstep with the engine:
+ * `[[GAHUB_TASK_DONE]]` (canonical, 2026-09-08), `[GAHUB_TASK_DONE]` (alias
+ * added 2026-09-14: the model is prone to normalising the doubled bracket to
+ * match every other single-bracketed tag in the same prompt), and the legacy
+ * short `[DONE]`. The engine reads all three; this function must strip all
+ * three — if one side is wider than the other, the extra spelling either
+ * leaks protocol noise into the dossier or blanks a real sentence.
+ *
  * Two shapes are stripped, in order:
  * 1. the full pair (marker + `<summary>` line);
- * 2. a bare trailing canonical marker — workers routinely emit the marker
- *    and drop the summary line (the engine then reports done_marker=false).
- *    Only the double-bracket form qualifies: a lone legacy `[DONE]` is
- *    ambiguous with ordinary prose AND the engine refuses to read it as a
+ * 2. a bare trailing long marker — workers routinely emit the marker and
+ *    drop the summary line (the engine then reports done_marker=false).
+ *    Only the long `GAHUB_TASK_DONE` spellings qualify: a lone legacy `[DONE]`
+ *    is ambiguous with ordinary prose AND the engine refuses to read it as a
  *    completion signal on its own, so leaving it is the safer default.
  * Anything mid-text is left alone: only the tail is contract.
+ *
+ * Scope (2026-09-14 audit): the marker is a WORKER contract. It is injected
+ * into a dispatch worker's prompt (gahub_app.WORKER_CONTRACT + the
+ * "[Reply Format]" section) and the engine reads it back only from a
+ * subagent's final output (conductor_core._DONE_TAIL_RE against acc /
+ * raw_final, feeding `done_marker`). The supervisor's own chat messages are
+ * never marker-bearing, and no hub-side chat path synthesizes one, so the
+ * dossier is the only surface that needs this strip — the conversation is
+ * deliberately left verbatim (a user prompt is literal text, and truncating
+ * a supervisor sentence that quotes the format would lose real content).
  */
 export function stripContractTail(reply: string): string {
   return reply
-    .replace(/(?:\[\[GAHUB_TASK_DONE\]\]|\[DONE\])\s*<summary>[\s\S]*?<\/summary>\s*$/i, '')
-    .replace(/\[\[GAHUB_TASK_DONE\]\]\s*$/i, '')
+    .replace(
+      /(?:\[\[GAHUB_TASK_DONE\]\]|\[GAHUB_TASK_DONE\]|\[DONE\])\s*<summary>[\s\S]*?<\/summary>\s*$/i,
+      '',
+    )
+    .replace(/(?:\[\[GAHUB_TASK_DONE\]\]|\[GAHUB_TASK_DONE\])\s*$/i, '')
     .trimEnd()
 }
 

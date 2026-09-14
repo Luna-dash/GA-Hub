@@ -100,6 +100,10 @@ export function useConductorActivity(requestId: string | null, enabled = true): 
     // No cursor means nothing has been read yet (first load failed, or the
     // task held no rows) — reading the newest page again is the retry.
     const pivot = cursor.current
+    // `+ 1` is deliberate, not an off-by-one: `beforeMs` is an exclusive bound
+    // on the hub side, and rows may share a millisecond. Passing `pivot` flat
+    // would skip the rest of that millisecond's bucket forever; passing
+    // `pivot + 1` re-reads it, and the store dedupes by id.
     void read(pivot === null ? undefined : pivot + 1)
   }, [read])
 
