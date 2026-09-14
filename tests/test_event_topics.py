@@ -62,7 +62,14 @@ def test_every_publish_topic_is_registered() -> None:
 
 
 def test_registry_has_no_orphans() -> None:
-    """Every registered topic constant is referenced outside the registry."""
+    """Every registered topic constant is referenced by its name.
+
+    The wire value does NOT count as a reference: a publisher writing
+    ``"conductor:request_outcome"`` instead of the constant is precisely the
+    drift this registry exists to stop, so matching on the value would
+    whitelist it. Dynamic ``"conductor:" + kind`` topics are exempt because
+    the constant is not what builds them.
+    """
     other_text = "\n".join(
         path.read_text(encoding="utf-8")
         for path in (ROOT / "server").rglob("*.py")
@@ -70,9 +77,9 @@ def test_registry_has_no_orphans() -> None:
     )
     orphans = [
         name
-        for name in vars(event_topics)
+        for name, value in vars(event_topics).items()
         if name.isupper()
-        and isinstance(vars(event_topics)[name], str)
+        and isinstance(value, str)
         and name not in other_text
     ]
     assert orphans == []

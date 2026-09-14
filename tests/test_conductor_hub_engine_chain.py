@@ -94,13 +94,34 @@ def _chain_service(monkeypatch: pytest.MonkeyPatch, engine: _FakeEngine) -> Cond
     return service
 
 
+def _wire_recovery_protocol(engine: _FakeEngine) -> None:
+    """Script the endpoints the command track touches before the accept POST:
+    status probe, recovery protocol, journal catch-up, worker envelope."""
+    engine.on("GET", "/status", {"started": True, "stopping": False})
+    engine.on("GET", "/recovery",
+              {"protocol_version": 2, "boot_id": "b1",
+               "capabilities": ["snapshot_revision", "path_policy",
+                                "request_recovery", "guarded_actions",
+                                "operation_receipts"],
+               "path_policy": {"mode": "explicit_absolute"},
+               "requests": []})
+    engine.on("GET", "/journal",
+              {"journal": {"epoch": "journal-a", "last_seq": 0,
+                           "disabled": False}, "events": []})
+    engine.on("GET", "/subagent",
+              {"boot_id": "b1", "snapshot_revision": 1, "items": []})
+
+
 def test_accept_forwards_force_through_the_real_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Regression: force used to raise TypeError at the service→client seam."""
+    monkeypatch.setenv("GAHUB_PATH_POLICY", "explicit_absolute")
     engine = _FakeEngine()
-    engine.on("GET", "/health", {})
-    engine.on("GET", "/status", {"started": True, "stopping": False})
+    _wire_recovery_protocol(engine)
+    engine.on("GET", "/subagent/w1",
+              {"id": "w1", "boot_id": "b1", "active_generation": 1,
+               "command_revision": 3, "review_status": "pending"})
     engine.on("POST", "/subagent", {"id": "w1", "status": "stopped",
                                     "active_generation": 1})
     service = _chain_service(monkeypatch, engine)
@@ -120,10 +141,13 @@ def test_accept_forwards_force_through_the_real_client(
 def test_plain_accept_omits_force(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A clean accept stays a plain accept: no force flag on the wire."""
+    """A clean accept stays a plain accept: force is never truthy on the wire."""
+    monkeypatch.setenv("GAHUB_PATH_POLICY", "explicit_absolute")
     engine = _FakeEngine()
-    engine.on("GET", "/health", {})
-    engine.on("GET", "/status", {"started": True, "stopping": False})
+    _wire_recovery_protocol(engine)
+    engine.on("GET", "/subagent/w1",
+              {"id": "w1", "boot_id": "b1", "active_generation": 1,
+               "command_revision": 3, "review_status": "pending"})
     engine.on("POST", "/subagent", {"id": "w1", "status": "stopped"})
     service = _chain_service(monkeypatch, engine)
 
@@ -131,51 +155,8 @@ def test_plain_accept_omits_force(
 
     accept_calls = [c for c in engine.calls
                     if c["method"] == "POST" and "/subagent/" in c["path"]]
-    assert accept_calls[0]["json"].get("force") is None
-
-
-def test_journal_epoch_change_resets_cursor_and_replays(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A fresh engine journal must renumber the cursor, not filter on it.
-
-    Regression: the old code logged "replaying its events" but kept the old
-    high-water seq, so after an engine restart every event of the new
-    journal (seq restarting at 1) was silently dropped.
-    """
-    engine = _FakeEngine()
-    service = _chain_service(monkeypatch, engine)
-    service._journal_cursor = {"seq": 5000, "epoch": "epoch-1"}
-    fed: list[dict] = []
-    service._on_sse_event = fed.append  # type: ignore[method-assign]
-
-    # First fetch uses the stale floor: the fresh journal has nothing above
-    # seq 5000, but its metadata reveals the epoch change...
-    def journal_payload(after_seq: int) -> dict:
-        if after_seq >= 5000:
-            return {"journal": {"epoch": "epoch-2", "last_seq": 2,
-                                "disabled": False}, "events": []}
-        return {"journal": {"epoch": "epoch-2", "last_seq": 2,
-                            "disabled": False},
-                "events": [
-                    {"seq": 1, "payload": {"event": "subagent_started",
-                                           "id": "w1"}},
-                    {"seq": 2, "payload": {"event": "pending_review",
-                                           "id": "w1"}},
-                ]}
-
-    def _fake_request(method, url, **kwargs):
-        path = "/" + url.split("/", 3)[-1]
-        assert method == "GET" and path.startswith("/journal")
-        return _FakeResponse(journal_payload(int(kwargs["params"]["after_seq"])))
-
-    monkeypatch.setattr(conductor_client_module.requests, "request", _fake_request)
-
-    service._replay_journal()
-
-    # ...so the replay must restart from 0 and feed the new journal's events.
-    assert [e["event"] for e in fed] == ["subagent_started", "pending_review"]
-    assert service._journal_cursor == {"seq": 2, "epoch": "epoch-2"}
+    assert accept_calls[0]["json"]["action"] == "accept"
+    assert not accept_calls[0]["json"].get("force")
 
 
 def test_timeout_monitor_survives_malformed_snapshots() -> None:

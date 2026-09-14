@@ -32,6 +32,7 @@ def _client():
 
 
 def test_accept_http_409_preserves_verification_evidence_through_route(monkeypatch):
+    monkeypatch.setenv("GAHUB_PATH_POLICY", "explicit_absolute")
     evidence = {
         "error": "completion_unverified",
         "id": "worker-1",
@@ -48,9 +49,30 @@ def test_accept_http_409_preserves_verification_evidence_through_route(monkeypat
     calls = []
 
     def request(method, url, **kwargs):
-        calls.append((method, url, kwargs["json"]))
+        calls.append((method, url, kwargs.get("json")))
         if url.endswith("/status"):
             return _response({"started": True, "stopping": False}, 200)
+        if url.endswith("/recovery"):
+            return _response({
+                "protocol_version": 2, "boot_id": "b1",
+                "capabilities": ["snapshot_revision", "path_policy",
+                                 "request_recovery", "guarded_actions",
+                                 "operation_receipts"],
+                "path_policy": {"mode": "explicit_absolute"},
+                "requests": [],
+            }, 200)
+        if url.endswith("/journal"):
+            return _response({"journal": {"epoch": "journal-a", "last_seq": 0},
+                              "events": []}, 200)
+        if url.endswith("/models"):
+            return _response({}, 200)
+        if url.endswith("/subagent"):
+            return _response({"boot_id": "b1", "snapshot_revision": 1,
+                              "items": []}, 200)
+        if url.endswith("/subagent/worker-1") and method == "GET":
+            return _response({"id": "worker-1", "boot_id": "b1",
+                              "active_generation": 1, "command_revision": 3,
+                              "review_status": "pending"}, 200)
         return _response(evidence, 409)
 
     monkeypatch.setattr(client_module.requests, "request", request)
@@ -58,6 +80,7 @@ def test_accept_http_409_preserves_verification_evidence_through_route(monkeypat
     service._process_manager = None
     service._ensure_relay = lambda: None
     service.client = _client()
+    service.pool.client = service.client
     service.pool.update([{"id": "worker-1", "status": "stopped"}])
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)
     app = FastAPI()
@@ -67,7 +90,13 @@ def test_accept_http_409_preserves_verification_evidence_through_route(monkeypat
         result = client.post("/api/conductor/subagent/worker-1", json={"action": "accept"})
 
     assert result.status_code == 409
-    assert result.json() == {"detail": evidence}
+    # The engine's verification evidence rides through verbatim; the command
+    # track only adds its own reconciliation bookkeeping keys.
+    detail = result.json()["detail"]
+    for key, value in evidence.items():
+        assert detail[key] == value
+    assert detail["operation_state"] == "rejected"
+    assert detail["operation_id"]
     assert calls[-1][:2] == ("POST", "http://127.0.0.1:18770/subagent/worker-1")
     assert calls[-1][2]["action"] == "accept"
 

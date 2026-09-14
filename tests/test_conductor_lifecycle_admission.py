@@ -16,10 +16,8 @@ from unittest.mock import Mock
 import pytest
 from fastapi import HTTPException
 
-from server.services.conductor_service import (
-    ConductorNotRunning,
-    ConductorService,
-)
+from server.services.conductor_service import ConductorService
+from server.services.conductor_vocabulary import ConductorNotRunning
 from server.services.conductor_workflow import WorkflowTracker
 
 
@@ -41,21 +39,44 @@ def _ready_service(started: bool) -> ConductorService:
     return service
 
 
-def test_subagent_ops_refuse_when_engine_not_started():
-    """start/input/accept/rework never cold-start the supervisor."""
-    service = _ready_service(started=False)
-    with pytest.raises(ConductorNotRunning):
-        service.start_subagent("do work")
-    with pytest.raises(ConductorNotRunning):
-        service.input_subagent("worker-1", "hello")
-    with pytest.raises(ConductorNotRunning):
-        service.accept_subagent("worker-1")
-    with pytest.raises(ConductorNotRunning):
-        service.rework_subagent("worker-1", "again")
-    # Every op checked engine-process liveness first, but the refusal comes
-    # from the supervisor started-flag: a stopped conductor (engine process
-    # still alive) must not gain workers it cannot wake.
-    assert service._process_manager.ensure_running.call_count == 4
+def test_subagent_ops_refuse_when_engine_not_started(tmp_path, monkeypatch):
+    """No subagent operation may cold-start the supervisor.
+
+    Both entry points are swept: the dispatch facade and every verb in the
+    shared matrix. Two verbs reach the refusal by different routes — the
+    model-carrying ones (input/rework) through ``_admit_action_models`` and
+    the rest (accept/keyinfo/abort) through the shared
+    ``kind in (dispatch, action)`` readiness branch — so a verb that lost its
+    assertion would otherwise be invisible.
+    """
+    from conductor_engine import Engine
+    from server.services.conductor_client import GahubProcessError
+    from server.services.conductor_vocabulary import SUBAGENT_VERBS
+
+    monkeypatch.setenv("GAHUB_PATH_POLICY", "explicit_absolute")
+    engine = Engine()
+    engine.started = False
+    service = ConductorService.for_tests(store_path=tmp_path / "state.sqlite3")
+    service.client = engine
+    service.pool.client = engine
+    service._process_manager = None
+    service._ensure_relay = lambda: None
+    try:
+        ops = [("dispatch", lambda: service.start_subagent("do work"))]
+        ops += [
+            (verb, lambda verb=verb: service.apply_subagent_action(
+                "worker-1", verb, "hello"))
+            for verb in sorted(SUBAGENT_VERBS)
+        ]
+        for label, op in ops:
+            with pytest.raises(GahubProcessError) as raised:
+                op()
+            assert raised.value.status_code == 409, label
+            assert "conductor is not running" in str(raised.value), label
+        # Refusal happens before delivery: the stopped engine saw nothing.
+        assert engine.posts == []
+    finally:
+        service.store.close()
 
 
 def test_assert_engine_ready_passes_when_started():
@@ -102,7 +123,7 @@ def test_stop_abandons_stranded_workflows():
     assert payload["request_id"] == "rid-stranded"
     assert payload["phase"] == "stopped_by_user"
     assert payload["terminal_event"] == "workflow_failed"
-    # Terminal workflows are invisible to the cold-start redispatch sweep.
+    # Terminal workflows are invisible to the cold-start stranded sweep.
     assert tracker.stranded_admitted() == []
     assert tracker.snapshot("rid-stranded")["status"] == "failed"
 

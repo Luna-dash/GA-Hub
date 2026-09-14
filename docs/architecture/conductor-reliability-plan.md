@@ -6,7 +6,7 @@
 
 已验证的性能措施包括 snapshot 摘要缓存、有界 milestone 队列、journal 批量追赶和 SQLite command 索引。前端真实 viewport 验证覆盖桌面、平板和手机尺寸，未发现横向溢出。
 
-范围：`D:/study/GA-Hub` 与 `D:/study/GA/frontends/gahub` 的 Conductor 链路。依据[联合续审报告](D:/study/GA-Hub/docs/GA_HUB_ENGINE_JOINT_REVIEW_20260908_FOLLOWUP.md)，基线为 Hub `85a0a7b` 加已有工作区修改、GA `aba30f7`。本文给出实施选择和验收边界，不代表生产代码已经修复。
+范围：`D:/study/GA-Hub` 与 `D:/study/GA/frontends/gahub` 的 Conductor 链路。依据[联合续审报告](../archive/GA_HUB_ENGINE_JOINT_REVIEW_20260908_FOLLOWUP.md)，基线为 Hub `85a0a7b` 加已有工作区修改、GA `aba30f7`。本文给出实施选择和验收边界，不代表生产代码已经修复。
 
 ## 1. 推荐决策
 
@@ -270,12 +270,13 @@ journal 先改为有界内存的流式读取；流式读取仍需从文件头扫
 
 ### 8.1 已落地的实施
 
-方案已实施为 Hub 工作区改动（基线 `85a0a7b`）与 GA 仓库配套改动（基线 `aba30f7`）：SQLite store、命令意图层、恢复握手、单一有序 journal 消费者、快照版本信封、路径策略声明与握手校验、前端数据 hook 与任务看板。store 模式下 Hub SQLite 是聊天历史与 workflow 投影的权威；store 未启用时保留旧内存路径。
+方案已实施为 Hub 工作区改动（基线 `85a0a7b`）与 GA 仓库配套改动（基线 `aba30f7`）：SQLite store、命令意图层、恢复握手、单一有序 journal 消费者、快照版本信封、路径策略声明与握手校验、前端数据 hook 与任务看板。store 模式下 Hub SQLite 是聊天历史与 workflow 投影的权威。**旧内存路径已于 2026-09-14 删除（见 §8.5）**——ConductorService 在生产中恒启用 store（唯一构造路径 `instance()` 传入 `ADMIN_DATA/conductor/state.sqlite3`），原先"store 未启用则保留旧内存路径"的分支是死代码。
 
 ### 8.2 验证结果
 
 - Hub 全量 pytest：**802 passed / 0 failed / 2 skipped**（2026-09-09，含 §8.3 修复）；本轮新增故障注入测试覆盖 §7 场景 1/2/3/7 的 Hub 侧：回放提交失败整体回滚且游标不动、丢响应跨重启同 request_id 恢复、旧 boot 不自动验收、journal gap/epoch/未知类型/截断四类拒绝、真实 GA ASGI 契约测试覆盖"HTTP 已执行未回执"。
 - 前端：vitest **58 文件 352 passed**，`tsc -b` 通过。
+- 2026-09-14 旧内存轨删除后复跑：Hub 全量 pytest **793 passed / 1 skipped**（见 §8.5）。上条 802/2 是 2026-09-09 的历史快照，不再代表当前基线。
 
 ### 8.3 首轮代码评审修订记录（已完成）
 
@@ -294,3 +295,16 @@ journal 先改为有界内存的流式读取；流式读取仍需从文件头扫
 - **GA 仓库范围**：§7 场景表第 5、8 行的故障测试与联跑套件归属见 §7 场景归属说明，需在 GA 仓库安排对应测试与运行频率。
 - **前端范围**：conductor.css 局部 palette 与全局单主题架构冲突，需决策收敛为命名 token 或回退 :root；TaskBoard/WorkerCard 的 memo 因内联 onSelect 失效；页面级版本信封缺集成测试（现只有 store 单测）；首启示例任务 chips 与桌面栏折叠两处功能删减需产品确认。
 - 真实模型长跑、桌面端端到端测试及全仓库回归仍应在生产实现验证后安排；普通 LiveChat、微信及其他运行域不随本方案迁移。
+
+### 8.5 旧内存轨删除（2026-09-14，工作区改动，未提交 commit）
+
+Conductor 原先并存两条轨道——「命令轨」（指令先写 SQLite，再发引擎，带凭据、可重试）与「内存轨」（直调引擎、靠内存记状态）——职责重复且行为不一致。本次删除旧轨道，Conductor 收敛为单一数据流：**指令先落库 → 再发引擎 → 成功后回填状态**。
+
+- **常量搬家**：动词集合（`SUBAGENT_VERBS`）、异常类（`ConductorNotRunning`）等公共定义集中到 `server/services/conductor_vocabulary.py`，解开 `conductor_service` ↔ `conductor_commands` 的循环依赖（原靠函数内延迟 import 绕环）。
+- **测试基建统一**：`for_tests()` 默认即生产形态（带 SQLite store）；共享假引擎 `tests/conductor_engine.py` 模拟引擎的日志、幂等凭据与恢复协议。
+- **补引擎就绪断言**：改前只有 `dispatch/input/rework` 经 `_assert_engine_ready`；`accept/keyinfo/abort` 一个断言都没有（`ConductorNotRunning` 的 docstring 当时是假声明）。补齐后所有子代理操作在引擎未启动时一律 409 拒绝，不再冷启动。
+- **补模型重推**：`ensure_started` 的冷启动点重推完整 hub 模型快照——引擎自行重启后，subagent 策略不再静默退回 `follow_main`（旧轨的 SSE hello 才会推，旧的 store 模式漏了）。
+- **`resume_workflow` 迁入命令轨**：由 fire-and-forget 的 `client.post_chat` 改为 `commands.submit`（落库 + boot 守卫 + 回执），`operation_id` 由 `(engine, request, snapshot.boot_id, msg)` 派生而非每次新铸 → 双击/传输重试不再重复投递。原 `ConductorService.notify()` 已无生产调用者，一并删除。
+- **命名与契约收尾**：`ensure_started` 的参数 `redispatch_stranded` 改名 `wake_recovery`（批量重发已删，旧名误导）；`CONDUCTOR_REQUEST_OUTCOME` 的裸字符串发布改为常量，topic 孤儿检查恢复严格规则。
+
+对外行为变化仅一处：恢复现在是普通 chat 轮次，引擎回显会在对话中留下重发记录（双击不产生第二条，第二次直接回放已存命令的回执）。

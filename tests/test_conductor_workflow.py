@@ -5,8 +5,11 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from server.services.conductor_service import ConductorService, HubConductorCallbacks
+from server.services.conductor_client import GahubProcessError
+from server.services.conductor_service import ConductorService
 from server.services.conductor_workflow import WorkflowTracker
+
+from conductor_engine import Engine
 
 
 def test_final_report_without_a_dispatched_worker_completes_the_workflow():
@@ -324,68 +327,69 @@ def test_terminal_workflow_transition_publishes_completion():
     assert activity["request_id"] == "request-1"
 
 
-def test_service_rejects_a_final_report_before_acceptance_without_persisting_it():
-    service = ConductorService.for_tests()
-    service.chat_messages = []
-    service.workflow_tracker = WorkflowTracker(clock=lambda: 10.0)
-    service.workflow_tracker.admit("request-1")
-    service.workflow_tracker.bind_subagent("request-1", "worker-1", 1)
+def test_service_rejects_a_final_report_before_acceptance_without_persisting_it(
+        tmp_path, monkeypatch):
+    from conductor_engine import Engine
+    from server.services.conductor_client import GahubProcessError
 
-    with pytest.raises(ValueError, match="before every subagent is accepted"):
-        service.add_chat_message(
-            "premature delivery",
-            role="conductor",
-            request_id="request-1",
-            kind="final",
-        )
+    monkeypatch.setenv("GAHUB_PATH_POLICY", "explicit_absolute")
+    engine = Engine()
+    service = ConductorService.for_tests(store_path=tmp_path / "state.sqlite3")
+    service.client = engine
+    service.pool.client = engine
+    service._process_manager = None
+    service._ensure_relay = lambda: None
+    try:
+        service.workflow_tracker.admit("request-1", boot_id="boot-a")
+        service.workflow_tracker.bind_subagent("request-1", "worker", 1)
 
-    assert service.chat_messages == []
+        with pytest.raises(GahubProcessError) as raised:
+            service.add_chat_message(
+                "premature delivery", role="conductor",
+                request_id="request-1", kind="final")
 
-
-def test_service_final_report_publishes_the_single_workflow_completion():
-    service = ConductorService.for_tests()
-    service.chat_messages = []
-    service.workflow_tracker = WorkflowTracker(clock=lambda: 10.0)
-    service.workflow_tracker.admit("request-1")
-    service.workflow_tracker.bind_subagent("request-1", "worker-1", 1)
-    service.workflow_tracker.record_subagent_event(
-        "worker-1", "accepted", generation=1
-    )
-
-    with patch("server.services.conductor_service.bus.publish") as publish:
-        item = service.add_chat_message(
-            "verified delivery",
-            role="conductor",
-            request_id="request-1",
-            kind="final",
-        )
-
-    assert item["kind"] == "final"
-    topics = [call.args[0] for call in publish.call_args_list]
-    assert topics == ["conductor:chat", "conductor:workflow_completed"]
+        # Deterministic rejection: surfaced immediately, recorded on the
+        # command, and nothing reaches the engine or the hub chat log.
+        assert raised.value.status_code == 422
+        assert "before every subagent is accepted" in str(raised.value)
+        assert engine.posts == []
+        assert service.get_chat_messages() == []
+    finally:
+        service.store.close()
 
 
-def test_generic_conductor_error_is_persisted_once_as_chat():
-    service = ConductorService.for_tests()
-    service.chat_messages = []
-    service.pool = SimpleNamespace(snapshot=lambda: [])
-    callbacks = HubConductorCallbacks(service)
+def test_service_final_report_publishes_the_single_workflow_completion(
+        tmp_path, monkeypatch):
+    from conductor_engine import Engine
 
-    with patch("server.services.conductor_service.bus.publish") as publish:
-        callbacks.on_conductor_event("error", {"error": "stream closed"})
-        callbacks.on_conductor_event("error", {"error": "stream closed"})
+    monkeypatch.setenv("GAHUB_PATH_POLICY", "explicit_absolute")
+    engine = Engine()
+    service = ConductorService.for_tests(store_path=tmp_path / "state.sqlite3")
+    service.client = engine
+    service.pool.client = engine
+    service._process_manager = None
+    service._ensure_relay = lambda: None
+    try:
+        service.workflow_tracker.admit("request-1", boot_id="boot-a")
+        service.workflow_tracker.bind_subagent("request-1", "worker", 1)
+        service.workflow_tracker.record_subagent_event(
+            "worker", "accepted", generation=1)
 
-    assert len(service.chat_messages) == 1
-    item = service.chat_messages[0]
-    assert item["role"] == "error"
-    assert item["kind"] == "error"
-    assert "stream closed" in item["msg"]
-    assert [call.args[0] for call in publish.call_args_list].count(
-        "conductor:chat"
-    ) == 1
-    assert [call.args[0] for call in publish.call_args_list].count(
-        "conductor:error"
-    ) == 2
+        with patch("server.services.conductor_service.bus.publish") as publish:
+            item = service.add_chat_message(
+                "verified delivery", role="conductor",
+                request_id="request-1", kind="final")
+
+        # The engine receipt is echoed back; the hub log carries the final
+        # marker the UI keys on.
+        assert service.get_chat_messages()[-1]["kind"] == "final"
+        topics = [call.args[0] for call in publish.call_args_list]
+        assert topics.count("conductor:chat") == 1
+        assert topics.count("conductor:workflow_completed") == 1
+        snapshot = service.workflow_tracker.snapshot("request-1")
+        assert snapshot["status"] == "completed"
+    finally:
+        service.store.close()
 
 
 def test_hub_snapshot_exposes_the_core_active_generation():
@@ -470,187 +474,132 @@ def test_stranded_admitted_keeps_newest_within_limit():
     assert [wf["request_id"] for wf in stranded] == ["rid-4", "rid-5", "rid-6"]
 
 
-def test_redispatch_re_relays_stranded_admitted_only():
-    service = ConductorService.for_tests()
-    tracker = WorkflowTracker(clock=lambda: 10.0)
-    tracker.admit("rid-strand")
-    tracker.admit("rid-busy")
-    tracker.bind_subagent("rid-busy", "worker-1", 1)
-    service.workflow_tracker = tracker
-    service.chat_messages = [
-        {"id": "c1", "role": "user", "msg": "做鹈鹕任务", "request_id": "rid-strand"},
-        {"id": "c2", "role": "user", "msg": "另一个", "request_id": "rid-busy"},
-    ]
-    service.client = Mock()
-    service.client.get_chat.return_value = []
-    service.client.post_chat.return_value = {"id": "engine-1"}
-
-    service._redispatch_stranded_workflows()
-
-    # P0 idempotency: the redispatch mints a fresh operation id for the
-    # re-delivery (the original admission died with the cold engine).
-    service.client.post_chat.assert_called_once()
-    args, kwargs = service.client.post_chat.call_args
-    assert args == ("做鹈鹕任务", "user", "rid-strand")
-    assert kwargs.get("operation_id")
-
-
-def test_redispatch_ignores_terminal_and_untraceable_requests():
-    service = ConductorService.for_tests()
-    tracker = WorkflowTracker(clock=lambda: 10.0)
-    tracker.admit("rid-strand")
-    tracker.admit("rid-lost")  # no chat message anywhere
-    tracker.fail_supervisor("rid-closed", phase="drain", error="stopped")
-    service.workflow_tracker = tracker
-    service.chat_messages = [
-        {"id": "c1", "role": "user", "msg": "任务", "request_id": "rid-strand"},
-    ]
-    service.client = Mock()
-    service.client.get_chat.return_value = []
-    service.client.post_chat.return_value = {"id": "engine-1"}
-
-    service._redispatch_stranded_workflows()
-
-    service.client.post_chat.assert_called_once()
-    args, kwargs = service.client.post_chat.call_args
-    assert args == ("任务", "user", "rid-strand")
-    assert kwargs.get("operation_id")
-
-
-def test_redispatch_failure_does_not_raise():
-    service = ConductorService.for_tests()
-    tracker = WorkflowTracker(clock=lambda: 10.0)
-    tracker.admit("rid-strand")
-    service.workflow_tracker = tracker
-    service.chat_messages = [
-        {"id": "c1", "role": "user", "msg": "任务", "request_id": "rid-strand"},
-    ]
-    service.client = Mock()
-    service.client.get_chat.return_value = []
-    service.client.post_chat.side_effect = RuntimeError("engine down")
-
-    service._redispatch_stranded_workflows()  # must not raise
-
-
-def test_redispatch_excludes_the_just_admitted_request():
-    """The just-admitted request looks stranded (no workers yet) but the
-    caller is about to notify the engine for it — re-relaying here duplicated
-    the user message (live 2026-09-01 regression)."""
-    service = ConductorService.for_tests()
-    tracker = WorkflowTracker(clock=lambda: 10.0)
-    tracker.admit("rid-new")
-    tracker.admit("rid-old")
-    service.workflow_tracker = tracker
-    service.chat_messages = [
-        {"id": "c1", "role": "user", "msg": "新消息", "request_id": "rid-new"},
-        {"id": "c2", "role": "user", "msg": "旧消息", "request_id": "rid-old"},
-    ]
-    service.client = Mock()
-    service.client.get_chat.return_value = []
-    service.client.post_chat.return_value = {"id": "engine-1"}
-
-    service._redispatch_stranded_workflows(exclude_request_id="rid-new")
-
-    service.client.post_chat.assert_called_once()
-    args, kwargs = service.client.post_chat.call_args
-    assert args == ("旧消息", "user", "rid-old")
-    assert kwargs.get("operation_id")
-
-
-def test_redispatch_empty_history_falls_back_to_engine_chat():
-    service = ConductorService.for_tests()
-    tracker = WorkflowTracker(clock=lambda: 10.0)
-    tracker.admit("rid-strand")
-    service.workflow_tracker = tracker
-    service.chat_messages = []
-    service.client = Mock()
-    service.client.get_chat.return_value = [
-        {"id": "e9", "role": "user", "msg": "引擎侧原文", "request_id": "rid-strand"},
-    ]
-    service.client.post_chat.return_value = {"id": "engine-1"}
-
-    service._redispatch_stranded_workflows()
-
-    service.client.post_chat.assert_called_once()
-    args, kwargs = service.client.post_chat.call_args
-    assert args == ("引擎侧原文", "user", "rid-strand")
-    assert kwargs.get("operation_id")
-
-
 # ===== resume_workflow: per-task relay, the explicit 恢复此任务 =====
 
 
-def _resume_service(service=None):
-    """Shared harness: two stranded workflows plus one with a worker, so a
-    per-task resume can prove it relays exactly one original message and
-    leaves the other open workflows untouched."""
-    service = service or ConductorService.for_tests()
-    tracker = WorkflowTracker(clock=lambda: 10.0)
-    tracker.admit("rid-a")
-    tracker.admit("rid-b")
-    tracker.admit("rid-busy")
+@pytest.fixture
+def resume_engine(tmp_path, monkeypatch):
+    """Two stranded workflows plus one with a worker, wired to the shared
+    in-memory engine. A per-task resume must relay exactly one original
+    message through the guarded chat command and leave the other open
+    workflows untouched."""
+    monkeypatch.setenv("GAHUB_PATH_POLICY", "explicit_absolute")
+    engine = Engine()
+    service = ConductorService.for_tests(store_path=tmp_path / "state.sqlite3")
+    service.client = engine
+    service.pool.client = engine
+    service._process_manager = None
+    service._ensure_relay = lambda: None
+    starts = []
+
+    def ensure_started(**kwargs):
+        starts.append(kwargs)
+        engine.started = True
+        return True
+
+    service.ensure_started = ensure_started
+    service.ensure_started_calls = starts
+    tracker = service.workflow_tracker
+    for rid in ("rid-a", "rid-b", "rid-busy"):
+        tracker.admit(rid, boot_id="boot-a")
     tracker.bind_subagent("rid-busy", "worker-1", 1)
-    service.workflow_tracker = tracker
     service.chat_messages = [
         {"id": "c1", "role": "user", "msg": "任务A", "request_id": "rid-a"},
         {"id": "c2", "role": "user", "msg": "任务B", "request_id": "rid-b"},
     ]
-    service.client = Mock()
-    service.client.get_chat.return_value = []
-    service.client.post_chat.return_value = {"id": "engine-1"}
-    service.ensure_started = Mock(return_value=True)
-    return service
+    yield engine, service
+    service.store.close()
 
 
-def test_resume_workflow_relays_only_the_named_request():
-    service = _resume_service()
+def test_resume_workflow_relays_only_the_named_request(resume_engine):
+    engine, service = resume_engine
 
     assert service.resume_workflow("rid-a") is True
 
-    service.ensure_started.assert_called_once_with(redispatch_stranded=False)
-    service.client.post_chat.assert_called_once()
-    args, kwargs = service.client.post_chat.call_args
-    assert args == ("任务A", "user", "rid-a")
-    assert kwargs.get("operation_id")
+    # The cold start is the per-task one: the recovery wake stays disarmed.
+    # (The command track's own ensure_started() then finds a live engine, so
+    # it never reaches the wake branch either.)
+    assert service.ensure_started_calls[0] == {"wake_recovery": False}
+    # Exactly one message reached the engine, and it is rid-a's original.
+    assert len(engine.posts) == 1
+    assert engine.posts[0]["msg"] == "任务A"
+    assert engine.posts[0]["request_id"] == "rid-a"
+    # It rode the guarded command track: persisted, boot-bound, receipt-stored.
+    command = service.store.command(engine.posts[0]["operation_id"])
+    assert command["state"] == "succeeded"
+    assert command["payload"]["boot_id"] == "boot-a"
+    # Being a chat turn, the relay is mirrored like any other: the engine
+    # appends it to the request's thread, and that echoed turn is the user
+    # visible feedback that the re-send went out.
+    assert [m["msg"] for m in service.chat_messages][-1] == "任务A"
 
 
-def test_resume_workflow_relay_failure_surfaces_to_the_caller():
-    service = _resume_service()
-    service.client.post_chat.side_effect = RuntimeError("engine down")
+def test_resume_workflow_double_click_replays_instead_of_relaying_twice(
+        resume_engine):
+    """P0: the relay is idempotent within one engine boot.
 
-    with pytest.raises(RuntimeError, match="engine down"):
+    The old direct post minted a fresh operation id per click, so a double
+    click (or a transport retry) appended the original instruction twice —
+    the engine has no request_id-level dedupe. The boot-scoped operation id
+    now makes the second call replay the stored outcome.
+    """
+    engine, service = resume_engine
+
+    assert service.resume_workflow("rid-a") is True
+    assert service.resume_workflow("rid-a") is True
+
+    assert len(engine.posts) == 1
+    # ...and the replay leaves the chat log alone: one echoed turn, not two.
+    assert [m["id"] for m in service.chat_messages] == ["c1", "c2", "chat-1"]
+
+
+def test_resume_workflow_relay_failure_surfaces_to_the_caller(resume_engine):
+    engine, service = resume_engine
+    engine.fail_response = True
+
+    with pytest.raises(GahubProcessError, match="lost response"):
         service.resume_workflow("rid-a")
 
 
-def test_resume_workflow_refused_relay_raises_runtime_error():
-    service = _resume_service()
-    service.client.post_chat.return_value = None
+def test_resume_workflow_refuses_when_the_supervisor_cannot_start(
+        resume_engine):
+    engine, service = resume_engine
+    # ensure_started claims success but the engine never came up, so the
+    # supervisor is still down when the command is prepared.
+    service.ensure_started = Mock(return_value=True)
+    engine.started = False
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(GahubProcessError) as excinfo:
         service.resume_workflow("rid-a")
 
+    # 409 + the ConductorNotRunning wording, not a silent no-op or a blind 500.
+    assert excinfo.value.status_code == 409
+    assert "not running" in str(excinfo.value)
 
-def test_resume_workflow_unknown_request_raises_value_error():
-    service = _resume_service()
+
+def test_resume_workflow_unknown_request_raises_value_error(resume_engine):
+    _, service = resume_engine
 
     with pytest.raises(ValueError, match="unknown"):
         service.resume_workflow("rid-missing")
 
 
-def test_resume_workflow_terminal_request_raises_value_error():
-    service = _resume_service()
+def test_resume_workflow_terminal_request_raises_value_error(resume_engine):
+    engine, service = resume_engine
     service.workflow_tracker.fail_supervisor("rid-a", phase="drain", error="stopped")
 
     with pytest.raises(ValueError):
         service.resume_workflow("rid-a")
+    assert engine.posts == []
 
 
-def test_resume_workflow_missing_original_message_raises_value_error():
-    service = _resume_service()
+def test_resume_workflow_missing_original_message_raises_value_error(resume_engine):
+    engine, service = resume_engine
     service.chat_messages = []
 
     with pytest.raises(ValueError, match="原始指令"):
         service.resume_workflow("rid-a")
+    assert engine.posts == []
 
 
 # ===== delete: terminal workflows tombstone instead of resurrect =====

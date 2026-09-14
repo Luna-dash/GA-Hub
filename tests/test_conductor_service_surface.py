@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import io
 import subprocess
-import threading
 from types import SimpleNamespace
-from unittest import mock
 from unittest.mock import MagicMock, Mock
 
 import pytest
@@ -24,38 +22,23 @@ def _bare_service() -> cs.ConductorService:
     return cs.ConductorService.for_tests()
 
 
-def test_get_chat_messages_proxies_engine_items(monkeypatch) -> None:
+def test_get_chat_messages_serves_the_mirrored_history() -> None:
+    """The store-loaded mirror is the hydration authority; the engine's
+    chat memory is gone on every boot (reliability plan §4.3)."""
     service = _bare_service()
+    with service._chat_lock:
+        service.chat_messages = [
+            {"id": "old", "role": "user", "msg": "hi"},
+            {"id": "new", "role": "conductor", "msg": "plan"},
+        ]
 
-    class FakeClient:
-        def __init__(self):
-            self.calls = []
-
-        def get_chat(self, last=20):
-            self.calls.append(last)
-            return [{"id": "a", "role": "user", "msg": "hi"}]
-
-    client = FakeClient()
-    service.client = client
-    assert service.get_chat_messages(last=7) == [
-        {"id": "a", "role": "user", "msg": "hi"}
+    assert service.get_chat_messages(last=1) == [
+        {"id": "new", "role": "conductor", "msg": "plan"}
     ]
-    assert client.calls == [7]
-
-
-def test_get_chat_messages_degrades_to_empty_when_engine_down(monkeypatch) -> None:
-    service = _bare_service()
-
-    class DownClient:
-        def get_chat(self, last=20):
-            raise RuntimeError("engine unreachable")
-
-    service.client = DownClient()
-    assert service.get_chat_messages(last=50) == []
 
 
 def test_replayed_final_for_unknown_request_is_downgraded(monkeypatch) -> None:
-    """Hello-snapshot finals for request ids this tracker never admitted must
+    """Finals for request ids this tracker never admitted must
     log-and-continue: no raise, chat line still mirrored, no transition."""
     service = _bare_service()
     service.chat_messages = []
@@ -256,84 +239,92 @@ def test_subagent_dossier_merges_engine_reply_with_mirror_facts() -> None:
     assert detail["request_id"] == "request-1"
 
 
-# ── apply_subagent_action: the single verb dispatcher ────────────────────────
+# ── apply_subagent_action: single verb front door over the command track ─────
 
-def _dispatch_service() -> cs.ConductorService:
+def _submit_spy(service: cs.ConductorService) -> Mock:
+    """The service layer only builds the intent; delivery is the command
+    track's job (tested end-to-end in test_conductor_recovery.py)."""
+    submit = Mock(return_value={"id": "w1"})
+    service.commands = SimpleNamespace(submit=submit)
+    return submit
+
+
+def test_apply_folds_aliases_onto_canonical_verbs() -> None:
     service = _bare_service()
-    service.pool = SimpleNamespace(
-        get=lambda _sid: SimpleNamespace(),
-        keyinfo_subagent=Mock(return_value={"id": "w1", "status": "ok"}),
-        abort_subagent=Mock(return_value={"id": "w1", "status": "cancelled"}),
-    )
-    return service
+    submit = _submit_spy(service)
 
-
-def test_apply_dispatches_input_aliases_and_attaches_instruction() -> None:
-    service = _dispatch_service()
-    service.input_subagent = Mock(return_value={"id": "w1"})
-
-    result = service.apply_subagent_action(
+    service.apply_subagent_action(
         "w1", "  MSG ", "retry", llm_index=3, conductor_llm_index=1,
         subagent_llm_index=5, subagent_model_policy="locked",
         operation_id="op-1",
     )
+    service.apply_subagent_action("w1", "stop")
 
-    # Aliases normalize (case/whitespace) onto the single input verb.
-    service.input_subagent.assert_called_once_with(
-        "w1", "retry", 3, request_id=None, conductor_llm_index=1,
-        subagent_llm_index=5, subagent_model_policy="locked",
-        operation_id="op-1",
-    )
-    assert result["instruction"] == cs.INSTR_DISPATCHED
-
-
-def test_apply_rework_attaches_instruction_only_on_success() -> None:
-    service = _dispatch_service()
-    service.rework_subagent = Mock(return_value={
-        "id": "w1", "error": "only a stopped pending subagent can be reworked"})
-
-    failed = service.apply_subagent_action("w1", "rework", "again")
-
-    service.rework_subagent.assert_called_once_with(
-        "w1", "again", None, request_id=None, conductor_llm_index=None,
-        subagent_llm_index=None, subagent_model_policy=None,
-        operation_id=None,
-    )
-    assert "instruction" not in failed
-
-    service.rework_subagent = Mock(return_value={"id": "w1"})
-    ok = service.apply_subagent_action("w1", "rework", "again")
-    assert ok["instruction"] == cs.INSTR_DISPATCHED
+    first = submit.call_args_list[0].args[1]
+    assert submit.call_args_list[0].args[0] == "op-1"
+    assert first == {"kind": "action", "sid": "w1", "action": "input",
+                     "msg": "retry", "request_id": None, "force": False,
+                     "llm_index": 3, "conductor_llm_index": 1,
+                     "subagent_llm_index": 5, "subagent_model_policy": "locked"}
+    # stop is the abort alias and carries the hub origin marker.
+    second = submit.call_args_list[1].args[1]
+    assert second["action"] == "abort"
+    assert second["origin"] == "hub"
 
 
-def test_start_subagent_attaches_dispatch_instruction() -> None:
+def test_apply_accept_builds_force_intent() -> None:
     service = _bare_service()
-    service._conductor_llm_index = 1
-    service._subagent_llm_index = None
-    service._subagent_model_policy = "follow_main"
-    service._model_lock = threading.RLock()
-    service.pool = Mock()
-    service.pool.snapshot.return_value = []
-    service.client = Mock()
-    service.client.start_subagent.return_value = {"id": "worker-1", "active_generation": 1}
+    submit = _submit_spy(service)
 
-    result = service.start_subagent("检查桌面启动流程", llm_index=3)
+    service.apply_subagent_action(
+        "w1", "accept", "verified", request_id="rid-1", force=True,
+        operation_id="op-2",
+    )
 
-    # Dispatched responses carry the instruction from the service itself,
-    # the same contract as apply_subagent_action's rework/input verbs.
-    assert result["instruction"] == cs.INSTR_DISPATCHED
+    submit.assert_called_once_with("op-2", {
+        "kind": "action", "sid": "w1", "action": "accept", "msg": "verified",
+        "request_id": "rid-1", "force": True, "llm_index": None,
+        "conductor_llm_index": None, "subagent_llm_index": None,
+        "subagent_model_policy": None})
 
 
-def _callbacks_with_worker(service: cs.ConductorService, worker: SimpleNamespace):
-    callbacks = cs.HubConductorCallbacks(service)
-    original = callbacks._maybe_auto_accept
+def test_apply_forwards_optimistic_concurrency_expectations() -> None:
+    service = _bare_service()
+    submit = _submit_spy(service)
 
-    def _join_after(agent_id, payload):
-        original(agent_id, payload)
-        for thread in list(service._auto_accept_threads):
-            thread.join(timeout=2)
+    service.apply_subagent_action("w1", "accept", operation_id="op-3",
+                                  expected_boot_id="boot-a", expected_generation=2,
+                                  expected_command_revision=7)
 
-    return callbacks, _join_after
+    intent = submit.call_args.args[1]
+    assert intent["expected_boot_id"] == "boot-a"
+    assert intent["expected_generation"] == 2
+    assert intent["expected_command_revision"] == 7
+
+
+def test_apply_rejects_unknown_verb() -> None:
+    service = _bare_service()
+    _submit_spy(service)
+    with pytest.raises(ValueError, match="unknown conductor action"):
+        service.apply_subagent_action("w1", "explode")
+
+
+def test_start_subagent_submits_the_full_manifest() -> None:
+    service = _bare_service()
+    submit = _submit_spy(service)
+
+    service.start_subagent(
+        "检查桌面启动流程", llm_index=3, request_id="rid-1",
+        goal="启动", deliverables=["D:/out/report.md"],
+        operation_id="op-4",
+    )
+
+    submit.assert_called_once_with("op-4", {
+        "kind": "dispatch", "prompt": "检查桌面启动流程", "request_id": "rid-1",
+        "llm_index": 3, "conductor_llm_index": None,
+        "subagent_llm_index": None, "subagent_model_policy": None,
+        "goal": "启动", "boundaries": None, "deliverables": ["D:/out/report.md"],
+        "done_when": None, "checks": None})
 
 
 def test_start_facade_configures_models_then_ensures_lifecycle() -> None:
@@ -352,195 +343,7 @@ def test_start_facade_configures_models_then_ensures_lifecycle() -> None:
     # every stranded workflow is what the 2026-09 user ruling removed —
     # resuming is a per-task decision (resume_workflow), never a side
     # effect of pressing the header start button.
-    service.ensure_started.assert_called_once_with(redispatch_stranded=False)
-
-
-def test_auto_accept_withholds_on_stale_deliverables() -> None:
-    """A deliverable that predates the attempt (path_exists/file_contains
-    pass for any old file) must never be machine-accepted."""
-    service = _bare_service()
-    service.auto_accept = True
-    service.accept_subagent = Mock()
-    stale_worker = SimpleNamespace(
-        id="w1", deliverables_stale=["D:/old/pelican.svg"], deliverables_missing=[])
-    service.pool = SimpleNamespace(get=lambda sid: stale_worker)
-
-    callbacks, joined = _callbacks_with_worker(service, stale_worker)
-    joined("w1", {"request_id": "req-1"})
-
-    service.accept_subagent.assert_not_called()
-
-
-def test_auto_accept_proceeds_when_deliverables_are_fresh() -> None:
-    service = _bare_service()
-    service.auto_accept = True
-    service.accept_subagent = Mock(return_value={"id": "w1"})
-    fresh_worker = SimpleNamespace(id="w1", deliverables_stale=[], deliverables_missing=[])
-    service.pool = SimpleNamespace(get=lambda sid: fresh_worker)
-
-    callbacks, joined = _callbacks_with_worker(service, fresh_worker)
-    joined("w1", {"request_id": "req-1"})
-
-    service.accept_subagent.assert_called_once()
-
-
-def test_duplicate_operation_id_in_flight_is_refused() -> None:
-    service = _dispatch_service()
-    # Reserve manually to simulate a concurrent duplicate mid-engine-call.
-    assert service._reserve_action_operation("op-x") is None
-    with pytest.raises(ValueError, match="already executing"):
-        service._reserve_action_operation("op-x")
-
-
-def test_failed_action_releases_reservation_for_retry() -> None:
-    service = _dispatch_service()
-    service.input_subagent = Mock(side_effect=RuntimeError("engine down"))
-
-    with pytest.raises(RuntimeError):
-        service.apply_subagent_action("w1", "input", "msg", operation_id="op-y")
-
-    # The reservation was released, so the genuine retry reaches the engine.
-    service.input_subagent = Mock(return_value={"id": "w1"})
-    result = service.apply_subagent_action("w1", "input", "msg", operation_id="op-y")
-    assert result["instruction"] == cs.INSTR_DISPATCHED
-
-
-def test_retried_final_replays_recorded_item() -> None:
-    service = _bare_service()
-    tracker = Mock()
-    tracker.has_request.return_value = True
-    # Plain Mocks forbid assert_* attribute names; wire it explicitly.
-    tracker.assert_ready_for_final = Mock()
-    service.workflow_tracker = tracker
-    service.chat_messages = []
-    recorded = {"id": "c1", "role": "conductor", "kind": "final", "msg": "done"}
-    service._record_action_operation("op-final", recorded)
-
-    result = service.add_chat_message(
-        "done", role="conductor", request_id="req-1",
-        kind="final", operation_id="op-final",
-    )
-
-    assert result == recorded
-    tracker.assert_ready_for_final.assert_not_called()
-
-
-def test_delivered_final_is_recorded_for_replay() -> None:
-    service = _bare_service()
-    tracker = Mock()
-    tracker.has_request.return_value = True
-    tracker.assert_ready_for_final = Mock()  # Mocks reject assert_* names
-    tracker.record_final.return_value = None
-    service.workflow_tracker = tracker
-    service.chat_messages = []
-
-    with mock.patch.object(cs, "bus", mock.MagicMock()):
-        item = service.add_chat_message(
-            "done", role="conductor", request_id="req-1",
-            kind="final", operation_id="op-f2",
-        )
-
-    assert service._replay_action_operation("op-f2") == item
-
-
-def test_apply_accept_forwards_request_force_and_operation_id() -> None:
-    service = _dispatch_service()
-    service.accept_subagent = Mock(return_value={
-        "id": "w1", "review_status": "accepted"})
-
-    result = service.apply_subagent_action(
-        "w1", "accept", "verified", request_id="rid-1", force=True,
-        operation_id="op-2",
-    )
-
-    service.accept_subagent.assert_called_once_with(
-        "w1", "verified", request_id="rid-1", force=True, operation_id="op-2")
-    assert result["review_status"] == "accepted"
-
-
-def test_apply_keyinfo_and_abort_forward_tracker_owner() -> None:
-    """P0-B ownership: the pool verbs carry the tracker-resolved request."""
-    service = _dispatch_service()
-    service.workflow_tracker.admit("rid-owner")
-    service.workflow_tracker.bind_subagent("rid-owner", "w1", 1)
-
-    keyinfo = service.apply_subagent_action("w1", "keyinfo", "ctx")
-    service.apply_subagent_action("w1", "stop")
-
-    assert keyinfo["instruction"] == cs.INSTR_KEYINFO
-    service.pool.keyinfo_subagent.assert_called_once_with(
-        "w1", "ctx", request_id="rid-owner")
-    service.pool.abort_subagent.assert_called_once_with(
-        "w1", request_id="rid-owner")
-
-
-def test_apply_unbound_worker_degrades_owner_to_none() -> None:
-    """A worker unknown to the tracker keeps legacy None ownership."""
-    service = _dispatch_service()
-
-    service.apply_subagent_action("w1", "keyinfo", "ctx")
-
-    service.pool.keyinfo_subagent.assert_called_once_with(
-        "w1", "ctx", request_id=None)
-
-
-def test_apply_rejects_unknown_verb() -> None:
-    service = _dispatch_service()
-    with pytest.raises(ValueError, match="unknown conductor action"):
-        service.apply_subagent_action("w1", "explode")
-
-
-# ── tracker-owner parity for accept/resume (P0-B loophole fix) ───────────────
-
-def _owner_ready_service(sid: str = "w1", owner: str | None = "rid-owner"):
-    """Service with a stubbed engine seam and a real, bound workflow tracker."""
-    service = _bare_service()
-    service._process_manager = None
-    service._ensure_relay = lambda: None  # type: ignore[method-assign]
-    service.client = SimpleNamespace(
-        status=lambda: {"started": True},
-        subagent_action=Mock(return_value={"id": sid}),
-    )
-    if owner:
-        service.workflow_tracker.admit(owner)
-        service.workflow_tracker.bind_subagent(owner, sid, 1)
-    return service
-
-
-def test_accept_resolves_tracker_owner_when_caller_omits_request() -> None:
-    """The engine's request_mismatch guard must see the owner on accepts
-    whose caller omitted the request — same as keyinfo/abort already do."""
-    service = _owner_ready_service()
-
-    result = service.accept_subagent("w1", "verified by machine")
-
-    service.client.subagent_action.assert_called_once_with(
-        "w1", "accept", "verified by machine",
-        request_id="rid-owner", force=False)
-    assert result["request_id"] == "rid-owner"
-
-
-def test_accept_keeps_none_owner_for_unbound_worker() -> None:
-    service = _owner_ready_service(owner=None)
-
-    service.accept_subagent("w1")
-
-    service.client.subagent_action.assert_called_once_with(
-        "w1", "accept", "", request_id=None, force=False)
-
-
-def test_resume_forwards_tracker_owner_to_engine() -> None:
-    service = _owner_ready_service()
-    service.configure_models = Mock(return_value={  # type: ignore[method-assign]
-        "llm_index": None, "subagent_llm_index": None,
-        "subagent_model_policy": "default"})
-    service._resolve_subagent_model_from_snapshot = Mock(  # type: ignore[method-assign]
-        return_value=None)
-
-    service.input_subagent("w1", "continue")
-
-    service.client.subagent_action.assert_called_once_with(
-        "w1", "input", "continue", request_id="rid-owner", llm_index=None)
+    service.ensure_started.assert_called_once_with(wake_recovery=False)
 
 
 class _FakeProc:

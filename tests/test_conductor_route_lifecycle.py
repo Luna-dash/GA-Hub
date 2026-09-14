@@ -491,7 +491,11 @@ def test_service_lifecycle_status_refreshes_compatibility_cache():
     service._lifecycle_cache = {}
     service.client = SimpleNamespace(status=lambda: dict(STOPPED))
 
-    assert service.lifecycle_status() == STOPPED
+    status = service.lifecycle_status()
+    # The legacy compatibility keys ride along; the command track adds its
+    # own recovery block for the UI.
+    assert {k: status[k] for k in STOPPED} == STOPPED
+    assert status["recovery"]["ready"] is False
     assert service._started is False
 
 
@@ -649,23 +653,6 @@ def test_abort_engine_unreachable_maps_to_503(monkeypatch):
 
     assert raised.value.status_code == 503
     assert "respawned on demand" in str(raised.value.detail)
-
-
-def test_poolmirror_stamps_request_id_and_hub_origin():
-    """PoolMirror is the single point that stamps hub-origin aborts; the
-    request_id rides the same call into the engine body."""
-    from server.services import conductor_service as csm
-    mirror = csm.PoolMirror.__new__(csm.PoolMirror)
-    mirror.client = Mock()
-    mirror.client.subagent_action = Mock(return_value={})
-
-    mirror.keyinfo_subagent("s1", "msg", request_id="rid-1")
-    mirror.abort_subagent("s1", request_id="rid-1")
-
-    mirror.client.subagent_action.assert_any_call(
-        "s1", "keyinfo", "msg", request_id="rid-1")
-    mirror.client.subagent_action.assert_any_call(
-        "s1", "abort", origin="hub", request_id="rid-1")
 
 
 # ── journal catch-up proxy (P2-A) ────────────────────────────────────────────

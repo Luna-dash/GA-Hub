@@ -4,80 +4,18 @@ from __future__ import annotations
 import copy
 import sqlite3
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from conductor_engine import Engine
 from server.routes import conductor as conductor_routes
 from server.services.conductor_client import GahubProcessError
 from server.services.conductor_service import ConductorService
 from server.services.conductor_store import OperationConflict
-
-
-class Engine:
-    def __init__(self):
-        self.boot = "boot-a"
-        self.epoch = "journal-a"
-        self.events = []
-        self.items = []
-        self.receipts = {}
-        self.posts = []
-        self.fail_response = False
-        self.revision = 1
-
-    def event(self, kind, **payload):
-        self.events.append({"seq": len(self.events) + 1, "type": kind,
-                            "payload": {"event": kind, "boot_id": self.boot, **payload}})
-
-    def recovery(self):
-        return {"protocol_version": 2, "boot_id": self.boot,
-                "capabilities": ["snapshot_revision", "path_policy", "request_recovery",
-                                 "guarded_actions", "operation_receipts"],
-                "path_policy": {"mode": "explicit_absolute"}, "requests": []}
-
-    def get_subagents(self):
-        return {"boot_id": self.boot, "snapshot_revision": self.revision, "items": self.items}
-
-    def get_subagent(self, sid):
-        return {"id": sid, "boot_id": self.boot, "active_generation": 1,
-                "command_revision": 3, "review_status": "pending"}
-
-    def journal(self, after_seq=0, limit=500):
-        return {"journal": {"epoch": self.epoch, "last_seq": len(self.events)},
-                "events": copy.deepcopy(self.events[after_seq:after_seq + limit])}
-
-    def status(self):
-        return {"started": True}
-
-    def push_models(self, **kwargs):
-        return {}
-
-    def subagent_action(self, **kwargs):
-        return self._post(kwargs, {"id": kwargs["sid"], "status": "stopped",
-                                  "active_generation": 1})
-
-    def start_subagent(self, **kwargs):
-        return self._post(kwargs, {"id": "worker", "active_generation": 1})
-
-    def post_chat(self, msg, role, request_id, **kwargs):
-        return self._post({**kwargs, "msg": msg, "role": role, "request_id": request_id},
-                          {"id": "chat-1", "msg": msg, "role": role, "request_id": request_id, "ts": 1000})
-
-    def _post(self, kwargs, result):
-        operation = kwargs["operation_id"]
-        if operation not in self.receipts:
-            self.posts.append(copy.deepcopy(kwargs))
-            self.receipts[operation] = copy.deepcopy(result)
-        if self.fail_response:
-            self.fail_response = False
-            raise GahubProcessError("lost response")
-        return copy.deepcopy(self.receipts[operation])
-
-    def operation(self, operation_id, scope):
-        return {"boot_id": self.boot, "known": operation_id in self.receipts,
-                "status_code": 200, "result": copy.deepcopy(self.receipts.get(operation_id))}
 
 
 @pytest.fixture
@@ -449,7 +387,7 @@ def test_chat_route_serves_store_history_when_engine_memory_is_gone(setup, monke
 
     engine.get_chat = no_engine_chat
     service._on_remote_chat({"id": "chat-1", "role": "conductor", "msg": "stable",
-                             "ts": 1000}, from_hello=True)
+                             "ts": 1000})
 
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)
     app = FastAPI()
@@ -595,12 +533,200 @@ def test_activity_route_serves_the_durable_timeline_with_paging(setup, monkeypat
     ]
 
 
-def test_a_task_without_a_store_reports_history_as_unavailable():
-    """Legacy no-store mode keeps working: the page falls back to live SSE
-    instead of showing an empty timeline as if it were the truth."""
-    from server.services.conductor_service import ConductorService
 
-    assert ConductorService.get_activity(SimpleNamespace(store=None), "request") == {
-        "items": [], "has_more": False, "durable": False,
-    }
+def test_accept_owner_parity_and_instruction_stamping(setup):
+    """Owner resolution (P0-B) and the conductor instruction line are
+    command-track post-processing: accept forwards the tracker owner even
+    when the caller omitted the request; input responses carry the
+    dispatched instruction and the resolved model context."""
+    engine, create = setup
+    service = create()
+    service.workflow_tracker.admit("rid-owner")
+    service.workflow_tracker.bind_subagent("rid-owner", "w1", 1)
 
+    accepted = service.apply_subagent_action("w1", "accept", "verified")
+    assert engine.posts[-1]["request_id"] == "rid-owner"
+    assert accepted["request_id"] == "rid-owner"
+
+    resumed = service.input_subagent("w1", "continue", llm_index=3)
+    assert resumed["instruction"]
+    assert resumed["llm_index"] == 3
+
+
+def test_unbound_worker_keeps_none_owner(setup):
+    engine, create = setup
+    service = create()
+
+    service.apply_subagent_action("w1", "keyinfo", "ctx")
+
+    assert engine.posts[-1]["request_id"] is None
+
+
+def test_auto_accept_drain_respects_staleness_guard(setup):
+    """A deliverable that predates the attempt must never be machine-accepted:
+    the drain rejects the auto command instead of delivering it."""
+    engine, create = setup
+    service = create()
+    service.recovery.sync()
+    state = engine.get_subagent("w1")
+    state["deliverables_stale"] = ["D:/old/pelican.svg"]
+    engine.get_subagent = lambda sid: state
+    service.commands.enqueue_auto_accept("w1", "rid-1", 1)
+
+    service.commands.drain_commands()
+
+    assert engine.posts == []
+    rejected = [c for c in service.store.pending_commands()]
+    assert rejected == []
+
+    # A clean worker goes through.
+    engine.get_subagent = lambda sid: {"id": sid, "boot_id": engine.boot,
+                                       "active_generation": 1, "command_revision": 3,
+                                       "review_status": "pending"}
+    service.commands.enqueue_auto_accept("w2", "rid-2", 1)
+    service.workflow_tracker.admit("rid-2")
+    service.commands.drain_commands()
+    assert len(engine.posts) == 1
+    assert engine.posts[0]["force"] is False
+
+
+def test_auto_accept_off_leaves_the_worker_for_a_human(setup):
+    """The automation policy has two gates and both must honour it.
+
+    Off, a clean pending_review neither persists an auto command (the journal
+    consumer) nor gets an already-persisted one delivered (the drain loop).
+    Dropping either gate silently machine-accepts a delivery the user asked
+    to review by hand.
+    """
+    engine, create = setup
+    service = create()
+    service.auto_accept = False
+    engine.event("subagent_pending_review", id="worker", request_id="request", generation=1)
+
+    assert service.recovery.sync()
+
+    # Gate 1 — the journal consumer enqueues nothing while the policy is off.
+    assert service.store.pending_commands() == []
+    snapshot = service.workflow_tracker.snapshot("request")
+    assert snapshot["subagents"]["worker"]["state"] == "pending"
+
+    # Gate 2 — a command persisted while the policy was on is not delivered
+    # after it is switched off: the flip takes effect mid-flight.
+    service.commands.enqueue_auto_accept("worker", "request", 1)
+    service.commands.drain_commands()
+
+    assert engine.posts == []
+    assert len(service.store.pending_commands()) == 1  # parked, not dropped
+
+
+def test_pending_review_without_a_request_owner_is_not_auto_accepted(setup):
+    """A worker no admitted request owns has nothing to accept it against, so
+    the automation must not invent one (the engine reports workers it never
+    bound to a request)."""
+    engine, create = setup
+    service = create()
+    engine.event("subagent_pending_review", id="orphan", generation=1)
+
+    assert service.recovery.sync()
+
+    assert service.store.pending_commands() == []
+    assert engine.posts == []
+
+
+def test_auto_accept_failure_does_not_abort_the_drain_loop(setup):
+    """A lost response on an auto accept must not stop the loop.
+
+    The failed command is parked as uncertain for reconciliation and the next
+    one still goes out; a raised exception would leave the rest of the queue
+    undelivered until the next wake.
+    """
+    engine, create = setup
+    service = create()
+    service.recovery.sync()
+    service.workflow_tracker.admit("rid-1")
+    service.commands.enqueue_auto_accept("w1", "rid-1", 1)
+    time.sleep(0.01)  # pending_commands orders on updated_at
+    service.workflow_tracker.admit("rid-2")
+    service.commands.enqueue_auto_accept("w2", "rid-2", 1)
+    engine.fail_response = True  # the FIRST delivery loses its response
+
+    service.commands.drain_commands()  # must not raise
+
+    assert [post["sid"] for post in engine.posts] == ["w1", "w2"]
+    # The uncertain one is parked for reconciliation (never silently dropped,
+    # never re-sent as if the engine had not seen it).
+    parked = service.store.pending_commands()
+    assert [c["payload"]["intent"]["sid"] for c in parked] == ["w1"]
+    assert parked[0]["state"] == "unknown"
+
+
+def test_final_command_replays_recorded_result(setup):
+    """A retried final gets the recorded item back instead of re-delivering
+    or failing assert_ready_for_final a second time."""
+    engine, create = setup
+    service = create()
+    service.workflow_tracker.admit("request-1")
+    service.workflow_tracker.bind_subagent("request-1", "worker-1", 1)
+    service.workflow_tracker.record_subagent_event("worker-1", "accepted", generation=1)
+
+    first = service.add_chat_message("done", role="conductor",
+                                     request_id="request-1", kind="final",
+                                     operation_id="op-final")
+    second = service.add_chat_message("done", role="conductor",
+                                      request_id="request-1", kind="final",
+                                      operation_id="op-final")
+
+    assert first == second
+    assert len(engine.posts) == 1
+    assert service.workflow_tracker.snapshot("request-1")["status"] == "completed"
+
+
+def test_duplicate_operation_in_flight_is_refused(setup):
+    engine, create = setup
+    service = create()
+    service.commands._inflight.add("op-x")
+
+    with pytest.raises(GahubProcessError, match="operation is in progress"):
+        service.commands.execute_command("op-x")
+
+
+def test_conductor_start_failure_keeps_the_chat_pending(setup):
+    """ensure_started failures are transient: the command stays pending for
+    the drain loop instead of being rejected or silently dropped."""
+    engine, create = setup
+    service = create()
+    failures = [RuntimeError("cold start raced")]
+
+    def flaky_start(**kwargs):
+        if failures:
+            raise failures.pop()
+        return True
+
+    service.ensure_started = flaky_start
+    with pytest.raises(RuntimeError, match="cold start raced"):
+        service.add_chat_message("task", role="user", operation_id="op-1")
+    assert engine.posts == []
+    assert service.store.command("op-1")["state"] == "pending"
+
+    assert service.recovery.sync()
+    service.commands.drain_commands()
+    assert len(engine.posts) == 1
+    assert service.store.command("op-1")["state"] == "succeeded"
+
+
+def test_boot_change_repushes_the_hub_model_policy(setup):
+    """A fresh engine process forgot the hub-pushed policy; the boot change
+    detected by sync is the re-assert signal (legacy SSE-hello behavior)."""
+    engine, create = setup
+    service = create()
+    pushed = []
+    engine.push_models = lambda **kwargs: pushed.append(kwargs) or {}
+
+    assert service.recovery.sync()          # first boot: baseline push
+    assert len(pushed) == 1
+    service.recovery.sync()                 # same boot: no repush
+    assert len(pushed) == 1
+
+    engine.boot = "boot-b"
+    assert service.recovery.sync()
+    assert len(pushed) == 2

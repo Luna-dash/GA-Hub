@@ -8,6 +8,7 @@ import uuid
 
 from .conductor_client import GahubProcessError
 from .conductor_store import OperationConflict, command_fingerprint
+from .conductor_vocabulary import INSTR_DISPATCHED, INSTR_KEYINFO, ConductorNotRunning
 
 log = logging.getLogger(__name__)
 MODEL_KEYS = ("conductor_llm_index", "subagent_llm_index", "subagent_model_policy")
@@ -86,7 +87,7 @@ class ConductorCommands:
                 # ensure_started failures stay transient: the engine may be
                 # cold-starting, and the command loop retries pending
                 # commands once recovery is ready.
-                self.service.ensure_started(exclude_request_id=payload.get("request_id"))
+                self.service.ensure_started()
             if not self.recovery.ready:
                 self.recovery.sync()
             if not self.recovery.ready or self.recovery.stop_event.is_set():
@@ -98,7 +99,6 @@ class ConductorCommands:
                                        status_code=409, detail={"error": "operation_unknown", "operation_id": operation_id})
             payload["boot_id"] = self.recovery.boot_id
             if "prepared" not in payload:
-                from .conductor_service import ConductorNotRunning
                 try:
                     self._prepare(payload)
                 except GahubProcessError as exc:
@@ -148,7 +148,7 @@ class ConductorCommands:
                 if intent["kind"] == "chat":
                     if intent.get("role") == "user" and rid:
                         tracker.confirm_admission(rid, payload["boot_id"])
-                    self.service._on_remote_chat(result, from_hello=True)
+                    self.service._on_remote_chat(result)
                 else:
                     result.setdefault("request_id", rid)
                     if rid and tracker.has_request(rid):
@@ -163,10 +163,8 @@ class ConductorCommands:
                     if intent.get("action") in (None, "input", "rework"):
                         result.setdefault("llm_index", payload["prepared"].get("llm_index"))
                         result["model_policy"] = payload.get("model_policy")
-                        from .conductor_service import INSTR_DISPATCHED
                         result["instruction"] = INSTR_DISPATCHED
                     elif intent.get("action") == "keyinfo":
-                        from .conductor_service import INSTR_KEYINFO
                         result["instruction"] = INSTR_KEYINFO
                 self.store.finish_command(operation_id, "succeeded", result)
             self.recovery.wake.set()
@@ -222,6 +220,10 @@ class ConductorCommands:
         elif kind == "chat" and intent.get("final"):
             tracker.assert_ready_for_final(rid)
         elif kind == "chat" and intent.get("role") == "user":
+            self.service._assert_engine_ready()
+        elif kind in ("dispatch", "action"):
+            # Subagent operations never cold-start the supervisor: a stopped
+            # conductor must not gain workers it cannot wake (P1).
             self.service._assert_engine_ready()
         payload["request_id"] = rid
         intent["request_id"] = rid

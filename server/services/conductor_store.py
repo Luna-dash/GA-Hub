@@ -275,8 +275,12 @@ class ConductorStore:
                              before_ms: int | None = None) -> list[dict]:
         """One request's newest ``limit`` rows, oldest-first for rendering.
 
-        ``before_ms`` pages backwards: pass the oldest ``atMs`` already held to
-        fetch the window before it.
+        ``before_ms`` is an **exclusive** upper bound on ``at_ms`` (``at_ms <
+        before_ms``). Page backwards with the oldest held ``atMs`` **plus 1**,
+        not with that value itself: several rows can share a millisecond, and
+        an exclusive bound on the exact value would drop the remainder of such
+        a bucket for good the moment it straddles a page boundary. The client
+        dedupes by row id, so re-reading the pivot millisecond costs nothing.
         """
         with self.lock:
             if before_ms is None:

@@ -1,224 +1,143 @@
-"""Request admission wiring tests for the Conductor service."""
+"""Request admission wiring tests for the Conductor service (command track).
+
+Admission is no longer a synchronous notify(): ``add_chat_message`` persists
+a chat command (minting/minting-through the request id), the engine POST
+carries the operation id for idempotency, and the engine's echoed item is
+mirrored into the hub log. These tests pin that wiring against the
+in-memory engine transport.
+"""
 from __future__ import annotations
 
 import pytest
-from unittest.mock import Mock, patch
 
+from conductor_engine import Engine
+from server.services.conductor_client import GahubProcessError
 from server.services.conductor_service import ConductorService
 
 
-def test_user_chat_message_is_admitted_with_a_request_id():
-    service = ConductorService.for_tests()
-    service.chat_messages = []
-    service._started = True
-    service.configure_models = Mock()
-    service.ensure_started = Mock()
-    service.notify = Mock(return_value=True)
+@pytest.fixture
+def setup(tmp_path, monkeypatch):
+    monkeypatch.setenv("GAHUB_PATH_POLICY", "explicit_absolute")
+    engine = Engine()
+    services = []
 
-    with patch("server.services.conductor_service.bus.publish"):
-        item = service.add_chat_message("hello", role="user", operation_id="op-fixed")
+    def create():
+        service = ConductorService.for_tests(store_path=tmp_path / "state.sqlite3")
+        service.client = engine
+        service.pool.client = engine
+        service._process_manager = None
+        service._ensure_relay = lambda: None
+        starts = []
 
+        def ensure_started(**kwargs):
+            starts.append(kwargs)
+            engine.started = True
+            return True
+
+        service.ensure_started = ensure_started
+        service.ensure_started_calls = starts
+        services.append(service)
+        return service
+
+    yield engine, create
+    for service in services:
+        service.store.close()
+
+
+def test_user_chat_message_is_admitted_with_a_request_id(setup):
+    engine, create = setup
+    service = create()
+
+    item = service.add_chat_message("hello", role="user", operation_id="op-fixed")
+
+    # The request id is minted hub-side and rides the whole pipeline.
     request_id = item["request_id"]
     assert request_id
-    assert request_id != item["id"]
-    service.configure_models.assert_called_once_with(
-        llm_index=None,
-        subagent_llm_index=None,
-        subagent_model_policy=None,
-    )
-    service.ensure_started.assert_called_once_with(
-        exclude_request_id=request_id)
+    assert engine.posts[0]["request_id"] == request_id
     # P0 idempotency: the caller's operation id rides through admission
     # verbatim so a retried POST /chat replays instead of double-admitting.
-    service.notify.assert_called_once_with(
-        {"type": "user_message", "msg": "hello", "request_id": request_id,
-         "operation_id": "op-fixed"}
-    )
+    assert engine.posts[0]["operation_id"] == "op-fixed"
+    # Cold start happens on the delivery path (the same one the command
+    # loop's retry uses), never before the command is persisted.
+    assert service.ensure_started_calls == [{}]
+    assert service.store.command("op-fixed")["state"] == "succeeded"
 
 
-def test_add_chat_message_mints_operation_id_when_absent():
-    service = ConductorService.for_tests()
-    service.chat_messages = []
-    service._started = True
-    service.configure_models = Mock()
-    service.ensure_started = Mock()
-    service.notify = Mock(return_value=True)
+def test_add_chat_message_mints_operation_id_when_absent(setup):
+    engine, create = setup
+    service = create()
 
-    with patch("server.services.conductor_service.bus.publish"):
-        service.add_chat_message("hello", role="user")
+    service.add_chat_message("hello", role="user")
 
-    event = service.notify.call_args.args[0]
-    assert event["operation_id"]           # fresh id per logical admission
+    assert engine.posts[0]["operation_id"]  # fresh id per logical admission
 
 
-def test_conductor_plan_and_report_do_not_recursively_admit_user_tasks():
-    service = ConductorService.for_tests()
-    service.chat_messages = []
-    service._started = True
-    service.configure_models = Mock()
-    service.ensure_started = Mock()
-    service.notify = Mock(return_value=True)
+def test_conductor_plan_and_report_do_not_recursively_admit_user_tasks(setup):
+    engine, create = setup
+    service = create()
 
-    with patch("server.services.conductor_service.bus.publish"):
-        user_item = service.add_chat_message("calculate", role="user")
-        plan_item = service.add_chat_message("dispatching", role="conductor")
-        report_item = service.add_chat_message("result: 323", role="conductor")
+    service.add_chat_message("算一下", role="conductor")
+    plan_item = service.add_chat_message("派单中", role="conductor")
+    report_item = service.add_chat_message("结果", role="conductor")
 
-    assert user_item["request_id"]
-    assert "request_id" not in plan_item
-    assert "request_id" not in report_item
-    service.configure_models.assert_called_once()
-    service.ensure_started.assert_called_once_with(
-        exclude_request_id=user_item["request_id"])
-    service.notify.assert_called_once()
-    assert service.notify.call_args.args[0]["type"] == "user_message"
+    # Conductor-authored chat never creates a user task: no request minted,
+    # no engine wake, exactly one mirror entry per message.
+    assert plan_item.get("request_id") is None
+    assert report_item.get("request_id") is None
+    assert all(post["role"] == "conductor" for post in engine.posts)
+    assert service.ensure_started_calls == []
 
 
-def _service_for_admission_test():
-    service = ConductorService.for_tests()
-    service.chat_messages = []
-    service._started = False
-    service.configure_models = Mock()
-    service.ensure_started = Mock()
-    service.notify = Mock(return_value={"id": "engine-1", "role": "user"})
-    return service
-
-
-def test_user_admission_starts_conductor_before_notify():
-    service = _service_for_admission_test()
-    order = []
-    service.configure_models.side_effect = lambda **_kwargs: order.append("configure")
-    service.ensure_started.side_effect = lambda **_kw: order.append("start")
-    service.notify.side_effect = (
-        lambda _event: order.append("notify") or {"id": "engine-1"}
-    )
-
-    with patch("server.services.conductor_service.bus.publish"):
-        service.add_chat_message("hello", role="user")
-
-    assert order == ["configure", "start", "notify"]
-
-
-def test_add_chat_failure_is_propagated_without_starting_conductor():
-    service = _service_for_admission_test()
-
-    with patch(
-        "server.services.conductor_service.add_chat",
-        side_effect=RuntimeError("chat failed"),
-    ), pytest.raises(RuntimeError, match="chat failed"):
-        service.add_chat_message("hello", role="user")
-
-
-
-def test_start_failure_is_propagated_before_notify():
-    service = _service_for_admission_test()
-    service.ensure_started.side_effect = RuntimeError("start failed")
-
-    with patch("server.services.conductor_service.bus.publish"), pytest.raises(
-        RuntimeError, match="start failed"
-    ):
-        service.add_chat_message("hello", role="user")
-
-    service.notify.assert_not_called()
-
-
-def test_notify_failure_is_propagated_after_start():
-    service = _service_for_admission_test()
-    service.notify.side_effect = RuntimeError("notify failed")
-
-    with patch("server.services.conductor_service.bus.publish"), pytest.raises(
-        RuntimeError, match="notify failed"
-    ):
-        service.add_chat_message("hello", role="user")
-
-    service.ensure_started.assert_called_once()
-
-
-def test_notify_false_raises_stopped_before_admission():
-    service = _service_for_admission_test()
-    service.notify.return_value = None
-
-    with patch("server.services.conductor_service.bus.publish"), pytest.raises(
-        RuntimeError, match="stopped before event admission"
-    ):
-        service.add_chat_message("hello", role="user")
-
-
-def test_user_chat_adopts_engine_id_and_publishes_once():
-    """D4: the engine id is the authoritative chat identity — the POST
-    response and the live event must both carry it, exactly once."""
-    service = _service_for_admission_test()
-    service.notify = Mock(return_value={
-        "id": "engine-9", "role": "user", "msg": "hello", "final": False,
-    })
-    published = []
-
-    with patch("server.services.conductor_service.bus.publish",
-               side_effect=lambda topic, payload: published.append((topic, payload))):
-        item = service.add_chat_message("hello", role="user")
-
-    assert item["id"] == "engine-9"
-    chat_events = [payload for topic, payload in published
-                   if topic == "conductor:chat"]
-    assert chat_events == [{"item": item}]
-    assert service.chat_messages[-1]["id"] == "engine-9"
-
-
-def _service_for_followup_test():
-    service = ConductorService.for_tests()
-    service.chat_messages = []
-    service._started = True
-    service.configure_models = Mock()
-    service.ensure_started = Mock()
-    service.notify = Mock(return_value=True)
-    return service
-
-
-def test_user_followup_appends_to_an_open_workflow_without_forking_a_task():
+def test_user_followup_appends_to_an_open_workflow_without_forking_a_task(setup):
     """Conversation continuity: a user message naming the request id of an
     open workflow stays on that workflow — the engine wakes the supervisor
     under the same id, so the UI thread never forks. 2026-09 UI audit."""
-    service = _service_for_followup_test()
-    service.workflow_tracker.admit("req-open")
-    before = service.workflow_tracker.snapshot("req-open")
+    engine, create = setup
+    service = create()
+    service.workflow_tracker.admit("req-open", boot_id="boot-a")
 
-    with patch("server.services.conductor_service.bus.publish"):
-        item = service.add_chat_message(
-            "补充说明", role="user", request_id="req-open",
-            operation_id="op-followup",
-        )
+    item = service.add_chat_message(
+        "补充说明", role="user", request_id="req-open",
+        operation_id="op-followup",
+    )
 
     assert item["request_id"] == "req-open"
-    # No second admission: the workflow keeps its original snapshot.
-    assert service.workflow_tracker.snapshot("req-open") == before
-    # The stranded redispatch exclusion still guards the direct notify below.
-    service.ensure_started.assert_called_once_with(exclude_request_id="req-open")
-    service.notify.assert_called_once_with({
-        "type": "user_message", "msg": "补充说明", "request_id": "req-open",
-        "operation_id": "op-followup",
-    })
+    assert engine.posts[0]["request_id"] == "req-open"
 
 
-def test_user_followup_on_a_closed_workflow_admits_a_new_task():
-    service = _service_for_followup_test()
+def test_user_followup_on_a_closed_workflow_admits_a_new_task(setup):
+    engine, create = setup
+    service = create()
     service.workflow_tracker.admit("req-dead")
     service.workflow_tracker.fail_supervisor(
         "req-dead", phase="finish", error="closed")
 
-    with patch("server.services.conductor_service.bus.publish"):
-        item = service.add_chat_message("再来一次", role="user", request_id="req-dead")
+    item = service.add_chat_message("再来一次", role="user", request_id="req-dead")
 
     assert item["request_id"] != "req-dead"
     assert service.workflow_tracker.has_request(item["request_id"])
 
 
-def test_user_followup_on_an_unknown_request_id_admits_a_new_task():
-    service = _service_for_followup_test()
+def test_user_followup_on_an_unknown_request_id_admits_a_new_task(setup):
+    engine, create = setup
+    service = create()
 
-    with patch("server.services.conductor_service.bus.publish"):
-        item = service.add_chat_message("新任务", role="user", request_id="req-ghost")
+    item = service.add_chat_message("新任务", role="user", request_id="req-ghost")
 
     assert item["request_id"] != "req-ghost"
     assert service.workflow_tracker.has_request(item["request_id"])
-    event = service.notify.call_args.args[0]
-    assert event["request_id"] == item["request_id"]
+    assert engine.posts[0]["request_id"] == item["request_id"]
+
+
+def test_conductor_not_running_does_not_block_admission(setup):
+    """Chat admission is the only cold-start entry: it starts the supervisor
+    even when the engine is currently stopped."""
+    engine, create = setup
+    engine.started = False
+    service = create()
+
+    item = service.add_chat_message("hello", role="user", operation_id="op-cold")
+
+    assert service.ensure_started_calls == [{}]
+    assert service.store.command("op-cold")["state"] == "succeeded"
+    assert item["request_id"]

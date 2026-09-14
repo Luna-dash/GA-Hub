@@ -13,6 +13,32 @@ from server.services.conductor_service import (
 )
 from server.services.conductor_workflow import WorkflowTracker
 
+import pytest
+
+from conductor_engine import Engine
+from server.services.conductor_service import ConductorService
+
+
+@pytest.fixture
+def setup(tmp_path, monkeypatch):
+    monkeypatch.setenv("GAHUB_PATH_POLICY", "explicit_absolute")
+    engine = Engine()
+    engine.started = True
+    services = []
+
+    def create():
+        service = ConductorService.for_tests(store_path=tmp_path / "state.sqlite3")
+        service.client = engine
+        service.pool.client = engine
+        service._process_manager = None
+        service._ensure_relay = lambda: None
+        services.append(service)
+        return service
+
+    yield engine, create
+    for service in services:
+        service.store.close()
+
 
 def _service(
     *,
@@ -109,77 +135,63 @@ def test_worker_model_push_keeps_legacy_semantics_without_clear():
     assert kwargs["subagent_llm_index"] == 5
 
 
-def test_dispatch_entrypoint_applies_same_locked_policy():
-    service = _service(worker=5, policy="locked")
-    prompt = "检查中文路径 D:\\项目\\资料 🚀"
+def test_dispatch_entrypoint_applies_same_locked_policy(setup):
+    engine, create = setup
+    service = create()
+    service.configure_models(subagent_llm_index=5, subagent_model_policy="locked")
 
-    result = service.start_subagent(prompt, llm_index=3)
+    result = service.start_subagent("检查中文路径 D:\\项目\\资料 🚀", llm_index=3)
 
-    service.client.start_subagent.assert_called_once()
-    args, kwargs = service.client.start_subagent.call_args
-    assert args == (prompt, None, 5)
-    assert kwargs["goal"] is None and kwargs["boundaries"] is None
-    assert kwargs["deliverables"] is None and kwargs["done_when"] is None
-    assert kwargs["checks"] is None
-    assert kwargs["operation_id"]            # P0: hub mints the idempotency key
+    # The locked policy wins over the explicit dispatch request, and the
+    # resolved context is stamped onto the result for the UI.
+    assert engine.posts[0]["llm_index"] == 5
     assert result["llm_index"] == 5
     assert result["model_policy"] == "locked"
+    assert result["instruction"]
 
 
-def test_dispatch_requests_a_cooperative_supervisor_yield_for_active_workflow():
-    service = _service(worker=5, policy="locked")
-    service.workflow_tracker = WorkflowTracker(clock=lambda: 10.0)
-    service.workflow_tracker.admit("request-1")
+def test_dispatch_requests_a_cooperative_supervisor_yield_for_active_workflow(setup):
+    engine, create = setup
+    service = create()
+    service.workflow_tracker.admit("request-1", boot_id="boot-a")
 
-    result = service.start_subagent(
-        "inspect",
-        request_id="request-1",
-    )
+    result = service.start_subagent("inspect", request_id="request-1")
 
     # gahub_app owns the cooperative yield now; the hub only forwards the
     # request attribution so the engine can bind and auto-yield.
     assert result["request_id"] == "request-1"
-    service.client.start_subagent.assert_called_once()
-    args, kwargs = service.client.start_subagent.call_args
-    assert args == ("inspect", "request-1", 5)
-    assert kwargs["operation_id"]
-    assert service.workflow_tracker.request_for_subagent("worker-1") == "request-1"
+    assert engine.posts[0]["request_id"] == "request-1"
+    assert service.workflow_tracker.request_for_subagent("worker") == "request-1"
 
 
-def test_resume_entrypoint_applies_same_locked_policy():
-    service = _service(worker=5, policy="locked")
+def test_resume_entrypoint_applies_same_locked_policy(setup):
+    engine, create = setup
+    service = create()
+    service.configure_models(subagent_llm_index=5, subagent_model_policy="locked")
 
     result = service.input_subagent("worker-1", "retry", llm_index=3)
 
-    service.client.subagent_action.assert_called_once_with(
-        "worker-1", "input", "retry", request_id=None, llm_index=5
-    )
+    assert engine.posts[0]["llm_index"] == 5
     assert result["llm_index"] == 5
 
 
-def test_dispatch_result_uses_the_admitted_policy_snapshot():
-    service = _service(worker=5, policy="default")
+def test_dispatch_result_uses_the_admitted_policy_snapshot(setup):
+    engine, create = setup
+    service = create()
 
-    def update_policy_after_admission(*_args, **_kwargs):
+    def mutate_policy_mid_dispatch():
         service.configure_models(
             subagent_llm_index=8,
             subagent_model_policy="locked",
         )
-        return {"id": "worker-1"}
 
-    service.client.start_subagent.side_effect = update_policy_after_admission
-
+    engine.dispatch_hook = mutate_policy_mid_dispatch
     result = service.start_subagent("inspect", llm_index=3)
 
-    service.client.start_subagent.assert_called_once()
-    args, kwargs = service.client.start_subagent.call_args
-    assert args == ("inspect", None, 3)
-    assert kwargs["goal"] is None and kwargs["boundaries"] is None
-    assert kwargs["deliverables"] is None and kwargs["done_when"] is None
-    assert kwargs["checks"] is None
-    assert kwargs["operation_id"]
+    # The result renders the policy resolved at prepare time, not whatever
+    # the (mocked) engine call changed the configuration to mid-flight.
     assert result["llm_index"] == 3
-    assert result["model_policy"] == "default"
+    assert result["model_policy"] == "follow_main"
     assert service.model_policy_snapshot()["subagent_model_policy"] == "locked"
 
 
@@ -242,15 +254,3 @@ def test_cold_start_passes_only_the_model_index():
     service.ensure_started()
 
     service.client.start.assert_called_once_with(llm_index=1)
-
-
-def test_pool_mirror_abort_stamps_hub_origin():
-    """User/UI aborts must be marked hub-origin so the engine records a
-    terminal user cancel; supervisor self-API aborts stay recoverable.
-    request_id rides along (None when the caller has no tracker context)."""
-    from server.services.conductor_service import PoolMirror
-    client = Mock()
-    mirror = PoolMirror(client)
-    mirror.abort_subagent("worker-1")
-    client.subagent_action.assert_called_once_with(
-        "worker-1", "abort", origin="hub", request_id=None)

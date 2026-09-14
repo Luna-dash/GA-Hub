@@ -403,10 +403,14 @@ class WorkflowTracker:
         A request can end up here when the stop drain only sweeps engine-side
         work (a dispatch that 422'd, a message queued behind a busy conductor,
         or a user message discarded with the queue). The workflow never sees a
-        worker event, so it stays open forever and a conductor restart finds
-        nothing to resume. ``redispatch_stranded_workflows`` re-relays these
-        original user messages on (re)start; anything already supervising
-        workers or terminal is deliberately left alone.
+        worker event, so it stays open forever.
+
+        Diagnostic surface only — no production caller since the batch
+        redispatch was removed: recovery is a per-task user decision via
+        ``ConductorService.resume_workflow``, so nothing re-relays these
+        automatically any more. Kept for the tests that pin the stranded
+        predicate and for future monitoring; its sibling ``abandon_stranded``
+        is still the live manual-stop path.
         """
         with self._lock:
             stranded = sorted(
@@ -426,7 +430,7 @@ class WorkflowTracker:
         """Terminal-fail every stranded ``admitted`` workflow (manual stop).
 
         Manual stop means the user gave up on the task, so the cold-start
-        redispatch must not resurrect these on the next start. Returns the
+        recovery must not resurrect these on the next start. Returns the
         published workflow_failed transitions; once terminal, the workflows
         no longer count as stranded. Only workerless ``admitted`` workflows
         are swept — supervising/awaiting_review workflows keep their own

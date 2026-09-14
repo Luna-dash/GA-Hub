@@ -115,3 +115,38 @@ def subagent_stage(*, status: str, attempt: int, review_status: str) -> str:
     if review_status == REVIEW_ACCEPTED:
         return STAGE_WORKER_ACCEPTED
     return STAGE_WORKER_STOPPED
+
+
+# ── verb matrix & instruction lines (service ↔ commands shared) ─────────
+# Verbs served by apply_subagent_action (the single dispatcher behind
+# POST /api/conductor/subagent/{sid}); aliases are mapped to canonical
+# verbs before membership is checked.
+SUBAGENT_VERBS = frozenset({
+    "keyinfo", "accept", "rework", "input", "reply", "append",
+    "message", "msg", "abort", "stop",
+})
+SUBAGENT_ACTION_ALIASES = {
+    "reply": "input", "append": "input", "message": "input",
+    "msg": "input", "stop": "abort",
+}
+
+# Instruction lines the hub appends to subagent action responses; the webui
+# renders them as the conductor's acknowledgment.
+INSTR_DISPATCHED = (
+    "Task received. I'll handle THIS TASK from here. "
+    "You MUST to do other task or end your reply."
+)
+INSTR_KEYINFO = (
+    "Received. I'll incorporate this. "
+    "You MUST to do other task or end your reply."
+)
+
+
+class ConductorNotRunning(RuntimeError):
+    """A subagent operation needs a LIVE supervisor and none is running.
+
+    Chat admission is the only cold-start entry (waking the engine lets
+    recovery replay the journal and drain already-persisted commands);
+    dispatch/input/accept/rework refuse loudly instead, so a stopped
+    conductor can never spawn supervisor-less orphan workers (2026-09
+    audit P1: unified lifecycle admission)."""

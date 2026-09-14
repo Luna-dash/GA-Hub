@@ -20,9 +20,7 @@ import logging
 import threading
 import time
 import uuid
-from collections import OrderedDict
-from types import SimpleNamespace
-from typing import Any, Dict, Literal, Optional
+from typing import Dict, Literal, Optional
 
 from .. import _paths
 
@@ -36,23 +34,20 @@ from .conductor_vocabulary import (
     SUBAGENT_RUNNING,
     subagent_stage,
     TERMINAL_WORKFLOW_STATES,
-    WORKER_EVENT_PENDING_REVIEW,
-    WORKER_EVENT_RUNNING,
+    SUBAGENT_VERBS,
+    SUBAGENT_ACTION_ALIASES,
+    ConductorNotRunning,
 )
 from .conductor_workflow import WorkflowTracker
-from .conductor_store import ConductorStore
+from .conductor_store import ConductorStore, command_fingerprint
 from .conductor_recovery import ConductorRecovery
 from . import conductor_activity
 from .conductor_commands import ConductorCommands
 from .event_bus import bus
 from ..event_topics import (
     CONDUCTOR_CHAT,
-    CONDUCTOR_CHAT_READ,
     CONDUCTOR_LOG,
-    CONDUCTOR_REQUEST_OUTCOME,
-    CONDUCTOR_REQUEST_YIELD_REQUESTED,
     CONDUCTOR_SUBAGENTS,
-    CONDUCTOR_WORKFLOW_COMPLETED,
     CONDUCTOR_WORKFLOW_FAILED,
 )
 
@@ -61,28 +56,6 @@ log = logging.getLogger(__name__)
 SubagentModelPolicy = Literal["follow_main", "default", "locked"]
 SUBAGENT_MODEL_POLICIES = frozenset({"follow_main", "default", "locked"})
 
-# Instruction lines the hub appends to subagent action responses; the webui
-# renders them as the conductor's acknowledgment.
-INSTR_DISPATCHED = (
-    "Task received. I'll handle THIS TASK from here. "
-    "You MUST to do other task or end your reply."
-)
-INSTR_KEYINFO = (
-    "Received. I'll incorporate this. "
-    "You MUST to do other task or end your reply."
-)
-
-# Idempotency-cache placeholder: the operation_id is claimed while its engine
-# call is in flight, so a concurrent duplicate is refused instead of
-# double-fired. Replaced by the recorded response on completion.
-_ACTION_OPERATION_IN_FLIGHT = object()
-
-# Verbs served by apply_subagent_action (the single dispatcher behind
-# POST /api/conductor/subagent/{sid}).
-SUBAGENT_VERBS = frozenset({
-    "keyinfo", "accept", "rework", "input", "reply", "append",
-    "message", "msg", "abort", "stop",
-})
 
 # Dossier fields the hub list snapshot mirrors; the engine detail may omit
 # any of them and the mirror fills in what it has.
@@ -150,11 +123,6 @@ def add_chat(
 def push_subagent_cards(snapshot: list):
     """Publish subagent pool snapshot to event bus."""
     bus.publish(CONDUCTOR_SUBAGENTS, {"items": snapshot})
-
-
-def _event_name(event: Any) -> str:
-    """Coerce a subagent event (enum or SSE string) to its stable value."""
-    return getattr(event, "value", None) or str(event)
 
 
 READMES = {
@@ -225,8 +193,7 @@ class PoolMirror:
     """Snapshot-fed stand-in for the in-process subagent pool.
 
     Provides the attribute surface the routes and TimeoutMonitor used on
-    the GA core pool (``lock``/``subagents``/``counts``/``get``/``snapshot``);
-    keyinfo/abort actions round-trip to gahub_app over HTTP.
+    the GA core pool (``lock``/``subagents``/``counts``/``get``/``snapshot``).
     """
 
     def __init__(self, client: GaConductorClient):
@@ -299,20 +266,6 @@ class PoolMirror:
             )
         return items
 
-    def keyinfo_subagent(self, sid: str, msg: str,
-                         request_id: Optional[str] = None) -> dict:
-        # request_id, when resolved by the caller (workflow tracker), lets the
-        # engine enforce worker ownership on every verb, not just accept/rework.
-        return self.client.subagent_action(sid, "keyinfo", msg,
-                                           request_id=request_id)
-
-    def abort_subagent(self, sid: str,
-                       request_id: Optional[str] = None) -> dict:
-        # Hub-originated (user/UI) cancel: stamped so the engine records a
-        # terminal CANCELLED; supervisor self-API aborts stay recoverable.
-        return self.client.subagent_action(sid, "abort", origin="hub",
-                                           request_id=request_id)
-
 
 class HubConductorCallbacks:
     """Translate gahub_app SSE lifecycle events into GA-Hub EventBus events.
@@ -331,8 +284,7 @@ class HubConductorCallbacks:
         """Publish changed pool state without allowing concurrent reordering."""
         with self._snapshot_publish_lock:
             try:
-                snapshot = (self.service.get_subagent_envelope() if self.service.recovery is not None
-                            else self.service.get_subagent_snapshot())
+                snapshot = self.service.get_subagent_envelope()
                 if snapshot == self._last_subagent_snapshot:
                     return
                 if isinstance(snapshot, dict):
@@ -346,49 +298,6 @@ class HubConductorCallbacks:
                 log.exception("conductor_subagent_snapshot_publish_failed")
 
     # request lifecycle ------------------------------------------------------
-    def _publish_request_outcome(
-        self,
-        request_id: str,
-        *,
-        status: str,
-        phase: str,
-        error: str = "",
-    ) -> None:
-        payload = {
-            "request_id": request_id,
-            "status": status,
-            "phase": phase,
-        }
-        if error:
-            payload["error"] = error
-        # Scanning a list that writers truncate (>200) under _chat_lock:
-        # an unlocked reversed() iteration can hit the resize and IndexError.
-        with self.service._chat_lock:
-            latest = next(
-                (
-                    item
-                    for item in reversed(self.service.chat_messages)
-                    if item.get("role") == "conductor"
-                    and item.get("request_id") == request_id
-                    and item.get("kind") == ("final" if status == "ok" else "error")
-                ),
-                None,
-            )
-        if latest is not None:
-            payload["item"] = latest
-        bus.publish(CONDUCTOR_REQUEST_OUTCOME, payload)
-
-    def on_conductor_request_finished(self, request_id: str) -> None:
-        try:
-            self._fail_unhandled_request(request_id)
-            self._publish_request_outcome(
-                request_id,
-                status="ok",
-                phase="finish",
-            )
-        except Exception:
-            log.exception("request finished handling failed")
-
     def _fail_unhandled_request(self, request_id: str) -> None:
         """Close the false-success window for requests the turn never touched.
 
@@ -424,135 +333,6 @@ class HubConductorCallbacks:
         if transition is not None:
             self.service._publish_workflow_transition(transition)
 
-    def on_conductor_request_yielded(self, request_id: str,
-                                     outcome=None) -> None:
-        """Close only this supervisor turn; the workflow remains active."""
-        try:
-            self._publish_request_outcome(
-                request_id,
-                status="yielded",
-                phase=getattr(outcome, "phase", "yield") or "yield",
-            )
-        except Exception:
-            log.exception("request yielded handling failed")
-
-    def on_conductor_request_outcome(self, request_id: str,
-                                     outcome=None) -> None:
-        status = getattr(outcome, "status", "failed") or "failed"
-        phase = getattr(outcome, "phase", "finish") or "finish"
-        error = getattr(outcome, "error", "") or ""
-        try:
-            if status != "ok":
-                tracker = self.service.workflow_tracker
-                transition = tracker.fail_supervisor(
-                    request_id,
-                    phase=phase,
-                    error=error,
-                )
-                if transition is not None:
-                    self.service._publish_workflow_transition(transition)
-            self._publish_request_outcome(
-                request_id, status=status, phase=phase, error=error
-            )
-        except Exception:
-            log.exception("request outcome handling failed")
-
-    # subagent lifecycle ------------------------------------------------------
-    def on_subagent_event(self, agent_id: str, event, payload) -> None:
-        name = _event_name(event)
-        if name == WORKER_EVENT_RUNNING:
-            return
-        if not isinstance(payload, dict):
-            payload = dict(getattr(payload, "__dict__", {}) or {})
-        service = self.service
-        tracker = service.workflow_tracker
-        state = service.pool.get(agent_id)
-        if state is not None and "generation" not in payload:
-            payload["generation"] = int(getattr(state, "active_generation", 0) or 0)
-        if not payload.get("request_id"):
-            request_id = tracker.request_for_subagent(agent_id)
-            if request_id:
-                payload["request_id"] = request_id
-        owner, transition = tracker.record_subagent_event(
-            agent_id,
-            name,
-            generation=int(payload.get("generation", 0) or 0),
-            request_id=payload.get("request_id"),
-        )
-        try:
-            bus.publish(f"conductor:subagent_{name}", {"id": agent_id, **payload})
-            if transition is not None:
-                service._publish_workflow_transition(transition)
-        except Exception:
-            # Observer failures must not block the authoritative snapshot push.
-            log.exception("subagent event publish failed for %s", name)
-        if name == WORKER_EVENT_PENDING_REVIEW:
-            self._maybe_auto_accept(agent_id, payload)
-        self.publish_subagent_snapshot()
-
-    def _maybe_auto_accept(self, agent_id: str, payload: dict) -> None:
-        """Accept a clean delivery automatically; escalate only problems.
-
-        The engine stays the single verification authority: an accept without
-        ``force`` succeeds only when its deterministic checks pass, so a
-        ``completion_unverified`` rejection simply leaves the worker pending
-        for a human verdict. Runs off the SSE reader thread so a slow accept
-        never delays lifecycle event processing.
-        """
-        service = self.service
-        if not service.auto_accept:
-            return
-        request_id = payload.get("request_id")
-        if not request_id:
-            return
-
-        def _accept() -> None:
-            try:
-                state = service.pool.get(agent_id)
-                stale = list(getattr(state, "deliverables_stale", None) or [])
-                missing = list(getattr(state, "deliverables_missing", None) or [])
-            except Exception:
-                log.exception("auto-accept staleness lookup failed for %s", agent_id)
-                return
-            if stale or missing:
-                # Never auto-accept on the strength of deliverables that did
-                # not come from this attempt: path_exists/file_contains pass
-                # for any pre-existing file (live 2026-09-05 case — a 9-day-
-                # old pelican SVG from an earlier test satisfied both checks
-                # and got "accepted" after a timeout rework). Leave the worker
-                # pending for a human; force-accept stays the escape hatch.
-                log.warning(
-                    "auto-accept withheld for %s: deliverables not produced "
-                    "by this attempt (stale=%s missing=%s)",
-                    agent_id, stale, missing,
-                )
-                return
-            try:
-                result = service.accept_subagent(
-                    agent_id,
-                    "自动验收：机器检查全部通过。",
-                    request_id=request_id,
-                )
-            except Exception:
-                # The worker stays pending; the reviewer sees it as before.
-                log.exception("auto-accept failed for %s", agent_id)
-                return
-            if isinstance(result, dict) and result.get("error"):
-                log.info(
-                    "auto-accept left %s for human review: %s",
-                    agent_id, result.get("error"),
-                )
-
-        thread = threading.Thread(
-            target=_accept,
-            daemon=True,
-            name=f"conductor-auto-accept-{agent_id[:8]}",
-        )
-        # Registered so shutdown can wait them out instead of letting them
-        # race a closing engine client with unattributable exceptions.
-        self.service._auto_accept_threads.add(thread)
-        thread.start()
-
     def on_conductor_log_frame(self, frame: object) -> None:
         """Bridge gahub_app log frames to the Hub event bus.
 
@@ -577,61 +357,11 @@ class HubConductorCallbacks:
             # Logging is an observer path and must not fail a conductor request.
             log.exception("conductor_log_frame_publish_failed")
 
-    def on_conductor_event(self, event_type: str, payload) -> None:
-        try:
-            payload = dict(payload or {})
-            if event_type == "error":
-                detail = str(payload.get("error", "")).strip()
-                if not detail:
-                    return
-                # The relay thread lands here while route threads append via
-                # add_chat_message — read+append under the same chat lock
-                # those writers hold.
-                with self.service._chat_lock:
-                    latest = next(
-                        (
-                            item
-                            for item in reversed(self.service.chat_messages)
-                            if item.get("kind") == "error"
-                        ),
-                        None,
-                    )
-                    added = None
-                    if latest is None or detail not in latest.get("msg", ""):
-                        added = add_chat(
-                            f"Conductor reply failed: {detail}",
-                            "error",
-                            self.service.chat_messages,
-                            kind="error",
-                        )
-                if added is not None:
-                    bus.publish(CONDUCTOR_CHAT, {"item": added})
-                    latest = added
-                payload = {**payload, "item": latest}
-            bus.publish(f"conductor:{event_type}", payload)
-        except Exception:
-            log.exception("conductor event handling failed")
-
-
-class ConductorNotRunning(RuntimeError):
-    """A subagent operation needs a LIVE supervisor and none is running.
-
-    Chat admission is the only cold-start entry (it re-adopts stranded
-    work); dispatch/input/accept/rework refuse loudly instead, so a stopped
-    conductor can never spawn supervisor-less orphan workers (2026-09
-    audit P1: unified lifecycle admission)."""
-
 
 class ConductorService:
     """Singleton GA-Hub product layer around the gahub_app engine."""
     _instance: Optional["ConductorService"] = None
     _lock = threading.Lock()
-    # Journal catch-up page size; the engine clamps /journal at 5000.
-    _JOURNAL_REPLAY_BATCH = 5000
-    # Hub-side operation replay for worker actions: the engine's operation
-    # cache covers chat/dispatch only, so accept/rework/input retries are
-    # deduplicated here (a replayed action must not wake the worker twice).
-    _ACTION_OPERATION_CACHE_SIZE = 512
 
     def __init__(self):
         self._init_fields(store_path=_paths.ADMIN_DATA / "conductor" / "state.sqlite3")
@@ -639,18 +369,19 @@ class ConductorService:
         self.recovery.start()
 
     @classmethod
-    def for_tests(cls, *, store_path=None) -> "ConductorService":
+    def for_tests(cls, *, store_path=":memory:") -> "ConductorService":
         """Fully initialized instance without threads or engine side effects.
 
-        The unit-test constructor that replaces ``object.__new__`` plus the
-        old ``_ensure_*`` backfills: every production field exists, and
-        nothing runs.
+        Production shape by default: every service carries its SQLite store,
+        so verbs always run the guarded command track. Pass a ``tmp_path``
+        file when a test needs persistence across instances. There is no
+        store-less mode — that legacy in-memory track is gone.
         """
         obj = cls.__new__(cls)
         obj._init_fields(store_path=store_path)
         return obj
 
-    def _init_fields(self, *, store_path=None) -> None:
+    def _init_fields(self, *, store_path=":memory:") -> None:
         # Application shutdown is a terminal lifecycle separate from the
         # user-facing ``stop`` route.  Keep the singleton alive while a close
         # is in progress (or after a timeout) so a late request cannot create
@@ -684,38 +415,23 @@ class ConductorService:
         self._relay_stop = threading.Event()
         self._relay_thread: Optional[threading.Thread] = None
         # Serializes the engine cold start: two concurrent admissions must
-        # not both observe "not started" and both re-relay the stranded set
-        # (each redispatch carries a fresh operation_id, so only this lock
-        # can keep the double relay from reaching the engine).
+        # not both observe "not started" and both run the start sequence
+        # (the second /start would double-run recovery replay and the model
+        # push alongside it).
         self._cold_start_lock = threading.Lock()
         # Serializes relay startup: chat admission and subagent verbs race
         # here on cold start, and two relays double-process every event.
         self._relay_lock = threading.Lock()
-        self._auto_accept_threads: set[threading.Thread] = set()
         self._relayed_chat_ids: set[str] = set()
         self._relayed_ids_lock = threading.Lock()
         self._lifecycle_cache: dict = {}
-        # Journal replay cursor (P2-A reconcile): seq of the last journal
-        # event this relay processed.  ``seq=None`` means "never connected" —
-        # the first connect baselines to the engine's current last_seq
-        # instead of replaying the whole history (hello already re-syncs
-        # state; replaying full history through the transition handlers
-        # could only manufacture spurious transitions).
-        self._journal_cursor: dict = {"seq": None, "epoch": None}
-        # Idempotency cache for retried worker actions (operation_id →
-        # recorded response); bounded, oldest entries evicted first.
-        self._action_operation_lock = threading.Lock()
-        self._action_operations: OrderedDict[str, dict] = OrderedDict()
         self._notifications_dirty = False
-        self.store = (ConductorStore(store_path, self._process_manager.base_url(), self.workflow_tracker)
-                      if store_path is not None else None)
-        self.recovery = ConductorRecovery(self, self.store) if self.store is not None else None
-        self.commands = ConductorCommands(self, self.store, self.recovery) if self.store is not None else None
-        if self.store is not None:
-            self._journal_cursor = self.store.cursor()
-            self.store.notification_failed = lambda: setattr(self, "_notifications_dirty", True)
-            self.chat_messages = self.store.chat_messages()
-            self._relayed_chat_ids.update(item["id"] for item in self.chat_messages)
+        self.store = ConductorStore(store_path, self._process_manager.base_url(), self.workflow_tracker)
+        self.recovery = ConductorRecovery(self, self.store)
+        self.commands = ConductorCommands(self, self.store, self.recovery)
+        self.store.notification_failed = lambda: setattr(self, "_notifications_dirty", True)
+        self.chat_messages = self.store.chat_messages()
+        self._relayed_chat_ids.update(item["id"] for item in self.chat_messages)
 
 
     @classmethod
@@ -738,10 +454,9 @@ class ConductorService:
     def shutdown(self, timeout: float = 2.0) -> bool:
         """Terminally close the engine session and monitor under one deadline."""
         self._relay_stop.set()
-        if self.recovery is not None:
-            self.recovery.stop_event.set()
-            self.recovery.wake.set()
-            self.recovery.command_wake.set()
+        self.recovery.stop_event.set()
+        self.recovery.wake.set()
+        self.recovery.command_wake.set()
         deadline = time.monotonic() + max(0.0, float(timeout))
 
         with self._shutdown_lock:
@@ -764,7 +479,7 @@ class ConductorService:
                 return bool(self._shutdown_complete)
 
         helpers_ok = False
-        store_ok = self.store is None or self.store.closed
+        store_ok = self.store.closed
         core_ok = self._shutdown_core_stopped
         monitor_ok = self._shutdown_monitor_stopped
         try:
@@ -807,21 +522,18 @@ class ConductorService:
                 self._shutdown_monitor_stopped = monitor_ok
 
             # Background helpers must not outlive the closing engine client:
-            # the relay would keep publishing into a retired loop, and
-            # auto-accept threads would race _assert_open with noise.
+            # the relay would keep publishing into a retired loop, and a
+            # command still in flight would race _assert_open with noise.
             helpers: list[threading.Thread] = []
             if self._relay_thread is not None:
                 helpers.append(self._relay_thread)
-            helpers.extend(list(self._auto_accept_threads))
-            if self.recovery is not None:
-                helpers.extend(self.recovery.threads)
+            helpers.extend(self.recovery.threads)
             for helper in helpers:
                 if helper.is_alive() and helper is not threading.current_thread():
                     helper.join(timeout=max(0.0, deadline - time.monotonic()))
             helpers_ok = not any(helper.is_alive() for helper in helpers)
-            if self.commands is not None:
-                helpers_ok = self.commands.wait_idle(max(0.0, deadline - time.monotonic())) and helpers_ok
-            if helpers_ok and self.store is not None:
+            helpers_ok = self.commands.wait_idle(max(0.0, deadline - time.monotonic())) and helpers_ok
+            if helpers_ok:
                 self.store.close()
                 store_ok = True
         finally:
@@ -893,16 +605,10 @@ class ConductorService:
             except Exception:
                 self._notifications_dirty = True
                 log.exception("conductor notification failed for %s", topic)
-        if self.store is not None:
-            self.store.defer(publish)
-        else:
-            publish()
+        self.store.defer(publish)
 
     def _publish_workflow_transition(self, transition: tuple[str, dict]) -> None:
-        if self.store is not None:
-            self.store.defer(lambda: self._publish_workflow_transition_now(transition))
-        else:
-            self._publish_workflow_transition_now(transition)
+        self.store.defer(lambda: self._publish_workflow_transition_now(transition))
 
     def _publish_workflow_transition_now(
         self, transition: tuple[str, dict]
@@ -924,7 +630,7 @@ class ConductorService:
         kind = topic.split(":", 1)[1]
         activity = conductor_activity.workflow_activity(
             kind, request_id, event_id=f"wf:{request_id}:{kind}", ts=time.time())
-        if activity is not None and self.store is not None:
+        if activity is not None:
             try:
                 self.store.save_activity([activity])
             except Exception:
@@ -1087,8 +793,7 @@ class ConductorService:
         with self._relay_lock:
             if self._closed:
                 return
-            if self.recovery is not None:
-                self.recovery.start()
+            self.recovery.start()
             thread = self._relay_thread
             if thread is not None and thread.is_alive():
                 return
@@ -1096,10 +801,10 @@ class ConductorService:
             self._relay_thread = threading.Thread(
                 target=self.client.stream_events,
                 args=(self._on_sse_event, self._relay_stop.is_set),
-                # P2-A reconcile: replay missed journal events after every
-                # (re)connect, before any live frame is read.
-                kwargs={"on_reconnect": (self.recovery.reconnect if self.recovery is not None
-                                         else self._replay_journal)},
+                # P0 store-mode: live SSE frames are only a hint; every
+                # (re)connect hands reconciliation to the recovery loop,
+                # which replays the durable journal before accepting state.
+                kwargs={"on_reconnect": self.recovery.reconnect},
                 name="conductor-sse-relay",
                 daemon=True,
             )
@@ -1120,14 +825,16 @@ class ConductorService:
         batch-resume any stranded workflow. Resuming is a per-task decision
         (``resume_workflow``); "stopped" means "not necessarily wanted back",
         and a single control silently relaying every open task overreaches.
-        The send path keeps the crash redispatch safety net because there the
-        user is demonstrably asking the conductor to work again."""
+        The send path keeps the crash-recovery wake because there the user is
+        demonstrably asking the conductor to work again: waking recovery
+        replays the journal and drains commands already persisted before the
+        crash."""
         self.configure_models(
             llm_index=llm_index,
             subagent_llm_index=subagent_llm_index,
             subagent_model_policy=subagent_model_policy,
         )
-        return self.ensure_started(redispatch_stranded=False)
+        return self.ensure_started(wake_recovery=False)
 
     def resume_workflow(self, request_id: str) -> bool:
         """Bring the supervisor up (if needed) and re-relay exactly ONE task.
@@ -1135,7 +842,21 @@ class ConductorService:
         The per-task counterpart of the old batch redispatch: only this
         workflow's original user message is delivered, every other open
         workflow is left untouched. Raises ValueError for unknown or
-        already-terminal requests; the route maps it to a clean 422."""
+        already-terminal requests; the route maps it to a clean 422.
+
+        Command track (P0): the relay is persisted before delivery like any
+        other chat command, so it carries a guarded receipt, a boot guard
+        and a retryable rejection instead of the fire-and-forget direct
+        ``client.post_chat`` this used to be. The operation id is derived
+        from (engine, request, boot, msg) rather than minted per call: a
+        double click or a transport retry replays the stored outcome
+        instead of appending a second copy of the original instruction,
+        while an engine restart (new boot) legitimately allows a fresh
+        relay. The boot in that key is the one the workflow is bound to
+        (its snapshot), not ``recovery.boot_id`` — the latter is still None
+        until the first sync and would make the id wobble between a first
+        and a second click.
+        """
         tracker = self.workflow_tracker
         snapshot = tracker.snapshot(request_id)
         if snapshot is None:
@@ -1143,24 +864,28 @@ class ConductorService:
         if (snapshot.get("terminal_event")
                 or snapshot.get("status") in TERMINAL_WORKFLOW_STATES):
             raise ValueError("该任务已经结束，无法恢复")
-        self.ensure_started(redispatch_stranded=False)
+        # wake_recovery=False: waking the engine must not batch-relay
+        # every other stranded workflow. It runs before submit() on purpose —
+        # the cold start is finished here, so the ensure_started() the
+        # command track performs finds a live engine and skips the recovery
+        # branch it would otherwise take.
+        self.ensure_started(wake_recovery=False)
         original = self._original_user_message(request_id)
         if original is None:
             raise ValueError("该任务找不到可重放的原始指令，无法恢复")
-        item = self.notify({
-            "type": "user_message",
-            "msg": original,
-            "request_id": request_id,
-        })
-        if item is None:
-            raise RuntimeError("engine refused resume (stopping?)")
+        operation_id = "resume-" + command_fingerprint({
+            "engine": self.store.engine_key, "request_id": request_id,
+            "boot": snapshot.get("boot_id") or self.recovery.boot_id or "",
+            "msg": original})[:48]
+        self.commands.submit(operation_id, {
+            "kind": "chat", "role": "user", "msg": original,
+            "request_id": request_id})
         log.info("resumed workflow %s on explicit request", request_id[:8])
         return True
 
     def ensure_started(
             self,
-            exclude_request_id: str | None = None,
-            redispatch_stranded: bool = True) -> bool:
+            wake_recovery: bool = True) -> bool:
         with self._shutdown_lock:
             if self._closed:
                 raise RuntimeError("Conductor service is closed")
@@ -1182,9 +907,8 @@ class ConductorService:
         status = self.client.status()
         if not status.get("started"):
             # Re-check under the cold-start lock: a concurrent admission may
-            # have finished the start + redispatch between our status check
-            # and this line, and a second start would re-relay the stranded
-            # set twice (fresh operation_id each time — no engine dedupe).
+            # have finished the start between our status check and this line,
+            # and a second start would double-run the cold-start sequence.
             with self._cold_start_lock:
                 status = self.client.status()
                 if not status.get("started"):
@@ -1194,72 +918,19 @@ class ConductorService:
                     # the engine restart instead of silently resetting to
                     # follow_main.
                     self._push_models_to_engine()
-                    # Fresh conductor: nothing is in flight on the engine, so
-                    # stranded requests can be re-relayed without
-                    # double-processing. On an already-running conductor this
-                    # must NOT run — an admitted workflow may be mid-turn
-                    # right now. The caller may also exclude the request it
-                    # just admitted (it is about to notify the engine itself);
-                    # re-relaying it here duplicated the message. Explicit
-                    # start passes redispatch_stranded=False: no task may be
-                    # resumed without a per-task user decision.
-                    if redispatch_stranded:
-                        self._redispatch_stranded_workflows(
-                            exclude_request_id=exclude_request_id)
+                    # Fresh conductor: waking recovery here replays the
+                    # durable journal and drains pending commands. On an
+                    # already-running conductor this must NOT run — an
+                    # admitted workflow may be mid-turn right now. Explicit
+                    # start passes wake_recovery=False: no task may be
+                    # resumed without a per-task user decision (the store
+                    # track fails boot-interrupted workflows instead of
+                    # auto-resuming them; resume_workflow is the per-task
+                    # channel).
+                    if wake_recovery:
+                        self.recovery.wake.set()
         self.lifecycle_status()
         return True
-
-    def _redispatch_stranded_workflows(
-            self, exclude_request_id: str | None = None) -> None:
-        """Re-relay stranded ``admitted`` workflows after a (re)start.
-
-        Stop-drain semantics discard engine-queued user messages without
-        touching the already-admitted workflow, so a message that only sat in
-        the engine inbox (or whose dispatch 422'd) used to strand forever:
-        nothing was supervising and nothing ever would. Re-relaying the
-        original user message wakes the supervisor to act on the same
-        request_id; the engine has no duplicate guard on the request id, and
-        the workflow simply gains workers when the relay lands. Failures are
-        logged, never raised — a resume must not break because one stranded
-        request cannot be relayed.
-        """
-        if self.recovery is not None:
-            self.recovery.wake.set()
-            return
-        tracker = self.workflow_tracker
-        stranded = [
-            workflow
-            for workflow in tracker.stranded_admitted()
-            if workflow["request_id"] != exclude_request_id
-        ]
-        if not stranded:
-            return
-        for workflow in stranded:
-            request_id = workflow["request_id"]
-            original = self._original_user_message(request_id)
-            if original is None:
-                log.warning(
-                    "stranded workflow %s has no original user message; "
-                    "leaving it admitted", request_id[:8],
-                )
-                continue
-            try:
-                item = self.notify({
-                    "type": "user_message",
-                    "msg": original,
-                    "request_id": request_id,
-                })
-                if item is None:
-                    raise RuntimeError("engine refused redispatch (stopping?)")
-            except Exception:
-                log.exception(
-                    "redispatch of stranded workflow %s failed", request_id[:8],
-                )
-                continue
-            log.info(
-                "redispatched stranded workflow %s after conductor (re)start",
-                request_id[:8],
-            )
 
     def _original_user_message(self, request_id: str) -> Optional[str]:
         """Latest user message for a request, from engine or local history."""
@@ -1278,8 +949,7 @@ class ConductorService:
         return None
 
     def stop(self, timeout: float = 5.0) -> bool:
-        if self.recovery is not None:
-            self.commands.suspend_commands()
+        self.commands.suspend_commands()
         try:
             result = self.client.stop(timeout=timeout)
             stopped = bool(result.get("stopped"))
@@ -1291,7 +961,7 @@ class ConductorService:
             # audit, user-confirmed policy). Stranded admitted workflows must
             # NOT be re-relayed by the next cold start: a task abandoned via
             # stop stays abandoned. Crash restarts (no manual stop) keep the
-            # redispatch safety net. Only workerless "admitted" workflows are
+            # recovery wake. Only workerless "admitted" workflows are
             # swept here — running workers already got terminal CANCELLED
             # events from the engine stop sweep.
             tracker = self.workflow_tracker
@@ -1316,8 +986,7 @@ class ConductorService:
             status.setdefault("agent_alive", False)
         self._started = bool(status.get("started"))
         self._lifecycle_cache = status
-        if self.recovery is not None:
-            status["recovery"] = self.recovery.status()
+        status["recovery"] = self.recovery.status()
         return status
 
     def _remember_relayed(self, ga_id) -> None:
@@ -1330,34 +999,6 @@ class ConductorService:
             if len(self._relayed_chat_ids) > 500:
                 self._relayed_chat_ids = set(list(self._relayed_chat_ids)[-250:])
 
-    def notify(self, event: dict) -> Optional[dict]:
-        """Admit a user message into the gahub_app conductor inbox.
-
-        Returns the engine-side chat item (its id is the authoritative chat
-        identity, D4) or ``None`` when the conductor is stopping. Remembering
-        the engine id here also lets ``_on_remote_chat`` recognize our own
-        relay instead of duplicating it in the UI.
-
-        Conversation continuity: a user message whose ``request_id`` names an
-        open workflow appends to it (same request id, no re-admission) — the
-        supervisor wake loop has no duplicate-id guard, so the same id is the
-        append channel. Unknown/closed ids silently admit as a fresh task.
-
-        P0 idempotency: the event may carry an ``operation_id`` (one per
-        logical admission, generated by ``add_chat_message``); when absent a
-        fresh one is minted so transport retries cannot double-admit.
-        """
-        if event.get("type") != "user_message":
-            return None
-        item = self.client.post_chat(
-            event.get("msg", ""), "user", event.get("request_id"),
-            operation_id=event.get("operation_id") or uuid.uuid4().hex,
-        )
-        if isinstance(item, dict):
-            self._remember_relayed(item.get("id"))
-            return item
-        return None
-
     def get_conductor_log(self) -> list:
         try:
             return self.client.get_log()
@@ -1368,24 +1009,12 @@ class ConductorService:
     def get_chat_messages(self, last: int = 20) -> list:
         """Bootstrap chat history for the conductor page (GET /chat proxy).
 
-        With the SQLite store the hub-side log is the durable authority: the
-        engine loses its chat memory on every boot, so hydration must not
-        depend on the engine being alive long enough to have replayed
-        (reliability plan §4.3).
-
-        Without the store (legacy in-memory mode) the live feed arrives over
-        SSE, so a transport failure here must not break the page — degrade to
-        an empty list and let the stream fill in, mirroring
-        ``get_conductor_log``.
+        The SQLite store is the durable authority: the engine loses its chat
+        memory on every boot, so hydration must not depend on the engine
+        being alive long enough to have replayed (reliability plan §4.3).
         """
-        if self.store is not None:
-            with self._chat_lock:
-                return list(self.chat_messages[-last:])
-        try:
-            return self.client.get_chat(last=last)
-        except Exception:
-            log.debug("gahub_app chat unavailable", exc_info=True)
-            return []
+        with self._chat_lock:
+            return list(self.chat_messages[-last:])
 
     def get_activity(self, request_id: str, limit: int = 200,
                      before_ms: int | None = None) -> dict:
@@ -1395,12 +1024,7 @@ class ConductorService:
         and an engine resync, so it reads the store instead of replaying the
         engine's live feed. ``before_ms`` walks backwards for the page's
         scroll-up window; ``has_more`` says whether an older window exists.
-
-        Without the store there is no durable history, and the page falls back
-        to its live SSE projection.
         """
-        if self.store is None:
-            return {"items": [], "has_more": False, "durable": False}
         rows = self.store.activity_for_request(request_id, limit + 1, before_ms)
         has_more = len(rows) > limit
         return {"items": rows[-limit:] if has_more else rows,
@@ -1409,248 +1033,20 @@ class ConductorService:
 
     # ===== SSE relay dispatch =====
 
-    def _advance_journal_cursor(self, seq: int) -> None:
-        cursor = self._journal_cursor
-        current = cursor.get("seq")
-        if current is None or seq > current:
-            cursor["seq"] = seq
-
-    def _replay_action_operation(self, operation_id: str | None) -> dict | None:
-        """Return the recorded response for a retried worker action, if any."""
-        if not operation_id:
-            return None
-        with self._action_operation_lock:
-            recorded = self._action_operations.get(operation_id)
-        if recorded is None or recorded is _ACTION_OPERATION_IN_FLIGHT:
-            return None
-        return recorded
-
-    def _reserve_action_operation(self, operation_id: str | None) -> dict | None:
-        """Replay a completed operation, or claim the id for execution.
-
-        Returns the recorded response when this operation_id already
-        completed (caller returns it as-is). Raises when the same id is
-        still executing in another thread — the "completed-then-registered"
-        cache alone let two concurrent duplicates both miss and double-fire
-        the engine. Claims are released on failure (see
-        _release_action_operation) so a genuine retry is not poisoned.
-        """
-        if not operation_id:
-            return None
-        with self._action_operation_lock:
-            recorded = self._action_operations.get(operation_id)
-            if recorded is not None and recorded is not _ACTION_OPERATION_IN_FLIGHT:
-                return recorded
-            if recorded is _ACTION_OPERATION_IN_FLIGHT:
-                raise ValueError(
-                    f"operation {operation_id} is already executing; wait for it to finish"
-                )
-            cache = self._action_operations
-            cache[operation_id] = _ACTION_OPERATION_IN_FLIGHT
-            while len(cache) > self._ACTION_OPERATION_CACHE_SIZE:
-                # Evict the oldest COMPLETED entry; a live reservation must
-                # survive (losing it would let a duplicate double-fire).
-                oldest = next(
-                    (k for k, v in cache.items()
-                     if v is not _ACTION_OPERATION_IN_FLIGHT),
-                    None,
-                )
-                if oldest is None:
-                    break
-                del cache[oldest]
-            return None
-
-    def _release_action_operation(self, operation_id: str | None) -> None:
-        """Drop an in-flight reservation after a failed execution."""
-        if not operation_id:
-            return
-        with self._action_operation_lock:
-            if self._action_operations.get(operation_id) is _ACTION_OPERATION_IN_FLIGHT:
-                del self._action_operations[operation_id]
-
-    def _record_action_operation(self, operation_id: str | None, result: dict) -> None:
-        if not operation_id:
-            return
-        with self._action_operation_lock:
-            cache = self._action_operations
-            cache.pop(operation_id, None)
-            cache[operation_id] = result
-            while len(cache) > self._ACTION_OPERATION_CACHE_SIZE:
-                cache.popitem(last=False)
-
-    def _replay_journal(self) -> bool:
-        """Catch-up replay after an SSE (re)connect (P2-A reconcile).
-
-        The live SSE stream is a hint; the engine journal is the truth.  On
-        every reconnect, everything after the last seen seq is fed through
-        the same event handler, closing the drop window between the live
-        hint and the durable stream.  Replay runs BEFORE any live frame is
-        read (the relay calls this hook right after connecting), so events
-        are applied in journal order and the cursor stays exact.
-
-        Long disconnects can outgrow one page, so the catch-up fetches in a
-        pagination loop until the engine returns a short page.  The cursor
-        still advances per event (crash-safe mid-replay progress) and the
-        loop breaks defensively if a full page yields no cursor progress.
-        """
-        try:
-            cursor = self._journal_cursor
-            if cursor.get("seq") is None:
-                resp = self.client.journal(after_seq=0, limit=1)
-                info = resp.get("journal") or {}
-                if info.get("disabled"):
-                    return True
-                cursor["seq"] = int(info.get("last_seq") or 0)
-                cursor["epoch"] = info.get("epoch")
-                log.info("journal cursor baselined at seq %s (epoch %s)",
-                         cursor["seq"], cursor["epoch"])
-                return True
-            fed = 0
-            failed = False
-            self._journal_replaying = True
-            while True:
-                page_floor = int(cursor["seq"] or 0)
-                resp = self.client.journal(
-                    after_seq=page_floor, limit=self._JOURNAL_REPLAY_BATCH)
-                info = resp.get("journal") or {}
-                if info.get("disabled"):
-                    self._journal_replaying = False
-                    return True
-                epoch = info.get("epoch")
-                if epoch and cursor.get("epoch") and epoch != cursor["epoch"]:
-                    log.warning(
-                        "journal epoch changed (%s -> %s): engine restarted "
-                        "with a fresh journal; resetting the cursor and "
-                        "replaying it",
-                        cursor["epoch"], epoch)
-                    # A fresh journal renumbers seq from 1, so the old
-                    # cursor floor would filter every new event out.
-                    # Replay the new epoch from its beginning; the SSE
-                    # handlers merge pool/chat state idempotently.
-                    cursor["seq"] = 0
-                    cursor["epoch"] = epoch
-                    continue
-                if epoch:
-                    cursor["epoch"] = epoch
-                events = resp.get("events") or []
-                highest = page_floor
-                for record in events:
-                    seq = record.get("seq")
-                    if not isinstance(seq, int) or seq <= page_floor:
-                        continue
-                    payload = record.get("payload")
-                    if isinstance(payload, dict):
-                        replay_payload = dict(payload)
-                        replay_payload["jseq"] = seq
-                        result = self._on_sse_event(replay_payload)
-                        # Legacy test doubles may return None; only an
-                        # explicit False means the event was not applied.
-                        if result is False:
-                            failed = True
-                            break
-                        fed += 1
-                    self._advance_journal_cursor(seq)
-                    highest = max(highest, seq)
-                if failed or (len(events) < self._JOURNAL_REPLAY_BATCH
-                        or highest <= page_floor):
-                    break
-            self._journal_replaying = False
-            if fed:
-                log.info("journal replay fed %d missed events after reconnect", fed)
-            return not failed
-        except Exception:
-            # Reconciliation is best-effort: a failed replay never kills the
-            # live relay; the next reconnect retries from the same cursor.
-            log.exception("journal replay after reconnect failed")
-            self._journal_replaying = False
-            return False
-
     def _on_sse_event(self, event: dict) -> bool:
-        if self.recovery is not None:
-            return self.recovery.on_event(event)
-        seq = event.get("jseq")
-        current = self._journal_cursor.get("seq")
-        if isinstance(seq, int) and current is not None:
-            if seq <= current:
-                return True
-            # A live sequence is only a hint. Reconcile from the durable
-            # journal first so an earlier dropped/failed event is not skipped.
-            if not getattr(self, "_journal_replaying", False):
-                return (self._replay_journal()
-                        and int(self._journal_cursor.get("seq") or 0) >= seq)
-        if "jseq" in event:
-            # Internal cursor field: keep it out of downstream payloads.
-            event = {k: v for k, v in event.items() if k != "jseq"}
-        kind = event.get("event")
-        try:
-            if kind == "hello":
-                self.pool.update(event.get("subagents") or [])
-                for item in (event.get("chat") or [])[-20:]:
-                    self._on_remote_chat(item, from_hello=True)
-                # The engine forgets its model policy on every cold restart;
-                # a fresh SSE hello is the reliable "engine (re)connected"
-                # signal, so re-assert the hub-owned policy snapshot. The
-                # push is best-effort and idempotent.
-                self._push_models_to_engine()
-            elif kind == "request_outcome":
-                rid = event.get("request_id")
-                if not rid:
-                    # Unattributed wakes have no workflow to transition;
-                    # forwarding them would publish request_id=None noise.
-                    log.debug("ignoring unattributed request_outcome event")
-                    return True
-                outcome = SimpleNamespace(
-                    status=event.get("status"),
-                    phase=event.get("phase"),
-                    error=event.get("error", ""),
-                )
-                if event.get("status") == "ok":
-                    self.callbacks.on_conductor_request_finished(rid)
-                elif event.get("status") == "yielded":
-                    self.callbacks.on_conductor_request_yielded(rid, outcome=outcome)
-                else:
-                    self.callbacks.on_conductor_request_outcome(rid, outcome=outcome)
-            elif kind == "subagents":
-                self.pool.update(event.get("items") or [])
-                self.callbacks.publish_subagent_snapshot()
-            elif isinstance(kind, str) and kind.startswith("subagent_"):
-                payload = {k: v for k, v in event.items() if k != "event"}
-                self.callbacks.on_subagent_event(
-                    event.get("id", ""), kind[len("subagent_"):], payload
-                )
-            elif kind == "chat":
-                self._on_remote_chat(event.get("item") or {})
-            elif kind == "chat_read":
-                bus.publish(CONDUCTOR_CHAT_READ, {})
-            elif kind == "log":
-                self.callbacks.on_conductor_log_frame(event.get("item") or {})
-            elif kind == "request_yield_requested":
-                bus.publish(CONDUCTOR_REQUEST_YIELD_REQUESTED, {
-                    "request_id": event.get("request_id"),
-                    "reason": event.get("reason", ""),
-                })
-            elif kind == "error":
-                payload = {k: v for k, v in event.items() if k != "event"}
-                self.callbacks.on_conductor_event("error", payload)
-        except Exception:
-            log.exception("SSE relay handler failed for %s", kind)
-            return False
-        if isinstance(seq, int):
-            self._advance_journal_cursor(seq)
-        return True
+        # Live SSE frames are only a hint; the durable journal (replayed by
+        # the recovery loop) is the state truth. There is no store-less
+        # reconcile path anymore.
+        return self.recovery.on_event(event)
 
-    def _on_remote_chat(self, item: dict, *, from_hello: bool = False) -> None:
-        """Mirror engine-side chat into the hub log.
+    def _on_remote_chat(self, item: dict) -> None:
+        """Mirror an engine-side chat item into the hub log.
 
-        ``role=user`` entries only arrive here as echoes of messages the hub
-        itself relayed (the engine broadcasts before our post_chat response
-        returns, so the id race cannot be fully closed) or inside the hello
-        snapshot after a hub restart. Live echoes of user messages are always
-        skipped; the hello path keeps them to restore history.
+        Callers are the journal replay (chat records, including user
+        messages the hub itself relayed — dedupe by engine id keeps the
+        optimistic copy single) and the chat command's engine receipt.
         """
         if not item:
-            return
-        if item.get("role") == "user" and not from_hello and self.store is None:
             return
         role = item.get("role") or "conductor"
         final = bool(item.get("final"))
@@ -1677,14 +1073,10 @@ class ConductorService:
                     self._remember_relayed(item.get("id"))
                 self._publish(CONDUCTOR_CHAT, {"item": hub_item})
 
-            if self.store is not None:
-                self.store.save_chat(hub_item)
-                self.store.defer(mirror)
-            else:
-                mirror()
+            self.store.save_chat(hub_item)
+            self.store.defer(mirror)
 
     # ===== dispatch / review through the engine =====
-
     def start_subagent(
         self,
         prompt: str,
@@ -1712,70 +1104,12 @@ class ConductorService:
         hub generates it when absent so a transport-level retry can never
         spawn a second worker for the same logical operation.
         """
-        if self.recovery is not None:
-            return self.commands.submit(operation_id, {
-                "kind": "dispatch", "prompt": prompt, "request_id": request_id,
-                "llm_index": llm_index, "conductor_llm_index": conductor_llm_index,
-                "subagent_llm_index": subagent_llm_index, "subagent_model_policy": subagent_model_policy,
-                "goal": goal, "boundaries": boundaries, "deliverables": deliverables,
-                "done_when": done_when, "checks": checks})
-        tracker, models, selected = self._admit_action_models(
-            llm_index,
-            request_id,
-            conductor_llm_index,
-            subagent_llm_index,
-            subagent_model_policy,
-        )
-        operation_id = operation_id or uuid.uuid4().hex
-        result = self.client.start_subagent(
-            prompt, request_id, selected,
-            goal=goal, boundaries=boundaries, deliverables=deliverables,
-            done_when=done_when, checks=checks,
-            operation_id=operation_id,
-        )
-        result.setdefault("operation_id", operation_id)
-        sid = result.get("id")
-        bound_request_id: str | None = None
-        if request_id and sid and "error" not in result:
-            generation = int(result.get("active_generation", 0) or 0)
-            completed = tracker.bind_subagent(request_id, sid, generation)
-            if completed is not None:
-                self._publish_workflow_transition(
-                    (CONDUCTOR_WORKFLOW_COMPLETED, completed)
-                )
-            # gahub_app auto-yields the supervisor turn on dispatch.
-            bound_request_id = request_id
-        self._fill_dispatch_defaults(
-            result,
-            llm_index=selected,
-            model_policy=models["subagent_model_policy"],
-            request_id=bound_request_id,
-        )
-        # Dispatched responses carry the conductor instruction line, like
-        # apply_subagent_action does for rework/input — "which responses
-        # carry an instruction" stays single-homed in the service.
-        result["instruction"] = INSTR_DISPATCHED
-        return result
-
-    @staticmethod
-    def _fill_dispatch_defaults(
-        result: dict,
-        *,
-        llm_index: Optional[int],
-        model_policy: SubagentModelPolicy,
-        request_id: str | None = None,
-    ) -> None:
-        """Fill the resolved model context the UI renders on dispatch results.
-
-        Engine responses omit these hub-resolved fields; the dispatch verbs
-        (start/input/rework) fill the same trio here instead of per action.
-        accept only fills request_id — its response carries no model
-        context, so it forwards the tracker owner without this helper.
-        """
-        if request_id:
-            result.setdefault("request_id", request_id)
-        result.setdefault("llm_index", llm_index)
-        result.setdefault("model_policy", model_policy)
+        return self.commands.submit(operation_id, {
+            "kind": "dispatch", "prompt": prompt, "request_id": request_id,
+            "llm_index": llm_index, "conductor_llm_index": conductor_llm_index,
+            "subagent_llm_index": subagent_llm_index, "subagent_model_policy": subagent_model_policy,
+            "goal": goal, "boundaries": boundaries, "deliverables": deliverables,
+            "done_when": done_when, "checks": checks})
 
     def _admit_action_models(
         self,
@@ -1811,66 +1145,6 @@ class ConductorService:
             raise ValueError(f"unknown conductor request_id: {request_id}")
         return tracker
 
-    def _resume_subagent_action(
-        self,
-        sid: str,
-        action: str,
-        msg: str,
-        llm_index: Optional[int],
-        *,
-        request_id: str | None = None,
-        conductor_llm_index: Optional[int],
-        subagent_llm_index: Optional[int],
-        subagent_model_policy: Optional[SubagentModelPolicy],
-        operation_id: str | None = None,
-    ) -> dict:
-        """input/rework 共用主体。
-
-        两个动作此前是逐字复制的双胞胎（断言/校验/配置/解析/绑定/setdefault
-        六段全同）；动作差异只剩 verb 字符串。
-        """
-        if self.recovery is not None:
-            return self.commands.submit(operation_id, {
-                "kind": "action", "sid": sid, "action": action, "msg": msg,
-                "request_id": request_id, "llm_index": llm_index,
-                "conductor_llm_index": conductor_llm_index, "subagent_llm_index": subagent_llm_index,
-                "subagent_model_policy": subagent_model_policy})
-        replayed = self._reserve_action_operation(operation_id)
-        if replayed is not None:
-            return replayed
-        try:
-            tracker, models, selected = self._admit_action_models(
-                llm_index,
-                request_id,
-                conductor_llm_index,
-                subagent_llm_index,
-                subagent_model_policy,
-            )
-            # Owner parity (P0-B): forward the tracker-resolved owner so the
-            # engine's request_mismatch guard applies even when the caller
-            # omitted the request (keyinfo/abort already behave this way).
-            owner = request_id or tracker.request_for_subagent(sid)
-            result = self.client.subagent_action(
-                sid, action, msg, request_id=owner, llm_index=selected
-            )
-            bound_request_id: str | None = None
-            if "error" not in result and owner:
-                generation = int(result.get("active_generation", 0) or 0)
-                tracker.bind_subagent(owner, sid, generation)
-                bound_request_id = owner
-            # gahub_app auto-yields the supervisor turn on resume/rework.
-            self._fill_dispatch_defaults(
-                result,
-                llm_index=selected,
-                model_policy=models["subagent_model_policy"],
-                request_id=bound_request_id,
-            )
-        except BaseException:
-            self._release_action_operation(operation_id)
-            raise
-        self._record_action_operation(operation_id, result)
-        return result
-
     def input_subagent(
         self,
         sid: str,
@@ -1884,9 +1158,8 @@ class ConductorService:
         operation_id: str | None = None,
     ) -> dict:
         """Resume a stopped worker through the same model-policy boundary."""
-        return self._resume_subagent_action(
-            sid, "input", msg, llm_index,
-            request_id=request_id,
+        return self.apply_subagent_action(
+            sid, "input", msg, llm_index=llm_index, request_id=request_id,
             conductor_llm_index=conductor_llm_index,
             subagent_llm_index=subagent_llm_index,
             subagent_model_policy=subagent_model_policy,
@@ -1903,39 +1176,10 @@ class ConductorService:
         deterministic verification verdict is not clean (the UI surfaces the
         evidence before offering it).
         """
-        if self.recovery is not None:
-            return self.commands.submit(operation_id, {
-                "kind": "action", "sid": sid, "action": "accept", "msg": msg,
-                "request_id": request_id, "force": force})
-        replayed = self._reserve_action_operation(operation_id)
-        if replayed is not None:
-            return replayed
-        try:
-            tracker = self._assert_action_request(request_id)
-            if request_id is None:
-                # Owner parity (P0-B): keyinfo/abort already forward the
-                # tracker-resolved owner so the engine's request_mismatch guard
-                # applies; plain accepts must not be the loophole.
-                request_id = tracker.request_for_subagent(sid)
-            result = self.client.subagent_action(
-                sid, "accept", msg, request_id=request_id, force=force)
-            if "error" not in result:
-                generation = int(result.get("active_generation", 0) or 0)
-                owner, transition = tracker.record_subagent_event(
-                    sid,
-                    "accepted",
-                    generation=generation,
-                    request_id=request_id,
-                )
-                if owner:
-                    result.setdefault("request_id", owner)
-                if transition is not None:
-                    self._publish_workflow_transition(transition)
-        except BaseException:
-            self._release_action_operation(operation_id)
-            raise
-        self._record_action_operation(operation_id, result)
-        return result
+        return self.apply_subagent_action(
+            sid, "accept", msg, request_id=request_id, force=force,
+            operation_id=operation_id,
+        )
 
     def rework_subagent(
         self,
@@ -1950,9 +1194,8 @@ class ConductorService:
         operation_id: str | None = None,
     ) -> dict:
         """Rework a pending worker through the model-policy boundary."""
-        return self._resume_subagent_action(
-            sid, "rework", msg, llm_index,
-            request_id=request_id,
+        return self.apply_subagent_action(
+            sid, "rework", msg, llm_index=llm_index, request_id=request_id,
             conductor_llm_index=conductor_llm_index,
             subagent_llm_index=subagent_llm_index,
             subagent_model_policy=subagent_model_policy,
@@ -1971,13 +1214,12 @@ class ConductorService:
             detail = self.client.get_subagent(sid, max_len)
         except Exception as exc:
             status_code = getattr(exc, "status_code", None)
-            archived = None
-            if self.store is not None:
-                try:
-                    found = self.store.archived_subagent_snapshots()
-                    archived = next((item for item in found if item.get("id") == sid), None)
-                except Exception:
-                    log.exception("subagent archive read failed for %s", sid)
+            try:
+                found = self.store.archived_subagent_snapshots()
+                archived = next((item for item in found if item.get("id") == sid), None)
+            except Exception:
+                log.exception("subagent archive read failed for %s", sid)
+                archived = None
             if archived is None:
                 raise
             detail = dict(archived)
@@ -2017,69 +1259,26 @@ class ConductorService:
     ) -> dict:
         """Dispatch one POST /api/conductor/subagent/{sid} verb.
 
-        Single home for the verb matrix: which method serves each action and
-        which responses carry a conductor instruction line. Accept/rework/
-        input resolve the tracker owner inside their own methods; keyinfo/
-        abort round-trip through the pool mirror, so their owner resolution
-        lives here.
+        Single home for the verb matrix: alias folding, verb validation and
+        intent construction (including abort's hub origin and the optimistic
+        concurrency expectations) all happen here before the intent is
+        handed to the command track.
         """
         action = action.lower().strip()
-        if self.recovery is not None:
-            action = {"reply": "input", "append": "input", "message": "input",
-                      "msg": "input", "stop": "abort"}.get(action, action)
-            if action not in SUBAGENT_VERBS:
-                raise ValueError(f"unknown conductor action: {action}")
-            intent = {"kind": "action", "sid": sid, "action": action, "msg": msg,
-                      "request_id": request_id, "force": force, "llm_index": llm_index,
-                      "conductor_llm_index": conductor_llm_index, "subagent_llm_index": subagent_llm_index,
-                      "subagent_model_policy": subagent_model_policy}
-            if action == "abort":
-                intent["origin"] = "hub"
-            intent.update({key: value for key, value in {
-                "expected_boot_id": expected_boot_id, "expected_generation": expected_generation,
-                "expected_command_revision": expected_command_revision,
-            }.items() if value is not None})
-            return self.commands.submit(operation_id, intent)
-        if action == "keyinfo":
-            # Controlled idempotency exception: keyinfo/abort carry no
-            # operation_id replay (the engine's once-per-attempt budget 409
-            # bounds retries instead of a cached 200 replay).
-            result = self.pool.keyinfo_subagent(
-                sid, msg,
-                request_id=self.workflow_tracker.request_for_subagent(sid))
-            result["instruction"] = INSTR_KEYINFO
-            return result
-        if action == "accept":
-            return self.accept_subagent(
-                sid, msg, request_id=request_id, force=force,
-                operation_id=operation_id)
-        if action == "rework":
-            result = self.rework_subagent(
-                sid, msg, llm_index,
-                request_id=request_id,
-                conductor_llm_index=conductor_llm_index,
-                subagent_llm_index=subagent_llm_index,
-                subagent_model_policy=subagent_model_policy,
-                operation_id=operation_id,
-            )
-            if "error" not in result:
-                result["instruction"] = INSTR_DISPATCHED
-            return result
-        if action in ("input", "reply", "append", "message", "msg"):
-            result = self.input_subagent(
-                sid, msg, llm_index,
-                request_id=request_id,
-                conductor_llm_index=conductor_llm_index,
-                subagent_llm_index=subagent_llm_index,
-                subagent_model_policy=subagent_model_policy,
-                operation_id=operation_id,
-            )
-            result["instruction"] = INSTR_DISPATCHED
-            return result
-        if action in ("abort", "stop"):
-            return self.pool.abort_subagent(
-                sid, request_id=self.workflow_tracker.request_for_subagent(sid))
-        raise ValueError(f"unknown conductor action: {action}")
+        action = SUBAGENT_ACTION_ALIASES.get(action, action)
+        if action not in SUBAGENT_VERBS:
+            raise ValueError(f"unknown conductor action: {action}")
+        intent = {"kind": "action", "sid": sid, "action": action, "msg": msg,
+                  "request_id": request_id, "force": force, "llm_index": llm_index,
+                  "conductor_llm_index": conductor_llm_index, "subagent_llm_index": subagent_llm_index,
+                  "subagent_model_policy": subagent_model_policy}
+        if action == "abort":
+            intent["origin"] = "hub"
+        intent.update({key: value for key, value in {
+            "expected_boot_id": expected_boot_id, "expected_generation": expected_generation,
+            "expected_command_revision": expected_command_revision,
+        }.items() if value is not None})
+        return self.commands.submit(operation_id, intent)
 
     # ===== snapshots & chat product surface =====
 
@@ -2090,7 +1289,7 @@ class ConductorService:
         restarts), while completed workflows keep referencing their workers.
         Best-effort: archiving must never break the snapshot surface.
         """
-        if self.store is None or not items:
+        if not items:
             return
         try:
             self.store.save_subagent_snapshots(items)
@@ -2099,8 +1298,6 @@ class ConductorService:
 
     def _merge_archived_subagents(self, items: list[dict]) -> list[dict]:
         """Append archived workers missing from the live pool snapshot."""
-        if self.store is None:
-            return items
         try:
             live_ids = {item.get("id") for item in items if item.get("id")}
             archived = self.store.archived_subagent_snapshots(exclude=live_ids)
@@ -2133,7 +1330,7 @@ class ConductorService:
         return envelope
 
     def get_operation(self, operation_id: str) -> dict:
-        command = self.store.command(operation_id) if self.store is not None else None
+        command = self.store.command(operation_id)
         if command is None:
             return {"operation_id": operation_id, "known": False}
         return {"operation_id": operation_id, "known": True, "state": command["state"],
@@ -2168,125 +1365,23 @@ class ConductorService:
         operation_id: Optional[str] = None,
     ) -> dict:
         self._assert_open()
-        tracker = self.workflow_tracker
         if kind is not None and role != "conductor":
             raise ValueError("kind is only valid for conductor messages")
         if kind == "final" and not request_id:
             raise ValueError("request_id is required for a final conductor message")
-        if role != "user" and request_id and not tracker.has_request(request_id):
+        if role != "user" and request_id and not self.workflow_tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")
-        if self.recovery is not None:
-            return self.commands.submit(operation_id, {
-                "kind": "chat", "msg": msg, "role": role, "request_id": request_id,
-                "final": kind == "final", "llm_index": llm_index,
-                "subagent_llm_index": subagent_llm_index, "subagent_model_policy": subagent_model_policy})
-        reserve_final = kind == "final" and request_id is not None
-        if reserve_final:
-            # Reserve-first: a retried final replays the recorded item (no
-            # 422 from assert_ready_for_final), and a concurrent duplicate
-            # with the same id is refused instead of double-committing.
-            replayed = self._reserve_action_operation(operation_id)
-            if replayed is not None:
-                return replayed
-        try:
-            if reserve_final:
-                tracker.assert_ready_for_final(request_id)
-            # Conversation continuity (2026-09 UI audit): a user message that
-            # carries the request id of an open workflow APPENDS to that
-            # workflow instead of forking a new task. The engine has no
-            # duplicate guard on a request id — the supervisor wake loop
-            # batches same-id user messages into one turn (stranded-workflow
-            # redispatch relies on exactly this) — so the same id is the
-            # append channel. Unknown or closed ids fall back to a fresh
-            # admission: a stale UI hint must never resurrect a dead task.
-            append_mode = (
-                role == "user" and request_id is not None
-                and tracker.is_open(request_id)
-            )
-            if append_mode:
-                admitted_request_id = request_id
-            else:
-                admitted_request_id = (
-                    uuid.uuid4().hex if role == "user" else request_id
-                )
-            # The SSE relay thread appends engine mirrors concurrently; every
-            # add_chat caller holds the chat lock (RLock, so nested use is fine).
-            with self._chat_lock:
-                item = add_chat(
-                    msg,
-                    role,
-                    self.chat_messages,
-                    request_id=admitted_request_id,
-                    kind=kind,
-                )
-            if role == "user" and admitted_request_id:
-                if not append_mode:
-                    tracker.admit(admitted_request_id)
-                try:
-                    self.configure_models(
-                        llm_index=llm_index,
-                        subagent_llm_index=subagent_llm_index,
-                        subagent_model_policy=subagent_model_policy,
-                    )
-                    # Exclude the just-admitted request: it is admitted but
-                    # workerless right now (the supervisor has not even woken),
-                    # which is exactly the "stranded" shape. Re-relaying it here
-                    # delivered the user's message to the engine twice (live
-                    # 2026-09-01: duplicated user_message batch, same request_id).
-                    self.ensure_started(exclude_request_id=admitted_request_id)
-                except Exception as exc:
-                    transition = tracker.fail_supervisor(
-                        admitted_request_id,
-                        phase="start",
-                        error=f"conductor start failed: {str(exc)[:600]}",
-                    )
-                    if transition is not None:
-                        self._publish_workflow_transition(transition)
-                    raise
-                try:
-                    engine_item = self.notify({
-                        "type": "user_message",
-                        "msg": msg,
-                        "request_id": admitted_request_id,
-                        # One id per logical admission (P0): a retried POST /chat
-                        # replays the first engine answer instead of double-admitting.
-                        "operation_id": operation_id or uuid.uuid4().hex,
-                    })
-                    if engine_item is None:
-                        raise RuntimeError("conductor stopped before event admission")
-                    engine_id = (
-                        engine_item.get("id")
-                        if isinstance(engine_item, dict) else None
-                    )
-                    if engine_id and engine_id != item["id"]:
-                        # D4: adopt the engine id as the authoritative identity so
-                        # the page's optimistic add and the later hydration merge.
-                        item["id"] = engine_id
-                except Exception:
-                    transition = tracker.fail_supervisor(
-                        admitted_request_id,
-                        phase="admission",
-                        error="conductor event admission failed",
-                    )
-                    if transition is not None:
-                        self._publish_workflow_transition(transition)
-                    raise
-                bus.publish(CONDUCTOR_CHAT, {"item": item})
-            elif role == "conductor" and kind == "final" and admitted_request_id:
-                bus.publish(CONDUCTOR_CHAT, {"item": item})
-                transition = tracker.record_final(admitted_request_id, item)
-                if transition is not None:
-                    self._publish_workflow_transition(transition)
-                # Recorded only after the final fully commits (no minting: a
-                # fresh id per call could never replay) so an engine retry of a
-                # delivered final gets the recorded item back.
-                self._record_action_operation(operation_id, item)
-        except BaseException:
-            # Release the final's reservation so a genuine retry is not
-            # poisoned; no-op for callers that never reserved.
-            self._release_action_operation(operation_id)
-            raise
-        return item
+        # Failure semantics (store track): the command is persisted before
+        # the engine call, so a delivery failure leaves it pending/rejected
+        # for the drain loop and journal reconciliation — there is no
+        # synchronous fail_supervisor transition here anymore. Boot-change
+        # outcomes are reconciled by recovery.sync() (fail_supervisor on an
+        # old-boot admitted workflow) and per-task retries go through
+        # resume_workflow.
+        return self.commands.submit(operation_id, {
+            "kind": "chat", "msg": msg, "role": role, "request_id": request_id,
+            "final": kind == "final", "llm_index": llm_index,
+            "subagent_llm_index": subagent_llm_index, "subagent_model_policy": subagent_model_policy})
 
     def get_readmes(self) -> dict:
         return READMES

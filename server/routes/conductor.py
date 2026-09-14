@@ -33,11 +33,8 @@ from ..schemas import (
 )
 from ..services import conductor_client as conductor_client_module
 from ..services.conductor_store import OperationConflict
-from ..services.conductor_service import (
-    SUBAGENT_VERBS,
-    ConductorNotRunning,
-    ConductorService,
-)
+from ..services.conductor_service import ConductorService
+from ..services.conductor_vocabulary import SUBAGENT_VERBS, ConductorNotRunning
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -169,8 +166,7 @@ async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
 async def list_subagents() -> ConductorSubagentListResp:
     """Return the subagent pool snapshot the UI renders."""
     service = svc()
-    return (service.get_subagent_envelope() if service.recovery is not None
-            else {"items": service.get_subagent_snapshot()})
+    return service.get_subagent_envelope()
 
 
 @router.get("/api/conductor/operations/{operation_id}")

@@ -82,29 +82,3 @@ def test_workflow_payload_carries_the_hub_decided_stage():
     snapshot = tracker.snapshot("req-1")
     assert snapshot is not None
     assert snapshot["stage"] == "supervising"
-
-
-def test_fill_dispatch_defaults_fills_only_missing_fields():
-    """The dispatch verbs (start/input/rework) route through
-    _fill_dispatch_defaults; accept only forwards the tracker owner. The
-    helper must fill hub-resolved context without clobbering engine values,
-    and must not invent a request_id when no owner was bound."""
-    fill = ConductorService._fill_dispatch_defaults
-
-    # Everything missing -> the resolved trio lands.
-    result: dict = {}
-    fill(result, llm_index=3, model_policy="locked", request_id="req-1")
-    assert result == {"request_id": "req-1", "llm_index": 3,
-                      "model_policy": "locked"}
-
-    # Engine-provided values are never overridden.
-    result = {"request_id": "engine-req", "llm_index": 7,
-              "model_policy": "follow_main"}
-    fill(result, llm_index=3, model_policy="locked", request_id="req-1")
-    assert result == {"request_id": "engine-req", "llm_index": 7,
-                      "model_policy": "follow_main"}
-
-    # No owner bound (workerless/admission race) -> no request_id invented.
-    result = {"llm_index": 1}
-    fill(result, llm_index=1, model_policy="default", request_id=None)
-    assert result == {"llm_index": 1, "model_policy": "default"}

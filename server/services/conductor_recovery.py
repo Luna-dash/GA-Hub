@@ -7,7 +7,12 @@ import threading
 import time
 
 from ..constants import ENV_GAHUB_DELIVERABLE_ROOTS, ENV_GAHUB_PATH_POLICY
-from .conductor_client import GahubProcessError, _engine_spawn_env
+from ..event_topics import (
+    CONDUCTOR_CHAT_READ,
+    CONDUCTOR_REQUEST_OUTCOME,
+    CONDUCTOR_REQUEST_YIELD_REQUESTED,
+)
+from .conductor_client import _engine_spawn_env
 from . import conductor_activity
 
 
@@ -19,6 +24,10 @@ OBSERVATIONS = frozenset({"chat_read", "request_yield_requested", "request_start
                           "model_fallback", "worker_failed", "worker_timeout", "worker_silent",
                           "subagent_milestone", "subagent_force_accept", "supervisor_followup",
                           "engine_stopped", "error", "output_truncated"})
+# Registry constants for the observations that have one; the rest ride the
+# dynamic "conductor:" family (their suffixes are engine event kinds).
+_OBSERVATION_TOPICS = {"chat_read": CONDUCTOR_CHAT_READ,
+                       "request_yield_requested": CONDUCTOR_REQUEST_YIELD_REQUESTED}
 # How far back the one-shot activity backfill reads the journal. The store keeps
 # at most ConductorStore.ACTIVITY_CAP rows per engine, so this is a generous
 # multiple of what could ever be stored: it bounds startup work on an old,
@@ -146,6 +155,11 @@ class ConductorRecovery:
                     self.ready = False
                     self.boot_id = response["boot_id"]
                     self.service.pool.select_boot(self.boot_id)
+                    # A fresh engine process forgot the hub-pushed model
+                    # policy. The SSE-hello path used to re-assert it on every
+                    # reconnect; on the journal track the boot change is the
+                    # equivalent signal. Best-effort and idempotent.
+                    self.service._push_models_to_engine()
             self.service._lifecycle_cache.update(response)
             if not self._catch_up():
                 return False
@@ -197,8 +211,6 @@ class ConductorRecovery:
         detail even though the engine cleared its pool.
         """
         store = self.service.store
-        if store is None:
-            return
         try:
             existing = store.archived_subagent_snapshots()
         except Exception:
@@ -300,7 +312,7 @@ class ConductorRecovery:
         scanning again costs a read and cannot duplicate anything.
         """
         store = self.service.store
-        if store is None or self._activity_backfilled:
+        if self._activity_backfilled:
             return
         try:
             head = self.service.client.journal(after_seq=0, limit=1)
@@ -402,7 +414,6 @@ class ConductorRecovery:
                     self._apply_record(record, epoch)
                     self.store.checkpoint(epoch, seq, cursor["boot_id"])
                 cursor["seq"] = seq
-                self.service._journal_cursor = {"seq": seq, "epoch": epoch}
                 if time.monotonic() >= deadline and seq < target:
                     self.ready = False
                     self.wake.set()
@@ -462,7 +473,7 @@ class ConductorRecovery:
         # Persist before publishing: the row is the durable truth, the SSE frame
         # only a live hint for it.
         activity = self._activity_for(record, epoch)
-        if activity is not None and self.service.store is not None:
+        if activity is not None:
             self.service.store.save_activity([activity])
         tracker = self.service.workflow_tracker
         rid = event.get("request_id")
@@ -494,8 +505,9 @@ class ConductorRecovery:
                                                    error=event.get("error") or "supervisor failed")
                 if transition:
                     self.service._publish_workflow_transition(transition)
-            self.service._publish("conductor:request_outcome", self._with_activity(event, activity))
+            self.service._publish(CONDUCTOR_REQUEST_OUTCOME, self._with_activity(event, activity))
         elif kind in OBSERVATIONS:
-            self.service._publish("conductor:" + kind, self._with_activity(event, activity))
+            self.service._publish(_OBSERVATION_TOPICS.get(kind) or "conductor:" + kind,
+                                  self._with_activity(event, activity))
         else:
             raise ValueError(f"unsupported journal event: {kind}")
