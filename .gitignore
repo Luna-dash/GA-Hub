@@ -19,6 +19,8 @@ target/
 webui/dist/
 webui/.vite/
 webui/tsconfig.tsbuildinfo
+# vitest 把 config 转译成临时文件；进程被中断（如超时 SIGTERM）时会残留
+vitest.config.ts.timestamp-*.mjs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -60,3 +62,8 @@ temp/
 .compare_launch_diff.txt
 .ga-staging/
 .zcode/
+mockups/
+# Agent 工作区：CDP 渲染截图 + 本地记忆，纯本机产物（无 skills/ 等需共享内容）
+.workbuddy/
+# 本机私有项目笔记（此前只靠 .git/info/exclude 兜着，换机 clone 会露出）
+project_memory.md

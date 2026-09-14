@@ -464,3 +464,117 @@ GA 32f4d5e。**已修**：
       落地前无法拉起引擎**——这不是代码缺陷，503 诊断已如实报告
 - [ ] 观察项：信誉判定若在数分钟后放行挂起进程，可考虑加长 health 等待
       （当前 60s）；本轮实测挂起 8 分钟未释放，暂不加码
+
+## 2026-09-14 Conductor 旧内存轨删除（收敛为单一数据流）
+
+Conductor 原有两条并行轨道——「命令轨」（指令先写 SQLite，再发引擎，有凭据、
+可重试）与「内存轨」（直调引擎、内存记状态）——做同一件事却重复、行为还不一
+致。本次把旧轨道整体删除，只剩命令轨。**改动在工作区，未提交 commit。**
+
+- [x] 常量搬家（`server/services/conductor_vocabulary.py`）：动词集合、异常类
+      等公共定义集中，解开 `conductor_service` ↔ `conductor_commands` 的循环
+      依赖（原靠函数内延迟 import 绕环）
+- [x] 测试基建统一：`for_tests()` 默认即生产形态（带 SQLite store）；共享假
+      引擎 `tests/conductor_engine.py` 模拟日志/幂等凭据/恢复协议
+- [x] 删旧轨：service 内回放、分发、SSE 旧处理器等数百行删除；所有用户操作
+      统一为「先落库 → 再发引擎 → 回执驱动重试」
+- [x] 补两处旧轨才有、新轨漏掉的：引擎重启后重推完整 hub 模型快照；`accept/
+      keyinfo/abort` 补上引擎就绪 409 断言（原只有 dispatch/input/rework）
+- [x] `resume_workflow` 迁入命令轨（原 `notify()` 直连引擎、缺 operation_id
+      时每次新铸 → 重试即重复投递）；已无调用者的 `notify()` 随之删除
+- [x] 评审追加收尾：topic 孤儿检查恢复严格规则 + `CONDUCTOR_REQUEST_OUTCOME`
+      裸字符串发布改常量；`ensure_started(redispatch_stranded=…)` 改名
+      `wake_recovery`；陈旧注释三处修正（`_cold_start_lock`、`shutdown()`、
+      `stranded_admitted` docstring）；迁移期孤立导入清理
+- [ ] 观察项：`WorkflowTracker.stranded_admitted()` 已无生产调用者（批量重发
+      删除后只剩测试与诊断面）——保留待未来看板/监控用，docstring 已标注
+
+## 2026-09-14 完成标记接受单括号别名（跨仓契约放宽读取端）
+
+起因：`[[GAHUB_TASK_DONE]]` 是全链路唯一的双括号标记，担心模型把它「归一化」
+成单括号 —— 同一份注入提示词里 `[Task Goal]`、`[Worker Contract]`、`[Status]`、
+`[Milestones]`、`[Reply Format]`、`[Original Request]` 全是单括号。核查后决定
+**不改 canonical、不动提示词，只放宽读取端**：加 `[GAHUB_TASK_DONE]` 作为别名，
+与已有的 `[DONE]` 遗留别名同一套做法。**改动在工作区，未提交 commit。**
+
+- [x] 引擎 `frontends/gahub/conductor_core.py`：`_DONE_TAIL_RE` 增加单括号
+      别名；注释写清「读取端是唯一宽松的一侧，提示词只发 canonical」
+- [x] 引擎 `tests/test_conductor.py`：`test_done_marker_accepts_*` 增补单括号
+      用例，并把「同提示词全是单括号标签所以模型会归一化」的理由写进断言消息
+- [x] 引擎 `memory/gahub_sop.md`：完成标记条款补别名，并写明「两侧拼法集合
+      必须一致，否则要么漏协议噪声给用户、要么误删真实句子」
+- [x] Hub `webui/src/components/conductor/presentation.ts`：`stripContractTail`
+      两条正则同步加别名（成对尾 + 裸尾），docstring 列明三种拼法与 lockstep
+- [x] Hub `webui/src/components/conductor/presentation.test.ts`：+3 用例
+      （别名成对尾、别名裸尾、别名中段不剥）
+- [ ] 未做（评估后决定不改）：canonical 与提示词三处（WORKER_CONTRACT、
+      `[Reply Format]` 注入、supervisor 的 done_marker 条款）保持原样 —— 真机
+      8 个归档 worker 里带标记的 4 个全部写成双括号，0 次写错括号；实测到的
+      失败模式是「有标记但漏 `<summary>` 行」
+
+验证：引擎 pytest **278 passed**；Hub pytest **793 passed / 1 skipped**；
+`tsc -b` exit 0；vitest **59 文件 / 412 passed**（+3）。两端对 9 种形态
+（canonical / 别名 / 遗留 / 裸尾 × 各拼法 / 中段提及 / 无标记）逐条比对一致。
+
+附注：`.ga-staging/` 里的引擎副本未同步 —— 该目录被 `.gitignore` 忽略，且
+`~/.genericagent-admin/config.json` 的 `ga_root` 指向 `D:\study\GA`，不参与运行。
+
+## 2026-09-14 全项目审计核验：修 relTime 小数除错 + 仓库卫生
+
+背景：对一份全项目审计（通俗版）逐条核验，发现它把一条**真 bug** 降级成了
+「时间格式化重复 5 份」的样板问题。**改动在工作区，未提交 commit。**
+
+- [x] **修 `webui/src/utils/foldTurns.ts` 的 `relTime` 小时档除数**：分支写作
+      `if (d < 86400) return \`${Math.floor(d / 86400)}小时前\`` —— 除数应为
+      `3600`。后果是 **1–24 小时前一律显示「0小时前」**。消费方是
+      `Autonomous.tsx`、`Tasks.tsx` 两页的「上次触发」列，即用户每次都会看到
+      的错数据。改为 `/3600` 并加注释钉住。
+- [x] `webui/src/utils/foldTurns.test.ts`：新增 `relTime` 用例组（fake timers
+      固定 `now`），覆盖 秒/分/小时/天 四档边界 + 30 天回退 + falsy 入参；
+      断言里写明回归原因，8 passed。
+- [x] **`.gitignore` 补三类本地产物**：`mockups/`（设计对比稿）、`.workbuddy/`
+      （4.4MB CDP 截图 + 本地记忆，无 `skills/` 等需共享内容）、
+      `project_memory.md`（此前**只靠 `.git/info/exclude` 兜底**，换机 clone
+      即露出）。原「天天在 git status 里晃」的问题随之消失。
+- [x] **docs 归档**：`docs/archive/` 机制早已存在却闲置。移入 5 份一次性文档
+      （用 `git mv` 保历史）：两份 0908 联合审查（含 FOLLOWUP）、0809 优化
+      评估、优化计划、过期的 `tui-v3-feature-gap.md`。docs 根目录由 8 份降为
+      3 份活文档（`BACKLOG.md` / `BUILD.md` / `CONDUCTOR_SUBAGENT_MODEL_POLICY.md`）。
+- [x] 归档时同步修引用链三处（否则断链）：`architecture/conductor-reliability-plan.md`
+      的续审报告链接改相对路径；FOLLOWUP 内指向上轮报告的链接；0809 评估里
+      提及优化计划的路径。
+- [x] `tui-v3-feature-gap.md` 头部加「**已过期**」横幅：该文 2026-05-28 生成、
+      仍称 `/rewind` 未实现（实已实现：`rewind_adapter.py` /
+      `test_rewind_turns.py` / `slashCommands.ts`）。过期「事实清单」比没有更
+      误导，故保留原文但显式声明。
+
+- [x] **合并相对时间实现**（用户批准后执行）：删掉 `foldTurns.relTime`，两处消费方
+      （`Autonomous.tsx` / `Tasks.tsx` 的「上次触发」列）统一改用
+      `utils/timeFormat.formatRelativeTime`（实现正确、已有测试）。**用户可见变化**：
+      `5分前`→`5分钟前`、`N秒前`→`刚刚`、超过 24h 由「N天前」改为 `M-D HH:MM`。
+      `foldTurns.test.ts` 随之删掉 3 条用例（415→412），同档位断言由
+      `timeFormat.test.ts` 覆盖。
+- [x] **移除 10 张零引用图片共 9.57MB**：5 张 `assets/287f8f65-*.png`（5 月做 logo 的
+      草稿：`perfect_circle` / `rounded` / `superellipse` / `circleish`）+ 5 张
+      `webui/src/assets/brand/gahub-logo*`。二者源码扫描均零引用——后者曾被早期
+      Conductor 页面引用（旧产物里仍能看到 `/assets/gahub-logo-*.png`），现已不用。
+- [ ] **待决：rewrite history 瘦身 —— 建议不做。** 理由：① 仓库有远程 `myfork`
+      → GitHub，重写后必须 force push；② 451 提交、4 个本地分支，冲突面大；
+      ③ `git filter-repo` 未安装，只剩官方已弃用的 `filter-branch`；④ 收益仅约
+      9.4MB（`.git` 39MB），而删文件已阻止未来增长；⑤ 需要先提交或 stash 工作区
+      （本项目习惯把改动留在工作区）。真要做，顺序应是：全量 `git bundle` 备份 →
+      干净工作区 → `filter-branch --index-filter` → 验证 → 再决定是否 force push。
+
+> ⚠️ **删除操作事故记录（2026-09-14 21:19）**：`git rm` 删除
+> `webui/src/assets/brand/` 下 5 个 png 时，沙箱删除守卫按**目录粒度**把**整个
+> `webui/src/`（167 个已跟踪文件）**移进了 `D:\$RECYCLE.BIN`，工作区未提交改动
+> 一度全部消失。恢复方式：解析回收站 `$I` 元数据取回原路径（**时间窗 + 路径白名单
+> 双重过滤**），133 个文件写回 + 34 个无改动文件从 HEAD `git checkout` 补回；
+> **刻意不用目录级 checkout**，以免覆盖含改动的文件。工具留档
+> `temp/restore_recycle.py`（默认 dry-run）。**在本沙箱不要用 `git rm` /
+> `rm -rf <目录>`**；删除前后用 `git status --porcelain | grep -c '^ D'` 核对数量。
+
+验证：`tsc -b` exit 0；vitest **59 文件 / 412 passed**（相对时间合并前为 415）；
+删除事故恢复后复跑仍为 412 passed。
+核验中同时剔除一条不成立的审计项：LiveChat 的 `queryKey` 实测全部走
+`@/queries/queryKeys` 注册表（10 处），并非「硬编码 11 处绕过注册表」。

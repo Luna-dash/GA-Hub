@@ -78,7 +78,7 @@
 ## 本次交付边界
 
 - 删除 `.github/workflows/release.yml`；
-- 更新 `docs/GA_HUB_OPTIMIZATION_PLAN.md` 的本地使用约束；
+- 更新 `docs/archive/GA_HUB_OPTIMIZATION_PLAN.md` 的本地使用约束；
 - 新增本评估报告。
 
 未自动 commit 或 push。

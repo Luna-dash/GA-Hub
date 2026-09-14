@@ -1,5 +1,10 @@
 # TUI v3 vs GA-Hub WebUI 功能差距清单
 
+> ⚠️ **已归档：本文生成于 2026-05-28，结论已过期。** 文中「❌ 完全缺失」不再成立，
+> 例如 `/rewind` 已实现（`server/services/rewind_adapter.py`、`tests/test_rewind_turns.py`、
+> `webui/src/components/slashCommands.ts`）。**勿将本文当作现状事实清单引用**；
+> 现状以代码与 `docs/BACKLOG.md` 为准。保留原文仅为记录当时的差距判断。
+
 > 生成日期：2026-05-28
 > 对比基准：
 > - **TUI v3**：`D:\study\GA\frontends\tui_v3.py`（216 KB，textual / prompt-toolkit 终端前端）
