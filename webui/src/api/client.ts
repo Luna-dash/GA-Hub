@@ -328,9 +328,9 @@ export const api = {
     http<ConversationDeleteResponse>('DELETE', `/api/conversations/${encodeURIComponent(id)}`),
   exportConversation: (id: string, format: 'md' | 'json') =>
     resolveApiUrl(`/api/conversations/${encodeURIComponent(id)}/export?format=${format}`),
-  restoreConversation: (id: string) =>
+  restoreConversation: (id: string, sessionId: string) =>
     http<ConversationRestoreResponse>(
-      'POST', `/api/conversations/${encodeURIComponent(id)}/restore`),
+      'POST', `/api/conversations/${encodeURIComponent(id)}/restore`, { session_id: sessionId }),
 
   // ── memory ───────────────────────────────────────────
   globalMem: () => http<MemoryTextResponse>('GET', '/api/memory/global'),

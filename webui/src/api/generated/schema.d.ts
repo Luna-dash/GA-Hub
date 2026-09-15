@@ -497,12 +497,13 @@ export interface paths {
         put?: never;
         /**
          * Restore Conversation
-         * @description Restore a GA archive as the agent's working history.
+         * @description Restore a GA archive as one chat session's working history.
          *
-         *     Delegates to GA's native ``restore(agent, path)`` which rebuilds the
-         *     backend's history from the raw log, then resets the WebUI live snapshots
-         *     (mirrors server/routes/agent.py restore-session behaviour) so reconnecting
-         *     clients don't replay stale bubbles.
+         *     The archive is loaded into a *fresh* runtime built by the session-scoped
+         *     factory (``archive_override``) and then atomically swapped into the shared
+         *     coordinator via ``replace_runtime`` — restore never touches the global
+         *     AgentService, so the history continues on whatever session the caller is
+         *     attached to.
          */
         post: operations["restore_conversation_api_conversations__cid__restore_post"];
         delete?: never;
@@ -2937,6 +2938,11 @@ export interface components {
             /** Id */
             id: string;
         };
+        /** ConversationRestoreReq */
+        ConversationRestoreReq: {
+            /** Session Id */
+            session_id: string;
+        };
         /** ConversationRestoreResp */
         ConversationRestoreResp: {
             /** Ok */
@@ -5035,7 +5041,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationRestoreReq"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

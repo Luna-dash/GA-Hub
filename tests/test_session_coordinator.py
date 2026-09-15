@@ -19,6 +19,7 @@ class FakeRuntime:
         self.session_id = session_id
         self.submissions: list[dict] = []
         self.abort_calls = 0
+        self.shutdown_calls = 0
         self.handle: FakeHandle | None = None
         self.btw_questions: list[str] = []
         self.rewinds: list[dict] = []
@@ -31,6 +32,10 @@ class FakeRuntime:
     def abort(self) -> None:
         self.abort_calls += 1
 
+    def shutdown(self, timeout: float = 3.0) -> bool:
+        self.shutdown_calls += 1
+        return True
+
     def btw(self, question: str) -> str:
         self.btw_questions.append(question)
         return f"side:{self.session_id}:{question}"
@@ -39,6 +44,25 @@ class FakeRuntime:
         request = {"sid": sid, "n": n}
         self.rewinds.append(request)
         return {"removed_sids": [], "kept": 0, "history_lines": 0}
+
+
+def test_replace_runtime_swaps_session_and_shuts_down_previous_runtime() -> None:
+    from server.services.session_coordinator import SessionCoordinator
+
+    runtimes: dict[str, FakeRuntime] = {}
+
+    def factory(session_id: str) -> FakeRuntime:
+        runtime = FakeRuntime(session_id)
+        runtimes[session_id] = runtime
+        return runtime
+
+    coordinator = SessionCoordinator(factory, poll_interval=0.005)
+    old_runtime = coordinator.ensure_runtime("A")
+    new_runtime = FakeRuntime("A")
+
+    assert coordinator.replace_runtime("A", new_runtime) is old_runtime
+    assert coordinator.ensure_runtime("A") is new_runtime
+    assert old_runtime.shutdown_calls == 1
 
 
 def test_session_configuration_is_atomic_and_rejected_while_running() -> None:

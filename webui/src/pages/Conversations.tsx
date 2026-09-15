@@ -16,6 +16,7 @@ import { saveTextExport } from '@/utils/desktop'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
+import { useChatStore } from '@/stores/chatStore'
 import {
   applyConversationTitle,
   conversationKeys,
@@ -48,6 +49,10 @@ export default function Conversations() {
   // plain /conversations route restores the selection instead of an empty pane.
   const lastActiveRef = useRef<string | null>(readPageState('conversations.lastActive', null))
   const [restoring, setRestoring] = useState<string | null>(null)
+  // Restore rebuilds the *active* chat session's runtime, so the call needs
+  // the current chat session id (null before the chat page ever ran → the
+  // handler refuses early with a clear message instead of a 4xx from API).
+  const chatSessionId = useChatStore((s) => s.sessionId)
   const [q, setQ] = usePageState('conversations.q', '')
   const [debouncedQ, setDebouncedQ] = useState('')
   const [page, setPage] = usePageState('conversations.page', 0)
@@ -192,6 +197,10 @@ export default function Conversations() {
 
   const handleRestore = async (id: string) => {
     if (!detail) return
+    if (!chatSessionId) {
+      await dialog.alert('无法恢复', '当前没有活动的聊天会话，请先在聊天页选择或新建会话后再恢复。')
+      return
+    }
     const ok = await dialog.confirm(
       `恢复会话「${detail.title || id}」？`,
       `· 当前 Agent 上下文会被清空\n· 将完整恢复该会话的原生模型上下文（含工具调用与结果）\n· 之后你可以在聊天界面无缝继续对话`,
@@ -200,7 +209,7 @@ export default function Conversations() {
     if (!ok) return
     setRestoring(id)
     try {
-      const r = await api.restoreConversation(id)
+      const r = await api.restoreConversation(id, chatSessionId)
       nav('/chat', {
         state: {
           restoredFrom: id,

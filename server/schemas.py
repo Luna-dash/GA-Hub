@@ -247,6 +247,9 @@ class ConversationMutationResp(BaseModel):
 class ConversationUpdateResp(ConversationMutationResp):
     title: str
 
+class ConversationRestoreReq(BaseModel):
+    session_id: str = Field(min_length=1)
+
 class ConversationRestoreResp(ConversationMutationResp):
     title: str
     restored_lines: int

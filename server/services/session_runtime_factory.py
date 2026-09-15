@@ -223,13 +223,18 @@ class SessionRuntimeFactory:
             session_id, runtime.agent.log_path
         )
 
-    def __call__(self, session_id: str):
+    def __call__(
+        self,
+        session_id: str,
+        *,
+        archive_override: str | Path | None = None,
+    ):
         row = self._store.get(session_id)
         runtime = self._service_factory(
             session_id=session_id,
             manage_global_preference=False,
         )
-        archive_path = row.get("archive_path")
+        archive_path = archive_override if archive_override is not None else row.get("archive_path")
         if archive_path:
             resolved_archive = str(Path(archive_path).resolve())
             message, ok = self._continue_inplace(
@@ -247,7 +252,7 @@ class SessionRuntimeFactory:
                     agent_id=session_id,
                     restore_wm=True,
                 )
-            if not ok and _is_content_failure(message):
+            if not ok and archive_override is None and _is_content_failure(message):
                 # L2: the refusal is about archive CONTENT, not occupancy —
                 # typically a response-less prompt-only tail from a run that
                 # died before its first answer landed. Retrying is futile, so

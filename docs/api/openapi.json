@@ -915,7 +915,7 @@
     "/api/conversations/{cid}/restore": {
       "post": {
         "summary": "Restore Conversation",
-        "description": "Restore a GA archive as the agent's working history.\n\nDelegates to GA's native ``restore(agent, path)`` which rebuilds the\nbackend's history from the raw log, then resets the WebUI live snapshots\n(mirrors server/routes/agent.py restore-session behaviour) so reconnecting\nclients don't replay stale bubbles.",
+        "description": "Restore a GA archive as one chat session's working history.\n\nThe archive is loaded into a *fresh* runtime built by the session-scoped\nfactory (``archive_override``) and then atomically swapped into the shared\ncoordinator via ``replace_runtime`` — restore never touches the global\nAgentService, so the history continues on whatever session the caller is\nattached to.",
         "operationId": "restore_conversation_api_conversations__cid__restore_post",
         "parameters": [
           {
@@ -928,6 +928,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationRestoreReq"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -6868,6 +6878,20 @@
           "id"
         ],
         "title": "ConversationMutationResp"
+      },
+      "ConversationRestoreReq": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Session Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "title": "ConversationRestoreReq"
       },
       "ConversationRestoreResp": {
         "properties": {

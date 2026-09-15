@@ -418,6 +418,35 @@ class SessionCoordinator:
             self._raise_if_shutdown()
             return self._runtime_for_session_locked(session_id)
 
+    def replace_runtime(
+        self,
+        session_id: str,
+        runtime: SessionRuntime,
+        *,
+        shutdown: Callable[[SessionRuntime], Any] | None = None,
+        operation: str = "replace",
+    ) -> SessionRuntime | None:
+        """Atomically install a prepared runtime for one session.
+
+        The replacement is admitted only while the session is idle and no
+        other mutating control or BTW snapshot is in flight.  Construction of
+        ``runtime`` therefore happens before this method; if construction
+        fails, the currently installed runtime remains untouched.  The old
+        runtime is detached before its potentially blocking shutdown runs.
+        """
+        def _replace() -> SessionRuntime | None:
+            with self._lock:
+                previous = self._runtimes.get(session_id)
+                self._runtimes[session_id] = runtime
+                self._states.pop(session_id, None)
+            if previous is not None:
+                disposer = shutdown or getattr(previous, "shutdown", None)
+                if disposer is not None:
+                    disposer(previous) if shutdown is not None else disposer()
+            return previous
+
+        return self.exclusive(session_id, operation, _replace)
+
     def peek_runtime(self, session_id: str) -> SessionRuntime | None:
         """Return the session's runtime if one exists, never creating one."""
         with self._lock:

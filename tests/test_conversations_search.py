@@ -5,8 +5,13 @@ import os
 import threading
 import time
 
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+
 from server.routes import conversations
 from server.services import archive_messages
+from server.services.session_coordinator import SessionControlBusyError
 
 
 def test_list_conversations_does_not_block_event_loop(tmp_path, monkeypatch):
@@ -186,39 +191,58 @@ def test_detail_and_export_parsing_do_not_block_event_loop(tmp_path, monkeypatch
     asyncio.run(run_all())
 
 
-def test_restore_archive_work_does_not_block_event_loop(tmp_path, monkeypatch):
-    from server.services.agent_service import AgentService
-    from server.services.event_bus import bus
-
+def test_restore_builds_session_runtime_via_coordinator(tmp_path, monkeypatch):
     archive = tmp_path / "session.txt"
     archive.write_text("body", encoding="utf-8")
-    events: list[str] = []
+    calls: dict = {}
 
-    class Service:
-        agent = object()
-        _lock = threading.Lock()
-        _snapshots = {"stale": object()}
-        # Bind the real facade so the route's reset path is exercised as-is.
-        reset_live_snapshots = AgentService.reset_live_snapshots
+    class FakeRuntime:
+        def __init__(self, name):
+            self.name = name
+            self.shutdown_calls = 0
 
-    service = Service()
+        def shutdown(self):
+            self.shutdown_calls += 1
+
+    old_runtime = FakeRuntime("old")
+    new_runtime = FakeRuntime("new")
+
+    class FakeFactory:
+        def __init__(self, store):
+            calls["factory_store"] = store
+
+        def __call__(self, session_id, *, archive_override=None):
+            calls["build"] = (session_id, archive_override)
+            return new_runtime
+
+    class FakeCoordinator:
+        def replace_runtime(self, session_id, runtime, *, shutdown=None, operation=None):
+            calls["replace"] = (session_id, runtime, operation)
+            shutdown(old_runtime)
+            return old_runtime
+
+    class FakeMetadata:
+        def get(self, session_id):
+            calls["validated"] = session_id
+            return {"id": session_id}
+
+        def title_for_archive(self, path):
+            return "Title"
+
+    monkeypatch.setattr(conversations, "_metadata", FakeMetadata())
+    monkeypatch.setattr(conversations, "SessionRuntimeFactory", FakeFactory)
+    monkeypatch.setattr(conversations, "_session_coordinator", lambda: FakeCoordinator())
     monkeypatch.setattr(
         conversations,
         "archive_session_by_id",
-        lambda cid: (str(archive), 0.0, "preview", 1),
+        lambda cid: (str(archive), "stable-id"),
     )
-    monkeypatch.setattr(conversations._metadata, "title_for_archive", lambda path: "Title")
-    monkeypatch.setattr(AgentService, "instance", classmethod(lambda cls: service))
-    monkeypatch.setattr(bus, "publish", lambda topic, payload: events.append("published"))
-
-    def slow_restore(agent, path):
-        assert agent is service.agent
-        events.append("restore-start")
-        time.sleep(0.05)
-        events.append("restore-end")
-        return [{"role": "user", "content": "hello"}]
-
-    monkeypatch.setattr(conversations, "_restore_archive", slow_restore)
+    monkeypatch.setattr(
+        conversations,
+        "read_ui_messages",
+        lambda path: [{"role": "user", "content": "hello"}],
+    )
+    events: list[str] = []
 
     async def heartbeat():
         await asyncio.sleep(0.01)
@@ -226,17 +250,83 @@ def test_restore_archive_work_does_not_block_event_loop(tmp_path, monkeypatch):
 
     async def run():
         result, _ = await asyncio.gather(
-            conversations.restore_conversation("session.txt"),
+            conversations.restore_conversation(
+                "archive-1",
+                conversations.ConversationRestoreReq(session_id="sess-1"),
+            ),
             heartbeat(),
         )
         return result
 
     result = asyncio.run(run())
 
-    assert events.index("heartbeat") < events.index("restore-end")
-    assert events[-1] == "published"
-    assert service._snapshots == {}
-    assert result["restored_lines"] == 1
+    assert calls["validated"] == "sess-1"
+    assert calls["build"] == ("sess-1", str(archive))
+    assert calls["replace"] == ("sess-1", new_runtime, "restore")
+    assert old_runtime.shutdown_calls == 1
+    assert new_runtime.shutdown_calls == 0
+    assert result == {
+        "ok": True,
+        "id": "archive-1",
+        "title": "Title",
+        "restored_lines": 1,
+    }
+    assert events == ["heartbeat"]
+
+
+def test_restore_busy_refusal_discards_new_runtime(tmp_path, monkeypatch):
+    archive = tmp_path / "session.txt"
+    archive.write_text("body", encoding="utf-8")
+    calls: dict = {}
+
+    class NewRuntime:
+        shutdown_calls = 0
+
+        def shutdown(self):
+            self.shutdown_calls += 1
+
+    new_runtime = NewRuntime()
+
+    class FakeFactory:
+        def __init__(self, store):
+            pass
+
+        def __call__(self, session_id, *, archive_override=None):
+            return new_runtime
+
+    class BusyCoordinator:
+        def replace_runtime(self, session_id, runtime, *, shutdown=None, operation=None):
+            calls["replace"] = (session_id, operation)
+            raise SessionControlBusyError(session_id, operation)
+
+    class FakeMetadata:
+        def get(self, session_id):
+            return {"id": session_id}
+
+        def title_for_archive(self, path):
+            raise AssertionError("title must not be read after a refused restore")
+
+    monkeypatch.setattr(conversations, "_metadata", FakeMetadata())
+    monkeypatch.setattr(conversations, "SessionRuntimeFactory", FakeFactory)
+    monkeypatch.setattr(conversations, "_session_coordinator", lambda: BusyCoordinator())
+    monkeypatch.setattr(
+        conversations,
+        "archive_session_by_id",
+        lambda cid: (str(archive), "stable-id"),
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(
+            conversations.restore_conversation(
+                "archive-1",
+                conversations.ConversationRestoreReq(session_id="sess-1"),
+            )
+        )
+
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail["code"] == "session_control_active"
+    assert calls["replace"] == ("sess-1", "restore")
+    assert new_runtime.shutdown_calls == 1
 
 
 def test_repeated_detail_and_export_requests_are_consistent(tmp_path, monkeypatch):
@@ -301,3 +391,36 @@ def test_content_search_cache_invalidates_after_archive_append(tmp_path):
     with archive.open("a", encoding="utf-8") as handle:
         handle.write(" new content")
     assert archive_messages.archive_contains(str(archive), "new content") is True
+
+
+def test_restore_requires_target_session_id_in_request_body():
+    app = FastAPI()
+    app.include_router(conversations.router)
+
+    with TestClient(app) as client:
+        response = client.post("/api/conversations/archive-1/restore")
+
+    assert response.status_code == 422
+
+
+def test_restore_rejects_unknown_target_session_before_loading_archive(monkeypatch):
+    app = FastAPI()
+    app.include_router(conversations.router)
+    archive_lookup_called = False
+
+    def archive_lookup(_cid):
+        nonlocal archive_lookup_called
+        archive_lookup_called = True
+        raise AssertionError("archive lookup must follow session validation")
+
+    monkeypatch.setattr(conversations._metadata, "get", lambda _session_id: (_ for _ in ()).throw(KeyError("missing")))
+    monkeypatch.setattr(conversations, "archive_session_by_id", archive_lookup)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/conversations/archive-1/restore",
+            json={"session_id": "missing"},
+        )
+
+    assert response.status_code == 404
+    assert archive_lookup_called is False

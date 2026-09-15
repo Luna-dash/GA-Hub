@@ -107,6 +107,45 @@ def test_existing_session_restores_native_archive_before_start(tmp_path: Path) -
     ]
 
 
+def test_restore_override_loads_requested_archive_without_rebinding_metadata(tmp_path: Path) -> None:
+    store = SessionMetadataStore(tmp_path / "metadata")
+    row = store.create(title="restore target")
+    bound_archive = tmp_path / "model_responses_bound.txt"
+    source_archive = tmp_path / "model_responses_source.txt"
+    bound_archive.write_text("target's own archive", encoding="utf-8")
+    source_archive.write_text("archive selected for restore", encoding="utf-8")
+    store.bind_archive(row["id"], bound_archive)
+    calls: list[object] = []
+
+    def make_service(*, session_id: str, manage_global_preference: bool) -> FakeService:
+        calls.append(("construct", session_id, manage_global_preference))
+        return FakeService(tmp_path / "unused.txt", calls)
+
+    def restore(agent: FakeAgent, path: str, **kwargs: object):
+        calls.append(("restore", path, kwargs))
+        agent.log_path = path
+        return "restored", True
+
+    runtime = SessionRuntimeFactory(
+        store,
+        service_factory=make_service,
+        continue_inplace=restore,
+    )(row["id"], archive_override=source_archive)
+
+    assert runtime.started is True
+    assert calls == [
+        ("construct", row["id"], False),
+        (
+            "restore",
+            str(source_archive.resolve()),
+            {"agent_id": row["id"], "restore_wm": True},
+        ),
+        "bind_rewind",
+        "start",
+    ]
+    assert store.get(row["id"])["archive_path"] == str(bound_archive.resolve())
+
+
 def test_restore_failure_does_not_start_runtime(tmp_path: Path) -> None:
     store = SessionMetadataStore(tmp_path / "metadata")
     row = store.create(title="broken")

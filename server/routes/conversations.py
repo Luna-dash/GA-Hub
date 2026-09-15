@@ -31,6 +31,7 @@ from ..schemas import (
     ConversationDetailResp,
     ConversationMutationResp,
     ConversationUpdateResp,
+    ConversationRestoreReq,
     ConversationRestoreResp,
     ArchiveZipListResp,
     ArchiveZipEntryListResp,
@@ -42,12 +43,16 @@ from ..services.archive_messages import (
     invalidate_archive_catalogue,
     list_archive_sessions,
     read_ui_messages,
-    restore_ga_archive,
     refresh_archive_catalogue,
 )
 from ..services.conversation_titles import migrate_legacy_titles
-from ..services.session_coordinator import AgentBusyError, SessionControlBusyError
+from ..services.session_coordinator import (
+    AgentBusyError,
+    SessionControlBusyError,
+    SessionCoordinatorStoppedError,
+)
 from ..services.session_metadata import SessionMetadataStore
+from ..services.session_runtime_factory import SessionRuntimeFactory
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -107,12 +112,6 @@ def run_legacy_title_migration_once() -> None:
 def _ga_extract(path: str):
     """Extract UI messages through the shared GA archive adapter."""
     return read_ui_messages(path)
-
-
-def _restore_archive(agent, path: str):
-    """Run GA's blocking restore and archive projection off the event loop."""
-    restore_ga_archive(agent, path)
-    return _ga_extract(path)
 
 
 # ── conversation list / detail / export / restore ─────────────────
@@ -274,19 +273,40 @@ def _unlink_archive(cid: str, path: Path) -> None:
     _metadata.delete_by_archive(path)
 
 
+def _session_coordinator():
+    """Resolve the shared coordinator lazily.
+
+    Sibling-route imports must stay inside functions (import-direction
+    rule); this wrapper keeps a stable module attribute that tests stub.
+    """
+    from .sessions import _get_coordinator
+
+    return _get_coordinator()
+
+
 @router.post(
     "/api/conversations/{cid}/restore",
     response_model=ConversationRestoreResp,
 )
-async def restore_conversation(cid: str):
-    """Restore a GA archive as the agent's working history.
+async def restore_conversation(cid: str, request: ConversationRestoreReq):
+    """Restore a GA archive as one chat session's working history.
 
-    Delegates to GA's native ``restore(agent, path)`` which rebuilds the
-    backend's history from the raw log, then resets the WebUI live snapshots
-    (mirrors server/routes/agent.py restore-session behaviour) so reconnecting
-    clients don't replay stale bubbles.
+    The archive is loaded into a *fresh* runtime built by the session-scoped
+    factory (``archive_override``) and then atomically swapped into the shared
+    coordinator via ``replace_runtime`` — restore never touches the global
+    AgentService, so the history continues on whatever session the caller is
+    attached to.
     """
-    from ..services.agent_service import AgentService
+    # The target session must exist before any archive I/O: restoring into a
+    # session that cannot receive the history is a client error, not a
+    # half-loaded archive.
+    try:
+        _metadata.get(request.session_id)
+    except KeyError:
+        # SessionNotFoundError subclasses KeyError; catching the base keeps
+        # the mapping correct for any store implementation raising the
+        # standard "missing record" signal.
+        raise HTTPException(404, f"session not found: {request.session_id}")
 
     # Catalogue refresh stats/scans the archive dir — keep it off the loop.
     s = await asyncio.to_thread(archive_session_by_id, cid)
@@ -294,15 +314,41 @@ async def restore_conversation(cid: str):
         raise HTTPException(404, "conversation not found")
     path = s[0]
 
-    svc = AgentService.instance()
-    messages = await asyncio.to_thread(_restore_archive, svc.agent, path)
-    svc.reset_live_snapshots("restore_conversation")
+    # Build the replacement runtime outside the coordinator so a failure here
+    # (RuntimeRestoreError — factory releases its own half-built agent) leaves
+    # the currently installed runtime untouched.
+    factory = SessionRuntimeFactory(_metadata)
+    new_runtime = await asyncio.to_thread(
+        factory, request.session_id, archive_override=str(path)
+    )
+    try:
+        await asyncio.to_thread(
+            _session_coordinator().replace_runtime,
+            request.session_id,
+            new_runtime,
+            shutdown=lambda runtime: runtime.shutdown(),
+            operation="restore",
+        )
+    except (SessionControlBusyError, SessionCoordinatorStoppedError) as exc:
+        # Refused before the swap: the fresh runtime was never installed, so
+        # dispose of it; the previously installed runtime keeps running.
+        await asyncio.to_thread(new_runtime.shutdown)
+        if isinstance(exc, SessionControlBusyError):
+            raise HTTPException(409, {
+                "code": "session_control_active",
+                "detail": "当前会话正在执行互斥控制操作，恢复已取消，请稍后重试。",
+                "operation": exc.operation,
+            }) from exc
+        raise
 
+    # Display-only count for the response body (the runtime itself was already
+    # hydrated from the archive above).
+    restored = await asyncio.to_thread(read_ui_messages, str(path))
     return {
         "ok": True,
         "id": cid,
         "title": await asyncio.to_thread(_metadata.title_for_archive, path),
-        "restored_lines": len(messages),
+        "restored_lines": len(restored),
     }
 
 
