@@ -512,6 +512,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/conversations/{cid}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Conversation
+         * @description Import one GA archive as a brand-new session (copy + bind).
+         *
+         *     Import is the persistent counterpart of restore: instead of loading the
+         *     archive into an existing session for this run only, it mints a new session
+         *     whose *own* archive is a copy of the source. The source is never written,
+         *     which is what makes importing an IM archive (still being appended to by its
+         *     bot) safe, and the binding makes the new session survive a restart.
+         *
+         *     The session row is created before the copy so every failure has something
+         *     to roll back: by the end of this handler a session either owns a complete
+         *     copy, or nothing happened and the source is untouched.
+         */
+        post: operations["import_conversation_api_conversations__cid__import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/conversations/{cid}/export": {
         parameters: {
             query?: never;
@@ -2909,6 +2939,22 @@ export interface components {
             title: string;
             /** Messages */
             messages: components["schemas"]["ConversationMessageResp"][];
+            /** Bound Session Id */
+            bound_session_id?: string | null;
+        };
+        /**
+         * ConversationImportResp
+         * @description The session created for an imported archive copy.
+         */
+        ConversationImportResp: {
+            /** Ok */
+            ok: boolean;
+            /** Session Id */
+            session_id: string;
+            /** Title */
+            title: string;
+            /** Imported Lines */
+            imported_lines: number;
         };
         /** ConversationListResp */
         ConversationListResp: {
@@ -2971,6 +3017,8 @@ export interface components {
             last_user_preview: string;
             /** Original User Preview */
             original_user_preview: string;
+            /** Bound Session Id */
+            bound_session_id?: string | null;
         };
         /** ConversationUpdate */
         ConversationUpdate: {
@@ -5054,6 +5102,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationRestoreResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_conversation_api_conversations__cid__import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationImportResp"];
                 };
             };
             /** @description Validation Error */

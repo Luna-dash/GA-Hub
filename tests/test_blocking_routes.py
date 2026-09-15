@@ -420,3 +420,35 @@ def test_upload_resolve_by_path_runs_in_worker_thread() -> None:
         result = asyncio.run(_run_with_probe(upload.get_file_by_path(path="x")))
 
     assert result.path == "D:/tmp/x"
+
+
+def test_conversation_import_copy_runs_in_worker_thread(tmp_path) -> None:
+    metadata = SimpleNamespace(
+        find_by_archive=lambda _p: None,
+        title_for_archive=lambda _p: "",
+        create=lambda **_k: {"id": "s1", "title": ""},
+        bind_archive=mock.Mock(),
+        delete=mock.Mock(),
+    )
+    coordinator = SimpleNamespace(ensure_runtime=mock.Mock())
+    with (
+        mock.patch.object(
+            conversations, "archive_session_by_id",
+            return_value=(str(tmp_path / "source.txt"),),
+        ),
+        mock.patch.object(conversations, "_metadata", metadata),
+        mock.patch.object(conversations, "_session_coordinator", lambda: coordinator),
+        mock.patch.object(conversations, "first_user_preview", lambda _p: "标题"),
+        mock.patch.object(
+            conversations,
+            "copy_archive_for_import",
+            side_effect=lambda _src: _slow_result((tmp_path / "copy.txt", 4)),
+        ),
+    ):
+        result = asyncio.run(
+            _run_with_probe(conversations.import_conversation("source.txt"))
+        )
+
+    assert result["session_id"] == "s1"
+    assert result["imported_lines"] == 4
+    assert coordinator.ensure_runtime.call_args.args == ("s1",)

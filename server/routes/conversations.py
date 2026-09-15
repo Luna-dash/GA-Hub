@@ -33,8 +33,13 @@ from ..schemas import (
     ConversationUpdateResp,
     ConversationRestoreReq,
     ConversationRestoreResp,
+    ConversationImportResp,
     ArchiveZipListResp,
     ArchiveZipEntryListResp,
+)
+from ..services.archive_import import (
+    ArchiveNotImportableError,
+    copy_archive_for_import,
 )
 from ..services.archive_messages import (
     archive_contains,
@@ -115,6 +120,16 @@ def _ga_extract(path: str):
 
 
 # ── conversation list / detail / export / restore ─────────────────
+def _bound_session_id(archive_path) -> str | None:
+    """Hub session owning this archive, or None when it is free to import.
+
+    Surfaced on every listing row so the UI can tell "open that session" from
+    "import as a new session" without a second lookup per row.
+    """
+    row = _metadata.find_by_archive(archive_path)
+    return str(row["id"]) if row else None
+
+
 def _list_conversations_sync(
     q: str | None,
     offset: int,
@@ -129,6 +144,7 @@ def _list_conversations_sync(
             "title": _metadata.title_for_archive(path),
             "message_count": rounds,
             "last_user_preview": preview,
+            "bound_session_id": _bound_session_id(path),
             "_archive_path": path,
         })
     if q:
@@ -184,6 +200,7 @@ async def get_conversation(cid: str):
         "id": cid,
         "title": title,
         "messages": messages,
+        "bound_session_id": await asyncio.to_thread(_bound_session_id, path),
     }
 
 
@@ -349,6 +366,95 @@ async def restore_conversation(cid: str, request: ConversationRestoreReq):
         "id": cid,
         "title": await asyncio.to_thread(_metadata.title_for_archive, path),
         "restored_lines": len(restored),
+    }
+
+
+async def _rollback_import(session_id: str, new_path: Path | None) -> None:
+    """Undo a half-finished import: the new session row and its copy both go.
+
+    The source archive is never part of this — import only reads it — so a
+    rolled-back import leaves it byte-identical.
+    """
+    if new_path is not None:
+        try:
+            await asyncio.to_thread(Path(new_path).unlink, missing_ok=True)
+        except OSError:
+            log.warning("failed to remove imported copy %s", new_path, exc_info=True)
+    try:
+        await asyncio.to_thread(_metadata.delete, session_id)
+    except KeyError:
+        pass
+    except Exception:
+        log.exception("failed to roll back imported session %s", session_id)
+
+
+@router.post(
+    "/api/conversations/{cid}/import",
+    response_model=ConversationImportResp,
+)
+async def import_conversation(cid: str):
+    """Import one GA archive as a brand-new session (copy + bind).
+
+    Import is the persistent counterpart of restore: instead of loading the
+    archive into an existing session for this run only, it mints a new session
+    whose *own* archive is a copy of the source. The source is never written,
+    which is what makes importing an IM archive (still being appended to by its
+    bot) safe, and the binding makes the new session survive a restart.
+
+    The session row is created before the copy so every failure has something
+    to roll back: by the end of this handler a session either owns a complete
+    copy, or nothing happened and the source is untouched.
+    """
+    # Catalogue refresh stats/scans the archive dir — keep it off the loop.
+    s = await asyncio.to_thread(archive_session_by_id, cid)
+    if s is None:
+        raise HTTPException(404, "conversation not found")
+    source = Path(s[0]).resolve()
+
+    # One archive belongs to at most one session; a second binding would give
+    # two runtimes the same file. The UI keys its action on the same lookup.
+    bound = await asyncio.to_thread(_metadata.find_by_archive, source)
+    if bound is not None:
+        raise HTTPException(409, {
+            "code": "archive_already_bound",
+            "detail": "该归档已属于一条会话，请直接打开该会话。",
+            "session_id": bound["id"],
+        })
+
+    title = await asyncio.to_thread(_metadata.title_for_archive, source)
+    if not title:
+        # Untitled archive: the first real user question titles the session,
+        # exactly like the archive listing's own fallback.
+        title = await asyncio.to_thread(first_user_preview, source)
+
+    row = await asyncio.to_thread(_metadata.create, title=title)
+    session_id = row["id"]
+    new_path: Path | None = None
+    try:
+        # Copy + sanitise + trim in one worker call: the archive can be many
+        # MB and nothing here may touch the event loop.
+        new_path, imported_lines = await asyncio.to_thread(
+            copy_archive_for_import, source
+        )
+        await asyncio.to_thread(_metadata.bind_archive, session_id, new_path)
+        # Cold start on the normal factory path: the bound copy is now the
+        # session's archive, so this loads it exactly like any other session
+        # (no override, no rebinding).
+        await asyncio.to_thread(_session_coordinator().ensure_runtime, session_id)
+    except BaseException as exc:
+        await _rollback_import(session_id, new_path)
+        if isinstance(exc, ArchiveNotImportableError):
+            raise HTTPException(409, {
+                "code": "archive_not_importable",
+                "detail": "该归档没有完整的对话轮次，无法导入。",
+            }) from exc
+        raise
+
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "title": row["title"],
+        "imported_lines": imported_lines,
     }
 
 

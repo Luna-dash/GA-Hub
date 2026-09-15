@@ -962,6 +962,46 @@
         }
       }
     },
+    "/api/conversations/{cid}/import": {
+      "post": {
+        "summary": "Import Conversation",
+        "description": "Import one GA archive as a brand-new session (copy + bind).\n\nImport is the persistent counterpart of restore: instead of loading the\narchive into an existing session for this run only, it mints a new session\nwhose *own* archive is a copy of the source. The source is never written,\nwhich is what makes importing an IM archive (still being appended to by its\nbot) safe, and the binding makes the new session survive a restart.\n\nThe session row is created before the copy so every failure has something\nto roll back: by the end of this handler a session either owns a complete\ncopy, or nothing happened and the source is untouched.",
+        "operationId": "import_conversation_api_conversations__cid__import_post",
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Cid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationImportResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/conversations/{cid}/export": {
       "get": {
         "summary": "Export Conversation",
@@ -6798,6 +6838,17 @@
             },
             "type": "array",
             "title": "Messages"
+          },
+          "bound_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bound Session Id"
           }
         },
         "type": "object",
@@ -6807,6 +6858,35 @@
           "messages"
         ],
         "title": "ConversationDetailResp"
+      },
+      "ConversationImportResp": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "imported_lines": {
+            "type": "integer",
+            "title": "Imported Lines"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "session_id",
+          "title",
+          "imported_lines"
+        ],
+        "title": "ConversationImportResp",
+        "description": "The session created for an imported archive copy."
       },
       "ConversationListResp": {
         "properties": {
@@ -6947,6 +7027,17 @@
           "original_user_preview": {
             "type": "string",
             "title": "Original User Preview"
+          },
+          "bound_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bound Session Id"
           }
         },
         "type": "object",

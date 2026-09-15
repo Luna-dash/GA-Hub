@@ -224,6 +224,9 @@ class ConversationSummaryResp(BaseModel):
     message_count: int
     last_user_preview: str
     original_user_preview: str
+    # Hub session already owning this archive (None ⇒ importable). Drives the
+    # listing's "open that session" vs "import as a new session" action.
+    bound_session_id: str | None = None
 
 class ConversationListResp(BaseModel):
     total: int
@@ -239,6 +242,7 @@ class ConversationDetailResp(BaseModel):
     id: str
     title: str
     messages: list[ConversationMessageResp]
+    bound_session_id: str | None = None
 
 class ConversationMutationResp(BaseModel):
     ok: bool
@@ -254,6 +258,14 @@ class ConversationRestoreResp(ConversationMutationResp):
     title: str
     restored_lines: int
     full: bool = True
+
+class ConversationImportResp(BaseModel):
+    """The session created for an imported archive copy."""
+
+    ok: bool
+    session_id: str
+    title: str
+    imported_lines: int
 
 class ArchiveZipResp(BaseModel):
     name: str
