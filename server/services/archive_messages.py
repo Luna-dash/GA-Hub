@@ -34,6 +34,24 @@ _NATIVE_HEADER_BYTES_RE = re.compile(
 )
 _TOOL_RESULT_BYTES_RE = re.compile(rb'"type"\s*:\s*"tool_result"')
 
+# GA's chat frontends prepend this instruction to every IM prompt before handing
+# it to the agent, so it is archived as the head of the user's own text.  The
+# archive file is never rewritten: projection strips the header on the way out.
+_FILE_HINT = "If you need to show files to user, use [FILE:filepath] in your response."
+
+
+def _strip_file_hint(text: str) -> str:
+    """Drop a leading IM [FILE:...] instruction header, else return text as-is.
+
+    Only the head is touched, so a ``[FILE:...]`` marker the user typed inside
+    their own question survives.  The header is followed by ``\\n\\n`` in the
+    archive but is whitespace-collapsed to a single space in GA previews, hence
+    the argument-less ``lstrip()``.
+    """
+    if text.startswith(_FILE_HINT):
+        return text[len(_FILE_HINT):].lstrip()
+    return text
+
 
 class HistoryUnavailableError(Exception):
     """A bound archive cannot be projected safely."""
@@ -107,9 +125,13 @@ def read_ui_messages(archive_path: str | Path) -> list[dict[str, Any]]:
     from frontends.continue_cmd import extract_ui_messages
 
     try:
-        return extract_ui_messages(path)
+        messages = extract_ui_messages(path)
     except (OSError, ValueError, TypeError, UnicodeError) as exc:
         raise HistoryUnavailableError from exc
+    for message in messages:
+        if message.get("role") == "user" and isinstance(message.get("content"), str):
+            message["content"] = _strip_file_hint(message["content"])
+    return messages
 
 
 def _extract_ui_messages_from_text(content: str) -> list[dict[str, Any]]:
@@ -132,7 +154,7 @@ def _extract_ui_messages_from_text(content: str) -> list[dict[str, Any]]:
     assistant: dict[str, Any] | None = None
     round_turn = 0
     for index, (prompt, response) in enumerate(pairs):
-        user = _user_text(prompt)
+        user = _strip_file_hint(_user_text(prompt))
         segment = _format_response_segment(response, next_tool_results[index])
         if user:
             if assistant is not None:
@@ -189,7 +211,9 @@ def _prompt_is_user(data: mmap.mmap, start: int, end: int) -> bool:
         return False
     from frontends.continue_cmd import _user_text
 
-    return bool(_user_text(data[start:end].decode("utf-8", errors="replace")))
+    # Same head-strip as _extract_ui_messages_from_text: a group whose count
+    # disagreed with the folded message list would silently drop indexed paging.
+    return bool(_strip_file_hint(_user_text(data[start:end].decode("utf-8", errors="replace"))))
 
 
 @lru_cache(maxsize=64)
@@ -478,8 +502,15 @@ def archive_session_by_id(cid: str) -> tuple | None:
 
 
 def list_archive_sessions() -> list[tuple]:
-    """GA-order session rows (mtime desc) — the one enumeration for listings."""
-    return _ga_sessions()
+    """GA-order session rows (mtime desc) — the one enumeration for listings.
+
+    GA's preview carries the IM [FILE:...] header, so it is stripped here where
+    both the listing and its title/content search consume these rows.
+    """
+    return [
+        (path, mtime, _strip_file_hint(preview), *rest)
+        for path, mtime, preview, *rest in _ga_sessions()
+    ]
 
 
 def _stat_signature(path_text: str) -> tuple[int, int] | None:
@@ -524,7 +555,7 @@ def _first_user_preview_head(path: str, mtime_ns: int, size: int) -> str:
         return ""
     text = head.decode("utf-8", errors="replace")
     for body in _PROMPT_BLOCK_RE.findall(text):
-        content = _user_text(body)
+        content = _strip_file_hint(_user_text(body))
         if content:
             return " ".join(content.split())[:200]
     return ""
