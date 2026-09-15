@@ -19,7 +19,7 @@ import os
 from pathlib import Path
 import re
 import threading
-from typing import Any
+from typing import Any, NamedTuple
 
 from .. import _paths  # Bootstrap GA's import path for the native archive parser.
 
@@ -524,11 +524,13 @@ def _stat_signature(path_text: str) -> tuple[int, int] | None:
     )
 
 
-# Listing only needs the first real user question.  Reading a bounded head is
-# enough for native GA archives (the prompt header and JSON normally occur in
-# the first few KB), while keeping a pathological multi-GB archive from
-# turning one list request into a full-history parse.  Content search reads
-# bounded chunks so "search all archives" cannot read whole multi-GB files.
+# Listing only needs the first real user question — as a display preview and as
+# the origin probe (did an IM frontend inject this turn?).  Reading a bounded
+# head answers both, and is enough for native GA archives (the prompt header and
+# JSON normally occur in the first few KB), while keeping a pathological
+# multi-GB archive from turning one list request into a full-history parse.
+# Content search reads bounded chunks so "search all archives" cannot read
+# whole multi-GB files.
 FIRST_USER_PREVIEW_READ_BYTES = 64 * 1024
 SEARCH_READ_CHUNK_BYTES = 256 * 1024
 _PROMPT_BLOCK_RE = re.compile(
@@ -537,14 +539,27 @@ _PROMPT_BLOCK_RE = re.compile(
 )
 
 
+class _FirstUserHead(NamedTuple):
+    """Both facts the listing reads out of one bounded archive head."""
+
+    preview: str
+    from_im: bool
+
+
 @lru_cache(maxsize=1024)
-def _first_user_preview_head(path: str, mtime_ns: int, size: int) -> str:
-    """Extract the first user question from a bounded archive head.
+def _first_user_head(path: str, mtime_ns: int, size: int) -> _FirstUserHead:
+    """Read one archive head once; report its display preview and its origin.
 
     ``mtime_ns`` and ``size`` are part of the cache key; callers never need a
     global invalidation when a session is appended or replaced.  Parsing uses
     GA's own ``_user_text`` filtering so tool-result continuations and working
     memory injections retain the existing title semantics.
+
+    ``from_im`` reads the *unstripped* head: GA's chat frontends prepend
+    ``_FILE_HINT`` to every prompt before it reaches the agent, so a first user
+    question starting with it was injected by an IM frontend.  A local/CLI
+    session never carries it, and no archive records *which* IM frontend wrote
+    it — so this is the only origin signal the files hold.
     """
     del mtime_ns, size  # identity-only cache inputs
     try:
@@ -552,13 +567,25 @@ def _first_user_preview_head(path: str, mtime_ns: int, size: int) -> str:
             head = fh.read(FIRST_USER_PREVIEW_READ_BYTES)
         from frontends.continue_cmd import _user_text
     except (OSError, ImportError):
-        return ""
+        return _FirstUserHead("", False)
     text = head.decode("utf-8", errors="replace")
     for body in _PROMPT_BLOCK_RE.findall(text):
-        content = _strip_file_hint(_user_text(body))
+        raw = _user_text(body)
+        content = _strip_file_hint(raw)
+        # A header-only IM prompt folds as a continuation (GA's `_prompt_is_user`
+        # agrees), so it must not end the scan — nor claim the archive as IM.
         if content:
-            return " ".join(content.split())[:200]
-    return ""
+            return _FirstUserHead(
+                " ".join(content.split())[:200],
+                raw.startswith(_FILE_HINT),
+            )
+    return _FirstUserHead("", False)
+
+
+@lru_cache(maxsize=1024)
+def _first_user_preview_head(path: str, mtime_ns: int, size: int) -> str:
+    """Extract the first user question from a bounded archive head."""
+    return _first_user_head(path, mtime_ns, size).preview
 
 
 def first_user_preview(archive_path: str | Path) -> str:
@@ -568,6 +595,19 @@ def first_user_preview(archive_path: str | Path) -> str:
     if signature is None:
         return ""
     return _first_user_preview_head(path, signature[0], signature[1])
+
+
+def first_user_has_file_hint(archive_path: str | Path) -> bool:
+    """True when an IM frontend injected this archive's first user question.
+
+    Same bounded head read and cache as ``first_user_preview`` — the one
+    difference is that this reports the header instead of stripping it.
+    """
+    path = os.path.abspath(str(archive_path))
+    signature = _stat_signature(path)
+    if signature is None:
+        return False
+    return _first_user_head(path, signature[0], signature[1]).from_im
 
 
 @lru_cache(maxsize=2048)

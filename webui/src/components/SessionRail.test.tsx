@@ -110,8 +110,15 @@ describe('SessionRail', () => {
     ))
 
     const create = host.querySelector('[aria-label="新建会话"]') as HTMLButtonElement
-    await act(async () => { create.click() })
+    expect(create.getAttribute('aria-haspopup')).toBe('menu')
+    expect(create.getAttribute('aria-expanded')).toBe('false')
+    act(() => create.click())
+    expect(create.getAttribute('aria-expanded')).toBe('true')
+
+    const empty = host.querySelector('[data-testid="create-session-empty"]') as HTMLButtonElement
+    await act(async () => { empty.click() })
     expect(onCreate).toHaveBeenCalledOnce()
+    expect(host.querySelector('[role="menu"]')).toBeNull()
 
     const renameCard = host.querySelector('[aria-current="page"]') as HTMLButtonElement
     act(() => { renameCard.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
@@ -124,6 +131,54 @@ describe('SessionRail', () => {
     })
     await act(async () => {})
     expect(onRename).toHaveBeenCalledWith(sessions[0].id, '新的标题')
+  })
+
+  it('routes the create menu entry for importing an archive to the history page', async () => {
+    const onCreate = vi.fn()
+    const onImportFromHistory = vi.fn()
+    act(() => root.render(
+      <SessionRail
+        sessions={sessions}
+        runtimes={runtimes}
+        currentId={sessions[0].id}
+        onSelect={vi.fn()}
+        onCreate={onCreate}
+        onImportFromHistory={onImportFromHistory}
+      />,
+    ))
+
+    act(() => (host.querySelector('[aria-label="新建会话"]') as HTMLButtonElement).click())
+    expect([...host.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim()))
+      .toEqual(['新建空会话', '从历史导入…'])
+
+    await act(async () => {
+      (host.querySelector('[data-testid="create-session-import"]') as HTMLButtonElement).click()
+    })
+    expect(onImportFromHistory).toHaveBeenCalledOnce()
+    expect(onCreate).not.toHaveBeenCalled()
+    expect(host.querySelector('[role="menu"]')).toBeNull()
+  })
+
+  it('dismisses the create menu on Escape and on an outside pointer press', () => {
+    act(() => root.render(
+      <SessionRail
+        sessions={sessions}
+        runtimes={runtimes}
+        currentId={sessions[0].id}
+        onSelect={vi.fn()}
+        onCreate={vi.fn()}
+        onImportFromHistory={vi.fn()}
+      />,
+    ))
+
+    const trigger = host.querySelector('[aria-label="新建会话"]') as HTMLButtonElement
+    act(() => trigger.click())
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+    expect(host.querySelector('[role="menu"]')).toBeNull()
+
+    act(() => trigger.click())
+    act(() => { window.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })) })
+    expect(host.querySelector('[role="menu"]')).toBeNull()
   })
 
   it('acknowledges only the current completed session when the user interacts with the window', () => {

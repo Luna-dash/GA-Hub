@@ -6849,13 +6849,23 @@
               }
             ],
             "title": "Bound Session Id"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "session",
+              "im",
+              "local"
+            ],
+            "title": "Source"
           }
         },
         "type": "object",
         "required": [
           "id",
           "title",
-          "messages"
+          "messages",
+          "source"
         ],
         "title": "ConversationDetailResp"
       },
@@ -7038,6 +7048,15 @@
               }
             ],
             "title": "Bound Session Id"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "session",
+              "im",
+              "local"
+            ],
+            "title": "Source"
           }
         },
         "type": "object",
@@ -7046,7 +7065,8 @@
           "title",
           "message_count",
           "last_user_preview",
-          "original_user_preview"
+          "original_user_preview",
+          "source"
         ],
         "title": "ConversationSummaryResp"
       },

@@ -227,6 +227,10 @@ class ConversationSummaryResp(BaseModel):
     # Hub session already owning this archive (None ⇒ importable). Drives the
     # listing's "open that session" vs "import as a new session" action.
     bound_session_id: str | None = None
+    # Where this archive came from — the listing's source badge and filter.
+    # Archives record no frontend identity, so "im" is the finest grain the
+    # files support (see routes/conversations._conversation_source).
+    source: Literal["session", "im", "local"]
 
 class ConversationListResp(BaseModel):
     total: int
@@ -243,6 +247,7 @@ class ConversationDetailResp(BaseModel):
     title: str
     messages: list[ConversationMessageResp]
     bound_session_id: str | None = None
+    source: Literal["session", "im", "local"]
 
 class ConversationMutationResp(BaseModel):
     ok: bool

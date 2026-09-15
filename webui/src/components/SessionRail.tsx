@@ -12,6 +12,9 @@ interface SessionRailProps {
   currentId: string | null
   onSelect: (sessionId: string) => void
   onCreate?: () => Promise<void> | void
+  /** Second entry of the create menu: adopt an archive from the history page.
+   * The rail only routes there — picking an archive needs the full index. */
+  onImportFromHistory?: () => void
   onRename?: (sessionId: string, title: string) => Promise<void> | void
   onDelete?: (sessionId: string) => Promise<void> | void
   creating?: boolean
@@ -74,8 +77,10 @@ function sessionTitle(session: HubSession) {
   return session.title.trim() || `未命名会话 · ${session.id.slice(0, 8)}`
 }
 
-function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreate, onRename, onDelete, creating }: SessionRailProps) {
+function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreate, onImportFromHistory, onRename, onDelete, creating }: SessionRailProps) {
   const [collapsed, setCollapsed] = usePageState('liveChat.sessionRailCollapsed', true)
+  const [createMenuOpen, setCreateMenuOpen] = useState(false)
+  const createMenuRef = useRef<HTMLDivElement>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [titleDraft, setTitleDraft] = useState('')
   const [savingId, setSavingId] = useState<string | null>(null)
@@ -250,7 +255,39 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
   }
 
   const toggle = () => {
+    setCreateMenuOpen(false)
     setCollapsed((current) => !current)
+  }
+
+  // Dismiss the create menu on any interaction outside it (and on Escape), so
+  // a half-open menu cannot sit on top of the session cards.
+  useEffect(() => {
+    if (!createMenuOpen) return
+    const dismiss = (event: Event) => {
+      if (event.type === 'keydown' && (event as KeyboardEvent).key !== 'Escape') return
+      // A press inside the menu (including on the trigger) is not "outside";
+      // anything that is not even a node — a window-level synthetic event —
+      // counts as outside and closes.
+      const target = event.target
+      if (event.type !== 'keydown' && target instanceof Node && createMenuRef.current?.contains(target)) return
+      setCreateMenuOpen(false)
+    }
+    window.addEventListener('pointerdown', dismiss, true)
+    window.addEventListener('keydown', dismiss, true)
+    return () => {
+      window.removeEventListener('pointerdown', dismiss, true)
+      window.removeEventListener('keydown', dismiss, true)
+    }
+  }, [createMenuOpen])
+
+  const createEmptySession = () => {
+    setCreateMenuOpen(false)
+    void onCreate?.()
+  }
+
+  const importFromHistory = () => {
+    setCreateMenuOpen(false)
+    onImportFromHistory?.()
   }
 
   const beginRename = (session: HubSession) => {
@@ -310,19 +347,49 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
             : 'translate-x-0 translate-y-0 opacity-100',
         )}
       >
-        {onCreate && (
-          <button
-            type="button"
-            onClick={() => { void onCreate() }}
-            disabled={creating}
-            aria-label="新建会话"
-            data-testid="create-session-row"
-            className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl border border-accent/45 bg-accent/15 px-3 py-2.5 text-sm font-semibold text-accent transition hover:border-accent/70 hover:bg-accent/25 active:scale-[0.99] disabled:opacity-50"
-            title="新建会话"
-          >
-            <span aria-hidden="true" className="text-base leading-none">＋</span>
-            <span>{creating ? '创建中…' : '新会话'}</span>
-          </button>
+        {(onCreate || onImportFromHistory) && (
+          <div ref={createMenuRef} className="relative mb-3">
+            <button
+              type="button"
+              onClick={() => setCreateMenuOpen((open) => !open)}
+              disabled={creating}
+              aria-label="新建会话"
+              aria-haspopup="menu"
+              aria-expanded={createMenuOpen}
+              data-testid="create-session-row"
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-accent/45 bg-accent/15 px-3 py-2.5 text-sm font-semibold text-accent transition hover:border-accent/70 hover:bg-accent/25 active:scale-[0.99] disabled:opacity-50"
+              title="新建会话"
+            >
+              <span aria-hidden="true" className="text-base leading-none">＋</span>
+              <span>{creating ? '创建中…' : '新会话'}</span>
+            </button>
+            {createMenuOpen && (
+              <div
+                role="menu"
+                aria-label="新建会话"
+                className="absolute inset-x-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-line bg-bg-card shadow-lg"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="create-session-empty"
+                  onClick={createEmptySession}
+                  className="block w-full px-3 py-2 text-left text-sm text-ink hover:bg-white/5"
+                >
+                  新建空会话
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="create-session-import"
+                  onClick={importFromHistory}
+                  className="block w-full border-t border-line/60 px-3 py-2 text-left text-sm text-ink hover:bg-white/5"
+                >
+                  从历史导入…
+                </button>
+              </div>
+            )}
+          </div>
         )}
         <div className="flex gap-2 md:flex-col">
           {sessionGroups.map((group) => {

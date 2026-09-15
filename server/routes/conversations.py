@@ -44,6 +44,7 @@ from ..services.archive_import import (
 from ..services.archive_messages import (
     archive_contains,
     archive_session_by_id,
+    first_user_has_file_hint,
     first_user_preview,
     invalidate_archive_catalogue,
     list_archive_sessions,
@@ -56,7 +57,7 @@ from ..services.session_coordinator import (
     SessionControlBusyError,
     SessionCoordinatorStoppedError,
 )
-from ..services.session_metadata import SessionMetadataStore
+from ..services.session_metadata import SessionMetadataStore, is_archive_metadata_id
 from ..services.session_runtime_factory import SessionRuntimeFactory
 
 log = logging.getLogger(__name__)
@@ -125,9 +126,36 @@ def _bound_session_id(archive_path) -> str | None:
 
     Surfaced on every listing row so the UI can tell "open that session" from
     "import as a new session" without a second lookup per row.
+
+    Title-only ``archive-<sha>`` rows are not bindings: they are what
+    ``set_title_for_archive`` mints when a user renames an *unbound* archive,
+    and they own no runtime. Counting one would strand the archive — renaming
+    it would flip the row to "open that session" forever (and 409 the import).
     """
     row = _metadata.find_by_archive(archive_path)
-    return str(row["id"]) if row else None
+    if not row:
+        return None
+    session_id = str(row["id"])
+    return None if is_archive_metadata_id(session_id) else session_id
+
+
+def _conversation_source(archive_path) -> str:
+    """Where one archive came from: ``"session"``, ``"im"`` or ``"local"``.
+
+    Deliberately no finer grain: archives do not record which frontend wrote
+    them (the IM ``[FILE:...]`` header is identical for every chat frontend), so
+    naming one would be a guess.  What the files do tell:
+
+    * ``"session"`` — a real hub session owns this archive.  Goes through
+      ``_bound_session_id`` so title-only ``archive-<sha>`` rows stay
+      unclassified as bindings here too.
+    * ``"im"``      — unbound, but GA's IM frontends injected their FILE_HINT
+      header into the first user question.
+    * ``"local"``   — the rest: command-line / local runs.
+    """
+    if _bound_session_id(archive_path) is not None:
+        return "session"
+    return "im" if first_user_has_file_hint(archive_path) else "local"
 
 
 def _list_conversations_sync(
@@ -145,6 +173,7 @@ def _list_conversations_sync(
             "message_count": rounds,
             "last_user_preview": preview,
             "bound_session_id": _bound_session_id(path),
+            "source": _conversation_source(path),
             "_archive_path": path,
         })
     if q:
@@ -201,6 +230,7 @@ async def get_conversation(cid: str):
         "title": title,
         "messages": messages,
         "bound_session_id": await asyncio.to_thread(_bound_session_id, path),
+        "source": await asyncio.to_thread(_conversation_source, path),
     }
 
 
@@ -412,13 +442,14 @@ async def import_conversation(cid: str):
     source = Path(s[0]).resolve()
 
     # One archive belongs to at most one session; a second binding would give
-    # two runtimes the same file. The UI keys its action on the same lookup.
-    bound = await asyncio.to_thread(_metadata.find_by_archive, source)
-    if bound is not None:
+    # two runtimes the same file. The UI keys its action on the same lookup
+    # (and the same "title-only rows do not count" narrowing).
+    bound_session_id = await asyncio.to_thread(_bound_session_id, source)
+    if bound_session_id is not None:
         raise HTTPException(409, {
             "code": "archive_already_bound",
             "detail": "该归档已属于一条会话，请直接打开该会话。",
-            "session_id": bound["id"],
+            "session_id": bound_session_id,
         })
 
     title = await asyncio.to_thread(_metadata.title_for_archive, source)

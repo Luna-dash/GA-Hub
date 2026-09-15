@@ -22,11 +22,25 @@ class SessionNotFoundError(KeyError):
     """Raised when a metadata record does not exist."""
 
 
+ARCHIVE_ROW_ID_PREFIX = "archive-"
+
+
 def stable_archive_id(archive_path: str | Path) -> str:
     """Deterministic pseudo-session id for archive-only metadata rows."""
     resolved = str(Path(archive_path).resolve())
     digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()
-    return f"archive-{digest}"
+    return f"{ARCHIVE_ROW_ID_PREFIX}{digest}"
+
+
+def is_archive_metadata_id(session_id: str | None) -> bool:
+    """True for title-only rows, which are metadata rather than conversations.
+
+    ``set_title_for_archive`` mints one per titled archive: it carries the
+    title and never owns a runtime. Callers asking "does this archive belong
+    to a session?" must exclude it, or renaming an unbound archive reads as a
+    binding — the row then offers "open that session" and refuses its import.
+    """
+    return bool(session_id) and str(session_id).startswith(ARCHIVE_ROW_ID_PREFIX)
 
 
 _store_locks_guard = threading.Lock()

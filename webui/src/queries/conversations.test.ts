@@ -23,7 +23,7 @@ describe('conversation query cache', () => {
 
     const first = qc.fetchQuery({ queryKey: conversationKeys.detail('a'), queryFn })
     const second = qc.fetchQuery({ queryKey: conversationKeys.detail('a'), queryFn })
-    release({ id: 'a', title: 'A', messages: [] })
+    release({ id: 'a', title: 'A', messages: [], source: 'local' })
 
     expect(await first).toEqual(await second)
     expect(queryFn).toHaveBeenCalledOnce()
@@ -49,9 +49,9 @@ describe('conversation query cache', () => {
       total: 1,
       offset: 0,
       limit: 50,
-      items: [{ id: 'a', title: 'Old', message_count: 1, last_user_preview: 'hi', original_user_preview: '' }],
+      items: [{ id: 'a', title: 'Old', message_count: 1, last_user_preview: 'hi', original_user_preview: '', source: 'local' }],
     })
-    qc.setQueryData<Conversation>(detailKey, { id: 'a', title: 'Old', messages: [] })
+    qc.setQueryData<Conversation>(detailKey, { id: 'a', title: 'Old', messages: [], source: 'local' })
 
     await applyConversationTitle(qc, 'a', 'New')
 

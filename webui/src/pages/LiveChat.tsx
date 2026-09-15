@@ -13,7 +13,6 @@ import { storageKeys } from '@/config/storageKeys'
 import type {
   HubSession,
   LLMInfo,
-  ConversationMessage,
   ScheduledChat,
   SessionRuntime,
 } from '@/api/types'
@@ -38,7 +37,7 @@ import { dialog } from '@/stores/dialogStore'
 import { noticeKeys, useChatStore } from '@/stores/chatStore'
 import { formatDateTime } from '@/utils/formatTime'
 import { useDraftStore } from '@/stores/draftStore'
-import { capacityConflictFromError, errorMessageFromError, sessionChatHref } from '@/utils/sessionUi'
+import { capacityConflictFromError, errorMessageFromError, openSessionChat, sessionChatHref } from '@/utils/sessionUi'
 import { buildSessionPromptText } from '@/utils/sessionPrompt'
 import { isTauriDesktop, selectDirectory } from '@/utils/desktop'
 import { defaultSessionLlmKey, resolveSessionLlmKey } from '@/utils/llm'
@@ -46,17 +45,11 @@ import { MainModelSelect } from '@/components/ModelSelect'
 import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 
-interface RestoreState {
-  restoredFrom?: string
-  restoredTitle?: string
-  restoredLines?: number
-  messages?: ConversationMessage[]
-}
-
 export default function LiveChat() {
+  // `location.search` carries the selected session (`?session=<id>`); the
+  // effect below resolves it against the session list.
   const location = useLocation()
   const nav = useNavigate()
-  const restoreState = (location.state as RestoreState | null) || null
 
   const streaming = useChatStore((s) => s.streaming)
   const conn = useChatStore((s) => s.conn)
@@ -67,7 +60,6 @@ export default function LiveChat() {
   const rollbackWebui = useChatStore((s) => s.rollbackWebui)
   const clearLocal = useChatStore((s) => s.clearLocal)
   const pushSystem = useChatStore((s) => s.pushSystem)
-  const restoreVisibleConversation = useChatStore((s) => s.restoreVisibleConversation)
 
   const [session, setSession] = useState<HubSession | null>(null)
   const draftKey = session ? `liveChat:${session.id}` : 'liveChat:pending'
@@ -295,21 +287,6 @@ export default function LiveChat() {
     }
   }
 
-  // Apply navigation-state restore once (e.g. coming from Conversations page).
-  useEffect(() => {
-    if (restoreState?.messages?.length) {
-      // Replace the visible transcript atomically: large restored archives must
-      // not grow the message array one copy at a time.
-      restoreVisibleConversation(
-        restoreState.messages,
-        `_↩ 已从「${restoreState.restoredTitle || ''}」恢复完整原生上下文（${restoreState.restoredLines ?? restoreState.messages.length} 条可视消息）。继续对话即可。_`,
-      )
-      // Drop the state so reload / back-nav doesn't re-inject.
-      nav('/chat', { replace: true, state: null })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   const submit = (draft: LiveChatDraftSnapshot) => {
     const t = draft.text.trim()
     if (!t && draft.attachments.length === 0) return
@@ -506,8 +483,13 @@ export default function LiveChat() {
 
   const selectSession = useCallback((id: string) => {
     if (id === sessionIdRef.current) return
-    localStorage.setItem(storageKeys.currentSessionId, id)
-    nav(sessionChatHref(id))
+    openSessionChat(nav, id)
+  }, [nav])
+
+  // The rail short-cuts to the history page instead of growing its own archive
+  // picker; the target archive is chosen (and imported) there.
+  const openHistoryImport = useCallback(() => {
+    nav('/conversations')
   }, [nav])
 
   const createSession = useCallback(async () => {
@@ -776,6 +758,7 @@ export default function LiveChat() {
           currentId={session?.id ?? null}
           onSelect={selectSession}
           onCreate={createSession}
+          onImportFromHistory={openHistoryImport}
           creating={creatingSession}
           onRename={renameSession}
           onDelete={deleteSession}

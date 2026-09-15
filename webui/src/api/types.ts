@@ -23,10 +23,13 @@ export interface SetupStatus {
 export type AgentStatus = ApiSchemas['GlobalAgentStatus']
 export type ConversationSummary = ApiSchemas['ConversationSummaryResp']
 export type Conversation = ApiSchemas['ConversationDetailResp']
+/** Where an archive came from — the history listing's source badge + filter.
+ *  Archives record no frontend identity, so `im` is the finest grain there is. */
+export type ConversationSource = ConversationSummary['source']
 export type ConversationListResponse = ApiSchemas['ConversationListResp']
 export type ConversationUpdateResponse = ApiSchemas['ConversationUpdateResp']
 export type ConversationDeleteResponse = ApiSchemas['ConversationMutationResp']
-export type ConversationRestoreResponse = ApiSchemas['ConversationRestoreResp']
+export type ConversationImportResponse = ApiSchemas['ConversationImportResp']
 export type ConversationMessage = ApiSchemas['ConversationMessageResp']
 
 export interface LLMInfo {

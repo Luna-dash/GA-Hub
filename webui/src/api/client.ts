@@ -21,8 +21,8 @@ import type {
   ConductorSubagent,
   Conversation,
   ConversationDeleteResponse,
+  ConversationImportResponse,
   ConversationListResponse,
-  ConversationRestoreResponse,
   ConversationUpdateResponse,
   EmailConfig,
   EmailTestResponse,
@@ -328,9 +328,11 @@ export const api = {
     http<ConversationDeleteResponse>('DELETE', `/api/conversations/${encodeURIComponent(id)}`),
   exportConversation: (id: string, format: 'md' | 'json') =>
     resolveApiUrl(`/api/conversations/${encodeURIComponent(id)}/export?format=${format}`),
-  restoreConversation: (id: string, sessionId: string) =>
-    http<ConversationRestoreResponse>(
-      'POST', `/api/conversations/${encodeURIComponent(id)}/restore`, { session_id: sessionId }),
+  // Mint a session that owns a cleaned copy of the archive (source read-only).
+  // Conflicts carry a `code` (archive_already_bound / archive_not_importable)
+  // the history page maps to its own message.
+  importConversation: (id: string) =>
+    http<ConversationImportResponse>('POST', `/api/conversations/${encodeURIComponent(id)}/import`),
 
   // ── memory ───────────────────────────────────────────
   globalMem: () => http<MemoryTextResponse>('GET', '/api/memory/global'),

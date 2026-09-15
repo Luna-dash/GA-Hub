@@ -95,12 +95,17 @@ interface ChatState {
   /** Wipe local view (used by /new). Doesn't talk to the server. */
   clearLocal: () => void
   /**
-   * Push a system / banner bubble (e.g. /new ack, LLM switched, restore notice).
+   * Push a system / banner bubble (e.g. /new ack, LLM switched, import ack).
    * With a key from {@link noticeKeys}, repeated pushes reuse one bubble
    * (id `sys:<key>`) instead of appending.
    */
   pushSystem: (content: string, stableKey?: NoticeKey) => void
-  /** Replace the visible transcript after a native conversation restore. */
+  /** Replace the visible transcript after a native conversation restore.
+   *
+   * No production caller since the restore UI was retired (2026-09-15): an
+   * archive now becomes a session of its own and the chat page hydrates it
+   * through the ordinary history load. Kept because chatStore.test.ts pins its
+   * atomic-replacement semantics. */
   restoreVisibleConversation: (messages: readonly ConversationMessage[], notice: string) => void
 }
 

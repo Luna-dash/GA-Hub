@@ -92,6 +92,23 @@ def test_set_title_for_archive_keeps_stable_id(tmp_path):
     assert len(sessions.list()) == 1
 
 
+def test_archive_metadata_id_marks_title_only_rows(tmp_path):
+    """The title row's id is the signal "metadata, not a binding"."""
+    sessions = _store(tmp_path)
+    bound = tmp_path / "bound.txt"
+    bound.write_text("x", encoding="utf-8")
+    owner = sessions.create(title="真实会话")
+    sessions.bind_archive(owner["id"], bound)
+
+    titled = sessions.set_title_for_archive(tmp_path / "untitled.txt", "改过名")
+
+    assert session_metadata.is_archive_metadata_id(titled["id"]) is True
+    assert session_metadata.is_archive_metadata_id(owner["id"]) is False
+    assert session_metadata.is_archive_metadata_id("") is False
+    assert session_metadata.is_archive_metadata_id(None) is False
+    assert titled["id"].startswith(session_metadata.ARCHIVE_ROW_ID_PREFIX)
+
+
 def test_conflicting_stable_id_binding_does_not_overwrite_other_session(tmp_path, monkeypatch):
     sessions = _store(tmp_path)
     first = tmp_path / "first.txt"

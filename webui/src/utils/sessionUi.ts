@@ -1,4 +1,5 @@
 import type { SessionRuntime } from '@/api/types'
+import { storageKeys } from '@/config/storageKeys'
 
 export type SessionActivity = 'active' | 'idle' | 'error' | 'unknown'
 
@@ -37,6 +38,26 @@ export function sessionStatusLabel(runtime?: SessionRuntime): string {
 export function sessionChatHref(sessionId: string): string {
   const params = new URLSearchParams({ session: sessionId })
   return `/chat?${params.toString()}`
+}
+
+/** Switch the app to one session — the rail's own selection contract.
+ *
+ * The chat page resolves `?session=` against the session list and the stored
+ * id, so both writes belong together: persist the id LiveChat restores on a
+ * plain `/chat` boot, then route to the session-scoped URL. Callers outside
+ * the rail (history → "open that session" / import) reuse this instead of
+ * re-deriving the pair.
+ */
+export function openSessionChat(
+  navigate: (to: string) => void,
+  sessionId: string,
+): void {
+  try {
+    localStorage.setItem(storageKeys.currentSessionId, sessionId)
+  } catch {
+    // Private mode / quota: the explicit ?session= below still selects it.
+  }
+  navigate(sessionChatHref(sessionId))
 }
 
 export function errorMessageFromError(error: unknown, fallback = '请求失败'): string {

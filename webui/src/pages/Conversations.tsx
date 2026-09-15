@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { readPageState, usePageState, writePageState } from '@/utils/pageState'
-import type { ConversationMessage, ConversationSummary } from '@/api/types'
+import type { ConversationMessage, ConversationSource, ConversationSummary, HubSession } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { MessageContent } from '@/components/MessageContent'
 import { bubbleTone } from '@/components/bubbleTone'
@@ -13,18 +13,19 @@ import { parseAssistantTranscript, stripAssistantTranscriptTags } from '@/utils/
 import { previewText } from '@/utils/foldTurns'
 import { RAIL_TITLE_SCALE_EVENT, getRailTitleScale } from '@/utils/railAppearance'
 import { saveTextExport } from '@/utils/desktop'
-import { errorMessageFromError } from '@/utils/sessionUi'
+import { errorMessageFromError, openSessionChat, structuredErrorDetailFromError } from '@/utils/sessionUi'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
-import { useChatStore } from '@/stores/chatStore'
 import {
   applyConversationTitle,
   conversationKeys,
   removeConversationFromCache,
 } from '@/queries/conversations'
+import { queryKeys } from '@/queries/queryKeys'
 
 type ViewMode = 'round' | 'flat'
 type Msg = ConversationMessage
+type SourceFilter = 'all' | ConversationSource
 type TurnSummary = {
   turn: number
   summary: string
@@ -40,6 +41,31 @@ type Round = {
   preview: string
 }
 
+// Source vocabulary, shared by the row badge and the filter chips. Only the
+// bound state carries a tone — it is the one that decides the row's action
+// ("打开该会话" vs "导入为会话"); the two unbound origins stay quiet neutrals
+// that differ by label alone.
+const SOURCE_META: Record<ConversationSource, { label: string; chipClass: string }> = {
+  session: {
+    label: '本机会话',
+    chipClass: 'border-status-info-line bg-status-info-soft text-status-info',
+  },
+  im: { label: '外部接入', chipClass: 'border-line bg-bg-card text-ink-muted' },
+  local: { label: '本地', chipClass: 'border-line bg-bg-card text-ink-faint' },
+}
+
+const SOURCE_FILTERS: { value: SourceFilter; label: string }[] = [
+  { value: 'all', label: '全部' },
+  { value: 'session', label: '本机会话' },
+  { value: 'im', label: '外部接入' },
+  { value: 'local', label: '本地' },
+]
+
+/** A backend without `source` (mid-upgrade) reads as 本地, never a blank chip. */
+function sourceMeta(source: ConversationSummary['source'] | undefined) {
+  return (source && SOURCE_META[source]) || SOURCE_META.local
+}
+
 export default function Conversations() {
   const qc = useQueryClient()
   const nav = useNavigate()
@@ -48,15 +74,12 @@ export default function Conversations() {
   // Remember the last opened conversation so returning to this page via the
   // plain /conversations route restores the selection instead of an empty pane.
   const lastActiveRef = useRef<string | null>(readPageState('conversations.lastActive', null))
-  const [restoring, setRestoring] = useState<string | null>(null)
-  // Restore rebuilds the *active* chat session's runtime, so the call needs
-  // the current chat session id (null before the chat page ever ran → the
-  // handler refuses early with a clear message instead of a 4xx from API).
-  const chatSessionId = useChatStore((s) => s.sessionId)
+  const [importing, setImporting] = useState<string | null>(null)
   const [q, setQ] = usePageState('conversations.q', '')
   const [debouncedQ, setDebouncedQ] = useState('')
   const [page, setPage] = usePageState('conversations.page', 0)
   const [viewMode, setViewMode] = usePageState<ViewMode>('conversations.viewMode', 'round')
+  const [sourceFilter, setSourceFilter] = usePageState<SourceFilter>('conversations.sourceFilter', 'all')
   const [openConclusion, setOpenConclusion] = usePageState<Record<string, boolean>>('conversations.openConclusion', {})
   const detailScrollRef = useRef<HTMLDivElement>(null)
   const limit = 50
@@ -88,6 +111,13 @@ export default function Conversations() {
 
   const total = data?.total ?? 0
   const items = data?.items ?? []
+  // Display-only narrowing of the loaded page: the query, the detail pane and
+  // every row action keep working off the unfiltered item either way.
+  const visibleItems = useMemo(
+    () => (sourceFilter === 'all' ? items : items.filter((c) => c.source === sourceFilter)),
+    [items, sourceFilter],
+  )
+  const filterLabel = SOURCE_FILTERS.find((f) => f.value === sourceFilter)?.label ?? '全部'
 
   // Clamp page when the result set shrinks (e.g. after deleting the last item
   // on a trailing page, or narrowing the search) so we never get stranded on
@@ -140,6 +170,9 @@ export default function Conversations() {
     }
   }, [active])
   const rounds = useMemo(() => buildRounds(detail?.messages || []), [detail])
+  // Non-empty only for a real chat session: the backend excludes title-only
+  // archive rows from `bound_session_id`, so this drives the primary action.
+  const boundSessionId = detail?.bound_session_id || null
 
   const handleExport = async (id: string, fmt: 'md' | 'json') => {
     try {
@@ -195,33 +228,56 @@ export default function Conversations() {
     }
   }
 
-  const handleRestore = async (id: string) => {
-    if (!detail) return
-    if (!chatSessionId) {
-      await dialog.alert('无法恢复', '当前没有活动的聊天会话，请先在聊天页选择或新建会话后再恢复。')
-      return
-    }
-    const ok = await dialog.confirm(
-      `恢复会话「${detail.title || id}」？`,
-      `· 当前 Agent 上下文会被清空\n· 将完整恢复该会话的原生模型上下文（含工具调用与结果）\n· 之后你可以在聊天界面无缝继续对话`,
-      { confirmText: '恢复并继续' },
-    )
-    if (!ok) return
-    setRestoring(id)
+  /** Select a session the way the rail does, from outside the chat page.
+   *
+   * The chat page resolves `?session=` against the cached session list, and
+   * that cache is fresh for 30s — so a session minted moments ago would miss
+   * the lookup and the chat page would fall back to an unrelated session.
+   * Refresh first, and refuse to navigate when the target is gone: opening the
+   * wrong conversation is worse than not opening one.
+   */
+  const openSession = async (sessionId: string) => {
+    let listed: { total: number; items: HubSession[] }
     try {
-      const r = await api.restoreConversation(id, chatSessionId)
-      nav('/chat', {
-        state: {
-          restoredFrom: id,
-          restoredTitle: r.title,
-          restoredLines: r.restored_lines,
-          messages: detail.messages || [],
-        },
+      listed = await qc.fetchQuery<{ total: number; items: HubSession[] }>({
+        queryKey: queryKeys.sessions,
+        queryFn: api.sessions,
+        staleTime: 0,
       })
     } catch (e: any) {
-      await dialog.alert('恢复失败', errorMessageFromError(e))
+      await dialog.alert('无法打开会话', `会话列表刷新失败：${errorMessageFromError(e)}`)
+      return
+    }
+    if (!listed.items.some((item) => item.id === sessionId)) {
+      await dialog.alert('无法打开会话', '该会话已不存在，请刷新后重试。')
+      return
+    }
+    openSessionChat(nav, sessionId)
+  }
+
+  const handleImport = async (id: string) => {
+    setImporting(id)
+    try {
+      const created = await api.importConversation(id)
+      toast.success(`已导入为会话「${created.title || id}」（${created.imported_lines} 条消息）`)
+      await openSession(created.session_id)
+    } catch (e: any) {
+      const payload = structuredErrorDetailFromError<{ code?: string; session_id?: unknown }>(e)
+      if (payload?.code === 'archive_already_bound') {
+        // The archive is spoken for, but the owner is exactly what the user
+        // wants to see — hand them the session the response names.
+        const owner = typeof payload.session_id === 'string' ? payload.session_id : ''
+        toast.error(owner ? '该归档已属于某条会话，已为你打开该会话' : '该归档已属于某条会话')
+        if (owner) await openSession(owner)
+      } else if (payload?.code === 'archive_not_importable') {
+        await dialog.alert('无法导入', '该归档没有可导入的完整对话。')
+      } else if (e?.status === 404) {
+        await dialog.alert('归档不存在', '该归档可能已被删除，请刷新列表后重试。')
+      } else {
+        await dialog.alert('导入失败', errorMessageFromError(e))
+      }
     } finally {
-      setRestoring(null)
+      setImporting(null)
     }
   }
 
@@ -254,7 +310,26 @@ export default function Conversations() {
         <ConversationIndexRail>
           {(collapsed) => (
             <>
-              {items.map((c, index) => (
+              {!collapsed && (
+                <div className="sticky top-0 z-10 flex items-center gap-1.5 border-b border-line/60 bg-bg-soft px-3 py-2">
+                  {SOURCE_FILTERS.map((f) => (
+                    <button
+                      key={f.value}
+                      type="button"
+                      aria-pressed={sourceFilter === f.value}
+                      onClick={() => setSourceFilter(f.value)}
+                      className={`rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
+                        sourceFilter === f.value
+                          ? 'border-accent bg-accent text-white'
+                          : 'border-line text-ink-muted hover:bg-white/5'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {visibleItems.map((c, index) => (
                 <ConvRow
                   key={c.id}
                   c={c}
@@ -265,6 +340,11 @@ export default function Conversations() {
                   onClick={() => nav(`/conversations/${encodeURIComponent(c.id)}`)}
                 />
               ))}
+              {visibleItems.length === 0 && items.length > 0 && (
+                <div className="px-3 py-6 text-center text-xs text-ink-faint">
+                  本页没有「{filterLabel}」会话
+                </div>
+              )}
               {total > limit && (
                 <div className={collapsed
                   ? 'sticky bottom-0 z-10 flex flex-col items-center gap-1 border-t border-line/60 bg-bg-soft py-2 text-xs text-slate-400'
@@ -309,14 +389,26 @@ export default function Conversations() {
                   </span>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line/60 pt-3">
-                  <button
-                    onClick={() => handleRestore(detail.id)}
-                    disabled={restoring === detail.id}
-                    className="shrink-0 px-3 py-1.5 rounded-lg bg-accent text-white text-sm disabled:opacity-40"
-                    title="把这个会话作为 Agent 的历史上下文，跳转到聊天页继续"
-                  >
-                    {restoring === detail.id ? '恢复中…' : '↩ 恢复并继续聊天'}
-                  </button>
+                  {boundSessionId ? (
+                    <button
+                      type="button"
+                      onClick={() => { void openSession(boundSessionId) }}
+                      className="shrink-0 px-3 py-1.5 rounded-lg bg-accent text-white text-sm"
+                      title="这条归档已属于一条会话，切换到该会话继续"
+                    >
+                      打开该会话
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => { void handleImport(detail.id) }}
+                      disabled={importing === detail.id}
+                      className="shrink-0 px-3 py-1.5 rounded-lg bg-accent text-white text-sm disabled:opacity-40"
+                      title="把这条归档复制成一条新会话（源文件保持只读），之后可无缝继续对话"
+                    >
+                      {importing === detail.id ? '导入中…' : '导入为会话'}
+                    </button>
+                  )}
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                     <div className="flex overflow-hidden rounded-lg border border-line">
                       <button
@@ -662,13 +754,14 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
   onClick: () => void
 }) {
   const title = summaryDisplayTitle(c)
+  const meta = sourceMeta(c.source)
   if (collapsed) {
     return (
       <button
         type="button"
         onClick={onClick}
         aria-label={`第 ${index} 条：${title}`}
-        title={`${index}. ${title}\n${previewText(c.last_user_preview || '')}`}
+        title={`${index}. ${title}\n${previewText(c.last_user_preview || '')}\n来源：${meta.label}`}
         className={`flex h-11 w-full items-center justify-center border-b border-line/60 text-xs font-medium transition-colors ${active ? 'bg-accent-soft text-accent' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
       >
         {index}
@@ -686,6 +779,12 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
         <div className="text-sm text-slate-200 truncate font-medium" style={titleStyle} title={title}>
           {title}
         </div>
+        <span
+          className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] leading-4 ${meta.chipClass}`}
+          title={`来源：${meta.label}`}
+        >
+          {meta.label}
+        </span>
       </div>
       <div className="text-xs text-slate-500 truncate mt-0.5">{previewText(c.last_user_preview || '')}</div>
       <div className="text-[10px] text-slate-600 mt-0.5">{c.message_count} 条消息</div>

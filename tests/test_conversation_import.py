@@ -363,6 +363,35 @@ def test_import_refuses_an_archive_that_already_belongs_to_a_session(
     assert [row["id"] for row in store.list()] == [owner["id"]]
 
 
+def test_import_ignores_a_title_only_row_left_by_renaming(
+    tmp_path, monkeypatch
+) -> None:
+    """Renaming an unbound archive writes an ``archive-<sha>`` row, not a binding.
+
+    Renaming used to be indistinguishable from adopting: the title row matched
+    the same ``find_by_archive`` lookup, so a renamed archive reported a
+    `bound_session_id`, showed "open that session", and 409'd on import —
+    with a session id no chat page could ever open.
+    """
+    store, source, target, coordinator = _setup_import(
+        tmp_path, monkeypatch, _im_archive()
+    )
+    titled = store.set_title_for_archive(source, "改过名的归档")
+    assert titled["id"].startswith("archive-")
+
+    with TestClient(_app()) as client:
+        response = client.post(f"/api/conversations/{source.name}/import")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["title"] == "改过名的归档"
+    row = store.get(body["session_id"])
+    assert row["archive_path"] == str(target.resolve())
+    assert coordinator.ensured == [body["session_id"]]
+    # The title row stays where it was: it still labels the untouched source.
+    assert store.title_for_archive(source) == "改过名的归档"
+
+
 def test_import_reports_unknown_conversations(tmp_path, monkeypatch) -> None:
     _setup_import(tmp_path, monkeypatch, _im_archive())
     monkeypatch.setattr(conversations, "archive_session_by_id", lambda cid: None)
@@ -461,3 +490,30 @@ def test_listing_and_detail_report_the_bound_session(tmp_path, monkeypatch) -> N
     assert [item["bound_session_id"] for item in listing["items"]] == [owner["id"], None]
     assert [item["id"] for item in listing["items"]] == [bound.name, free.name]
     assert detail["bound_session_id"] == owner["id"]
+
+
+def test_listing_and_detail_ignore_title_only_rows(tmp_path, monkeypatch) -> None:
+    """A renamed-but-unbound archive is still free to import."""
+    store = SessionMetadataStore(tmp_path / "sessions")
+    archive = tmp_path / "model_responses_titled.txt"
+    archive.write_text(_question_turn(_hinted("第一个问题")), encoding="utf-8")
+    store.set_title_for_archive(archive, "我改的名字")
+
+    monkeypatch.setattr(conversations, "_metadata", store)
+    monkeypatch.setattr(conversations, "list_archive_sessions", lambda: [
+        (str(archive), 2.0, "预览", 2),
+    ])
+    monkeypatch.setattr(
+        conversations, "archive_session_by_id",
+        lambda cid: (str(archive), 2.0, "预览", 2),
+    )
+    monkeypatch.setattr(conversations, "_ga_extract", lambda path: [])
+
+    with TestClient(_app()) as client:
+        listing = client.get("/api/conversations").json()
+        detail = client.get(f"/api/conversations/{archive.name}").json()
+
+    assert [item["bound_session_id"] for item in listing["items"]] == [None]
+    # The title itself is untouched by the narrowing — it is still metadata.
+    assert listing["items"][0]["title"] == "我改的名字"
+    assert detail["bound_session_id"] is None

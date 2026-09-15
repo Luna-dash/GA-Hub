@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import {
   capacityConflictFromError,
   errorMessageFromError,
   myKeyParseErrorFromError,
   myKeySyncErrorFromError,
+  openSessionChat,
   sessionActivity,
   sessionChatHref,
   sessionStatusLabel,
@@ -42,6 +43,16 @@ describe('session UI contracts', () => {
 
   it('builds a stable URL used to switch the selected live-chat session', () => {
     expect(sessionChatHref('session/a b')).toBe('/chat?session=session%2Fa+b')
+  })
+
+  it('switches sessions like the rail does: persist the id, then route to it', () => {
+    const navigate = vi.fn()
+
+    openSessionChat(navigate, 'session/a b')
+
+    // LiveChat re-reads this on a plain /chat boot; the URL selects it now.
+    expect(localStorage.getItem('gahub.currentSessionId')).toBe('session/a b')
+    expect(navigate).toHaveBeenCalledWith('/chat?session=session%2Fa+b')
   })
 
   it('extracts the bounded-capacity 409 contract and ignores unrelated errors', () => {

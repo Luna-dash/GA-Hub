@@ -2941,6 +2941,11 @@ export interface components {
             messages: components["schemas"]["ConversationMessageResp"][];
             /** Bound Session Id */
             bound_session_id?: string | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "session" | "im" | "local";
         };
         /**
          * ConversationImportResp
@@ -3019,6 +3024,11 @@ export interface components {
             original_user_preview: string;
             /** Bound Session Id */
             bound_session_id?: string | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "session" | "im" | "local";
         };
         /** ConversationUpdate */
         ConversationUpdate: {
