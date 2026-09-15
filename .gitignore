@@ -67,3 +67,6 @@ mockups/
 .workbuddy/
 # 本机私有项目笔记（此前只靠 .git/info/exclude 兜着，换机 clone 会露出）
 project_memory.md
+
+# pytest local temp dirs
+.pytest_tmp/
