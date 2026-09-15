@@ -24,8 +24,9 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
   endRef: { current: HTMLDivElement | null }
   userMsg: string
   onUserMsgChange: (value: string) => void
-  /** Submit the composer; `null` targets a brand-new task. */
-  onSubmit: (targetRequestId: string | null) => void
+  /** Submit the composer; `new` leaves the current task behind (the page
+   *  confirms it first), `append` continues the current task's request id. */
+  onSubmit: (target: 'append' | 'new') => void
   appendMode: boolean
   llmReady: boolean
   sending: boolean
@@ -143,14 +144,18 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
             <span className="truncate text-xs text-ink-muted">
               当前任务
             </span>
+            {/* ＋新开任务 is the only way out of the current task: the page
+                confirms it (and aborts this task's running workers) before
+                minting the new task, so the send button alone can never
+                silently abandon work in flight. */}
             <button
               type="button"
               onClick={() => onSubmit('new')}
               disabled={!userMsg.trim() || !llmReady || sending}
               className="ga-btn shrink-0 px-2.5 py-1 text-xs"
-              title="忽略当前任务，另开一个新任务"
+              title="放弃当前任务并新开一个任务（运行中的 worker 会先被中止）"
             >
-              <Plus size={13} />新任务
+              <Plus size={13} />新开任务
             </button>
           </div>
         )}

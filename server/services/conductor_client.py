@@ -26,6 +26,7 @@ from ..constants import (
     CONDUCTOR_ENGINE_PORT,
     ENV_GAHUB_DELIVERABLE_ROOTS,
     ENV_GAHUB_JOURNAL_PATH,
+    ENV_GAHUB_MULTI_REQUEST_TURNS,
     ENV_GAHUB_PATH_POLICY,
     ENV_GAHUB_TEMP_DIR,
 )
@@ -91,12 +92,19 @@ def _engine_spawn_env() -> dict:
     optional allow-list. When it is absent, the engine accepts explicit
     absolute user paths on any drive; the supervisor prompt still uses
     ``<GA_ROOT>\\temp`` as the default delivery location.
+
+    GAHUB_MULTI_REQUEST_TURNS is forced to "off": the hub's task model is
+    one task (= one request_id = one archive) per turn, so a coalesced
+    multi-request wake has no archive to belong to. Unlike the journal and
+    path settings above this is an invariant the hub owns, not an operator
+    default — an inherited value must not silently re-enable batching.
     """
     env = _clean_child_env()
     env.setdefault(ENV_GAHUB_JOURNAL_PATH, str(_paths.gahub_journal_file()))
     env.setdefault(ENV_GAHUB_PATH_POLICY, "allowed_roots" if
                    env.get(ENV_GAHUB_DELIVERABLE_ROOTS, "").strip()
                    else "explicit_absolute")
+    env[ENV_GAHUB_MULTI_REQUEST_TURNS] = "off"
     return env
 
 
@@ -303,6 +311,13 @@ class GahubProcessManager:
         log_file.flush()
 
     def stop(self, timeout: float = 5.0) -> bool:
+        """Reap the engine process this manager spawned.
+
+        Second half of app teardown (``ConductorService.shutdown`` stops the
+        supervisor first): whatever the engine session did on the way out, the
+        child process must not outlive the app — the desktop sidecar's owner
+        pipe and ``server.run``'s Ctrl-C both land here through the lifespan.
+        """
         with self._lock:
             proc, self._proc = self._proc, None
         if proc is None:

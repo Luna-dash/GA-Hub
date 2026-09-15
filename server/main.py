@@ -417,6 +417,11 @@ def create_app() -> FastAPI:
                 except Exception:
                     log.exception("session runtime abort failed")
                 await _cancel_background_task(feishu_autostart_task)
+                # Closes every lifespan-owned service, the conductor engine
+                # included: its supervisor session is stopped and the spawned
+                # gahub_app process reaped (no orphan engines after app close).
+                # The desktop sidecar runs this same app/lifespan, so both
+                # entry points share the one close path.
                 services.shutdown_all()
                 try:
                     from .services.goalhive_service import shutdown_goalhive_service

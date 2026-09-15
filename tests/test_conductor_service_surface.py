@@ -109,6 +109,9 @@ def test_engine_spawn_uses_mei_stripped_env_and_no_preflight_probe(monkeypatch, 
     assert env is not None
     assert all("_MEI" not in item for item in env["PATH"].split(chr(59)))
     assert "_PYI_ARCHIVE" not in env
+    # One task per turn (H1.1): the switch must reach the engine's real env,
+    # not merely _engine_spawn_env()'s return value.
+    assert env["GAHUB_MULTI_REQUEST_TURNS"] == "off"
     # Exactly one child process: the engine itself, no probe child.
     assert captured["cmd"][1:3] == ["-u", str(tmp_path / "frontends" / "gahub_app.py")]
     # The timeout diagnostic names the AV condition for the operator.

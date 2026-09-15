@@ -54,6 +54,10 @@ ENV_GAHUB_DELIVERABLE_ROOTS = "GAHUB_DELIVERABLE_ROOTS"
 # paths on any drive. The recovery handshake refuses an engine whose policy
 # mode differs from the hub value instead of guessing.
 ENV_GAHUB_PATH_POLICY = "GAHUB_PATH_POLICY"
+# gahub_app engine (conductor_client): whether one supervisor turn may
+# coalesce several requests (F1 batching). The hub runs one task at a time
+# (task = request_id = one archive), so every spawned engine gets "off".
+ENV_GAHUB_MULTI_REQUEST_TURNS = "GAHUB_MULTI_REQUEST_TURNS"
 # UI origin allowlist beyond localhost (main.py).
 ENV_GAHUB_ALLOWED_HOSTS = "GAHUB_ALLOWED_HOSTS"
 # mykey sync (routes/mykey.py): sync-site root URL and the credential env

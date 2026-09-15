@@ -3,7 +3,7 @@
 // values, saving hands the resolved triple to the page (which owns the
 // persistence calls) and closes. Focus returns to the trigger on close.
 import { useRef, useState } from 'react'
-import { Settings2, X } from 'lucide-react'
+import { Settings2, Square, X } from 'lucide-react'
 import clsx from 'clsx'
 import { SubagentModelSelect } from '@/components/ModelSelect'
 import { ModalOverlay } from '@/components/ModalOverlay'
@@ -14,11 +14,15 @@ export type SubagentSettingsValue = {
   autoAccept: boolean
 }
 
-export function SubagentSettingsModal({ llms, value, locked, autoAccept, open, onOpenChange, onSave }: {
+export function SubagentSettingsModal({ llms, value, locked, autoAccept, engineStarted, engineStopping, onStopEngine, open, onOpenChange, onSave }: {
   llms: ReadonlyArray<{ key: string; name: string }>
   value: string | null
   locked: boolean
   autoAccept: boolean
+  /** Engine-level stop: only meaningful while a supervisor session runs. */
+  engineStarted: boolean
+  engineStopping: boolean
+  onStopEngine: () => void
   open: boolean
   onOpenChange: (open: boolean) => void
   onSave: (next: SubagentSettingsValue) => void
@@ -118,6 +122,23 @@ export function SubagentSettingsModal({ llms, value, locked, autoAccept, open, o
                 />
                 <span className="font-medium text-ink">质检通过自动验收</span>
               </label>
+            </div>
+            {/* 停止（引擎级）lives here now: the page ensures the engine on
+                entry, so stopping one is a deliberate maintenance action, not
+                a daily control. 放弃任务 (task level) stays on the composer. */}
+            <div className="border-t border-line/70 pt-4">
+              <p className="text-sm font-medium text-ink">引擎</p>
+              <p className="mt-1 text-xs text-ink-muted">
+                进入本页会自动启动引擎（幂等：已在运行的引擎会被跳过）。停止后需重新进入本页或发送消息才会再次启动。
+              </p>
+              <button
+                type="button"
+                className="ga-btn ga-btn-danger mt-3 inline-flex items-center gap-1.5"
+                disabled={!engineStarted || engineStopping}
+                onClick={onStopEngine}
+              >
+                <Square size={13} />{engineStopping ? '停止中…' : '停止引擎'}
+              </button>
             </div>
           </div>
           <div className="flex justify-end gap-2 border-t border-line/70 px-5 py-4">

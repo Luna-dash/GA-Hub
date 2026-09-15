@@ -150,6 +150,10 @@ describe('Conductor chat scroll restoration', () => {
       review_note: '', attempt: 1, generation: 1, request_id: 'request-1',
     })
     mocks.llms.mockResolvedValue({ llms: [] })
+    // 引擎懒启动 (H1): every mount fires the idempotent bring-up, so the
+    // baseline is a resolved, already-started engine. Tests that care about
+    // the bring-up override this.
+    mocks.conductorStart.mockResolvedValue({ ok: true, started: true })
     // Durable 动态 history: an empty page is the baseline every test that does
     // not care about the timeline expects.
     mocks.conductorActivity.mockResolvedValue({ items: [], has_more: false, durable: true })
@@ -764,7 +768,83 @@ describe('Conductor chat scroll restoration', () => {
     )
   })
 
-  it('offers an explicit new-task submit that omits the request id', async () => {
+  it('opens a new task without asking for confirmation when no task is on screen', async () => {
+    mocks.conductorSendChat.mockResolvedValue({
+      id: 'u1', role: 'user', msg: '从零开始的任务', ts: 1,
+    })
+    renderPage()
+    await waitFor(() => expect(host.querySelector('form textarea')).toBeTruthy())
+
+    // 无任务 → the composer IS the new task: no append affordance, no dialog.
+    expect((host.querySelector('form textarea') as HTMLTextAreaElement).placeholder)
+      .toBe('描述一个新任务…')
+    expect(() => button('新开任务')).toThrow()
+
+    typeMessage('从零开始的任务')
+    act(() => button('发送').click())
+    await waitFor(() => expect(mocks.conductorSendChat).toHaveBeenCalledTimes(1))
+    expect(mocks.dialogConfirm).not.toHaveBeenCalled()
+    expect(mocks.conductorSendChat).toHaveBeenCalledWith(
+      '从零开始的任务', 'user', expect.anything(), undefined,
+    )
+  })
+
+  it('abandons the current task after a counted confirmation and aborts its running workers', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [{
+        request_id: 'request-1',
+        status: 'supervising',
+        stage: 'supervising',
+        subagents: { live: { generation: 1, state: 'running' }, idle: { generation: 1, state: 'pending' } },
+        created_at: 1,
+        completed_at: null,
+      }],
+    })
+    mocks.conductorSubagents.mockResolvedValue({
+      items: [
+        {
+          id: 'live', prompt: '跑基准测试', reply: '', status: 'running',
+          created_at: 1, updated_at: 1, review_status: 'none', review_note: '',
+          attempt: 1, generation: 1, request_id: 'request-1', stage: 'running',
+          boot_id: 'boot-a', active_generation: 1, command_revision: 3,
+        },
+        {
+          id: 'idle', prompt: '写文档', reply: 'done', status: 'stopped',
+          created_at: 2, updated_at: 2, review_status: 'pending', review_note: '',
+          attempt: 1, generation: 1, request_id: 'request-1', stage: 'reviewing',
+        },
+      ],
+    })
+    mocks.conductorSubagentAction.mockResolvedValue({ id: 'live', status: 'stopped' })
+    mocks.conductorSendChat.mockResolvedValue({
+      id: 'u2', role: 'user', msg: '另起一个独立任务', ts: 2,
+    })
+    mocks.dialogConfirm.mockResolvedValue(true)
+    renderPage()
+    await waitFor(() => expect(host.querySelector('form textarea')).toBeTruthy())
+    await waitFor(() => expect(button('新开任务')).toBeTruthy())
+
+    typeMessage('另起一个独立任务')
+    act(() => button('新开任务').click())
+
+    // The confirmation names what is about to be lost — task + live workers.
+    await waitFor(() => expect(mocks.dialogConfirm).toHaveBeenCalledTimes(1))
+    expect(mocks.dialogConfirm.mock.calls[0][0]).toBe('新开任务')
+    expect(mocks.dialogConfirm.mock.calls[0][1]).toContain('1 个运行中的 worker')
+    // Only RUNNING workers are aborted (hub origin is stamped backend-side).
+    await waitFor(() => expect(mocks.conductorSubagentAction).toHaveBeenCalledTimes(1))
+    expect(mocks.conductorSubagentAction).toHaveBeenCalledWith(
+      'live', 'abort', '', null, {}, false,
+      { expected_boot_id: 'boot-a', expected_generation: 1, expected_command_revision: 3 },
+    )
+    // ...and the new task omits the abandoned request id.
+    await waitFor(() => expect(mocks.conductorSendChat).toHaveBeenCalledTimes(1))
+    expect(mocks.conductorSendChat).toHaveBeenCalledWith(
+      '另起一个独立任务', 'user', expect.anything(), undefined,
+    )
+  })
+
+  it('keeps the current task when the new-task confirmation is declined', async () => {
     mocks.conductorWorkflows.mockResolvedValue({
       items: [{
         request_id: 'request-1',
@@ -775,22 +855,23 @@ describe('Conductor chat scroll restoration', () => {
         completed_at: null,
       }],
     })
-    mocks.conductorSendChat.mockResolvedValue({
-      id: 'u2', role: 'user', msg: '另起一个独立任务', ts: 2,
-    })
+    mocks.dialogConfirm.mockResolvedValue(false)
     renderPage()
     await waitFor(() => expect(host.querySelector('form textarea')).toBeTruthy())
-    await waitFor(() => expect(host.textContent).toContain('新任务'))
+    await waitFor(() => expect(button('新开任务')).toBeTruthy())
 
     typeMessage('另起一个独立任务')
-    act(() => button('新任务').click())
-    await waitFor(() => expect(mocks.conductorSendChat).toHaveBeenCalledTimes(1))
-    expect(mocks.conductorSendChat).toHaveBeenCalledWith(
-      '另起一个独立任务', 'user', expect.anything(), undefined,
-    )
+    act(() => button('新开任务').click())
+    await flushQueries()
+
+    expect(mocks.conductorSubagentAction).not.toHaveBeenCalled()
+    expect(mocks.conductorSendChat).not.toHaveBeenCalled()
+    // The draft survives a declined confirmation.
+    expect((host.querySelector('form textarea') as HTMLTextAreaElement).value)
+      .toBe('另起一个独立任务')
   })
 
-  it('falls back to fresh-task wording when the viewed workflow is closed', async () => {
+  it('defaults a just-finished task to appending instead of forking a new one', async () => {
     mocks.conductorWorkflows.mockResolvedValue({
       items: [{
         request_id: 'request-1',
@@ -803,10 +884,12 @@ describe('Conductor chat scroll restoration', () => {
     })
     renderPage()
     await waitFor(() => expect(host.querySelector('form textarea')).toBeTruthy())
+    // 刚完成任务 → 追加要求 (the task on screen is still the addressee).
     await waitFor(() => expect(
       (host.querySelector('form textarea') as HTMLTextAreaElement).placeholder,
-    ).toBe('描述一个新任务…'))
-    expect(button('发送')).toBeTruthy()
+    ).toBe('将作为补充发送给当前任务…'))
+    expect(button('发送补充')).toBeTruthy()
+    expect(button('新开任务')).toBeTruthy()
   })
 
   it('restores the draft and warns instead of silently dropping a failed task', async () => {
@@ -841,18 +924,37 @@ describe('Conductor chat scroll restoration', () => {
   it('reports when the conductor could not be stopped instead of faking success', async () => {
     mocks.conductorStop.mockResolvedValueOnce({ ok: false })
     renderPage()
-    // 停止 renders only after the status query reports started; one
-    // flushQueries() raced that under load (button not found: 停止).
-    await waitFor(() => expect(button('停止').disabled).toBe(false))
+    // 停止引擎 lives in the settings dialog now (H2); it renders enabled only
+    // after the status query reports a started engine.
+    await waitFor(() => expect(button('子代理设置')).toBeTruthy())
+    act(() => button('子代理设置').click())
+    const stop = button('停止引擎')
 
-    act(() => button('停止').click())
+    act(() => stop.click())
     await waitFor(() => expect(lastToast()?.message).toBe('Conductor 未能停止，请检查引擎状态。'))
     expect(lastToast()?.kind).toBe('error')
-    expect(button('停止').disabled).toBe(false)
+    expect(stop.disabled).toBe(false)
 
     mocks.conductorStop.mockRejectedValueOnce(new Error('engine down'))
-    act(() => button('停止').click())
+    act(() => stop.click())
     await waitFor(() => expect(lastToast()?.message).toBe('停止 Conductor 失败，请稍后重试。'))
+  })
+
+  it('keeps the engine stop control out of the main page', async () => {
+    renderPage()
+    await waitFor(() => expect(host.querySelector('form textarea')).toBeTruthy())
+    await flushQueries()
+
+    // Neither engine-level control belongs to the page surface (H2.4): entry
+    // ensures the engine, stopping is a settings action.
+    expect(() => button('停止')).toThrow()
+    expect(() => button('停止引擎')).toThrow()
+    expect(() => button('启动')).toThrow()
+    expect(host.querySelector('header .ga-badge')?.textContent).toBe('运行中')
+    expect(mocks.conductorStart).toHaveBeenCalledTimes(1)
+
+    act(() => button('子代理设置').click())
+    expect(button('停止引擎').disabled).toBe(false)
   })
 
   function failedWorkflowFixture(terminalEvent: string | null) {
@@ -966,16 +1068,15 @@ describe('Conductor chat scroll restoration', () => {
     const headerActions = host.querySelector('.conductor-header-actions') as HTMLElement
     expect(headerActions.contains(trigger)).toBe(false)
 
-    // The remaining controls are two right-aligned groups — 模型 and 引擎 —
-    // with a deliberate gap between them: run together the select and the
-    // toggle read as one glued strip.
-    const layout = Array.from(headerActions.children).map((el) => (
-      el.classList.contains('conductor-header-engine') ? 'engine' : 'model'
-    ))
-    expect(layout).toEqual(['model', 'engine'])
-    // The engine toggle keeps the right edge.
-    const engineGroup = headerActions.lastElementChild as HTMLElement
-    expect(engineGroup.lastElementChild?.className).toMatch(/ga-btn-danger|ga-btn-primary/)
+    // The right cluster holds the model family only. 启动 is gone (the page
+    // ensures the engine on entry) and 停止 moved into the settings dialog, so
+    // no engine toggle is glued to the model select.
+    expect(Array.from(headerActions.children)).toHaveLength(1)
+    const modelGroup = headerActions.firstElementChild as HTMLElement
+    expect(modelGroup.querySelector('[aria-label="Conductor 主模型"]')).toBeTruthy()
+    expect(headerActions.querySelector('.conductor-header-engine')).toBeNull()
+    expect(Array.from(host.querySelectorAll('header button'))
+      .some((item) => item.textContent?.trim() === '停止')).toBe(false)
 
     act(() => trigger.click())
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
@@ -1373,10 +1474,10 @@ describe('Conductor chat scroll restoration', () => {
     ).toBeTruthy())
   })
 
-  it('keeps a pure start button visible whenever the conductor is down, without resuming anything', async () => {
-    // 2026-09 user ruling: the header control is a pure bring-up — it must
-    // stay visible even when no open workflow waits, and it must never
-    // imply that pressing it relays tasks.
+  it('ensures the engine exactly once per entry, silently, and never resumes by itself', async () => {
+    // H1.2: entering the page is the only bring-up trigger. The call is the
+    // idempotent POST /start (an already-running engine is spared by the
+    // backend), so a re-render during the visit must not fire a second one.
     mocks.conductorStatus.mockResolvedValue({ ready: true, started: false })
     mocks.conductorStart.mockResolvedValue({ ok: true, started: true })
     // Only closed history exists — a resume would have nothing to hand back.
@@ -1385,20 +1486,47 @@ describe('Conductor chat scroll restoration', () => {
     ] })
 
     renderPage()
-    await waitFor(() => expect(host.querySelector('header .ga-badge-offline')).toBeTruthy())
-    const headerButtons = Array.from(host.querySelectorAll('header button'))
-    const start = headerButtons.find((item): item is HTMLButtonElement =>
-      item.textContent?.trim() === '启动')
-    await waitFor(() => expect(start).toBeTruthy())
-    expect(start!.textContent).not.toContain('恢复')
-    const anyResume = Array.from(host.querySelectorAll('button'))
-      .some((item) => item.textContent?.trim() === '恢复此任务')
-    expect(anyResume).toBe(false)
-    act(() => start!.click())
-    await waitFor(() => expect(mocks.conductorStart).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.conductorStart).toHaveBeenCalledTimes(1))
+    // The bring-up carries the page's resolved model triple, so the
+    // supervisor never starts on the engine's own default model.
+    expect(mocks.conductorStart).toHaveBeenCalledWith({
+      llmIndex: 0, subagentLlmIndex: null, subagentModelPolicy: 'follow_main',
+    })
     expect(mocks.conductorResumeWorkflow).not.toHaveBeenCalled()
-    await waitFor(() => expect(useToastStore.getState().items.some((toast) =>
-      toast.kind === 'success' && toast.message.includes('已启动'))).toBe(true))
+    // Bring-up is not a user action: no success toast for it.
+    expect(useToastStore.getState().items).toHaveLength(0)
+
+    // A later render (typing) must not re-ensure.
+    typeMessage('稍后再发')
+    await flushQueries()
+    expect(mocks.conductorStart).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows 启动中… while the bring-up runs instead of a stale 未运行', async () => {
+    let settle!: (value: { ok: boolean; started: boolean }) => void
+    mocks.conductorStart.mockImplementationOnce(
+      () => new Promise((resolve) => { settle = resolve }),
+    )
+    renderPage()
+    await waitFor(() => expect(host.querySelector('header .ga-badge')?.textContent).toBe('启动中…'))
+
+    act(() => settle({ ok: true, started: true }))
+    await flushQueries()
+    // No retry affordance once the bring-up succeeded.
+    expect(() => button('重试启动')).toThrow()
+  })
+
+  it('offers a retry when the entry bring-up fails instead of a dead page', async () => {
+    mocks.conductorStatus.mockResolvedValue({ ready: true, started: false })
+    mocks.conductorStart.mockRejectedValueOnce(new Error('engine unavailable'))
+    renderPage()
+    await waitFor(() => expect(host.querySelector('header .ga-badge')?.textContent).toBe('启动失败'))
+    await waitFor(() => expect(lastToast()?.kind).toBe('error'))
+    expect(mocks.conductorResumeWorkflow).not.toHaveBeenCalled()
+
+    mocks.conductorStart.mockResolvedValueOnce({ ok: true, started: true })
+    act(() => button('重试启动').click())
+    await waitFor(() => expect(mocks.conductorStart).toHaveBeenCalledTimes(2))
   })
 
   it('resumes exactly the clicked workflow instead of every open task', async () => {
@@ -1415,12 +1543,14 @@ describe('Conductor chat scroll restoration', () => {
 
     renderPage()
     await waitFor(() => expect(button('恢复此任务')).toBeTruthy())
+    // The entry ensure already ran; the resume must not add another bring-up.
+    await waitFor(() => expect(mocks.conductorStart).toHaveBeenCalledTimes(1))
     act(() => button('恢复此任务').click())
     // The latest open workflow ('stranded', created later) is the pinned
     // current task — its sibling 'live' must not be swept into the resume.
     await waitFor(() => expect(mocks.conductorResumeWorkflow).toHaveBeenCalledTimes(1))
     expect(mocks.conductorResumeWorkflow).toHaveBeenCalledWith('stranded')
-    expect(mocks.conductorStart).not.toHaveBeenCalled()
+    expect(mocks.conductorStart).toHaveBeenCalledTimes(1)
     await waitFor(() => expect(useToastStore.getState().items.some((toast) =>
       toast.kind === 'success' && toast.message.includes('已恢复该任务'))).toBe(true))
   })

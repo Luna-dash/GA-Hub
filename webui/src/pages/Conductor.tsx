@@ -1,8 +1,9 @@
 import { MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, FileCheck2, Play, Square } from 'lucide-react'
+import { Activity, FileCheck2, Play } from 'lucide-react'
 import '@/styles/conductor.css'
 import { api, type ConductorSubagentModelPolicy } from '@/api/client'
+import type { ConductorSubagent } from '@/api/types'
 import { storageKeys } from '@/config/storageKeys'
 import { useConductorStore } from '@/stores/conductorStore'
 import { dialog } from '@/stores/dialogStore'
@@ -35,11 +36,10 @@ import { formatDurationSeconds } from '@/utils/timeFormat'
 const SUBAGENT_MODEL_LOCK_KEY = storageKeys.conductorSubagentModelLocked
 
 /**
- * The engine toggle swaps between 启动 and 停止 in the same slot. Both branches
- * must share this layout: a bare inline button lets the icon and the label break
- * onto two lines once the header row squeezes, so keep it a single
- * shrink-proof inline-flex row regardless of which label is showing. Colours
- * stay per-branch (primary vs danger) — only the layout is shared.
+ * The engine lifecycle controls (启动中… / 重试启动) are the only buttons in
+ * the header cluster besides the model family. They must share this layout: a
+ * bare inline button lets the icon and the label break onto two lines once the
+ * header row squeezes, so keep it a single shrink-proof inline-flex row.
  */
 const ENGINE_TOGGLE_LAYOUT = 'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap'
 
@@ -57,6 +57,19 @@ function writeSubagentModelLock(locked: boolean): void {
   } catch {}
 }
 
+/**
+ * Optimistic-concurrency expectations for one worker action. Only sent when
+ * the snapshot carried the worker's boot id: archived rows have none, and an
+ * invented one would make the engine refuse the action as a version conflict.
+ */
+function expectedVersionOf(worker: ConductorSubagent | undefined) {
+  return worker?.boot_id ? {
+    expected_boot_id: worker.boot_id,
+    expected_generation: worker.active_generation,
+    expected_command_revision: worker.command_revision,
+  } : undefined
+}
+
 export default function Conductor() {
   const qc = useQueryClient()
   const [userMsg, setUserMsg] = usePageState('conductor.userMsg', '')
@@ -65,6 +78,14 @@ export default function Conductor() {
   const [isSending, setIsSending] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
   const [isResuming, setIsResuming] = useState(false)
+  // 引擎懒启动 (H1): entering this page is the only bring-up trigger, and the
+  // endpoint behind it is idempotent — an engine that is already healthy and
+  // started is left alone, so a remount never spawns a second one.
+  const [isEnsuring, setIsEnsuring] = useState(false)
+  const [ensureFailed, setEnsureFailed] = useState(false)
+  // Abandoning the current task waits on a confirm dialog and N aborts; the
+  // composer stays busy for the whole sequence.
+  const [isAbandoning, setIsAbandoning] = useState(false)
   // Subagent review surface (roadmap P1-B): inline accept/rework/abort with
   // the engine's verification evidence shown before any forced accept.
   const [reworkSid, setReworkSid] = useState<string | null>(null)
@@ -86,6 +107,8 @@ export default function Conductor() {
   // Bumped to move focus into the composer (retry prefill).
   const [composerFocusTick, setComposerFocusTick] = useState(0)
   const actionInFlightRef = useRef(false)
+  const ensureFiredRef = useRef(false)
+  const ensureInFlightRef = useRef(false)
   const chatEndRef = useRef<HTMLDivElement | null>(null)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
   const shouldFollowChatRef = useRef(false)
@@ -104,7 +127,7 @@ export default function Conductor() {
   })
 
   // Conductor and Goal/Hive share durable key-based model preferences.
-  const { data: llmsData } = useQuery({
+  const { data: llmsData, isError: llmsFailed } = useQuery({
     queryKey: queryKeys.llms,
     queryFn: api.llms,
   })
@@ -166,17 +189,15 @@ export default function Conductor() {
     ))
     return active ?? workflows.at(-1)
   }, [workflows, pinnedRequestId])
-  // Conversation continuity (2026-09 UI audit): while the viewed workflow is
-  // still open, the composer APPENDS to it (same request id) instead of
-  // forking a new task — previously every message minted a fresh request id
-  // and the "本轮对话" filter made the running task's thread vanish.
-  const appendTargetRequestId = currentWorkflow
-    && !isWorkflowClosed(currentWorkflow)
-    ? currentWorkflow.request_id
-    : null
-  // The explicit start button is a pure bring-up (2026-09 user ruling): it
-  // never batch-resumes stranded workflows. Per-task resume lives on the
-  // workflow card ("恢复此任务") so the user picks which task continues.
+  // 输入框三态 (H2): the composer targets the task on screen — running OR
+  // just finished — because "追加要求" is how a user continues the task they
+  // are looking at. Only a page with no task at all opens in new-task mode;
+  // leaving a task behind is the explicit ＋新开任务 action below, which asks
+  // for confirmation first.
+  const appendTargetRequestId = currentWorkflow?.request_id ?? null
+  // The engine-level 启动 button is gone (进页面自动 ensure); per-task resume
+  // lives on the workflow card ("恢复此任务") so the user picks which task
+  // continues, and the engine-level 停止 moved into the settings dialog.
 
   const submitChat = async (targetRequestId: string | null) => {
     if (!userMsg.trim() || effectiveLlmIndex === null || isSending) return
@@ -216,6 +237,52 @@ export default function Conductor() {
     }
   }
 
+  // 放弃当前任务并新开 (H2): the only path that leaves a task behind, so it is
+  // the only path that asks for confirmation. Running workers are aborted one
+  // by one through the existing subagent action route — the hub stamps
+  // origin="hub" for the abort verb in conductor_service, which is what makes
+  // the engine read it as a terminal user cancel instead of a recoverable
+  // worker failure the supervisor would re-dispatch.
+  const abandonCurrentTask = async (): Promise<boolean> => {
+    if (!currentWorkflow) return true
+    const running = workflowSubagents.filter((sub) => sub.status === 'running')
+    const confirmed = await dialog.confirm(
+      '新开任务',
+      running.length > 0
+        ? `将放弃当前任务并中止 ${running.length} 个运行中的 worker。`
+        : '将放弃当前任务（当前没有运行中的 worker）。',
+      { confirmText: '放弃并新开', tone: 'danger' },
+    )
+    if (!confirmed) return false
+    let failed = 0
+    for (const worker of running) {
+      try {
+        await api.conductorSubagentAction(
+          worker.id, 'abort', '', null, {}, false, expectedVersionOf(worker))
+      } catch (err) {
+        // One un-abortable worker (already finished, version drifted) must not
+        // block the new task the user just confirmed.
+        failed += 1
+        console.error('abort on abandon failed', worker.id, err)
+      }
+    }
+    if (failed > 0) toast.error(`${failed} 个 worker 未能中止，已按确认开新任务。`)
+    return true
+  }
+
+  const requestNewTask = async () => {
+    if (!userMsg.trim() || effectiveLlmIndex === null || isSending || isAbandoning) return
+    setIsAbandoning(true)
+    try {
+      if (!(await abandonCurrentTask())) return
+      await submitChat(null)
+    } finally {
+      setIsAbandoning(false)
+      void qc.invalidateQueries({ queryKey: queryKeys.conductor.workflows })
+      void qc.invalidateQueries({ queryKey: queryKeys.conductor.subagents })
+    }
+  }
+
   const stopConductor = async () => {
     if (isStopping) return
     setIsStopping(true)
@@ -239,26 +306,50 @@ export default function Conductor() {
     }
   }
 
-  const startConductor = async () => {
-    if (isSending || isStopping) return
-    setIsSending(true)
+  // 引擎懒启动 (H1): POST /api/conductor/start is the hub's idempotent bring-up
+  // (spawn the engine process when down, start the supervisor session when
+  // stopped, push the model snapshot) — the same call the old 启动 button made.
+  // Success is silent on purpose: entering the page is not a user action that
+  // deserves a toast, and re-entering an already-running Conductor appends
+  // nothing. Failure offers the header retry instead of a dead page.
+  const ensureConductor = async () => {
+    if (ensureInFlightRef.current) return
+    ensureInFlightRef.current = true
+    setIsEnsuring(true)
     try {
       const result = await api.conductorStart(conductorModelSettings)
-      if (!result.ok) {
-        toast.error('Conductor 未能启动，请检查引擎配置。')
+      if (!result.ok && !result.started) {
+        setEnsureFailed(true)
+        toast.error('Conductor 引擎未能就绪，请检查引擎配置后重试。')
         return
       }
-      await qc.invalidateQueries({ queryKey: queryKeys.conductor.status })
-      toast.success('Conductor 已启动：不会自动重跑任务，需要续跑时用任务卡上的“恢复此任务”')
+      setEnsureFailed(false)
     } catch (err) {
-      console.error('startConductor failed', err)
+      console.error('ensureConductor failed', err)
+      setEnsureFailed(true)
       // The backend sends actionable detail (bad llm index 422, engine
       // 502/503) — surface it instead of a fixed retry line.
       toast.error(errorMessageFromError(err, '启动 Conductor 失败，请稍后重试。'))
     } finally {
-      setIsSending(false)
+      ensureInFlightRef.current = false
+      setIsEnsuring(false)
+      void qc.invalidateQueries({ queryKey: queryKeys.conductor.status })
     }
   }
+
+  // The model triple is resolved against the llm catalogue, so wait for that
+  // query to settle (success OR failure) before ensuring: a model-less first
+  // call would start the supervisor on the engine's own default model.
+  const modelsSettled = llmsData !== undefined || llmsFailed
+  useEffect(() => {
+    if (!modelsSettled || ensureFiredRef.current) return
+    ensureFiredRef.current = true
+    void ensureConductor()
+    // Re-renders before the llm list lands must not re-fire; the ref guard
+    // covers that, and a later model change is carried by the send/dispatch
+    // paths, not by another bring-up.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelsSettled])
 
   // Per-task resume (恢复此任务): the backend brings the supervisor up and
   // re-relays ONLY this workflow's original message — every other open task
@@ -298,12 +389,7 @@ export default function Conductor() {
     setBusySid(sid)
     try {
       const worker = subagents.find(sub => sub.id === sid)
-      const expected = worker?.boot_id ? {
-        expected_boot_id: worker.boot_id,
-        expected_generation: worker.active_generation,
-        expected_command_revision: worker.command_revision,
-      } : undefined
-      await api.conductorSubagentAction(sid, action, msg, null, {}, force, expected)
+      await api.conductorSubagentAction(sid, action, msg, null, {}, force, expectedVersionOf(worker))
       setEvidenceBySid((prev) => {
         if (!(sid in prev)) return prev
         const next = { ...prev }
@@ -500,8 +586,16 @@ export default function Conductor() {
       title="Conductor"
       titleExtra={
         <>
-        <span className={`ga-badge ${status === undefined ? 'ga-badge-offline' : status.started ? 'ga-badge-connected' : 'ga-badge-offline'}`}>
-          {status === undefined ? '连接中' : status.started ? '运行中' : '未运行'}
+        {/* Engine state, read-only: the page ensures the engine on entry, so
+            there is no 启动 control here, and 停止 (engine level) moved into
+            the settings dialog. 启动中… covers the bring-up window, when the
+            last known status is still the stale "not running". */}
+        <span className={`ga-badge ${!isEnsuring && status?.started ? 'ga-badge-connected' : 'ga-badge-offline'}`}>
+          {isEnsuring
+            ? '启动中…'
+            : status === undefined
+              ? '连接中'
+              : status.started ? '运行中' : ensureFailed ? '启动失败' : '未运行'}
         </span>
         </>
       }
@@ -519,12 +613,10 @@ export default function Conductor() {
       }
       actions={
         <div className="conductor-header-actions">
-          {/* Right cluster = two groups with a deliberate gap: [主模型 + 子代理
-              模型] ⟷ [启动/停止]. The model-family controls belong together —
+          {/* Right cluster = [主模型 + 子代理模型] and, only after a failed
+              bring-up, [重试启动]. The model-family controls belong together —
               picking the conductor's model and the subagents' models is one
-              decision — while the engine toggle stands alone on the right edge.
-              Packed at 8px they read as one glued strip; the group gap (22px,
-              in CSS) marks the boundary. */}
+              decision — while the retry stands alone on the right edge. */}
           <div className="flex items-center gap-2">
             <span className="conductor-header-model-label text-xs text-ink-muted">主模型</span>
             <MainModelSelect
@@ -540,23 +632,27 @@ export default function Conductor() {
               value={subagentLlmKey}
               locked={subagentModelLocked}
               autoAccept={status?.auto_accept ?? true}
+              engineStarted={status?.started ?? false}
+              engineStopping={isStopping}
+              onStopEngine={() => void stopConductor()}
               open={subagentSettingsOpen}
               onOpenChange={setSubagentSettingsOpen}
               onSave={saveSubagentSettings}
             />
           </div>
-          <div className="conductor-header-engine flex items-center gap-2">
-            {status?.started ? (
-              <button onClick={stopConductor} disabled={isStopping} className={`ga-btn-danger ${ENGINE_TOGGLE_LAYOUT}`}>
-                <Square size={13} />停止
+          {ensureFailed && !status?.started && !isEnsuring && (
+            /* Entry-time ensure failed (engine missing, spawn refused, bad
+               model index): retry stays reachable without a page reload. It
+               disappears as soon as any path reports a running engine — e.g.
+               a later status poll or a successfully sent message. */
+            <div className="conductor-header-engine flex items-center gap-2">
+              <button onClick={() => void ensureConductor()}
+                className={`ga-btn ga-btn-primary ${ENGINE_TOGGLE_LAYOUT}`}
+                title="重新拉起 Conductor 引擎（幂等：已在运行的引擎不会被重复启动，也不会重跑任何任务）">
+                <Play size={13} />重试启动
               </button>
-            ) : (
-              <button onClick={startConductor} disabled={isSending} className={`ga-btn ga-btn-primary ${ENGINE_TOGGLE_LAYOUT}`}
-                title="仅拉起监督者，不会自动重跑任何任务；要续跑某个暂停任务，用任务卡上的“恢复此任务”">
-                <Play size={13} />启动
-              </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       }
     >
@@ -625,10 +721,10 @@ export default function Conductor() {
               endRef={chatEndRef}
               userMsg={userMsg}
               onUserMsgChange={setUserMsg}
-              onSubmit={(target) => void submitChat(target === 'append' ? appendTargetRequestId : null)}
+              onSubmit={(target) => void (target === 'append' ? submitChat(appendTargetRequestId) : requestNewTask())}
               appendMode={appendTargetRequestId !== null}
               llmReady={effectiveLlmIndex !== null}
-              sending={isSending}
+              sending={isSending || isAbandoning}
               focusSignal={composerFocusTick}
             />
           </main>

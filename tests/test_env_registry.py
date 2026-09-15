@@ -38,6 +38,7 @@ def _registered_names() -> set[str]:
         constants.ENV_GAHUB_JOURNAL_PATH,
         constants.ENV_GAHUB_DELIVERABLE_ROOTS,
         constants.ENV_GAHUB_PATH_POLICY,
+        constants.ENV_GAHUB_MULTI_REQUEST_TURNS,
         constants.ENV_GAHUB_ALLOWED_HOSTS,
         constants.ENV_MYKEY_SYNC_URL,
         constants.ENV_MYKEY_SYNC_PASSPHRASE,
