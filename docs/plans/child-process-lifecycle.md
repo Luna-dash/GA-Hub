@@ -162,10 +162,35 @@ A 就是「GA-Hub 崩溃/被强杀」的等价路径：OS 关掉 job handle → 
   理论上能丢一行。丢行的后果只是少一次自愈（笼子仍在），因此刻意不做文件锁。
 - `spawn` 与 `AssignProcessToJobObject` 之间有一段极短窗口（子进程此刻已能再 spawn 孙子）。
   未走 `CREATE_SUSPENDED` + resume，因为那要绕过 `Popen` 自己造进程；窗口内逃逸的孙子
-  由登记表兜底。
+  由登记表兜底。**引擎那一处把这个窗口显式补上了 —— 见 §8.5。**
 - **§0 里当作证据的 `hub.py`（活了 3 周）不在本机制范围内**：GA-Hub 全仓 grep 不到
   任何对 `hub.py` 的 spawn，那三个 spawn 点只有引擎 / 飞书 / worker。GA 仓自己的
   `frontends/hub.py` 是 GA 的 **P2P hub**（见当日日志同名条目），与 GA-Hub 无关 ——
   它要么是手工起的，要么是 GA 自己拉的，本方案不管也不会去管。
 - 「附着（adopt）」路径（手动起的引擎/飞书被探测到）不经 `ChildJob.spawn`，
   既不进笼子也不进登记表 → 关 app 后仍在，正是 §4 要保的语义。
+
+### 8.5 引擎改经 cmd.exe 中介启动（2026-09-16）
+
+- 背景：**冻结的桌面 sidecar** 直接 `CreateProcess` 起引擎时 3/3 全挂死（日志只有一行
+  `[spawn]`，进程 CPU=0、不监听），同一份 env 换非冻结父进程拉起则 8 秒内正常。
+  ⇒ 问题在「冻结父进程直接 spawn」这一步，与引擎和 env 无关。
+- 改动（只动引擎那一处）：Windows 下 spawn 形式改为
+  `cmd.exe /c ""<python>" -u "<script>" --host … --port …"`（`conductor_client._shell_launch`），
+  引擎的直接父进程变成**签名的系统程序**；同时补 `stdin=subprocess.DEVNULL`
+  （引擎此前继承 sidecar 的 stdin，即 Tauri owner 管道）。
+- 为什么是**字符串**而不是参数列表：cmd 会把 `/c` 后面的命令行**再解析一遍**，并剥掉最外层
+  的一对引号，因此需要经典的多包一层引号形式；而 `Popen` 传列表时会把元素里的引号转义成
+  `\"`，cmd 不认这个转义（实测：含空格路径下列表形式 3 种全挂，字符串形式可用）。
+- 随之而来的两处补偿（**这正是 §8.4 那个窗口的实例**）：
+  - `child_job.cage_descendants(pid)`：引擎是 **cmd 的子进程**，cmd 进笼子时它可能已经创建
+    （不继承笼子）→ spawn 后立刻、以及 `/health` 通过后各补一次
+    `AssignProcessToJobObject`（用 `OpenProcess(PROCESS_SET_QUOTA|PROCESS_TERMINATE)` 拿句柄）。
+  - `child_job.terminate_tree(pid)`：回收要连子孙一起收 —— `TerminateProcess(cmd)` 不会
+    带走引擎（会留下占着端口和单例锁的孤儿）。失败回收与 `stop()` 都走这条路径。
+- 登记行仍记 `self._proc`（cmd）的 pid，`marker` 用脚本路径（`…/frontends/gahub_app.py`，
+  就在 cmd 的命令行里，身份校验照旧通过）。
+- 真机验证（`temp/verify_engine_intermediary.py`，非冻结父进程）：`/health` 2.6s 变 200；
+  引擎 pid 是 cmd 的子进程、`IsProcessInJob` 为 True（cmd 与全部子孙都在笼内）；
+  `terminate_tree` 后两者 0.0s 内消失、无残留。
+- **仍未验证**：真实「冻结 sidecar」场景本地复现不了，需要重建桌面包后由实机确认。

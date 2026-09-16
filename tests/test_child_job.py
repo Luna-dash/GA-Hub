@@ -55,6 +55,7 @@ class _FakeJobApi:
         self.job = job
         self.created = 0
         self.assigned: list[tuple[object, int]] = []
+        self.assigned_pids: list[tuple[object, int]] = []
         self._assign_ok = assign_ok
         self._error = error
 
@@ -64,6 +65,10 @@ class _FakeJobApi:
 
     def assign(self, job, proc):
         self.assigned.append((job, proc.pid))
+        return self._assign_ok, self._error
+
+    def assign_pid(self, job, pid):
+        self.assigned_pids.append((job, pid))
         return self._assign_ok, self._error
 
 
@@ -193,6 +198,147 @@ def test_spawn_without_a_cage_still_registers(cage, monkeypatch):
 
     assert child_job._windows_job_api() is None
     assert [row["pid"] for row in _registry_rows()] == [4242]
+
+
+# ── intermediary spawns: the real child is one level down ───────
+
+class _FakePsutil:
+    """psutil stand-in answering ``Process(pid).children()`` from a tree."""
+
+    def __init__(self, tree: dict[int, list[int]] | None = None, boom: bool = False):
+        self.tree = tree or {}
+        self.boom = boom
+
+    def Process(self, pid):  # noqa: N802 - mirrors the psutil API
+        outer = self
+
+        class _Proc:
+            def __init__(self, pid: int) -> None:
+                self.pid = pid
+
+            def children(self, recursive: bool = False):
+                if outer.boom:
+                    raise RuntimeError("process vanished mid-walk")
+                if not recursive:
+                    return [_Proc(k) for k in outer.tree.get(self.pid, [])]
+                found: list = []
+                for kid in outer.tree.get(self.pid, []):
+                    child = _Proc(kid)
+                    found.append(child)
+                    found.extend(child.children(recursive=True))
+                return found
+
+        return _Proc(pid)
+
+
+def test_cage_descendants_brings_the_whole_subtree_into_the_cage(cage, monkeypatch):
+    """A cmd.exe intermediary spawns the engine *after* cmd was caged, so the
+    engine inherits nothing; the descendants are assigned explicitly."""
+    api = _install_api(monkeypatch)
+    monkeypatch.setitem(sys.modules, "psutil",
+                        _FakePsutil({500: [600, 700], 600: [800]}))
+
+    assert child_job.cage_descendants(500) == [600, 800, 700]
+
+    assert api.created == 1
+    assert api.assigned_pids == [(api.job, 600), (api.job, 800), (api.job, 700)]
+
+
+def test_cage_descendants_never_targets_an_unset_pid(cage, monkeypatch):
+    """psutil reads a missing pid as *this* process: an unvalidated lookup
+    would walk up on our own children."""
+    api = _install_api(monkeypatch)
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil({0: [1, 2], None: [3]}))
+
+    assert child_job.cage_descendants(None) == []
+    assert child_job.cage_descendants(0) == []
+    assert child_job.cage_descendants("500") == []
+
+    assert api.assigned_pids == []
+    assert api.created == 0
+
+
+def test_cage_descendants_survives_a_child_that_is_already_gone(cage, monkeypatch):
+    """The lookup races the process; a failure costs the fence, never the run."""
+    api = _install_api(monkeypatch)
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil(boom=True))
+
+    assert child_job.cage_descendants(500) == []
+    assert api.assigned_pids == []
+
+
+def test_cage_descendants_reports_an_assign_it_could_not_make(cage, monkeypatch):
+    api = _install_api(monkeypatch, _FakeJobApi(assign_ok=False, error=6))
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil({500: [600]}))
+
+    assert child_job.cage_descendants(500) == []
+    assert api.assigned_pids == [(api.job, 600)]
+
+
+def test_cage_descendants_leaves_everything_alone_under_the_escape_hatch(cage, monkeypatch):
+    monkeypatch.setenv(ENV_GAHUB_KEEP_CHILDREN_ON_EXIT, "1")
+    child_job.ChildJob.reset_instance()
+    api = _install_api(monkeypatch)
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil({500: [600]}))
+
+    assert child_job.cage_descendants(500) == []
+    assert api.created == 0 and api.assigned_pids == []
+
+
+def test_assign_pid_opens_the_handle_it_needs_and_closes_it(monkeypatch):
+    """A descendant found by a tree walk has no Popen handle, so the assign
+    opens one with the two rights the call documents."""
+    api = object.__new__(child_job._WindowsJobApi)
+    api.ctypes = SimpleNamespace(get_last_error=lambda: 87,
+                                 c_void_p=lambda value: ("handle", value))
+    opened: list = []
+    closed: list = []
+
+    class _Kernel32:
+        def OpenProcess(self, access, inherit, pid):  # noqa: N802
+            opened.append((access, inherit, pid))
+            return 0x77
+
+        def AssignProcessToJobObject(self, job, handle):  # noqa: N802
+            assert job == 0xABCD and handle == 0x77
+            return 1
+
+        def CloseHandle(self, handle):  # noqa: N802
+            closed.append(handle)
+
+    api.kernel32 = _Kernel32()
+
+    assert api.assign_pid(0xABCD, 5150) == (True, 0)
+    assert opened == [(child_job._PROCESS_SET_QUOTA | child_job._PROCESS_TERMINATE,
+                       False, 5150)]
+    assert closed == [0x77]
+
+
+def test_assign_pid_reports_an_unopenable_process():
+    api = object.__new__(child_job._WindowsJobApi)
+    api.ctypes = SimpleNamespace(get_last_error=lambda: 87,
+                                 c_void_p=lambda value: value)
+
+    class _Kernel32:
+        def OpenProcess(self, access, inherit, pid):  # noqa: N802
+            return None
+
+    api.kernel32 = _Kernel32()
+
+    assert api.assign_pid(0xABCD, 5150) == (False, 87)
+
+
+def test_tree_termination_never_targets_an_unset_pid(monkeypatch):
+    """``_terminate_tree`` is reachable with whatever a caller has at hand
+    (a test double, a child that never reported a pid) — and psutil resolves a
+    missing pid to the *calling* process, so the guard is what keeps a reap
+    from walking up on our own tree."""
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil())
+
+    assert child_job.terminate_tree(None) is False
+    assert child_job.terminate_tree(0) is False
+    assert child_job.terminate_tree(-1) is False
+    assert child_job._terminate_tree("5150", 0.0) is False
 
 
 # ── graceful reap ───────────────────────────────────────────────

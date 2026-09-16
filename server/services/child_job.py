@@ -24,6 +24,15 @@ reaped normally, and the survivors are swept once at startup. A row whose
 This is the belt to the cage's braces: it also collects children spawned by a
 build that predates the cage, and it is the only mechanism on POSIX.
 
+**Intermediaries.** A spawn may route through a system binary instead of the
+program itself (the engine goes through ``cmd.exe`` — see
+``conductor_client._shell_launch``), and then the process that matters is a
+*child of the child*: it does not inherit the cage, because it can be created
+before the intermediary is assigned, and terminating the intermediary does not
+stop it. ``cage_descendants`` closes the first half (it re-assigns the live
+descendants once they exist) and ``terminate_tree`` the second (reaping by pid
+stops descendants too, not just the process ``Popen`` handed back).
+
 The desktop shell already puts the sidecar inside its own kill-on-close job
 (``src-tauri/src/main.rs``), so this job is *nested* inside that one. That is
 deliberate and verified on Windows: a process already inside a job can be
@@ -59,6 +68,9 @@ log = logging.getLogger(__name__)
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _ERROR_ACCESS_DENIED = 5
+# The two rights AssignProcessToJobObject documents for the target handle.
+_PROCESS_SET_QUOTA = 0x0100
+_PROCESS_TERMINATE = 0x0001
 
 # Registry sweeps touch at most a handful of rows; these bound a hung child so
 # startup can never stall on one.
@@ -129,6 +141,8 @@ class _WindowsJobApi:
         kernel32.SetInformationJobObject.restype = ctypes.c_int
         kernel32.AssignProcessToJobObject.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
         kernel32.AssignProcessToJobObject.restype = ctypes.c_int
+        kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
         kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
         kernel32.CloseHandle.restype = ctypes.c_int
         self.kernel32 = kernel32
@@ -164,6 +178,26 @@ class _WindowsJobApi:
             self.kernel32.AssignProcessToJobObject(job, self.ctypes.c_void_p(raw))
         )
         return ok, (0 if ok else self.ctypes.get_last_error())
+
+    def assign_pid(self, job: Any, pid: int) -> tuple[bool, int]:
+        """Put the live process ``pid`` in ``job``; returns ``(ok, last_error)``.
+
+        ``assign`` rides on the handle ``Popen`` already holds; a descendant
+        found by a process-tree walk has no such handle, so this opens one with
+        exactly the two rights ``AssignProcessToJobObject`` asks for and closes
+        it again. A pid that exited in between simply fails the open, which the
+        caller treats as "nothing left to cage".
+        """
+        handle = self.kernel32.OpenProcess(
+            _PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, int(pid)
+        )
+        if not handle:
+            return False, self.ctypes.get_last_error()
+        try:
+            ok = bool(self.kernel32.AssignProcessToJobObject(job, handle))
+            return ok, (0 if ok else self.ctypes.get_last_error())
+        finally:
+            self.kernel32.CloseHandle(handle)
 
 
 _job_api_cache: Any = _UNSET
@@ -269,6 +303,11 @@ def _matches_identity(pid: int, marker: Any) -> bool:
 
 def _terminate_tree(pid: int, timeout: float) -> bool:
     """Terminate ``pid`` and its descendants; ``True`` once the root is gone."""
+    if not isinstance(pid, int) or pid <= 0:
+        # psutil reads a missing pid as *this* process, so an unvalidated call
+        # would walk up on our own tree. Callers holding a test double or a
+        # child that never reported a pid get "nothing reaped" instead.
+        return False
     try:
         import psutil
 
@@ -437,6 +476,59 @@ class ChildJob:
             self._atexit_registered = True
         atexit.register(_atexit_reap)
 
+    def cage_descendants(self, pid: Any) -> list[int]:
+        """Assign the live descendants of ``pid`` to this process's job.
+
+        A child created *by a child* inherits the cage only if its parent was
+        already a member. That is guaranteed for the feishu bot and the GA
+        worker, and explicitly *not* for the engine: its ``cmd.exe``
+        intermediary is caged milliseconds after ``CreateProcess`` returned, and
+        cmd may already have started the engine by then. An engine left outside
+        the cage outlives a hard-killed GA-Hub, which is the leak the cage
+        exists to prevent — so the descendants are swept into it here.
+
+        Idempotent (re-assigning a member is a no-op), best-effort, and cheap
+        enough to call twice: once right after the spawn and once the child is
+        known to be up. Returns the pids it actually caged.
+        """
+        if self._keep_children:
+            return []
+        if not isinstance(pid, int) or pid <= 0:
+            return []
+        api = _windows_job_api()
+        if api is None:
+            return []
+        with self._lock:
+            if not self._job_attempted:
+                self._job_attempted = True
+                self._job = api.create_kill_on_close()
+            job = self._job
+        if job is None:
+            return []
+        try:
+            import psutil
+
+            descendants = psutil.Process(pid).children(recursive=True)
+        except Exception:
+            # The intermediary may not have spawned anything yet, or may be
+            # gone; both mean "nothing to adopt".
+            log.debug("descendant lookup for pid %r failed", pid, exc_info=True)
+            return []
+        caged: list[int] = []
+        for child in descendants:
+            ok, error = api.assign_pid(job, child.pid)
+            if ok:
+                caged.append(child.pid)
+            elif error != _ERROR_ACCESS_DENIED:
+                log.warning(
+                    "job assign failed descendant=%s parent=%s err=%s; this child "
+                    "is protected by the startup sweep only",
+                    child.pid, pid, error,
+                )
+        if caged:
+            log.info("child_job caged descendants of %s: %s", pid, caged)
+        return caged
+
     def forget(self, pid: Any) -> None:
         """Drop one child from the bookkeeping after the caller reaped it."""
         if not isinstance(pid, int) or pid <= 0:
@@ -542,6 +634,21 @@ def _atexit_reap() -> None:
 def spawn(cmd: Any, *, kind: str, marker: Optional[str] = None, **popen_kwargs: Any):
     """See :meth:`ChildJob.spawn`."""
     return ChildJob.instance().spawn(cmd, kind=kind, marker=marker, **popen_kwargs)
+
+
+def terminate_tree(pid: Any, timeout: float = _SWEEP_TERMINATE_TIMEOUT) -> bool:
+    """Reap ``pid`` **and its descendants**; see :func:`_terminate_tree`.
+
+    The public name exists because a spawn may return an intermediary rather
+    than the process the work happens in: ``proc.terminate()`` on a ``cmd.exe``
+    handle stops cmd, not the engine it started.
+    """
+    return _terminate_tree(pid, timeout)
+
+
+def cage_descendants(pid: Any) -> list[int]:
+    """See :meth:`ChildJob.cage_descendants`."""
+    return ChildJob.instance().cage_descendants(pid)
 
 
 def forget(pid: Any) -> None:

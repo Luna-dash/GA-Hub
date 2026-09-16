@@ -81,11 +81,19 @@ def test_engine_spawn_uses_mei_stripped_env_and_no_preflight_probe(monkeypatch, 
     def fake_popener(cmd, **kwargs):
         captured["cmd"] = cmd
         captured["env"] = kwargs.get("env")
+        captured["stdin"] = kwargs.get("stdin")
+        captured["executable"] = kwargs.get("executable")
         return FakeProc()
 
     monkeypatch.setattr(subprocess, "Popen", fake_popener)
     monkeypatch.setattr("server.services.conductor_client.tempfile.gettempdir",
                         lambda: str(tmp_path))
+    # The route assertions below pin the Windows intermediary; keep them true
+    # on any host. Adoption of cmd's child has its own tests further down.
+    from server.services import conductor_client as cc
+
+    monkeypatch.setattr("server.services.conductor_client.os.name", "nt")
+    monkeypatch.setattr(cc.child_job, "cage_descendants", lambda pid: [])
 
     manager = GahubProcessManager(
         python_exe="python-does-not-matter",
@@ -112,10 +120,290 @@ def test_engine_spawn_uses_mei_stripped_env_and_no_preflight_probe(monkeypatch, 
     # One task per turn (H1.1): the switch must reach the engine's real env,
     # not merely _engine_spawn_env()'s return value.
     assert env["GAHUB_MULTI_REQUEST_TURNS"] == "off"
-    # Exactly one child process: the engine itself, no probe child.
-    assert captured["cmd"][1:3] == ["-u", str(tmp_path / "frontends" / "gahub_app.py")]
+    # Exactly one child process: the engine itself, no probe child — started
+    # through the signed system shell (see the intermediary tests below).
+    cmd = captured["cmd"]
+    assert isinstance(cmd, str)
+    exe, _, command = cmd.partition(" /c ")
+    assert exe.lower().endswith("cmd.exe")
+    assert "-u " in command and str(tmp_path / "frontends" / "gahub_app.py") in command
     # The timeout diagnostic names the AV condition for the operator.
     assert "security software" in str(raised.value)
+
+
+# ── engine spawn route: cmd.exe as the signed intermediary ───────────────────
+#
+# A frozen sidecar spawning the engine directly hangs before the child's first
+# byte of output (measured 3/3; the same command from a non-frozen parent comes
+# up in seconds), so the spawn is routed through the signed system shell. cmd
+# re-parses the command line as shell text — it strips the outermost quote pair
+# of a /c command line — which is what the quoting and the tests below pin.
+
+_CMD = r"C:\Windows\System32\cmd.exe"
+
+
+def _engine_manager(tmp_path, monkeypatch, *, pid: int = 4242, healthy_after: int = 999):
+    """A manager whose spawn is captured instead of executed.
+
+    ``healthy_after`` counts *probes*: two health gates run before the spawn
+    (unlocked + locked), then one per loop turn. The default never turns
+    healthy; ``2`` brings the engine up on the loop's first probe.
+
+    Both ``Popen`` and ``child_job.spawn`` are replaced, so nothing real is
+    created — no console, no job object, no registry row.
+    """
+    from server.services import conductor_client as cc
+
+    (tmp_path / "frontends").mkdir(exist_ok=True)
+    (tmp_path / "frontends" / "gahub_app.py").write_text("# engine\n")
+    manager = GahubProcessManager(
+        python_exe="D:/py/python.exe", ga_root=str(tmp_path), port=8791, token="tok")
+    captured: dict = {}
+    calls = {"healthy": 0}
+
+    class FakeProc:
+        def __init__(self):
+            self.pid = pid
+            self.returncode = None
+            self.terminated = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    def fake_spawn(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured.update(kwargs)
+        captured["proc"] = FakeProc()
+        return captured["proc"]
+
+    def is_healthy(timeout: float = 1.0) -> bool:
+        calls["healthy"] += 1
+        return calls["healthy"] > healthy_after
+
+    monkeypatch.setattr(cc.child_job, "spawn", fake_spawn)
+    monkeypatch.setattr(cc, "_open_engine_log",
+                        lambda: (io.BytesIO(), str(tmp_path / "engine.log")))
+    monkeypatch.setattr(cc.child_job, "cage_descendants", lambda pid: [])
+    monkeypatch.setattr(manager, "is_healthy", is_healthy)
+    return manager, captured
+
+
+def _spawn_through_cmd(tmp_path, monkeypatch, **kwargs) -> tuple:
+    """Capture one Windows spawn; returns ``(manager, captured, command)``."""
+    from server.services import conductor_client as cc
+
+    monkeypatch.setattr(cc.os, "name", "nt")
+    monkeypatch.setattr(cc.os, "environ", {"ComSpec": _CMD})
+    manager, captured = _engine_manager(tmp_path, monkeypatch, **kwargs)
+    with pytest.raises(GahubProcessError):
+        manager.ensure_running(startup_timeout=0.3)
+    exe, sep, command = captured["cmd"].partition(" /c ")
+    assert sep and exe == _CMD
+    return manager, captured, command
+
+
+def test_engine_spawn_shape_is_cmd_exe_slash_c(tmp_path, monkeypatch) -> None:
+    """Windows: ``cmd.exe /c "<python> -u <script> --host … --port …>"``."""
+    _, captured, command = _spawn_through_cmd(tmp_path, monkeypatch)
+    engine_cmd = ["D:/py/python.exe", "-u", str(tmp_path / "frontends" / "gahub_app.py"),
+                  "--host", "127.0.0.1", "--port", "8791", "--token", "tok"]
+    # The outer pair is the one cmd strips again when it parses /c.
+    assert command == '"' + subprocess.list2cmdline(engine_cmd) + '"'
+    # …and the interpreter is pinned rather than parsed off the command line.
+    assert captured["executable"] == _CMD
+    assert captured["stdin"] is subprocess.DEVNULL
+    assert captured["stderr"] is subprocess.STDOUT
+
+
+def test_engine_spawn_quotes_spaced_and_metacharacter_arguments(tmp_path, monkeypatch) -> None:
+    """Paths with spaces and tokens with cmd syntax must reach the engine
+    verbatim: cmd reads its command line as shell text, so anything it could
+    interpret is quoted — and the C-runtime escaping stays untouched."""
+    from server.services import conductor_client as cc
+
+    spaced_root = tmp_path / "ga root"
+    (spaced_root / "frontends").mkdir(parents=True)
+    (spaced_root / "frontends" / "gahub_app.py").write_text("# engine\n")
+
+    monkeypatch.setattr(cc.os, "name", "nt")
+    monkeypatch.setattr(cc.os, "environ", {"ComSpec": _CMD})
+    manager, captured = _engine_manager(tmp_path, monkeypatch, pid=9001)
+    manager.ga_root = str(spaced_root)
+    manager.python_exe = r"D:\py dir\python.exe"
+    manager.token = "a&b=c d"
+    with pytest.raises(GahubProcessError):
+        manager.ensure_running(startup_timeout=0.3)
+
+    command = captured["cmd"].partition(" /c ")[2]
+    assert command.startswith('"') and command.endswith('"')
+    inner = command[1:-1]
+    assert '"D:\\py dir\\python.exe"' in inner
+    assert f'"{spaced_root / "frontends" / "gahub_app.py"}"' in inner
+    assert '"a&b=c d"' in inner
+    # Space-bearing parts quote exactly as the engine's own argv parse expects.
+    assert inner == subprocess.list2cmdline([
+        manager.python_exe, "-u", str(spaced_root / "frontends" / "gahub_app.py"),
+        "--host", "127.0.0.1", "--port", str(manager.port), "--token", "a&b=c d",
+    ])
+
+
+def test_engine_spawn_quotes_a_token_that_cmd_would_read_as_syntax(tmp_path, monkeypatch) -> None:
+    """A token without spaces is not quoted by the C-runtime rules, so the
+    cmd-level quoting has to add it — otherwise ``&`` splits the command."""
+    from server.services import conductor_client as cc
+
+    monkeypatch.setattr(cc.os, "name", "nt")
+    monkeypatch.setattr(cc.os, "environ", {"ComSpec": _CMD})
+    manager, captured = _engine_manager(tmp_path, monkeypatch, pid=9002)
+    manager.token = "a&b"
+    with pytest.raises(GahubProcessError):
+        manager.ensure_running(startup_timeout=0.3)
+
+    assert '"a&b"' in captured["cmd"].partition(" /c ")[2]
+
+
+@pytest.mark.parametrize("part,expected", [
+    ("plain", "plain"),
+    ("--port=8791", "--port=8791"),
+    ("with space", '"with space"'),
+    ("a&b", '"a&b"'),
+    ("x|y", '"x|y"'),
+    ("a<b", '"a<b"'),
+    ("caret^", '"caret^"'),
+    ("", '""'),
+    ('say "hi"', '"say \\"hi\\""'),
+])
+def test_cmd_quote_keeps_every_argument_literal(part, expected) -> None:
+    from server.services import conductor_client as cc
+
+    assert cc._cmd_quote(part) == expected
+
+
+def test_engine_spawn_keeps_the_direct_exec_off_windows(tmp_path, monkeypatch) -> None:
+    """POSIX has no shell in the middle: argv is passed through untouched."""
+    from server.services import conductor_client as cc
+
+    monkeypatch.setattr(cc.os, "name", "posix")
+    manager, captured = _engine_manager(tmp_path, monkeypatch, pid=9003)
+    with pytest.raises(GahubProcessError):
+        manager.ensure_running(startup_timeout=0.3)
+
+    assert captured["cmd"] == [
+        "D:/py/python.exe", "-u", str(tmp_path / "frontends" / "gahub_app.py"),
+        "--host", "127.0.0.1", "--port", "8791", "--token", "tok",
+    ]
+    assert "executable" not in captured
+    assert captured["stdin"] is subprocess.DEVNULL
+
+
+def test_engine_spawn_adopts_cmds_child_into_the_cage(tmp_path, monkeypatch) -> None:
+    """The engine is cmd's child, and cmd can start it before joining the cage
+    itself, so it inherits nothing — ensure_running assigns it explicitly:
+    once right after the spawn (cmd may be quick) and once /health answers
+    (cmd may be slow, in which case the first call found no children yet)."""
+    from server.services import conductor_client as cc
+
+    monkeypatch.setattr(cc.os, "name", "nt")
+    monkeypatch.setattr(cc.os, "environ", {"ComSpec": _CMD})
+    manager, _ = _engine_manager(tmp_path, monkeypatch, pid=5150, healthy_after=2)
+    adopted: list = []
+    monkeypatch.setattr(cc.child_job, "cage_descendants",
+                        lambda pid: adopted.append(pid) or [])
+
+    manager.ensure_running(startup_timeout=2.0)
+
+    assert adopted == [5150, 5150]
+
+
+def test_engine_spawn_registers_cmds_pid_with_the_script_as_marker(tmp_path, monkeypatch) -> None:
+    """The registry row describes the process that will be killed — now cmd —
+    and the sweep's identity check needs a marker its command line carries:
+    the engine's script path is right there in ``cmd /c``."""
+    from server.services import conductor_client as cc
+
+    monkeypatch.setattr(cc.os, "name", "nt")
+    monkeypatch.setattr(cc.os, "environ", {"ComSpec": _CMD})
+    manager, captured = _engine_manager(tmp_path, monkeypatch, pid=8100)
+
+    with pytest.raises(GahubProcessError):
+        manager.ensure_running(startup_timeout=0.3)
+
+    script = str(tmp_path / "frontends" / "gahub_app.py")
+    assert captured["kind"] == "engine"
+    assert captured["marker"] == script
+    assert script in captured["cmd"]           # …and visible on cmd's own line
+    assert captured["cwd"] == str(tmp_path)
+
+
+def test_failed_start_reaps_cmd_and_the_engine_behind_it(tmp_path, monkeypatch) -> None:
+    """A hung engine is one level down, so the reap walks the tree: killing
+    the cmd handle would leave the engine holding the port and the lock."""
+    from server.services import conductor_client as cc
+
+    monkeypatch.setattr(cc.os, "name", "nt")
+    monkeypatch.setattr(cc.os, "environ", {"ComSpec": _CMD})
+    manager, captured = _engine_manager(tmp_path, monkeypatch, pid=6001)
+    killed: list = []
+    forgotten: list = []
+    monkeypatch.setattr(cc.child_job, "terminate_tree",
+                        lambda pid, timeout: killed.append(pid) or True)
+    monkeypatch.setattr(cc.child_job, "forget", forgotten.append)
+
+    with pytest.raises(GahubProcessError):
+        manager.ensure_running(startup_timeout=0.3)
+
+    assert killed == [6001]
+    assert forgotten == [6001]
+    # The handle is only the fallback, and it was not needed.
+    assert captured["proc"].terminated is False
+    assert manager._proc is None
+
+
+def test_stop_reaps_the_intermediary_and_the_engine_behind_it(tmp_path, monkeypatch) -> None:
+    from server.services import conductor_client as cc
+
+    monkeypatch.setattr(cc.os, "name", "nt")
+    monkeypatch.setattr(cc.os, "environ", {"ComSpec": _CMD})
+    manager, captured = _engine_manager(tmp_path, monkeypatch, pid=7007, healthy_after=2)
+    monkeypatch.setattr(cc.child_job, "cage_descendants", lambda pid: [])
+    manager.ensure_running(startup_timeout=2.0)
+
+    killed: list = []
+    monkeypatch.setattr(cc.child_job, "terminate_tree",
+                        lambda pid, timeout: killed.append(pid) or True)
+
+    assert manager.stop(timeout=1.0) is True
+    assert killed == [7007]
+    assert manager._proc is None
+
+
+def test_reaping_never_kills_a_pid_whose_process_is_gone(tmp_path, monkeypatch) -> None:
+    """Pids get recycled: once the child is gone its number is not a kill
+    target any more, and the Popen handle takes over."""
+    from server.services import conductor_client as cc
+
+    monkeypatch.setattr(cc.os, "name", "nt")
+    monkeypatch.setattr(cc.os, "environ", {"ComSpec": _CMD})
+    manager, captured = _engine_manager(tmp_path, monkeypatch, pid=7008, healthy_after=2)
+    manager.ensure_running(startup_timeout=2.0)
+    proc = captured["proc"]
+    proc.returncode = 0                      # exited on its own
+    killed: list = []
+    monkeypatch.setattr(cc.child_job, "terminate_tree",
+                        lambda pid, timeout: killed.append(pid) or True)
+
+    assert manager.stop(timeout=1.0) is True
+    assert killed == []
+    assert proc.terminated is True
 
 
 def test_engine_spawn_context_is_logged(monkeypatch, tmp_path) -> None:

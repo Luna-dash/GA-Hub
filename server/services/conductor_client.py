@@ -6,6 +6,12 @@ subprocess — over HTTP, and consumes its SSE event stream. This module owns
 transport only: request calls, subprocess supervision, and the SSE reader
 loop. Product logic (workflow tracking, chat admission, model policy)
 stays in conductor_service.
+
+On Windows the engine is started *through* ``cmd.exe`` rather than directly
+(``_shell_launch``): a frozen sidecar's spawn of an unsigned interpreter hangs
+before the child's first line of output, a signed system parent does not.
+Everything that follows from that — the cage adoption of cmd's child and the
+tree-wide reap — is handled here and in ``child_job``.
 """
 from __future__ import annotations
 
@@ -149,6 +155,67 @@ def _config_str(key: str) -> Optional[str]:
     return os.environ.get(f"GAHUB_{key.upper()}") or None
 
 
+# Characters cmd.exe parses as syntax even in the middle of an argument; the
+# quoting in _cmd_quote is what keeps them literal.
+_CMD_METACHARACTERS = "&|<>^"
+
+
+def _cmd_quote(part: str) -> str:
+    """Quote one argv element so cmd.exe passes it to the engine verbatim.
+
+    Started directly, an argument is just a string. Through ``cmd.exe /c`` it
+    is parsed as shell text first, so anything cmd reads as syntax (whitespace,
+    ``&|<>^``) has to be neutralized — inside double quotes cmd keeps those
+    literal. The C-runtime escaping :func:`subprocess.list2cmdline` adds
+    (backslashes, embedded quotes) is layered on top because that is what the
+    engine's own argv parse expects to see.
+    """
+    part = str(part)
+    if part and not any(ch in part for ch in " \t" + _CMD_METACHARACTERS):
+        return part
+    quoted = subprocess.list2cmdline([part])
+    if quoted.startswith('"') and quoted.endswith('"'):
+        return quoted
+    # list2cmdline quotes for the C runtime only (whitespace/empty); a part
+    # whose sole offense is a cmd metacharacter is quoted here instead.
+    #
+    # One value class does not round-trip: an argument that itself contains a
+    # double quote (cmd has no escape for it — the C-runtime `\"` is not one).
+    # Nothing on this command line can carry one today: paths may not contain a
+    # quote on Windows, and host/port are fixed — the operator's token would
+    # have to spell one out to hit it.
+    return f'"{quoted}"'
+
+
+def _shell_launch(cmd: list) -> tuple:
+    """Route a spawn through the signed system shell; returns ``(args, kwargs)``.
+
+    Spawning the engine straight from the *frozen* sidecar is what hangs: three
+    attempts out of three produced a child with no output, no CPU and no
+    listener, while the very same command from a non-frozen parent is up in
+    seconds (see ``_log_spawn_context`` for the AV-suspension history this
+    repeats). Making ``cmd.exe`` the direct parent puts a signed system binary
+    between the unsigned bundle and the engine, which the reputation scan does
+    not hold up.
+
+    Quoting is the delicate part, and the reason this returns a *string*: cmd
+    strips the first and last quote of a ``/c`` command line, so the engine
+    command is wrapped in one extra pair — the classic ``cmd /c ""prog" args"``
+    form. A list cannot express that, because ``Popen`` escapes an element's
+    quotes as ``\"`` and cmd does not read that escape. ``executable`` pins the
+    interpreter so the launcher does not depend on how cmd's path is parsed off
+    the command line.
+
+    POSIX keeps the direct exec: no shell parses an argv there.
+    """
+    if os.name != "nt":
+        return cmd, {}
+    comspec = os.environ.get("ComSpec") or os.path.join(
+        os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe")
+    inner = " ".join(_cmd_quote(part) for part in cmd)
+    return f'{comspec} /c "{inner}"', {"executable": comspec}
+
+
 def _resolve_python_exe(ga_root: Optional[str]) -> str:
     """Find a real interpreter for gahub_app.py.
 
@@ -210,20 +277,55 @@ class GahubProcessManager:
         every later start attempt would stack another process on top of it
         (2026-09-08 zombie-farm diagnosis: 8 leaked children in one morning).
         """
+        self._reap_process_tree(proc, timeout)
+
+    def _reap_process_tree(self, proc: subprocess.Popen, timeout: float = 3.0) -> bool:
+        """Stop a spawned child **and its descendants**; ``True`` when it is gone.
+
+        ``self._proc`` is the ``cmd.exe`` intermediary (see
+        :func:`_shell_launch`), and Windows' ``TerminateProcess`` stops at the
+        process it is handed: terminating cmd alone would leave the engine
+        running with the port and the singleton lock. The pid is therefore
+        reaped as a tree, which also covers the engine's own children.
+
+        The pid route is taken only while the child is demonstrably alive — a
+        pid that outlived its process may already belong to somebody else, and
+        the Popen handle (which survives pid reuse) is the safe lever then.
+        """
+        pid = getattr(proc, "pid", None)
         try:
+            live = proc.poll() is None
+        except Exception:
+            live = True
+        try:
+            if live and child_job.terminate_tree(pid, timeout):
+                try:
+                    # Release the Popen handle; nothing is behind it now.
+                    proc.wait(timeout=2.0)
+                except Exception:
+                    pass
+                return True
+            if live:
+                # The tree walk could not describe the child (no psutil, or a
+                # pid it refuses): the handle still stops the intermediary, but
+                # anything below it may survive this reap.
+                log.warning("gahub_app tree reap failed pid=%r; reaping the "
+                            "handle only", pid)
             proc.terminate()
             try:
                 proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=2.0)
+            return True
         except Exception:
-            log.exception("gahub_app_child_reap_failed")
+            log.exception("gahub_app_child_reap_failed pid=%r", pid)
+            return False
         finally:
             # The registry row exists to heal a leak; this child is gone. This
             # is an error path, so it must not raise on a partial process
             # object in the way a bare ``proc.pid`` would.
-            child_job.forget(getattr(proc, "pid", None))
+            child_job.forget(pid)
 
     def ensure_running(self, startup_timeout: float = 60.0) -> None:
         """Spawn gahub_app when unhealthy and wait for /health."""
@@ -257,20 +359,34 @@ class GahubProcessManager:
                     "interpreter; set gahub_python in config"
                 )
             log_file, log_path = _open_engine_log()
-            self._log_spawn_context(log_file)
-            cmd = [self.python_exe, "-u", script, "--host", "127.0.0.1",
-                   "--port", str(self.port)]
+            engine_cmd = [self.python_exe, "-u", script, "--host", "127.0.0.1",
+                          "--port", str(self.port)]
             if self.token:
-                cmd += ["--token", self.token]
-            log.info("gahub_app_spawn cmd=%s", " ".join(cmd))
-            self._proc = child_job.spawn(
-                cmd, kind="engine", cwd=self.ga_root,
-                stdout=log_file, stderr=subprocess.STDOUT,
-                env=_engine_spawn_env(), **hidden_process_kwargs(),
+                engine_cmd += ["--token", self.token]
+            # Through the signed system shell on Windows — see _shell_launch.
+            spawn_cmd, spawn_kwargs = _shell_launch(engine_cmd)
+            self._log_spawn_context(
+                log_file, launch="cmd.exe" if isinstance(spawn_cmd, str) else "direct"
             )
+            log.info("gahub_app_spawn cmd=%s",
+                     spawn_cmd if isinstance(spawn_cmd, str) else " ".join(spawn_cmd))
+            self._proc = child_job.spawn(
+                spawn_cmd, kind="engine", marker=script, cwd=self.ga_root,
+                stdout=log_file, stderr=subprocess.STDOUT,
+                # Inheriting the sidecar's stdin would hand the engine the
+                # owner pipe whose EOF is the app's shutdown signal.
+                stdin=subprocess.DEVNULL,
+                env=_engine_spawn_env(), **spawn_kwargs, **hidden_process_kwargs(),
+            )
+            # The engine is cmd's child, and cmd may have started it before
+            # joining the cage (child_job §8.4 window): adopt it explicitly.
+            child_job.cage_descendants(getattr(self._proc, "pid", None))
             deadline = time.monotonic() + startup_timeout
             while time.monotonic() < deadline:
                 if self.is_healthy():
+                    # The engine is up, so it is findable now even when the
+                    # call above ran before cmd had started it.
+                    child_job.cage_descendants(getattr(self._proc, "pid", None))
                     return
                 if self._proc.poll() is not None:
                     raise GahubProcessError(
@@ -297,7 +413,7 @@ class GahubProcessManager:
             "gahub_app as a scheduled task"
         )
 
-    def _log_spawn_context(self, log_file) -> None:
+    def _log_spawn_context(self, log_file, *, launch: str = "direct") -> None:
         """Record the spawn context in the engine log before spawning.
 
         History (2026-09-07, three live rounds): the frozen sidecar's AV
@@ -309,10 +425,14 @@ class GahubProcessManager:
         diagnose: it hung 3/3, 4/4 and 12/12 across sessions while the real
         engine spawn succeeded right beside it. The engine spawn is its own
         probe — the health-wait loop below reports exactly how it failed.
+
+        ``launch`` names the route the spawn took (``cmd.exe`` when the engine
+        is started through the system shell), so a hung child can be told apart
+        from a route that was never taken.
         """
         log_file.write(
             f"\n[spawn] python={self.python_exe} frozen={bool(getattr(sys, 'frozen', False))} "
-            f"PATH_head={os.environ.get('PATH', '')[:120]}\n".encode("utf-8", "replace")
+            f"launch={launch} PATH_head={os.environ.get('PATH', '')[:120]}\n".encode("utf-8", "replace")
         )
         log_file.flush()
 
@@ -323,25 +443,14 @@ class GahubProcessManager:
         supervisor first): whatever the engine session did on the way out, the
         child process must not outlive the app — the desktop sidecar's owner
         pipe and ``server.run``'s Ctrl-C both land here through the lifespan.
+        The reap covers the whole tree, because the handle here is the
+        ``cmd.exe`` intermediary and not the engine itself.
         """
         with self._lock:
             proc, self._proc = self._proc, None
         if proc is None:
             return True
-        try:
-            proc.terminate()
-            try:
-                proc.wait(timeout=timeout)
-                child_job.forget(getattr(proc, "pid", None))
-                return True
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=2.0)
-                child_job.forget(getattr(proc, "pid", None))
-                return True
-        except Exception:
-            log.exception("gahub_app_stop_failed")
-            return False
+        return self._reap_process_tree(proc, timeout)
 
 
 class GaConductorClient:
