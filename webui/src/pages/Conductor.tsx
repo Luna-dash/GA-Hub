@@ -43,6 +43,17 @@ const SUBAGENT_MODEL_LOCK_KEY = storageKeys.conductorSubagentModelLocked
  */
 const ENGINE_TOGGLE_LAYOUT = 'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap'
 
+/**
+ * 启动窗口 (H1.2 收口): entering the page — or clicking 重试启动 — opens a bounded
+ * window in which the recovery strip stays neutral. The engine is spawned on
+ * demand, so the first probes legitimately fail while the process is still
+ * coming up; without the window the very first status poll paints
+ * 调度暂不可用 over an otherwise healthy page. Aligned with the backend's
+ * ensure_running(startup_timeout=60.0): the hub gives up on the spawn at the
+ * same moment, so the page never contradicts it.
+ */
+const ENGINE_STARTUP_WINDOW_MS = 60_000
+
 function readSubagentModelLock(): boolean {
   try {
     return localStorage.getItem(SUBAGENT_MODEL_LOCK_KEY) === 'true'
@@ -83,6 +94,10 @@ export default function Conductor() {
   // started is left alone, so a remount never spawns a second one.
   const [isEnsuring, setIsEnsuring] = useState(false)
   const [ensureFailed, setEnsureFailed] = useState(false)
+  // 启动窗口 (H1.2 收口): true from page entry (and from every 重试启动) until the
+  // engine reports ready, the bring-up fails, or ENGINE_STARTUP_WINDOW_MS
+  // elapses — whichever happens first. See the strip below.
+  const [startupWindowOpen, setStartupWindowOpen] = useState(true)
   // Abandoning the current task waits on a confirm dialog and N aborts; the
   // composer stays busy for the whole sequence.
   const [isAbandoning, setIsAbandoning] = useState(false)
@@ -337,6 +352,15 @@ export default function Conductor() {
     }
   }
 
+  // 重试启动 re-opens the window: the previous failure is cleared (the header
+  // returns to 启动中… and the strip to the neutral 正在启动) and the clock
+  // restarts with the new attempt.
+  const retryEnsure = () => {
+    setEnsureFailed(false)
+    setStartupWindowOpen(true)
+    void ensureConductor()
+  }
+
   // The model triple is resolved against the llm catalogue, so wait for that
   // query to settle (success OR failure) before ensuring: a model-less first
   // call would start the supervisor on the engine's own default model.
@@ -350,6 +374,30 @@ export default function Conductor() {
     // paths, not by another bring-up.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelsSettled])
+
+  // 启动窗口 deadline: re-armed whenever the window re-opens (retry), so the
+  // bound is always 60s from the attempt it belongs to.
+  useEffect(() => {
+    if (!startupWindowOpen) return
+    const timer = window.setTimeout(() => setStartupWindowOpen(false), ENGINE_STARTUP_WINDOW_MS)
+    return () => window.clearTimeout(timer)
+  }, [startupWindowOpen])
+
+  // Two early ends, both terminal for the window: an engine that reported
+  // ready is no longer "starting" (a later drop must report its real error
+  // instead of re-entering 正在启动), and a failed bring-up is a real failure
+  // the header retry answers — no reason to wait out the full 60s.
+  const recoveryReady = status?.recovery?.ready === true
+  // 统一口径 (H1.2 收口): ONE value, two surfaces. The header badge and the
+  // recovery strip over the board both read this, so they can never give two
+  // accounts of the same engine. The gap it closes: the bring-up call returns
+  // before the next 12s status poll lands, so the last known status is still
+  // the stale "not running" — a badge keyed on isEnsuring/started alone read
+  // 未运行 under a strip that read 正在启动.
+  const engineStarting = startupWindowOpen && !recoveryReady
+  useEffect(() => {
+    if (recoveryReady || ensureFailed) setStartupWindowOpen(false)
+  }, [recoveryReady, ensureFailed])
 
   // Per-task resume (恢复此任务): the backend brings the supervisor up and
   // re-relays ONLY this workflow's original message — every other open task
@@ -588,10 +636,12 @@ export default function Conductor() {
         <>
         {/* Engine state, read-only: the page ensures the engine on entry, so
             there is no 启动 control here, and 停止 (engine level) moved into
-            the settings dialog. 启动中… covers the bring-up window, when the
-            last known status is still the stale "not running". */}
-        <span className={`ga-badge ${!isEnsuring && status?.started ? 'ga-badge-connected' : 'ga-badge-offline'}`}>
-          {isEnsuring
+            the settings dialog. 启动中… comes from engineStarting — the same
+            value the strip below reads — not from isEnsuring: the bring-up
+            call returns long before the engine is ready, and only the window
+            covers that whole span. */}
+        <span className={`ga-badge ${!engineStarting && status?.started ? 'ga-badge-connected' : 'ga-badge-offline'}`}>
+          {engineStarting
             ? '启动中…'
             : status === undefined
               ? '连接中'
@@ -646,7 +696,7 @@ export default function Conductor() {
                disappears as soon as any path reports a running engine — e.g.
                a later status poll or a successfully sent message. */
             <div className="conductor-header-engine flex items-center gap-2">
-              <button onClick={() => void ensureConductor()}
+              <button onClick={retryEnsure}
                 className={`ga-btn ga-btn-primary ${ENGINE_TOGGLE_LAYOUT}`}
                 title="重新拉起 Conductor 引擎（幂等：已在运行的引擎不会被重复启动，也不会重跑任何任务）">
                 <Play size={13} />重试启动
@@ -657,9 +707,17 @@ export default function Conductor() {
       }
     >
       <div className="flex h-full min-h-0 flex-col">
+        {/* 调度状态条: while engineStarting (the startup window is open and the
+            engine has not reported ready) the strip stays neutral and the hub's
+            recovery error (first probes fail while the process spawns) is NOT
+            shown. Past the window — or after a failed bring-up — the error is
+            the honest report and the header retry is the answer. The wording
+            and the badge share one derived value, so they always agree. */}
         {status?.recovery && !status.recovery.ready && (
           <div role="status" className="conductor-recovery">
-            {status.recovery.error ? `调度暂不可用：${status.recovery.error}` : '正在同步任务状态'}
+            {engineStarting
+              ? '正在启动调度引擎…'
+              : status.recovery.error ? `调度暂不可用：${status.recovery.error}` : '正在同步任务状态'}
           </div>
         )}
         <div className="conductor-mobile-tabs" role="tablist" aria-label="工作区视图">

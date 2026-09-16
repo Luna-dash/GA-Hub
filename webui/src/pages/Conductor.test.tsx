@@ -8,6 +8,7 @@ import { useConductorStore } from '@/stores/conductorStore'
 import { useToastStore } from '@/stores/toastStore'
 import Conductor from './Conductor'
 import { resetPageState } from '@/utils/pageState'
+import { queryKeys } from '@/queries/queryKeys'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -137,6 +138,10 @@ describe('Conductor chat scroll restoration', () => {
       subagents: { running: 0, stopped: 0 },
       chat_count: 1,
       auto_accept: true,
+      // Both the header badge and the recovery strip read recovery.ready (it is
+      // what ends the 启动中 window on entry), so a started engine must report
+      // ready here too — otherwise every unrelated test would sit in 启动中.
+      recovery: { ready: true, error: null },
     })
     mocks.conductorSubagents.mockResolvedValue({ items: [] })
     mocks.conductorWorkflows.mockResolvedValue({ items: [] })
@@ -182,6 +187,7 @@ describe('Conductor chat scroll restoration', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     act(() => root?.unmount())
     queryClient?.clear()
     host?.remove()
@@ -204,6 +210,26 @@ describe('Conductor chat scroll restoration', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
+  }
+
+  // Fake-timer counterparts of the helpers below: advancing the clock is what
+  // runs the startup window's deadline and the 12s status polls it spans.
+  async function flushTimers() {
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+  }
+
+  async function waitForTimers(assertion: () => void, attempts = 40) {
+    let lastError: unknown
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await flushTimers()
+      try {
+        assertion()
+        return
+      } catch (error) {
+        lastError = error
+      }
+    }
+    throw lastError
   }
 
   // Under parallel-suite load a single setTimeout(0) can race react-query
@@ -1502,7 +1528,37 @@ describe('Conductor chat scroll restoration', () => {
     expect(mocks.conductorStart).toHaveBeenCalledTimes(1)
   })
 
+  // Shared engine-state fixtures for the H1.2 pair: the header badge and the
+  // recovery strip both read the same startup window + recovery.ready value,
+  // so the tests below assert them together.
+  const ENGINE_PROBE_ERROR = 'gahub_app engine unreachable (connection refused)'
+
+  function engineDownStatus() {
+    return {
+      started: false, stopping: false, admission_open: false, loop_alive: false,
+      agent_alive: false, subagents: { running: 0, stopped: 0 }, chat_count: 0,
+      auto_accept: true,
+      recovery: { ready: false, error: ENGINE_PROBE_ERROR },
+    }
+  }
+
+  function engineReadyStatus() {
+    return {
+      started: true, stopping: false, admission_open: true, loop_alive: true,
+      agent_alive: true, subagents: { running: 0, stopped: 0 }, chat_count: 0,
+      auto_accept: true,
+      recovery: { ready: true, error: null },
+    }
+  }
+
+  function recoveryStrip(): HTMLElement | null {
+    return host.querySelector('.conductor-recovery')
+  }
+
   it('shows 启动中… while the bring-up runs instead of a stale 未运行', async () => {
+    // The status poll still carries the down engine (the page's ensure is what
+    // turns it up), so nothing but the startup window keeps the header neutral.
+    mocks.conductorStatus.mockResolvedValue(engineDownStatus())
     let settle!: (value: { ok: boolean; started: boolean }) => void
     mocks.conductorStart.mockImplementationOnce(
       () => new Promise((resolve) => { settle = resolve }),
@@ -1517,16 +1573,162 @@ describe('Conductor chat scroll restoration', () => {
   })
 
   it('offers a retry when the entry bring-up fails instead of a dead page', async () => {
-    mocks.conductorStatus.mockResolvedValue({ ready: true, started: false })
+    mocks.conductorStatus.mockResolvedValue(engineDownStatus())
     mocks.conductorStart.mockRejectedValueOnce(new Error('engine unavailable'))
     renderPage()
+    // A failed bring-up ends the startup window: both surfaces drop the neutral
+    // wording for the real report, and 重试启动 is the way out of it.
     await waitFor(() => expect(host.querySelector('header .ga-badge')?.textContent).toBe('启动失败'))
+    await waitFor(() => expect(recoveryStrip()?.textContent)
+      .toBe(`调度暂不可用：${ENGINE_PROBE_ERROR}`))
     await waitFor(() => expect(lastToast()?.kind).toBe('error'))
     expect(mocks.conductorResumeWorkflow).not.toHaveBeenCalled()
+    expect(button('重试启动')).toBeTruthy()
 
     mocks.conductorStart.mockResolvedValueOnce({ ok: true, started: true })
     act(() => button('重试启动').click())
     await waitFor(() => expect(mocks.conductorStart).toHaveBeenCalledTimes(2))
+    // …and the retry re-opens the window rather than leaving the failure stuck
+    // on screen: badge and strip go back to the neutral pair.
+    await waitFor(() => expect(host.querySelector('header .ga-badge')?.textContent).toBe('启动中…'))
+    expect(recoveryStrip()?.textContent).toBe('正在启动调度引擎…')
+  })
+
+  // 启动窗口 (H1.2 收口): the strip over the board must not open with the hub's
+  // probe error (engine down → connection refused) while the on-demand spawn
+  // is still in flight. It stays neutral for one bounded window, then reports.
+  it('holds the recovery strip at 正在启动 while the engine comes up', async () => {
+    // The reported flash: the very first status poll returns the down engine's
+    // error, which used to paint 调度暂不可用 over a page that was merely still
+    // starting.
+    mocks.conductorStatus.mockResolvedValue(engineDownStatus())
+    renderPage()
+    await waitFor(() => expect(recoveryStrip()?.textContent).toBe('正在启动调度引擎…'))
+
+    expect(host.textContent).not.toContain('调度暂不可用')
+    expect(host.textContent).not.toContain('connection refused')
+  })
+
+  it('reports the engine error only after the startup window elapses', async () => {
+    vi.useFakeTimers()
+    mocks.conductorStatus.mockResolvedValue(engineDownStatus())
+    renderPage()
+    await waitForTimers(() => expect(recoveryStrip()?.textContent).toBe('正在启动调度引擎…'))
+
+    // Still inside the window (which is 60s, matching the backend's
+    // ensure_running startup_timeout) — four status polls later, no error.
+    await act(async () => { await vi.advanceTimersByTimeAsync(58_000) })
+    expect(recoveryStrip()?.textContent).toBe('正在启动调度引擎…')
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+    await waitForTimers(() => expect(recoveryStrip()?.textContent)
+      .toBe(`调度暂不可用：${ENGINE_PROBE_ERROR}`))
+  })
+
+  it('ends the startup window immediately when the bring-up fails', async () => {
+    mocks.conductorStatus.mockResolvedValue(engineDownStatus())
+    mocks.conductorStart.mockRejectedValueOnce(new Error('engine unavailable'))
+    renderPage()
+    // A failed bring-up is a real failure — no reason to sit out the window.
+    await waitFor(() => expect(recoveryStrip()?.textContent)
+      .toBe(`调度暂不可用：${ENGINE_PROBE_ERROR}`))
+    expect(lastToast()?.kind).toBe('error')
+    await waitFor(() => expect(button('重试启动')).toBeTruthy())
+  })
+
+  it('reports a post-ready drop with the real error instead of 正在启动', async () => {
+    mocks.conductorStatus.mockResolvedValue(engineReadyStatus())
+    renderPage()
+    await waitFor(() => expect(host.querySelector('header .ga-badge')?.textContent).toBe('运行中'))
+    expect(recoveryStrip()).toBeNull()
+    expect(host.textContent).not.toContain('正在启动调度引擎')
+
+    // The engine drops inside the 60s window (it crashed after booting): a
+    // once-ready engine is no longer "starting", so the error shows at once.
+    mocks.conductorStatus.mockResolvedValue(engineDownStatus())
+    await act(async () => {
+      await queryClient!.invalidateQueries({ queryKey: queryKeys.conductor.status })
+    })
+    await waitFor(() => expect(recoveryStrip()?.textContent)
+      .toBe(`调度暂不可用：${ENGINE_PROBE_ERROR}`))
+  })
+
+  it('re-opens the startup window on 重试启动', async () => {
+    mocks.conductorStatus.mockResolvedValue(engineDownStatus())
+    mocks.conductorStart.mockRejectedValueOnce(new Error('engine unavailable'))
+    renderPage()
+    await waitFor(() => expect(recoveryStrip()?.textContent)
+      .toBe(`调度暂不可用：${ENGINE_PROBE_ERROR}`))
+
+    // Retry = a fresh attempt, so the strip returns to the neutral state while
+    // the new bring-up is in flight.
+    let settle!: (value: { ok: boolean; started: boolean }) => void
+    mocks.conductorStart.mockImplementationOnce(
+      () => new Promise((resolve) => { settle = resolve }),
+    )
+    act(() => button('重试启动').click())
+    await waitFor(() => expect(recoveryStrip()?.textContent).toBe('正在启动调度引擎…'))
+    expect(host.textContent).not.toContain('调度暂不可用')
+
+    act(() => settle({ ok: true, started: true }))
+    await flushQueries()
+    // …and it stays neutral when the new attempt succeeds without the engine
+    // being ready yet (the recovery handshake outlives the HTTP call).
+    expect(recoveryStrip()?.textContent).toBe('正在启动调度引擎…')
+  })
+
+  it('speaks with one voice: badge and strip agree inside the startup window', async () => {
+    // The reported inconsistency: the bring-up call settles (isEnsuring back to
+    // false) while the next 12s status poll has not landed yet, so the last
+    // known status is still the down engine. A badge keyed on isEnsuring and
+    // status.started alone read 未运行 under a strip that read 正在启动.
+    mocks.conductorStatus.mockResolvedValue(engineDownStatus())
+    let settle!: (value: { ok: boolean; started: boolean }) => void
+    mocks.conductorStart.mockImplementationOnce(
+      () => new Promise((resolve) => { settle = resolve }),
+    )
+    renderPage()
+    await waitFor(() => expect(host.querySelector('header .ga-badge')?.textContent).toBe('启动中…'))
+
+    // The bring-up has returned successfully — the engine is still not ready,
+    // which is exactly the gap the two surfaces used to disagree in.
+    act(() => settle({ ok: true, started: true }))
+    await flushQueries()
+
+    const badge = host.querySelector('header .ga-badge')
+    expect(badge?.textContent).toBe('启动中…')
+    expect(badge?.textContent).not.toBe('未运行')
+    expect(recoveryStrip()?.textContent).toBe('正在启动调度引擎…')
+    // A starting engine is not a connected one: the badge keeps its offline tone.
+    expect(badge?.classList.contains('ga-badge-connected')).toBe(false)
+    expect(badge?.classList.contains('ga-badge-offline')).toBe(true)
+  })
+
+  it('reads a ready engine as 运行中 with no startup wording anywhere', async () => {
+    mocks.conductorStatus.mockResolvedValue(engineReadyStatus())
+    renderPage()
+    await waitFor(() => expect(host.querySelector('header .ga-badge')?.textContent).toBe('运行中'))
+    // A ready engine ends the startup window, so neither surface ever says
+    // 启动中/正在启动 for an engine that is already up.
+    expect(host.querySelector('header .ga-badge')?.classList.contains('ga-badge-connected')).toBe(true)
+    expect(recoveryStrip()).toBeNull()
+    expect(host.textContent).not.toContain('正在启动')
+  })
+
+  it('drops 启动中… from the badge once the startup window times out', async () => {
+    vi.useFakeTimers()
+    mocks.conductorStatus.mockResolvedValue(engineDownStatus())
+    renderPage()
+    await waitForTimers(() => expect(host.querySelector('header .ga-badge')?.textContent).toBe('启动中…'))
+
+    // 60s is the whole window (the backend's ensure_running startup_timeout):
+    // past it the header reports the last known truth again instead of holding
+    // 启动中… forever.
+    await act(async () => { await vi.advanceTimersByTimeAsync(61_000) })
+    await waitForTimers(() => expect(host.querySelector('header .ga-badge')?.textContent).toBe('未运行'))
+    expect(host.querySelector('header .ga-badge')?.classList.contains('ga-badge-offline')).toBe(true)
+    // …on the same page as the strip, which now carries the hub's real error.
+    expect(recoveryStrip()?.textContent).toBe(`调度暂不可用：${ENGINE_PROBE_ERROR}`)
   })
 
   it('resumes exactly the clicked workflow instead of every open task', async () => {
