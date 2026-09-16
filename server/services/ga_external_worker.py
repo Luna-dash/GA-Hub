@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ..process_utils import hidden_process_kwargs
+from . import child_job
 
 log = logging.getLogger(__name__)
 
@@ -155,8 +156,13 @@ class _ExternalGaWebTools:
             env=env,
         )
         popen_kwargs.update(hidden_process_kwargs())
-        self._proc = subprocess.Popen(
+        self._proc = child_job.spawn(
             [self.python, "-u", "-c", _WEB_TOOL_WORKER_SCRIPT],
+            kind="ga_worker",
+            # The worker's program is an inline ``-c`` script, so the default
+            # marker heuristic finds no script path; name a distinctive string
+            # from the script itself so the startup sweep can verify identity.
+            marker="web_execute_js",
             **popen_kwargs,
         )
         log.info(
@@ -176,6 +182,10 @@ class _ExternalGaWebTools:
                 proc.kill()
             except Exception:
                 pass
+        if proc is not None:
+            # Abandoned on purpose (failure, timeout, replacement): the worker
+            # is gone, so its leak-healing row goes with it.
+            child_job.forget(getattr(proc, "pid", None))
 
     def _read_stdout(self, proc: subprocess.Popen[str]) -> None:
         if proc.stdout is None:

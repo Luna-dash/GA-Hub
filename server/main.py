@@ -299,6 +299,18 @@ def create_app() -> FastAPI:
         services.clear()
         feishu_autostart_task = None
         bus.attach_loop(asyncio.get_running_loop())
+        # Collect long-lived children a previous GA-Hub left behind (crash or
+        # taskkill /F — the graceful path reaps its own). Runs before any
+        # service can spawn, and off the event loop: a sweep may have to wait
+        # seconds on a hung orphan, never on the serve path.
+        from .services import child_job
+
+        try:
+            swept = await asyncio.to_thread(child_job.sweep_registry)
+            if swept:
+                log.warning("reaped orphaned child processes from a previous run: %s", swept)
+        except Exception:
+            log.exception("orphaned child process sweep failed")
         if setup_mode:
             log.warning(
                 "GA_ROOT not configured — running in SETUP MODE.\n"

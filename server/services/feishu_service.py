@@ -497,8 +497,9 @@ class FeishuService:
             log_fh = log_file.open("a", encoding="utf-8", errors="replace")
             log_fh.write("\n" + "=" * 18 + " GA-Hub start feishuapp " + time.strftime("%Y-%m-%d %H:%M:%S") + " " + "=" * 18 + "\n")
             log_fh.flush()
-            self._proc = subprocess.Popen(
+            self._proc = child_job.spawn(
                 [self._python(), "-X", "utf8", "-u", str(fsapp)],
+                kind="feishu",
                 cwd=str(_paths.GA_ROOT),
                 env=self._base_env(),
                 stdout=log_fh,
@@ -534,6 +535,8 @@ class FeishuService:
             proc.wait(timeout=3)
         with self._lock:
             self._proc = None
+        # The bot is really gone: drop the leak-healing row with it.
+        child_job.forget(pid)
         evt = {"stopped": True, "running": False, "pid": pid}
         bus.publish(FEISHU_STOPPED, evt)
         return evt

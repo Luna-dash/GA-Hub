@@ -94,3 +94,14 @@ class AppServices:
                     log.warning("agent shutdown missed its graceful deadline")
             except Exception:
                 log.exception("agent shutdown failed")
+        # Last: no service owns these children any more. Each service above
+        # already stops the one it started; this is the catch-all for a child
+        # the services never tracked (the external GA worker has no owner
+        # object), and it is the graceful half of the guarantee whose crash
+        # half is the kill-on-close job in services/child_job.
+        try:
+            from . import child_job
+
+            child_job.reap_all()
+        except Exception:
+            log.exception("child process reap failed")

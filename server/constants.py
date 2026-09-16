@@ -60,6 +60,12 @@ ENV_GAHUB_PATH_POLICY = "GAHUB_PATH_POLICY"
 ENV_GAHUB_MULTI_REQUEST_TURNS = "GAHUB_MULTI_REQUEST_TURNS"
 # UI origin allowlist beyond localhost (main.py).
 ENV_GAHUB_ALLOWED_HOSTS = "GAHUB_ALLOWED_HOSTS"
+# services/child_job: escape hatch for debugging across a GA-Hub restart.
+# Truthy means this run does NOT put its long-lived children (engine, feishu
+# bot, external GA worker) under the kill-on-close job, does not register them,
+# and does not sweep the registry — so they outlive GA-Hub on purpose. Unset
+# (the default) means GA-Hub's exit takes its children with it, however it dies.
+ENV_GAHUB_KEEP_CHILDREN_ON_EXIT = "GAHUB_KEEP_CHILDREN_ON_EXIT"
 # mykey sync (routes/mykey.py): sync-site root URL and the credential env
 # entries the sync subprocess consumes; the probe strips both secrets from
 # the child environment.

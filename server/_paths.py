@@ -519,6 +519,16 @@ def email_config_file() -> Path:
     return ADMIN_DATA / "email_config.json"
 
 
+def child_processes_file() -> Path:
+    """Spawn registry for GA-Hub's own long-lived children (services/child_job).
+
+    Records the pid of every engine / feishu bot / external worker this app
+    spawned, so the next start can collect the ones a hard kill or a crash left
+    behind. Lives with the other hub-owned state, never in the GA repo.
+    """
+    return ADMIN_DATA / "child_processes.json"
+
+
 def reports_dir() -> Path:
     """GenericAgent's autonomous reports directory (under GA's temp/)."""
     return temp_dir() / "autonomous_reports"

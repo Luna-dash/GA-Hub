@@ -31,6 +31,7 @@ from ..constants import (
     ENV_GAHUB_TEMP_DIR,
 )
 from ..process_utils import hidden_process_kwargs
+from . import child_job
 
 log = logging.getLogger(__name__)
 
@@ -218,6 +219,11 @@ class GahubProcessManager:
                 proc.wait(timeout=2.0)
         except Exception:
             log.exception("gahub_app_child_reap_failed")
+        finally:
+            # The registry row exists to heal a leak; this child is gone. This
+            # is an error path, so it must not raise on a partial process
+            # object in the way a bare ``proc.pid`` would.
+            child_job.forget(getattr(proc, "pid", None))
 
     def ensure_running(self, startup_timeout: float = 60.0) -> None:
         """Spawn gahub_app when unhealthy and wait for /health."""
@@ -257,8 +263,8 @@ class GahubProcessManager:
             if self.token:
                 cmd += ["--token", self.token]
             log.info("gahub_app_spawn cmd=%s", " ".join(cmd))
-            self._proc = subprocess.Popen(
-                cmd, cwd=self.ga_root,
+            self._proc = child_job.spawn(
+                cmd, kind="engine", cwd=self.ga_root,
                 stdout=log_file, stderr=subprocess.STDOUT,
                 env=_engine_spawn_env(), **hidden_process_kwargs(),
             )
@@ -326,10 +332,12 @@ class GahubProcessManager:
             proc.terminate()
             try:
                 proc.wait(timeout=timeout)
+                child_job.forget(getattr(proc, "pid", None))
                 return True
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=2.0)
+                child_job.forget(getattr(proc, "pid", None))
                 return True
         except Exception:
             log.exception("gahub_app_stop_failed")

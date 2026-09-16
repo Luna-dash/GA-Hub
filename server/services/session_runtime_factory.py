@@ -22,6 +22,11 @@ from typing import Any, Callable
 
 from .project_runtime import activate_project
 from .session_metadata import SessionMetadataStore
+# Liveness for the lock-takeover path. The probe lives in process_utils because
+# the child-process sweep (services/child_job) needs the identical answer; the
+# local alias keeps this module's call site — and the tests that monkeypatch
+# ``session_runtime_factory._pid_alive`` — unchanged.
+from ..process_utils import pid_alive as _pid_alive
 
 log = logging.getLogger(__name__)
 
@@ -40,71 +45,6 @@ def _is_content_failure(message: str | None) -> bool:
 
 class RuntimeRestoreError(RuntimeError):
     """Raised when GA cannot restore the archive bound to a Hub session."""
-
-
-_WINDOWS_STILL_ACTIVE = 259
-_ERROR_ACCESS_DENIED = 5
-
-
-def _windows_pid_alive(pid: int) -> bool:
-    import ctypes
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    process_query_limited_information = 0x1000
-    # Explicit wide signatures: the default windll restype (c_int) truncates
-    # 64-bit HANDLEs and makes probes of high-valued handles unreliable.
-    kernel32.OpenProcess.argtypes = (
-        ctypes.c_uint32,
-        ctypes.c_int,
-        ctypes.c_uint32,
-    )
-    kernel32.OpenProcess.restype = ctypes.c_void_p
-    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
-    if not handle:
-        error = ctypes.get_last_error()
-        if error == _ERROR_ACCESS_DENIED:
-            # The process exists but cannot be probed from this token
-            # (elevated/protected). Conservative direction: treat as alive —
-            # taking a live holder's lock would allow two writers on one
-            # archive, while waiting costs at most the usual 30s expiry.
-            return True
-        return False
-    kernel32.GetExitCodeProcess.argtypes = (
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_ulong),
-    )
-    kernel32.GetExitCodeProcess.restype = ctypes.c_int
-    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
-    exit_code = ctypes.c_ulong()
-    try:
-        if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-            return exit_code.value == _WINDOWS_STILL_ACTIVE
-        return True
-    finally:
-        kernel32.CloseHandle(handle)
-
-
-def _pid_alive(pid: int) -> bool:
-    """Best-effort cross-platform process liveness probe.
-
-    The conservative failure direction is "alive": an unprobeable pid must not
-    cause a lock takeover, because taking a live session's lock would let two
-    agents append to the same archive.
-    """
-    if pid <= 0:
-        return False
-    try:
-        if os.name == "nt":
-            return _windows_pid_alive(pid)
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
-    except Exception:
-        return True
 
 
 def _takeover_stale_lock(archive_path: str) -> bool:
