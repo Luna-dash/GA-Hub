@@ -383,9 +383,12 @@ def _mykey_sync_script() -> Path:
 
 
 def _sync_base_url() -> str:
-    # Vercel 静态部署方案(2026-08-30 起)：自定义域名 ga.lunadash.me 大陆直连可达；
-    # vercel.app 直连被墙不可作端点。upload 参数=部署后回读校验用的站点根 URL。
-    return os.environ.get(constants.ENV_MYKEY_SYNC_URL, "https://ga.lunadash.me").rstrip("/")
+    # KV 方案(2026-09-17 起)：入口 sync.lunadash.me =
+    # Vercel Serverless Function + Cloudflare Workers KV。
+    # 每次 upload 只是一次 PUT（不再创建 Vercel 部署），下载是一次 GET。
+    # 自定义域名大陆直连可达；*vercel.app 直连被墙，不可作端点。
+    # 旧静态站 ga.lunadash.me 仅作历史兜底，不再写入。
+    return os.environ.get(constants.ENV_MYKEY_SYNC_URL, "https://sync.lunadash.me").rstrip("/")
 
 
 _MYKEY_MIN_PYTHON = (3, 11)
@@ -533,11 +536,13 @@ def _mykey_sync_python() -> str:
 def _run_mykey_sync(args: list[str]) -> dict[str, Any]:
     """Run mykey_sync.py without passing secrets on argv.
 
-    凭证不进 argv；GA_MYKEY_SYNC_PASSPHRASE / GA_MYKEY_UPLOAD_TOKEN 两个
-    env 变量原样透传给子进程（通常由外部注入，本函数只负责不额外泄露），
-    探测子进程则显式 pop 掉它们（见 _probe_mykey_python）。脚本自身优先
-    从 GA keychain 读取凭证（``ga_mykey_sync_key``，同时用于 HTTP 上传
-    鉴权、manifest 路径派生与 AES-256-GCM 加解密）。
+    凭证不进 argv，也不进 env：脚本自身从 GA keychain 读取唯一凭证
+    ``ga_mykey_sync_key``（同时用于服务端路径派生、AES-256-GCM 加解密与
+    Bearer 写入口令派生），本函数只负责透传环境。
+
+    历史遗留的 GA_MYKEY_SYNC_PASSPHRASE / GA_MYKEY_UPLOAD_TOKEN 仍会被
+    原样透传（外部注入时），探测子进程则显式 pop 掉它们
+    （见 _probe_mykey_python）。KV 方案下无需设置这两个变量。
     """
     script = _mykey_sync_script()
     if _paths.GA_ROOT is None:
@@ -603,7 +608,8 @@ def sync_upload() -> dict:
     p = _mykey_path()
     if not p.is_file():
         raise MykeyHttpError(404, "mykey.py 不存在")
-    # Vercel 方案: upload 走 Vercel 部署 API，--base-url 仅用于部署后回读校验
+    # KV 方案: upload = 加密为单容器后一次 PUT 到 KV（脚本内含回读字节级校验），
+    # --base-url 为服务根 URL（默认 sync.lunadash.me）。
     result = _run_mykey_sync([
         "upload",
         "--base-url", _sync_base_url(),

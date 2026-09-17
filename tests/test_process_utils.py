@@ -327,7 +327,7 @@ def test_mykey_sync_reports_missing_cryptography_actionably(tmp_path):
 @pytest.mark.parametrize(
     ("environment", "expected_url"),
     [
-        ({}, "https://ga.lunadash.me"),
+        ({}, "https://sync.lunadash.me"),
         ({"GA_MYKEY_SYNC_URL": "https://mirror.example/"}, "https://mirror.example"),
             ],
 )
