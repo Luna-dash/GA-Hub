@@ -1,7 +1,16 @@
 # Restore 会话域收敛修复计划
 
+> **状态标记（2026-09-18 复核）：✅ 已完成 —— 不再是待办。**
+> 步骤 1–5 全部落地并提交 `46ffcb4`（2026-09-15）。代码证据：`server/routes/conversations.py`
+> 使用 `ConversationRestoreReq.session_id` + `archive_override` + 协调器原子替换（`:342` / `:369`）；
+> `server/services/session_runtime_factory.py:170` 支持 `archive_override`；openapi 与 `schema.d.ts` 已含新契约。
+> **本文保留为设计记录。** 后续动作见 `docs/plans/TODO_REMAINING.md`；索引见 `docs/plans/README.md`。
+> ⚠️ 附带发现：前端已无任何 `restoreConversation` 调用方，`POST /api/conversations/{cid}/restore` 目前
+> **无 UI 消费者**，去留待定（待办计划决策 ④）。
+
 - **日期**：2026-09-15
-- **状态**：设计已冻结，尚未开始步骤 2；当前工作树保留既有步骤 1 改动
+- **状态**：~~设计已冻结，尚未开始步骤 2；当前工作树保留既有步骤 1 改动~~
+  → **全部 5 步已完成并提交（`46ffcb4`，2026-09-15）**（2026-09-18 更正）
 - **范围**：GA-Hub 后端 restore 链路、会话 runtime 构造、Web UI 调用与回归测试
 - **原则**：先验证行为，再逐步实现；不引入兼容性临时分支，不改变会话归档绑定语义
 

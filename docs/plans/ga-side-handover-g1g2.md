@@ -1,5 +1,10 @@
 # 交接单：GA 侧 supervisor 协议模板化（G1 + G2）
 
+> **状态标记（2026-09-18 复核）：✅ 已完成 —— 交接已被接收方执行并提交 GA `04f0d9d`（2026-09-18 06:25）。**
+> 本文保留供追溯（含边界条件与「禁止 revert / checkout / clean / stash」等上下文）。
+> 注意文中「GA 仓 HEAD：`aba30f7`」与「GA 仓有未提交改动（12 个文件）」**均已过期**，勿据此行动。
+> 执行细节见 `ga-supervisor-protocol-patch.md`。按本仓 `docs/archive/` 约定应归档（当前只标记，未移动）。
+
 > 交接给：**绑定 `D:\study\GA` 的 AutoCoder 会话**
 > 交接自：绑定 `D:\study\GA-Hub` 的会话（2026-09-16）
 > 关联文档：`D:\study\GA-Hub\docs\plans\ga-supervisor-protocol-patch.md`（**含模板逐字正文与逐行改动，必读**）

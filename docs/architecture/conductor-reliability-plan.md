@@ -1,5 +1,12 @@
 # GA-Hub 与 GA Conductor 可靠性优化方案
 
+> **状态标记（2026-09-18 复核）：🟡 主体已实施，§8.4 遗留未清零。**
+> 未完成项：`workflows` 表终态行无保留策略；旧 boot 的 pending 命令被静默跳过（数量/年龄不可观测）；
+> `engine_key` 取 `base_url`；提交被拒后遗留的 `submitting` 投影无清理；GA §7 场景表第 5、8 行的故障
+> 测试与两仓联跑套件；前端 palette 收敛决策与页面级版本信封集成测试。
+> 注：§8.4 同时列的「`TaskBoard` / `WorkerCard` 的 memo 因内联 `onSelect` 失效」**已修**，别重复改。
+> 逐项措辞与排序见 `docs/plans/TODO_REMAINING.md` 并行轨 P.1。
+
 状态：已实施；首轮代码评审完成，P1/P2 阻塞项已修复（见 §8.3 修订记录），遗留与长期运维验证项见 §8.4。日期：2026-09-09。
 
 本方案已落地到 GA 引擎、GA-Hub 后端与 WebUI：GA 负责准入、资源池、watchdog、journal、交付路径策略和 operation receipt；Hub 负责 SQLite 持久化、恢复握手、命令意图与回执、workflow 生命周期；WebUI 通过数据 hook、任务看板、WorkerCard 与 context tabs 展示并调度这些状态。GA 是运行状态权威，Hub 是跨重启的持久化权威，前端只保存交互草稿并展示服务端快照。

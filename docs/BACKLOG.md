@@ -3,6 +3,11 @@
 来源：2026-09-03 全量架构复审（四路并行）+ GPT 交叉复审的合并结论。按"用户可感知伤害"排序。
 修复后请条目化勾销，不要整段删除。
 
+> **2026-09-18 状态提示**：本文件是**活文档**，历史上多轮扫描的条目绝大多数已勾销（`[x]`）。
+> 仍未勾销的 `[ ]` 项已全部汇总进 `docs/plans/TODO_REMAINING.md`（并行轨 P.2，含排序与依赖），
+> **进度请在那里更新**，做完后回到本文件逐条勾销。计划文档索引见 `docs/plans/README.md`。
+> 本轮另勾销了一条过期条目：2026-09-05「P1·conductor 引擎无 journal」（引擎侧其实早已实现）。
+
 **2026-09-04 进度**：P0 全部、SessionRail 排序、P1 全部、P2 全部、P3 全部
 （dac6a10、4e89e76、3df23a3、143ac57、e972ea7、ab591ab、6faffd1、beaaef6、
 bbed3cf、d63f98a、7572e21、ea68615、16b4f08）。
@@ -290,7 +295,10 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
 - [x] webui navigation.ts 伪装 config（08c6513）：有状态半边归位
       stores/navPreferenceStore.ts，config 只留纯词汇（NAV_ITEMS/
       归一化器/事件名），config 层恢复零 api 依赖
-- [ ] P1·conductor 引擎无 journal（GA 侧缺口，2026-09-05 鹈鹕事件实证）：
+- [x] ~~P1·conductor 引擎无 journal~~ **（2026-09-18 勾销）** 引擎侧早已实现写盘：
+      `GA/frontends/gahub/conductor_journal.py` 存在、`gahub_app.py:238` 读 `GAHUB_JOURNAL_PATH`，
+      Hub 侧 `conductor_client.py` 注入该变量。**原文保留如下**（含仍待处理的残余）：
+      原记 —— P1·conductor 引擎无 journal（GA 侧缺口，2026-09-05 鹈鹕事件实证）：
       gahub_app 完全没有 GAHUB_JOURNAL_PATH 写盘实现（GA 仓 grep 零命中），
       hub 的断线补放网因此生产上空转——SSE 任何一次掉线窗口内的事件永久
       丢失（现场实证：引擎 chat_count=4 vs hub 镜像 3）。修法二选一：
@@ -299,6 +307,8 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
       监督者 LLM 会以"磁盘核验交付物已存在"为由收编旧文件——交付物校验
       需按次锚定（引擎已产出 deliverables_stale，hub 已拦自动验收
       d2ad1c0，但人工强制验收仍可放行旧文件）
+      → **残余（2026-09-18 复核，仍未修）**：人工强制验收仍可放行旧交付物。
+        已汇总进 `docs/plans/TODO_REMAINING.md` 并行轨。
 - [ ] chatStore 活跃会话 msgs 无上限（后台缓存有界 MAX_CACHED_SESSION_
       VIEWS=3，当前打开的视图随历史翻页无限增长）——若要做需同时保留
       historyBefore 再取路径，属产品级内存取舍

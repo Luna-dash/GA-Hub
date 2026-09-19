@@ -1,7 +1,19 @@
 # Conductor 任务提交模型与引擎生命周期改造计划
 
+> **状态标记（2026-09-18 复核）：🟡 部分完成 —— H1–H3 ✅、G1+G2 ✅、G3 ✗、G4 待复核。**
+> - **H1–H3**（Hub 侧：引擎懒启动/关闭回收、输入三态）✅ 提交 `a1d5659`（2026-09-15）。
+> - **G1+G2**（GA 侧：supervisor 协议模板化 + 每轮仅动态头）✅ **已于 2026-09-18 提交 GA `04f0d9d`（06:25）**
+>   —— `GA/frontends/gahub/supervisor_protocol.md` 已入库；`gahub_app.py:152-155` 读模板、`:526` 注入
+>   `extra_sys_prompts=[SUPERVISOR_PROTOCOL]`。原文「G1–G4 未开工」已过期。
+> - **G3**（新任务边界换归档 + 清上下文）✗ **未开工** —— `_new_log_path` / `_retarget_log` /
+>   `_clear_conversation_state` 在 `GA/frontends/gahub/` 零命中。不做这条，「一个任务一个归档」不成立。
+> - **G4**（放弃 = 任务级）**待复核**：单 worker 级 `abort_subagent(origin=…)` 与 `CANCELLED` 终态已存在
+>   （`conductor_core.py:1567`、`gahub_app.py:1920`），需确认是否还缺 workflow 级终态收口。
+> - **追加语义缺口**：对终态任务追加会另铸 `request_id`（见 §4 H2.2），需 GA 侧 workflow reopen + Hub 侧配套。
+> 剩余动作与顺序见 `docs/plans/TODO_REMAINING.md` W2。
+
 - 日期：2026-09-15
-- 状态：GA-Hub 侧 H1–H3 **已实现**（2026-09-15 本轮）；GA 侧 G1–G4 **未开工**
+- 状态：GA-Hub 侧 H1–H3 **已实现**；GA 侧 **G1+G2 已完成（GA `04f0d9d`，09-18）、G3 未开工、G4 待复核**（2026-09-18 更正）
 - 范围：GA-Hub（引擎生命周期、Conductor 输入框）+ GA 仓（提示词模板化、任务级归档/上下文切换）
 - 关联：`feishu-import-task-brief.md`、`restore-ui-interaction-spec.md`
 

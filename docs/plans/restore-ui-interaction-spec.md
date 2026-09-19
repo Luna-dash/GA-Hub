@@ -1,7 +1,17 @@
 # Restore / Adopt UI 交互逻辑规格
 
+> **状态标记（2026-09-18 复核）：🟡 绝大部分已落地，另一半已作废，剩 1 项决策。**
+> - **已落地**：§1.2 Adopt、§2.1 来源徽标（`Conversations.tsx` 的 `sourceMeta` / `sourceFilter`）、
+>   §3 Adopt 入口（历史页详情栏「导入为会话」，`Conversations.tsx:409`）、§4 后端契约
+>   （`server/services/archive_import.py` + `bound_session_id`）。提交 `a7c3cab` / `f2061ff` / `64df128`。
+> - **已作废，无需实施**：§1.1 / §2.2 / §2.3 / §2.4 都是「恢复到当前会话」的交互 —— 该动作
+>   **已从前端整体下线**（`webui/src` 全仓无 `restoreConversation` 调用方），§8 的模型修正确认它多余。
+> - **仍待决策**：§6.3 adopt 入口是否两处都要（现状 = 仅历史页）；§4.2 的 `mode: copy` 参数未引入
+>   （改由独立 adopt 端点承担，等价）。→ 见 `docs/plans/TODO_REMAINING.md` 决策 ③ / ④ / ⑤。
+
 - 日期：2026-09-15
-- 状态：草案（决策 1 已定 = copy；第 6 节剩 2 项待确认）
+- 状态：~~草案（决策 1 已定 = copy；第 6 节剩 2 项待确认）~~
+  → **大部分已落地；§1.1、§2.2–§2.4 作废**（2026-09-18 更正）
 - 范围：webui（Conversations 页 / LiveChat / SessionRail）+ 最小后端契约
 - 依赖：`restore-session-scoped-fix-plan.md`（后端 restore 会话域收敛，另一任务在途）
 

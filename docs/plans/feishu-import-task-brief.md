@@ -1,5 +1,13 @@
 # 任务简报：飞书会话 → GA-Hub 会话管理（2026-09-15）
 
+> **状态标记（2026-09-18 复核）：✅ 主体已完成，只剩决策项。**
+> T1（`a7c3cab`）、T2 导入 / adopt（`f2061ff` + `64df128`，`server/services/archive_import.py` +
+> `bound_session_id`）、T3（`46ffcb4`）均已落地。
+> §3 的五条待办：① 已重写（规格 §1.2 Adopt）、②④⑤ 已落地；③ 的 `mode: copy` 参数未引入
+> （改由独立 adopt 端点承担，等价）。
+> 剩余唯一动作是 §4 的三条确认 —— 其中第 1 条已事实落地（前端已无 restore 入口），
+> 2、3 见 `docs/plans/TODO_REMAINING.md` 决策 ③ / ④。
+
 ## 1. 任务目标
 
 **一句话**：把 GA 的 IM 归档（尤其飞书）变成 GA-Hub 里**可继续的一等会话**。

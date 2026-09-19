@@ -1,5 +1,11 @@
 # GA 侧补丁包：supervisor 协议模板化（G1+G2）
 
+> **状态标记（2026-09-18 复核）：✅ 已完成 —— 本补丁包已执行完毕。**
+> G1+G2 已于 2026-09-18 在 GA 仓提交 `04f0d9d`（06:25，「feat(gahub): supervisor 协议模板化，规则改由 system 层下发」）：
+> `frontends/gahub/supervisor_protocol.md` 已入库，`gahub_app.py:152-155` 读模板、`:526` 注入
+> `extra_sys_prompts=[SUPERVISOR_PROTOCOL]`。运行期验收亦已完成（主会话归档每轮仅动态头、
+> 不再落 `temp/user_prompt_*.md`）。按本仓 `docs/archive/` 约定应归档（当前只做了标记，未移动文件）。
+
 - 日期：2026-09-16
 - 目标：让 conductor **主会话的归档可读**，并让"用户提交物"只剩任务本身
 - 范围：**只改 GA 仓**（`frontends/gahub/`），不动 GA-Hub、不动 `agentmain` 的"长 prompt 落 .md"通用机制

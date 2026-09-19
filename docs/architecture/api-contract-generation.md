@@ -1,5 +1,8 @@
 # API Contract Generation
 
+> **状态标记（2026-09-18 复核）：📌 架构参考（非计划文档）** —— 随实现更新，不参与待办跟踪。
+> 状态总览见 [`docs/plans/README.md`](../plans/README.md) §2.2。
+
 ## Current contract slice
 
 The checked-in [`openapi.json`](../api/openapi.json) is generated from the configured FastAPI application and is the route/method contract used by the frontend. It prevents these failures:
