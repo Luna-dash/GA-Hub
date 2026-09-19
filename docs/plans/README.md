@@ -1,8 +1,9 @@
 # 计划文档索引（docs/plans）
 
-- 最后整理：2026-09-18
+- 最后整理：2026-09-20
 - 口径：**以代码、提交与构建产物为准**，不采信计划文档的自述状态。历史上已抓到 5 处自述与事实不符（清单见 §3）。
-- **待办唯一入口**：[`TODO_REMAINING.md`](./TODO_REMAINING.md)。其他文档只保留设计记录，进度一律回到那里更新。
+- **关系治理唯一方案**：[`gahub-frontend-implementation-plan.md`](./gahub-frontend-implementation-plan.md)。
+- **待办唯一入口**：[`TODO_REMAINING.md`](./TODO_REMAINING.md)。其他文档只保留规格、证据或历史记录，进度一律回到那里更新。
 
 ---
 
@@ -13,6 +14,7 @@
 | ✅ 已完成 | 动作全部落地，且有提交/产物证据 | 保留为设计记录；可收进 `docs/archive/` |
 | 🟡 部分完成 | 部分落地，仍有明确剩余动作 | 剩余部分已汇总进 `TODO_REMAINING.md` |
 | ⏹ 已过期 | 描述的状态已被后续实现推翻 | 应收进 `docs/archive/` |
+| ⛔ 已作废 | 旧决策已被新权威方案取代 | 只保留跳转页，禁止继续执行 |
 | 📌 活文档 | 持续维护的清单 / 规格 / 参考 | 就地更新，不归档 |
 
 ## 2. 一览
@@ -29,15 +31,16 @@
 | `child-process-lifecycle.md` | 🟡 代码已实施并进包 | 实现已提交（`f6f5732`、`20ad092`）；**2026-09-18 重建后新包已含 `20ad092`**（见 §4.1）；**§8.5 实机验收仍未做** |
 | `ga-supervisor-protocol-patch.md` | ✅ 已完成 | 补丁包已执行完毕：GA `04f0d9d`（2026-09-18 06:25） |
 | `ga-side-handover-g1g2.md` | ✅ 已完成 | 交接单已被接收方执行（GA `04f0d9d`）；文中「GA HEAD `aba30f7`」已过期 |
-| `PLAN_REMAINING_AUDIT_20260918.md` | 📌 分析记录 | 本次盘点的过程与证据；桌面产物一节已按实测更正 |
+| `PLAN_REMAINING_AUDIT_20260918.md` | 📌 历史分析记录 | 保留盘点过程与证据；其中旧边界批次已被 2026-09-20 方案取代，不再执行 |
+| `gahub-frontend-implementation-plan.md` | 📌 权威方案 | **GA/GA-Hub 关系治理唯一架构与实施依据**：特殊 frontend + 双连接面 + Memory 授权编辑 |
 | `TODO_REMAINING.md` | 📌 活文档 | **唯一待办入口**（波次顺序 + 决策区 + 已收口清单）。原 W0（key 轮换）/ W1（重建与验收）已于 2026-09-18 按用户决定移出，故波次从 W2 起 |
 
 ### 2.2 docs/architecture/
 
 | 文档 | 状态 | 结论 |
 |---|---|---|
-| `GA_HUB_BOUNDARY_PLAN.md` | 🟡 待决策 | 批次 0（删 `.ga-staging/`）已完成（实测目录已不存在）；批次 1–5 未开工，卡 §9 两个拍板点。⚠️ 该文件**尚未纳入 git 跟踪**（`git status` 显示 `??`） |
-| `GA_HUB_DEPENDENCY_PLAN.md` | 🆕 未复核 | 2026-09-18 **15:09 由另一会话落盘**（本轮整理之后），细化解耦面并**自称修订** `GA_HUB_BOUNDARY_PLAN.md` §5 批次表三处。执行 W3–W5 前必须先读它——这三波的依据正是被它修订的那张表 |
+| `GA_HUB_BOUNDARY_PLAN.md` | ⛔ 已作废 | 旧“只允许 HTTP/SSE、Hub 不 import GA”方案不再采用；文件已改为跳转页 |
+| `GA_HUB_DEPENDENCY_PLAN.md` | ⛔ 已作废 | 有效分析已合并到权威实施方案；文件已改为跳转页 |
 | `conductor-reliability-plan.md` | 🟡 主体已实施 | §8.4 遗留未清零（逐项见 `TODO_REMAINING.md` 并行轨） |
 | `api-contract-generation.md`、`llm-preference-store.md`、`session-runtime-controls.md` | 📌 架构参考 | 非计划文档，随实现更新 |
 

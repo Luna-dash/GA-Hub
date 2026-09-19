@@ -2,7 +2,8 @@
 
 > **本文定位：盘点过程与证据记录。**
 > 状态视图已并入 [`README.md`](./README.md) §2，待办动作与顺序已并入 [`TODO_REMAINING.md`](./TODO_REMAINING.md)。
-> 动手前请看那两份，本文只用于追溯"为什么得出这个结论"。
+> **2026-09-20 更新**：本文关于 `GA_HUB_BOUNDARY_PLAN.md`、批次 1–5、路线 A/B 和 Memory 只读/端点化的结论已经作废；关系治理只按 [`gahub-frontend-implementation-plan.md`](./gahub-frontend-implementation-plan.md) 执行。
+> 动手前请看上述活文档，本文只用于追溯“当时为什么得出这个结论”。
 >
 > **⚠️ 2026-09-18 更正（实测后）**：§1 第 1 行与 §3 P0-1 关于「桌面端未重建 / `target` 下无 release exe」的
 > 结论**有误**。实测 `src-tauri/target/x86_64-pc-windows-msvc/release/` 下两个 exe 均存在，构建于
@@ -75,20 +76,11 @@
 
 5. **G4：放弃（任务级）的引擎侧语义**——复核。引擎已有单 worker 级 `abort_subagent(origin=...)` 与 `CANCELLED` 终态（`conductor_core.py:1567`、`gahub_app.py:1920`），Hub 侧也走该端点；但计划把 G4 列为未开工，需按 `conductor-task-model.md` §4 核对是否还缺 **workflow 级终态**收口。
 
-### P1 · 两仓边界（`GA_HUB_BOUNDARY_PLAN.md`）
+### P1 · 两仓关系治理（旧结论已作废）
 
-6. **批次 1 · 声明与可见性**（零行为变更、风险最低，却仍未做）：
-   - `GET /health` 增 `protocol_version` + `capabilities`（R5）；
-   - 更正三处失真文档（`README.md:5-6`、`server/_paths.py:36-37` 的"零侵入"、`GA/memory/ga_update_sop.md:34`）；
-   - 跨仓常量抽 `*.golden.json`（完成标记三拼法、事件 kind 表、`INSTR_*`）+ 两侧一致性测试（R4）。
+> 本节原列出 `GA_HUB_BOUNDARY_PLAN.md` 的批次 1–5，包括“全部跨进程”“Memory 端点化或只读”“重命名 `frontends/gahub`”等动作。它们已于 2026-09-20 被新架构决策取代，不得继续执行。
 
-7. **批次 2 · 数据归属**（R2）：Hub 停写 `GA/memory/global_mem*.txt`——二选一（引擎新增 `POST /memory/...` 端点 / 降级只读）；`gahub_journal` 语义改为"共享运行时状态"并给 `GAHUB_JOURNAL_PATH` 明确默认值 + 启动日志。
-
-8. **批次 3 · 命名与去重**（R3）：`GA/frontends/gahub/` → `frontends/conductor/`（保留一个 release 的旧入口 shim）；去客户端品牌（docstring / 日志前缀 `[gahub]`）；删 Hub 侧与引擎重复的 `conductor_ext_timeout.py`。
-
-9. **批次 4 · 进程边界**（R1，最高风险）：路线 A 逐步端点化 vs 路线 B（先冻结 `GA_EMBEDDED_API.md` 清单 + 越界 import 契约测试）。**卡在拍板**。
-
-10. **批次 5 · 抽独立包**（长期、可选）。
+当前结论只保留为：GA-Hub 是 GA 的特殊 frontend；主 Agent 高语义能力走受控进程内 bridge，Conductor 走 HTTP/SSE，Memory 由 Hub 授权编辑并增加冲突保护。具体波次见 [`gahub-frontend-implementation-plan.md`](./gahub-frontend-implementation-plan.md) §10 和 [`TODO_REMAINING.md`](./TODO_REMAINING.md) W3。
 
 ### P2 · 可靠性方案遗留（`conductor-reliability-plan.md` §8.4）
 
@@ -148,7 +140,6 @@
 
 1. ~~**W0 先做安全**：Datalab key 轮换（已到 `origin/main`，删文件不能补救）。~~ → 已出列
 2. ~~**W1 加 McAfee 排除项 → 重建桌面端 → 补 `child-process-lifecycle` §8.5 实机验收**。~~ → 已出列（重建已完成）
-3. **W2 GA 侧 G3**（新任务边界换归档 + 清上下文）→ 追加 reopen → G4 复核。**引擎是脚本，改完重启即生效，不需要重建**，是唯一「改完即生效」的轨道。
-4. **W3 边界批次 1**（声明与可见性 + golden 常量）→ 需决策 ② 后做批次 2 → 批次 3。
-5. 批次 4/5 需决策 ①。
-6. 文档过期项随手勾销（§4 已完成）。
+3. **W2 GA 侧 G3**（新任务边界换归档 + 清上下文）→ 追加 reopen → G4 复核。**引擎是脚本，改完重启即生效，不需要重建**。
+4. **W3 关系治理**：本盘点当时提出的批次和决策点已经作废；按 [`TODO_REMAINING.md`](./TODO_REMAINING.md) W3.0–W3.7 执行。
+5. 文档过期项随手勾销（§4 已完成）。
