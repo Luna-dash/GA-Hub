@@ -12,10 +12,10 @@ from server.process_utils import hidden_process_kwargs
 from server.services.feishu_service import FeishuService
 
 
-def _chat_line(event_id: str, *, newline: bool = True) -> str:
+def _chat_line(event_id: str, *, newline: bool = True, marker: str | None = None) -> str:
     payload = {"event_id": event_id, "type": "message", "text": event_id}
     suffix = "\n" if newline else ""
-    return f"INFO {FeishuService._CHAT_MARKER}{json.dumps(payload)}{suffix}"
+    return f"INFO {marker or FeishuService._CHAT_MARKERS[0]}{json.dumps(payload)}{suffix}"
 
 
 def test_feishu_log_cursor_reads_tail_then_only_appends(tmp_path):
@@ -298,3 +298,34 @@ def test_failed_log_refresh_releases_waiters_and_allows_retry():
 
     assert sorted(results, key=str) == [1, "error"]
     assert attempts == 2
+
+
+def test_feishu_chat_accepts_both_markers_and_dedupes_dual_emit(tmp_path):
+    """During the dual-emit window fsapp prints each event twice (new + legacy
+    marker). Both must parse, and event_id dedupe must collapse them to one."""
+    legacy = FeishuService._CHAT_MARKERS[1]
+    log_file = tmp_path / "feishuapp.log"
+    log_file.write_text(
+        _chat_line("dual-1") + _chat_line("dual-1", marker=legacy)
+        + _chat_line("legacy-only", marker=legacy),
+        encoding="utf-8",
+    )
+    service = FeishuService()
+
+    with mock.patch.object(service, "log_file", return_value=log_file), mock.patch(
+        "server.services.feishu_service.bus.publish"
+    ) as publish:
+        assert service._publish_chat_events_from_log() == 2
+        assert publish.call_count == 2
+
+    assert [call.args[1]["event_id"] for call in publish.call_args_list] == [
+        "dual-1",
+        "legacy-only",
+    ]
+
+
+def test_feishu_chat_markers_are_product_neutral_first():
+    """New marker must not carry any downstream product name; legacy is windowed."""
+    assert FeishuService._CHAT_MARKERS[0] == "__GA_FRONTEND_EVENT__"
+    assert "GAHUB" not in FeishuService._CHAT_MARKERS[0]
+    assert len(FeishuService._CHAT_MARKERS) == 2

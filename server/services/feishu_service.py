@@ -30,7 +30,11 @@ from ..event_topics import (
 class FeishuService:
     _instance: "FeishuService | None" = None
 
-    _CHAT_MARKER = "__GAHUB_FEISHU_CHAT__"
+    # GA-owned wire protocol emitted by fsapp.py via stdout. New marker is
+    # product-neutral; the legacy GAHUB-prefixed marker is accepted during a
+    # dual-emit compatibility window and removed afterwards (see fsapp.py).
+    _CHAT_MARKERS = ("__GA_FRONTEND_EVENT__", "__GAHUB_FEISHU_CHAT__")
+    _CHAT_MARKER = _CHAT_MARKERS[0]
     _CHECK_CACHE_TTL_SECONDS = 15.0
     _STATUS_PID_CACHE_TTL_SECONDS = 1.0
     _STATUS_LOG_REFRESH_SECONDS = 1.0
@@ -81,10 +85,16 @@ class FeishuService:
     def _publish_chat_events_from_text(self, text: str) -> int:
         payloads: list[dict[str, Any]] = []
         for line in (text or "").splitlines():
-            marker_at = line.find(self._CHAT_MARKER)
+            marker_at = -1
+            marker = ""
+            for candidate in self._CHAT_MARKERS:
+                idx = line.find(candidate)
+                if idx >= 0 and (marker_at < 0 or idx < marker_at):
+                    marker_at = idx
+                    marker = candidate
             if marker_at < 0:
                 continue
-            raw = line[marker_at + len(self._CHAT_MARKER):].strip()
+            raw = line[marker_at + len(marker):].strip()
             try:
                 payload = json.loads(raw)
             except Exception:

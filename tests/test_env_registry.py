@@ -20,7 +20,8 @@ MARKERS = {
     "GA_HUB_MYKEY_PYTHON",  # stdout probe marker (routes/mykey.py)
     "GA_HUB_HIDE_LOADING",  # Tauri loading gate (main.rs)
     "GA_HUB_RUNTIME",       # window global injected by main.rs
-    "GAHUB_FEISHU_CHAT",    # chat id marker in feishu messages (feishu_service)
+    "GAHUB_FEISHU_CHAT",    # DEPRECATED legacy chat marker (feishu_service, dual-marker window)
+    "GA_FRONTEND_EVENT",    # product-neutral fsapp stdout event marker (feishu_service)
     "GA_HUB_PERF",          # __GA_HUB_PERF__ webui window global (chatPerformance.ts)
 }
 
@@ -62,7 +63,7 @@ def _scan_files() -> list[Path]:
 
 def test_every_ga_hub_name_is_registered() -> None:
     registered = _registered_names() | MARKERS
-    pattern = re.compile(r"(?:GA_HUB_|GAHUB_|GA_MYKEY_)[A-Z_]+")
+    pattern = re.compile(r"(?:GA_HUB_|GAHUB_|GA_MYKEY_|GA_FRONTEND_)[A-Z_]+")
     offenders: list[str] = []
     for path in _scan_files():
         for lineno, line in enumerate(
