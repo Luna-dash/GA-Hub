@@ -8,6 +8,7 @@ import {
   openSessionChat,
   sessionActivity,
   sessionChatHref,
+  sessionRecencyMs,
   sessionStatusLabel,
   structuredErrorDetailFromError,
 } from './sessionUi'
@@ -137,5 +138,28 @@ describe('session UI contracts', () => {
   it('provides a useful fallback title for untitled sessions', () => {
     expect(sessionStatusLabel(runtime('a', 'error'))).toBe('异常')
     expect(session('a').title).toBe('')
+  })
+
+  describe('sessionRecencyMs', () => {
+    it('reads the sidecar stamp and the optimistic stamp as the same instant', () => {
+      // `datetime.now(timezone.utc).isoformat()` vs `new Date().toISOString()`.
+      expect(sessionRecencyMs({ updated_at: '2026-09-18T06:00:00.123000+00:00', created_at: '' }))
+        .toBe(Date.parse('2026-09-18T06:00:00.123Z'))
+      // A whole second carries no fraction at all — isoformat drops it.
+      expect(sessionRecencyMs({ updated_at: '2026-09-18T06:00:00+00:00', created_at: '' }))
+        .toBe(Date.parse('2026-09-18T06:00:00Z'))
+    })
+
+    it('orders stamps by time, not by which flavour wrote them', () => {
+      const sidecar = { updated_at: '2026-09-18T06:00:00.123456+00:00', created_at: '' }
+      const optimistic = { updated_at: '2026-09-18T06:00:01.000Z', created_at: '' }
+      expect(sessionRecencyMs(optimistic)).toBeGreaterThan(sessionRecencyMs(sidecar))
+    })
+
+    it('falls back to created_at and bottoms out at 0 for unusable rows', () => {
+      expect(sessionRecencyMs({ updated_at: '', created_at: '2026-09-18T06:00:00Z' }))
+        .toBe(Date.parse('2026-09-18T06:00:00Z'))
+      expect(sessionRecencyMs({ updated_at: 'not-a-date', created_at: 'also-bad' })).toBe(0)
+    })
   })
 })

@@ -43,6 +43,7 @@ import { isTauriDesktop, selectDirectory } from '@/utils/desktop'
 import { defaultSessionLlmKey, resolveSessionLlmKey } from '@/utils/llm'
 import { MainModelSelect } from '@/components/ModelSelect'
 import { useHubEvent } from '@/hooks/useHubEvent'
+import { markSessionUsed } from '@/queries/sessions'
 import { queryKeys } from '@/queries/queryKeys'
 
 export default function LiveChat() {
@@ -347,6 +348,10 @@ export default function LiveChat() {
       const promptText = buildSessionPromptText(t, sourceAtts)
       const stageId = stageWebui(t, sourceAtts)
       transcriptRef.current?.pinToBottom()
+      // Lift the row the moment the user sends. A cold-start submit holds its
+      // HTTP response until the runtime is admitted, so waiting for the
+      // response left the rail showing the old order for seconds.
+      markSessionUsed(queryClient, sid)
       try {
         await api.sessionRun(sid, promptText, sourceAtts.map((a) => a.path))
         if (sessionIdRef.current !== sid) return
@@ -370,6 +375,11 @@ export default function LiveChat() {
         } else {
           pushSystem(`_发送失败：${errorMessageFromError(e)}。草稿已保留，可直接重试。_`, noticeKeys.sendBlocked)
         }
+      } finally {
+        // The optimistic bump above is only a guess: the sidecar stamps its own
+        // `updated_at` on submit, and a refused submit never stamps at all.
+        // Revalidate so the rail converges on the sidecar's order either way.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
       }
     })().catch((e: any) => {
       pushSystem(`_创建会话失败：${errorMessageFromError(e)}。草稿已保留，可直接重试。_`, noticeKeys.sessionCreateFail)

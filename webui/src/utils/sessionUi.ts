@@ -1,7 +1,26 @@
-import type { SessionRuntime } from '@/api/types'
+import type { HubSession, SessionRuntime } from '@/api/types'
 import { storageKeys } from '@/config/storageKeys'
 
 export type SessionActivity = 'active' | 'idle' | 'error' | 'unknown'
+
+/** Rail ordering key: epoch ms of the last real activity (submit / btw / rewind).
+ *
+ * Callers must go through this parser rather than comparing the raw strings.
+ * Two writers stamp `updated_at`: the sidecar uses
+ * `datetime.now(utc).isoformat()` (`...T06:34:21.123456+00:00`, and it omits
+ * the fraction entirely when the microsecond is 0), while a frontend optimistic
+ * bump uses `toISOString()` (`...T06:34:21.123Z`). Text comparison orders those
+ * two spellings of the same instant by accident of format, not by time — it
+ * only holds while every writer agrees on the flavour. Parsing to epoch ms
+ * makes the key explicit and survives a legacy or non-UTC stamp.
+ */
+export function sessionRecencyMs(session: Pick<HubSession, 'updated_at' | 'created_at'>): number {
+  for (const stamp of [session.updated_at, session.created_at]) {
+    const parsed = Date.parse(stamp ?? '')
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return 0
+}
 
 export interface CapacityConflict {
   message: string

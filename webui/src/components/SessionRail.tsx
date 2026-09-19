@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { HubSession, SessionRuntime } from '@/api/types'
-import { sessionActivity, sessionStatusLabel } from '@/utils/sessionUi'
+import { sessionActivity, sessionRecencyMs, sessionStatusLabel } from '@/utils/sessionUi'
 import { usePageState } from '@/utils/pageState'
 import { RAIL_TITLE_SCALE_EVENT, getRailTitleScale } from '@/utils/railAppearance'
 import { storageKeys } from '@/config/storageKeys'
@@ -86,6 +86,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
   const [savingId, setSavingId] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const deleteConfirmRef = useRef<HTMLDivElement>(null)
   const [terminalState, setTerminalState] = useState<TerminalMap>(() => readJson<TerminalMap>(TERMINAL_KEY, {}))
   const [seenCompletedRuns, setSeenCompletedRuns] = useState<Record<string, string>>(
     () => readJson<Record<string, string>>(SEEN_COMPLETED_KEY, {}),
@@ -138,12 +139,9 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
     // Single stable key: latest activity first. Deliberately NOT state-grouped
     // (the old unstarted/active/other bands made a session jump between bands
     // whenever a run started or stopped), so stopping a run never moves a row.
-    const activity = (session: HubSession) => session.updated_at || session.created_at
-    return [...sessions].sort((a, b) => {
-      const byActivity = activity(b).localeCompare(activity(a))
-      if (byActivity !== 0) return byActivity
-      return b.created_at.localeCompare(a.created_at)
-    })
+    // Ties keep the incoming order (Array#sort is stable) — that order is the
+    // sidecar's own recency sort, so there is no second client-side opinion.
+    return [...sessions].sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))
   }, [sessions])
 
   const displayState = (session: HubSession): 'active' | 'completed' | 'idle' | 'error' => {
@@ -168,11 +166,8 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
       else projects.set(name, [session])
     })
     const groupActivity = (list: HubSession[]) => list.reduce(
-      (latest, session) => {
-        const stamp = session.updated_at || session.created_at
-        return stamp > latest ? stamp : latest
-      },
-      '',
+      (latest, session) => Math.max(latest, sessionRecencyMs(session)),
+      0,
     )
     const groups: SessionGroup[] = [
       { key: 'free', name: '自由会话', projectPath: null, sessions: free },
@@ -183,9 +178,9 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
         sessions,
       })),
     ].filter((group) => group.sessions.length > 0)
-    groups.sort((a, b) => groupActivity(b.sessions).localeCompare(groupActivity(a.sessions)))
+    groups.sort((a, b) => groupActivity(b.sessions) - groupActivity(a.sessions))
     return groups
-  }, [orderedSessions, runtimes])
+  }, [orderedSessions])
   const hasProjectGroups = sessionGroups.some((group) => group.key !== 'free')
 
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(
@@ -308,6 +303,27 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
     }
   }
 
+  // The confirm strip must not be sticky. It used to be dismissable only
+  // through its own 取消 button, which at this rail width read as a trap — a
+  // stray strip also sat on top of the row behind it. A press anywhere outside
+  // the strip (or Escape) cancels instead. While a delete is in flight the
+  // strip is pinned: it is the only place showing 删除中….
+  useEffect(() => {
+    if (!confirmDeleteId || deletingId) return
+    const dismiss = (event: Event) => {
+      if (event.type === 'keydown' && (event as KeyboardEvent).key !== 'Escape') return
+      const target = event.target
+      if (event.type !== 'keydown' && target instanceof Node && deleteConfirmRef.current?.contains(target)) return
+      setConfirmDeleteId(null)
+    }
+    window.addEventListener('pointerdown', dismiss, true)
+    window.addEventListener('keydown', dismiss, true)
+    return () => {
+      window.removeEventListener('pointerdown', dismiss, true)
+      window.removeEventListener('keydown', dismiss, true)
+    }
+  }, [confirmDeleteId, deletingId])
+
   const removeSession = async (session: HubSession) => {
     if (!onDelete || deletingId || sessionActivity(runtimes[session.id]) === 'active') return
     setDeletingId(session.id)
@@ -407,6 +423,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                   <div
                     key={session.id}
                     data-activity={activity}
+                    data-session-id={session.id}
                     className={clsx(
                       'group relative w-52 shrink-0 rounded-xl border transition-colors md:w-full',
                       activityCard[activity],
@@ -443,15 +460,26 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                       </button>
                     )}
                     {!editing && (
-                      <div className="absolute right-2 top-2 flex items-center gap-0.5">
+                      <div
+                        className={clsx(
+                          // A permanent × on every row read as "everything here is
+                          // deletable". Reveal on hover or keyboard focus, and keep
+                          // it up on the selected row so a pointer-less/touch
+                          // surface can still reach it.
+                          'absolute right-2 top-2 flex items-center gap-0.5 transition-opacity duration-150',
+                          current
+                            ? 'opacity-100'
+                            : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100',
+                        )}
+                      >
                         {onDelete && (
                           <button
                             type="button"
                             onClick={() => setConfirmDeleteId(session.id)}
                             disabled={activity === 'active' || deletingId === session.id}
                             aria-label={`删除 ${sessionTitle(session)}`}
-                            title={activity === 'active' ? '请先停止任务再删除' : '删除会话'}
-                            className="rounded p-1 text-xs text-status-danger opacity-50 transition hover:bg-status-danger-soft hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-25"
+                            title={activity === 'active' ? '请先停止任务再删除' : '删除会话索引（不影响归档文件）'}
+                            className="rounded p-1 text-xs text-status-danger transition hover:bg-status-danger-soft disabled:cursor-not-allowed disabled:opacity-25"
                           >
                             ×
                           </button>
@@ -462,12 +490,27 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                       <span className="block px-3 pb-2 pl-7 text-[10px] opacity-70">{savingId === session.id ? '保存中…' : sessionStatusLabel(runtime)}</span>
                     )}
                     {confirmDeleteId === session.id && (
-                      <div role="alertdialog" aria-label={`确认删除 ${sessionTitle(session)}`} className="mx-2 mb-2 flex items-center justify-between gap-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-2 py-1.5 text-[11px] text-status-danger">
-                        <span>永久删除？</span>
-                        <span className="flex gap-1">
-                          <button type="button" disabled={deletingId === session.id} onClick={() => { void removeSession(session) }} className="rounded bg-status-danger px-2 py-1 text-white disabled:opacity-50">{deletingId === session.id ? '删除中…' : '确认'}</button>
-                          <button type="button" disabled={deletingId === session.id} onClick={() => setConfirmDeleteId(null)} className="rounded border border-status-danger-line px-2 py-1 disabled:opacity-50">取消</button>
-                        </span>
+                      <div
+                        ref={deleteConfirmRef}
+                        role="alertdialog"
+                        aria-label={`确认删除 ${sessionTitle(session)}`}
+                        className="mx-2 mb-2 flex items-center justify-between gap-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-2 py-1.5 text-[11px] text-status-danger"
+                      >
+                        <span className="whitespace-nowrap">删除索引？</span>
+                        <button
+                          type="button"
+                          disabled={deletingId === session.id}
+                          // Failure is reported by the page (pushSystem); without
+                          // this catch the rejection would surface as an
+                          // unhandled promise rejection in the renderer.
+                          onClick={() => { void removeSession(session).catch(() => {}) }}
+                          // leading-none: at 200px rail width the inherited
+                          // 1.5 line-height made this button 24.5px tall and
+                          // the strip 38.5px — compact it to ~33px.
+                          className="shrink-0 whitespace-nowrap rounded bg-status-danger px-2 py-1 leading-none text-white disabled:opacity-50"
+                        >
+                          {deletingId === session.id ? '删除中…' : '确认'}
+                        </button>
                       </div>
                     )}
                   </div>

@@ -89,10 +89,57 @@ describe('SessionRail', () => {
     const idleDelete = host.querySelector('[aria-label="删除 未命名会话 · bbbbbbbb"]') as HTMLButtonElement
     act(() => idleDelete.click())
     expect(host.querySelector('[role="alertdialog"]')?.getAttribute('aria-label')).toBe('确认删除 未命名会话 · bbbbbbbb')
+    expect(host.querySelector('[role="alertdialog"]')?.textContent).toContain('删除索引？')
     const confirm = Array.from(host.querySelectorAll('[role="alertdialog"] button'))
       .find((button) => button.textContent === '确认') as HTMLButtonElement
+    // 只剩一个按钮：取消就是「点别处」
+    expect(host.querySelectorAll('[role="alertdialog"] button')).toHaveLength(1)
     await act(async () => { confirm.click() })
     expect(onDelete).toHaveBeenCalledWith(sessions[1].id)
+  })
+
+  it('hides the delete affordance until the row is hovered, focused, or selected', () => {
+    act(() => root.render(
+      <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} onDelete={vi.fn()} />,
+    ))
+
+    const classesOf = (label: string) => (
+      host.querySelector(`[aria-label="${label}"]`) as HTMLButtonElement
+    ).parentElement!.className.split(/\s+/)
+
+    // 选中行常显：触屏没有 hover，否则删除键永远够不到
+    expect(classesOf('删除 研究任务')).toContain('opacity-100')
+    expect(classesOf('删除 研究任务')).not.toContain('opacity-0')
+
+    const other = classesOf('删除 未命名会话 · bbbbbbbb')
+    expect(other).toContain('opacity-0')
+    expect(other).toContain('group-hover:opacity-100')
+    expect(other).toContain('focus-within:opacity-100')
+  })
+
+  it('cancels the delete confirmation from anywhere outside it, or with Escape', () => {
+    act(() => root.render(
+      <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} onDelete={vi.fn()} />,
+    ))
+
+    const openConfirm = () => {
+      act(() => (host.querySelector('[aria-label="删除 未命名会话 · bbbbbbbb"]') as HTMLButtonElement).click())
+      expect(host.querySelector('[role="alertdialog"]')).not.toBeNull()
+    }
+
+    openConfirm()
+    act(() => { window.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })) })
+    expect(host.querySelector('[role="alertdialog"]')).toBeNull()
+
+    openConfirm()
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+    expect(host.querySelector('[role="alertdialog"]')).toBeNull()
+
+    // 非 Escape 的按键不误关
+    openConfirm()
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' })) })
+    expect(host.querySelector('[role="alertdialog"]')).not.toBeNull()
+    act(() => { window.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })) })
   })
 
   it('creates and renames sessions from the workspace rail', async () => {
@@ -290,6 +337,8 @@ describe('SessionRail', () => {
       />,
     ))
     const whileRunning = orderOf()
+    // 唯一钥匙是最近活动时间：c(11:00) > b(10:00) > a(09:00)
+    expect(whileRunning).toEqual([sessions[2].id, sessions[1].id, sessions[0].id])
 
     act(() => root.render(
       <SessionRail
@@ -304,6 +353,31 @@ describe('SessionRail', () => {
     ))
 
     expect(orderOf()).toEqual(whileRunning)
+  })
+
+  it('lifts a session to the top as soon as its activity stamp moves', () => {
+    // 发消息 → 乐观提升 updated_at → 会话必须立刻置顶（旧缓存只在重连/重挂载
+    // 时才刷新，于是同一行会长时间停在原位）。
+    const orderOf = () => Array.from(host.querySelectorAll('[data-activity]'))
+      .map((card) => card.getAttribute('data-session-id'))
+
+    act(() => root.render(
+      <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,
+    ))
+    expect(orderOf()).toEqual([sessions[2].id, sessions[1].id, sessions[0].id])
+
+    act(() => root.render(
+      <SessionRail
+        sessions={sessions.map((item) => (
+          item.id === sessions[0].id ? { ...item, updated_at: '2026-08-05T12:00:00Z' } : item
+        ))}
+        runtimes={runtimes}
+        currentId={sessions[0].id}
+        onSelect={vi.fn()}
+      />,
+    ))
+
+    expect(orderOf()).toEqual([sessions[0].id, sessions[2].id, sessions[1].id])
   })
 
   it('shows an unseen completed run immediately and persists acknowledgement on selection', () => {
