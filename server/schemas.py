@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .services.session_runtime_status import STATUS_IDLE
 
@@ -294,13 +294,32 @@ class TextWrite(BaseModel):
     content: str
 
 
+class MemoryWriteReq(BaseModel):
+    content: str
+    # Decimal strings avoid losing nanosecond precision in JavaScript.
+    # Both nullable fields are required so callers must acknowledge whether
+    # the file existed when their editable snapshot was loaded.
+    expected_mtime_ns: str | None = Field(pattern=r"^\d+$")
+    expected_sha256: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def validate_snapshot_pair(self) -> "MemoryWriteReq":
+        if (self.expected_mtime_ns is None) != (self.expected_sha256 is None):
+            raise ValueError("expected_mtime_ns and expected_sha256 must both be null or both be set")
+        return self
+
+
 class MemoryTextResp(BaseModel):
     content: str
+    mtime_ns: str | None
+    sha256: str | None
 
 
 class MemoryWriteResp(BaseModel):
     ok: bool
     size: int
+    mtime_ns: str
+    sha256: str
 
 
 class SOPItem(BaseModel):
@@ -316,6 +335,8 @@ class SOPListResp(BaseModel):
 class SOPDetailResp(BaseModel):
     name: str
     content: str
+    mtime_ns: str
+    sha256: str
 
 
 class SkillItem(BaseModel):

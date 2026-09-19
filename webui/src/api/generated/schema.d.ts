@@ -3388,6 +3388,19 @@ export interface components {
         MemoryTextResp: {
             /** Content */
             content: string;
+            /** Mtime Ns */
+            mtime_ns: string | null;
+            /** Sha256 */
+            sha256: string | null;
+        };
+        /** MemoryWriteReq */
+        MemoryWriteReq: {
+            /** Content */
+            content: string;
+            /** Expected Mtime Ns */
+            expected_mtime_ns: string | null;
+            /** Expected Sha256 */
+            expected_sha256: string | null;
         };
         /** MemoryWriteResp */
         MemoryWriteResp: {
@@ -3395,6 +3408,10 @@ export interface components {
             ok: boolean;
             /** Size */
             size: number;
+            /** Mtime Ns */
+            mtime_ns: string;
+            /** Sha256 */
+            sha256: string;
         };
         /** MyKeyBackup */
         MyKeyBackup: {
@@ -3686,6 +3703,10 @@ export interface components {
             name: string;
             /** Content */
             content: string;
+            /** Mtime Ns */
+            mtime_ns: string;
+            /** Sha256 */
+            sha256: string;
         };
         /** SOPItem */
         SOPItem: {
@@ -4122,11 +4143,6 @@ export interface components {
             run_id: string;
             /** Stream Id */
             stream_id: string;
-        };
-        /** TextWrite */
-        TextWrite: {
-            /** Content */
-            content: string;
         };
         /** UploadResp */
         UploadResp: {
@@ -5302,7 +5318,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TextWrite"];
+                "application/json": components["schemas"]["MemoryWriteReq"];
             };
         };
         responses: {
@@ -5355,7 +5371,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TextWrite"];
+                "application/json": components["schemas"]["MemoryWriteReq"];
             };
         };
         responses: {
@@ -5441,7 +5457,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TextWrite"];
+                "application/json": components["schemas"]["MemoryWriteReq"];
             };
         };
         responses: {

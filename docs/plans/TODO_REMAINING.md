@@ -52,8 +52,8 @@
 
 ### W3.1 真实性与数据安全
 
-- [ ] 修正 README、pyproject、路径注释中“磁盘零侵入/从不写 GA”表述。
-- [ ] Memory 写入增加 `expected_mtime` 或内容 hash、HTTP 409、写前备份、原子替换和前端重新载入。
+- [x] 修正 README、pyproject、路径注释中“磁盘零侵入/从不写 GA”表述。
+- [x] Memory 写入增加 `expected_mtime` 或内容 hash、HTTP 409、写前备份、原子替换和前端重新载入。
 - [ ] 清理 `frontends/gahub/__init__.py` 对 `gahub_app` 的 wildcard 导入。
 - [ ] 增加 bridge 子模块 import 无副作用测试。
 

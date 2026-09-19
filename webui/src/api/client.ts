@@ -28,6 +28,7 @@ import type {
   EmailTestResponse,
   LLMInfo,
   MemoryTextResponse,
+  MemoryWriteRequest,
   MemoryWriteResponse,
   MyKeyBackupListResponse,
   MyKeyData,
@@ -336,13 +337,13 @@ export const api = {
 
   // ── memory ───────────────────────────────────────────
   globalMem: () => http<MemoryTextResponse>('GET', '/api/memory/global'),
-  setGlobalMem: (content: string) => http<MemoryWriteResponse>('PUT', '/api/memory/global', { content }),
+  setGlobalMem: (body: MemoryWriteRequest) => http<MemoryWriteResponse>('PUT', '/api/memory/global', body),
   insight: () => http<MemoryTextResponse>('GET', '/api/memory/insight'),
-  setInsight: (content: string) => http<MemoryWriteResponse>('PUT', '/api/memory/insight', { content }),
+  setInsight: (body: MemoryWriteRequest) => http<MemoryWriteResponse>('PUT', '/api/memory/insight', body),
   sops: () => http<SOPListResponse>('GET', '/api/memory/sops'),
   sop: (name: string) => http<SOPDetailResponse>('GET', `/api/memory/sops/${encodeURIComponent(name)}`),
-  setSop: (name: string, content: string) =>
-    http<MemoryWriteResponse>('PUT', `/api/memory/sops/${encodeURIComponent(name)}`, { content }),
+  setSop: (name: string, body: MemoryWriteRequest) =>
+    http<MemoryWriteResponse>('PUT', `/api/memory/sops/${encodeURIComponent(name)}`, body),
 
   skills: (limit = 200) => http<SkillListResponse>('GET', `/api/memory/skills?limit=${limit}`),
   skill: (path: string) => http<SkillDetailResponse>('GET', `/api/memory/skills/read?path=${encodeURIComponent(path)}`),

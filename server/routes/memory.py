@@ -2,13 +2,21 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
+import hashlib
 import logging
 import os
+from pathlib import Path
+import stat
+import tempfile
+import threading
+import time
 
 from fastapi import APIRouter, HTTPException, Query
 
 from ..schemas import (
     MemoryTextResp,
+    MemoryWriteReq,
     MemoryWriteResp,
     SOPDetailResp,
     SOPItem,
@@ -19,7 +27,6 @@ from ..schemas import (
     SkillSearchHit,
     SkillSearchMatch,
     SkillSearchResp,
-    TextWrite,
 )
 from .. import _paths
 
@@ -33,42 +40,200 @@ def _insight() -> str: return str(_paths.memory_dir() / "global_mem_insight.txt"
 def _skill_dir() -> str: return str(_paths.memory_dir() / "skill_search")
 
 
+_memory_write_lock = threading.RLock()
+_UTF8_BOM = b"\xef\xbb\xbf"
+
+
+@dataclass(frozen=True)
+class _MemorySnapshot:
+    exists: bool
+    data: bytes
+    content: str
+    mtime_ns: str | None
+    sha256: str | None
+    mode: int | None
+
+    def response(self) -> dict:
+        return {
+            "content": self.content,
+            "mtime_ns": self.mtime_ns,
+            "sha256": self.sha256,
+        }
+
+
 def _read(path: str) -> str:
+    """Read a UTF-8 text file for the read-only skill endpoints."""
     if not os.path.isfile(path):
         return ""
-    with open(path, encoding="utf-8") as fh:
+    with open(path, encoding="utf-8-sig", newline="") as fh:
         return fh.read()
 
 
-def _write(path: str, content: str) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(content)
-    os.replace(tmp, path)
+def _snapshot(path: str) -> _MemorySnapshot:
+    """Read bytes and metadata from one stable path snapshot."""
+    for _attempt in range(3):
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+                opened = os.fstat(fh.fileno())
+            current = os.stat(path)
+        except FileNotFoundError:
+            return _MemorySnapshot(False, b"", "", None, None, None)
+
+        opened_id = (opened.st_dev, opened.st_ino, opened.st_mtime_ns, opened.st_size)
+        current_id = (current.st_dev, current.st_ino, current.st_mtime_ns, current.st_size)
+        if opened_id == current_id:
+            content = data.decode("utf-8-sig")
+            return _MemorySnapshot(
+                True,
+                data,
+                content,
+                str(opened.st_mtime_ns),
+                hashlib.sha256(data).hexdigest(),
+                stat.S_IMODE(opened.st_mode),
+            )
+    raise HTTPException(409, detail={"error": "memory_busy", "message": "Memory file is changing; reload and retry."})
+
+
+def _same_version(snapshot: _MemorySnapshot, expected_mtime_ns: str | None, expected_sha256: str | None) -> bool:
+    return snapshot.mtime_ns == expected_mtime_ns and snapshot.sha256 == expected_sha256
+
+
+def _raise_conflict(snapshot: _MemorySnapshot) -> None:
+    raise HTTPException(
+        409,
+        detail={
+            "error": "memory_conflict",
+            "message": "Memory file changed since it was loaded. Reload before saving.",
+            "current_mtime_ns": snapshot.mtime_ns,
+            "current_sha256": snapshot.sha256,
+        },
+    )
+
+
+def _encode_like(snapshot: _MemorySnapshot, content: str) -> bytes:
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    if snapshot.exists:
+        old = snapshot.content
+        crlf = old.count("\r\n")
+        lone_lf = old.count("\n") - crlf
+        lone_cr = old.count("\r") - crlf
+        if crlf > lone_lf and crlf >= lone_cr:
+            normalized = normalized.replace("\n", "\r\n")
+        elif lone_cr > lone_lf and lone_cr > crlf:
+            normalized = normalized.replace("\n", "\r")
+    encoded = normalized.encode("utf-8")
+    if snapshot.data.startswith(_UTF8_BOM):
+        encoded = _UTF8_BOM + encoded
+    return encoded
+
+
+def _fsync_directory(directory: Path) -> None:
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _stage_bytes(destination: Path, data: bytes, mode: int | None = None) -> Path:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, raw_temp = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
+    temp_path = Path(raw_temp)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if mode is not None:
+            os.chmod(temp_path, mode)
+        return temp_path
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+
+def _backup_snapshot(path: str, snapshot: _MemorySnapshot) -> None:
+    if not snapshot.exists or snapshot.sha256 is None:
+        return
+    backup_dir = _paths.ADMIN_DATA / "memory-backups"
+    safe_name = Path(path).name.replace(os.sep, "_")
+    destination = backup_dir / f"{safe_name}.{time.time_ns()}.{snapshot.sha256[:12]}.bak"
+    staged = _stage_bytes(destination, snapshot.data, snapshot.mode)
+    try:
+        os.replace(staged, destination)
+        _fsync_directory(backup_dir)
+    finally:
+        staged.unlink(missing_ok=True)
+
+
+def _write_memory(path: str, req: MemoryWriteReq) -> dict:
+    with _memory_write_lock:
+        before = _snapshot(path)
+        if not _same_version(before, req.expected_mtime_ns, req.expected_sha256):
+            _raise_conflict(before)
+
+        new_data = _encode_like(before, req.content)
+        if before.exists and new_data == before.data:
+            return {
+                "ok": True,
+                "size": len(before.data),
+                "mtime_ns": before.mtime_ns,
+                "sha256": before.sha256,
+            }
+
+        destination = Path(path)
+        staged = _stage_bytes(destination, new_data, before.mode)
+        try:
+            # Re-check immediately before the side effects so an external edit
+            # cannot be silently overwritten after our initial validation.
+            current = _snapshot(path)
+            if not _same_version(current, before.mtime_ns, before.sha256):
+                _raise_conflict(current)
+            _backup_snapshot(path, before)
+            current = _snapshot(path)
+            if not _same_version(current, before.mtime_ns, before.sha256):
+                _raise_conflict(current)
+            os.replace(staged, destination)
+            _fsync_directory(destination.parent)
+        finally:
+            staged.unlink(missing_ok=True)
+
+        written = _snapshot(path)
+        return {
+            "ok": True,
+            "size": len(written.data),
+            "mtime_ns": written.mtime_ns,
+            "sha256": written.sha256,
+        }
 
 
 @router.get("/api/memory/global", response_model=MemoryTextResp)
 async def get_global():
     # File IO stays off the event loop — same contract as every other route.
-    return {"content": await asyncio.to_thread(_read, _global_mem())}
+    snapshot = await asyncio.to_thread(_snapshot, _global_mem())
+    return snapshot.response()
 
 
 @router.put("/api/memory/global", response_model=MemoryWriteResp)
-async def put_global(req: TextWrite):
-    await asyncio.to_thread(_write, _global_mem(), req.content)
-    return {"ok": True, "size": len(req.content)}
+async def put_global(req: MemoryWriteReq):
+    return await asyncio.to_thread(_write_memory, _global_mem(), req)
 
 
 @router.get("/api/memory/insight", response_model=MemoryTextResp)
 async def get_insight():
-    return {"content": await asyncio.to_thread(_read, _insight())}
+    snapshot = await asyncio.to_thread(_snapshot, _insight())
+    return snapshot.response()
 
 
 @router.put("/api/memory/insight", response_model=MemoryWriteResp)
-async def put_insight(req: TextWrite):
-    await asyncio.to_thread(_write, _insight(), req.content)
-    return {"ok": True, "size": len(req.content)}
+async def put_insight(req: MemoryWriteReq):
+    return await asyncio.to_thread(_write_memory, _insight(), req)
 
 
 def _list_sops() -> list[dict]:
@@ -95,7 +260,17 @@ async def list_sops():
 
 
 def _safe_sop_path(name: str) -> str:
-    if "/" in name or ".." in name or not name.endswith(".md"):
+    # This endpoint accepts one file name, never a path.  Check both separator
+    # styles and Windows drive/ADS syntax even when tests run on another OS.
+    if (
+        not name
+        or name in {".", ".."}
+        or "/" in name
+        or "\\" in name
+        or ":" in name
+        or "\x00" in name
+        or not name.endswith(".md")
+    ):
         raise HTTPException(400, "bad sop name")
     return os.path.join(_mem_dir(), name)
 
@@ -104,7 +279,8 @@ def _read_sop(name: str) -> dict:
     p = _safe_sop_path(name)
     if not os.path.isfile(p):
         raise HTTPException(404, "sop not found")
-    return {"name": name, "content": _read(p)}
+    snapshot = _snapshot(p)
+    return {"name": name, **snapshot.response()}
 
 
 @router.get("/api/memory/sops/{name}", response_model=SOPDetailResp)
@@ -113,10 +289,9 @@ async def read_sop(name: str):
 
 
 @router.put("/api/memory/sops/{name}", response_model=MemoryWriteResp)
-async def write_sop(name: str, req: TextWrite):
+async def write_sop(name: str, req: MemoryWriteReq):
     p = _safe_sop_path(name)
-    await asyncio.to_thread(_write, p, req.content)
-    return {"ok": True, "size": len(req.content)}
+    return await asyncio.to_thread(_write_memory, p, req)
 
 
 # ── skills ──────────────────────────────────────────────────────

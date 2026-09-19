@@ -9,7 +9,7 @@ from unittest import mock
 import pytest
 
 from server.routes import agent, autonomous, conductor, conversations, memory, mykey, notify, sessions, tasks, upload, wechat
-from server.schemas import ChatRetryConfigReq, RewindReq, TextWrite
+from server.schemas import ChatRetryConfigReq, MemoryWriteReq, RewindReq
 from server.services import mykey_service
 
 
@@ -206,16 +206,43 @@ def test_archive_page_projection_runs_in_worker_thread() -> None:
 
 def test_memory_read_write_run_in_worker_thread(tmp_path) -> None:
     target = tmp_path / "global_mem.txt"
+    snapshot = memory._MemorySnapshot(
+        exists=True,
+        data=b"body",
+        content="body",
+        mtime_ns="123",
+        sha256="a" * 64,
+        mode=0o644,
+    )
+    write_response = {
+        "ok": True,
+        "size": 1,
+        "mtime_ns": "124",
+        "sha256": "b" * 64,
+    }
+    request = MemoryWriteReq(
+        content="x",
+        expected_mtime_ns=None,
+        expected_sha256=None,
+    )
     with (
         mock.patch.object(memory, "_global_mem", return_value=str(target)),
-        mock.patch.object(memory, "_write", side_effect=lambda _p, _c: _slow_result(None)),
-        mock.patch.object(memory, "_read", side_effect=lambda _p: _slow_result("body")),
+        mock.patch.object(
+            memory,
+            "_write_memory",
+            side_effect=lambda _p, _req: _slow_result(write_response),
+        ),
+        mock.patch.object(
+            memory,
+            "_snapshot",
+            side_effect=lambda _p: _slow_result(snapshot),
+        ),
     ):
-        written = asyncio.run(_run_with_probe(memory.put_global(TextWrite(content="x"))))
+        written = asyncio.run(_run_with_probe(memory.put_global(request)))
         read = asyncio.run(_run_with_probe(memory.get_global()))
 
-    assert written == {"ok": True, "size": 1}
-    assert read == {"content": "body"}
+    assert written == write_response
+    assert read == snapshot.response()
 
 
 def test_memory_skill_search_runs_in_worker_thread() -> None:

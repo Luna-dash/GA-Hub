@@ -20,7 +20,7 @@
 
 ## 2. 重要设定（事实与约束）
 
-1. **仓库边界**：本会话绑定 `D:\study\GA-Hub`；GA 仓（`D:\study\GA`）只读——GA-Hub 项目铁律 "never modifies the GA repo"。
+1. **当时的任务边界（已被新方案取代）**：该会话只修改 `D:\study\GA-Hub`，未改 GA 仓。这里曾引用的 "never modifies the GA repo" 已由 2026-09-20 权威方案废止；当前 GA-Hub 可在用户授权下安全编辑 GA Memory、配置和运行状态文件。
 2. **FILE_HINT 是 GA 官方设计**（上游 `upstream/main` 含同一常量），每条 IM 消息前置；上游只在「首问预览」处剥离，归档历史读取（`continue_cmd._user_text`）不剥。
 3. **GA 恢复语义共四档**：`restore`（载入历史，日志不动）/ `continue_inplace`（接管原文件，追加）/ `continue_copy`（拷成新记录）/ `begin_fresh_session`；另有已失效的「快照」档。
 4. **锁缺口（决定性）**：IM 前端（fsapp/微信/QQ/Telegram）**不抢会话锁** → `session_occupant()` 把运行中的飞书会话判为「空闲」→ `continue_inplace` 会与 bot **双写同一归档**。故 inplace 不可用于 IM 源。

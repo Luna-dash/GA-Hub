@@ -1177,7 +1177,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TextWrite"
+                "$ref": "#/components/schemas/MemoryWriteReq"
               }
             }
           },
@@ -1231,7 +1231,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TextWrite"
+                "$ref": "#/components/schemas/MemoryWriteReq"
               }
             }
           },
@@ -1336,7 +1336,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TextWrite"
+                "$ref": "#/components/schemas/MemoryWriteReq"
               }
             }
           }
@@ -8021,13 +8021,76 @@
           "content": {
             "type": "string",
             "title": "Content"
+          },
+          "mtime_ns": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mtime Ns"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
           }
         },
         "type": "object",
         "required": [
-          "content"
+          "content",
+          "mtime_ns",
+          "sha256"
         ],
         "title": "MemoryTextResp"
+      },
+      "MemoryWriteReq": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "expected_mtime_ns": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d+$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Mtime Ns"
+          },
+          "expected_sha256": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Sha256"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content",
+          "expected_mtime_ns",
+          "expected_sha256"
+        ],
+        "title": "MemoryWriteReq"
       },
       "MemoryWriteResp": {
         "properties": {
@@ -8038,12 +8101,22 @@
           "size": {
             "type": "integer",
             "title": "Size"
+          },
+          "mtime_ns": {
+            "type": "string",
+            "title": "Mtime Ns"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
           }
         },
         "type": "object",
         "required": [
           "ok",
-          "size"
+          "size",
+          "mtime_ns",
+          "sha256"
         ],
         "title": "MemoryWriteResp"
       },
@@ -8789,12 +8862,22 @@
           "content": {
             "type": "string",
             "title": "Content"
+          },
+          "mtime_ns": {
+            "type": "string",
+            "title": "Mtime Ns"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
           }
         },
         "type": "object",
         "required": [
           "name",
-          "content"
+          "content",
+          "mtime_ns",
+          "sha256"
         ],
         "title": "SOPDetailResp"
       },
@@ -10030,19 +10113,6 @@
           "stream_id"
         ],
         "title": "TaskTriggerResp"
-      },
-      "TextWrite": {
-        "properties": {
-          "content": {
-            "type": "string",
-            "title": "Content"
-          }
-        },
-        "type": "object",
-        "required": [
-          "content"
-        ],
-        "title": "TextWrite"
       },
       "UploadResp": {
         "properties": {

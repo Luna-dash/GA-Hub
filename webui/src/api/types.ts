@@ -48,6 +48,7 @@ export interface LLMInfo {
 }
 
 export type MemoryTextResponse = ApiSchemas['MemoryTextResp']
+export type MemoryWriteRequest = ApiSchemas['MemoryWriteReq']
 export type MemoryWriteResponse = ApiSchemas['MemoryWriteResp']
 
 export interface SessionSnapshot {

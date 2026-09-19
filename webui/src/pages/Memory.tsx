@@ -1,8 +1,8 @@
 // Memory: tabs for global_mem.txt, insight, SOPs (markdown).
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
-import { MarkdownEditor } from '@/components/MarkdownEditor'
+import { VersionedMemoryEditor } from '@/components/VersionedMemoryEditor'
 import { toast } from '@/stores/toastStore'
 import { PageShell } from '@/components/PageShell'
 import { queryKeys } from '@/queries/queryKeys'
@@ -45,36 +45,56 @@ export default function Memory() {
   )
 }
 
+function memoryWriteError(error: unknown): void {
+  if ((error as { status?: number })?.status === 409) {
+    toast.error('保存冲突：磁盘版本已变化，草稿仍保留，请重载后合并')
+    return
+  }
+  toast.error('保存失败：' + errorMessageFromError(error))
+}
+
 function GlobalMem() {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.global, queryFn: api.globalMem })
-  const [v, setV] = useState('')
-  const [dirty, setDirty] = useState(false)
-  useEffect(() => { if (data) { setV(data.content); setDirty(false) } }, [data])
-  if (isLoading) return <div className="text-slate-500 text-sm">载入中…</div>
+  if (isLoading || !data) return <div className="text-slate-500 text-sm">载入中…</div>
   return (
-    <Editor
+    <VersionedMemoryEditor
       label="memory/global_mem.txt"
-      value={v}
-      dirty={dirty}
-      onChange={(s) => { setV(s); setDirty(true) }}
-      onSave={async () => { try { await api.setGlobalMem(v); setDirty(false); qc.invalidateQueries({ queryKey: queryKeys.memory.global }); toast.success('已保存 global_mem.txt') } catch (e: any) { toast.error('保存失败：' + errorMessageFromError(e)) } }}
+      snapshot={data}
+      onSave={api.setGlobalMem}
+      onReload={async () => {
+        const latest = await api.globalMem()
+        qc.setQueryData(queryKeys.memory.global, latest)
+        return latest
+      }}
+      onSaved={() => {
+        void qc.invalidateQueries({ queryKey: queryKeys.memory.global })
+        toast.success('已保存 global_mem.txt')
+      }}
+      onError={memoryWriteError}
     />
   )
 }
 
 function Insight() {
   const qc = useQueryClient()
-  const { data } = useQuery({ queryKey: queryKeys.memory.insight, queryFn: api.insight })
-  const [v, setV] = useState(''); const [dirty, setDirty] = useState(false)
-  useEffect(() => { if (data) { setV(data.content); setDirty(false) } }, [data])
+  const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.insight, queryFn: api.insight })
+  if (isLoading || !data) return <div className="text-slate-500 text-sm">载入中…</div>
   return (
-    <Editor
+    <VersionedMemoryEditor
       label="memory/global_mem_insight.txt"
-      value={v}
-      dirty={dirty}
-      onChange={(s) => { setV(s); setDirty(true) }}
-      onSave={async () => { try { await api.setInsight(v); setDirty(false); qc.invalidateQueries({ queryKey: queryKeys.memory.insight }); toast.success('已保存 insight') } catch (e: any) { toast.error('保存失败：' + errorMessageFromError(e)) } }}
+      snapshot={data}
+      onSave={api.setInsight}
+      onReload={async () => {
+        const latest = await api.insight()
+        qc.setQueryData(queryKeys.memory.insight, latest)
+        return latest
+      }}
+      onSaved={() => {
+        void qc.invalidateQueries({ queryKey: queryKeys.memory.insight })
+        toast.success('已保存 insight')
+      }}
+      onError={memoryWriteError}
     />
   )
 }
@@ -87,8 +107,6 @@ function SopList() {
   const [q, setQ] = usePageState('memory.sopQuery', '')
   const visible = filterSops(sops, q)
   const { data: cur } = useQuery({ queryKey: queryKeys.memory.sop(active), queryFn: () => api.sop(active!), enabled: !!active })
-  const [v, setV] = useState(''); const [dirty, setDirty] = useState(false)
-  useEffect(() => { if (cur) { setV(cur.content); setDirty(false) } }, [cur])
 
   return (
     <div className="h-full grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] gap-4 p-6">
@@ -121,13 +139,22 @@ function SopList() {
 
       <div className="h-full min-h-0">
         {!active && <div className="text-slate-500 text-sm">选择左侧文档</div>}
-        {active && (
-          <Editor
+        {active && cur && (
+          <VersionedMemoryEditor
+            key={active}
             label={`memory/${active}`}
-            value={v}
-            dirty={dirty}
-            onChange={(s) => { setV(s); setDirty(true) }}
-            onSave={async () => { try { await api.setSop(active, v); setDirty(false); qc.invalidateQueries({ queryKey: queryKeys.memory.sop(active) }); toast.success('已保存 ' + active) } catch (e: any) { toast.error('保存失败：' + errorMessageFromError(e)) } }}
+            snapshot={cur}
+            onSave={(body) => api.setSop(active, body)}
+            onReload={async () => {
+              const latest = await api.sop(active)
+              qc.setQueryData(queryKeys.memory.sop(active), latest)
+              return latest
+            }}
+            onSaved={() => {
+              void qc.invalidateQueries({ queryKey: queryKeys.memory.sop(active) })
+              toast.success('已保存 ' + active)
+            }}
+            onError={memoryWriteError}
           />
         )}
       </div>
@@ -171,27 +198,6 @@ function SkillList() {
             </pre>
           </div>
         )}
-      </div>
-    </div>
-  )
-}
-
-function Editor({ label, value, dirty, onChange, onSave }: {
-  label: string; value: string; dirty: boolean
-  onChange: (s: string) => void; onSave: () => void
-}) {
-  return (
-    <div className="h-full flex flex-col space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="text-xs text-slate-500 font-mono">{label}</div>
-        <button
-          disabled={!dirty}
-          onClick={onSave}
-          className="px-3 py-1.5 rounded-lg bg-accent text-white text-sm disabled:opacity-40"
-        >{dirty ? '保存' : '已保存'}</button>
-      </div>
-      <div className="flex-1 min-h-0">
-        <MarkdownEditor value={value} onChange={onChange} />
       </div>
     </div>
   )

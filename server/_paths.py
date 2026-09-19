@@ -31,10 +31,12 @@ table — keep the two lists in sync):
     wechat_log.jsonl            → wechat message log
     logs/                       → backend.log (run.py logging setup)
     mykey-backups/              → mykey.py backup rotation
+    memory-backups/             → conflict-safe Memory editor backups
     uploads/                    → files pasted/dragged in the React UI
 
-Crucially, NOTHING is written into the GenericAgent repo from admin code,
-so ``git pull`` on GA never conflicts.
+The Hub source tree remains separate from GenericAgent Core.  User-authorized
+management actions may write GA Memory, configuration, and runtime-state files;
+Memory writes use conflict detection, Hub-side backups, and atomic replacement.
 """
 from __future__ import annotations
 

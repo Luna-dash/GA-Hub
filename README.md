@@ -2,14 +2,14 @@
 
 **独立**的 Web 管理控制台，专门管理 [GenericAgent](https://github.com/lsdefine/GenericAgent) 项目。
 
-> 🔒 **磁盘零侵入**：本项目与 GenericAgent 仓库**文件级完全分离**，从不写入 GA 目录。
-> 你可以随时在 GA 目录下 `git pull` 拉取上游更新，GA 的源码与配置不会被本工具改动。
+> 🔒 **源码工程独立，管理写入透明**：本项目不修改 GenericAgent Core 源码；作为正式管理前端，
+> 会在用户操作下修改 GA 的 Memory、配置和运行状态文件。Memory 保存带版本冲突检测、
+> Hub 侧写前备份和原子替换，不会静默覆盖已检测到的外部修改。
 >
-> ⚙️ **运行时耦合说明**：本工具在**进程内**通过导入 GA 的内部模块（`llmcore`、
-> `agent`、`agentmain` 等）来驱动 Agent，属于**运行时深度集成**而非外部协议调用。
-> 这意味着：磁盘上零侵入，但运行行为依赖这些 GA 内部 API 的稳定性——若上游对这些
-> 内部接口做了**不兼容改动**，可能需要同步升级本工具。两者的边界是「文件分离、
-> 进程内集成」，而非「完全无关的独立系统」。
+> ⚙️ **运行时耦合说明**：本工具对主 Agent 高语义能力采用**进程内 bridge/helper**，
+> Conductor 通过 HTTP/SSE 协作。因此运行行为仍依赖这些受控入口的兼容性；若上游做了
+> 不兼容改动，可能需要同步升级本工具。两者的边界是「源码工程独立、授权管理写入、
+> 受控运行时集成」，而非「完全无关的独立系统」。
 
 ## 它是什么
 
@@ -87,18 +87,21 @@ cd GA-Hub
 | `~/.genericagent-admin/wechat_log.jsonl` | 微信消息日志 | ❌ |
 | `~/.genericagent-admin/logs/` | 后端日志（backend.log） | ❌ |
 | `~/.genericagent-admin/mykey-backups/` | mykey.py 编辑前的备份轮转 | ❌ |
+| `~/.genericagent-admin/memory-backups/` | Memory 每次实际写入前的原始字节备份 | ❌ |
 | `~/.genericagent-admin/uploads/` | 前端粘贴/拖放的文件 | ❌ |
 | `~/.wxbot/token.json` | 微信登录 token（与官方 wechatapp.py 共享） | ❌ |
+| `<GA>/memory/` | 用户通过“记忆 & SOP”页面授权编辑的 Memory 文件 | ✅ |
 | `<GA>/temp/wechat_media/` | 接收的微信媒体（GA 自己用） | ✅ |
 | `<GA>/temp/autonomous_reports/` | Agent 自主任务的产出报告（沿用 SOP 约定） | ✅ |
 
-> 上面 ✅ 的两类是 **agent 运行时数据**，本来就归 GA 自身管理；
-> 它们已在 GA 的 `.gitignore` 中被忽略，`git pull` 不会冲突。
+> `<GA>/memory/` 可能包含 Git 跟踪文件，保存后应像普通源码改动一样审阅、提交或暂存。
+> `<GA>/temp/` 下两类运行时数据通常由 GA 的 `.gitignore` 忽略。
 
 ## 常见问题
 
 **Q: 我的 GenericAgent 用 git 同步，会被覆盖吗？**
-不会。本项目不动 GA 目录里的任何文件。你随时可以 `git pull`。
+GA-Hub 不修改 GA Core 源码，但你在管理界面保存 Memory 或配置时会产生真实文件改动。
+Memory 保存会检测版本冲突并先备份；执行 `git pull` 前仍应先检查 `git status`，提交或暂存本地改动。
 
 **Q: 我可以同时管理多个 GenericAgent 项目吗？**
 当前是单 GA 配置。如需切换，进入"设置"页选择新目录并重启。
