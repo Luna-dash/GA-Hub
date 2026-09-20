@@ -57,7 +57,8 @@ def test_accept_http_409_preserves_verification_evidence_through_route(monkeypat
                 "protocol_version": 2, "boot_id": "b1",
                 "capabilities": ["snapshot_revision", "path_policy",
                                  "request_recovery", "guarded_actions",
-                                 "operation_receipts"],
+                                 "operation_receipts", "sse_resync",
+                                 "unified_admission"],
                 "path_policy": {"mode": "explicit_absolute"},
                 "requests": [],
             }, 200)

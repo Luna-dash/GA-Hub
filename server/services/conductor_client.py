@@ -38,6 +38,7 @@ from ..constants import (
 )
 from ..process_utils import hidden_process_kwargs
 from . import child_job
+from .conductor_protocol import ProtocolValidationError, validate_protocol
 
 log = logging.getLogger(__name__)
 
@@ -258,12 +259,25 @@ class GahubProcessManager:
         return f"http://127.0.0.1:{self.port}"
 
     def is_healthy(self, timeout: float = 1.0) -> bool:
+        """Return whether the engine is both reachable and wire-compatible."""
         try:
             resp = requests.get(f"{self.base_url()}/health", timeout=timeout,
                                 headers=self._headers(), **NO_PROXY_KWARGS)
-            return resp.status_code == 200
         except requests.RequestException:
             return False
+        if resp.status_code != 200:
+            return False
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise GahubProcessError(
+                "gahub_app /health returned HTTP 200 with invalid JSON") from exc
+        try:
+            validate_protocol(payload, expected_env=_engine_spawn_env())
+        except ProtocolValidationError as exc:
+            raise GahubProcessError(
+                f"gahub_app /health is incompatible: {exc}") from exc
+        return True
 
     def _headers(self) -> dict:
         return {"X-GAHub-Token": self.token} if self.token else {}
@@ -383,7 +397,16 @@ class GahubProcessManager:
             child_job.cage_descendants(getattr(self._proc, "pid", None))
             deadline = time.monotonic() + startup_timeout
             while time.monotonic() < deadline:
-                if self.is_healthy():
+                try:
+                    healthy = self.is_healthy()
+                except GahubProcessError:
+                    # A reachable but incompatible child can never become
+                    # ready by waiting.  Reap the child we just spawned and
+                    # preserve the actionable contract error.
+                    self._terminate_child(self._proc)
+                    self._proc = None
+                    raise
+                if healthy:
                     # The engine is up, so it is findable now even when the
                     # call above ran before cmd had started it.
                     child_job.cage_descendants(getattr(self._proc, "pid", None))

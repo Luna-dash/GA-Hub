@@ -54,16 +54,16 @@
 
 - [x] 修正 README、pyproject、路径注释中“磁盘零侵入/从不写 GA”表述。
 - [x] Memory 写入增加 `expected_mtime` 或内容 hash、HTTP 409、写前备份、原子替换和前端重新载入。
-- [ ] 清理 `frontends/gahub/__init__.py` 对 `gahub_app` 的 wildcard 导入。
-- [ ] 增加 bridge 子模块 import 无副作用测试。
+- [x] 清理 `frontends/gahub/__init__.py` 对 `gahub_app` 的 wildcard 导入。
+- [x] 增加 bridge 子模块 import 无副作用测试。
 
 ### W3.2 治理护栏与协议前置校验
 
-- [ ] GA 增加 frontend 依赖方向测试；通用 frontend 禁止新增 `GAHUB_`/`__GAHUB_` 协议名。
-- [ ] Hub 增加 GA 允许入口和遗留白名单测试；白名单只能减少。
-- [ ] GA 用单一常量生成 `/health` 与 `/recovery` 的 protocol/capability 声明。
-- [ ] Hub 共用一个 validator，并在启动 health 阶段立即校验版本、能力、boot identity 和 path policy。
-- [ ] 增加 paired-repo contract 测试。
+- [x] GA 增加 frontend 依赖方向测试；通用 frontend 禁止新增 `GAHUB_`/`__GAHUB_` 协议名。
+- [x] Hub 增加 GA 允许入口和遗留白名单测试；白名单只能减少。
+- [x] GA 用单一常量生成 `/health` 与 `/recovery` 的 protocol/capability 声明。
+- [x] Hub 共用一个 validator，并在启动 health 阶段立即校验版本、能力、boot identity 和 path policy。
+- [x] 增加 paired-repo contract 测试。
 
 ### W3.3 低风险能力垂直迁移
 

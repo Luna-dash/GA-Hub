@@ -54,6 +54,32 @@ def test_ensure_running_skips_the_spawn_when_the_engine_is_healthy(monkeypatch) 
     manager.ensure_running(startup_timeout=0.1)
 
 
+def test_ensure_running_rejects_http_200_with_missing_capability(monkeypatch) -> None:
+    """Reachable is not ready: startup must validate the health contract."""
+    manager = GahubProcessManager(ga_root="D:/nonexistent-ga", spawn_enabled=False)
+    response = mock.Mock(status_code=200)
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "ok": True,
+        "service": "gahub",
+        "protocol_version": 2,
+        "capabilities": [
+            "snapshot_revision", "path_policy", "sse_resync",
+            "guarded_actions", "unified_admission", "request_recovery",
+        ],
+    }
+    get = mock.Mock(return_value=response)
+    monkeypatch.setattr(cc.requests, "get", get)
+    monkeypatch.setattr(
+        cc.subprocess, "Popen",
+        mock.Mock(side_effect=AssertionError("an incompatible engine must not be respawned")))
+
+    with pytest.raises(GahubProcessError, match="operation_receipts"):
+        manager.ensure_running(startup_timeout=0.1)
+
+    assert get.call_count == 1
+
+
 def test_ensure_running_still_refuses_to_spawn_when_disabled(monkeypatch) -> None:
     """The health gate is the only reason a disabled manager is silent."""
     manager = GahubProcessManager(ga_root="D:/nonexistent-ga", spawn_enabled=False)

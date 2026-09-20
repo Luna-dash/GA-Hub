@@ -96,13 +96,21 @@ def _chain_service(monkeypatch: pytest.MonkeyPatch, engine: _FakeEngine) -> Cond
 
 def _wire_recovery_protocol(engine: _FakeEngine) -> None:
     """Script the endpoints the command track touches before the accept POST:
-    status probe, recovery protocol, journal catch-up, worker envelope."""
+    health gate, status probe, recovery protocol, journal catch-up, worker envelope."""
+    engine.on("GET", "/health",
+              {"protocol_version": 2, "boot_id": "b1",
+               "capabilities": ["snapshot_revision", "path_policy",
+                                "request_recovery", "guarded_actions",
+                                "operation_receipts", "sse_resync",
+                                "unified_admission"],
+               "path_policy": {"mode": "explicit_absolute"}})
     engine.on("GET", "/status", {"started": True, "stopping": False})
     engine.on("GET", "/recovery",
               {"protocol_version": 2, "boot_id": "b1",
                "capabilities": ["snapshot_revision", "path_policy",
                                 "request_recovery", "guarded_actions",
-                                "operation_receipts"],
+                                "operation_receipts", "sse_resync",
+                                "unified_admission"],
                "path_policy": {"mode": "explicit_absolute"},
                "requests": []})
     engine.on("GET", "/journal",

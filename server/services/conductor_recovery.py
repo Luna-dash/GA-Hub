@@ -2,18 +2,17 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 
-from ..constants import ENV_GAHUB_DELIVERABLE_ROOTS, ENV_GAHUB_PATH_POLICY
 from ..event_topics import (
     CONDUCTOR_CHAT_READ,
     CONDUCTOR_REQUEST_OUTCOME,
     CONDUCTOR_REQUEST_YIELD_REQUESTED,
 )
-from .conductor_client import _engine_spawn_env
 from . import conductor_activity
+from .conductor_client import _engine_spawn_env
+from .conductor_protocol import validate_protocol
 
 
 log = logging.getLogger(__name__)
@@ -125,21 +124,7 @@ class ConductorRecovery:
 
     @staticmethod
     def _validate_protocol(response: dict) -> None:
-        required = {"snapshot_revision", "path_policy", "request_recovery", "guarded_actions", "operation_receipts"}
-        if response.get("protocol_version") != 2 or not required <= set(response.get("capabilities") or []):
-            raise RuntimeError("engine protocol lacks required Conductor recovery capabilities; restart the updated engine")
-        if not response.get("boot_id"):
-            raise RuntimeError("engine recovery response has no boot identity")
-        policy = response.get("path_policy") or {}
-        expected = _engine_spawn_env()
-        if policy.get("mode") != expected[ENV_GAHUB_PATH_POLICY]:
-            raise RuntimeError("engine path policy differs from Hub configuration; restart the engine")
-        roots = expected.get(ENV_GAHUB_DELIVERABLE_ROOTS, "")
-        if roots.strip() and policy.get("mode") == "allowed_roots":
-            normalize = lambda p: os.path.normcase(os.path.realpath(p))
-            wanted = {normalize(p.strip()) for p in roots.split(",") if p.strip()}
-            if wanted != {normalize(p) for p in policy.get("allowed_roots") or []}:
-                raise RuntimeError("engine allowed roots differ from Hub configuration; restart the engine")
+        validate_protocol(response, expected_env=_engine_spawn_env())
 
     def sync(self) -> bool:
         with self.lock:
