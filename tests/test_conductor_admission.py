@@ -127,6 +127,47 @@ def test_user_followup_on_a_closed_workflow_reopens_it(setup):
     assert engine.posts[0]["reopen"] is True
 
 
+def test_reopened_workflow_completes_again_with_new_workers(setup):
+    """Regression (W2.2 review): a reopened workflow must reach
+    ``workflow_completed`` again once the follow-up round finishes.
+
+    The prior round's workers belong to subagents that already exited, so
+    ``reopen()`` must keep their terminal (accepted/rejected) state instead of
+    reviving them to ``running``. Reviving them would leave dangling workers
+    that never emit another event, which both trips
+    ``_assert_ready_for_final`` (open workers) and blocks
+    ``_complete_if_ready`` — the continued work could never complete.
+    """
+    engine, create = setup
+    service = create()
+    tracker = service.workflow_tracker
+
+    # Round 1: a real worker runs and is accepted, then the round finalizes.
+    tracker.admit("req-reopen")
+    tracker.record_subagent_event("agent-old", "spawned", request_id="req-reopen")
+    tracker.record_subagent_event("agent-old", "accepted", request_id="req-reopen")
+    final1 = tracker.record_final("req-reopen", {"id": "item-1"})
+    assert final1 is not None
+    assert final1[0] == "conductor:workflow_completed"
+    assert not tracker.is_open("req-reopen")
+
+    # Follow-up: the closed workflow reopens under the same id.
+    item = service.add_chat_message("再补一句", role="user", request_id="req-reopen")
+    assert item["request_id"] == "req-reopen"
+    assert engine.posts[0]["reopen"] is True
+    assert tracker.is_open("req-reopen")
+
+    # Round 2: the follow-up dispatches a brand-new worker (fresh agent id).
+    # The stale prior-round worker stays closed and must not block completion.
+    tracker.record_subagent_event("agent-new", "spawned", request_id="req-reopen")
+    tracker.record_subagent_event("agent-new", "accepted", request_id="req-reopen")
+    final2 = tracker.record_final("req-reopen", {"id": "item-2"})
+
+    assert final2 is not None
+    assert final2[0] == "conductor:workflow_completed"
+    assert not tracker.is_open("req-reopen")
+
+
 def test_user_followup_on_an_unknown_request_id_admits_a_new_task(setup):
     engine, create = setup
     service = create()

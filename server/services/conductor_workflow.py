@@ -249,9 +249,14 @@ class WorkflowTracker:
             workflow.phase = "reopened"
             workflow.error = None
             workflow.failed_agent_id = None
-            for worker in workflow.workers.values():
-                if worker.state in CLOSED_WORKER_STATES:
-                    worker.state = WORKER_RUNNING
+            # NOTE: prior-round workers keep their terminal (accepted/rejected)
+            # state. They belong to subagents that already finished and will
+            # never emit another lifecycle event; resetting them to RUNNING
+            # would leave dangling workers that block ``_complete_if_ready``
+            # (which requires every worker to reach a closed state), so the
+            # continued work could never complete. The follow-up dispatch adds
+            # brand-new workers under fresh agent ids and drives completion via
+            # their own events instead.
             return self._payload(workflow, phase="reopened")
 
     def request_for_subagent(self, agent_id: str) -> str | None:
