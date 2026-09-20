@@ -331,7 +331,7 @@ def test_scheduled_dispatch_matches_coordinator_submit_contract(
 
 
 def test_project_registry_create_and_session_binding_api(tmp_path: Path, monkeypatch) -> None:
-    from frontends import workspace_cmd
+    from frontends.gahub.bridge import workspace as workspace_bridge
     from server.routes import sessions
     from server.services.session_coordinator import SessionCoordinator
     from server.services.session_metadata import SessionMetadataStore
@@ -343,8 +343,19 @@ def test_project_registry_create_and_session_binding_api(tmp_path: Path, monkeyp
         "mem_lines": 3,
         "dangling": False,
     }]
-    monkeypatch.setattr(workspace_cmd, "registry_list", lambda: projects)
-    monkeypatch.setattr(workspace_cmd, "prepare", lambda path: {
+    monkeypatch.setattr(workspace_bridge, "list_workspaces", lambda: projects)
+    monkeypatch.setattr(
+        workspace_bridge,
+        "get_workspace",
+        lambda name, path=None: next(
+            (
+                item for item in projects
+                if item["name"] == name and (path is None or item["path"] == path)
+            ),
+            None,
+        ),
+    )
+    monkeypatch.setattr(workspace_bridge, "prepare_workspace", lambda path: {
         "ok": True,
         "name": "beta-5678",
         "target": path,
@@ -408,8 +419,8 @@ def test_project_registry_create_and_session_binding_api(tmp_path: Path, monkeyp
 
         removed = []
         monkeypatch.setattr(
-            workspace_cmd,
-            "remove",
+            workspace_bridge,
+            "remove_workspace",
             lambda name: (
                 removed.append(name)
                 or {
@@ -486,15 +497,22 @@ def test_project_registry_create_and_session_binding_api(tmp_path: Path, monkeyp
 
 
 def test_project_binding_rejects_unknown_or_running_session(tmp_path: Path, monkeypatch) -> None:
-    from frontends import workspace_cmd
+    from frontends.gahub.bridge import workspace as workspace_bridge
     from server.routes import sessions
     from server.services.session_coordinator import SessionCoordinator
     from server.services.session_metadata import SessionMetadataStore
 
-    monkeypatch.setattr(workspace_cmd, "registry_list", lambda: [{
+    project = {
         "name": "alpha-1234", "path": "D:/work/alpha", "last_used": 1,
         "mem_lines": 0, "dangling": False,
-    }])
+    }
+    monkeypatch.setattr(
+        workspace_bridge,
+        "get_workspace",
+        lambda name, path=None: project
+        if name == project["name"] and (path is None or path == project["path"])
+        else None,
+    )
     store = SessionMetadataStore(tmp_path)
     row = store.create(title="Busy")
     coordinator = SessionCoordinator(lambda _session_id: None)
@@ -523,14 +541,14 @@ def test_project_binding_rejects_unknown_or_running_session(tmp_path: Path, monk
 
 
 def test_project_delete_reports_mapping_removal_failure(tmp_path: Path, monkeypatch) -> None:
-    from frontends import workspace_cmd
+    from frontends.gahub.bridge import workspace as workspace_bridge
 
-    monkeypatch.setattr(workspace_cmd, "registry_list", lambda: [{
-        "name": "alpha-1234",
+    monkeypatch.setattr(workspace_bridge, "get_workspace", lambda name: {
+        "name": name,
         "path": "D:/work/alpha",
         "dangling": False,
-    }])
-    monkeypatch.setattr(workspace_cmd, "remove", lambda name: {
+    })
+    monkeypatch.setattr(workspace_bridge, "remove_workspace", lambda name: {
         "ok": False,
         "name": name,
         "link_removed": False,

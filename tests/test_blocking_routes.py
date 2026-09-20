@@ -409,7 +409,9 @@ def test_session_llm_reload_runs_in_worker_thread() -> None:
 def test_project_prepare_runs_in_worker_thread() -> None:
     prepared = {"ok": True, "name": "p1", "path": "D:/proj"}
     with mock.patch.object(
-        sessions.workspace_cmd, "prepare", side_effect=lambda _p: _slow_result(prepared)
+        sessions.workspace_bridge,
+        "prepare_workspace",
+        side_effect=lambda _p: _slow_result(prepared),
     ):
         result = asyncio.run(
             _run_with_probe(sessions.create_project(sessions.ProjectCreate(path="D:/proj")))

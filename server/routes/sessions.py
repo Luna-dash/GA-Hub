@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, WebSocket, WebSoc
 # puts the GA checkout on sys.path, and a fresh process importing this
 # route directly (e.g. test_sessions_api alone) otherwise fails here.
 from .. import _paths as _ga_paths_bootstrap  # noqa: F401  (bootstrap order)
-from frontends import workspace_cmd
+from frontends.gahub.bridge import workspace as workspace_bridge
 
 from .. import constants
 from ..event_topics import CHAT_ERROR, SESSION_RUNTIME
@@ -309,8 +309,8 @@ def _not_found() -> HTTPException:
 
 @router.get("/api/projects", response_model_exclude_unset=True)
 async def list_projects() -> ProjectListResp:
-    # registry_list opens workspaces.json plus one memory file per entry.
-    items = await asyncio.to_thread(workspace_cmd.registry_list)
+    # Native listing opens workspaces.json plus one memory file per entry.
+    items = await asyncio.to_thread(workspace_bridge.list_workspaces)
     return ProjectListResp(total=len(items), items=items)
 
 
@@ -320,9 +320,9 @@ async def list_projects() -> ProjectListResp:
     response_model_exclude_unset=True,
 )
 async def create_project(req: ProjectCreate) -> ProjectItem:
-    # prepare() shells out to `cmd /c mklink` and creates directories — a
-    # subprocess wait has no business on the event loop.
-    result = await asyncio.to_thread(workspace_cmd.prepare, req.path.strip())
+    # Native preparation may shell out to `cmd /c mklink` and create
+    # directories, so the subprocess wait stays off the event loop.
+    result = await asyncio.to_thread(workspace_bridge.prepare_workspace, req.path.strip())
     if not result.get("ok"):
         raise _api_error(400, "project_prepare_failed", result.get("error") or "项目创建失败。")
     return ProjectItem(
@@ -335,8 +335,8 @@ async def create_project(req: ProjectCreate) -> ProjectItem:
 
 @router.delete("/api/projects/{project_name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_project(project_name: str):
-    projects = await asyncio.to_thread(workspace_cmd.registry_list)
-    if not any(item.get("name") == project_name for item in projects):
+    project = await asyncio.to_thread(workspace_bridge.get_workspace, project_name)
+    if project is None:
         raise _api_error(404, "project_not_found", "项目索引不存在")
     bound_sessions = [
         row for row in await asyncio.to_thread(_store.list)
@@ -349,7 +349,7 @@ async def delete_project(project_name: str):
             "仍有其他会话绑定此项目，请先在这些会话中取消绑定。",
             session_ids=[row["id"] for row in bound_sessions],
         )
-    result = await asyncio.to_thread(workspace_cmd.remove, project_name)
+    result = await asyncio.to_thread(workspace_bridge.remove_workspace, project_name)
     if not result.get("ok"):
         raise _api_error(
             500,
@@ -361,12 +361,8 @@ async def delete_project(project_name: str):
 @router.put("/api/sessions/{session_id}/project")
 async def bind_session_project(session_id: str, req: SessionProjectUpdate) -> HubSession:
     await asyncio.to_thread(_session, session_id)
-    project = next(
-        (
-            item for item in await asyncio.to_thread(workspace_cmd.registry_list)
-            if item.get("name") == req.name and item.get("path") == req.path
-        ),
-        None,
+    project = await asyncio.to_thread(
+        workspace_bridge.get_workspace, req.name, req.path
     )
     if project is None or project.get("dangling"):
         raise HTTPException(404, "project not found")

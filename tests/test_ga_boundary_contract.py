@@ -15,7 +15,6 @@ REGISTERED_BRIDGE_PREFIX = "frontends.gahub.bridge"
 # Compatibility debt present when W3.2 began.  This is deliberately a ceiling:
 # migrations may delete entries without editing the test, but new direct imports fail.
 LEGACY_DIRECT_IMPORTS = {
-    ("server/routes/sessions.py", "from", "frontends", ("workspace_cmd",)),
     ("server/run.py", "import", "mykey", ()),
     ("server/services/agent_service.py", "from", "agentmain", ("GeneraticAgent",)),
     ("server/services/agent_service.py", "from", "frontends.btw_cmd", ("handle_frontend_command",)),
