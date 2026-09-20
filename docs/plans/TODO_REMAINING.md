@@ -35,8 +35,7 @@
 
 ## W2 · Conductor 任务语义收口
 
-- [ ] **2.1 G3：新任务边界换归档 + 清上下文**。需要 `_new_log_path` + `_retarget_log` + `_clear_conversation_state`（当前在 `GA/frontends/gahub/` **零命中** = 未开工）。
-      *不改的后果*：**「一个任务一个归档」不成立** —— supervisor 归档把多任务轮次混在一起。这是 `conductor-task-model.md` §1 目标终态的最后一块。
+- [x] **2.1 G3：新任务边界换 supervisor / 归档 + 清上下文**（2026-09-20）。最终采用与官方桌面端一致的方案 B：首个 `request_id` 认领启动时创建的 agent；同一 request 的追加继续复用；切到不同 request 时先 `abort` + 停止哨兵并等待旧线程退出，再由 `agent_factory` 重建全新 `GenericAgent`。因此新任务天然获得新 `logid`、新归档和空会话状态，无需把 `_retarget_log` / `_clear_conversation_state` 私有逻辑复制进 Hub adapter。GA 生命周期测试覆盖“同 request 复用、跨 request 换实例、线程不重叠、旧线程不退出则拒绝创建新实例”；Hub 继续强制 `GAHUB_MULTI_REQUEST_TURNS=off`。
 - [ ] **2.2 对已完成任务追加时保留原 workflow 语义**。当前会另铸 `request_id`，需 GA 侧 workflow reopen（清 `terminal_event` / `final_item`）+ Hub 侧配套。依据 `conductor-task-model.md` §4 H2.2。
 - [ ] **2.3 G4 复核**：单 worker 级 `abort_subagent(origin=…)` 与 `CANCELLED` 终态已存在。确认是否还缺 workflow 级终态；若已足够，直接勾销旧文档的 G4。
 
