@@ -37,7 +37,7 @@
 
 - [x] **2.1 G3：新任务边界换 supervisor / 归档 + 清上下文**（2026-09-20）。最终采用与官方桌面端一致的方案 B：首个 `request_id` 认领启动时创建的 agent；同一 request 的追加继续复用；切到不同 request 时先 `abort` + 停止哨兵并等待旧线程退出，再由 `agent_factory` 重建全新 `GenericAgent`。因此新任务天然获得新 `logid`、新归档和空会话状态，无需把 `_retarget_log` / `_clear_conversation_state` 私有逻辑复制进 Hub adapter。GA 生命周期测试覆盖“同 request 复用、跨 request 换实例、线程不重叠、旧线程不退出则拒绝创建新实例”；Hub 继续强制 `GAHUB_MULTI_REQUEST_TURNS=off`。
 - [x] **2.2 对已完成任务追加时保留原 workflow 语义（续作 reopen）**（2026-09-20）。采用方案 1：不再另铸 `request_id`。Hub 侧 `ConductorWorkflowTracker.reopen` 清 `terminal_event`/`final_item`/`completed_at` 回 SUPERVISING 并广播 `workflow_reopened`；`conductor_commands.submit` 命中已终态任务时沿用旧 id 并置 `reopen=True`；`conductor_client.post_chat` 透传 `reopen`。GA 侧 `RequestBudget.reopen`（移出 `_closed`/清 `_exhausted`/重置计时与尝试计数）+ chat admission 在 `reopen=True` 时先 re-arm 再放行（`gahub_app.py`），`ChatIn` 增加 `reopen` 字段。终态预算因此复活、同一归档继续追加。依据 `conductor-task-model.md` §4 H2.2。
-- [ ] **2.3 G4 复核**：单 worker 级 `abort_subagent(origin=…)` 与 `CANCELLED` 终态已存在。确认是否还缺 workflow 级终态；若已足够，直接勾销旧文档的 G4。
+- [x] **2.3 G4 复核（2026-09-20）**：**结论——不缺 workflow 级终态，无新代码**。链路已完整：单 worker 取消 `abort_subagent(origin="hub"/"stop")` → `SubAgentEvent.CANCELLED` → 回调 `on_subagent_event` → Hub `record_worker_event` 命中 `TERMINAL_FAILURE_EVENTS={WORKFLOW_CANCELLED, WORKFLOW_KILLED}` → 直接置 `workflow.terminal_event="workflow_failed"` 终结整个 workflow（`conductor_workflow.py:357-367`）。语义分级清晰（`conductor_core.py:1567` 注释）：`hub`/`stop`=用户/停止=终态取消；supervisor 自 API abort（origin 空）=可恢复 FAILED 不死锁。词汇表注释亦确认「只有 deliberate cancellation / reaping 才关闭整个 workflow」。G4 勾销，W2 线清零。
 
 ## W3 · GA / GA-Hub 关系治理
 

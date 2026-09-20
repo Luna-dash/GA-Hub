@@ -9,8 +9,10 @@
 >   `request_id` 复用当前 supervisor；不同 request 先停止并等待旧 agent 线程退出，再由工厂创建新的
 >   `GenericAgent`。新实例天然拥有新 `logid`、新归档与空上下文，不复制 `_retarget_log` /
 >   `_clear_conversation_state` 私有实现；旧线程未退出时不创建新实例。
-> - **G4**（放弃 = 任务级）**待复核**：单 worker 级 `abort_subagent(origin=…)` 与 `CANCELLED` 终态已存在
->   （`conductor_core.py:1567`、`gahub_app.py:1920`），需确认是否还缺 workflow 级终态收口。
+> - **G4**（放弃 = 任务级）**复核通过（2026-09-20）**：单 worker 级 `abort_subagent(origin=…)` 的 `CANCELLED`
+>   终态即触发 workflow 级终结——`origin="hub"/"stop"` 的 worker 取消事件命中 `TERMINAL_FAILURE_EVENTS`，
+>   `record_worker_event` 直接置 `workflow.terminal_event="workflow_failed"`（`conductor_workflow.py:357-367`）。
+>   不缺独立 workflow 级收口，G4 勾销（见 TODO_REMAINING.md W2.3）。
 > - **追加语义（W2.2 已实现）**：对终态任务追加走 **续作（reopen）**——Hub 侧 `ConductorWorkflowTracker.reopen`
 >   清 `terminal_event`/`final_item`/`completed_at` 回 SUPERVISING 并广播 `workflow_reopened`，`commands.submit` 命中已终态
 >   任务时沿用旧 `request_id` 并置 `reopen=True`；GA 侧 `RequestBudget.reopen`（移出 `_closed`/清 `_exhausted`/重置计时与
