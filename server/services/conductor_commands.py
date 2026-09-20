@@ -6,6 +6,7 @@ import logging
 import threading
 import uuid
 
+from ..event_topics import CONDUCTOR_WORKFLOW_REOPENED
 from .conductor_client import GahubProcessError
 from .conductor_store import OperationConflict, command_fingerprint
 from .conductor_vocabulary import INSTR_DISPATCHED, INSTR_KEYINFO, ConductorNotRunning
@@ -44,9 +45,20 @@ class ConductorCommands:
                 payload = {"intent": copy.deepcopy(intent), "boot_id": None}
                 if intent["kind"] == "chat" and intent.get("role") == "user":
                     hint = intent.get("request_id")
-                    payload["request_id"] = (hint if hint and self.service.workflow_tracker.is_open(hint)
-                                             else uuid.uuid4().hex)
-                    self.service.workflow_tracker.admit(payload["request_id"], admission_state="submitting")
+                    if hint and self.service.workflow_tracker.is_open(hint):
+                        payload["request_id"] = hint
+                    elif hint and (transition := self.service.workflow_tracker.reopen(hint)) is not None:
+                        # W2.2: append to a finished workflow — reuse its
+                        # identity and tell the engine to re-arm its closed
+                        # request budget (the follow-up carries reopen=True).
+                        payload["request_id"] = hint
+                        payload["intent"]["reopen"] = True
+                        self.service.workflow_tracker.admit(payload["request_id"], admission_state="submitting")
+                        self.store.defer(lambda p=transition: self.service._publish_workflow_transition(
+                            (CONDUCTOR_WORKFLOW_REOPENED, p)))
+                    else:
+                        payload["request_id"] = uuid.uuid4().hex
+                        self.service.workflow_tracker.admit(payload["request_id"], admission_state="submitting")
                 self.store.put_command(operation_id, payload)
         return self.execute_command(operation_id, start_allowed=True)
 
@@ -241,6 +253,7 @@ class ConductorCommands:
         if kind == "chat":
             return self.service.client.post_chat(intent["msg"], intent.get("role", "user"),
                 intent.get("request_id"), final=bool(intent.get("final")),
+                reopen=bool(intent.get("reopen")),
                 operation_id=operation_id, expected_boot_id=payload["boot_id"])
         if kind == "dispatch":
             return self.service.client.start_subagent(**intent, operation_id=operation_id,

@@ -36,7 +36,7 @@
 ## W2 · Conductor 任务语义收口
 
 - [x] **2.1 G3：新任务边界换 supervisor / 归档 + 清上下文**（2026-09-20）。最终采用与官方桌面端一致的方案 B：首个 `request_id` 认领启动时创建的 agent；同一 request 的追加继续复用；切到不同 request 时先 `abort` + 停止哨兵并等待旧线程退出，再由 `agent_factory` 重建全新 `GenericAgent`。因此新任务天然获得新 `logid`、新归档和空会话状态，无需把 `_retarget_log` / `_clear_conversation_state` 私有逻辑复制进 Hub adapter。GA 生命周期测试覆盖“同 request 复用、跨 request 换实例、线程不重叠、旧线程不退出则拒绝创建新实例”；Hub 继续强制 `GAHUB_MULTI_REQUEST_TURNS=off`。
-- [ ] **2.2 对已完成任务追加时保留原 workflow 语义**。当前会另铸 `request_id`，需 GA 侧 workflow reopen（清 `terminal_event` / `final_item`）+ Hub 侧配套。依据 `conductor-task-model.md` §4 H2.2。
+- [x] **2.2 对已完成任务追加时保留原 workflow 语义（续作 reopen）**（2026-09-20）。采用方案 1：不再另铸 `request_id`。Hub 侧 `ConductorWorkflowTracker.reopen` 清 `terminal_event`/`final_item`/`completed_at` 回 SUPERVISING 并广播 `workflow_reopened`；`conductor_commands.submit` 命中已终态任务时沿用旧 id 并置 `reopen=True`；`conductor_client.post_chat` 透传 `reopen`。GA 侧 `RequestBudget.reopen`（移出 `_closed`/清 `_exhausted`/重置计时与尝试计数）+ chat admission 在 `reopen=True` 时先 re-arm 再放行（`gahub_app.py`），`ChatIn` 增加 `reopen` 字段。终态预算因此复活、同一归档继续追加。依据 `conductor-task-model.md` §4 H2.2。
 - [ ] **2.3 G4 复核**：单 worker 级 `abort_subagent(origin=…)` 与 `CANCELLED` 终态已存在。确认是否还缺 workflow 级终态；若已足够，直接勾销旧文档的 G4。
 
 ## W3 · GA / GA-Hub 关系治理
@@ -89,7 +89,7 @@
 
 - [x] 在组合入口注册 monitor/wake/abort 窄控制面（AgentService 经官方 `frontends.hub.connect` 复用，只 override put_task→`submit(source='hub')`）。
 - [x] 不替代 Conductor 和产品 API；依赖缺失时安全降级（`frontends.hub` 缺席时 attach 静默返回 False）。
-- [~] 实测断线重连和 abort：abort/降级/忙态有单测覆盖；真实 smoke 验证了无 hub server 时 daemon 静默存活不崩，但**未对真实 hub server 做断线重连实测**（需起 server 端）。
+- [x] 实测断线重连和 abort：abort/降级/忙态有单测覆盖；真实 smoke 验证了无 hub server 时 daemon 静默存活不崩，且已对真实 hub server 做断线重连实测（起 server 端）。生命周期修复：`HubClient` 增加 `stop/close`，bridge `detach()` 和换 agent `attach()` 前停止旧 client，避免重复 daemon loop 和同名 peer 重复连接。
 
 ### W3.7 兼容清理
 

@@ -11,6 +11,7 @@ from ..event_topics import (
     CONDUCTOR_WORKER_FAILED,
     CONDUCTOR_WORKFLOW_COMPLETED,
     CONDUCTOR_WORKFLOW_FAILED,
+    CONDUCTOR_WORKFLOW_REOPENED,
 )
 from .conductor_vocabulary import (
     WORKER_EVENT_REWORKED,
@@ -224,6 +225,34 @@ class WorkflowTracker:
         with self._lock:
             workflow = self._get(request_id)
             return workflow is not None and workflow.terminal_event is None
+
+    def reopen(self, request_id: str) -> dict[str, Any] | None:
+        """Re-arm a terminal workflow so a user follow-up reuses its identity.
+
+        Clears the terminal marker and the completed round's bookkeeping so
+        the workflow counts as open again (``is_open`` → True) and the next
+        dispatch is not swallowed by ``_complete_if_ready``'s stale
+        ``final_item``.  Returns the reopen event payload, or None when the
+        workflow is unknown, tombstoned, or still open (no reopen needed).
+        """
+        if request_id in self.tombstones:
+            return None
+        with self.transaction():
+            self._touch(request_id)
+            workflow = self._get(request_id)
+            if workflow is None or workflow.terminal_event is None:
+                return None
+            workflow.terminal_event = None
+            workflow.final_item = None
+            workflow.completed_at = None
+            workflow.state = WORKFLOW_SUPERVISING
+            workflow.phase = "reopened"
+            workflow.error = None
+            workflow.failed_agent_id = None
+            for worker in workflow.workers.values():
+                if worker.state in CLOSED_WORKER_STATES:
+                    worker.state = WORKER_RUNNING
+            return self._payload(workflow, phase="reopened")
 
     def request_for_subagent(self, agent_id: str) -> str | None:
         with self._lock:

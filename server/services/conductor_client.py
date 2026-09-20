@@ -559,12 +559,16 @@ class GaConductorClient:
 
     # -- chat -------------------------------------------------------------------
     def post_chat(self, msg: str, role: str, request_id: Optional[str] = None,
-                  final: bool = False,
+                  final: bool = False, reopen: bool = False,
                   operation_id: Optional[str] = None,
                   expected_boot_id: Optional[str] = None) -> dict:
         body: dict = {
             "msg": msg, "role": role, "request_id": request_id, "final": final,
         }
+        if reopen:
+            # W2.2: re-arm a request budget the engine closed after a final
+            # report so the user follow-up is admitted under the same id.
+            body["reopen"] = True
         if operation_id:
             # P0 idempotency: one id per logical admission; the engine
             # replays the first terminal response on retry.

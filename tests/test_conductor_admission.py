@@ -105,7 +105,11 @@ def test_user_followup_appends_to_an_open_workflow_without_forking_a_task(setup)
     assert engine.posts[0]["request_id"] == "req-open"
 
 
-def test_user_followup_on_a_closed_workflow_admits_a_new_task(setup):
+def test_user_followup_on_a_closed_workflow_reopens_it(setup):
+    """W2.2 方案1（续作）：append to a finished workflow reuses its identity.
+    The hub reopens the workflow (terminal state cleared, back to open) and
+    tells the engine to re-arm the closed request budget via reopen=True, so
+    the follow-up continues the same task instead of forking a new one."""
     engine, create = setup
     service = create()
     service.workflow_tracker.admit("req-dead")
@@ -114,8 +118,13 @@ def test_user_followup_on_a_closed_workflow_admits_a_new_task(setup):
 
     item = service.add_chat_message("再来一次", role="user", request_id="req-dead")
 
-    assert item["request_id"] != "req-dead"
-    assert service.workflow_tracker.has_request(item["request_id"])
+    # The same request id is reused — no fork.
+    assert item["request_id"] == "req-dead"
+    # The workflow is reopened hub-side (open again, not terminal).
+    assert service.workflow_tracker.is_open("req-dead")
+    # The engine is told to re-arm the closed budget for this id.
+    assert engine.posts[0]["request_id"] == "req-dead"
+    assert engine.posts[0]["reopen"] is True
 
 
 def test_user_followup_on_an_unknown_request_id_admits_a_new_task(setup):

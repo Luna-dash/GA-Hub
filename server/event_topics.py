@@ -79,6 +79,7 @@ CONDUCTOR_REQUEST_YIELD_REQUESTED = "conductor:request_yield_requested"
 # cannot see who owns them.
 CONDUCTOR_WORKFLOW_COMPLETED = "conductor:workflow_completed"
 CONDUCTOR_WORKFLOW_FAILED = "conductor:workflow_failed"
+CONDUCTOR_WORKFLOW_REOPENED = "conductor:workflow_reopened"
 CONDUCTOR_WORKER_FAILED = "conductor:worker_failed"
 
 # ── dynamic sub-topic families ──────────────────────────────────

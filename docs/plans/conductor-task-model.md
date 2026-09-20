@@ -11,7 +11,10 @@
 >   `_clear_conversation_state` 私有实现；旧线程未退出时不创建新实例。
 > - **G4**（放弃 = 任务级）**待复核**：单 worker 级 `abort_subagent(origin=…)` 与 `CANCELLED` 终态已存在
 >   （`conductor_core.py:1567`、`gahub_app.py:1920`），需确认是否还缺 workflow 级终态收口。
-> - **追加语义缺口**：对终态任务追加会另铸 `request_id`（见 §4 H2.2），需 GA 侧 workflow reopen + Hub 侧配套。
+> - **追加语义（W2.2 已实现）**：对终态任务追加走 **续作（reopen）**——Hub 侧 `ConductorWorkflowTracker.reopen`
+>   清 `terminal_event`/`final_item`/`completed_at` 回 SUPERVISING 并广播 `workflow_reopened`，`commands.submit` 命中已终态
+>   任务时沿用旧 `request_id` 并置 `reopen=True`；GA 侧 `RequestBudget.reopen`（移出 `_closed`/清 `_exhausted`/重置计时与
+>   尝试计数）+ chat admission 在 `reopen=True` 时先 re-arm 再放行（`gahub_app.py:1406`）。终态预算因此可复活，同一归档继续。
 > 剩余动作与顺序见 `docs/plans/TODO_REMAINING.md` W2。
 
 - 日期：2026-09-15
@@ -77,7 +80,7 @@
 - H1.1：`_engine_spawn_env()` **强制**写 `GAHUB_MULTI_REQUEST_TURNS=off`（不是 setdefault）：一次一个任务是 hub 的不变量，继承来的 `on` 不得把批量重新打开。GA 侧 `gahub_app.py` 已有 `_env_flag_off` 读取，无需改 GA。
 - H1.2：进页面复用 **`POST /api/conductor/start`** 作为幂等 ensure（进程 + supervisor 会话 + 模型快照一次到位），未新增路由；app 启动路径不碰引擎。前端在 llms 查询结算后触发一次（模型三件套已解析，避免用引擎默认模型冷启动），成功后静默，失败给「重试启动」。
 - H1.3：dev（`server.run` → `server.main:app`）与桌面 sidecar（`desktop_sidecar.py` 同样 import `server.main.app`）共用 lifespan → `_shutdown` → `services.shutdown_all()` → `ConductorService.shutdown()`（先停 supervisor，再 `GahubProcessManager.stop()` 收进程）；本轮补了注释与两条回归测试，未发现漏洞。
-- H2.2 已知偏差：对**已终态**任务追加仍按 `conductor_commands.submit` 的 `is_open` 规则**另铸 request_id**（实际成为新任务，不回到原归档）。UI 三态按规格实现；「追加进原归档」仍需 workflow tracker 的 reopen 语义（清 `terminal_event`/`final_item`、允许新 worker 绑定终态 workflow），作为 W2.2 单独实施，不属于已完成的 G3。
+- H2.2（**W2.2 已补全**）：对**已终态**任务追加现按**续作**语义回到原归档——workflow tracker 的 `reopen()` 清 `terminal_event`/`final_item` 并允许新 worker 绑定，`commands.submit` 命中已终态任务沿用旧 `request_id` 并置 `reopen=True`（不再另铸）；GA 侧 `RequestBudget.reopen` 复活终态预算、chat admission 在 `reopen=True` 时 re-arm 放行。不再是"另铸 request_id 实际成为新任务"。
 - H2.3：abort 走现有 `POST /api/conductor/subagent/{sid}`；`origin="hub"` 由 `conductor_service.apply_subagent_action` 对 abort 动词统一盖章，前端路由无需也无法传 origin（已核实）。
 
 ## 5. 验收
