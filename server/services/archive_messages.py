@@ -82,34 +82,66 @@ def _parse_header_time(raw: str | None) -> str | None:
         return None
 
 
+def _archive_bridge():
+    """Resolve GA's public archive boundary after ``_paths`` bootstraps it."""
+    from frontends.gahub.bridge import archive
+
+    return archive
+
+
+def _normalize_projected_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Apply Hub-only FILE_HINT presentation policy to GA's projection."""
+    normalized: list[dict[str, Any]] = []
+    for source in messages:
+        message = dict(source)
+        if message.get("role") == "user" and isinstance(message.get("content"), str):
+            message["content"] = _strip_file_hint(message["content"])
+        if str(message.get("content") or "").strip():
+            normalized.append(message)
+    return normalized
+
+
+def _extract_ui_messages_from_text(content: str) -> list[dict[str, Any]]:
+    """Project an archive slice through GA's public archive bridge."""
+    return _normalize_projected_messages(_archive_bridge().project_archive_text(content))
+
+
+def _completed_rounds(
+    content: str,
+) -> list[tuple[str, str | None, str | None]]:
+    """Return completed native round slices plus their prompt/response times."""
+    headers = list(_NATIVE_HEADER_RE.finditer(content))
+    completed: list[tuple[str, str | None, str | None]] = []
+    pending: tuple[int, str | None] | None = None
+    for index, header in enumerate(headers):
+        label, raw_time = header.groups()
+        body_end = headers[index + 1].start() if index + 1 < len(headers) else len(content)
+        if label == "Prompt":
+            pending = (header.start(), raw_time)
+        elif pending is not None:
+            prompt_start, prompt_time = pending
+            completed.append((content[prompt_start:body_end], prompt_time, raw_time))
+            pending = None
+    return completed
+
+
 def _message_timestamps(content: str) -> list[str | None]:
     """Match GA's visible-round folding and return one time per UI bubble."""
-    from frontends.continue_cmd import _pairs, _user_text
-
-    completed_headers: list[tuple[str | None, str | None]] = []
-    pending_prompt: str | None = None
-    for match in _NATIVE_HEADER_RE.finditer(content):
-        label, raw_time = match.groups()
-        if label == "Prompt":
-            pending_prompt = raw_time
-        elif pending_prompt is not None:
-            completed_headers.append((pending_prompt, raw_time))
-            pending_prompt = None
-
     result: list[str | None] = []
     assistant_time: str | None = None
     assistant_open = False
-    for index, (prompt, _response) in enumerate(_pairs(content)):
-        prompt_time, response_time = (
-            completed_headers[index] if index < len(completed_headers) else (None, None)
-        )
-        if _user_text(prompt):
+    for round_text, prompt_time, response_time in _completed_rounds(content):
+        messages = _extract_ui_messages_from_text(round_text)
+        has_user = any(message.get("role") == "user" for message in messages)
+        if has_user:
             if assistant_open:
                 result.append(_parse_header_time(assistant_time))
             result.append(_parse_header_time(prompt_time))
             assistant_time = response_time
             assistant_open = True
-        elif not assistant_open:
+        elif messages and not assistant_open:
             assistant_time = response_time
             assistant_open = True
     if assistant_open:
@@ -122,59 +154,11 @@ def read_ui_messages(archive_path: str | Path) -> list[dict[str, Any]]:
     path = Path(archive_path).resolve()
     if not path.is_file():
         raise HistoryUnavailableError
-    from frontends.continue_cmd import extract_ui_messages
-
     try:
-        messages = extract_ui_messages(path)
+        messages = _archive_bridge().project_archive_path(str(path))
     except (OSError, ValueError, TypeError, UnicodeError) as exc:
         raise HistoryUnavailableError from exc
-    for message in messages:
-        if message.get("role") == "user" and isinstance(message.get("content"), str):
-            message["content"] = _strip_file_hint(message["content"])
-    return messages
-
-
-def _extract_ui_messages_from_text(content: str) -> list[dict[str, Any]]:
-    """Run GA's UI folding helpers against an already-read archive slice."""
-    from frontends.continue_cmd import (
-        _format_response_segment,
-        _pairs,
-        _tool_results_from_prompt,
-        _user_text,
-    )
-
-    pairs = _pairs(content)
-    if not pairs:
-        return []
-    next_tool_results = [{} for _ in pairs]
-    for index in range(len(pairs) - 1):
-        next_tool_results[index] = _tool_results_from_prompt(pairs[index + 1][0])
-
-    out: list[dict[str, Any]] = []
-    assistant: dict[str, Any] | None = None
-    round_turn = 0
-    for index, (prompt, response) in enumerate(pairs):
-        user = _strip_file_hint(_user_text(prompt))
-        segment = _format_response_segment(response, next_tool_results[index])
-        if user:
-            if assistant is not None:
-                out.append(assistant)
-            out.append({"role": "user", "content": user})
-            assistant = {
-                "role": "assistant",
-                "content": f"\n\n**LLM Running (Turn 1) ...**\n\n{segment}",
-            }
-            round_turn = 1
-        else:
-            if assistant is None:
-                assistant = {"role": "assistant", "content": ""}
-                round_turn = 1
-            round_turn += 1
-            marker = f"\n\n**LLM Running (Turn {round_turn}) ...**\n\n"
-            assistant["content"] = (assistant["content"] or "") + marker + segment
-    if assistant is not None:
-        out.append(assistant)
-    return [message for message in out if str(message.get("content") or "").strip()]
+    return _normalize_projected_messages(messages)
 
 
 def _items_from_messages(
@@ -206,14 +190,15 @@ def _items_from_text(content: str, ordinal_start: int = 0) -> list[dict[str, Any
 
 
 def _prompt_is_user(data: mmap.mmap, start: int, end: int) -> bool:
-    """Identify a real user prompt without decoding large tool-result blocks."""
+    """Classify one prompt through GA's public projection contract."""
     if _TOOL_RESULT_BYTES_RE.search(data, start, end):
         return False
-    from frontends.continue_cmd import _user_text
-
-    # Same head-strip as _extract_ui_messages_from_text: a group whose count
-    # disagreed with the folded message list would silently drop indexed paging.
-    return bool(_strip_file_hint(_user_text(data[start:end].decode("utf-8", errors="replace"))))
+    prompt = data[start:end].decode("utf-8", errors="replace")
+    probe = f"=== Prompt ===\n{prompt}\n=== Response ===\n"
+    return any(
+        message.get("role") == "user"
+        for message in _extract_ui_messages_from_text(probe)
+    )
 
 
 @lru_cache(maxsize=64)
@@ -445,14 +430,8 @@ _CATALOGUE_INDEX: dict[str, tuple] = {}
 
 
 def _ga_sessions() -> list[tuple]:
-    """Return GA's session list, mirroring server/routes/agent.py.
-
-    list_sessions() -> [(path, mtime, preview, n_rounds)] sorted by mtime desc.
-    Importing inside the function keeps the (optional) GA path injection local.
-    """
-    from frontends.continue_cmd import list_sessions
-
-    return list_sessions()
+    """Return GA-native archive rows through the public archive bridge."""
+    return _archive_bridge().list_native_sessions()
 
 
 def _catalogue_signature() -> tuple:
@@ -551,9 +530,10 @@ def _first_user_head(path: str, mtime_ns: int, size: int) -> _FirstUserHead:
     """Read one archive head once; report its display preview and its origin.
 
     ``mtime_ns`` and ``size`` are part of the cache key; callers never need a
-    global invalidation when a session is appended or replaced.  Parsing uses
-    GA's own ``_user_text`` filtering so tool-result continuations and working
-    memory injections retain the existing title semantics.
+    global invalidation when a session is appended or replaced.  Each prompt is
+    wrapped with an empty response and classified by GA's public projector, so
+    response-less tail prompts keep their existing preview semantics without
+    importing GA's private parser helpers.
 
     ``from_im`` reads the *unstripped* head: GA's chat frontends prepend
     ``_FILE_HINT`` to every prompt before it reaches the agent, so a first user
@@ -565,14 +545,26 @@ def _first_user_head(path: str, mtime_ns: int, size: int) -> _FirstUserHead:
     try:
         with open(path, "rb") as fh:
             head = fh.read(FIRST_USER_PREVIEW_READ_BYTES)
-        from frontends.continue_cmd import _user_text
+        archive = _archive_bridge()
     except (OSError, ImportError):
         return _FirstUserHead("", False)
     text = head.decode("utf-8", errors="replace")
     for body in _PROMPT_BLOCK_RE.findall(text):
-        raw = _user_text(body)
+        probe = f"=== Prompt ===\n{body}\n=== Response ===\n"
+        try:
+            projected = archive.project_archive_text(probe)
+        except (ValueError, TypeError, UnicodeError):
+            continue
+        raw = next(
+            (
+                str(message.get("content") or "").strip()
+                for message in projected
+                if message.get("role") == "user"
+            ),
+            "",
+        )
         content = _strip_file_hint(raw)
-        # A header-only IM prompt folds as a continuation (GA's `_prompt_is_user`
+        # A header-only IM prompt folds as a continuation (GA's projector
         # agrees), so it must not end the scan — nor claim the archive as IM.
         if content:
             return _FirstUserHead(

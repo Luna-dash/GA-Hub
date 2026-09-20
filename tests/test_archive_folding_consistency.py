@@ -1,10 +1,8 @@
-"""Strategy-b guard: hub slice folding must track GA's whole-file parser.
+"""The public archive bridge must project paths and text identically.
 
-Hub folds in-memory archive slices because GA's ``extract_ui_messages``
-only accepts a path. The fork reuses GA's private block helpers but
-re-owns the outer folding loop — if GA changes its log format or helper
-contracts, this test turns the silent misparse into a loud failure.
-Skipped on machines without a discoverable GA checkout.
+Hub uses text projection for bounded archive pages and path projection for full
+reads. This paired-repo test protects that public contract, including GA's
+auto-continuation folding semantics.
 """
 from __future__ import annotations
 
@@ -40,18 +38,18 @@ def _continuation(index: int) -> str:
     )
 
 
-def test_hub_folding_matches_ga_whole_file_parse(tmp_path: Path) -> None:
+def test_hub_text_projection_matches_public_path_projection(tmp_path: Path) -> None:
     _paths.bootstrap_sys_path()
-    from frontends.continue_cmd import extract_ui_messages
+    from frontends.gahub.bridge.archive import project_archive_path
 
     content = "".join(_round(i) + _continuation(i) for i in range(3))
     archive = tmp_path / "archive.txt"
     archive.write_text(content, encoding="utf-8")
 
-    ga_messages = extract_ui_messages(archive)
-    assert ga_messages, "fixture should produce messages"
+    path_messages = project_archive_path(str(archive))
+    assert path_messages, "fixture should produce messages"
     assert any(
-        "LLM Running (Turn 2)" in str(m.get("content")) for m in ga_messages
+        "LLM Running (Turn 2)" in str(m.get("content")) for m in path_messages
     ), "fixture should exercise the auto-continuation branch"
 
-    assert _extract_ui_messages_from_text(content) == ga_messages
+    assert _extract_ui_messages_from_text(content) == path_messages
