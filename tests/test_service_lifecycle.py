@@ -61,16 +61,31 @@ class _FakeAgent:
         self.is_running = False
 
 
+def test_agent_service_uses_runtime_bridge_factory_for_main_agent() -> None:
+    agent = _FakeAgent()
+    with mock.patch(
+        "server.services.agent_service.create_main_agent",
+        return_value=agent,
+    ) as create_main:
+        service = AgentService(agent=None, manage_global_preference=False)
+
+    create_main.assert_called_once_with()
+    assert service.agent is agent
+    assert agent._turn_end_hooks["webui"] is service._turn_end_hook
+
+
 def test_agent_service_shutdown_aborts_signals_and_joins_run_thread() -> None:
     agent = _FakeAgent()
     service = AgentService(agent=agent, manage_global_preference=False)
     service.start_run_thread()
+    assert agent._turn_end_hooks["webui"] is service._turn_end_hook
 
     service.shutdown(timeout=1.0)
 
     assert agent.exited.is_set()
     assert service._run_thread is None
     assert agent.abort_calls == 0
+    assert "webui" not in agent._turn_end_hooks
     service.shutdown(timeout=0.1)  # idempotent
 
 

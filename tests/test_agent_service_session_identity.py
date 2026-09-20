@@ -32,7 +32,7 @@ class FakeAgent:
 
 def test_session_runtime_skips_process_global_preference_hooks() -> None:
     agent = FakeAgent()
-    with mock.patch.object(svc_mod, "install_continue"), \
+    with mock.patch.object(svc_mod, "create_main_agent") as create_main, \
          mock.patch.object(svc_mod.AgentService, "_wrap_next_llm_with_persistence") as wrap, \
          mock.patch.object(svc_mod.AgentService, "_restore_preferred_llm") as restore:
         service = svc_mod.AgentService(
@@ -41,6 +41,7 @@ def test_session_runtime_skips_process_global_preference_hooks() -> None:
             manage_global_preference=False,
         )
 
+    create_main.assert_not_called()
     assert service.agent is agent
     assert service.session_id == "session-A"
     wrap.assert_not_called()
@@ -49,8 +50,7 @@ def test_session_runtime_skips_process_global_preference_hooks() -> None:
 
 def test_submit_and_stream_events_keep_session_and_run_identity() -> None:
     agent = FakeAgent()
-    with mock.patch.object(svc_mod, "install_continue"), \
-         mock.patch.object(svc_mod.bus, "publish") as publish:
+    with mock.patch.object(svc_mod.bus, "publish") as publish:
         service = svc_mod.AgentService(
             agent=agent,
             session_id="session-A",
@@ -157,8 +157,7 @@ def test_unconsumed_stream_queue_is_bounded_and_preserves_terminal_item() -> Non
             q.put({"done": "complete"})
             return q
 
-    with mock.patch.object(svc_mod, "install_continue"), \
-         mock.patch.object(svc_mod.bus, "publish"):
+    with mock.patch.object(svc_mod.bus, "publish"):
         service = svc_mod.AgentService(
             agent=VerboseAgent(),
             manage_global_preference=False,
@@ -188,8 +187,7 @@ def test_unconsumed_stream_queue_is_bounded_and_preserves_terminal_item() -> Non
 
 
 def test_many_completed_submissions_do_not_accumulate_stream_handles() -> None:
-    with mock.patch.object(svc_mod, "install_continue"), \
-         mock.patch.object(svc_mod.bus, "publish"):
+    with mock.patch.object(svc_mod.bus, "publish"):
         service = svc_mod.AgentService(
             agent=FakeAgent(),
             manage_global_preference=False,
@@ -214,8 +212,7 @@ def test_shutdown_wakes_a_fanout_with_no_terminal_frame() -> None:
         def put_task(self, query, *, source, images):
             return queue.Queue()
 
-    with mock.patch.object(svc_mod, "install_continue"), \
-         mock.patch.object(svc_mod.bus, "publish"):
+    with mock.patch.object(svc_mod.bus, "publish"):
         service = svc_mod.AgentService(
             agent=StuckAgent(),
             manage_global_preference=False,
@@ -236,11 +233,10 @@ def test_shutdown_wakes_a_fanout_with_no_terminal_frame() -> None:
 
 
 def test_submit_is_rejected_after_agent_service_shutdown() -> None:
-    with mock.patch.object(svc_mod, "install_continue"):
-        service = svc_mod.AgentService(
-            agent=FakeAgent(),
-            manage_global_preference=False,
-        )
+    service = svc_mod.AgentService(
+        agent=FakeAgent(),
+        manage_global_preference=False,
+    )
 
     assert service.shutdown(timeout=0) is True
     with pytest.raises(RuntimeError, match="shutting down"):

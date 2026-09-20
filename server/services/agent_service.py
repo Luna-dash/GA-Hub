@@ -25,9 +25,12 @@ from .. import _paths
 if _paths.GA_ROOT is None:
     raise RuntimeError("AgentService imported before GA_ROOT is configured")
 
-from agentmain import GeneraticAgent  # noqa: E402  (resolved via _paths sys.path)
+from frontends.gahub.bridge.runtime import (  # noqa: E402
+    create_main_agent,
+    register_turn_end_hook,
+    unregister_turn_end_hook,
+)
 from frontends.gahub.bridge.session import (  # noqa: E402
-    install_agent_class as install_continue,
     release_current,
     reset_conversation,
 )
@@ -267,10 +270,8 @@ class AgentService:
         session_id: str = "",
         manage_global_preference: bool = True,
     ) -> None:
-        # Patch /continue and /new before instantiating
-        install_continue(GeneraticAgent)
         self._init_fields()
-        self.agent = agent if agent is not None else GeneraticAgent()
+        self.agent = agent if agent is not None else create_main_agent()
         LlmRegistry.mark_agent_current(self.agent)
         self.session_id = session_id
         self._manage_global_preference = manage_global_preference
@@ -282,10 +283,9 @@ class AgentService:
         if not hasattr(self.agent, "last_reply_time"):
             self.agent.last_reply_time = int(time.time())
 
-        # Wire turn_end_hook to broadcast events
-        if not hasattr(self.agent, "_turn_end_hooks"):
-            self.agent._turn_end_hooks = {}
-        self.agent._turn_end_hooks["webui"] = self._on_turn_end
+        # Wire the frontend turn-end event through GA's stable runtime bridge.
+        self._turn_end_hook = self._on_turn_end
+        register_turn_end_hook(self.agent, "webui", self._turn_end_hook)
 
         if self._manage_global_preference:
             self._wrap_next_llm_with_persistence()
@@ -295,9 +295,9 @@ class AgentService:
     def for_tests(cls) -> "AgentService":
         """Fully-initialized service with an inert stub agent — no GA wiring.
 
-        The real __init__ installs GA's /continue patch, marks the LLM
-        registry, wraps next_llm and restores the persisted preference.
-        Tests that exercise service mechanics use this instead of
+        The real __init__ creates the main agent through GA's runtime bridge,
+        marks the LLM registry, wraps next_llm and restores the persisted
+        preference. Tests that exercise service mechanics use this instead of
         ``object.__new__`` so production code never needs getattr backfills
         for missing fields (same contract as ConductorService.for_tests).
         """
@@ -353,6 +353,14 @@ class AgentService:
 
     def shutdown(self, timeout: float = 5.0) -> bool:
         """Stop the GA run loop and fanout workers before releasing singleton."""
+        hook = getattr(self, "_turn_end_hook", None)
+        if hook is not None:
+            try:
+                unregister_turn_end_hook(self.agent, "webui", hook)
+            except Exception:
+                log.debug("turn-end hook release on shutdown failed", exc_info=True)
+            self._turn_end_hook = None
+
         deadline = time.monotonic() + max(0.0, timeout)
         self._fanout_stop_event.set()
         submission_stopped = self._submit_admission_lock.acquire(

@@ -81,8 +81,8 @@
 
 ### W3.5 Agent runtime 与模型配置
 
-- [ ] turn-end hook 注册/释放与 shutdown 清理。
-- [ ] Main Agent factory；GoalHive 保持独立 runtime owner。
+- [x] turn-end hook 注册/释放与 shutdown 清理。
+- [x] Main Agent factory；GoalHive 保持独立 runtime owner。
 - [ ] LLM resolve/reload、MyKey invalidation、patch/tool 注入。
 - [ ] 验证模型切换、web/code tools、线程/子进程和 hook 无回归或残留。
 
