@@ -167,6 +167,12 @@ class LiveContractTests(unittest.TestCase):
                 callable(getattr(cc, name, None)),
                 f"drift: frontends.continue_cmd.{name} no longer callable in real core",
             )
+        import frontends.gahub.bridge.model as model_bridge
+        for name in core_contract._REQUIRED_MODEL_BRIDGE:
+            self.assertTrue(
+                callable(getattr(model_bridge, name, None)),
+                f"drift: frontends.gahub.bridge.model.{name} no longer callable in real core",
+            )
 
 
 if __name__ == "__main__":

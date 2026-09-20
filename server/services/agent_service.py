@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import queue as _q
 import threading
 import time
@@ -288,7 +287,6 @@ class AgentService:
         register_turn_end_hook(self.agent, "webui", self._turn_end_hook)
 
         if self._manage_global_preference:
-            self._wrap_next_llm_with_persistence()
             self._restore_preferred_llm()
 
     @classmethod
@@ -296,8 +294,8 @@ class AgentService:
         """Fully-initialized service with an inert stub agent — no GA wiring.
 
         The real __init__ creates the main agent through GA's runtime bridge,
-        marks the LLM registry, wraps next_llm and restores the persisted
-        preference. Tests that exercise service mechanics use this instead of
+        marks the LLM registry and restores the persisted preference through
+        the GA-owned model bridge. Tests that exercise service mechanics use this instead of
         ``object.__new__`` so production code never needs getattr backfills
         for missing fields (same contract as ConductorService.for_tests).
         """
@@ -525,43 +523,12 @@ class AgentService:
             n = LlmRegistry.resolve(self.agent, saved)
             if int(getattr(self.agent, "llm_no", -1)) == n:
                 return
-            self.agent.next_llm(n)
+            LlmRegistry.switch_by_index(self.agent, n)
             log.info("restored preferred_llm_key=%s (%s)", n, self.agent.get_llm_name())
         except LlmUnavailableError as e:
             log.warning("preferred llm is unavailable: %s", e)
         except Exception as e:
             log.warning("failed to restore preferred llm: %s", e)
-
-    def _wrap_next_llm_with_persistence(self) -> None:
-        """Monkey-patch ``agent.next_llm`` so any caller — admin, wechat slash
-        command, autonomous SOP via code_run inline_eval, etc. — surfaces the
-        change in admin logs and (optionally) updates the user-preferred slot.
-
-        Persistence now lives solely in ``switch_llm`` (via
-        LlmPreferenceStore.set_selection); this wrapper only logs so the user
-        can spot unexpected drift from other callers.
-        """
-        import traceback
-        original = self.agent.next_llm
-        # Already wrapped (singleton may be re-init'd in tests)
-        if getattr(original, "_admin_wrapped", False):
-            return
-
-        def _wrapped(n: int = -1):
-            before = int(getattr(self.agent, "llm_no", 0))
-            ret = original(n)
-            after = int(self.agent.llm_no)
-            if before != after:
-                # Capture caller frame for diagnostic — skip our own frames.
-                stack = traceback.extract_stack(limit=8)[:-1]
-                tail = " <- ".join(f"{os.path.basename(f.filename)}:{f.lineno}" for f in stack[-4:])
-                try: name = self.agent.get_llm_name()
-                except Exception: name = "?"
-                log.info("agent.llm_no %s → %s (%s)  caller: %s", before, after, name, tail)
-            return ret
-
-        _wrapped._admin_wrapped = True  # type: ignore[attr-defined]
-        self.agent.next_llm = _wrapped  # type: ignore[assignment]
 
     def abort(self) -> None:
         self.agent.abort()

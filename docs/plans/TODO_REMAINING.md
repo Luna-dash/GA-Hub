@@ -83,8 +83,8 @@
 
 - [x] turn-end hook 注册/释放与 shutdown 清理。
 - [x] Main Agent factory；GoalHive 保持独立 runtime owner。
-- [ ] LLM resolve/reload、MyKey invalidation、patch/tool 注入。
-- [ ] 验证模型切换、web/code tools、线程/子进程和 hook 无回归或残留。
+- [x] LLM resolve/reload、MyKey invalidation、patch/tool 注入。
+- [x] 验证模型切换、web/code tools、线程/子进程和 hook 无回归或残留。
 
 ### W3.6 Official hub 可选接入
 

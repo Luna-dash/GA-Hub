@@ -21,6 +21,8 @@ if _paths.GA_ROOT is None:
 
 from agentmain import GeneraticAgent  # noqa: E402  (resolved via _paths sys.path)
 
+from .llm_registry import LlmRegistry
+
 log = logging.getLogger(__name__)
 
 _RUNNER_STOP = "__goalhive_shutdown__"
@@ -286,7 +288,7 @@ class GoalHiveService:
                 clients = getattr(agent, "llmclients", []) or []
                 if 0 <= int(llm_index) < len(clients):
                     if int(getattr(agent, "llm_no", -1)) != int(llm_index):
-                        agent.next_llm(int(llm_index))
+                        LlmRegistry.switch_by_index(agent, int(llm_index))
                         log.info("goalhive switched to llm %d (%s)", llm_index, agent.get_llm_name())
             except Exception as e:
                 log.warning("failed to switch GoalHive LLM=%s: %s", llm_index, e)

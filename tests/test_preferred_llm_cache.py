@@ -220,6 +220,11 @@ class PreferredLlmCacheTests(unittest.TestCase):
             mock.patch.object(
                 self.svc_mod.LlmRegistry, "resolve", return_value=2
             ).start()
+            mock.patch.object(
+                self.svc_mod.LlmRegistry,
+                "switch_by_index",
+                side_effect=lambda target, index: target.next_llm(index),
+            ).start()
             self.addCleanup(mock.patch.stopall)
             service._restore_preferred_llm()
         # transient selection drifts llm_no away from preferred

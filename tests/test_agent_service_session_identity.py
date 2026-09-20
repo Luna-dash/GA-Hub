@@ -33,7 +33,6 @@ class FakeAgent:
 def test_session_runtime_skips_process_global_preference_hooks() -> None:
     agent = FakeAgent()
     with mock.patch.object(svc_mod, "create_main_agent") as create_main, \
-         mock.patch.object(svc_mod.AgentService, "_wrap_next_llm_with_persistence") as wrap, \
          mock.patch.object(svc_mod.AgentService, "_restore_preferred_llm") as restore:
         service = svc_mod.AgentService(
             agent=agent,
@@ -44,7 +43,6 @@ def test_session_runtime_skips_process_global_preference_hooks() -> None:
     create_main.assert_not_called()
     assert service.agent is agent
     assert service.session_id == "session-A"
-    wrap.assert_not_called()
     restore.assert_not_called()
 
 

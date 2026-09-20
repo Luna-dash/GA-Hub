@@ -1,8 +1,6 @@
 """Stable MyKey assignment identity regression tests."""
 from __future__ import annotations
 
-import sys
-import types
 from unittest import mock
 
 from server.services.llm_registry import (
@@ -27,15 +25,42 @@ class _Agent:
         self.llm_no = index
 
 
-def _llmcore(keys) -> types.ModuleType:
-    module = types.ModuleType("llmcore")
-    module.reload_mykeys = lambda: ({key: {} for key in keys()}, True)  # type: ignore[attr-defined]
-    return module
+class _Bridge:
+    def __init__(self) -> None:
+        self.revision = ("mykey.py", 1)
+
+    def mykey_revision(self):
+        return self.revision
+
+    def model_snapshot(
+        self,
+        agent: _Agent,
+        *,
+        reload_clients: bool = False,
+        force_reload: bool = False,
+    ) -> list[tuple[str, int]]:
+        if reload_clients:
+            agent.load_llm_sessions()
+        if len(agent.keys) != len(agent.llmclients):
+            raise RuntimeError("LLM registry mismatch")
+        return [(key, index) for index, key in enumerate(agent.keys)]
+
+    @staticmethod
+    def switch_model(agent: _Agent, index: int) -> int:
+        agent.next_llm(index)
+        return agent.llm_no
+
+
+def _patch_bridge(bridge: _Bridge):
+    return mock.patch(
+        "server.services.llm_registry._model_bridge",
+        return_value=bridge,
+    )
 
 
 def test_registry_keys_follow_assignment_order_not_backend_identity() -> None:
     agent = _Agent()
-    with mock.patch.dict(sys.modules, {"llmcore": _llmcore(lambda: agent.keys)}):
+    with _patch_bridge(_Bridge()):
         assert LlmRegistry.reload_and_snapshot(agent) == [
             ("a_oai_config", 0),
             ("b_oai_config", 1),
@@ -46,7 +71,7 @@ def test_registry_keys_follow_assignment_order_not_backend_identity() -> None:
 def test_registry_rejects_client_assignment_count_mismatch() -> None:
     agent = _Agent()
     agent.llmclients = [0, 1]
-    with mock.patch.dict(sys.modules, {"llmcore": _llmcore(lambda: agent.keys)}):
+    with _patch_bridge(_Bridge()):
         try:
             LlmRegistry.snapshot(agent)
         except LlmRegistryError:
@@ -57,7 +82,7 @@ def test_registry_rejects_client_assignment_count_mismatch() -> None:
 
 def test_switch_by_key_survives_deletion_and_reordering() -> None:
     agent = _Agent()
-    with mock.patch.dict(sys.modules, {"llmcore": _llmcore(lambda: agent.keys)}):
+    with _patch_bridge(_Bridge()):
         assert LlmRegistry.switch_by_key(agent, "b_oai_config") == 1
         assert agent.next_llm_calls == [1]
 
@@ -73,49 +98,52 @@ def test_switch_by_key_survives_deletion_and_reordering() -> None:
             LlmRegistry.resolve(agent, "b_oai_config")
         except LlmUnavailableError:
             pass
+        else:
+            raise AssertionError("expected unavailable assignment")
 
 
 def test_each_open_agent_reloads_same_assignment_after_global_change_is_consumed() -> None:
-    module = _llmcore(lambda: module.keys)
-    module.keys = ["a_oai_config"]  # type: ignore[attr-defined]
-    module.endpoint = "https://old.example/v1"  # type: ignore[attr-defined]
-    module.version = 1  # type: ignore[attr-defined]
-    module._mykey_mtime = 1  # type: ignore[attr-defined]
+    class GlobalBridge(_Bridge):
+        def __init__(self) -> None:
+            super().__init__()
+            self.endpoint = "https://old.example/v1"
+            self.consumed_revision = self.revision
+            self.force_reload_calls: list[bool] = []
 
-    class GlobalReloadAgent(_Agent):
-        def load_llm_sessions(self) -> None:
-            if module._mykey_mtime == module.version:  # type: ignore[attr-defined]
-                return
-            module._mykey_mtime = module.version  # type: ignore[attr-defined]
-            self.keys = list(module.keys)  # type: ignore[attr-defined]
-            self.llmclients = [{"endpoint": module.endpoint}]  # type: ignore[attr-defined]
+        def model_snapshot(
+            self,
+            agent: _Agent,
+            *,
+            reload_clients: bool = False,
+            force_reload: bool = False,
+        ) -> list[tuple[str, int]]:
+            self.force_reload_calls.append(force_reload)
+            if reload_clients and (force_reload or self.consumed_revision != self.revision):
+                self.consumed_revision = self.revision
+                agent.keys = ["a_oai_config"]
+                agent.llmclients = [{"endpoint": self.endpoint}]
+            return [("a_oai_config", 0)]
 
-    first = GlobalReloadAgent()
-    second = GlobalReloadAgent()
-    first.keys = second.keys = list(module.keys)  # type: ignore[attr-defined]
-    first.llmclients = second.llmclients = [{"endpoint": module.endpoint}]  # type: ignore[attr-defined]
+    bridge = GlobalBridge()
+    first = _Agent()
+    second = _Agent()
+    first.keys = second.keys = ["a_oai_config"]
+    first.llmclients = second.llmclients = [{"endpoint": bridge.endpoint}]
 
-    with (
-        mock.patch.dict(sys.modules, {"llmcore": module}),
-        mock.patch.object(
-            LlmRegistry,
-            "_mykey_version",
-            side_effect=lambda: ("mykey.py", module.version),  # type: ignore[attr-defined]
-        ),
-    ):
+    with _patch_bridge(bridge):
         LlmRegistry.mark_agent_current(first)
         LlmRegistry.mark_agent_current(second)
 
-        # Keep the assignment name, index, and count unchanged; only edit its
-        # internal API configuration, matching the production regression.
-        module.endpoint = "https://new.example/v1"  # type: ignore[attr-defined]
-        module.version = 2  # type: ignore[attr-defined]
+        # Keep assignment name/index/count unchanged; only edit API internals.
+        bridge.endpoint = "https://new.example/v1"
+        bridge.revision = ("mykey.py", 2)
 
         assert LlmRegistry.reload_and_snapshot(first) == [("a_oai_config", 0)]
         assert first.llmclients == [{"endpoint": "https://new.example/v1"}]
         assert second.llmclients == [{"endpoint": "https://old.example/v1"}]
 
-        # The first reload consumed the process-global change. The second open
-        # agent must still rebuild instead of retaining its stale API client.
+        # The first reload consumed the global marker. The second agent must
+        # still request a force reload based on its per-agent revision.
         assert LlmRegistry.reload_and_snapshot(second) == [("a_oai_config", 0)]
         assert second.llmclients == [{"endpoint": "https://new.example/v1"}]
+        assert bridge.force_reload_calls[-2:] == [True, True]

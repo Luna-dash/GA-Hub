@@ -2,10 +2,10 @@
 
 GA-Hub's backend depends on a small, stable surface of the GenericAgent
 ("GA core") project: the ``GeneraticAgent`` class, a handful of its methods,
-a few instance attributes set in ``__init__``, and two helpers exported by
-``frontends.continue_cmd``. When the user upgrades GA core, a rename or a
-removed symbol silently breaks chat with an opaque ``ImportError`` /
-``AttributeError`` deep in a worker thread.
+a few instance attributes set in ``__init__``, helpers exported by
+``frontends.continue_cmd``, and the GA-owned model bridge. When the user
+upgrades GA core, a rename or a removed symbol silently breaks chat with an
+opaque ``ImportError`` / ``AttributeError`` deep in a worker thread.
 
 This module makes that contract *explicit and observable*:
 
@@ -59,9 +59,7 @@ _REQUIRED_CLASS_MEMBERS: tuple[str, ...] = (
     "put_task",     # put_task(query, source=, images=) -> queue
     "abort",        # abort()
     "run",          # run() — main loop
-    "next_llm",     # next_llm(idx)
     "list_llms",    # list_llms() -> [(i, name, current)]
-    "load_llm_sessions",
     "get_llm_name",
 )
 
@@ -82,6 +80,13 @@ _REQUIRED_INIT_ATTRS: tuple[str, ...] = (
 _REQUIRED_CONTINUE_CMD: tuple[str, ...] = (
     "install",            # install(GeneraticAgent) — class-level patch
     "reset_conversation", # reset_conversation(agent) -> agent
+)
+
+# GA-owned model configuration bridge used by llm_registry.
+_REQUIRED_MODEL_BRIDGE: tuple[str, ...] = (
+    "mykey_revision",
+    "model_snapshot",
+    "switch_model",
 )
 
 
@@ -267,6 +272,22 @@ def probe_core_contract() -> ContractReport:
                                           getattr(cc, name, None), name))
             if not items[-1].ok:
                 errors.append(f"frontends.continue_cmd.{name} missing or not callable")
+
+    # 5) GA-owned model configuration bridge
+    model_module = "frontends.gahub.bridge.model"
+    try:
+        from frontends.gahub.bridge import model as model_bridge  # noqa: E402
+    except Exception as e:  # noqa: BLE001
+        for name in _REQUIRED_MODEL_BRIDGE:
+            items.append(Check(f"{model_module}.{name}", False,
+                               f"import_failed: {e!r}"))
+        errors.append(f"import_failed: {model_module}: {e!r}")
+    else:
+        for name in _REQUIRED_MODEL_BRIDGE:
+            items.append(_check_callable(model_module,
+                                          getattr(model_bridge, name, None), name))
+            if not items[-1].ok:
+                errors.append(f"{model_module}.{name} missing or not callable")
 
     ok = all(c.ok for c in items)
     return ContractReport(

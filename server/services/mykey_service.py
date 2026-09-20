@@ -4,8 +4,8 @@ mykey.py 是 GA 的核心配置：所有 LLM 链路、apikey、apibase、第三�
 都在这里。终端编辑门槛太高，把它搬到 webui；本模块持有全部业务逻辑，
 ``routes/mykey.py`` 只做 HTTP 适配（线程投递 + 错误翻译）。
 
-GA 已经支持 mykey.py 热更新：``llmcore.reload_mykeys()`` 基于 mtime，所以只要
-落盘就会被下次 ``agent.load_llm_sessions()`` 自动拉起，不需要重启进程。
+GA 已经支持 mykey.py 热更新；GA-Hub 通过稳定 model bridge 触发刷新，
+配置落盘后无需重启进程。
 
 安全约束：
     * apikey 永远 mask（前 4 + ``***`` + 后 4），仅 raw 文本视图能看到完整值
@@ -110,9 +110,9 @@ def _atomic_write(path: Path, text: str) -> None:
 def _trigger_reload() -> tuple[list[dict], list[str]]:
     """Force GA to re-read mykey.py + return resulting llm list + warnings.
 
-    Errors loading individual sessions are caught silently inside
-    load_llm_sessions itself (it `try: ... except: pass`s per config), so
-    we reconstruct warnings by diffing intent vs result: every var that
+    GA's model bridge preserves native per-config load isolation, so individual
+    failures do not abort the whole reload. We reconstruct warnings by diffing
+    intent vs result: every var that
     looks like a session config but doesn't appear in the resulting llm
     names is reported.
     """
