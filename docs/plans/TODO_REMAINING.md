@@ -69,7 +69,7 @@
 
 - [x] workspace。
 - [x] usage/cost tracker。
-- [ ] native log path。
+- [x] native log path。
 - [ ] archive 只读投影。
 
 ### W3.4 Session / Archive / Rewind

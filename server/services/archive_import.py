@@ -24,6 +24,8 @@ import re
 from pathlib import Path
 from typing import Callable
 
+from frontends.gahub.bridge import archive as archive_bridge
+
 # Reuse the projection layer's constants: the header is defined once, next to
 # the read-side strip that keeps it out of UI responses.
 from .archive_messages import _FILE_HINT, _strip_file_hint
@@ -43,13 +45,6 @@ _LOG_PATH_ATTEMPTS = 8
 
 class ArchiveNotImportableError(Exception):
     """The source archive has no complete turn to import."""
-
-
-def ga_new_log_path() -> str:
-    """Mint a new GA-native log path (imported lazily: GA is optional here)."""
-    from frontends.continue_cmd import _new_log_path
-
-    return _new_log_path()
 
 
 def _iter_blocks(text: str) -> list[tuple[str, int, int, int]]:
@@ -228,7 +223,7 @@ def copy_archive_for_import(
     the copy's visible message count, computed before the rename: nothing is
     left that can fail after the new archive becomes visible.
     """
-    factory = new_log_path or ga_new_log_path
+    factory = new_log_path or archive_bridge.mint_native_log_path
     data = Path(source).read_bytes()
     text = prepare_import_text(data.decode("utf-8", errors="replace"))
     target = _mint_log_path(factory)

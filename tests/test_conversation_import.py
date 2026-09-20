@@ -290,7 +290,9 @@ def _setup_import(tmp_path: Path, monkeypatch, archive: str, *, coordinator=None
     coordinator = coordinator or _Coordinator()
 
     monkeypatch.setattr(conversations, "_metadata", store)
-    monkeypatch.setattr(archive_import, "ga_new_log_path", lambda: str(target))
+    monkeypatch.setattr(
+        archive_import.archive_bridge, "mint_native_log_path", lambda: str(target)
+    )
     monkeypatch.setattr(conversations, "_session_coordinator", lambda: coordinator)
     monkeypatch.setattr(
         conversations,

@@ -21,7 +21,6 @@ LEGACY_DIRECT_IMPORTS = {
     ("server/services/agent_service.py", "from", "frontends.continue_cmd", ("install", "reset_conversation")),
     ("server/services/agent_service.py", "from", "frontends.continue_cmd", ("release_current",)),
     ("server/services/agent_service.py", "import", "ga", ()),
-    ("server/services/archive_import.py", "from", "frontends.continue_cmd", ("_new_log_path",)),
     ("server/services/archive_messages.py", "from", "frontends.continue_cmd", ("_format_response_segment", "_pairs", "_tool_results_from_prompt", "_user_text")),
     ("server/services/archive_messages.py", "from", "frontends.continue_cmd", ("_pairs", "_user_text")),
     ("server/services/archive_messages.py", "from", "frontends.continue_cmd", ("_user_text",)),
