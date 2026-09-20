@@ -289,6 +289,15 @@ class AgentService:
         if self._manage_global_preference:
             self._restore_preferred_llm()
 
+        # Optional official-hub monitor/remote-control surface (W3.6). The
+        # bridge resolves the live service each call, degrades silently when
+        # GA's frontends.hub is absent, and never raises into the host.
+        try:
+            from frontends.gahub.bridge import official_hub
+            official_hub.attach(self)
+        except Exception:  # pragma: no cover - defensive; bridge never raises
+            log.warning("official hub attach failed", exc_info=True)
+
     @classmethod
     def for_tests(cls) -> "AgentService":
         """Fully-initialized service with an inert stub agent — no GA wiring.
@@ -351,6 +360,15 @@ class AgentService:
 
     def shutdown(self, timeout: float = 5.0) -> bool:
         """Stop the GA run loop and fanout workers before releasing singleton."""
+        # Detach the optional official-hub surface (W3.6). GA's HubClient has
+        # no close(); its daemon loop idles harmlessly, so this only clears the
+        # bridge's module-level reference. Never raises.
+        try:
+            from frontends.gahub.bridge import official_hub
+            official_hub.detach()
+        except Exception:  # pragma: no cover - defensive
+            log.debug("official hub detach on shutdown failed", exc_info=True)
+
         hook = getattr(self, "_turn_end_hook", None)
         if hook is not None:
             try:
