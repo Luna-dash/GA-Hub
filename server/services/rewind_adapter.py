@@ -12,6 +12,7 @@ import threading
 from typing import Any
 
 from .. import _paths
+from frontends.gahub.bridge import rewind as ga_rewind
 from .chat_stream_projection import ChatStreamProjection
 from .event_bus import bus
 from ..event_topics import CHAT_REWOUND
@@ -48,20 +49,17 @@ class RewindAdapter:
         if not log_path:
             raise RuntimeError("session runtime has no GA archive path")
 
-        from frontends.worldline import RewindStore  # type: ignore
-
         temp_dir = os.path.normpath(os.path.join(str(_paths.GA_ROOT), "temp"))
-        store = RewindStore.for_log(temp_dir, log_path, temp_dir)
-        with self._checkpoint_lock:
-            self.store = store
-            self.agent._rw_store = store
-            try:
-                self.sync_store(strict=True)
-            except Exception:
-                self.store = None
-                if getattr(self.agent, "_rw_store", None) is store:
-                    self.agent._rw_store = None
-                raise
+        try:
+            store = ga_rewind.bind_store(
+                self.agent,
+                temp_dir=temp_dir,
+                checkpoint_lock=self._checkpoint_lock,
+            )
+        except Exception:
+            self.store = None
+            raise
+        self.store = store
         return store
 
     def sync_store(self, *, strict: bool = False) -> Any | None:
@@ -73,18 +71,11 @@ class RewindAdapter:
                     if strict and str(self.session_id or ""):
                         raise RuntimeError("durable rewind store is not bound")
                     return None
-                log_path = str(getattr(self.agent, "log_path", "") or "")
-                if not log_path:
-                    raise RuntimeError("GA archive path is unavailable")
-
-                from frontends.continue_cmd import parse_native_log  # type: ignore
-
-                history = parse_native_log(log_path, allow_empty=True)
-                if history is None:
-                    raise RuntimeError("GA native archive could not be parsed")
-                store.reconcile(history)
-                store.save()
-                return store
+                return ga_rewind.sync_store(
+                    self.agent,
+                    store=store,
+                    checkpoint_lock=self._checkpoint_lock,
+                )
         except Exception:
             if strict:
                 raise
@@ -96,85 +87,17 @@ class RewindAdapter:
 
     def sync_working_memory(self, result: dict) -> None:
         """Keep GA working memory aligned with restored LLM history."""
-        agent = self.agent
-        handler = getattr(agent, "handler", None)
-        hist_info = result.get("hist_info")
-        if hist_info is not None:
-            restored = list(hist_info)
-            handler_history = getattr(handler, "history_info", None)
-            if isinstance(handler_history, list):
-                handler_history[:] = restored
-                agent.history = handler_history
-            else:
-                agent.history = restored
-        key_info = result.get("key_info")
-        working = getattr(handler, "working", None)
-        if key_info is not None and isinstance(working, dict):
-            working["key_info"] = key_info
+        ga_rewind.sync_working_memory(self.agent, result)
 
     def apply_durable(self, store: Any, turn_count: int) -> dict:
         """Rewrite archive/worldline and return durable rewind metrics."""
         self.sync_store(strict=True)
-        turn_nodes: list[str] = []
-        for node_id in store.linear_path():
-            message = store.first_user_message(node_id)
-            if message is not None and store._msg_user_text(message).strip():
-                turn_nodes.append(node_id)
-        if turn_count < 1 or turn_count > len(turn_nodes):
-            raise ValueError(f"n out of range 1..{len(turn_nodes)}")
-
-        try:
-            backend_history = self.agent.llmclient.backend.history
-        except AttributeError as exc:
-            raise RuntimeError(
-                f"agent has no llmclient.backend.history: {exc}"
-            ) from exc
-        old_len = len(backend_history)
-        first_removed_node = turn_nodes[-turn_count]
-        old_head = getattr(store, "head", None)
-        log_path = str(getattr(self.agent, "log_path", "") or "")
-
-        from frontends.continue_cmd import parse_native_log  # type: ignore
-        from frontends.worldline import restore_plan, rewrite_projection  # type: ignore
-
-        result = restore_plan(
-            store,
-            first_removed_node,
-            mode="conv",
-            to="before",
-            log_path=log_path,
+        return ga_rewind.apply_durable(
+            self.agent,
+            store=store,
+            turn_count=turn_count,
+            checkpoint_lock=self._checkpoint_lock,
         )
-        if result is None or result.get("history") is None:
-            raise RuntimeError("GA worldline could not restore the requested turn")
-        restored_history = list(result["history"])
-
-        archived_history = parse_native_log(log_path, allow_empty=True)
-        if archived_history != restored_history:
-            target = result.get("target")
-            rewritten = bool(target) and rewrite_projection(store, target, log_path)
-            archived_history = (
-                parse_native_log(log_path, allow_empty=True) if rewritten else None
-            )
-        if archived_history != restored_history:
-            rewind_head = getattr(store, "rewind_head", None)
-            if callable(rewind_head) and old_head is not None:
-                try:
-                    rewind_head(old_head)
-                except Exception:
-                    log.exception(
-                        "could not restore worldline head after archive rewrite failure"
-                    )
-            raise RuntimeError(
-                "GA native archive rewrite could not be verified; rewind was not applied"
-            )
-
-        backend_history[:] = restored_history
-        self.sync_working_memory(result)
-        return {
-            "kept": len(turn_nodes) - turn_count,
-            "history_lines": len(restored_history),
-            "removed_history_entries": max(0, old_len - len(restored_history)),
-        }
 
     def _removed_sids_after(
         self,

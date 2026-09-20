@@ -22,6 +22,7 @@ import threading
 from typing import Any, NamedTuple
 
 from .. import _paths  # Bootstrap GA's import path for the native archive parser.
+from frontends.gahub.bridge.session import restore_archive
 
 
 _NATIVE_HEADER_RE = re.compile(
@@ -637,9 +638,7 @@ def restore_ga_archive(agent, path: str):
     through here so "which GA helper mutates the working history" has one
     home next to the archive read/enumerate helpers.
     """
-    from frontends.continue_cmd import restore
-
-    return restore(agent, path)
+    return restore_archive(agent, path)
 
 
 def archive_contains(archive_path: str | Path, query: str) -> bool:

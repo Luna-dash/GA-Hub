@@ -48,26 +48,106 @@ def _load_agent_service_module():
     fake_continue.install = lambda *_a, **_kw: None
     fake_continue.reset_conversation = lambda *_a, **_kw: None
 
+    # agent_service now delegates session bootstrap to the GA-owned bridge.
+    fake_session_bridge = types.ModuleType("frontends.gahub.bridge.session")
+    fake_session_bridge.install_agent_class = lambda *_a, **_kw: None
+    fake_session_bridge.release_current = lambda *_a, **_kw: None
+    fake_session_bridge.reset_conversation = lambda *_a, **_kw: None
+
+    # rewind_adapter also pulls the durable-rewind bridge at module scope.
+    fake_rewind_bridge = types.ModuleType("frontends.gahub.bridge.rewind")
+    fake_rewind_bridge.bind_store = lambda *_a, **_kw: None
+    fake_rewind_bridge.sync_store = lambda *_a, **_kw: 0
+
+    def _apply_durable(agent, store, turn_count, **_kw):
+        """Mirror the real bridge's orchestration so stubbed integration tests
+        still exercise rewind_adapter through the same code path."""
+        import importlib as _il
+
+        turn_nodes = store.linear_path()
+        if turn_count > len(turn_nodes):
+            raise RuntimeError("rewind exceeds recorded history")
+        backend_history = agent.llmclient.backend.history
+        old_len = len(backend_history)
+        first_removed_node = turn_nodes[-turn_count]
+        old_head = getattr(store, "head", None)
+        log_path = str(getattr(agent, "log_path", "") or "")
+
+        native = _il.import_module("frontends.continue_cmd")
+        worldline = _il.import_module("frontends.worldline")
+        result = worldline.restore_plan(
+            store, first_removed_node, mode="conv", to="before", log_path=log_path
+        )
+        store.save()
+        restored_history = result["history"]
+
+        archived_history = native.parse_native_log(log_path, allow_empty=True)
+        if archived_history != restored_history:
+            target = result.get("target")
+            rewritten = bool(worldline.rewrite_projection(target, restored_history))
+            archived_history = (
+                native.parse_native_log(log_path, allow_empty=True) if rewritten else None
+            )
+            if archived_history != restored_history:
+                if old_head is not None:
+                    store.rewind_head(old_head)
+                    store.save()
+                raise RuntimeError(
+                    "GA native archive rewrite could not be verified; rewind was not applied"
+                )
+
+        backend_history[:] = restored_history
+        agent.history = list(result.get("hist_info") or [])
+        handler = getattr(agent, "handler", None)
+        if handler is not None:
+            handler.history_info = list(agent.history)
+            handler.working["key_info"] = result.get("key_info") or ""
+        return {
+            "kept": len(turn_nodes) - turn_count,
+            "history_lines": len(restored_history),
+            "removed_history_entries": max(0, old_len - len(restored_history)),
+        }
+
+    fake_rewind_bridge.apply_durable = _apply_durable
+
+    fake_bridge = types.ModuleType("frontends.gahub.bridge")
+    fake_bridge.session = fake_session_bridge
+    fake_bridge.rewind = fake_rewind_bridge
+    fake_gahub = types.ModuleType("frontends.gahub")
+    fake_gahub.bridge = fake_bridge
+    fake_frontends = types.ModuleType("frontends")
+    fake_frontends.gahub = fake_gahub
+
     modules = {
         "ga": fake_ga,
         "agentmain": fake_agentmain,
-        "frontends": types.ModuleType("frontends"),
+        "frontends": fake_frontends,
+        "frontends.gahub": fake_gahub,
+        "frontends.gahub.bridge": fake_bridge,
+        "frontends.gahub.bridge.session": fake_session_bridge,
+        "frontends.gahub.bridge.rewind": fake_rewind_bridge,
         "frontends.continue_cmd": fake_continue,
     }
     with TemporaryDirectory() as td:
         with mock.patch.object(_paths, "GA_ROOT", Path(td)), \
              mock.patch.object(_paths, "discover_user_python", return_value="/tmp/py"), \
              mock.patch.dict(sys.modules, modules):
-            # The stub-bound module must not leak into later test files:
-            # save the genuine entry and put it back once the class is built.
-            saved = sys.modules.get("server.services.agent_service")
+            # The stub-bound modules must not leak into later test files:
+            # save the genuine entries and put them back once built.
+            # rewind_adapter is ALSO evicted so its module-level
+            # ``ga_rewind`` binding re-resolves to the stubbed bridge.
+            saved_svc = sys.modules.get("server.services.agent_service")
+            saved_adapter = sys.modules.get("server.services.rewind_adapter")
             sys.modules.pop("server.services.agent_service", None)
+            sys.modules.pop("server.services.rewind_adapter", None)
             try:
                 import importlib
                 return importlib.import_module("server.services.agent_service")
             finally:
-                if saved is not None:
-                    sys.modules["server.services.agent_service"] = saved
+                if saved_svc is not None:
+                    sys.modules["server.services.agent_service"] = saved_svc
+                if saved_adapter is not None:
+                    sys.modules["server.services.rewind_adapter"] = saved_adapter
                 else:
                     sys.modules.pop("server.services.agent_service", None)
 
@@ -208,7 +288,9 @@ class RewindTurnsTests(unittest.TestCase):
              mock.patch.object(self.svc_mod, "bus", mock.MagicMock()) as fake_bus:
             result = svc.rewind_turns(n=2)
 
-        self.assertEqual(store.reconciled, native_history)
+        # sync_store is orchestrated separately by the session path, not by
+        # rewind_adapter.apply_durable — so reconcile is NOT invoked here.
+        self.assertIsNone(store.reconciled)
         self.assertEqual(store.saved, 1)
         self.assertEqual(restore_calls, [{
             "store": store,
@@ -285,9 +367,10 @@ class RewindTurnsTests(unittest.TestCase):
         self.assertEqual(svc.agent.llmclient.backend.history, history)
         self.assertEqual(list(svc._snapshots), ["live-1"])
         self.assertEqual(store.restored_heads, ["turn-1"])
-        fake_worldline.rewrite_projection.assert_called_once_with(
-            store, "origin", svc.agent.log_path
-        )
+        # New bridge contract: rewrite_projection(target, history) — target is
+        # the value returned in restore_plan's result, history is the restored
+        # native log rows (empty here because restore_plan returned []).
+        fake_worldline.rewrite_projection.assert_called_once_with("origin", [])
         fake_bus.publish.assert_not_called()
 
 
@@ -467,6 +550,88 @@ class RewindWithRealProjectionTests(unittest.TestCase):
         adapter._drop_snapshots(["ghost"])  # must not raise
 
         self.assertEqual(adapter.snapshots.items(), [])
+
+
+class RealNativeArchiveSmoke(unittest.TestCase):
+    """End-to-end smoke against the REAL GA archive machinery (no stubs).
+
+    The durable-rewind bridge must round-trip a genuine
+    ``model_responses_*.txt`` log: render a two-turn archive, reconcile the
+    worldline, rewind one turn, then re-parse the rewritten projection with
+    the real ``continue_cmd.parse_native_log`` and confirm it matches the
+    restored tree. This guards the GA-owned native format contract that the
+    stubbed tests above cannot cover.
+    """
+
+    def _history(self) -> list[dict]:
+        return [
+            _make_user_msg("first question"),
+            _make_assistant("first answer"),
+            _make_user_msg("second question"),
+            _make_assistant("second answer"),
+        ]
+
+    def test_real_archive_round_trip_through_bridge(self):
+        import os
+        import importlib
+
+        # Stubbed tests above leave a bare ``frontends`` namespace placeholder in
+        # ``sys.modules`` (a plain ModuleType without ``__path__``).  Ensure the
+        # REAL package is importable here, then restore the stub afterwards.
+        ga_frontends = os.path.join(
+            os.environ.get("GA_ROOT", r"D:\study\GA"), "frontends"
+        )
+        placeholder = sys.modules.get("frontends")
+        real_pkg = types.ModuleType("frontends")
+        real_pkg.__path__ = [ga_frontends]
+        sys.modules["frontends"] = real_pkg
+        try:
+            continue_cmd = importlib.import_module("frontends.continue_cmd")
+            worldline = importlib.import_module("frontends.worldline")
+            bridge = importlib.import_module("frontends.gahub.bridge.rewind")
+        finally:
+            # Re-point to the placeholder so downstream stubbed tests behave.
+            if placeholder is not None:
+                sys.modules["frontends"] = placeholder
+
+        with TemporaryDirectory() as td:
+            log_path = os.path.join(td, "model_responses_smoke.txt")
+            history = self._history()
+            with open(log_path, "w", encoding="utf-8") as fh:
+                fh.write(worldline.render_native_history(history))
+
+            store = worldline.RewindStore.for_log(
+                os.path.normpath(td), log_path, os.path.normpath(td)
+            )
+            backend_history: list[dict] = []
+            agent = types.SimpleNamespace(
+                log_path=log_path,
+                llmclient=types.SimpleNamespace(
+                    backend=types.SimpleNamespace(history=backend_history)
+                ),
+                handler=types.SimpleNamespace(history_info=[], working={}),
+                history=[],
+            )
+            lock = threading.RLock()
+
+            # Reconcile the real archive into the worldline, then cut one turn.
+            bridge.sync_store(agent, store=store, checkpoint_lock=lock)
+            self.assertEqual(
+                continue_cmd.parse_native_log(log_path, allow_empty=True), history
+            )
+            result = bridge.apply_durable(
+                agent, store=store, turn_count=1, checkpoint_lock=lock
+            )
+
+            self.assertEqual(result["kept"], 1)
+            self.assertEqual(result["history_lines"], 2)
+            # Live runtime history was truncated to the first turn.
+            self.assertEqual(backend_history, history[:2])
+            # The on-disk projection was rewritten and re-parses identically.
+            self.assertEqual(
+                continue_cmd.parse_native_log(log_path, allow_empty=True),
+                history[:2],
+            )
 
 
 if __name__ == "__main__":

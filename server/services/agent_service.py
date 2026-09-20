@@ -26,7 +26,11 @@ if _paths.GA_ROOT is None:
     raise RuntimeError("AgentService imported before GA_ROOT is configured")
 
 from agentmain import GeneraticAgent  # noqa: E402  (resolved via _paths sys.path)
-from frontends.continue_cmd import install as install_continue, reset_conversation  # noqa: E402
+from frontends.gahub.bridge.session import (  # noqa: E402
+    install_agent_class as install_continue,
+    release_current,
+    reset_conversation,
+)
 
 from .chat_retry import SCHEDULED_RETRY_SOURCES, ChatRetryConfig, classify_recoverable_error, compute_backoff_delay, load_chat_retry_config  # noqa: E402
 from .chat_stream_projection import ChatSnapshot, ChatStreamProjection  # noqa: E402
@@ -392,11 +396,8 @@ class AgentService:
             # Release the archive lock only after the run loop truly stopped:
             # GA's lock liveness is heartbeat-based, so an unreleased lock keeps
             # "occupying" its session for 30s after this process exits and the
-            # next launch's first restore would be refused. Imported lazily so
-            # stubbed continue_cmd test doubles keep working.
+            # next launch's first restore would be refused.
             try:
-                from frontends.continue_cmd import release_current
-
                 release_current(self.agent)
             except Exception:
                 log.debug("archive lock release on shutdown failed", exc_info=True)

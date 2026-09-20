@@ -20,6 +20,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from frontends.gahub.bridge import session as ga_session
+
 from .project_runtime import activate_project
 from .session_metadata import SessionMetadataStore
 # Liveness for the lock-takeover path. The probe lives in process_utils because
@@ -59,20 +61,12 @@ def _takeover_stale_lock(archive_path: str) -> bool:
     probe is left alone so the usual 30s expiry still applies.
     """
     try:
-        from frontends.continue_cmd import _lock_path, session_occupant
+        return ga_session.takeover_stale_lock(
+            archive_path,
+            pid_alive=_pid_alive,
+        )
     except Exception:
         return False
-    occupant = session_occupant(archive_path)
-    if not occupant:
-        return False
-    pid = occupant.get("pid")
-    if not isinstance(pid, int) or _pid_alive(pid):
-        return False
-    try:
-        os.remove(_lock_path(archive_path))
-    except OSError:
-        return False
-    return True
 
 
 class SessionRuntimeFactory:
@@ -98,15 +92,9 @@ class SessionRuntimeFactory:
 
             service_factory = AgentService
         if continue_inplace is None or acquire_birth_lock is None or release_current is None:
-            from frontends.continue_cmd import (
-                acquire_birth_lock as ga_acquire_birth_lock,
-                continue_inplace as ga_continue_inplace,
-                release_current as ga_release_current,
-            )
-
-            continue_inplace = continue_inplace or ga_continue_inplace
-            acquire_birth_lock = acquire_birth_lock or ga_acquire_birth_lock
-            release_current = release_current or ga_release_current
+            continue_inplace = continue_inplace or ga_session.continue_inplace
+            acquire_birth_lock = acquire_birth_lock or ga_session.acquire_birth_lock
+            release_current = release_current or ga_session.release_current
         self._store = store
         self._service_factory = service_factory
         self._continue_inplace = continue_inplace
@@ -119,9 +107,7 @@ class SessionRuntimeFactory:
         if self._begin_fresh_session is not None:
             self._begin_fresh_session(agent)
             return
-        from frontends.continue_cmd import begin_fresh_session as ga_begin_fresh
-
-        ga_begin_fresh(agent)
+        ga_session.begin_fresh_session(agent)
 
     def _rotate_unreadable_archive(
         self,

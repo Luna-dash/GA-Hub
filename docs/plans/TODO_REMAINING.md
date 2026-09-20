@@ -74,10 +74,10 @@
 
 ### W3.4 Session / Archive / Rewind
 
-- [ ] continue / begin / release native session。
-- [ ] archive occupant / lock / parse。
-- [ ] bind / sync rewind store、restore turn。
-- [ ] 移除 Hub 对 GA 私有 rewind 字段的直接写入，并用真实 archive fixture 回归。
+- [x] continue / begin / release native session。
+- [x] archive occupant / lock / parse。
+- [x] bind / sync rewind store、restore turn。
+- [x] 移除 Hub 对 GA 私有 rewind 字段的直接写入，并用真实 archive fixture 回归。
 
 ### W3.5 Agent runtime 与模型配置
 
