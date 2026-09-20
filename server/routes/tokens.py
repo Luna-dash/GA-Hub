@@ -18,14 +18,13 @@ _SESSION_METADATA = SessionMetadataStore()
 _TOTAL_KEYS = ("requests", "input", "output", "cache_create", "cache_read", "total")
 
 try:
-    import cost_tracker
-    cost_tracker.install()
+    from frontends.gahub.bridge import usage as usage_bridge
     if _paths.GA_ROOT is not None:
-        # Reuse GA's native JSONL ledger exactly as the official desktop
-        # bridge does.  GA-Hub is only a reader/presenter of that ledger.
-        cost_tracker.init_ledger(str(_paths.GA_ROOT))
-except Exception:  # GA versions without cost_tracker remain usable
-    cost_tracker = None
+        # Reuse GA's native JSONL ledger through its registered Hub boundary.
+        # GA-Hub remains only a reader/presenter of that ledger.
+        usage_bridge.initialize_usage_tracking(str(_paths.GA_ROOT))
+except Exception:  # GA versions without the usage bridge remain usable
+    usage_bridge = None
     log.exception("token tracker unavailable")
 
 
@@ -83,7 +82,7 @@ def _add_totals(left: dict[str, Any], right: dict[str, Any]) -> dict[str, int]:
 def _native_ledger_usage() -> dict[str, Any]:
     """Read GA's official ledger and adapt it to the existing WebUI schema."""
     now = int(time.time())
-    if cost_tracker is None:
+    if usage_bridge is None:
         empty = _normalise_totals({})
         usage = {"days": {}, "all_time": empty, "sessions": {}}
         result = {"available": False, "totals": _with_rate(empty), "timestamp": now}
@@ -93,7 +92,7 @@ def _native_ledger_usage() -> dict[str, Any]:
     days: dict[str, dict[str, int]] = {}
     sessions: dict[str, dict[str, Any]] = {}
     all_time = _normalise_totals({})
-    for entry in cost_tracker.read_ledger():
+    for entry in usage_bridge.read_usage_ledger():
         if not isinstance(entry, dict):
             continue
         key = entry.get("k")
@@ -122,11 +121,11 @@ def _native_ledger_usage() -> dict[str, Any]:
 
 def _native_ledger_history(hours: int) -> list[dict[str, Any]]:
     """Return native ledger events in the legacy history response shape."""
-    if cost_tracker is None:
+    if usage_bridge is None:
         return []
     cutoff = int(time.time()) - hours * 3600
     history = []
-    for entry in cost_tracker.read_ledger():
+    for entry in usage_bridge.read_usage_ledger():
         if not isinstance(entry, dict):
             continue
         try:

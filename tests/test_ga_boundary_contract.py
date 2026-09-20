@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GA_MODULE_ROOTS = {
     "TMWebDriver", "agent_loop", "agentmain", "frontends", "ga", "ga_cli",
-    "llmcore", "mykey", "mykey_template", "mykey_template_en", "plugins", "simphtml",
+    "cost_tracker", "llmcore", "mykey", "mykey_template", "mykey_template_en", "plugins", "simphtml",
 }
 REGISTERED_BRIDGE_PREFIX = "frontends.gahub.bridge"
 

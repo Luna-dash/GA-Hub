@@ -68,7 +68,7 @@
 ### W3.3 低风险能力垂直迁移
 
 - [x] workspace。
-- [ ] usage/cost tracker。
+- [x] usage/cost tracker。
 - [ ] native log path。
 - [ ] archive 只读投影。
 

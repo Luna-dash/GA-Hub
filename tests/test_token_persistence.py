@@ -99,7 +99,7 @@ class TokenPersistenceTests(unittest.TestCase):
             {"id": "chat-b", "title": "并行会话 B"},
         ]
 
-        with mock.patch.object(tokens.cost_tracker, "read_ledger", return_value=ledger), \
+        with mock.patch.object(tokens.usage_bridge, "read_usage_ledger", return_value=ledger), \
              mock.patch.object(tokens, "_SESSION_METADATA", metadata), \
              mock.patch.object(tokens.time, "time", return_value=timestamp + 3):
             result = tokens.token_stats()
@@ -120,7 +120,7 @@ class TokenPersistenceTests(unittest.TestCase):
         metadata = mock.Mock()
         metadata.list.return_value = []
 
-        with mock.patch.object(tokens.cost_tracker, "read_ledger", return_value=ledger), \
+        with mock.patch.object(tokens.usage_bridge, "read_usage_ledger", return_value=ledger), \
              mock.patch.object(tokens, "_SESSION_METADATA", metadata), \
              mock.patch.object(tokens.time, "time", return_value=timestamp + 3):
             result = tokens.token_stats()
@@ -170,7 +170,7 @@ class TokenPersistenceTests(unittest.TestCase):
             {"id": "chat-b", "title": "并行会话 B"},
         ]
 
-        with mock.patch.object(tokens.cost_tracker, "read_ledger", return_value=ledger), \
+        with mock.patch.object(tokens.usage_bridge, "read_usage_ledger", return_value=ledger), \
              mock.patch.object(tokens, "_SESSION_METADATA", metadata), \
              mock.patch.object(tokens.time, "time", return_value=timestamp + 3):
             result = tokens.token_stats()
