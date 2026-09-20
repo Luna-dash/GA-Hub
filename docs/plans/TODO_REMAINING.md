@@ -88,9 +88,9 @@
 
 ### W3.6 Official hub 可选接入
 
-- [ ] 在组合入口注册 monitor/wake/abort 窄控制面。
-- [ ] 不替代 Conductor 和产品 API；依赖缺失时安全降级。
-- [ ] 实测断线重连和 abort。
+- [x] 在组合入口注册 monitor/wake/abort 窄控制面（AgentService 经官方 `frontends.hub.connect` 复用，只 override put_task→`submit(source='hub')`）。
+- [x] 不替代 Conductor 和产品 API；依赖缺失时安全降级（`frontends.hub` 缺席时 attach 静默返回 False）。
+- [~] 实测断线重连和 abort：abort/降级/忙态有单测覆盖；真实 smoke 验证了无 hub server 时 daemon 静默存活不崩，但**未对真实 hub server 做断线重连实测**（需起 server 端）。
 
 ### W3.7 兼容清理
 
