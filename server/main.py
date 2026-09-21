@@ -405,7 +405,27 @@ def create_app() -> FastAPI:
         from .routes import conversations as conversations_routes
         await asyncio.to_thread(conversations_routes.run_legacy_title_migration_once)
 
+        # Phone projection: expose chat sessions as hub peers (plan §7.3).
+        # Coordinator accessors are injected here — the composition root —
+        # because services/ must not import routes/ (import-direction test).
+        try:
+            from .services.hub_session_projection import start_hub_session_projection
+            from .routes.sessions import _get_coordinator, peek_coordinator
+
+            start_hub_session_projection(
+                get_coordinator=_get_coordinator,
+                peek_coordinator=peek_coordinator,
+            )
+        except Exception:
+            log.exception("hub session projection start failed")
+
     async def _shutdown():
+        # Stop the phone projection first: no new puts should enter admission.
+        try:
+            from .services.hub_session_projection import stop_hub_session_projection
+            await asyncio.to_thread(stop_hub_session_projection)
+        except Exception:
+            log.exception("hub session projection stop failed")
         if not setup_mode:
             session_routes = None
             session_runtime_shutdown_ok = False
