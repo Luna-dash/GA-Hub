@@ -60,6 +60,7 @@ const LEGACY_RECENT_KEY = storageKeys.sessionRailLegacyRecentActivity
 const TERMINAL_KEY = storageKeys.sessionRailTerminalState
 const SEEN_COMPLETED_KEY = storageKeys.sessionRailSeenCompletedRuns
 const GROUP_COLLAPSE_KEY = storageKeys.sessionRailGroupCollapse
+const PINNED_GROUPS_KEY = storageKeys.sessionRailGroupPinned
 type TerminalState = 'completed' | 'error'
 type TerminalMap = Record<string, TerminalState>
 type SessionGroup = { key: string; name: string; projectPath: string | null; sessions: HubSession[] }
@@ -79,8 +80,6 @@ function sessionTitle(session: HubSession) {
 
 function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreate, onImportFromHistory, onRename, onDelete, creating }: SessionRailProps) {
   const [collapsed, setCollapsed] = usePageState('liveChat.sessionRailCollapsed', true)
-  const [createMenuOpen, setCreateMenuOpen] = useState(false)
-  const createMenuRef = useRef<HTMLDivElement>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [titleDraft, setTitleDraft] = useState('')
   const [savingId, setSavingId] = useState<string | null>(null)
@@ -92,6 +91,11 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
     () => readJson<Record<string, string>>(SEEN_COMPLETED_KEY, {}),
   )
   const previousActivity = useRef<Record<string, ReturnType<typeof sessionActivity>>>({})
+  // 置顶的分组键按置顶先后排列，持久化到本设备；未置顶组仍按最近活动排序。
+  const [pinnedGroups, setPinnedGroups] = useState<string[]>(() => {
+    const stored = readJson<string[]>(PINNED_GROUPS_KEY, [])
+    return Array.isArray(stored) ? stored.filter((key) => typeof key === 'string') : []
+  })
 
   useEffect(() => {
     try { localStorage.removeItem(LEGACY_RECENT_KEY) } catch { /* legacy cleanup */ }
@@ -178,9 +182,21 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
         sessions,
       })),
     ].filter((group) => group.sessions.length > 0)
-    groups.sort((a, b) => groupActivity(b.sessions) - groupActivity(a.sessions))
+    // 置顶组稳定排在最前（按置顶先后），其余组仍按最近活动排序。
+    // 注意不能对未置顶组用 Infinity 下标相减：Infinity - Infinity = NaN 会让
+    // sort 行为不可预期，必须显式分支比较。
+    groups.sort((a, b) => {
+      const aIndex = pinnedGroups.indexOf(a.key)
+      const bIndex = pinnedGroups.indexOf(b.key)
+      const aPinned = aIndex !== -1
+      const bPinned = bIndex !== -1
+      if (aPinned !== bPinned) return aPinned ? -1 : 1
+      if (aPinned && bPinned) return aIndex - bIndex
+      return groupActivity(b.sessions) - groupActivity(a.sessions)
+    })
     return groups
-  }, [orderedSessions])
+  }, [orderedSessions, pinnedGroups])
+  const hasPinnedGroups = sessionGroups.some((group) => pinnedGroups.includes(group.key))
   const hasProjectGroups = sessionGroups.some((group) => group.key !== 'free')
 
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(
@@ -250,38 +266,24 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
   }
 
   const toggle = () => {
-    setCreateMenuOpen(false)
     setCollapsed((current) => !current)
   }
 
-  // Dismiss the create menu on any interaction outside it (and on Escape), so
-  // a half-open menu cannot sit on top of the session cards.
-  useEffect(() => {
-    if (!createMenuOpen) return
-    const dismiss = (event: Event) => {
-      if (event.type === 'keydown' && (event as KeyboardEvent).key !== 'Escape') return
-      // A press inside the menu (including on the trigger) is not "outside";
-      // anything that is not even a node — a window-level synthetic event —
-      // counts as outside and closes.
-      const target = event.target
-      if (event.type !== 'keydown' && target instanceof Node && createMenuRef.current?.contains(target)) return
-      setCreateMenuOpen(false)
-    }
-    window.addEventListener('pointerdown', dismiss, true)
-    window.addEventListener('keydown', dismiss, true)
-    return () => {
-      window.removeEventListener('pointerdown', dismiss, true)
-      window.removeEventListener('keydown', dismiss, true)
-    }
-  }, [createMenuOpen])
+  const togglePin = useCallback((key: string) => {
+    setPinnedGroups((current) => {
+      const next = current.includes(key)
+        ? current.filter((pinned) => pinned !== key)
+        : [key, ...current]
+      try { localStorage.setItem(PINNED_GROUPS_KEY, JSON.stringify(next)) } catch { /* 私有模式等 */ }
+      return next
+    })
+  }, [])
 
   const createEmptySession = () => {
-    setCreateMenuOpen(false)
     void onCreate?.()
   }
 
   const importFromHistory = () => {
-    setCreateMenuOpen(false)
     onImportFromHistory?.()
   }
 
@@ -364,56 +366,62 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
         )}
       >
         {(onCreate || onImportFromHistory) && (
-          <div ref={createMenuRef} className="relative mb-3">
-            <button
-              type="button"
-              onClick={() => setCreateMenuOpen((open) => !open)}
-              disabled={creating}
-              aria-label="新建会话"
-              aria-haspopup="menu"
-              aria-expanded={createMenuOpen}
-              data-testid="create-session-row"
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-accent/45 bg-accent/15 px-3 py-2.5 text-sm font-semibold text-accent transition hover:border-accent/70 hover:bg-accent/25 active:scale-[0.99] disabled:opacity-50"
-              title="新建会话"
-            >
-              <span aria-hidden="true" className="text-base leading-none">＋</span>
-              <span>{creating ? '创建中…' : '新会话'}</span>
-            </button>
-            {createMenuOpen && (
-              <div
-                role="menu"
-                aria-label="新建会话"
-                className="absolute inset-x-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-line bg-bg-card shadow-lg"
-              >
+          // 单一组件三段式：左窄条「＋」与中部「新会话」触发同一动作，右侧图
+          // 标区是历史导入。整体底色比页面大背景深一档（bg-soft），导入区回到
+          // 大背景色（bg），作为「次要入口」的视觉层级。
+          <div
+            data-testid="create-session-row"
+            className="mb-3 flex w-full items-stretch overflow-hidden rounded-xl border border-line/70 bg-bg-soft shadow-sm"
+          >
+            {onCreate && (
+              <Fragment>
                 <button
                   type="button"
-                  role="menuitem"
-                  data-testid="create-session-empty"
                   onClick={createEmptySession}
-                  className="block w-full px-3 py-2 text-left text-sm text-ink hover:bg-white/5"
+                  disabled={creating}
+                  aria-label="新建空会话"
+                  title="新建空会话"
+                  className="flex w-8 flex-none items-center justify-center border-r border-line/50 text-base leading-none text-accent transition hover:bg-black/5 active:scale-[0.98] disabled:opacity-50"
                 >
-                  新建空会话
+                  <span aria-hidden="true">＋</span>
                 </button>
                 <button
                   type="button"
-                  role="menuitem"
-                  data-testid="create-session-import"
-                  onClick={importFromHistory}
-                  className="block w-full border-t border-line/60 px-3 py-2 text-left text-sm text-ink hover:bg-white/5"
+                  onClick={createEmptySession}
+                  disabled={creating}
+                  aria-label="新建会话"
+                  data-testid="create-session-empty"
+                  className="min-w-0 flex-1 px-2 py-2.5 text-center text-sm font-semibold text-accent transition hover:bg-black/5 active:scale-[0.99] disabled:opacity-50"
                 >
-                  从历史导入…
+                  {creating ? '创建中…' : '新会话'}
                 </button>
-              </div>
+              </Fragment>
+            )}
+            {onImportFromHistory && (
+              <button
+                type="button"
+                onClick={importFromHistory}
+                aria-label="历史导入"
+                title="从历史导入…"
+                data-testid="create-session-import"
+                className="flex w-9 flex-none items-center justify-center border-l border-line/50 bg-bg text-ink-muted transition hover:text-ink active:scale-[0.98]"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 3v11" />
+                  <path d="m7 10 5 5 5-5" />
+                  <path d="M4 19h16" />
+                </svg>
+              </button>
             )}
           </div>
         )}
-        <div className="flex gap-2 md:flex-col">
+        <div className="flex gap-2 md:flex-col md:gap-3">
           {sessionGroups.map((group) => {
             const groupClosed = collapsedGroups[group.key] === true
             const sessions = group.sessions
             if (sessions.length === 0) return null
             const cards = (
-              <div className={clsx('flex gap-2 md:flex-col', hasProjectGroups && !groupClosed && 'md:pl-1')}>
+              <div className={clsx('flex gap-2 md:flex-col md:gap-1.5', hasProjectGroups && !groupClosed && 'md:pl-1')}>
                 {sessions.map((session) => {
                   const runtime = runtimes[session.id]
                   const activity = displayState(session)
@@ -451,7 +459,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                         onDoubleClick={() => beginRename(session)}
                         aria-current={current ? 'page' : undefined}
                         title={`${sessionTitle(session)} · ${sessionStatusLabel(runtime)}${session.project_name ? ` · ${session.project_name}` : ''}`}
-                        className="block w-full px-3 py-2 text-left"
+                        className="block w-full px-2.5 py-1.5 text-left"
                       >
                         <span className="flex items-center gap-2 pr-8">
                           <span aria-hidden="true" title={sessionStatusLabel(runtime)} className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
@@ -519,31 +527,52 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
               </div>
             )
             if (!hasProjectGroups) return <Fragment key={group.key}>{cards}</Fragment>
+            const isPinned = pinnedGroups.includes(group.key)
             return (
-              <section key={group.key} className="md:mb-0.5">
-                <button
-                  type="button"
-                  onClick={() => toggleGroup(group.key)}
-                  aria-expanded={!groupClosed}
-                  title={group.projectPath || group.name}
-                  className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-[11px] font-medium text-[#8D7B5D] transition hover:bg-black/5 hover:text-ink-muted"
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                    className={clsx('h-3 w-3 flex-none transition-transform duration-200', groupClosed && '-rotate-90')}
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.4"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
+              <section key={group.key} className={clsx('md:mb-1', isPinned && hasPinnedGroups && 'md:mb-1.5')}>
+                <div className="group/project-header relative flex w-full items-stretch rounded-lg border border-line/60 bg-bg-soft/70 transition hover:border-line">
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.key)}
+                    aria-expanded={!groupClosed}
+                    title={group.projectPath || group.name}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 rounded-l-lg px-1.5 py-1.5 text-left text-xs font-semibold text-ink-muted transition hover:text-ink"
                   >
-                    <path d="m6 9 6 6 6-6" />
-                  </svg>
-                  <span className="min-w-0 flex-1 truncate text-left">{group.name}</span>
-                  <span className="rounded-full bg-black/6 px-1.5 py-px text-[10px] tabular-nums">{sessions.length}</span>
-                </button>
-                {!groupClosed && cards}
+                    <svg
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      className={clsx('h-3 w-3 flex-none transition-transform duration-200', groupClosed && '-rotate-90')}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
+                    <span className="min-w-0 flex-1 truncate">{group.name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => togglePin(group.key)}
+                    aria-pressed={isPinned}
+                    aria-label={isPinned ? `取消置顶 ${group.name}` : `置顶 ${group.name}`}
+                    data-testid={`pin-project-${group.key}`}
+                    title={isPinned ? '取消置顶' : '置顶此项目空间'}
+                    className={clsx(
+                      'flex w-7 flex-none items-center justify-center rounded-r-lg border-l border-line/50 transition',
+                      isPinned
+                        ? 'text-accent'
+                        : 'text-ink-faint/70 opacity-0 hover:text-ink-muted focus-visible:opacity-100 group-hover/project-header:opacity-100',
+                    )}
+                  >
+                    <svg viewBox="0 0 24 24" className="h-3 w-3" fill={isPinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z" />
+                      <path d="M12 15v6" />
+                    </svg>
+                  </button>
+                </div>
+                {!groupClosed && <div className="md:pt-1">{cards}</div>}
               </section>
             )
           })}
@@ -589,7 +618,8 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
         onClick={toggle}
         title={collapsed ? '展开会话管理' : '折叠会话管理'}
         className={clsx(
-          'absolute z-30 flex items-center justify-center border border-line bg-bg-card/95 text-ink-muted shadow-md backdrop-blur-sm hover:bg-white',
+          // bg-soft 比大背景深一档：这个半浮空把手此前与卡片几乎同色，看不清。
+          'absolute z-30 flex items-center justify-center border border-line bg-bg-soft text-ink-muted shadow-md backdrop-blur-sm hover:bg-bg-card',
           'left-1/2 h-6 w-12 -translate-x-1/2 rounded-b-lg border-t-0 transition-[top,background-color] duration-300',
           'md:left-auto md:top-1/2 md:h-12 md:w-6 md:translate-x-0 md:-translate-y-1/2 md:rounded-b-none md:rounded-r-lg md:border-l-0 md:border-t',
           collapsed ? 'top-0 md:-right-6' : 'top-32 md:-right-6 md:top-1/2',

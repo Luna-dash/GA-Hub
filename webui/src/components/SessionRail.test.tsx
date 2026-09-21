@@ -156,16 +156,15 @@ describe('SessionRail', () => {
       />,
     ))
 
+    // 三段式创建组件：左「＋」窄条与中部「新会话」触发同一动作
     const create = host.querySelector('[aria-label="新建会话"]') as HTMLButtonElement
-    expect(create.getAttribute('aria-haspopup')).toBe('menu')
-    expect(create.getAttribute('aria-expanded')).toBe('false')
-    act(() => create.click())
-    expect(create.getAttribute('aria-expanded')).toBe('true')
+    expect(create).not.toBeNull()
+    expect(create.textContent).toContain('新会话')
+    expect(host.querySelector('[aria-label="新建空会话"]')).not.toBeNull()
 
     const empty = host.querySelector('[data-testid="create-session-empty"]') as HTMLButtonElement
     await act(async () => { empty.click() })
     expect(onCreate).toHaveBeenCalledOnce()
-    expect(host.querySelector('[role="menu"]')).toBeNull()
 
     const renameCard = host.querySelector('[aria-current="page"]') as HTMLButtonElement
     act(() => { renameCard.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
@@ -180,7 +179,7 @@ describe('SessionRail', () => {
     expect(onRename).toHaveBeenCalledWith(sessions[0].id, '新的标题')
   })
 
-  it('routes the create menu entry for importing an archive to the history page', async () => {
+  it('routes the history-import button to the history page', async () => {
     const onCreate = vi.fn()
     const onImportFromHistory = vi.fn()
     act(() => root.render(
@@ -194,38 +193,36 @@ describe('SessionRail', () => {
       />,
     ))
 
-    act(() => (host.querySelector('[aria-label="新建会话"]') as HTMLButtonElement).click())
-    expect([...host.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim()))
-      .toEqual(['新建空会话', '从历史导入…'])
+    const importButton = host.querySelector('[data-testid="create-session-import"]') as HTMLButtonElement
+    expect(importButton.getAttribute('aria-label')).toBe('历史导入')
+    // 图标-only 按钮：无文字标签
+    expect(importButton.textContent?.trim()).toBe('')
 
-    await act(async () => {
-      (host.querySelector('[data-testid="create-session-import"]') as HTMLButtonElement).click()
-    })
+    await act(async () => { importButton.click() })
     expect(onImportFromHistory).toHaveBeenCalledOnce()
     expect(onCreate).not.toHaveBeenCalled()
-    expect(host.querySelector('[role="menu"]')).toBeNull()
   })
 
-  it('dismisses the create menu on Escape and on an outside pointer press', () => {
+  it('pins a project group to the top and persists the choice', () => {
     act(() => root.render(
-      <SessionRail
-        sessions={sessions}
-        runtimes={runtimes}
-        currentId={sessions[0].id}
-        onSelect={vi.fn()}
-        onCreate={vi.fn()}
-        onImportFromHistory={vi.fn()}
-      />,
+      <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,
     ))
 
-    const trigger = host.querySelector('[aria-label="新建会话"]') as HTMLButtonElement
-    act(() => trigger.click())
-    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
-    expect(host.querySelector('[role="menu"]')).toBeNull()
+    // 置顶前没有 pinned 组；alpha 是 fixture 里唯一的项目空间
+    const pin = host.querySelector('[data-testid="pin-project-project:alpha"]') as HTMLButtonElement
+    expect(pin).not.toBeNull()
+    expect(pin.getAttribute('aria-pressed')).toBe('false')
 
-    act(() => trigger.click())
-    act(() => { window.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })) })
-    expect(host.querySelector('[role="menu"]')).toBeNull()
+    act(() => pin.click())
+    expect((host.querySelector('[aria-label="取消置顶 alpha"]') as HTMLButtonElement)
+      .getAttribute('aria-pressed')).toBe('true')
+    expect(localStorage.getItem('gahub.sessionRailGroupPinned')).toContain('alpha')
+
+    // 再点一次取消置顶
+    act(() => (host.querySelector('[aria-label="取消置顶 alpha"]') as HTMLButtonElement).click())
+    expect((host.querySelector('[aria-label="置顶 alpha"]') as HTMLButtonElement)
+      .getAttribute('aria-pressed')).toBe('false')
+    expect(localStorage.getItem('gahub.sessionRailGroupPinned')).not.toContain('alpha')
   })
 
   it('acknowledges only the current completed session when the user interacts with the window', () => {
