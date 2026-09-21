@@ -620,11 +620,11 @@ current && 'ring-2 ring-inset ring-accent/50',
         onClick={toggle}
         title={collapsed ? '展开会话管理' : '折叠会话管理'}
         className={clsx(
-          // 幽灵把手：无底无边框，只留箭头——「新会话」行是 bg-bg-soft 实色块，
-          // 把手不能再与其同色（曾因此看不出区分度）。
-          'absolute z-30 flex items-center justify-center text-ink-faint transition-colors duration-300 hover:text-ink',
-          'left-1/2 h-6 w-12 -translate-x-1/2',
-          'md:left-auto md:top-1/2 md:h-12 md:w-6 md:translate-x-0 md:-translate-y-1/2',
+          // 保留底色/边框/阴影（用户要求配色区分，勿再改无色幽灵样式）。
+          // 实色 accent（棕 #8A6438）与「新会话」米色实块（bg-soft #D3C8B3）色系明确不同。
+          'absolute z-30 flex items-center justify-center border border-accent bg-accent text-bg-card shadow-md backdrop-blur-sm transition-[filter,background-color] duration-300 hover:brightness-110',
+          'left-1/2 h-6 w-12 -translate-x-1/2 rounded-b-lg border-t-0',
+          'md:left-auto md:top-1/2 md:h-12 md:w-6 md:translate-x-0 md:-translate-y-1/2 md:rounded-b-none md:rounded-r-lg md:border-l-0 md:border-t',
           collapsed ? 'top-0 md:-right-6' : 'top-32 md:-right-6 md:top-1/2',
         )}
       >
