@@ -20,8 +20,6 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from frontends.gahub.bridge import session as ga_session
-
 from .project_runtime import activate_project
 from .session_metadata import SessionMetadataStore
 # Liveness for the lock-takeover path. The probe lives in process_utils because
@@ -31,6 +29,19 @@ from .session_metadata import SessionMetadataStore
 from ..process_utils import pid_alive as _pid_alive
 
 log = logging.getLogger(__name__)
+
+
+def _ga_session_bridge() -> Any:
+    """Load GA's optional session bridge only when a runtime is used.
+
+    Setup mode intentionally has no GA checkout on ``sys.path``.  Keeping this
+    import lazy lets the sidecar expose setup/health endpoints without making
+    the optional runtime bridge a process-start dependency.
+    """
+    from frontends.gahub.bridge import session
+
+    return session
+
 
 # GA's continue_inplace refuses archives whose parse can never succeed again
 # (zero Prompt→Response pairs, or no native/summary structure at all). Retrying
@@ -61,7 +72,7 @@ def _takeover_stale_lock(archive_path: str) -> bool:
     probe is left alone so the usual 30s expiry still applies.
     """
     try:
-        return ga_session.takeover_stale_lock(
+        return _ga_session_bridge().takeover_stale_lock(
             archive_path,
             pid_alive=_pid_alive,
         )
@@ -92,6 +103,7 @@ class SessionRuntimeFactory:
 
             service_factory = AgentService
         if continue_inplace is None or acquire_birth_lock is None or release_current is None:
+            ga_session = _ga_session_bridge()
             continue_inplace = continue_inplace or ga_session.continue_inplace
             acquire_birth_lock = acquire_birth_lock or ga_session.acquire_birth_lock
             release_current = release_current or ga_session.release_current
@@ -107,7 +119,7 @@ class SessionRuntimeFactory:
         if self._begin_fresh_session is not None:
             self._begin_fresh_session(agent)
             return
-        ga_session.begin_fresh_session(agent)
+        _ga_session_bridge().begin_fresh_session(agent)
 
     def _rotate_unreadable_archive(
         self,

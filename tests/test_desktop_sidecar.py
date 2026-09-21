@@ -236,13 +236,38 @@ class OwnerStdinReaderTests(unittest.TestCase):
 
 
 class DesktopSidecarTests(unittest.TestCase):
-    def _spawn(self, *, owned_stdin: bool = True) -> None:
+    def _spawn(
+        self,
+        *,
+        owned_stdin: bool = True,
+        strip_pythonpath: bool = False,
+        instance_token: str = "test-token",
+    ) -> None:
         self.temp = tempfile.TemporaryDirectory()
         base = Path(self.temp.name)
         ga = base / "invalid-ga"
         ga.mkdir()
         env = os.environ.copy()
         env.update({"GA_ROOT": str(ga), "GA_ADMIN_DATA": str(base / "admin-data"), "PYTHONUNBUFFERED": "1"})
+        if strip_pythonpath:
+            env.pop("PYTHONPATH", None)
+            probe = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import importlib.util; print(importlib.util.find_spec('frontends') is None)",
+                ],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(
+                probe.stdout.strip(),
+                "True",
+                "regression needs GA sources to be unreachable; fix the test environment",
+            )
         command = [
             sys.executable,
             "-m",
@@ -250,7 +275,7 @@ class DesktopSidecarTests(unittest.TestCase):
             "--port",
             "0",
             "--instance-token",
-            "test-token",
+            instance_token,
         ]
         if owned_stdin:
             command.append("--owned-stdin")
@@ -339,6 +364,21 @@ class DesktopSidecarTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("loopback", result.stderr)
+
+    def test_setup_mode_boot_without_ga_sources_on_pythonpath(self) -> None:
+        """W3.4 regression: setup-mode boot must not need the optional GA checkout.
+
+        The packaged sidecar starts with no GA sources importable at all — the
+        user picks a GA root afterwards.  Importing the app must tolerate that,
+        and the sidecar must reach readiness and shut down gracefully.
+        """
+        self._spawn(strip_pythonpath=True, instance_token="setup-boot-token")
+        self.assertEqual(self.event["event"], "starting")
+        ready = self._wait_ready()
+        self.assertEqual(ready["instance_token"], "setup-boot-token")
+        self.proc.stdin.write("\n")
+        self.proc.stdin.flush()
+        self.assertEqual(self.proc.wait(timeout=10), 0)
 
     def _spawn_packaged_sidecar(self) -> dict[str, object]:
         if not _current_packaged_sidecar_is_staged():
