@@ -171,6 +171,7 @@ def _list_conversations_sync(
             "id": cid,
             "title": _metadata.title_for_archive(path),
             "message_count": rounds,
+            "mtime": int(mtime),
             "last_user_preview": preview,
             "bound_session_id": _bound_session_id(path),
             "source": _conversation_source(path),

@@ -3022,6 +3022,8 @@ export interface components {
             last_user_preview: string;
             /** Original User Preview */
             original_user_preview: string;
+            /** Mtime */
+            mtime: number;
             /** Bound Session Id */
             bound_session_id?: string | null;
             /**

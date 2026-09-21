@@ -7038,6 +7038,10 @@
             "type": "string",
             "title": "Original User Preview"
           },
+          "mtime": {
+            "type": "integer",
+            "title": "Mtime"
+          },
           "bound_session_id": {
             "anyOf": [
               {
@@ -7066,6 +7070,7 @@
           "message_count",
           "last_user_preview",
           "original_user_preview",
+          "mtime",
           "source"
         ],
         "title": "ConversationSummaryResp"

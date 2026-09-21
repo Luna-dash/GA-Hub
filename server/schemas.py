@@ -224,6 +224,8 @@ class ConversationSummaryResp(BaseModel):
     message_count: int
     last_user_preview: str
     original_user_preview: str
+    # Archive file mtime (epoch seconds) — the listing's last-activity stamp.
+    mtime: int
     # Hub session already owning this archive (None ⇒ importable). Drives the
     # listing's "open that session" vs "import as a new session" action.
     bound_session_id: str | None = None

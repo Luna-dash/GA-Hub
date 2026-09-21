@@ -11,6 +11,7 @@ import { ConversationIndexRail } from '@/components/ConversationIndexRail'
 import { VirtualMessageList } from '@/components/VirtualMessageList'
 import { parseAssistantTranscript, stripAssistantTranscriptTags } from '@/utils/assistantTranscript'
 import { previewText } from '@/utils/foldTurns'
+import { formatRelativeTime } from '@/utils/timeFormat'
 import { RAIL_TITLE_SCALE_EVENT, getRailTitleScale } from '@/utils/railAppearance'
 import { saveTextExport } from '@/utils/desktop'
 import { errorMessageFromError, openSessionChat, structuredErrorDetailFromError } from '@/utils/sessionUi'
@@ -755,13 +756,14 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
 }) {
   const title = summaryDisplayTitle(c)
   const meta = sourceMeta(c.source)
+  const lastActive = formatRelativeTime(c.mtime)
   if (collapsed) {
     return (
       <button
         type="button"
         onClick={onClick}
         aria-label={`第 ${index} 条：${title}`}
-        title={`${index}. ${title}\n${previewText(c.last_user_preview || '')}\n来源：${meta.label}`}
+        title={`${index}. ${title}\n${previewText(c.last_user_preview || '')}\n来源：${meta.label}${lastActive ? `\n最后活动：${lastActive}` : ''}`}
         className={`flex h-11 w-full items-center justify-center border-b border-line/60 text-xs font-medium transition-colors ${active ? 'bg-accent-soft text-accent' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
       >
         {index}
@@ -787,7 +789,7 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
         </span>
       </div>
       <div className="text-xs text-slate-500 truncate mt-0.5">{previewText(c.last_user_preview || '')}</div>
-      <div className="text-[10px] text-slate-600 mt-0.5">{c.message_count} 条消息</div>
+      <div className="text-[10px] text-slate-600 mt-0.5">{c.message_count} 条消息{lastActive ? ` · 最后活动 ${lastActive}` : ''}</div>
     </button>
   )
 }

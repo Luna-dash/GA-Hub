@@ -113,6 +113,7 @@ describe('conversation route selection', () => {
         id: 'alpha beta',
         title: 'Alpha conversation',
         message_count: 1,
+        mtime: 0,
         last_user_preview: 'hello',
         original_user_preview: 'hello',
       }],
