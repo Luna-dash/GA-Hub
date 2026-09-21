@@ -63,6 +63,7 @@ interface ChatState {
   msgs: ChatMsg[]
   conn: 'connecting' | 'open' | 'closed'
   streaming: boolean              // true if any stream still receiving
+  retryPending: boolean           // true while a recoverable error retry is backing off (abortable, but coordinator reports idle)
   hydrating: boolean              // legacy alias for historyStatus === 'loading_history'
   historyStatus: 'idle' | 'loading_history' | 'ready' | 'history_error'
   historyError: string | null
@@ -607,6 +608,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
   msgs: [],
   conn: 'connecting',
   streaming: false,
+  retryPending: false,
   hydrating: true,
   historyStatus: 'idle',
   historyError: null,
@@ -656,6 +658,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     set({
       msgs: switching ? (cached?.msgs ?? []) : current.msgs,
       streaming: switching ? (cached?.streaming ?? false) : current.streaming,
+      retryPending: false,
       historyStatus: resumeCachedView ? cached.historyStatus : 'loading_history',
       historyError: resumeCachedView ? cached.historyError : null,
       historyRevision: resumeCachedView ? cached.historyRevision : null,
@@ -846,7 +849,12 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       if (pendingNext.size > 0) flushNext()
       set((st) => {
         const msgs = applyEvent(st.msgs, m)
-        return { msgs, streaming: anyStreaming(msgs) }
+        // Track the server-side error-retry backoff so the UI can keep the
+        // stop action available while the coordinator reports the run idle.
+        let retryPending = st.retryPending
+        if (m.type === 'retry_scheduled') retryPending = true
+        else if (m.type === 'retry' || m.type === 'retry_exhausted' || m.type === 'done' || m.type === 'aborted' || m.type === 'started') retryPending = false
+        return { msgs, streaming: anyStreaming(msgs), retryPending }
       })
       commitCursor(sessionId, m)
     }

@@ -318,6 +318,10 @@ class AgentService:
         self.session_id = ""
         self._manage_global_preference = False
         self._streams: dict[str, StreamHandle] = {}
+        # Error retries that are backing off before resubmit, keyed by the
+        # originating stream_id.  The backoff runs on a fanout thread outside
+        # the coordinator's admission, so abort() consults this registry.
+        self._pending_error_retry: dict[str, ChatSnapshot] = {}
         # Per-stream UI snapshot (LRU-capped) for replay on reconnect
         self._snapshots = ChatStreamProjection(capacity=self._SNAPSHOT_CAP)
         self._lock = threading.Lock()
@@ -549,12 +553,36 @@ class AgentService:
             log.warning("failed to restore preferred llm: %s", e)
 
     def abort(self) -> None:
+        # Cancel any error retry still backing off so a stopped session does
+        # not spring back to life after this abort.  agent.abort() itself is a
+        # no-op when the agent is idle, so this stays safe on the retry path.
+        self.cancel_pending_error_retry()
         self.agent.abort()
         bus.publish(AGENT_ABORT, {"ts": time.time()})
         # Immediately publish chat:aborted to unblock the UI.
         # The agent's run loop may still emit a final {'done': ...} if it
         # manages to break out, but when LLM is stuck we can't wait for that.
         bus.publish(CHAT_ABORTED, {"ts": time.time()})
+
+    def cancel_pending_error_retry(self) -> int:
+        """Mark every error retry still backing off as aborted.
+
+        The backoff runs on a fanout thread outside the coordinator's
+        admission, so ``abort_if_current`` alone cannot reach it.  Marking
+        happens under the lock so it is serialized against the post-submit
+        recheck in ``_maybe_retry_recoverable_error``.  Returns the number
+        of retries cancelled.
+        """
+        with self._lock:
+            pending = list(self._pending_error_retry.values())
+            self._pending_error_retry.clear()
+            for snap in pending:
+                snap.aborted = True
+        return len(pending)
+
+    def _discard_pending_error_retry(self, stream_id: str) -> None:
+        with self._lock:
+            self._pending_error_retry.pop(stream_id, None)
 
     # ── tasks ────────────────────────────────────────────────────
     def btw(self, question: str) -> str:
@@ -854,6 +882,8 @@ class AgentService:
                 "attempt": h.error_retry_count,
                 "max_attempts": eff_max,
                 "reason": match.to_dict(),
+                "session_id": h.session_id,
+                "run_id": h.run_id,
             })
             return True
         next_count = h.error_retry_count + 1
@@ -861,6 +891,11 @@ class AgentService:
         delay_seconds = compute_backoff_delay(
             h.error_retry_count, cfg, match.delay_scale, jitter=True, scheduled=is_scheduled
         )
+        # Register the pending retry so an abort during the backoff window
+        # (or right after the resubmit below) can still reach this fanout
+        # thread, which runs outside the coordinator's admission.
+        with self._lock:
+            self._pending_error_retry[h.stream_id] = snap
         if delay_seconds > 0:
             # The stream is already terminal here, so the coordinator has
             # released its session slot; waiting on this fanout thread does
@@ -874,6 +909,8 @@ class AgentService:
                 "max_attempts": eff_max,
                 "delay_seconds": delay_seconds,
                 "reason": match.to_dict(),
+                "session_id": h.session_id,
+                "run_id": h.run_id,
             })
             log.info(
                 "backing off %.1fs before recoverable chat error retry for %s (%d/%d, %s)",
@@ -884,21 +921,26 @@ class AgentService:
                 match.label,
             )
             if not self._wait_for_error_retry_slot(h, snap, delay_seconds):
+                self._discard_pending_error_retry(h.stream_id)
                 return False
             if snap.aborted:
+                self._discard_pending_error_retry(h.stream_id)
                 return False
             # Policy may have changed while waiting; honor the freshest one.
             cfg = self._load_chat_retry_config()
             eff_max = cfg.scheduled_max_attempts if is_scheduled else cfg.max_attempts
             if not cfg.enabled or eff_max <= 0:
+                self._discard_pending_error_retry(h.stream_id)
                 return False
             if h.error_retry_count >= eff_max:
+                self._discard_pending_error_retry(h.stream_id)
                 return False
             if not self._error_retry_still_alone(h):
                 log.info(
                     "skipping recoverable chat error retry for %s: newer stream active",
                     h.stream_id,
                 )
+                self._discard_pending_error_retry(h.stream_id)
                 return False
         log.info(
             "retrying recoverable chat error for %s (%d/%d, %s)",
@@ -914,6 +956,8 @@ class AgentService:
             "attempt": next_count,
             "max_attempts": eff_max,
             "reason": match.to_dict(),
+            "session_id": h.session_id,
+            "run_id": h.run_id,
         })
         self.submit(
             prompt,
@@ -928,6 +972,14 @@ class AgentService:
             session_id=h.session_id,
             run_id=h.run_id,
         )
+        # An abort may have landed between the last backoff check and this
+        # submit; the pending registry keeps that window visible.  Honor it
+        # immediately instead of running an unwanted retry.
+        with self._lock:
+            self._pending_error_retry.pop(h.stream_id, None)
+            aborted_after_submit = snap.aborted
+        if aborted_after_submit:
+            self.agent.abort()
         return True
 
     def _wait_for_error_retry_slot(self, h: StreamHandle, snap: ChatSnapshot, delay_seconds: float) -> bool:

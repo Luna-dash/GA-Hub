@@ -562,6 +562,36 @@ describe('chat_error_retry notice bubble reuse', () => {
     expect(list[0].content).toContain('timeout')
   })
 
+  it('flags retryPending during the backoff window so the stop action stays available', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
+      session_id: 'session-retry',
+      archive_bound: true,
+      revision: 'r1',
+      items: [],
+    })
+    useChatStore.getState().start('session-retry')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+
+    const sock = FakeWebSocket.instances.at(-1)!
+    // Backoff scheduled while the run itself is already terminal: the
+    // coordinator reports idle, but the stop button must stay usable.
+    sock.emit({ type: 'retry_scheduled', stream_id: 'turn-p', source: 'user', logical_id: 'turn-p', attempt: 1, max_attempts: 3, delay_seconds: 4, retry_reason: 'timeout' } as never)
+    expect(useChatStore.getState().retryPending).toBe(true)
+    expect(useChatStore.getState().streaming).toBe(false)
+
+    // Resubmit begins -> the pending flag clears as the stream goes live.
+    sock.emit({ type: 'retry', stream_id: 'turn-p', source: 'user', logical_id: 'turn-p', attempt: 1, max_attempts: 3, retry_reason: 'timeout' } as never)
+    sock.emit({ type: 'started', stream_id: 'r-p1', source: 'chat_error_retry', logical_id: 'turn-p', retry_attempt: 1, retry_max: 3, retry_reason: 'timeout' } as never)
+    expect(useChatStore.getState().retryPending).toBe(false)
+
+    // Aborting during a later backoff window also clears the flag.
+    sock.emit({ type: 'done', stream_id: 'r-p1', source: 'chat_error_retry', logical_id: 'turn-p', retry_attempt: 1, retry_max: 3, content: '' } as never)
+    sock.emit({ type: 'retry_scheduled', stream_id: 'turn-p', source: 'user', logical_id: 'turn-p', attempt: 2, max_attempts: 3, delay_seconds: 8, retry_reason: 'timeout' } as never)
+    expect(useChatStore.getState().retryPending).toBe(true)
+    sock.emit({ type: 'aborted', stream_id: 'r-p1', source: 'chat_error_retry', logical_id: 'turn-p' } as never)
+    expect(useChatStore.getState().retryPending).toBe(false)
+  })
+
   it('shows one countdown bubble for retry_scheduled and rewrites it when the retry starts', async () => {
     vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
       session_id: 'session-sched',

@@ -725,6 +725,14 @@ class SessionCoordinator:
         with self._lock:
             active = self._active_by_session.get(session_id)
             if active is None:
+                # No admitted run, but an error retry may still be backing
+                # off on this session's runtime: fanout resubmits bypass the
+                # coordinator, so route the abort to the runtime directly.
+                # runtime.abort() is a no-op for a truly idle agent, and it
+                # also cancels any pending error retry on that service.
+                runtime = self._runtimes.get(session_id)
+                if runtime is not None:
+                    runtime.abort()
                 return replace(self._states.get(session_id, RuntimeState(session_id)))
             return self._abort_locked(active)
 

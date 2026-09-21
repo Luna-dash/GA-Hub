@@ -38,11 +38,36 @@ def _load_agent_service_module():
     fake_continue.install = lambda *_a, **_kw: None
     fake_continue.reset_conversation = lambda *_a, **_kw: None
 
+    # agent_service imports the GA bridge eagerly at module level, so the
+    # stubbed ``frontends`` tree must expose the gahub.bridge.* submodules
+    # (importing them from disk would drag the real GA runtime in).
+    fake_frontends = types.ModuleType("frontends")
+    fake_frontends.__path__ = []  # mark as package so submodule imports work
+    fake_gahub = types.ModuleType("frontends.gahub")
+    fake_gahub.__path__ = []
+    fake_bridge = types.ModuleType("frontends.gahub.bridge")
+    fake_bridge.__path__ = []
+    fake_runtime_bridge = types.ModuleType("frontends.gahub.bridge.runtime")
+    fake_runtime_bridge.create_main_agent = lambda *_a, **_kw: mock.MagicMock()
+    fake_runtime_bridge.register_turn_end_hook = lambda *_a, **_kw: None
+    fake_runtime_bridge.unregister_turn_end_hook = lambda *_a, **_kw: None
+    fake_session_bridge = types.ModuleType("frontends.gahub.bridge.session")
+    fake_session_bridge.release_current = lambda *_a, **_kw: None
+    fake_session_bridge.reset_conversation = lambda *_a, **_kw: None
+    # rewind_adapter imports ``frontends.gahub.bridge.rewind`` eagerly; the
+    # retry tests never exercise it, so a permissive MagicMock suffices.
+    fake_rewind_bridge = mock.MagicMock(name="frontends.gahub.bridge.rewind")
+
     modules = {
         "ga": fake_ga,
         "agentmain": fake_agentmain,
-        "frontends": types.ModuleType("frontends"),
+        "frontends": fake_frontends,
         "frontends.continue_cmd": fake_continue,
+        "frontends.gahub": fake_gahub,
+        "frontends.gahub.bridge": fake_bridge,
+        "frontends.gahub.bridge.runtime": fake_runtime_bridge,
+        "frontends.gahub.bridge.session": fake_session_bridge,
+        "frontends.gahub.bridge.rewind": fake_rewind_bridge,
     }
     with TemporaryDirectory() as td:
         with mock.patch.object(_paths, "GA_ROOT", Path(td)), \

@@ -53,6 +53,7 @@ export default function LiveChat() {
   const nav = useNavigate()
 
   const streaming = useChatStore((s) => s.streaming)
+  const retryPending = useChatStore((s) => s.retryPending)
   const conn = useChatStore((s) => s.conn)
   const dropSessionView = useChatStore((s) => s.dropSessionView)
   const startChat = useChatStore((s) => s.start)
@@ -792,10 +793,10 @@ export default function LiveChat() {
         onSchedule={openSchedule}
         onStop={() => {
           const sid = session?.id
-          if (!sid || sessionIdRef.current !== sid || !sessionRunning) return
+          if (!sid || sessionIdRef.current !== sid || (!sessionRunning && !retryPending)) return
           void api.abortSession(sid).then(() => refreshRuntime(sid))
         }}
-        stopActive={sessionRunning}
+        stopActive={sessionRunning || retryPending}
         onSlashCommand={handleSlashCommand}
         placeholder="输入消息,或输入 / 查看命令"
         disabled={creatingSession}
