@@ -435,7 +435,8 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                     className={clsx(
                       'group relative w-52 shrink-0 rounded-xl border transition-colors md:w-full',
                       activityCard[activity],
-                      current && 'ring-2 ring-accent/35 ring-offset-1 ring-offset-bg-card',
+                      // 内描边：ring + offset 会画在盒外（曾挤占 rail 横向空间），ring-inset 收进盒内。
+current && 'ring-2 ring-inset ring-accent/50',
                     )}
                   >
                     {editing ? (
