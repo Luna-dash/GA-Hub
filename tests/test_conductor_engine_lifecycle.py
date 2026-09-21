@@ -80,6 +80,91 @@ def test_ensure_running_rejects_http_200_with_missing_capability(monkeypatch) ->
     assert get.call_count == 1
 
 
+def _incompatible_engine_response() -> mock.Mock:
+    """A healthy-looking foreign engine with the wrong path policy.
+
+    This is the manually spawned ``gahub_app.py`` case: it answers /health
+    with 200 but was started without the Hub's ``GAHUB_PATH_POLICY``, so the
+    handshake must reject it instead of attaching.
+    """
+    response = mock.Mock(status_code=200)
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "ok": True,
+        "service": "gahub",
+        "protocol_version": 2,
+        "boot_id": "0" * 32,
+        "capabilities": [
+            "snapshot_revision", "path_policy", "sse_resync",
+            "guarded_actions", "unified_admission", "request_recovery",
+            "operation_receipts",
+        ],
+        "path_policy": {"mode": "allowed_roots",
+                        "allowed_roots": ["D:/study/GA"]},
+    }
+    return response
+
+
+def test_incompatible_engine_error_names_the_port_occupier(monkeypatch) -> None:
+    """A foreign engine on the singleton port must identify itself in the error.
+
+    The hub must never kill an unknown process, but it owes the operator the
+    pid and the remediation hint rather than a bare "incompatible".
+    """
+    manager = GahubProcessManager(ga_root="D:/nonexistent-ga", spawn_enabled=False)
+    monkeypatch.setattr(
+        cc.requests, "get", mock.Mock(return_value=_incompatible_engine_response()))
+    monkeypatch.setattr(
+        cc, "_describe_port_occupier",
+        lambda port: "pid 1234 (python.exe): python gahub_app.py")
+    monkeypatch.setattr(
+        cc.subprocess, "Popen",
+        mock.Mock(side_effect=AssertionError("an incompatible engine must not be respawned")))
+
+    with pytest.raises(GahubProcessError) as excinfo:
+        manager.ensure_running(startup_timeout=0.1)
+
+    message = str(excinfo.value)
+    assert "path policy differs" in message
+    assert "pid 1234 (python.exe): python gahub_app.py" in message
+    assert "respawn a compatible engine" in message
+
+
+def test_incompatible_engine_error_stays_plain_without_a_known_occupier(monkeypatch) -> None:
+    """When the occupier cannot be probed the original message is kept."""
+    manager = GahubProcessManager(ga_root="D:/nonexistent-ga", spawn_enabled=False)
+    monkeypatch.setattr(
+        cc.requests, "get", mock.Mock(return_value=_incompatible_engine_response()))
+    monkeypatch.setattr(cc, "_describe_port_occupier", lambda port: None)
+
+    with pytest.raises(GahubProcessError) as excinfo:
+        manager.ensure_running(startup_timeout=0.1)
+
+    message = str(excinfo.value)
+    assert "path policy differs" in message
+    assert "is held by" not in message
+
+
+def test_describe_port_occupier_finds_a_real_listener() -> None:
+    """Probe a socket this test owns: the pid must be reported."""
+    import os
+    import socket
+
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        description = cc._describe_port_occupier(port)
+        assert description is not None
+        assert f"pid {os.getpid()}" in description
+    finally:
+        listener.close()
+
+    # Once closed the port has no listener and the probe must stay silent.
+    assert cc._describe_port_occupier(port) is None
+
+
 def test_ensure_running_still_refuses_to_spawn_when_disabled(monkeypatch) -> None:
     """The health gate is the only reason a disabled manager is silent."""
     manager = GahubProcessManager(ga_root="D:/nonexistent-ga", spawn_enabled=False)

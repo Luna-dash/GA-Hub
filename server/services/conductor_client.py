@@ -236,6 +236,41 @@ def _resolve_python_exe(ga_root: Optional[str]) -> str:
     return sys.executable
 
 
+def _describe_port_occupier(port: int) -> Optional[str]:
+    """Best-effort description of the process listening on *port*.
+
+    The engine's singleton port can be held by a foreign process — typically a
+    ``gahub_app.py`` started manually without the Hub's environment. When the
+    /health handshake then fails, naming the occupier turns an opaque
+    "engine unreachable" into an actionable diagnosis. psutil stays optional
+    here for parity with the defensive imports in child_job (frozen sidecar).
+    """
+    try:
+        import psutil
+    except ImportError:
+        return None
+    try:
+        for conn in psutil.net_connections(kind="tcp"):
+            if (
+                conn.status == psutil.CONN_LISTEN
+                and conn.laddr
+                and conn.laddr.port == port
+                and conn.pid
+            ):
+                try:
+                    proc = psutil.Process(conn.pid)
+                    cmdline = " ".join(proc.cmdline() or [])
+                    if len(cmdline) > 160:
+                        cmdline = cmdline[:157] + "..."
+                    detail = cmdline or "cmdline unavailable"
+                    return f"pid {conn.pid} ({proc.name()}): {detail}"
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    return f"pid {conn.pid} (process details unavailable)"
+    except Exception:
+        log.debug("port %s occupier probe failed", port, exc_info=True)
+    return None
+
+
 class GahubProcessManager:
     """Supervise the GA-side gahub_app.py subprocess (sidecar pattern)."""
 
@@ -275,8 +310,14 @@ class GahubProcessManager:
         try:
             validate_protocol(payload, expected_env=_engine_spawn_env())
         except ProtocolValidationError as exc:
+            occupier = _describe_port_occupier(self.port)
+            hint = (
+                f"; port {self.port} is held by {occupier} — terminate that "
+                "process so the Hub can respawn a compatible engine"
+                if occupier else ""
+            )
             raise GahubProcessError(
-                f"gahub_app /health is incompatible: {exc}") from exc
+                f"gahub_app /health is incompatible: {exc}{hint}") from exc
         return True
 
     def _headers(self) -> dict:
@@ -412,8 +453,13 @@ class GahubProcessManager:
                     child_job.cage_descendants(getattr(self._proc, "pid", None))
                     return
                 if self._proc.poll() is not None:
+                    occupier = _describe_port_occupier(self.port)
+                    cause = (
+                        f" — port {self.port} is occupied by {occupier}"
+                        if occupier else ""
+                    )
                     raise GahubProcessError(
-                        f"gahub_app exited with code {self._proc.returncode} during startup"
+                        f"gahub_app exited with code {self._proc.returncode} during startup{cause}"
                     )
                 time.sleep(0.25)
         detail = f"python={self.python_exe} poll={self._proc.poll() if self._proc else 'n/a'}"
