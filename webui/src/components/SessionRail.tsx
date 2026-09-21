@@ -530,13 +530,14 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
             const isPinned = pinnedGroups.includes(group.key)
             return (
               <section key={group.key} className={clsx('md:mb-1', isPinned && hasPinnedGroups && 'md:mb-1.5')}>
-                <div className="group/project-header relative flex w-full items-stretch rounded-lg border border-line/60 bg-bg-soft/70 transition hover:border-line">
+                {/* 标题是纯文字区隔（无描边/无底框）：会话卡是带边框的盒体，标题再描边会与之同形难区分。 */}
+                <div className="group/project-header relative flex w-full items-center px-0.5">
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.key)}
                     aria-expanded={!groupClosed}
                     title={group.projectPath || group.name}
-                    className="flex min-w-0 flex-1 items-center gap-1.5 rounded-l-lg px-1.5 py-1.5 text-left text-xs font-semibold text-ink-muted transition hover:text-ink"
+                    className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-1 text-left text-xs font-bold tracking-wide text-ink-muted/90 transition hover:text-ink"
                   >
                     <svg
                       viewBox="0 0 24 24"
@@ -560,7 +561,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
                     data-testid={`pin-project-${group.key}`}
                     title={isPinned ? '取消置顶' : '置顶此项目空间'}
                     className={clsx(
-                      'flex w-7 flex-none items-center justify-center rounded-r-lg border-l border-line/50 transition',
+                      'flex w-6 flex-none items-center justify-center rounded transition',
                       isPinned
                         ? 'text-accent'
                         : 'text-ink-faint/70 opacity-0 hover:text-ink-muted focus-visible:opacity-100 group-hover/project-header:opacity-100',
@@ -618,10 +619,11 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
         onClick={toggle}
         title={collapsed ? '展开会话管理' : '折叠会话管理'}
         className={clsx(
-          // bg-soft 比大背景深一档：这个半浮空把手此前与卡片几乎同色，看不清。
-          'absolute z-30 flex items-center justify-center border border-line bg-bg-soft text-ink-muted shadow-md backdrop-blur-sm hover:bg-bg-card',
-          'left-1/2 h-6 w-12 -translate-x-1/2 rounded-b-lg border-t-0 transition-[top,background-color] duration-300',
-          'md:left-auto md:top-1/2 md:h-12 md:w-6 md:translate-x-0 md:-translate-y-1/2 md:rounded-b-none md:rounded-r-lg md:border-l-0 md:border-t',
+          // 幽灵把手：无底无边框，只留箭头——「新会话」行是 bg-bg-soft 实色块，
+          // 把手不能再与其同色（曾因此看不出区分度）。
+          'absolute z-30 flex items-center justify-center text-ink-faint transition-colors duration-300 hover:text-ink',
+          'left-1/2 h-6 w-12 -translate-x-1/2',
+          'md:left-auto md:top-1/2 md:h-12 md:w-6 md:translate-x-0 md:-translate-y-1/2',
           collapsed ? 'top-0 md:-right-6' : 'top-32 md:-right-6 md:top-1/2',
         )}
       >
