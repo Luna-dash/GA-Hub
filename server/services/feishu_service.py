@@ -16,6 +16,7 @@ import psutil
 
 from .. import _paths
 from ..process_utils import hidden_process_kwargs
+from . import child_job
 from .event_bus import bus
 from ..event_topics import (
     FEISHU_CHAT,
