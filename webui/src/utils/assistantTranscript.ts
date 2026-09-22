@@ -330,6 +330,10 @@ function fallbackTrimTail(text: string, hard = false): string {
 /** The first meaningful prose line before any tool dump; '' when none. */
 function fallbackLeadLine(raw: string): string {
   let text = raw
+  // Strip full thinking blocks up front (mirrors extractSummary's pre-pass).
+  text = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, ' ')
+  // Clear DSML residue before label peeling so it cannot shield opening labels.
+  text = text.replace(/(?:\s*[｜|]+\s*DSML[^>]*>?)+/gi, ' ')
   // Peel opening label shells such as '<summary>' or '<parameter ...>'.
   text = text.replace(/^(?:\s*<[A-Za-z][^<>]{0,80}>)+\s*/, '')
   text = text.replace(/^(\s*<thinking>[\s\S]*?<\/thinking>)+\s*/i, '')
@@ -341,7 +345,8 @@ function fallbackLeadLine(raw: string): string {
   if (cut >= 0) text = text.slice(0, cut)
   text = text.replace(/(?:\s*<\/[A-Za-z][^<>]{0,80}>)+\s*$/, '')
   text = text.replace(/\s*[｜|]+\s*DSML.*$/i, '')
-  text = text.replace(/\s*<\/?(?:arg_value|parameter|antml:[a-z_]+)>\s*$/i, '')
+  // Strip summary/parameter/arg_value label residue anywhere (attributes included).
+  text = text.replace(/<\/?(?:summary|parameter|arg_value|antml:[a-z_]+)(?:\s[^<>]{0,200})?>/gi, ' ')
   text = text.replace(/(?:\s*[｜|]+\s*DSML[^>]*>?)+/gi, ' ')
   let line = ''
   for (const candidate of text.split(/\r?\n/)) {

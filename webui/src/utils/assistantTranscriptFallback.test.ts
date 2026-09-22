@@ -39,6 +39,11 @@ describe('fallback summary derivation', () => {
     ['请先修改配置，然后重启服务', '请先修改配置，然后重启服务'],
     ['。。', ''],
     ['', ''],
+    // label-shell residue in stray positions (v3 hardening, 2026-09-22)
+    ['A 完成</summary>\n\n后面正文继续', 'A 完成'],
+    ['|DSML| <parameter name="summary">A 完成</parameter>\n\n正文', 'A 完成'],
+    ['<thinking>想想</thinking>\n\n正文若干。继续说', '正文若干。'],
+    ['嗯 <parameter name="summary">A 完成</parameter> 就这样', '嗯 A 完成'],
   ]
 
   it.each(cases)('derives %j -> %j', (input, expected) => {
