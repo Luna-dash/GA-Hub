@@ -19,6 +19,11 @@ import { MessageBubble } from './MessageBubble'
 import { VirtualMessageList, type VirtualMessageListHandle } from './VirtualMessageList'
 import { Z_LAYERS } from '@/config/zLayers'
 
+// A freshly launched UI lands on the latest turn (its user question at the
+// top of the viewport); positions saved by a previous run are ignored. Route
+// remounts within the same run still restore the saved reading position.
+let freshLaunchPending = true
+
 export interface LiveChatTranscriptHandle {
   /** Preserve the existing send behavior: a local submission follows the tail. */
   pinToBottom: () => void
@@ -84,7 +89,13 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     const restoredSessionsRef = useRef<Set<string>>(new Set())
     const capturePosition = useCallback(() => {
       const el = scrollRef.current
-      if (!sessionId || !el || msgs.length === 0) return
+      // Detached DOM reads zeros and would overwrite a good saved position
+      // with a bogus stuck=true entry during unmount cleanup.
+      if (!sessionId || !el || !el.isConnected || msgs.length === 0) return
+      // The remount commit runs recomputeStuck (and its capture) before the
+      // one-shot restore effect scrolls back. Without this gate that early
+      // capture clobbers the saved position with the initial (bottom) state.
+      if (!restoredSessionsRef.current.has(sessionId)) return
       const index = virtualListRef.current?.getFirstVisibleIndex(48) ?? 0
       const message = msgs[index]
       if (!message) return
@@ -212,15 +223,35 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       if (!sessionId || hydrating || msgs.length === 0) return
       if (restoredSessionsRef.current.has(sessionId)) return
       restoredSessionsRef.current.add(sessionId)
-      const saved = scrollPositionsRef.current[sessionId]
-      if (!saved || saved.stuck || !saved.key) return
-      const index = msgs.findIndex((message) => chatMessageKey(message) === saved.key)
-      if (index < 0) {
-        setStuckBottom(true)
+      const saved = freshLaunchPending ? null : scrollPositionsRef.current[sessionId]
+      freshLaunchPending = false
+      if (saved && !saved.stuck && saved.key) {
+        const index = msgs.findIndex((message) => chatMessageKey(message) === saved.key)
+        if (index >= 0) {
+          virtualListRef.current?.scrollToIndex(index, { behavior: 'auto', align: 'start' })
+          setStuckBottom(false)
+          return
+        }
+      }
+      // Default landing: the latest turn, starting at its user question. A
+      // short turn bottoms out and keeps the tail pinned; a long one leaves
+      // the reader mid-turn with the question visible first.
+      for (let index = msgs.length - 1; index >= 0; index -= 1) {
+        if (msgs[index].role !== 'user') continue
+        // Row heights are still estimated on the first pass; scrolling now
+        // would clamp into the "pinned" zone near the estimated bottom and
+        // measureRow would keep re-pinning to the real bottom. Wait two
+        // frames so measurements settle, then land and judge pinning on
+        // real metrics.
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            virtualListRef.current?.scrollToIndex(index, { behavior: 'auto', align: 'start' })
+            const el = scrollRef.current
+            if (el) setStuckBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
+          })
+        })
         return
       }
-      virtualListRef.current?.scrollToIndex(index, { behavior: 'auto', align: 'start' })
-      setStuckBottom(false)
     }, [sessionId, hydrating, msgs])
 
     const handleLoadOlderHistory = useCallback(async () => {
