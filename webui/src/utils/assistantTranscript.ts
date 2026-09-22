@@ -299,9 +299,11 @@ export function parseAssistantTranscript(text: string): AssistantTranscript {
   let finalBody = ''
   let finalTurnIndex: number | null = null
   let stopped = false
+  let terminalIndex = turns.length - 1
+  while (terminalIndex >= 0 && !turns[terminalIndex].content.trim()) terminalIndex -= 1
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     if (!turns[index].content.trim()) continue
-    if (isDanglingToolTurn(turns[index].content)) {
+    if (index === terminalIndex && isDanglingToolTurn(turns[index].content)) {
       stopped = true
       continue
     }

@@ -514,6 +514,26 @@ class MaybeRetryBackoffTests(unittest.TestCase):
         self.assertIn("chat:retry_exhausted", published)
         self.assertNotIn("chat:retry", published)
 
+    def test_failed_recovery_submission_clears_pending_without_aborting(self):
+        from server.services.chat_retry import ChatRetryConfig
+        for source in ("chat_error_retry", "auto_continue"):
+            with self.subTest(source=source):
+                svc = _make_svc(self.mod)
+                svc._load_chat_retry_config = lambda: ChatRetryConfig(
+                    enabled=True, max_attempts=2, backoff_base_seconds=0.0,
+                )
+                h, snap = _make_handle(), _make_snap()
+                with mock.patch.object(self.mod, "bus"), \
+                     mock.patch.object(svc, "submit", side_effect=RuntimeError("submission failed")), \
+                     mock.patch.object(svc, "agent", mock.Mock()) as agent:
+                    with self.assertRaisesRegex(RuntimeError, "submission failed"):
+                        if source == "chat_error_retry":
+                            svc._maybe_retry_recoverable_error(h, snap, _HTTP_503_TAIL)
+                        else:
+                            svc._maybe_auto_continue(h, snap, self.mod._AUTO_CONTINUE_MARKERS[0])
+                    self.assertEqual(svc._pending_error_retry, {})
+                    agent.abort.assert_not_called()
+
     def test_disabled_config_short_circuits(self):
         from server.services.chat_retry import ChatRetryConfig
         rv, _bus, submit, _svc, _h, _snap = self._run(cfg=ChatRetryConfig(enabled=False))

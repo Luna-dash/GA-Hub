@@ -26,12 +26,18 @@ import type {
 } from '@/api/types'
 import { api, ChatSocket } from '@/api/client'
 import type { PasteAttachment } from '@/api/types'
+import { replySegmentsContent, updateReplySegments, type ReplySegment } from '@/utils/replySegments'
 
 export type ChatMsgRole = 'user' | 'assistant' | 'system'
 
 export interface ChatMsg {
   role: ChatMsgRole
   content: string
+  /** Hub recovery streams share one logical answer; GA turns remain untouched. */
+  logicalId?: string
+  /** Hub recovery status, rendered inside the answer, never part of LLM text. */
+  recoveryNotice?: string
+  segments?: ReplySegment[]
   timestamp?: number | null          // epoch milliseconds; null means archive has no real header time
   startedAt?: number | null
   finishedAt?: number | null
@@ -134,8 +140,6 @@ function epochMilliseconds(value?: number): number | null {
   return value < 1e12 ? value * 1000 : value
 }
 
-const RETRY_NOTICE_ID_SUFFIX = ':retry-notice'
-
 /**
  * Reusable ("stable") system-notice bubbles: one key rewrites one bubble in
  * place (streamId `sys:<key>`) instead of appending, so repeating an action
@@ -156,9 +160,8 @@ export const noticeKeys = {
 export type NoticeKey = (typeof noticeKeys)[keyof typeof noticeKeys]
 
 /**
- * Insert-or-update the single reusable retry-notice bubble of one logical
- * turn. A stable streamId (no attempt counter) makes every subsequent retry
- * event rewrite the same bubble in place instead of appending new ones.
+ * Insert or update recovery status inside the explicitly identified answer.
+ * Status stays separate from model content and does not create a notice bubble.
  */
 function upsertRetryNotice(
   prev: ChatMsg[],
@@ -166,16 +169,20 @@ function upsertRetryNotice(
   content: string,
   timestamp?: number,
 ): ChatMsg[] {
-  const streamId = `${retryKey}${RETRY_NOTICE_ID_SUFFIX}`
-  const idx = prev.findIndex((m) => m.streamId === streamId)
+  const idx = prev.findIndex((m) => m.role === 'assistant' && (
+    m.logicalId === retryKey || m.streamId === retryKey
+    || m.segments?.some((part) => part.streamId === retryKey)
+  ))
+  const recoveryNotice = content.replace(/^_|_$/g, '')
   if (idx === -1) {
     return [
       ...prev,
-      { role: 'assistant', content, streamId, source: 'chat_error_retry_notice', timestamp },
+      { role: 'assistant', content: '', streamId: retryKey, logicalId: retryKey,
+        recoveryNotice, segments: [], timestamp },
     ]
   }
   const next = prev.slice()
-  next[idx] = { ...next[idx], content, ...(timestamp !== undefined ? { timestamp } : {}) }
+  next[idx] = { ...next[idx], recoveryNotice }
   return next
 }
 
@@ -190,45 +197,27 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
     `_自动重试请求${s.done ? '已完成' : '进行中'}（${attempt || '?'}${s.retry_max ? `/${s.retry_max}` : ''}${s.retry_reason ? ` · ${s.retry_reason}` : ''}）。_`
   for (const s of streams) {
     if (isHiddenSource(s.source)) continue
-    if (s.source === 'chat_error_retry') {
+    if (s.source === 'chat_error_retry' || s.source === 'auto_continue') {
       const attempt = s.retry_attempt || 0
       const done = !!s.done
-      const retryKey = s.logical_id || s.stream_id || ''
+      const retryKey = s.logical_id || s.retry_of || s.stream_id || ''
       const meta = retryNoticeEntries.get(retryKey)
-      if (meta === undefined) {
-        retryNoticeEntries.set(retryKey, { idx: out.length, attempt, done })
-        out.push({
-          role: 'assistant',
-          content: retryNoticeLabel(s, attempt),
-          streamId: `${retryKey}:retry-notice`,
-          source: 'chat_error_retry_notice',
-          timestamp: epochMilliseconds(done ? s.finished_at : s.started_at),
-          startedAt: epochMilliseconds(s.started_at),
-          finishedAt: done ? epochMilliseconds(s.finished_at) : null,
-        })
-      } else if (attempt > meta.attempt || (attempt === meta.attempt && done && !meta.done)) {
-        // A later attempt (or the completion of the current one) refreshes
-        // the hint text in place — newest attempt wins regardless of order.
-        retryNoticeEntries.set(retryKey, { ...meta, attempt, done })
-        out[meta.idx] = {
-          ...out[meta.idx],
-          content: retryNoticeLabel(s, attempt),
-          timestamp: epochMilliseconds(done ? s.finished_at : s.started_at),
-          startedAt: epochMilliseconds(s.started_at),
-          finishedAt: done ? epochMilliseconds(s.finished_at) : null,
-        }
+      if (meta === undefined || attempt > meta.attempt || (attempt === meta.attempt && done && !meta.done)) {
+        retryNoticeEntries.set(retryKey, { idx: 0, attempt, done })
+        const withNotice = upsertRetryNotice(out, retryKey, retryNoticeLabel(s, attempt),
+          epochMilliseconds(done ? s.finished_at : s.started_at) ?? undefined)
+        out.splice(0, out.length, ...withNotice)
       }
       if (s.content || !s.done) {
-        out.push({
-          role: 'assistant',
-          content: s.content,
-          streamId: s.stream_id,
+        const merged = updateLogicalReply(out, {
+          type: s.done ? 'done' : 'next',
+          stream_id: s.stream_id,
+          logical_id: s.logical_id,
+          retry_of: s.retry_of,
           source: s.source,
-          streaming: !s.done,
-          timestamp: epochMilliseconds(s.done ? s.finished_at : s.started_at),
-          startedAt: epochMilliseconds(s.started_at),
-          finishedAt: s.done ? epochMilliseconds(s.finished_at) : null,
-        })
+          content: s.content,
+        }, epochMilliseconds(s.done ? s.finished_at : s.started_at) ?? Date.now())
+        out.splice(0, out.length, ...merged)
       }
       continue
     }
@@ -397,6 +386,41 @@ function sessionSocketPath(sessionId: string): string {
 }
 
 /** Apply a single server event to the message list. */
+type ReplyEvent = Extract<ChatWSOut, { type: 'started' | 'next' | 'done' }>
+
+function updateLogicalReply(prev: ChatMsg[], evt: ReplyEvent, now: number): ChatMsg[] {
+  const sid = evt.stream_id
+  const key = evt.logical_id || evt.retry_of || sid
+  const idx = prev.findIndex((m) => m.role === 'assistant' && (
+    m.logicalId === key || m.streamId === key || m.streamId === sid
+    || m.segments?.some((part) => part.streamId === sid || part.streamId === evt.retry_of)
+  ))
+  const old = idx < 0 ? undefined : prev[idx]
+  const initial = old?.segments ?? (old?.streamId ? [{
+    streamId: old.streamId, content: old.content, done: !old.streaming && !old.stopped,
+  }] : [])
+  const segments = updateReplySegments(initial, sid, evt.type, 'content' in evt ? evt.content : undefined)
+  const latest = segments[segments.length - 1]
+  const streaming = !old?.stopped && !latest.done
+  const message: ChatMsg = {
+    ...old,
+    role: 'assistant',
+    logicalId: old?.logicalId || key,
+    streamId: old?.streamId || sid,
+    source: old?.source || evt.source,
+    segments,
+    content: replySegmentsContent(segments),
+    streaming,
+    timestamp: old?.timestamp ?? now,
+    startedAt: old?.startedAt ?? now,
+    finishedAt: streaming ? null : (old?.finishedAt ?? now),
+  }
+  if (idx < 0) return [...prev, message]
+  const next = prev.slice()
+  next[idx] = message
+  return next
+}
+
 // exported for tests: pure reducer over the message list
 export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   const now = Date.now()
@@ -413,13 +437,12 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
     const query = evt.query ?? ''
     if (isHiddenSource(source)) return prev
     const retryAttempt = evt.retry_attempt ?? 0
-    if (source === 'chat_error_retry') {
+    if (source === 'chat_error_retry' || source === 'auto_continue') {
       const retryKey = evt.logical_id || evt.retry_of || sid
-      const note = `_自动重试请求已开始（${retryAttempt || '?'}${evt.retry_max ? `/${evt.retry_max}` : ''}${evt.retry_reason ? ` · ${evt.retry_reason}` : ''}）。_`
-      return [
-        ...upsertRetryNotice(prev, retryKey, note, now),
-        { role: 'assistant', content: '', streamId: sid, source, streaming: true, timestamp: now, startedAt: epochMilliseconds(evt.ts) ?? now, finishedAt: null },
-      ]
+      const reason = evt.retry_reason === 'truncated' ? '截断续接' : '网络重试'
+      const note = `_系统${reason}（${retryAttempt || '?'}${evt.retry_max ? `/${evt.retry_max}` : ''}）。_`
+      const withNotice = upsertRetryNotice(prev, retryKey, note, now)
+      return updateLogicalReply(withNotice, evt, epochMilliseconds(evt.ts) ?? now)
     }
     // 1. If our local pre-add bubble is still pending and source is webui,
     //    adopt this stream_id rather than creating a duplicate.
@@ -450,17 +473,8 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
     return next
   }
   if (evt.type === 'next') {
-    const sid = evt.stream_id
     if (isHiddenSource(evt.source)) return prev
-    const next = ensureRetryStartNotice(prev, evt)
-    const idx = next.findIndex((m) => m.role === 'assistant' && m.streamId === sid)
-    if (idx === -1) {
-      // started not yet seen — create on the fly
-      return [...next, { role: 'assistant', content: evt.content, streamId: sid, source: evt.source, streaming: true, timestamp: now, startedAt: now, finishedAt: null }]
-    }
-    const updated = next.slice()
-    updated[idx] = { ...updated[idx], content: evt.content, streaming: updated[idx].stopped ? false : true }
-    return updated
+    return updateLogicalReply(ensureRetryStartNotice(prev, evt), evt, now)
   }
   if (evt.type === 'done') {
     const sid = evt.stream_id
@@ -468,6 +482,7 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
     // 该流已终态：解除 abort 余波压制（之后这条流再来的 error 是真故障）
     runtime.abortedStreams.delete(sid)
     const next = ensureRetryStartNotice(prev, evt)
+    if (evt.source !== 'system') return updateLogicalReply(next, evt, now)
     // /btw side-question answers come with source='system' — render as system role
     const role = evt.source === 'system' ? 'system' : 'assistant'
     const idx = next.findIndex((m) => (m.role === 'assistant' || m.role === 'system') && m.streamId === sid)
@@ -561,10 +576,11 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
 
 function ensureRetryStartNotice(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   if (evt.type !== 'next' && evt.type !== 'done') return prev
-  if (evt.source !== 'chat_error_retry') return prev
+  if (evt.source !== 'chat_error_retry' && evt.source !== 'auto_continue') return prev
   const attempt = evt.retry_attempt ?? 0
   const retryKey = evt.logical_id || evt.retry_of || evt.stream_id || ''
-  const note = `_自动重试请求已开始（${attempt || '?'}${evt.retry_max ? `/${evt.retry_max}` : ''}${evt.retry_reason ? ` · ${evt.retry_reason}` : ''}）。_`
+  const reason = evt.retry_reason === 'truncated' ? '截断续接' : '网络重试'
+  const note = `_系统${reason}（${attempt || '?'}${evt.retry_max ? `/${evt.retry_max}` : ''}）。_`
   return upsertRetryNotice(prev, retryKey, note)
 }
 

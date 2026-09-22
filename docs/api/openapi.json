@@ -3805,7 +3805,7 @@
               "anyOf": [
                 {
                   "type": "integer",
-                  "maximum": 2000000,
+                  "maximum": 8000000,
                   "minimum": 10000
                 },
                 {
@@ -3813,6 +3813,24 @@
                 }
               ],
               "title": "Max Chars"
+            }
+          },
+          {
+            "name": "turns",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 500,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Turns"
             }
           }
         ],

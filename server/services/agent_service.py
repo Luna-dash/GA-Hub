@@ -58,10 +58,8 @@ RETRY_ELIGIBLE_SOURCES = frozenset({
 AUTO_CONTINUE_SOURCES = RETRY_ELIGIBLE_SOURCES
 _STREAM_MIRROR_QUEUE_CAPACITY = 2
 _AUTO_CONTINUE_MARKERS = ("[!!! 流异常中断", "[!!! Response truncated: max_tokens")
-_AUTO_CONTINUE_PROMPT = "继续上一条回复，从中断处继续，不要重复已经完成的内容。"
-_ERROR_RETRY_PROMPT_TEMPLATE = (
-    "上一条回复因可恢复的传输/网络错误（{label}）中断。"
-    "请自动重试并从中断处继续，不要重复已经完成的内容。"
+_CONTINUATION_PROMPT = (
+    "[GA_CONTINUE] Continue from the interruption. Do not repeat completed work."
 )
 
 
@@ -196,6 +194,19 @@ class StreamHandle:
     error_retry_origin: str = ""
     session_id: str = ""
     run_id: str = ""
+    _fanout_done: threading.Event = field(default_factory=threading.Event, repr=False)
+    _continuation: "StreamHandle | None" = field(default=None, repr=False)
+
+    @property
+    def run_finished(self) -> bool:
+        """A run ends only after every physical stream and handoff finishes."""
+        current = self
+        while current._fanout_done.is_set():
+            successor = current._continuation
+            if successor is None:
+                return True
+            current = successor
+        return False
 
 
 # ── chat replay snapshot (lets a reconnecting webui rebuild the running
@@ -669,7 +680,7 @@ class AgentService:
             query=query or "",
             started_at=time.time(),
             logical_id=logical_id,
-            retry_attempt=error_retry_count,
+            retry_attempt=auto_continue_count if source == "auto_continue" else error_retry_count,
             retry_max=retry_max,
             retry_of=retry_of,
             retry_reason=retry_reason,
@@ -687,9 +698,9 @@ class AgentService:
             "session_id": effective_session_id,
             "run_id": run_id,
         }
-        if error_retry_count:
+        if retry_of:
             submit_payload.update({
-                "retry_attempt": error_retry_count,
+                "retry_attempt": auto_continue_count if source == "auto_continue" else error_retry_count,
                 "retry_max": retry_max,
                 "retry_of": retry_of,
                 "retry_reason": retry_reason,
@@ -704,9 +715,9 @@ class AgentService:
             "session_id": effective_session_id,
             "run_id": run_id,
         }
-        if error_retry_count:
+        if retry_of:
             started_payload.update({
-                "retry_attempt": error_retry_count,
+                "retry_attempt": auto_continue_count if source == "auto_continue" else error_retry_count,
                 "retry_max": retry_max,
                 "retry_of": retry_of,
                 "retry_reason": retry_reason,
@@ -837,6 +848,11 @@ class AgentService:
                 if self._streams.get(h.stream_id) is h:
                     self._streams.pop(h.stream_id, None)
                 self._fanout_threads.discard(threading.current_thread())
+            # Publish after the successor link and local cleanup are complete.
+            # A fast child may already be done; the parent still gates handoff.
+            done_event = getattr(h, "_fanout_done", None)
+            if done_event is not None:
+                done_event.set()
 
     @staticmethod
     def _mirror_stream_item(out_q: "_q.Queue", item: dict) -> None:
@@ -887,20 +903,16 @@ class AgentService:
             })
             return True
         next_count = h.error_retry_count + 1
-        prompt = _ERROR_RETRY_PROMPT_TEMPLATE.format(label=match.label)
         delay_seconds = compute_backoff_delay(
             h.error_retry_count, cfg, match.delay_scale, jitter=True, scheduled=is_scheduled
         )
-        # Register the pending retry so an abort during the backoff window
-        # (or right after the resubmit below) can still reach this fanout
-        # thread, which runs outside the coordinator's admission.
+        # Register the pending retry so abort can reach it during backoff
+        # and submission handoff. The logical run retains admission capacity.
         with self._lock:
             self._pending_error_retry[h.stream_id] = snap
         if delay_seconds > 0:
-            # The stream is already terminal here, so the coordinator has
-            # released its session slot; waiting on this fanout thread does
-            # not hold any admission capacity. Back off before resubmitting
-            # so transient upstream failures are spaced out exponentially.
+            # Only the physical stream is terminal. Keep the logical run's
+            # session slot while spacing transient failures exponentially.
             bus.publish(CHAT_RETRY_SCHEDULED, {
                 "stream_id": h.stream_id,
                 "source": snap.source,
@@ -959,19 +971,23 @@ class AgentService:
             "session_id": h.session_id,
             "run_id": h.run_id,
         })
-        self.submit(
-            prompt,
-            source="chat_error_retry",
-            logical_id=h.logical_id,
-            auto_continue_count=h.auto_continue_count,
-            error_retry_count=next_count,
-            error_retry_origin=origin,
-            retry_of=h.stream_id,
-            retry_reason=match.label,
-            retry_max=eff_max,
-            session_id=h.session_id,
-            run_id=h.run_id,
-        )
+        try:
+            h._continuation = self.submit(
+                _CONTINUATION_PROMPT,
+                source="chat_error_retry",
+                logical_id=h.logical_id,
+                auto_continue_count=h.auto_continue_count,
+                error_retry_count=next_count,
+                error_retry_origin=origin,
+                retry_of=h.stream_id,
+                retry_reason=match.label,
+                retry_max=eff_max,
+                session_id=h.session_id,
+                run_id=h.run_id,
+            )
+        except Exception:
+            self._discard_pending_error_retry(h.stream_id)
+            raise
         # An abort may have landed between the last backoff check and this
         # submit; the pending registry keeps that window visible.  Honor it
         # immediately instead of running an unwanted retry.
@@ -1029,18 +1045,35 @@ class AgentService:
             return
         next_count = h.auto_continue_count + 1
         log.info("auto-continuing interrupted stream %s (%d/%d)", h.stream_id, next_count, _AUTO_CONTINUE_MAX)
-        self.submit(
-            _AUTO_CONTINUE_PROMPT,
-            source="auto_continue",
-            logical_id=h.logical_id,
-            auto_continue_count=next_count,
-            error_retry_count=h.error_retry_count,
-            retry_of=snap.retry_of,
-            retry_reason=snap.retry_reason,
-            retry_max=snap.retry_max,
-            session_id=h.session_id,
-            run_id=h.run_id,
-        )
+        with self._lock:
+            self._pending_error_retry[h.stream_id] = snap
+            aborted_before_submit = snap.aborted
+        if aborted_before_submit:
+            with self._lock:
+                self._pending_error_retry.pop(h.stream_id, None)
+            return
+        try:
+            h._continuation = self.submit(
+                _CONTINUATION_PROMPT,
+                source="auto_continue",
+                logical_id=h.logical_id,
+                auto_continue_count=next_count,
+                error_retry_count=h.error_retry_count,
+                error_retry_origin=h.error_retry_origin,
+                retry_of=h.stream_id,
+                retry_reason="truncated",
+                retry_max=_AUTO_CONTINUE_MAX,
+                session_id=h.session_id,
+                run_id=h.run_id,
+            )
+        except Exception:
+            self._discard_pending_error_retry(h.stream_id)
+            raise
+        with self._lock:
+            self._pending_error_retry.pop(h.stream_id, None)
+            aborted_after_submit = snap.aborted
+        if aborted_after_submit:
+            self.agent.abort()
 
     # ── replay ──────────────────────────────────────────────────
     def active_message_snapshot(

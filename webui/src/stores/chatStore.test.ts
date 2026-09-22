@@ -584,7 +584,7 @@ describe('chat_error_retry notice bubble reuse', () => {
   })
 
   function notices() {
-    return useChatStore.getState().msgs.filter((m) => m.source === 'chat_error_retry_notice')
+    return useChatStore.getState().msgs.filter((m) => m.recoveryNotice !== undefined)
   }
 
   it('reuses one bubble across multiple live retries instead of appending', async () => {
@@ -606,9 +606,9 @@ describe('chat_error_retry notice bubble reuse', () => {
 
     const list = notices()
     expect(list).toHaveLength(1)
-    expect(list[0].streamId).toBe('turn-1:retry-notice')
-    expect(list[0].content).toContain('上限（3/3）')
-    expect(list[0].content).toContain('timeout')
+    expect(list[0].logicalId).toBe('turn-1')
+    expect(list[0].recoveryNotice).toContain('上限（3/3）')
+    expect(list[0].recoveryNotice).toContain('timeout')
   })
 
   it('flags retryPending during the backoff window so the stop action stays available', async () => {
@@ -655,15 +655,15 @@ describe('chat_error_retry notice bubble reuse', () => {
     sock.emit({ type: 'retry_scheduled', stream_id: 'turn-9', source: 'user', logical_id: 'turn-9', attempt: 1, max_attempts: 3, delay_seconds: 4, retry_reason: 'timeout' } as never)
     let list = notices()
     expect(list).toHaveLength(1)
-    expect(list[0].streamId).toBe('turn-9:retry-notice')
-    expect(list[0].content).toContain('约 4s')
-    expect(list[0].content).toContain('（1/3）')
+    expect(list[0].logicalId).toBe('turn-9')
+    expect(list[0].recoveryNotice).toContain('约 4s')
+    expect(list[0].recoveryNotice).toContain('（1/3）')
 
     sock.emit({ type: 'retry', stream_id: 'turn-9', source: 'user', logical_id: 'turn-9', attempt: 1, max_attempts: 3, retry_reason: 'timeout' } as never)
     sock.emit({ type: 'started', stream_id: 'r-a9', source: 'chat_error_retry', logical_id: 'turn-9', retry_attempt: 1, retry_max: 3, retry_reason: 'timeout' } as never)
     list = notices()
     expect(list).toHaveLength(1)
-    expect(list[0].content).not.toContain('约 4s')
+    expect(list[0].recoveryNotice).not.toContain('约 4s')
   })
 
   it('merges same-turn retry streams from a snapshot into a single bubble', async () => {
@@ -689,11 +689,11 @@ describe('chat_error_retry notice bubble reuse', () => {
     await vi.waitFor(() => expect(notices()).toHaveLength(1))
     const list = notices()
     expect(list).toHaveLength(1)
-    expect(list[0].streamId).toBe('turn-9:retry-notice')
-    expect(list[0].content).toContain('进行中（2/3 · connection）')
-    // The ongoing retry stream itself still renders its own content bubble.
+    expect(list[0].logicalId).toBe('turn-9')
+    expect(list[0].recoveryNotice).toContain('进行中（2/3 · connection）')
+    // The ongoing retry is a segment inside the same logical answer.
     expect(
-      useChatStore.getState().msgs.some((m) => m.streamId === 'sr-a2' && m.streaming),
+      useChatStore.getState().msgs.some((m) => m.logicalId === 'turn-9' && m.streaming && m.segments?.some((p) => p.streamId === 'sr-a2')),
     ).toBe(true)
   })
 
@@ -712,7 +712,7 @@ describe('chat_error_retry notice bubble reuse', () => {
     sock.emit({ type: 'retry', stream_id: 't-b', source: 'chat_error_retry', logical_id: 'turn-b', attempt: 1, max_attempts: 3, retry_reason: 'ssl' } as never)
 
     const list = notices()
-    expect(list.map((m) => m.streamId)).toEqual(['turn-a:retry-notice', 'turn-b:retry-notice'])
+    expect(list.map((m) => m.logicalId)).toEqual(['turn-a', 'turn-b'])
   })
 })
 

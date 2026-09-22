@@ -35,6 +35,7 @@ interface Props {
    *  与投影层的悬空尾启发式（transcript.stopped）相互独立。 */
   stopped?: boolean
   /** 来源标签（自动继续/定时任务等）：渲染为头部小字，不混入 content。 */
+  recoveryNotice?: string
   tagLabel?: string
   timestamp?: number | null
   startedAt?: number | null
@@ -87,7 +88,7 @@ function formatDuration(milliseconds: number): string {
     : `${minutes}:${String(rest).padStart(2, '0')}`
 }
 
-export const MessageBubble = memo(function MessageBubble({ role, content, streaming, stopped, tagLabel, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact }: Props) {
+export const MessageBubble = memo(function MessageBubble({ role, content, streaming, stopped, recoveryNotice, tagLabel, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact }: Props) {
   const [fontScale, setFontScale] = useState(getChatFontScale)
   const [clock, setClock] = useState(Date.now)
   const [longFinalExpanded, setLongFinalExpanded] = useState(false)
@@ -201,6 +202,12 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
           )}
           {tagLabel && (
             <div className="mb-1.5 text-[11px] font-medium leading-4 text-ink-faint">{tagLabel}</div>
+          )}
+          {role === 'assistant' && recoveryNotice && (
+            <div data-recovery-notice className="mb-2 flex items-center gap-2 text-xs leading-5 text-status-warning-muted">
+              <span className="shrink-0 rounded border border-current px-1 text-[10px]">系统</span>
+              <span>{recoveryNotice}</span>
+            </div>
           )}
           {stopped && !useHistoryProjection && (
             <p className="mb-2 text-xs italic leading-5 text-status-warning-muted">⏹ 已手动停止</p>

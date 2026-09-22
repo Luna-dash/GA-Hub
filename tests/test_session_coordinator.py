@@ -46,6 +46,36 @@ class FakeRuntime:
         return {"removed_sids": [], "kept": 0, "history_lines": 0}
 
 
+def test_physical_stream_completion_does_not_release_logical_run() -> None:
+    from server.services.session_coordinator import AgentBusyError, SessionCoordinator
+
+    runtime = FakeRuntime("A")
+    chain_done = threading.Event()
+
+    class ChainHandle:
+        stream_id = "physical-stream"
+        finished = True
+
+        @property
+        def run_finished(self) -> bool:
+            return chain_done.is_set()
+
+    runtime.submit = lambda *args, **kwargs: ChainHandle()
+    coordinator = SessionCoordinator(lambda _: runtime, poll_interval=0.001)
+    state = coordinator.submit("request", session_id="A")
+    try:
+        # Allow the watcher to observe the physically finished first stream.
+        time.sleep(0.03)
+        active = coordinator.active_run()
+        assert active is not None, "physical completion released a recovering run"
+        assert active.run_id == state.run_id
+        with pytest.raises(AgentBusyError):
+            coordinator.submit("must not overtake recovery", session_id="A")
+    finally:
+        chain_done.set()
+    _wait_until(lambda: coordinator.active_run() is None)
+
+
 def test_replace_runtime_swaps_session_and_shuts_down_previous_runtime() -> None:
     from server.services.session_coordinator import SessionCoordinator
 

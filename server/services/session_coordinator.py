@@ -771,7 +771,9 @@ class SessionCoordinator:
         run_id: str,
     ) -> None:
         try:
-            while not handle.finished:
+            # Recovery-capable handles expose completion of the whole run;
+            # legacy runtimes have only a single physical stream.
+            while not getattr(handle, "run_finished", handle.finished):
                 notification: RuntimeState | None = None
                 with self._lock:
                     active = self._active_by_session.get(session_id)

@@ -30,6 +30,27 @@ class FakeAgent:
         return None
 
 
+@pytest.mark.parametrize("child_finishes_first", [False, True])
+def test_run_finished_waits_for_parent_handoff_and_child(child_finishes_first) -> None:
+    parent = svc_mod.StreamHandle("parent", queue.Queue())
+    child = svc_mod.StreamHandle("child", queue.Queue())
+    parent.finished = True
+    assert not parent.run_finished
+    parent._continuation = child
+    if child_finishes_first:
+        child.finished = True
+        child._fanout_done.set()
+        assert not parent.run_finished
+        parent._fanout_done.set()
+    else:
+        parent._fanout_done.set()
+        assert not parent.run_finished
+        child.finished = True
+        assert not parent.run_finished
+        child._fanout_done.set()
+    assert parent.run_finished
+
+
 def test_session_runtime_skips_process_global_preference_hooks() -> None:
     agent = FakeAgent()
     with mock.patch.object(svc_mod, "create_main_agent") as create_main, \

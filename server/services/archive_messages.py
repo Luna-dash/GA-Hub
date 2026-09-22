@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
 import hashlib
+import json
 import mmap
 import os
 from pathlib import Path
@@ -90,10 +91,44 @@ def _archive_bridge():
     return archive
 
 
+_CONTROL_PROMPTS = frozenset((
+    "[GA_CONTINUE] Continue from the interruption. Do not repeat completed work.",
+    "[ERROR] Blank response, regenerate and tooluse",
+    "[ERROR] Incomplete response. Regenerate and tooluse.",
+    "[ERROR] max_tokens limit reached. Use multi small steps to do it.",
+    "继续上一条回复，从中断处继续，不要重复已经完成的内容。",
+))
+_LEGACY_ERROR_RETRY_RE = re.compile(
+    r"上一条回复因可恢复的传输/网络错误（[^（）\r\n]+）中断。"
+    r"请自动重试并从中断处继续，不要重复已经完成的内容。"
+)
+
+
+def _is_control_prompt(content: str) -> bool:
+    """Recognize complete emitted templates, not arbitrary user prefixes.
+
+    Old archives do not encode provenance: an exact user quotation of an
+    emitted template remains indistinguishable from the original injection.
+    Similar prefixes or templates followed by a user question are preserved.
+    GA archives the injection together with its runtime context (a leading
+    ``cwd = ...`` line or the ``---\\n[PROJECT MODE ...]`` wrapper), so also
+    accept the template as the first line when every following line is that
+    machine context.
+    """
+    text = content.strip()
+    if text in _CONTROL_PROMPTS or _LEGACY_ERROR_RETRY_RE.fullmatch(text) is not None:
+        return True
+    head, _, rest = text.partition("\n")
+    head = head.strip()
+    if head not in _CONTROL_PROMPTS and _LEGACY_ERROR_RETRY_RE.fullmatch(head) is None:
+        return False
+    return rest.lstrip().startswith(("cwd = ", "---"))
+
+
 def _normalize_projected_messages(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Apply Hub-only FILE_HINT presentation policy to GA's projection."""
+    """Apply Hub-only presentation policy to GA's public projection."""
     normalized: list[dict[str, Any]] = []
     for source in messages:
         message = dict(source)
@@ -104,9 +139,69 @@ def _normalize_projected_messages(
     return normalized
 
 
+def _prepare_projection_text(content: str) -> str:
+    """Filter control blocks before GA decides message boundaries.
+
+    This is an in-memory view only: native archive bytes and offsets remain
+    untouched. Keep tool results and all other non-text blocks intact.
+    """
+    headers = list(_NATIVE_HEADER_RE.finditer(content))
+    edits: list[tuple[int, int, str]] = []
+    for index, header in enumerate(headers):
+        if header.group(1) != "Prompt":
+            continue
+        start = header.end()
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(content)
+        body = content[start:end]
+        try:
+            payload = json.loads(body.strip())
+        except (ValueError, TypeError):
+            continue
+        blocks = payload.get("content") if isinstance(payload, dict) else payload
+        if not isinstance(blocks, list):
+            continue
+        kept = [block for block in blocks if not (
+            isinstance(block, dict) and block.get("type") == "text"
+            and _is_control_prompt(str(block.get("text") or ""))
+        )]
+        # GA's formatter selects only the first eligible text block. Ask its
+        # public projection which blocks are eligible, then coalesce only
+        # those blocks in this disposable view so no genuine body is lost.
+        if (sum(isinstance(b, dict) and b.get("type") == "text" for b in kept) > 1
+                and not any(isinstance(b, dict) and b.get("type") == "tool_result" for b in kept)):
+            eligible: list[int] = []
+            texts: list[str] = []
+            for position, block in enumerate(kept):
+                if not isinstance(block, dict) or block.get("type") != "text":
+                    continue
+                probe = json.dumps({"role": "user", "content": [block]}, ensure_ascii=False)
+                projected = _archive_bridge().project_archive_text(
+                    "=== Prompt ===\n" + probe + "\n=== Response ===\n"
+                )
+                user = next((m for m in projected if m.get("role") == "user"), None)
+                if user:
+                    eligible.append(position)
+                    texts.append(str(user["content"]))
+            if len(eligible) > 1:
+                first = eligible[0]
+                kept = [({**b, "text": "\n\n".join(texts)} if i == first else b)
+                        for i, b in enumerate(kept) if i == first or i not in eligible]
+        if kept != blocks:
+            if isinstance(payload, dict):
+                payload = {**payload, "content": kept}
+            else:
+                payload = kept
+            edits.append((start, end, "\n" + json.dumps(payload, ensure_ascii=False) + "\n"))
+    for start, end, replacement in reversed(edits):
+        content = content[:start] + replacement + content[end:]
+    return content
+
+
 def _extract_ui_messages_from_text(content: str) -> list[dict[str, Any]]:
     """Project an archive slice through GA's public archive bridge."""
-    return _normalize_projected_messages(_archive_bridge().project_archive_text(content))
+    return _normalize_projected_messages(
+        _archive_bridge().project_archive_text(_prepare_projection_text(content))
+    )
 
 
 def _completed_rounds(
@@ -156,7 +251,7 @@ def read_ui_messages(archive_path: str | Path) -> list[dict[str, Any]]:
     if not path.is_file():
         raise HistoryUnavailableError
     try:
-        messages = _archive_bridge().project_archive_path(str(path))
+        messages = _extract_ui_messages_from_text(path.read_text(encoding="utf-8", errors="replace"))
     except (OSError, ValueError, TypeError, UnicodeError) as exc:
         raise HistoryUnavailableError from exc
     return _normalize_projected_messages(messages)
@@ -458,6 +553,27 @@ def _window_items(
 
 
 def read_archive_messages(
+    archive_path: str | Path | None,
+    *,
+    before: int | None = None,
+    limit: int | None = None,
+    max_chars: int | None = None,
+    turns: int | None = None,
+) -> dict[str, Any]:
+    """Apply the same failure contract to full and indexed archive reads."""
+    try:
+        return _read_archive_messages(
+            archive_path, before=before, limit=limit,
+            max_chars=max_chars, turns=turns,
+        )
+    except HistoryUnavailableError:
+        raise
+    except (OSError, ValueError, TypeError) as exc:
+        # UnicodeError is a ValueError. Never replace failed reads with empty history.
+        raise HistoryUnavailableError from exc
+
+
+def _read_archive_messages(
     archive_path: str | Path | None,
     *,
     before: int | None = None,

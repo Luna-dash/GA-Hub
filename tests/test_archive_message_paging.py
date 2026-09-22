@@ -1,6 +1,7 @@
 """Indexed archive paging regression tests."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest import mock
 
@@ -184,3 +185,50 @@ def test_turns_take_precedence_over_limit(tmp_path: Path) -> None:
         "question 3", "question 4", "question 5",
     ]
     assert page["has_more"] is True
+
+
+def _prompt_entry(text: str, stamp: str) -> str:
+    payload = json.dumps(
+        {"role": "user", "content": [{"type": "text", "text": text}]},
+        ensure_ascii=False,
+    )
+    return f"=== Prompt === {stamp}\n{payload}\n"
+
+
+def test_injections_with_appended_context_stay_hidden(tmp_path: Path) -> None:
+    """GA archives auto-retry injections together with runtime context in the
+    same text block (a ``cwd = ...`` preamble or the ``---``-wrapped PROJECT
+    MODE block).  The projection must still hide those injections, while a
+    user quotation that continues with a real question is preserved.
+    """
+    archive = tmp_path / "archive.txt"
+    retry = "[ERROR] Incomplete response. Regenerate and tooluse."
+    legacy = (
+        "上一条回复因可恢复的传输/网络错误（ConnectionError）中断。"
+        "请自动重试并从中断处继续，不要重复已经完成的内容。"
+    )
+    quoted = f"{retry}\n这条注入是什么意思？"
+    response = "=== Response === {0}\n[{{'type': 'text', 'text': 'answer'}}]\n"
+    parts = [
+        _prompt_entry("real question", "2026-08-05 09:00:00"),
+        response.format("2026-08-05 09:00:30"),
+        _prompt_entry(
+            f"{retry}\ncwd = D:\\study\\GA\\temp (./)\n[Memory] (../memory)",
+            "2026-08-05 09:01:00",
+        ),
+        response.format("2026-08-05 09:01:30"),
+        _prompt_entry(
+            f"{legacy}\n\n---\n[PROJECT MODE: x]\nbody\n---",
+            "2026-08-05 09:02:00",
+        ),
+        response.format("2026-08-05 09:02:30"),
+        _prompt_entry(quoted, "2026-08-05 09:03:00"),
+        response.format("2026-08-05 09:03:30"),
+    ]
+    archive.write_text("".join(parts), encoding="utf-8")
+    _build_archive_index.cache_clear()
+
+    items = read_archive_messages(archive)["items"]
+
+    users = [item["content"] for item in items if item["role"] == "user"]
+    assert users == ["real question", quoted]

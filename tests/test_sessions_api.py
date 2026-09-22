@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -140,31 +141,38 @@ def test_bound_missing_archive_is_structured_error_without_path_leak(
     assert str(missing) not in caplog.text
 
 
+@pytest.mark.parametrize("params,warm_index", [({}, False), ({"limit": 2}, False), ({"turns": 1}, False), ({"limit": 2}, True), ({"turns": 1}, True)])
+@pytest.mark.parametrize("error_type", [ValueError, TypeError, OSError, UnicodeError])
 def test_bound_archive_parser_failure_is_stable_error(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, caplog, params, warm_index, error_type
 ) -> None:
     from server.routes import sessions
+    from server.services import archive_messages as archives
 
     archive = tmp_path / "bound.txt"
-    archive.write_text("not important", encoding="utf-8")
-
-    def fail_parser(_path):
-        raise ValueError("sensitive parser detail")
-
+    archive.write_text(
+        '=== Prompt === 2026-08-05 09:10:11\n'
+        '{"content":[{"type":"text","text":"hello archive"}]}\n'
+        '=== Response === 2026-08-05 09:10:12\n'
+        "[{'type': 'text', 'text': 'hello from GA'}]\n",
+        encoding="utf-8",
+    )
+    if warm_index:
+        archives._archive_index(archive.resolve())
+    parser = mock.Mock(side_effect=error_type("sensitive parser detail"))
     with _client(tmp_path, monkeypatch) as client:
-        from frontends import continue_cmd
-
-        monkeypatch.setattr(continue_cmd, "extract_ui_messages", fail_parser)
+        monkeypatch.setattr(archives._archive_bridge(), "project_archive_text", parser)
         created = client.post("/api/sessions", json={"title": "Broken"}).json()
         sessions._store.bind_archive(created["id"], archive)
-
-        response = client.get(f"/api/sessions/{created['id']}/messages")
+        response = client.get(f"/api/sessions/{created['id']}/messages", params=params)
+        parser.assert_called_once()
         assert response.status_code == 409
         assert response.json() == {"detail": {
             "code": "history_unavailable",
             "detail": "历史消息暂时不可用，请稍后重试。",
         }}
-        assert "sensitive parser detail" not in response.text
+        assert "sensitive parser detail" not in response.text + caplog.text
+        assert str(archive) not in response.text + caplog.text
 
 
 def test_bound_archive_projects_ga_messages_without_copying_body(
