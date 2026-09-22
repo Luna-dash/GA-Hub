@@ -7,22 +7,22 @@ export default {
     extend: {
       colors: {
         bg: {
-          DEFAULT: 'var(--c-bg)',
-          soft: 'var(--c-bg-soft)',
-          card: 'var(--c-bg-card)',
+          DEFAULT: 'rgb(var(--c-bg-rgb) / <alpha-value>)',
+          soft: 'rgb(var(--c-bg-soft-rgb) / <alpha-value>)',
+          card: 'rgb(var(--c-bg-card-rgb) / <alpha-value>)',
         },
-        line: { DEFAULT: 'var(--c-line)' },
+        line: { DEFAULT: 'rgb(var(--c-line-rgb) / <alpha-value>)' },
         accent: {
-          DEFAULT: 'var(--c-accent)',
-          soft: 'var(--c-accent-soft)',
+          DEFAULT: 'rgb(var(--c-accent-rgb) / <alpha-value>)',
+          soft: 'rgb(var(--c-accent-soft-rgb) / <alpha-value>)',
         },
         // Text tones: sanctioned for prose/UI text. Hardcoding hex text-[#...]
         // values is what let three slightly different "muted grays"
         // (#665741/#7B6D5A/#8A7B65) drift across pages.
         ink: {
-          DEFAULT: 'var(--c-text)',
-          muted: 'var(--c-text-muted)',
-          faint: 'var(--c-text-faint)',
+          DEFAULT: 'rgb(var(--c-text-rgb) / <alpha-value>)',
+          muted: 'rgb(var(--c-text-muted-rgb) / <alpha-value>)',
+          faint: 'rgb(var(--c-text-faint-rgb) / <alpha-value>)',
         },
         // Semantic status palette: the sanctioned vocabulary for state color
         // (badges, dots, banners, evidence panels). Values are fixed hex on

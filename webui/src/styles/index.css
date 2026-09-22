@@ -19,18 +19,27 @@
 */
 :root {
   --c-bg: #DED6C5;            /* 低饱和灰米旧纸底，不再黄亮 */
+  --c-bg-rgb: 222 214 197;    /* = #DED6C5，供 Tailwind alpha 变体 */
   --c-bg-soft: #D3C8B3;       /* 次级旧纸面 */
+  --c-bg-soft-rgb: 211 200 179; /* = #D3C8B3 */
   --c-bg-card: #E7DFCF;       /* 实体纸卡片 */
+  --c-bg-card-rgb: 231 223 207; /* = #E7DFCF */
   --c-line: #A99572;          /* 细棕灰边框 */
+  --c-line-rgb: 169 149 114;  /* = #A99572 */
   --c-accent: #8A6438;        /* 克制复古棕 */
+  --c-accent-rgb: 138 100 56; /* = #8A6438，供 Tailwind alpha 变体（bg-accent/10 等） */
   --c-accent-soft: #D3C3A6;
+  --c-accent-soft-rgb: 211 195 166; /* = #D3C3A6 */
   --c-scrollbar-thumb: #9E8965;
   --c-scrollbar-thumb-hover: #806A48;
   --c-overlay-soft: rgba(54, 42, 28, 0.045);
   --c-overlay-soft-strong: rgba(54, 42, 28, 0.10);
   --c-text: #2C2418;
+  --c-text-rgb: 44 36 24;     /* = #2C2418 */
   --c-text-muted: #665741;
+  --c-text-muted-rgb: 102 87 65; /* = #665741 */
   --c-text-faint: #86775F;
+  --c-text-faint-rgb: 134 119 95; /* = #86775F */
   --c-sidebar: #0B261D;
   --c-sidebar-soft: #12382B;
   --c-sidebar-text: #E8DFC9;
