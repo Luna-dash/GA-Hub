@@ -267,6 +267,150 @@ function isDanglingToolTurn(content: string): boolean {
   return stripped === ''
 }
 
+// ---------------------------------------------------------------------------
+// Fallback summary derivation.
+//
+// Some models occasionally miss the <summary> protocol (bad escapes, raw long
+// prose, truncated markdown). For those turns we derive a cheap title from the
+// leading prose — everything before the first tool dump — capped at 50 chars
+// and preferring a complete sentence. Rules locked with the user 2026-09-22;
+// tuned against the full archived corpus (423 derivable turns / 9266) with a
+// frozen Python reference (temp/fallback_reference.py) this port must match —
+// see assistantTranscriptFallback.test.ts for the conformance fixture.
+// Error turns and empty/tool-only turns intentionally derive '' so they keep
+// rendering as plain execution logs.
+// ---------------------------------------------------------------------------
+
+const FALLBACK_SUMMARY_LIMIT = 50
+
+/** First cut points that end the leading prose block. */
+const fallbackToolCutRes: RegExp[] = [
+  /`{4,}/, // multiline tool fence (only its start matters)
+  /🛠️/, // GA tool-call glyph
+  /<\/arg_value>|<\/parameter>|DSML/, // escaped tool-call houses
+  /^\[(?:Info|Warn|Error|Status|Stdout|Stderr|系统)\]/m, // GA log lines
+]
+
+const fallbackErrorRe =
+  /^\s*(?:[!！]{1,4}\s*)?(?:\[(?:ERROR|DANGER)\]|\[\s*!{2,}|流异常中断|Incomplete response|上一条回复|Error[:：])/i
+
+/** Clause-level break characters for the no-sentence-end downgrade. */
+const FALLBACK_PAUSE_CHARS = '，、；,;'
+
+function fallbackStripMarkdown(text: string): string {
+  return text.replace(/\*\*|__|`|~~/g, '')
+}
+
+/** Trim trailing whitespace/punctuation and unclosed brackets (≤2 rounds). */
+function fallbackTrimTail(text: string, hard = false): string {
+  let value = text.replace(/\s+$/, '')
+  const strip = hard ? '，、；：,;:—～~-' : '，、；,;—～~-'
+  const dropTrailing = () => {
+    for (;;) {
+      value = value.replace(/\s+$/, '')
+      if (!value || !strip.includes(value.slice(-1))) return
+      value = value.slice(0, -1)
+    }
+  }
+  dropTrailing()
+  for (let round = 0; round < 2; round += 1) {
+    const open: number[] = []
+    for (let index = 0; index < value.length; index += 1) {
+      const char = value[index]
+      if ('（({[【'.includes(char)) open.push(index)
+      else if ('）)}]】'.includes(char) && open.length) open.pop()
+    }
+    if (!open.length) break
+    value = value.slice(0, open[0])
+    dropTrailing()
+  }
+  return value
+}
+
+/** The first meaningful prose line before any tool dump; '' when none. */
+function fallbackLeadLine(raw: string): string {
+  let text = raw
+  // Peel opening label shells such as '<summary>' or '<parameter ...>'.
+  text = text.replace(/^(?:\s*<[A-Za-z][^<>]{0,80}>)+\s*/, '')
+  text = text.replace(/^(\s*<thinking>[\s\S]*?<\/thinking>)+\s*/i, '')
+  let cut = -1
+  for (const pattern of fallbackToolCutRes) {
+    const match = pattern.exec(text)
+    if (match && (cut < 0 || match.index < cut)) cut = match.index
+  }
+  if (cut >= 0) text = text.slice(0, cut)
+  text = text.replace(/(?:\s*<\/[A-Za-z][^<>]{0,80}>)+\s*$/, '')
+  text = text.replace(/\s*[｜|]+\s*DSML.*$/i, '')
+  text = text.replace(/\s*<\/?(?:arg_value|parameter|antml:[a-z_]+)>\s*$/i, '')
+  text = text.replace(/(?:\s*[｜|]+\s*DSML[^>]*>?)+/gi, ' ')
+  let line = ''
+  for (const candidate of text.split(/\r?\n/)) {
+    const trimmed = candidate.trim()
+    if (!trimmed) continue
+    if (/^[|>#*=\-•·`]+\s*$/.test(trimmed)) continue // heading/list decoration only
+    line = trimmed
+    break
+  }
+  if (!line) return ''
+  return line.replace(/^\s*[#>*\-•·]+\s*/, '').replace(/\s+/g, ' ').trim()
+}
+
+/** 50-char sentence-first cut of the lead line; '' means derive nothing. */
+function fallbackDerive(text: string): string {
+  if (text.length < 2 || !/[0-9A-Za-z\u4e00-\u9fff]/.test(text)) return ''
+  const stdEnd = /[。！？]/.exec(text)
+  const colonEnd = /：[ \t\r]*(?=\n|$)/.exec(text)
+  let stop = -1
+  let stopKind = ''
+  if (stdEnd) {
+    stop = stdEnd.index
+    stopKind = 'std'
+  }
+  if (colonEnd && (stop < 0 || colonEnd.index < stop)) {
+    stop = colonEnd.index
+    stopKind = 'colon'
+  }
+  if (stop >= 0 && stop < FALLBACK_SUMMARY_LIMIT) {
+    let segment = text.slice(0, stop + 1)
+    // A line-ending colon reads as a sentence end but must render as 。
+    if (stopKind === 'colon') segment = `${segment.slice(0, -1)}。`
+    const derived = fallbackTrimTail(fallbackStripMarkdown(segment))
+    if (derived.length >= 2) return derived
+  }
+  const window = text.slice(0, FALLBACK_SUMMARY_LIMIT)
+  let clauseCut = -1
+  for (const char of FALLBACK_PAUSE_CHARS) {
+    const index = window.lastIndexOf(char)
+    if (index > clauseCut) clauseCut = index
+  }
+  if (clauseCut >= 10) {
+    const derived = fallbackTrimTail(fallbackStripMarkdown(window.slice(0, clauseCut + 1)))
+    if (derived.length >= 2) return `${derived}…`
+  }
+  const spaceCut = window.lastIndexOf(' ')
+  if (spaceCut >= 20) {
+    const derived = fallbackTrimTail(fallbackStripMarkdown(window.slice(0, spaceCut)))
+    if (derived.length >= 2) return `${derived}…`
+  }
+  let derived = fallbackTrimTail(fallbackStripMarkdown(window), true)
+  if (text.length > FALLBACK_SUMMARY_LIMIT) derived += '…'
+  if (!derived || derived.length < 2 || !/[0-9A-Za-z\u4e00-\u9fff]/.test(derived)) return ''
+  return derived
+}
+
+/**
+ * Derive a fallback title for a turn whose model output missed the <summary>
+ * protocol. Returns '' when the turn has no usable prose (error output,
+ * tool-only or empty). Emoji are preserved.
+ */
+export function fallbackSummary(raw: string): string {
+  const trimmed = raw.trim()
+  if (fallbackErrorRe.test(trimmed)) return ''
+  const lead = fallbackLeadLine(trimmed)
+  if (!lead) return ''
+  return fallbackDerive(lead)
+}
+
 /**
  * Project a raw GA assistant transcript into cheap, user-facing semantics.
  * This scans strings only; Markdown parsing remains the rendering layer's job.
@@ -288,7 +432,7 @@ export function parseAssistantTranscript(text: string): AssistantTranscript {
     const rawContent = restore(safe.slice(start, end)).trim()
     return {
       turn: Number(match[1]),
-      summary: extractSummary(rawContent),
+      summary: extractSummary(rawContent) || fallbackSummary(rawContent),
       content: stripTraceMeta(rawContent),
     }
   })
