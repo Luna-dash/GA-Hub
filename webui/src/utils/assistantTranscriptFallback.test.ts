@@ -6,7 +6,7 @@ import { fallbackSummary } from './assistantTranscript'
 // corpus study (423 derivable turns / 9266) against a Python reference
 // implementation; expectations below are the verified reference outputs.
 //  - Prefer the first complete sentence within 50 chars (。！？ stops even if short)
-//  - A line-ending ： counts as sentence end and is rewritten to 。
+//  - Rev2: a colon never ends a sentence; only a trailing ： renders as 。
 //  - No sentence end: downgrade to clause/space break with a trailing ellipsis
 //  - Strip summary/parameter label shells and markdown emphasis; keep emoji
 //  - Never derive from error or empty turns
@@ -44,6 +44,16 @@ describe('fallback summary derivation', () => {
     ['|DSML| <parameter name="summary">A 完成</parameter>\n\n正文', 'A 完成'],
     ['<thinking>想想</thinking>\n\n正文若干。继续说', '正文若干。'],
     ['嗯 <parameter name="summary">A 完成</parameter> 就这样', '嗯 A 完成'],
+    // rev2 (2026-09-22): a colon never stops; only a trailing ： renders as 。
+    [
+      '更新检查与隔离验证已完成，结果如下：\n\n## 已完成\n\n- 基于上次更新基点',
+      '更新检查与隔离验证已完成…',
+    ],
+    [
+      '合并完成，CF 相关 SOP 现在只剩两个，职责清晰：\n\n**1. cf_management_sop.md — CF 总体管理**',
+      '合并完成，CF 相关 SOP 现在只剩两个…',
+    ],
+    ['**新码（刚生成，约 2 分钟有效）：**\n\n# `954473649`', '新码（刚生成，约 2 分钟有效）。'],
   ]
 
   it.each(cases)('derives %j -> %j', (input, expected) => {

@@ -290,6 +290,7 @@ function isDanglingToolTurn(content: string): boolean {
 // prose, truncated markdown). For those turns we derive a cheap title from the
 // leading prose — everything before the first tool dump — capped at 50 chars
 // and preferring a complete sentence. Rules locked with the user 2026-09-22;
+// rev2 (same day): a colon never ends a sentence — only a trailing ： renders as 。
 // tuned against the full archived corpus (423 derivable turns / 9266) with a
 // frozen Python reference (temp/fallback_reference.py) this port must match —
 // see assistantTranscriptFallback.test.ts for the conformance fixture.
@@ -320,7 +321,7 @@ function fallbackStripMarkdown(text: string): string {
 /** Trim trailing whitespace/punctuation and unclosed brackets (≤2 rounds). */
 function fallbackTrimTail(text: string, hard = false): string {
   let value = text.replace(/\s+$/, '')
-  const strip = hard ? '，、；：,;:—～~-' : '，、；,;—～~-'
+  const strip = hard ? '，、；,;:—～~-' : '，、；,;—～~-'
   const dropTrailing = () => {
     for (;;) {
       value = value.replace(/\s+$/, '')
@@ -376,27 +377,18 @@ function fallbackLeadLine(raw: string): string {
   return line.replace(/^\s*[#>*\-•·]+\s*/, '').replace(/\s+/g, ' ').trim()
 }
 
+/** A trailing colon no longer ends a sentence; it renders as 。 instead. */
+function fallbackColonTail(text: string): string {
+  return text.endsWith('：') ? `${text.slice(0, -1)}。` : text
+}
+
 /** 50-char sentence-first cut of the lead line; '' means derive nothing. */
 function fallbackDerive(text: string): string {
   if (text.length < 2 || !/[0-9A-Za-z\u4e00-\u9fff]/.test(text)) return ''
   const stdEnd = /[。！？]/.exec(text)
-  const colonEnd = /：[ \t\r]*(?=\n|$)/.exec(text)
-  let stop = -1
-  let stopKind = ''
-  if (stdEnd) {
-    stop = stdEnd.index
-    stopKind = 'std'
-  }
-  if (colonEnd && (stop < 0 || colonEnd.index < stop)) {
-    stop = colonEnd.index
-    stopKind = 'colon'
-  }
-  if (stop >= 0 && stop < FALLBACK_SUMMARY_LIMIT) {
-    let segment = text.slice(0, stop + 1)
-    // A line-ending colon reads as a sentence end but must render as 。
-    if (stopKind === 'colon') segment = `${segment.slice(0, -1)}。`
-    const derived = fallbackTrimTail(fallbackStripMarkdown(segment))
-    if (derived.length >= 2) return derived
+  if (stdEnd && stdEnd.index < FALLBACK_SUMMARY_LIMIT) {
+    const derived = fallbackTrimTail(fallbackStripMarkdown(text.slice(0, stdEnd.index + 1)))
+    if (derived.length >= 2) return fallbackColonTail(derived)
   }
   const window = text.slice(0, FALLBACK_SUMMARY_LIMIT)
   let clauseCut = -1
@@ -406,15 +398,16 @@ function fallbackDerive(text: string): string {
   }
   if (clauseCut >= 10) {
     const derived = fallbackTrimTail(fallbackStripMarkdown(window.slice(0, clauseCut + 1)))
-    if (derived.length >= 2) return `${derived}…`
+    if (derived.length >= 2) return `${fallbackColonTail(derived)}…`
   }
   const spaceCut = window.lastIndexOf(' ')
   if (spaceCut >= 20) {
     const derived = fallbackTrimTail(fallbackStripMarkdown(window.slice(0, spaceCut)))
-    if (derived.length >= 2) return `${derived}…`
+    if (derived.length >= 2) return `${fallbackColonTail(derived)}…`
   }
   let derived = fallbackTrimTail(fallbackStripMarkdown(window), true)
   if (text.length > FALLBACK_SUMMARY_LIMIT) derived += '…'
+  derived = fallbackColonTail(derived)
   if (!derived || derived.length < 2 || !/[0-9A-Za-z\u4e00-\u9fff]/.test(derived)) return ''
   return derived
 }
