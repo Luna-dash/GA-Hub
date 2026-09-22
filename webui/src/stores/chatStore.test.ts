@@ -469,6 +469,55 @@ describe('chatStore lifecycle', () => {
     })
   })
 
+  it('loads every remaining page in one sweep and tracks progress', async () => {
+    const getHistory = vi.spyOn(api, 'getSessionMessages')
+      .mockResolvedValueOnce({
+        session_id: 'session-a', archive_bound: true, revision: 'a1', total: 6,
+        has_more: true, next_before: 4,
+        items: [
+          { id: 'q3', role: 'user', content: 'q3', ordinal: 4 },
+          { id: 'a3', role: 'assistant', content: 'a3', ordinal: 5 },
+        ],
+      })
+      .mockResolvedValueOnce({
+        session_id: 'session-a', archive_bound: true, revision: 'a1', total: 6,
+        has_more: true, next_before: 2,
+        items: [
+          { id: 'q2', role: 'user', content: 'q2', ordinal: 2 },
+          { id: 'a2', role: 'assistant', content: 'a2', ordinal: 3 },
+        ],
+      })
+      .mockResolvedValueOnce({
+        session_id: 'session-a', archive_bound: true, revision: 'a1', total: 6,
+        has_more: false, next_before: null,
+        items: [
+          { id: 'q1', role: 'user', content: 'q1', ordinal: 0 },
+          { id: 'a1', role: 'assistant', content: 'a1', ordinal: 1 },
+        ],
+      })
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyBefore).toBe(4))
+
+    await useChatStore.getState().loadAllHistory()
+
+    expect(getHistory).toHaveBeenCalledTimes(3)
+    expect(getHistory).toHaveBeenLastCalledWith('session-a', expect.objectContaining({
+      turns: 20,
+      signal: expect.any(AbortSignal),
+    }))
+    expect(useChatStore.getState().msgs.map((message) => message.content)).toEqual([
+      'q1', 'a1', 'q2', 'a2', 'q3', 'a3',
+    ])
+    expect(useChatStore.getState()).toMatchObject({
+      historyHasMore: false,
+      historyBefore: null,
+      loadingAllHistory: false,
+      allHistoryLoadedItems: 4,
+      olderHistoryStatus: 'idle',
+    })
+  })
+
   it('bounds inactive session projections and never caches the active session', async () => {
     vi.spyOn(api, 'getSessionMessages').mockImplementation(async (sessionId) => ({
       session_id: sessionId, archive_bound: true, revision: `${sessionId}-revision`,

@@ -433,7 +433,8 @@ async def get_session_messages(
     session_id: str,
     before: int | None = Query(default=None, ge=0),
     limit: int | None = Query(default=None, ge=1, le=200),
-    max_chars: int | None = Query(default=None, ge=10_000, le=2_000_000),
+    max_chars: int | None = Query(default=None, ge=10_000, le=8_000_000),
+    turns: int | None = Query(default=None, ge=1, le=500),
 ) -> SessionMessagesResp:
     row = await asyncio.to_thread(_session, session_id)
     try:
@@ -443,6 +444,7 @@ async def get_session_messages(
             before=before,
             limit=limit,
             max_chars=max_chars,
+            turns=turns,
         )
     except HistoryUnavailableError:
         log.warning(

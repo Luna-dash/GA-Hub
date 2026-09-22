@@ -71,6 +71,8 @@ export interface SessionMessagePageOptions {
   before?: number
   limit?: number
   maxChars?: number
+  /** Real human↔assistant turns per page (takes precedence over limit). */
+  turns?: number
   signal?: AbortSignal
 }
 
@@ -507,6 +509,7 @@ export const api = {
     if (options.before !== undefined) query.set('before', String(options.before))
     if (options.limit !== undefined) query.set('limit', String(options.limit))
     if (options.maxChars !== undefined) query.set('max_chars', String(options.maxChars))
+    if (options.turns !== undefined) query.set('turns', String(options.turns))
     return http<SessionMessagesResponse>(
       'GET',
       `/api/sessions/${encodeURIComponent(id)}/messages`,

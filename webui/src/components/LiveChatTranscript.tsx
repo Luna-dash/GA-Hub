@@ -56,6 +56,9 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     const olderHistoryError = useChatStore((state) => state.olderHistoryError)
     const retryHistory = useChatStore((state) => state.retryHistory)
     const loadOlderHistory = useChatStore((state) => state.loadOlderHistory)
+    const loadingAllHistory = useChatStore((state) => state.loadingAllHistory)
+    const allHistoryLoadedItems = useChatStore((state) => state.allHistoryLoadedItems)
+    const loadAllHistory = useChatStore((state) => state.loadAllHistory)
 
     // Smart auto-scroll state. Pin only while the user is already near the
     // bottom; otherwise retain their reading position and count new messages.
@@ -237,6 +240,31 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       }
     }, [loadOlderHistory, olderHistoryStatus])
 
+    const handleLoadAllHistory = useCallback(async () => {
+      const el = scrollRef.current
+      if (!el || olderHistoryStatus === 'loading' || loadingAllHistory) return
+      prependingHistoryRef.current = true
+      // Pages keep prepending for the whole sweep; compensate the scrollTop
+      // each frame by exactly how much the content grew, so the reader stays
+      // anchored to the same message instead of chasing the new content.
+      let lastHeight = el.scrollHeight
+      let frame = requestAnimationFrame(function keepAnchor() {
+        const current = scrollRef.current
+        if (current) {
+          const height = current.scrollHeight
+          if (height > lastHeight) current.scrollTop += height - lastHeight
+          lastHeight = height
+        }
+        frame = requestAnimationFrame(keepAnchor)
+      })
+      try {
+        await loadAllHistory()
+      } finally {
+        cancelAnimationFrame(frame)
+        prependingHistoryRef.current = false
+      }
+    }, [loadAllHistory, olderHistoryStatus, loadingAllHistory])
+
     const jumpToBottom = () => {
       const el = scrollRef.current
       if (!el) return
@@ -316,14 +344,25 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           )}
           {historyStatus === 'ready' && (historyHasMore || olderHistoryStatus === 'error') && (
             <div className="flex flex-col items-center gap-1 pb-2">
-              <button
-                type="button"
-                className="ga-btn"
-                disabled={olderHistoryStatus === 'loading'}
-                onClick={() => { void handleLoadOlderHistory() }}
-              >
-                {olderHistoryStatus === 'loading' ? '正在加载更早消息…' : '加载更早消息'}
-              </button>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button
+                  type="button"
+                  className="ga-btn"
+                  disabled={olderHistoryStatus === 'loading' || loadingAllHistory}
+                  onClick={() => { void handleLoadOlderHistory() }}
+                >
+                  {olderHistoryStatus === 'loading' ? '正在加载更早消息…' : '加载更早消息'}
+                </button>
+                <button
+                  type="button"
+                  className="ga-btn"
+                  disabled={olderHistoryStatus === 'loading' || loadingAllHistory}
+                  onClick={() => { void handleLoadAllHistory() }}
+                  title="从最新一页开始连续加载，直到会话最早一条消息"
+                >
+                  {loadingAllHistory ? `正在加载全部历史…（已加载 ${allHistoryLoadedItems} 条）` : '加载全部历史'}
+                </button>
+              </div>
               {olderHistoryStatus === 'error' && (
                 <span className="text-xs text-status-danger">{olderHistoryError || '加载失败，请重试'}</span>
               )}

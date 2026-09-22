@@ -72,6 +72,10 @@ interface ChatState {
   historyBefore: number | null
   olderHistoryStatus: 'idle' | 'loading' | 'error'
   olderHistoryError: string | null
+  /** True while 「加载全部历史」 sweeps every remaining page in the background. */
+  loadingAllHistory: boolean
+  /** Approximate count of messages added by the full-history sweep. */
+  allHistoryLoadedItems: number
   sock: ChatSocket | null
   sessionId: string | null
   /** Per-session in-memory projections make switching instant; WS replay catches them up. */
@@ -80,6 +84,8 @@ interface ChatState {
   start: (sessionId: string, options?: { forceHistory?: boolean }) => void
   retryHistory: () => void
   loadOlderHistory: () => Promise<void>
+  /** Page back from the newest edge until the whole archive is loaded. */
+  loadAllHistory: () => Promise<void>
   dropSessionView: (sessionId: string) => void
   /**
    * Tear down the live connection and local projection state (session
@@ -568,6 +574,7 @@ function anyStreaming(msgs: ChatMsg[]): boolean {
 
 const HISTORY_PAGE_LIMIT = 32
 const HISTORY_PAGE_MAX_CHARS = 400_000
+const HISTORY_PAGE_TURNS = 20
 const MAX_CACHED_SESSION_VIEWS = 3
 const MAX_CACHED_SESSION_CHARS = 3_000_000
 
@@ -604,6 +611,10 @@ function prependUniqueHistory(older: ChatMsg[], current: ChatMsg[]): ChatMsg[] {
   })
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => { setTimeout(resolve, ms) })
+}
+
 export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get) => ({
   msgs: [],
   conn: 'connecting',
@@ -617,6 +628,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
   historyBefore: null,
   olderHistoryStatus: 'idle',
   olderHistoryError: null,
+  loadingAllHistory: false,
+  allHistoryLoadedItems: 0,
   sock: null,
   sessionId: null,
   sessionViews: {},
@@ -666,6 +679,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       historyBefore: resumeCachedView ? cached.historyBefore : null,
       olderHistoryStatus: resumeCachedView ? cached.olderHistoryStatus : 'idle',
       olderHistoryError: resumeCachedView ? cached.olderHistoryError : null,
+      loadingAllHistory: false,
+      allHistoryLoadedItems: 0,
       sessionViews: pruneSessionViews(sessionViews),
       // Like the Tauri desktop, switching only rebinds the already-live
       // per-session projection.  The cursor WebSocket catches up events that
@@ -940,8 +955,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     try {
       const history = await api.getSessionMessages(sessionId, {
         before,
-        limit: HISTORY_PAGE_LIMIT,
-        maxChars: HISTORY_PAGE_MAX_CHARS,
+        turns: HISTORY_PAGE_TURNS,
         signal: abort.signal,
       })
       if (abort.signal.aborted || get().sessionId !== sessionId) return
@@ -977,6 +991,77 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     }
   },
 
+  /**
+   * Walk the turn-based pages back to the very start of the archive.
+   * Pages keep their day-snapped boundaries; this loop only chains them so a
+   * long session needs one click instead of dozens. Stops on session switch,
+   * fatal errors, or when the cursor reaches the beginning.
+   */
+  loadAllHistory: async () => {
+    const current = get()
+    if (
+      !current.sessionId
+      || current.historyStatus !== 'ready'
+      || !current.historyHasMore
+      || current.historyBefore == null
+      || current.olderHistoryStatus === 'loading'
+      || current.loadingAllHistory
+    ) return
+
+    const sessionId = current.sessionId
+    const deadline = Date.now() + 5 * 60_000
+    let stalled = 0
+    set({ loadingAllHistory: true, allHistoryLoadedItems: 0, olderHistoryError: null })
+
+    try {
+      for (let step = 0; step < 600; step += 1) {
+        const state = get()
+        if (state.sessionId !== sessionId || Date.now() > deadline) return
+        if (state.historyStatus === 'history_error') return
+        if (state.historyStatus !== 'ready') {
+          // A newer revision raced a page and restarted hydration — wait it out.
+          await delay(250)
+          continue
+        }
+        if (!state.historyHasMore || state.historyBefore == null) return
+
+        const beforeCount = state.msgs.length
+        const revisionBefore = state.historyRevision
+        await get().loadOlderHistory()
+
+        const after = get()
+        if (after.sessionId !== sessionId) return
+        if (after.olderHistoryStatus === 'error' || after.historyStatus === 'history_error') {
+          stalled += 1
+          if (stalled >= 3) return
+          await delay(750)
+          continue
+        }
+        if (after.historyRevision !== revisionBefore) {
+          stalled += 1
+          if (stalled >= 3) return
+          await delay(900)
+          continue
+        }
+        const added = Math.max(0, after.msgs.length - beforeCount)
+        if (added === 0 && after.historyHasMore && after.historyBefore != null) {
+          stalled += 1
+          if (stalled >= 3) return
+          await delay(400)
+          continue
+        }
+        stalled = 0
+        set((st) => (
+          st.sessionId === sessionId
+            ? { allHistoryLoadedItems: st.allHistoryLoadedItems + added }
+            : {}
+        ))
+      }
+    } finally {
+      if (get().sessionId === sessionId) set({ loadingAllHistory: false })
+    }
+  },
+
   dropSessionView: (sessionId) => {
     runtime.sessionCursors.delete(sessionId)
     const current = get()
@@ -1007,6 +1092,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       historyBefore: null,
       olderHistoryStatus: 'idle',
       olderHistoryError: null,
+      loadingAllHistory: false,
+      allHistoryLoadedItems: 0,
       sock: null,
       sessionId: null,
       sessionViews,
@@ -1039,6 +1126,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       historyBefore: null,
       olderHistoryStatus: 'idle',
       olderHistoryError: null,
+      loadingAllHistory: false,
+      allHistoryLoadedItems: 0,
     })
   },
 
@@ -1072,6 +1161,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     historyBefore: null,
     olderHistoryStatus: 'idle',
     olderHistoryError: null,
+    loadingAllHistory: false,
+    allHistoryLoadedItems: 0,
   }),
   pushSystem: (content, stableKey) =>
     set((st) => {
@@ -1101,5 +1192,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     historyBefore: null,
     olderHistoryStatus: 'idle',
     olderHistoryError: null,
+    loadingAllHistory: false,
+    allHistoryLoadedItems: 0,
   }),
 })))

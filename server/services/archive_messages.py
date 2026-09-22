@@ -281,15 +281,22 @@ def _read_indexed_window(
     index: _ArchiveIndex,
     *,
     before: int | None,
-    limit: int,
+    limit: int | None,
     max_chars: int | None,
+    turns: int | None = None,
 ) -> tuple[list[dict[str, Any]], bool, int | None] | None:
     end = index.total if before is None else max(0, min(before, index.total))
     if end == 0:
         return [], False, None
 
-    # One extra ordinal is enough for _window_items' assistant/user pairing fix.
-    candidate_start = max(0, end - limit - 1)
+    # One extra ordinal is enough for _window_items' assistant/user pairing fix;
+    # turn mode loads a generous item span so the real-turn walker sees enough
+    # user turns even when retry/auto-continue injections inflate the ratio.
+    if turns is not None:
+        candidate_start = max(0, end - (turns + _TURN_SNAP_EXTEND) * 4 - 4)
+    else:
+        assert limit is not None
+        candidate_start = max(0, end - limit - 1)
     groups = [
         group
         for group in index.groups
@@ -316,9 +323,98 @@ def _read_indexed_window(
         before=None,
         limit=limit,
         max_chars=max_chars,
+        turns=turns,
     )
     has_more = bool(window and int(window[0]["ordinal"]) > 0)
     return window, has_more, int(window[0]["ordinal"]) if has_more else None
+
+
+# ── Real-turn paging (hub history v2) ─────────────────────────────
+# GA-side retry/auto-continue injections read as ordinary user prompts in the
+# archive, but they are not human turns.  Keep this prefix list in sync with
+# GA's injection templates (engine "[ERROR] Incomplete response." family plus
+# the hub "继续上一条回复…" / "上一条回复因可恢复…" notices).
+_RETRY_INJECTED_PREFIXES = (
+    "[ERROR] Incomplete response.",
+    "继续上一条回复",
+    "上一条回复因可恢复",
+)
+_TURN_SNAP_SHRINK = 3  # keep a local-day edge when it is ≤3 turns away
+_TURN_SNAP_EXTEND = 8  # reach a local-day edge by adding at most 8 turns
+_TURN_DEFAULT_MAX_CHARS = 8_000_000  # hard safety net for one turn page
+
+
+def _is_real_user_item(item: dict[str, Any]) -> bool:
+    """True for human user turns; retry/auto-continue injections are not turns."""
+    if item.get("role") != "user":
+        return False
+    content = str(item.get("content", "")).lstrip()
+    return not content.startswith(_RETRY_INJECTED_PREFIXES)
+
+
+def _turn_window_start(
+    items: list[dict[str, Any]],
+    end: int,
+    turns: int,
+    max_chars: int | None,
+) -> int:
+    """Pick the page start ordinal for a real-turn-counted window.
+
+    Walks back from ``end`` until ``turns`` real user turns are covered, then
+    prefers a start that also lands on a local-day boundary (timestamps are the
+    archive's naive local stamps) within a bounded shrink/extend window.
+    ``max_chars`` is a soft budget: an oversized single turn is still returned
+    intact rather than dropped, mirroring the limit-mode contract.
+    """
+    budget = max_chars if max_chars is not None else _TURN_DEFAULT_MAX_CHARS
+    prefix = [0] * (len(items) + 1)
+    for index, item in enumerate(items):
+        prefix[index + 1] = prefix[index] + len(str(item.get("content", "")))
+
+    turn_starts: list[int] = []  # real user ordinals, newest first
+    for index in range(end - 1, -1, -1):
+        if _is_real_user_item(items[index]):
+            turn_starts.append(index)
+            if len(turn_starts) >= turns + _TURN_SNAP_EXTEND:
+                break
+
+    def char_len(start: int) -> int:
+        return prefix[end] - prefix[start]
+
+    def day_edge(start: int) -> bool:
+        if start <= 0 or start >= end:
+            return False
+        before_ts = items[start - 1].get("timestamp")
+        after_ts = items[start].get("timestamp")
+        if not before_ts or not after_ts:
+            return False
+        return str(before_ts)[:10] != str(after_ts)[:10]
+
+    exact_k = min(turns, len(turn_starts))
+    if exact_k <= 0:
+        return 0
+
+    # Candidates ordered by distance from the exact cut, extend side first.
+    candidates: list[int] = [exact_k]
+    for delta in range(1, _TURN_SNAP_EXTEND + 1):
+        if exact_k + delta <= len(turn_starts):
+            candidates.append(exact_k + delta)
+        if delta <= _TURN_SNAP_SHRINK and exact_k - delta >= 1:
+            candidates.append(exact_k - delta)
+
+    fallback = turn_starts[exact_k - 1]
+    for k in candidates:
+        start = turn_starts[k - 1]
+        if char_len(start) <= budget and day_edge(start):
+            return start
+    if char_len(fallback) <= budget:
+        return fallback
+    # Budget exceeded even at the exact cut: drop oldest turns until it fits,
+    # keeping at least one turn so the client can always make progress.
+    for k in range(exact_k - 1, 0, -1):
+        if char_len(turn_starts[k - 1]) <= budget:
+            return turn_starts[k - 1]
+    return turn_starts[0]
 
 
 def _window_items(
@@ -327,6 +423,7 @@ def _window_items(
     before: int | None,
     limit: int | None,
     max_chars: int | None,
+    turns: int | None = None,
 ) -> tuple[list[dict[str, Any]], bool, int | None]:
     """Return a newest-first bounded slice while preserving display order.
 
@@ -336,17 +433,19 @@ def _window_items(
     rebuilding a multi-megabyte DOM on first paint.
     """
     end = len(items) if before is None else max(0, min(before, len(items)))
-    if limit is None:
+    if turns is not None:
+        start = _turn_window_start(items, end, turns, max_chars)
+    elif limit is None:
         return items[:end], False, None
-
-    start = end
-    selected_chars = 0
-    while start > 0 and end - start < limit:
-        item_chars = len(str(items[start - 1].get("content", "")))
-        if max_chars is not None and start < end and selected_chars + item_chars > max_chars:
-            break
-        start -= 1
-        selected_chars += item_chars
+    else:
+        start = end
+        selected_chars = 0
+        while start > 0 and end - start < limit:
+            item_chars = len(str(items[start - 1].get("content", "")))
+            if max_chars is not None and start < end and selected_chars + item_chars > max_chars:
+                break
+            start -= 1
+            selected_chars += item_chars
 
     # Avoid opening a page with an orphaned assistant answer when the paired
     # user prompt is immediately before it.  This may exceed the soft budget by
@@ -364,6 +463,7 @@ def read_archive_messages(
     before: int | None = None,
     limit: int | None = None,
     max_chars: int | None = None,
+    turns: int | None = None,
 ) -> dict[str, Any]:
     """Return UI messages from one bound GA archive, never persisting content."""
     if not archive_path:
@@ -376,13 +476,14 @@ def read_archive_messages(
             "next_before": None,
         }
     path = Path(archive_path).resolve()
-    if limit is not None:
+    if limit is not None or turns is not None:
         index = _archive_index(path)
         indexed = _read_indexed_window(
             index,
             before=before,
             limit=limit,
             max_chars=max_chars,
+            turns=turns,
         )
         if indexed is not None:
             window, has_more, next_before = indexed
@@ -407,6 +508,7 @@ def read_archive_messages(
         before=before,
         limit=limit,
         max_chars=max_chars,
+        turns=turns,
     )
     return {
         "archive_bound": True,
