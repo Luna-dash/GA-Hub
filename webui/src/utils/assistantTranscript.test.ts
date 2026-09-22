@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   parseAssistantTranscript,
+  renderAskUserPayload,
   stripAssistantTranscriptTags,
   stripFinalResponseMarker,
 } from './assistantTranscript'
@@ -139,6 +140,7 @@ describe('assistant transcript projection', () => {
 
     expect(transcript.stopped).toBe(false)
     expect(transcript.finalTurnIndex).toBe(0)
+    expect(transcript.finalAskUser).toEqual({ question: '继续吗？', candidates: ['继续'] })
   })
 
   it('treats ask_user as a readable final response', () => {
@@ -156,13 +158,12 @@ describe('assistant transcript projection', () => {
 
     const transcript = parseAssistantTranscript(content)
 
-    expect(transcript.finalBody).toBe([
-      '请先启用设备代码授权，然后告诉我结果。',
-      '',
-      '可选项：',
-      '- 已启用设备代码授权',
-      '- 设置里找不到该开关',
-    ].join('\n'))
+    expect(transcript.finalAskUser).toEqual({
+      question: '请先启用设备代码授权，然后告诉我结果。',
+      candidates: ['已启用设备代码授权', '设置里找不到该开关'],
+    })
+    // 有候选的 ask_user 由 AskUserCard 接管：正文挖空
+    expect(transcript.finalBody).toBe('')
     expect(transcript.finalTurnIndex).toBe(0)
   })
 
@@ -182,7 +183,10 @@ describe('assistant transcript projection', () => {
     const transcript = parseAssistantTranscript(content)
 
     expect(transcript.finalTurnIndex).toBe(1)
-    expect(transcript.finalBody).toContain('是否继续？')
+    expect(transcript.finalAskUser?.question).toBe('是否继续？')
+    expect(transcript.finalAskUser?.candidates).toEqual(['继续', '暂停'])
+    // 最终轮只剩 ask_user：正文为空，卡片独承内容
+    expect(transcript.finalBody).toBe('')
   })
 
   it('parses real GA ask_user args whose strings hold raw newlines', () => {
@@ -214,10 +218,12 @@ describe('assistant transcript projection', () => {
     const transcript = parseAssistantTranscript(content)
 
     expect(transcript.finalTurnIndex).toBe(0)
-    expect(transcript.finalBody).toContain('1. 阈值认可默认值吗？MIN_TURNS=5？')
-    expect(transcript.finalBody).toContain('2. 丢弃策略：quarantine 回收站还是直接物理删？')
-    expect(transcript.finalBody).toContain('- 认可默认值')
-    expect(transcript.finalBody).toContain('- 两项都改')
+    expect(transcript.finalAskUser?.question).toContain('1. 阈值认可默认值吗？MIN_TURNS=5？')
+    expect(transcript.finalAskUser?.question).toContain('2. 丢弃策略：quarantine 回收站还是直接物理删？')
+    expect(transcript.finalAskUser?.candidates).toEqual(['认可默认值', '两项都改'])
+    // 问题前的说明正文保留，工具转储被挖掉
+    expect(transcript.finalBody).toContain('方案已完成，全文在 `./l4_archive_proposal.md`。')
+    expect(transcript.finalBody).not.toContain('🛠️ Tool:')
   })
 
   it('keeps the conclusion prose when the final turn carries both prose and ask_user', () => {
@@ -259,9 +265,31 @@ describe('assistant transcript projection', () => {
     const body = transcript.finalBody
     expect(body).toContain('## 是，有未提交修改（12 个文件）')
     expect(body).toContain('共 +624/−69 行')
-    expect(body).toContain('这批 WIP 要我怎么处理？')
-    expect(body).toContain('- 我来提交（按主题拆分）并推送')
-    expect(body.indexOf('## 是，有未提交修改')).toBeLessThan(body.indexOf('这批 WIP 要我怎么处理？'))
+    expect(body).not.toContain('🛠️ Tool:')
+    expect(transcript.finalAskUser?.question).toBe('这批 WIP 要我怎么处理？')
+    expect(transcript.finalAskUser?.candidates).toEqual(['我来提交（按主题拆分）并推送', '只提交不推送'])
+  })
+
+  it('falls back to the text form when the ask_user payload has no candidates', () => {
+    const content = [
+      'LLM Running (Turn 1) ...',
+      '<summary>需要补充信息</summary>',
+      '🛠️ Tool: `ask_user`  📥 args:',
+      '````text',
+      JSON.stringify({ question: '请补充部署目标环境。' }),
+      '````',
+    ].join('\n')
+
+    const transcript = parseAssistantTranscript(content)
+
+    expect(transcript.finalAskUser).toBeNull()
+    expect(transcript.finalBody).toBe('请补充部署目标环境。')
+  })
+
+  it('renders an ask_user payload back to its text form for copying', () => {
+    expect(renderAskUserPayload({ question: '继续吗？', candidates: ['继续', '暂停'] }))
+      .toBe('继续吗？\n\n可选项：\n- 继续\n- 暂停')
+    expect(renderAskUserPayload({ question: '单独问题', candidates: [] })).toBe('单独问题')
   })
 
   it('strips only the trailing final-response protocol marker', () => {

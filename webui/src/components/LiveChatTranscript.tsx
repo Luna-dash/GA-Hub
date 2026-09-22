@@ -448,10 +448,11 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
             attachments={message.attachments}
             streamId={role === 'assistant' ? message.streamId : undefined}
             onRewind={role === 'assistant' ? onRewind : undefined}
+            askUserDraftKey={sessionId ? `liveChat:${sessionId}` : undefined}
           />
         </div>
       )
-    }, [onRewind])
+    }, [onRewind, sessionId])
 
     return (
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">

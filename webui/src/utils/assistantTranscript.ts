@@ -4,6 +4,11 @@ export interface AssistantTranscriptTurn {
   content: string
 }
 
+export interface AskUserPayload {
+  question: string
+  candidates: string[]
+}
+
 export interface AssistantTranscript {
   /** Content before the first turn marker (normally empty in GA messages). */
   leading: string
@@ -11,6 +16,9 @@ export interface AssistantTranscript {
   finalBody: string
   /** Index of the final rendered turn when it contains an ask_user call. */
   finalTurnIndex: number | null
+  /** Parsed ask_user payload of the final turn (only when it carries
+   *  candidates; rendered by AskUserCard instead of raw text). */
+  finalAskUser: AskUserPayload | null
   /** True when the last turn dangles (tool dump only — e.g. manual stop) and
    *  the conclusion fell back to an earlier turn. */
   stopped: boolean
@@ -169,22 +177,27 @@ function readLenientStringArrayField(source: string, key: string): string[] {
   return items
 }
 
-function askUserFromObject(payload: Record<string, unknown>): string {
+function askUserPayloadFromObject(payload: Record<string, unknown>): AskUserPayload | null {
   const question = typeof payload.question === 'string'
     ? payload.question.trim()
     : typeof payload.prompt === 'string'
       ? payload.prompt.trim()
       : ''
-  if (!question) return ''
+  if (!question) return null
   const rawCandidates = Array.isArray(payload.candidates)
     ? payload.candidates
     : Array.isArray(payload.options)
       ? payload.options
       : []
-  const candidates = rawCandidates.map(candidateLabel).filter(Boolean)
-  return candidates.length > 0
-    ? `${question}\n\n可选项：\n${candidates.map((candidate) => `- ${candidate}`).join('\n')}`
-    : question
+  return { question, candidates: rawCandidates.map(candidateLabel).filter(Boolean) }
+}
+
+/** Text form of an ask_user payload — used by the copy chip and the
+ *  no-picker fallback so the readable contract stays intact. */
+export function renderAskUserPayload(payload: AskUserPayload): string {
+  return payload.candidates.length > 0
+    ? `${payload.question}\n\n可选项：\n${payload.candidates.map((candidate) => `- ${candidate}`).join('\n')}`
+    : payload.question
 }
 
 function lastAskUserMatch(text: string): RegExpMatchArray | null {
@@ -198,16 +211,16 @@ function lastAskUserMatch(text: string): RegExpMatchArray | null {
   ))
 }
 
-/** Render the last ask_user payload in *text*, or '' when absent/unparseable. */
-function extractAskUserCandidate(text: string): string {
+/** Parse the last ask_user payload in *text*, or null when absent/unparseable. */
+function extractAskUserPayload(text: string): AskUserPayload | null {
   const match = lastAskUserMatch(text)
-  if (!match) return ''
+  if (!match) return null
   const tail = text.slice((match.index ?? 0) + match[0].length)
   const encoded = readJsonObjectAfter(tail, 0)
   if (encoded) {
     try {
-      const rendered = askUserFromObject(JSON.parse(encoded) as Record<string, unknown>)
-      if (rendered) return rendered
+      const parsed = askUserPayloadFromObject(JSON.parse(encoded) as Record<string, unknown>)
+      if (parsed) return parsed
     } catch {
       // fall through to the lenient scanner — GA allows raw newlines in strings
     }
@@ -216,13 +229,10 @@ function extractAskUserCandidate(text: string): string {
   // cannot truncate the payload the way a balanced-brace pre-slice would.
   let question = readLenientStringField(tail, 'question') || readLenientStringField(tail, 'prompt')
   question = question.trim()
-  if (!question) return ''
+  if (!question) return null
   let candidates = readLenientStringArrayField(tail, 'candidates')
   if (!candidates.length) candidates = readLenientStringArrayField(tail, 'options')
-  const labels = candidates.map(candidateLabel).filter(Boolean)
-  return labels.length > 0
-    ? `${question}\n\n可选项：\n${labels.map((candidate) => `- ${candidate}`).join('\n')}`
-    : question
+  return { question, candidates: candidates.map(candidateLabel).filter(Boolean) }
 }
 
 // 提炼层只负责"选哪个 turn"，不改写 markdown 本身。
@@ -231,18 +241,24 @@ function extractAskUserCandidate(text: string): string {
 /**
  * 最终展示体 = turn 原始内容，仅两处**无损**加工：
  * 1. 剥 <summary>/<thinking> 协议元数据（摘要是折叠列表用的，不属于正文）；
- * 2. ask_user 工具转储替换为友好问答渲染——它是 UI 交互件不是 markdown，
+ * 2. ask_user 工具转储替换——有候选的 payload 由 AskUserCard 卡片接管，
+ *    本处整段移除（askReplacement=''）；其余情况替换为友好问答文本。
  *    替换范围 = ask_user 标记到其参数围栏闭合；转储后的残余内容保留。
  * （回归：ga更新任务 的目录树 ```text 围栏曾被全局剥壳正则吃掉、
  *   结论正文曾被问题文本整体替换——原始内容直出后此类加工不复存在。）
  */
-function projectFinalBody(content: string): string {
+function projectFinalBody(content: string, askReplacement: string | null = null): string {
   const withoutMeta = stripTraceMeta(content).trim()
   if (!withoutMeta) return ''
   const askMatch = lastAskUserMatch(withoutMeta)
   if (!askMatch) return withoutMeta
-  const rendered = extractAskUserCandidate(withoutMeta)
-  if (!rendered) return withoutMeta
+  const rendered = askReplacement !== null
+    ? askReplacement
+    : (() => {
+        const payload = extractAskUserPayload(withoutMeta)
+        return payload ? renderAskUserPayload(payload) : ''
+      })()
+  if (askReplacement === null && !rendered) return withoutMeta
   const start = askMatch.index ?? 0
   const tail = withoutMeta.slice(start)
   const fence = /^`{4,}[^\r\n]*\r?\n[\s\S]*?^`{4,}[ \t]*$/m.exec(tail)
@@ -426,7 +442,16 @@ export function parseAssistantTranscript(text: string): AssistantTranscript {
   const matches = [...safe.matchAll(turnMarkerRe())]
 
   if (!matches.length) {
-    return { leading: '', turns: [], finalBody: projectFinalBody(source), finalTurnIndex: null, stopped: false }
+    const payload = extractAskUserPayload(source)
+    const finalAskUser = payload && payload.candidates.length > 0 ? payload : null
+    return {
+      leading: '',
+      turns: [],
+      finalBody: projectFinalBody(source, finalAskUser ? '' : null),
+      finalTurnIndex: null,
+      finalAskUser,
+      stopped: false,
+    }
   }
 
   const leading = stripTraceMeta(restore(safe.slice(0, matches[0].index ?? 0)))
@@ -447,6 +472,7 @@ export function parseAssistantTranscript(text: string): AssistantTranscript {
   // 被停止截断的悬空轮（LLM 尾巴不会写入存档）——不当结论，回退上一轮。
   let finalBody = ''
   let finalTurnIndex: number | null = null
+  let finalAskUser: AskUserPayload | null = null
   let stopped = false
   let terminalIndex = turns.length - 1
   while (terminalIndex >= 0 && !turns[terminalIndex].content.trim()) terminalIndex -= 1
@@ -456,12 +482,19 @@ export function parseAssistantTranscript(text: string): AssistantTranscript {
       stopped = true
       continue
     }
-    finalBody = projectFinalBody(turns[index].content)
+    // 有候选的 ask_user 交给 AskUserCard 交互卡片：finalBody 里挖掉转储段
+    // （askReplacement=''），组件用结构化 payload 渲染；无候选/解析失败保持
+    // 文本兜底（原行为）。
+    const payload = lastAskUserMatch(turns[index].content)
+      ? extractAskUserPayload(turns[index].content)
+      : null
+    finalAskUser = payload && payload.candidates.length > 0 ? payload : null
+    finalBody = projectFinalBody(turns[index].content, finalAskUser ? '' : null)
     finalTurnIndex = lastAskUserMatch(turns[index].content) ? index : null
     break
   }
 
-  return { leading, turns, finalBody, finalTurnIndex, stopped }
+  return { leading, turns, finalBody, finalTurnIndex, finalAskUser, stopped }
 }
 
 export function stripAssistantTranscriptTags(text: string): string {

@@ -15,6 +15,7 @@ import { memo, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import {
   parseAssistantTranscript,
+  renderAskUserPayload,
   type AssistantTranscript,
   type AssistantTranscriptTurn,
 } from '@/utils/assistantTranscript'
@@ -23,6 +24,7 @@ import { useCopy } from '@/utils/clipboard'
 import { CHAT_FONT_SCALE_EVENT, getChatFontScale } from '@/utils/chatAppearance'
 import { FILE_HINT } from '@/utils/sessionPrompt'
 import { MessageContent } from './MessageContent'
+import { AskUserCard } from './AskUserCard'
 import { bubbleTone } from './bubbleTone'
 import type { PasteAttachment } from '@/api/types'
 import { api } from '@/api/client'
@@ -47,6 +49,8 @@ interface Props {
   onRewind?: (sid: string) => void
   /** Compact mode: hide role labels and reduce padding (rail/compact surfaces) */
   compact?: boolean
+  /** Draft-store key (e.g. `liveChat:<id>`) that AskUserCard fills on pick. */
+  askUserDraftKey?: string
 }
 
 const LONG_HISTORY_THRESHOLD = 60_000
@@ -88,7 +92,7 @@ function formatDuration(milliseconds: number): string {
     : `${minutes}:${String(rest).padStart(2, '0')}`
 }
 
-export const MessageBubble = memo(function MessageBubble({ role, content, streaming, stopped, recoveryNotice, tagLabel, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact }: Props) {
+export const MessageBubble = memo(function MessageBubble({ role, content, streaming, stopped, recoveryNotice, tagLabel, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact, askUserDraftKey }: Props) {
   const [fontScale, setFontScale] = useState(getChatFontScale)
   const [clock, setClock] = useState(Date.now)
   const [longFinalExpanded, setLongFinalExpanded] = useState(false)
@@ -133,6 +137,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
   const copySource = useMemo(() => {
     if (role !== 'assistant') return content
     if (useHistoryProjection && historyTranscript) {
+      if (historyTranscript.finalAskUser) return renderAskUserPayload(historyTranscript.finalAskUser)
       return historyTranscript.finalBody
         || historyTranscript.turns.filter((turn) => turn.summary).at(-1)?.summary
         || content
@@ -226,6 +231,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
                 manualStop={Boolean(stopped)}
                 finalExpanded={longFinalExpanded}
                 onExpandFinal={() => setLongFinalExpanded(true)}
+                askUserDraftKey={askUserDraftKey}
               />
             ) : segs.map((seg, i) =>
               seg.type === 'fold' ? (
@@ -262,15 +268,18 @@ function HistoryTranscriptReply({
   manualStop,
   finalExpanded,
   onExpandFinal,
+  askUserDraftKey,
 }: {
   transcript: AssistantTranscript
   rawContent: string
   manualStop: boolean
   finalExpanded: boolean
   onExpandFinal: () => void
+  askUserDraftKey?: string
 }) {
   const lastSummary = transcript.turns.filter((turn) => turn.summary).at(-1)?.summary || ''
-  const finalBody = transcript.finalBody || lastSummary
+  // 带交互卡片的结论不再回落摘要：问题由卡片承载，摘要只会误导。
+  const finalBody = transcript.finalBody || (transcript.finalAskUser ? '' : lastSummary)
   const finalDeferred = finalBody.length > LONG_HISTORY_THRESHOLD && !finalExpanded
   const visibleFinal = finalDeferred
     ? `${finalBody.slice(0, LONG_HISTORY_PREVIEW_CHARS)}…`
@@ -279,7 +288,7 @@ function HistoryTranscriptReply({
     .filter((_, index) => index !== transcript.finalTurnIndex)
   const visibleProcessTurns = processTurns.length > 0
     ? processTurns
-    : finalBody
+    : finalBody || transcript.finalAskUser
       ? []
       : [{ turn: 1, summary: '原始执行记录', content: rawContent }]
   // 两类"没结论"相互独立：manualStop 是事实（用户按了停止），
@@ -299,8 +308,15 @@ function HistoryTranscriptReply({
       )}
       {visibleFinal ? (
         <MessageContent content={visibleFinal} format="markdown" />
-      ) : manualStop || transcript.stopped ? null : (
+      ) : manualStop || transcript.stopped || transcript.finalAskUser ? null : (
         <p className="text-sm leading-6 text-ink-muted">该条历史回复未包含可提取的最终回答。</p>
+      )}
+      {transcript.finalAskUser && (
+        <AskUserCard
+          question={transcript.finalAskUser.question}
+          candidates={transcript.finalAskUser.candidates}
+          draftKey={askUserDraftKey}
+        />
       )}
       {finalDeferred && (
         <button

@@ -13,6 +13,7 @@ vi.mock('./MarkdownView', () => ({
 }))
 
 import { MessageBubble } from './MessageBubble'
+import { useDraftStore } from '@/stores/draftStore'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -44,6 +45,7 @@ describe('MessageBubble render isolation', () => {
 
   beforeEach(() => {
     markdownRender.mockClear()
+    useDraftStore.setState({ texts: {}, attachments: {} })
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -197,7 +199,7 @@ describe('MessageBubble render isolation', () => {
     expect(host.textContent).toContain('共 1 个 Turn')
   })
 
-  it('shows an archived ask_user call as the final user-facing question', () => {
+  it('shows an archived ask_user call as an interactive picker card', () => {
     const content = [
       '**LLM Running (Turn 1) ...**',
       '<summary>需要用户确认</summary>',
@@ -211,12 +213,48 @@ describe('MessageBubble render isolation', () => {
       <MessageBubble role="assistant" content={content} streaming={false} />,
     ))
 
+    // 问题由 AskUserCard 渲染（结论区不再输出文本形式），候选为可点击按钮
+    const card = host.querySelector('[data-ask-user-card]')
+    expect(card).toBeTruthy()
     expect(markdownRender).toHaveBeenCalledTimes(1)
-    expect(markdownRender.mock.calls[0][0].children).toContain('请选择下一步。')
-    expect(markdownRender.mock.calls[0][0].children).toContain('- 继续')
+    expect(markdownRender.mock.calls[0][0].children).toBe('请选择下一步。')
+    const optionTexts = [...card!.querySelectorAll('button')].map((button) => button.textContent)
+    expect(optionTexts.some((text) => text?.includes('继续'))).toBe(true)
+    expect(optionTexts.some((text) => text?.includes('暂停'))).toBe(true)
+    expect(host.textContent).toContain('点击选项将填入输入框')
     expect(host.textContent).not.toContain('查看执行过程')
     expect(host.textContent).not.toContain('共 1 个 Turn')
     expect(host.textContent).not.toContain('🛠️ Tool:')
+  })
+
+  it('fills the composer draft when a picker option is clicked', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>需要用户确认</summary>',
+      '🛠️ Tool: `ask_user`  📥 args:',
+      '````text',
+      '{"question":"请选择下一步。","candidates":["继续","暂停"]}',
+      '````',
+    ].join('\n')
+
+    act(() => root.render(
+      <MessageBubble
+        role="assistant"
+        content={content}
+        streaming={false}
+        askUserDraftKey="liveChat:s1"
+      />,
+    ))
+
+    const card = host.querySelector('[data-ask-user-card]')!
+    const option = [...card.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('暂停'))!
+    act(() => option.click())
+
+    expect(useDraftStore.getState().texts['liveChat:s1']).toBe('暂停')
+    const picked = [...card.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('暂停'))!
+    expect(picked.textContent).toContain('已填入')
   })
 
   it('copies only the conclusion, not the whole process, from a multi-turn card', async () => {
