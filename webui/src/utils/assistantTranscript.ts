@@ -350,7 +350,7 @@ function fallbackLeadLine(raw: string): string {
   // Strip full thinking blocks up front (mirrors extractSummary's pre-pass).
   text = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, ' ')
   // Clear DSML residue before label peeling so it cannot shield opening labels.
-  text = text.replace(/(?:\s*[｜|]+\s*DSML[^>]*>?)+/gi, ' ')
+  text = text.replace(/(?:\s*(?:<\/?)?\s*[｜|]+\s*DSML[^>]*>?)+/gi, ' ')
   // Peel opening label shells such as '<summary>' or '<parameter ...>'.
   text = text.replace(/^(?:\s*<[A-Za-z][^<>]{0,80}>)+\s*/, '')
   text = text.replace(/^(\s*<thinking>[\s\S]*?<\/thinking>)+\s*/i, '')
@@ -364,7 +364,7 @@ function fallbackLeadLine(raw: string): string {
   text = text.replace(/\s*[｜|]+\s*DSML.*$/i, '')
   // Strip summary/parameter/arg_value label residue anywhere (attributes included).
   text = text.replace(/<\/?(?:summary|parameter|arg_value|antml:[a-z_]+)(?:\s[^<>]{0,200})?>/gi, ' ')
-  text = text.replace(/(?:\s*[｜|]+\s*DSML[^>]*>?)+/gi, ' ')
+  text = text.replace(/(?:\s*(?:<\/?)?\s*[｜|]+\s*DSML[^>]*>?)+/gi, ' ')
   let line = ''
   for (const candidate of text.split(/\r?\n/)) {
     const trimmed = candidate.trim()
@@ -377,14 +377,21 @@ function fallbackLeadLine(raw: string): string {
   return line.replace(/^\s*[#>*\-•·]+\s*/, '').replace(/\s+/g, ' ').trim()
 }
 
-/** A trailing colon no longer ends a sentence; it renders as 。 instead. */
+/** A trailing colon (：or :) no longer ends a sentence; it renders as 。 instead. */
 function fallbackColonTail(text: string): string {
-  return text.endsWith('：') ? `${text.slice(0, -1)}。` : text
+  if (text.endsWith('：') || text.endsWith(':')) return `${text.slice(0, -1)}。`
+  return text
 }
 
-/** 50-char sentence-first cut of the lead line; '' means derive nothing. */
+/** Lead line title: ≤50 chars kept whole; longer leads get a sentence-first cut. */
 function fallbackDerive(text: string): string {
   if (text.length < 2 || !/[0-9A-Za-z\u4e00-\u9fff]/.test(text)) return ''
+  // Short leads are the title as-is (cleanup + trailing-colon swap, no pause probing).
+  if (text.length <= FALLBACK_SUMMARY_LIMIT) {
+    const whole = fallbackColonTail(fallbackTrimTail(fallbackStripMarkdown(text)))
+    if (whole.length >= 2 && /[0-9A-Za-z\u4e00-\u9fff]/.test(whole)) return whole
+    return ''
+  }
   const stdEnd = /[。！？]/.exec(text)
   if (stdEnd && stdEnd.index < FALLBACK_SUMMARY_LIMIT) {
     const derived = fallbackTrimTail(fallbackStripMarkdown(text.slice(0, stdEnd.index + 1)))

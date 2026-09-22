@@ -2,17 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { fallbackSummary } from './assistantTranscript'
 
 // Fallback summary derivation for turns whose model output missed the
-// <summary> protocol. Rules locked with the user on 2026-09-22 after a full
+// summary protocol. Rules locked with the user on 2026-09-22 after a full
 // corpus study (423 derivable turns / 9266) against a Python reference
 // implementation; expectations below are the verified reference outputs.
-//  - Prefer the first complete sentence within 50 chars (。！？ stops even if short)
-//  - Rev2: a colon never ends a sentence; only a trailing ： renders as 。
-//  - No sentence end: downgrade to clause/space break with a trailing ellipsis
+//  - Rev3: leads of 50 chars or less are kept whole (cleanup + trailing colon
+//    swap only) — no pause-point probing below the limit
+//  - Over 50 chars: first complete sentence (。！？) wins; otherwise downgrade
+//    to a clause/space break with a trailing ellipsis
+//  - Rev2: a colon never ends a sentence; a trailing ：/: renders as 。
 //  - Strip summary/parameter label shells and markdown emphasis; keep emoji
 //  - Never derive from error or empty turns
 describe('fallback summary derivation', () => {
   const cases: Array<[string, string]> = [
-    ['关键确认！fluxionai 域调 refresh 返回 200', '关键确认！'],
+    ['关键确认！fluxionai 域调 refresh 返回 200', '关键确认！fluxionai 域调 refresh 返回 200'],
     ['✅ 测速完成，节点性能如下：\n\n## 报告\n正文', '✅ 测速完成，节点性能如下。'],
     [
       '关键澄清：在 fluxionai 域上调 /api 返回 404 page not found！说明问题',
@@ -22,7 +24,7 @@ describe('fallback summary derivation', () => {
       '<summary>正则转义错误；修正后查 token</arg_value>\n\n🛠️ Tool: x',
       '正则转义错误；修正后查 token',
     ],
-    ['重大发现！refresh 返回 401（上一次 200），说明 rt 已失效', '重大发现！'],
+    ['重大发现！refresh 返回 401（上一次 200），说明 rt 已失效', '重大发现！refresh 返回 401（上一次 200），说明 rt 已失效'],
     [
       'cookies 命令返回空——前面用户提到登录态存在 l... 开头的 cookie（很可能是 laravel，因为常见）。我用 CDP',
       'cookies 命令返回空——前面用户提到登录态存在 l... 开头的 cookie…',
@@ -30,30 +32,33 @@ describe('fallback summary derivation', () => {
     ['[!!! 流异常中断 AttributeError !!!]', ''],
     ['!!!Error: boom', ''],
     ['\n\n## 根因定位结论\n\n已查清。这是**误报** bug', '根因定位结论'],
-    ['ADMIN_KEY 已重置为已知值 xyz 并存文件。现在可触发', 'ADMIN_KEY 已重置为已知值 xyz 并存文件。'],
+    ['ADMIN_KEY 已重置为已知值 xyz 并存文件。现在可触发', 'ADMIN_KEY 已重置为已知值 xyz 并存文件。现在可触发'],
     [
       '✅ 已从 GitHub Releases 拉到官方数据（beta3→beta10，2026-06-11 至 09-06，共 8 个版本）。核心',
       '✅ 已从 GitHub Releases 拉到官方数据…',
     ],
-    ['工作记忆已更新。下一步验证策略：本地模拟', '工作记忆已更新。'],
+    ['工作记忆已更新。下一步验证策略：本地模拟', '工作记忆已更新。下一步验证策略：本地模拟'],
     ['请先修改配置，然后重启服务', '请先修改配置，然后重启服务'],
     ['。。', ''],
     ['', ''],
     // label-shell residue in stray positions (v3 hardening, 2026-09-22)
     ['A 完成</summary>\n\n后面正文继续', 'A 完成'],
     ['|DSML| <parameter name="summary">A 完成</parameter>\n\n正文', 'A 完成'],
-    ['<thinking>想想</thinking>\n\n正文若干。继续说', '正文若干。'],
+    ['<thinking>想想</thinking>\n\n正文若干。继续说', '正文若干。继续说'],
     ['嗯 <parameter name="summary">A 完成</parameter> 就这样', '嗯 A 完成'],
-    // rev2 (2026-09-22): a colon never stops; only a trailing ： renders as 。
+    // rev2+rev3 (2026-09-22): colons never stop; short leads stay whole; trailing ：/: as 。
     [
       '更新检查与隔离验证已完成，结果如下：\n\n## 已完成\n\n- 基于上次更新基点',
-      '更新检查与隔离验证已完成…',
+      '更新检查与隔离验证已完成，结果如下。',
     ],
     [
       '合并完成，CF 相关 SOP 现在只剩两个，职责清晰：\n\n**1. cf_management_sop.md — CF 总体管理**',
-      '合并完成，CF 相关 SOP 现在只剩两个…',
+      '合并完成，CF 相关 SOP 现在只剩两个，职责清晰。',
     ],
     ['**新码（刚生成，约 2 分钟有效）：**\n\n# `954473649`', '新码（刚生成，约 2 分钟有效）。'],
+    // rev3 (2026-09-22): whole-lead rule & slash-prefixed DSML close residue
+    ['重试 run 返回 200(刚才 403 是瞬时):\n\n继续流程。', '重试 run 返回 200(刚才 403 是瞬时)。'],
+    ['<summary>找定义与加载流程，确认入口' + '<' + '/' + '｜｜DSML｜｜ parameter>\n\n后文继续', '找定义与加载流程，确认入口'],
   ]
 
   it.each(cases)('derives %j -> %j', (input, expected) => {
