@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { markProgrammaticScroll } from '@/utils/programmaticScroll'
 import { buildVirtualOffsets, computeVirtualRange, virtualIndexAtOffset } from '@/utils/virtualList'
 
 export interface VirtualMessageListHandle {
@@ -164,10 +165,14 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
       ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80
       : pinnedToBottom
     if (scroller && Math.abs(delta) >= 0.5 && wasAboveViewport && !currentlyPinned) {
+      markProgrammaticScroll()
       scroller.scrollTop += delta
     } else if (scroller && Math.abs(delta) >= 0.5 && currentlyPinned) {
       window.requestAnimationFrame(() => {
-        if (scrollRef.current === scroller) scroller.scrollTop = scroller.scrollHeight
+        if (scrollRef.current === scroller) {
+          markProgrammaticScroll()
+          scroller.scrollTop = scroller.scrollHeight
+        }
       })
     }
     setLayoutRevision((value) => value + 1)
@@ -196,6 +201,7 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
           ? itemBottom - viewportHeight
           : itemTop - 16
       const top = Math.max(0, list.offsetTop + targetTop)
+      markProgrammaticScroll()
       if (typeof scroller.scrollTo === 'function') {
         scroller.scrollTo({ top, behavior: options.behavior ?? 'smooth' })
       } else {
@@ -270,6 +276,7 @@ const MeasuredRow = memo(function MeasuredRow({ rowKey, index, top, virtualized,
     <div
       ref={nodeRef}
       data-chat-message
+      data-chat-key={rowKey}
       data-virtual-index={index}
       style={virtualized
         ? { position: 'absolute', top, left: 0, right: 0, paddingBottom: '0.5rem' }
