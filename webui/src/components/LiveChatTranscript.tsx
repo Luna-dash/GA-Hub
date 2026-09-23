@@ -412,7 +412,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       virtualListRef.current?.scrollToIndex(targetIndex, { behavior: 'smooth', align: 'start' })
     }
 
-    const renderChatMessage = useCallback((message: ChatMsg) => {
+    const renderChatMessage = useCallback((message: ChatMsg, index: number) => {
       // system 消息（/btw 回答 role='system'；GA-Hub 通知 source='system'；
       // 自动重试状态 source='chat_error_retry_notice'）保留 system 角色：
       // 琥珀气泡 + "system" 头行，正文不再被塞来源前缀。
@@ -449,10 +449,11 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
             streamId={role === 'assistant' ? message.streamId : undefined}
             onRewind={role === 'assistant' ? onRewind : undefined}
             askUserDraftKey={sessionId ? `liveChat:${sessionId}` : undefined}
+            askUserInteractive={index === msgs.length - 1}
           />
         </div>
       )
-    }, [onRewind, sessionId])
+    }, [onRewind, sessionId, msgs.length])
 
     return (
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">

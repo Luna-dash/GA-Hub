@@ -257,6 +257,38 @@ describe('MessageBubble render isolation', () => {
     expect(picked.textContent).toContain('已填入')
   })
 
+  it('renders an inert picker card when the ask is not the latest turn', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>需要用户确认</summary>',
+      '🛠️ Tool: `ask_user`  📥 args:',
+      '````text',
+      '{"question":"请选择下一步。","candidates":["继续","暂停"]}',
+      '````',
+    ].join('\n')
+
+    act(() => root.render(
+      <MessageBubble
+        role="assistant"
+        content={content}
+        streaming={false}
+        askUserDraftKey="liveChat:s1"
+        askUserInteractive={false}
+      />,
+    ))
+
+    const card = host.querySelector('[data-ask-user-card]')!
+    const buttons = [...card.querySelectorAll<HTMLButtonElement>('button')]
+    expect(buttons).toHaveLength(2)
+    expect(buttons.every((button) => button.disabled)).toBe(true)
+
+    act(() => buttons[0].click())
+
+    expect(useDraftStore.getState().texts).toEqual({})
+    expect(host.textContent).toContain('历史提问')
+    expect(host.textContent).not.toContain('点击选项将填入输入框')
+  })
+
   it('copies only the conclusion, not the whole process, from a multi-turn card', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     ;(navigator as unknown as { clipboard: { writeText: (t: string) => Promise<void> } }).clipboard = { writeText }

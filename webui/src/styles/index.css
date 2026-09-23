@@ -897,7 +897,7 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--c-accent) 25%, transparent);
   background-color: var(--c-bg-card);
 }
-.ask-option:hover {
+.ask-option:not(:disabled):hover {
   border-color: color-mix(in srgb, var(--c-accent) 60%, transparent);
   background-color: color-mix(in srgb, var(--c-accent-soft) 45%, transparent);
 }

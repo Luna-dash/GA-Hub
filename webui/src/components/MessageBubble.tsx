@@ -51,6 +51,8 @@ interface Props {
   compact?: boolean
   /** Draft-store key (e.g. `liveChat:<id>`) that AskUserCard fills on pick. */
   askUserDraftKey?: string
+  /** false = 该消息不是会话末条：卡片降级为归档展示（不可点选）。 */
+  askUserInteractive?: boolean
 }
 
 const LONG_HISTORY_THRESHOLD = 60_000
@@ -109,7 +111,7 @@ function formatDuration(milliseconds: number): string {
     : `${minutes}:${String(rest).padStart(2, '0')}`
 }
 
-export const MessageBubble = memo(function MessageBubble({ role, content, streaming, stopped, recoveryNotice, tagLabel, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact, askUserDraftKey }: Props) {
+export const MessageBubble = memo(function MessageBubble({ role, content, streaming, stopped, recoveryNotice, tagLabel, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact, askUserDraftKey, askUserInteractive = true }: Props) {
   const [fontScale, setFontScale] = useState(getChatFontScale)
   const [clock, setClock] = useState(Date.now)
   const [longFinalExpanded, setLongFinalExpanded] = useState(false)
@@ -244,6 +246,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
                 finalExpanded={longFinalExpanded}
                 onExpandFinal={() => setLongFinalExpanded(true)}
                 askUserDraftKey={askUserDraftKey}
+                askUserInteractive={askUserInteractive}
               />
             ) : segs.map((seg, i) =>
               seg.type === 'fold' ? (
@@ -284,6 +287,7 @@ function HistoryTranscriptReply({
   finalExpanded,
   onExpandFinal,
   askUserDraftKey,
+  askUserInteractive,
 }: {
   transcript: AssistantTranscript
   rawContent: string
@@ -291,6 +295,7 @@ function HistoryTranscriptReply({
   finalExpanded: boolean
   onExpandFinal: () => void
   askUserDraftKey?: string
+  askUserInteractive: boolean
 }) {
   // 停止态统一呈现：正文=最后一条有效 summary（见 projectConclusionBody），不再回落
   // "上一轮的完整正文"；提示行统一"⏹任务中止"并置于最后，与停止事实是否留存无关。
@@ -323,6 +328,7 @@ function HistoryTranscriptReply({
           question={transcript.finalAskUser.question}
           candidates={transcript.finalAskUser.candidates}
           draftKey={askUserDraftKey}
+          interactive={askUserInteractive}
         />
       )}
       {finalDeferred && (

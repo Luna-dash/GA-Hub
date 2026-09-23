@@ -80,6 +80,26 @@ describe('AskUserCard', () => {
     expect(options().find((b) => b.textContent?.includes('是'))?.textContent).not.toContain('已填入')
   })
 
+  it('renders an archived (inert) card that never picks or writes', () => {
+    act(() => root.render(
+      <AskUserCard question="选哪个？" candidates={['是', '否']} draftKey="liveChat:s9" interactive={false} />,
+    ))
+
+    const buttons = options()
+    expect(buttons).toHaveLength(2)
+    expect(buttons[0].textContent).toContain('是')
+    expect(buttons.every((button) => button.disabled)).toBe(true)
+
+    act(() => buttons[0].click())
+    act(() => buttons[1].click())
+
+    expect(useDraftStore.getState().texts).toEqual({})
+    expect(host.textContent).toContain('历史提问')
+    expect(host.textContent).not.toContain('待回答')
+    expect(host.textContent).not.toContain('已填入')
+    expect(host.textContent).not.toContain('点击选项将填入输入框')
+  })
+
   it('never writes the draft store without a draft key', () => {
     act(() => root.render(
       <AskUserCard question="选哪个？" candidates={['是']} />,
