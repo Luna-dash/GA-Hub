@@ -56,6 +56,23 @@ interface Props {
 const LONG_HISTORY_THRESHOLD = 60_000
 const LONG_HISTORY_PREVIEW_CHARS = 20_000
 
+/** 最后一条有效 summary（空白视为无效）。 */
+function lastValidSummary(turns: AssistantTranscriptTurn[]): string {
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    const text = (turns[i].summary || '').trim()
+    if (text) return text
+  }
+  return ''
+}
+
+/** 结论区正文（渲染与复制共用）。尾部为悬空工具轮（被停止截断/轮询任务/进程重启同形）
+ *  时不再回落"上一轮的完整正文"（实测 34/41 条拿到的都是工具转储），改用最后一条
+ *  有效 summary；一条都没有则正文留空。带交互卡片的结论不回落摘要（问题由卡片承载）。 */
+function projectConclusionBody(transcript: AssistantTranscript): string {
+  const summaryBody = transcript.finalAskUser ? '' : lastValidSummary(transcript.turns)
+  return transcript.stopped ? summaryBody : transcript.finalBody || summaryBody
+}
+
 /** Strip prompt-engineering tokens from a user message before showing it. */
 function cleanUserContent(s: string): string {
   if (!s) return ''
@@ -138,9 +155,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
     if (role !== 'assistant') return content
     if (useHistoryProjection && historyTranscript) {
       if (historyTranscript.finalAskUser) return renderAskUserPayload(historyTranscript.finalAskUser)
-      return historyTranscript.finalBody
-        || historyTranscript.turns.filter((turn) => turn.summary).at(-1)?.summary
-        || content
+      return projectConclusionBody(historyTranscript) || content
     }
     const answerSeg = [...foldTurns(content)].reverse().find((seg) => seg.type === 'text')
     return answerSeg?.content || content
@@ -214,9 +229,6 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
               <span>{recoveryNotice}</span>
             </div>
           )}
-          {stopped && !useHistoryProjection && (
-            <p className="mb-2 text-xs italic leading-5 text-status-warning-muted">⏹ 已手动停止</p>
-          )}
           <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
             {streamId && onRewind && !streaming && (
               <RewindChip onClick={() => onRewind(streamId)} />
@@ -249,6 +261,9 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
               ),
             )}
           </div>
+          {stopped && !useHistoryProjection && (
+            <p className="mt-2 text-xs italic leading-5 text-status-warning-muted">⏹任务中止</p>
+          )}
         </div>
         {(timeLabel || startedAt) && (
           <span className={clsx("shrink-0 whitespace-nowrap px-0.5 text-[10px] leading-4 tabular-nums", isSystem ? "text-status-warning-muted" : "text-ink-faint")}>
@@ -277,9 +292,10 @@ function HistoryTranscriptReply({
   onExpandFinal: () => void
   askUserDraftKey?: string
 }) {
-  const lastSummary = transcript.turns.filter((turn) => turn.summary).at(-1)?.summary || ''
-  // 带交互卡片的结论不再回落摘要：问题由卡片承载，摘要只会误导。
-  const finalBody = transcript.finalBody || (transcript.finalAskUser ? '' : lastSummary)
+  // 停止态统一呈现：正文=最后一条有效 summary（见 projectConclusionBody），不再回落
+  // "上一轮的完整正文"；提示行统一"⏹任务中止"并置于最后，与停止事实是否留存无关。
+  const stoppedState = manualStop || transcript.stopped
+  const finalBody = projectConclusionBody(transcript)
   const finalDeferred = finalBody.length > LONG_HISTORY_THRESHOLD && !finalExpanded
   const visibleFinal = finalDeferred
     ? `${finalBody.slice(0, LONG_HISTORY_PREVIEW_CHARS)}…`
@@ -291,24 +307,15 @@ function HistoryTranscriptReply({
     : finalBody || transcript.finalAskUser
       ? []
       : [{ turn: 1, summary: '原始执行记录', content: rawContent }]
-  // 两类"没结论"相互独立：manualStop 是事实（用户按了停止），
-  // transcript.stopped 是投影启发式（尾轮只有工具转储——轮询任务/进程重启同形）。
-  // manualStop 优先措辞；启发式成立且发生结论回退时才说"以下为上一轮的完整结论"。
-  const fallbackSuffix = transcript.stopped && transcript.finalBody ? '，以下为上一轮的完整结论' : ''
+  // 停止的两个来源——manualStop（abort 事实）与 transcript.stopped（悬空尾启发式）——
+  // 共用同一条提示行；呈现与"是否还能拿到停止事实"无关，当场与事后一致。
 
   return (
     <>
       {visibleProcessTurns.length > 0 && <LazyProcessFold turns={visibleProcessTurns} />}
-      {(manualStop || transcript.stopped) && (
-        <p className="mb-2 text-xs italic leading-5 text-status-warning-muted">
-          {manualStop
-            ? `⏹ 已手动停止${fallbackSuffix}`
-            : `⏹ 本轮以工具调用收尾，未输出文字结论${transcript.finalBody ? '，以下为上一轮的完整结论' : ''}`}
-        </p>
-      )}
       {visibleFinal ? (
         <MessageContent content={visibleFinal} format="markdown" />
-      ) : manualStop || transcript.stopped || transcript.finalAskUser ? null : (
+      ) : stoppedState || transcript.finalAskUser ? null : (
         <p className="text-sm leading-6 text-ink-muted">该条历史回复未包含可提取的最终回答。</p>
       )}
       {transcript.finalAskUser && (
@@ -326,6 +333,9 @@ function HistoryTranscriptReply({
         >
           最终回答较长，展开完整内容
         </button>
+      )}
+      {stoppedState && (
+        <p className="mt-2 text-xs italic leading-5 text-status-warning-muted">⏹任务中止</p>
       )}
     </>
   )
