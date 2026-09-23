@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 
 from .. import _paths
 from ..services.session_metadata import SessionMetadataStore
@@ -117,37 +117,6 @@ def _native_ledger_usage() -> dict[str, Any]:
     result = {"available": True, "totals": _with_rate(all_time), "timestamp": now}
     result.update(_weekly_response(usage, now))
     return result
-
-
-def _native_ledger_history(hours: int) -> list[dict[str, Any]]:
-    """Return native ledger events in the legacy history response shape."""
-    if usage_bridge is None:
-        return []
-    cutoff = int(time.time()) - hours * 3600
-    history = []
-    for entry in usage_bridge.read_usage_ledger():
-        if not isinstance(entry, dict):
-            continue
-        try:
-            timestamp = int(float(entry.get("t", 0) or 0))
-        except (TypeError, ValueError):
-            continue
-        if timestamp >= cutoff:
-            history.append({"timestamp": timestamp, **_with_rate(_ledger_totals(entry))})
-    history.sort(key=lambda item: item["timestamp"])
-    return history
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def _session_title(metadata: dict[str, Any]) -> str:
@@ -276,8 +245,3 @@ def _weekly_response(data: dict[str, Any], timestamp: int) -> dict[str, Any]:
 @router.get("/stats")
 def token_stats():
     return _native_ledger_usage()
-
-
-@router.get("/history")
-def token_history(hours: int = Query(24, ge=1, le=720)):
-    return {"hours": hours, "history": _native_ledger_history(hours)}

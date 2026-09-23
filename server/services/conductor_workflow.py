@@ -11,7 +11,6 @@ from ..event_topics import (
     CONDUCTOR_WORKER_FAILED,
     CONDUCTOR_WORKFLOW_COMPLETED,
     CONDUCTOR_WORKFLOW_FAILED,
-    CONDUCTOR_WORKFLOW_REOPENED,
 )
 from .conductor_vocabulary import (
     WORKER_EVENT_REWORKED,

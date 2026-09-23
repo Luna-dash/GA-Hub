@@ -200,12 +200,6 @@ class ConductorStore:
             return {row[0] for row in self.db.execute(
                 "SELECT request_id FROM workflow_tombstones WHERE engine_key=?", (self.engine_key,))}
 
-    def is_workflow_deleted(self, request_id: str) -> bool:
-        with self.lock:
-            return self.db.execute(
-                "SELECT 1 FROM workflow_tombstones WHERE engine_key=? AND request_id=?",
-                (self.engine_key, request_id)).fetchone() is not None
-
     # ── subagent archive ─────────────────────────────────────────────────
     # Engine pool state is volatile (cleared on conductor stop and lost on
     # engine restarts), but completed workflows reference their workers by

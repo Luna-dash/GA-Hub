@@ -17,10 +17,8 @@ from __future__ import annotations
 SUBAGENT_RUNNING = "running"
 
 # ── hub-side review verdicts (review_status) ────────────────────────────
-REVIEW_NONE = "none"
 REVIEW_PENDING = "pending"
 REVIEW_ACCEPTED = "accepted"
-REVIEW_REJECTED = "rejected"
 
 # ── workflow status (WorkflowTracker workflow.state) ────────────────────
 WORKFLOW_ADMITTED = "admitted"
@@ -91,8 +89,6 @@ STAGE_AGGREGATING = "aggregating"
 STAGE_RECOVERABLE_FAILURE = "recoverable_failure"
 STAGE_COMPLETED = "completed"
 STAGE_FAILED = "failed"
-# Terminal from the UI's point of view: nothing further will happen.
-STAGE_WORKFLOW_CLOSED = frozenset({STAGE_COMPLETED, STAGE_FAILED})
 
 STAGE_WORKER_RUNNING = "running"
 STAGE_WORKER_REWORKING = "reworking"

@@ -397,7 +397,6 @@ class ConductorService:
         self.chat_messages: list = []
         self._chat_lock = threading.RLock()
         self.workflow_tracker = WorkflowTracker()
-        self._dispatch_context = threading.local()
         self._started = False
         self._conductor_llm_index = None
         self._subagent_llm_index = None
@@ -1178,27 +1177,6 @@ class ConductorService:
         """
         return self.apply_subagent_action(
             sid, "accept", msg, request_id=request_id, force=force,
-            operation_id=operation_id,
-        )
-
-    def rework_subagent(
-        self,
-        sid: str,
-        msg: str,
-        llm_index: Optional[int] = None,
-        *,
-        request_id: str | None = None,
-        conductor_llm_index: Optional[int] = None,
-        subagent_llm_index: Optional[int] = None,
-        subagent_model_policy: Optional[SubagentModelPolicy] = None,
-        operation_id: str | None = None,
-    ) -> dict:
-        """Rework a pending worker through the model-policy boundary."""
-        return self.apply_subagent_action(
-            sid, "rework", msg, llm_index=llm_index, request_id=request_id,
-            conductor_llm_index=conductor_llm_index,
-            subagent_llm_index=subagent_llm_index,
-            subagent_model_policy=subagent_model_policy,
             operation_id=operation_id,
         )
 

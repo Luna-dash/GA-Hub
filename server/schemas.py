@@ -292,10 +292,6 @@ class ArchiveZipEntryListResp(BaseModel):
 
 
 # ── memory ───────────────────────────────────────────────────────
-class TextWrite(BaseModel):
-    content: str
-
-
 class MemoryWriteReq(BaseModel):
     content: str
     # Decimal strings avoid losing nanosecond precision in JavaScript.

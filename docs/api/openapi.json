@@ -4711,49 +4711,6 @@
           }
         }
       }
-    },
-    "/api/tokens/history": {
-      "get": {
-        "tags": [
-          "tokens"
-        ],
-        "summary": "Token History",
-        "operationId": "token_history_api_tokens_history_get",
-        "parameters": [
-          {
-            "name": "hours",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 720,
-              "minimum": 1,
-              "default": 24,
-              "title": "Hours"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
     }
   },
   "components": {

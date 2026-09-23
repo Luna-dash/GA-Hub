@@ -291,7 +291,6 @@ export interface TokenStatsResponse {
   days: TokenDayStats[]
 }
 export interface TokenHistoryPoint extends TokenTotals { timestamp: number }
-export interface TokenHistoryResponse { hours: number; history: TokenHistoryPoint[] }
 
 export type ServicePanelItem = Omit<ApiSchemas['ServicePanelItem'], 'metrics'> & {
   metrics: Record<string, string | number | boolean | null>
