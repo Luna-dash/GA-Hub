@@ -286,6 +286,60 @@ describe('assistant transcript projection', () => {
     expect(transcript.finalBody).toBe('请补充部署目标环境。')
   })
 
+  it('parses the compact live ask_user form (verbose=False)', () => {
+    // 实车（verbose=False）dump：🛠️ ask_user(问题 / candidates: / - a / - b)
+    // 无 JSON、无引号字段（见 agent_loop._compact_tool_args）。
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>等待确认处理方式</summary>',
+      '🛠️ ask_user(这批 WIP 要我怎么处理？',
+      'candidates:',
+      '- 我来提交（按主题拆分）并推送',
+      '- 只提交不推送)',
+    ].join('\n')
+
+    const transcript = parseAssistantTranscript(content)
+
+    expect(transcript.finalAskUser?.question).toBe('这批 WIP 要我怎么处理？')
+    expect(transcript.finalAskUser?.candidates).toEqual(['我来提交（按主题拆分）并推送', '只提交不推送'])
+    expect(transcript.finalTurnIndex).toBe(0)
+    // 卡片接管：正文里 compact 转储段被挖掉
+    expect(transcript.finalBody).not.toContain('candidates:')
+  })
+
+  it('keeps a compact ask_user without candidates as plain text', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>需要补充信息</summary>',
+      '🛠️ ask_user(请补充部署目标环境。)',
+    ].join('\n')
+
+    const transcript = parseAssistantTranscript(content)
+
+    expect(transcript.finalAskUser).toBeNull()
+    expect(transcript.finalBody).toBe('请补充部署目标环境。')
+  })
+
+  it('keeps conclusion prose before a compact live ask_user block', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>等待确认处理方式</summary>',
+      '这些 WIP 有以下处理方式。',
+      '',
+      '🛠️ ask_user(这批 WIP 要我怎么处理？',
+      'candidates:',
+      '- 我来提交并推送',
+      '- 只提交不推送)',
+    ].join('\n')
+
+    const transcript = parseAssistantTranscript(content)
+
+    expect(transcript.finalAskUser?.candidates).toEqual(['我来提交并推送', '只提交不推送'])
+    const body = transcript.finalBody
+    expect(body).toContain('这些 WIP 有以下处理方式。')
+    expect(body).not.toContain('- 我来提交并推送')
+  })
+
   it('renders an ask_user payload back to its text form for copying', () => {
     expect(renderAskUserPayload({ question: '继续吗？', candidates: ['继续', '暂停'] }))
       .toBe('继续吗？\n\n可选项：\n- 继续\n- 暂停')

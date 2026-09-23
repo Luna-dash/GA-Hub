@@ -229,9 +229,53 @@ function extractAskUserPayload(text: string): AskUserPayload | null {
   // cannot truncate the payload the way a balanced-brace pre-slice would.
   let question = readLenientStringField(tail, 'question') || readLenientStringField(tail, 'prompt')
   question = question.trim()
-  if (!question) return null
+  if (!question) {
+    // Live (verbose=False) GA runs dump ask_user as a compact one-liner:
+    //   🛠️ ask_user(问题文本 [换行] candidates: [换行] - a [换行] - b)
+    // — no JSON and no quoted fields (see agent_loop._compact_tool_args).
+    // Only the "🛠️ ask_user(" marker takes this path.
+    return /\(\s*$/.test(match[0]) ? parseCompactAskUser(tail) : null
+  }
   let candidates = readLenientStringArrayField(tail, 'candidates')
   if (!candidates.length) candidates = readLenientStringArrayField(tail, 'options')
+  return { question, candidates: candidates.map(candidateLabel).filter(Boolean) }
+}
+
+/** Compact live dump: question lines, then an optional "candidates:" line and
+ *  one "- option" per line; the final ")" sits at the end of the last line. */
+function parseCompactAskUser(tail: string): AskUserPayload | null {
+  const sep = /\n[ \t]*candidates:[ \t]*(\r?\n|$)/i.exec(tail)
+  let question = ''
+  const candidates: string[] = []
+  if (sep) {
+    question = tail.slice(0, sep.index).replace(/\)\s*$/, '').trim()
+    const itemRe = /^[ \t]*-[ \t]?(.*)$/
+    for (const line of tail.slice(sep.index + sep[0].length).split(/\r?\n/)) {
+      const item = itemRe.exec(line)
+      if (!item) break
+      const closing = /\)\s*$/.exec(item[1])
+      const text = (closing ? item[1].slice(0, closing.index) : item[1]).trim()
+      if (text) candidates.push(text)
+      if (closing) break
+    }
+  } else {
+    const lines: string[] = []
+    let closed = false
+    for (const line of tail.split(/\r?\n/)) {
+      const closing = /\)\s*$/.exec(line)
+      if (closing) {
+        const text = line.slice(0, closing.index).trimEnd()
+        if (text) lines.push(text)
+        closed = true
+        break
+      }
+      const text = line.trim()
+      if (text) lines.push(text)
+    }
+    if (!closed) return null
+    question = lines.join('\n').trim()
+  }
+  if (!question) return null
   return { question, candidates: candidates.map(candidateLabel).filter(Boolean) }
 }
 
