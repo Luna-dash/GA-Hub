@@ -8,6 +8,7 @@ import {
   openSessionChat,
   sessionActivity,
   sessionChatHref,
+  sessionPreview,
   sessionRecencyMs,
   sessionStatusLabel,
   structuredErrorDetailFromError,
@@ -160,6 +161,32 @@ describe('session UI contracts', () => {
       expect(sessionRecencyMs({ updated_at: '', created_at: '2026-09-18T06:00:00Z' }))
         .toBe(Date.parse('2026-09-18T06:00:00Z'))
       expect(sessionRecencyMs({ updated_at: 'not-a-date', created_at: 'also-bad' })).toBe(0)
+    })
+  })
+
+  describe('sessionPreview', () => {
+    const rows = [
+      session('a', 'A'),
+      session('b', 'B'),
+      session('c', 'C'),
+      session('d', 'D'),
+      session('e', 'E'),
+    ]
+
+    it('caps the preview at the limit when the current session is already inside it', () => {
+      expect(sessionPreview(rows, 'b', 3).map((item) => item.id)).toEqual(['a', 'b', 'c'])
+      expect(sessionPreview(rows, null, 3).map((item) => item.id)).toEqual(['a', 'b', 'c'])
+      expect(sessionPreview(rows, 'nowhere', 3).map((item) => item.id)).toEqual(['a', 'b', 'c'])
+      expect(sessionPreview(rows, 'a', 0)).toEqual([])
+    })
+
+    it('pulls a current session that sits past the edge into the last preview slot', () => {
+      expect(sessionPreview(rows, 'e', 3).map((item) => item.id)).toEqual(['a', 'b', 'e'])
+    })
+
+    it('returns everything at or under the limit untouched', () => {
+      expect(sessionPreview(rows.slice(0, 2), 'a', 3).map((item) => item.id)).toEqual(['a', 'b'])
+      expect(sessionPreview(rows.slice(0, 3), 'e', 3).map((item) => item.id)).toEqual(['a', 'b', 'c'])
     })
   })
 })

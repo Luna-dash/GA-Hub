@@ -171,3 +171,21 @@ export function capacityConflictFromError(error: unknown): CapacityConflict | nu
     reason,
   }
 }
+
+/** Rail 分组默认态（v3 三态之 D）的预览切片：取最近 `limit` 条。
+ *
+ * 当前会话在前 limit 条之外时不能被藏掉（它正是用户眼前在用的那条）：
+ * 顶入最后一个预览位，而不是替换别的行——前两条仍是最新的，顺序语义不破。
+ * 入参已按 sessionRecencyMs 降序（orderedSessions），这里不再排序。
+ */
+export function sessionPreview(
+  sessions: HubSession[],
+  currentId: string | null | undefined,
+  limit: number,
+): HubSession[] {
+  const preview = sessions.slice(0, limit)
+  if (limit < 1 || !currentId || preview.some((session) => session.id === currentId)) return preview
+  const current = sessions.find((session) => session.id === currentId)
+  if (!current) return preview
+  return [...preview.slice(0, limit - 1), current]
+}

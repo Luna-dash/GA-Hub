@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { HubSession, SessionRuntime } from '@/api/types'
-import { sessionActivity, sessionRecencyMs, sessionStatusLabel } from '@/utils/sessionUi'
+import { sessionActivity, sessionPreview, sessionRecencyMs, sessionStatusLabel } from '@/utils/sessionUi'
 import { usePageState } from '@/utils/pageState'
 import { RAIL_TITLE_SCALE_EVENT, getRailTitleScale } from '@/utils/railAppearance'
 import { storageKeys } from '@/config/storageKeys'
@@ -60,6 +60,9 @@ const LEGACY_RECENT_KEY = storageKeys.sessionRailLegacyRecentActivity
 const TERMINAL_KEY = storageKeys.sessionRailTerminalState
 const SEEN_COMPLETED_KEY = storageKeys.sessionRailSeenCompletedRuns
 const GROUP_COLLAPSE_KEY = storageKeys.sessionRailGroupCollapse
+const GROUP_SHOW_ALL_KEY = storageKeys.sessionRailGroupShowAll
+/** 组内默认态预览条数（v3 三态中的 D；与组底链接文案同源）。 */
+const GROUP_PREVIEW_LIMIT = 3
 const PINNED_GROUPS_KEY = storageKeys.sessionRailGroupPinned
 type TerminalState = 'completed' | 'error'
 type TerminalMap = Record<string, TerminalState>
@@ -202,13 +205,67 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(
     () => readJson<Record<string, boolean>>(GROUP_COLLAPSE_KEY, {}),
   )
+  const [showAllGroups, setShowAllGroups] = useState<Record<string, boolean>>(
+    () => readJson<Record<string, boolean>>(GROUP_SHOW_ALL_KEY, {}),
+  )
+
+  // v3 三态：C（全折叠，collapsed[key]=true）/ D（默认预览 ≤3）/ E（展开全部，
+  // showAll[key]=true）。两个存储对象互斥写入，皆非 true 即 D。
+  // 组头 chevron 只走 C ↔ D（从 C 展开恒回默认，绝不直接落回 E）；E 只由组底
+  // 链接进入/退出；E 态下组内活动抬升（含提交/btw/回退的乐观 updated_at）时
+  // 自动落回 D（见下方 effect）。
   const toggleGroup = useCallback((key: string) => {
     setCollapsedGroups((current) => {
-      const next = { ...current, [key]: !current[key] }
+      const next = { ...current }
+      if (current[key] === true) delete next[key] // C → D
+      else next[key] = true // D/E → C；E 的悬挂标志由随后的 showAll 清理
       try { localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify(next)) } catch { /* 私有模式等 */ }
       return next
     })
+    setShowAllGroups((current) => {
+      if (current[key] !== true) return current
+      const next = { ...current }
+      delete next[key]
+      try { localStorage.setItem(GROUP_SHOW_ALL_KEY, JSON.stringify(next)) } catch { /* 私有模式等 */ }
+      return next
+    })
   }, [])
+
+  const toggleGroupShowAll = useCallback((key: string) => {
+    setShowAllGroups((current) => {
+      const next = { ...current }
+      if (current[key] === true) delete next[key] // E → D
+      else next[key] = true // D → E（D 态下 collapsed[key] 不同时为 true，互斥自然成立）
+      try { localStorage.setItem(GROUP_SHOW_ALL_KEY, JSON.stringify(next)) } catch { /* 私有模式等 */ }
+      return next
+    })
+  }, [])
+
+  // E 态只活在纯浏览时段：组内任一会话的最近活动被抬升即回落默认态。首帧只建立
+  // 基线，不算激活——刷新页面后 E 照常保留。
+  const previousGroupActivity = useRef<Record<string, number>>({})
+  useEffect(() => {
+    const next: Record<string, number> = {}
+    const activated: string[] = []
+    for (const group of sessionGroups) {
+      const latest = group.sessions.reduce(
+        (max, session) => Math.max(max, sessionRecencyMs(session)),
+        0,
+      )
+      next[group.key] = latest
+      const before = previousGroupActivity.current[group.key]
+      if (before !== undefined && latest > before) activated.push(group.key)
+    }
+    previousGroupActivity.current = next
+    if (activated.length === 0) return
+    setShowAllGroups((current) => {
+      if (!activated.some((key) => current[key] === true)) return current
+      const updated = { ...current }
+      for (const key of activated) delete updated[key]
+      try { localStorage.setItem(GROUP_SHOW_ALL_KEY, JSON.stringify(updated)) } catch { /* 私有模式等 */ }
+      return updated
+    })
+  }, [sessionGroups])
 
   const attentionSessions = useMemo(() => (
     orderedSessions
@@ -420,9 +477,17 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
             const groupClosed = collapsedGroups[group.key] === true
             const sessions = group.sessions
             if (sessions.length === 0) return null
+            // v3 三态可见集：C（上面的 groupClosed）→ 0 条；D → 最近 3 条（当前
+            // 会话不在其中时顶入第 3 位，保证可见）；E → 全量，仅经组底链接进入。
+            // 纯自由区（rail 里没有任何项目分组可被遮挡）不参与收折：恒全量、无链接。
+            const groupExpandable = hasProjectGroups && sessions.length > GROUP_PREVIEW_LIMIT
+            const groupShowAll = groupExpandable && !groupClosed && showAllGroups[group.key] === true
+            const visibleSessions = !hasProjectGroups || groupShowAll
+              ? sessions
+              : sessionPreview(sessions, currentId, GROUP_PREVIEW_LIMIT)
             const cards = (
               <div className={clsx('flex gap-2 md:flex-col md:gap-1.5', hasProjectGroups && !groupClosed && 'md:pl-1')}>
-                {sessions.map((session) => {
+                {visibleSessions.map((session) => {
                   const runtime = runtimes[session.id]
                   const activity = displayState(session)
                   const current = session.id === currentId
@@ -574,7 +639,21 @@ current && 'ring-2 ring-inset ring-accent/50',
                     </svg>
                   </button>
                 </div>
-                {!groupClosed && <div className="md:pt-1">{cards}</div>}
+                {!groupClosed && (
+                  <div className="md:pt-1">
+                    {cards}
+                    {groupExpandable && (
+                      <button
+                        type="button"
+                        onClick={() => toggleGroupShowAll(group.key)}
+                        data-testid={`group-show-all-${group.key}`}
+                        className="mt-1 w-full rounded px-1 py-0.5 text-center text-[11px] text-ink-faint/80 transition hover:text-ink-muted"
+                      >
+                        {groupShowAll ? '收起（仅显示最近3个）' : `展开全部（还有${sessions.length - GROUP_PREVIEW_LIMIT}个）`}
+                      </button>
+                    )}
+                  </div>
+                )}
               </section>
             )
           })}

@@ -421,4 +421,133 @@ describe('SessionRail', () => {
     act(() => (host.querySelector('[aria-label="折叠会话管理"]') as HTMLButtonElement).click())
     expect(host.querySelector('[data-collapsed]')?.getAttribute('data-collapsed')).toBe('true')
   })
+
+  // v3 收折：默认每组最多 3 条、chevron = C↔D、组底链接（仅 N>3）= D↔E、
+  // E 态组内活动抬升 → 自动回落 D。状态机注释见 SessionRail.tsx。
+  const drawerSessions = (count: number, base: HubSession): HubSession[] =>
+    Array.from({ length: count }, (_, index) => ({
+      ...base,
+      id: `drawer-${base.project_name ?? 'free'}-${index}`,
+      title: `任务 ${index}`,
+      updated_at: `2026-08-0${6 - index}T09:00:00Z`,
+    }))
+
+  const sectionOf = (name: string) => Array.from(host.querySelectorAll('section'))
+    .find((node) => node.textContent?.startsWith(name))
+
+  const shownInDrawer = (name: string) => Array.from(sectionOf(name)?.querySelectorAll('[data-activity]') ?? [])
+    .map((card) => card.textContent?.match(/任务 (\d+)/)?.[1])
+
+  const linkOf = (key: string) => host.querySelector(`[data-testid="group-show-all-${key}"]`) as HTMLButtonElement | null
+
+  it('caps a drawer at its three newest sessions and the footer link toggles the rest', () => {
+    const many = drawerSessions(5, sessions[0])
+    act(() => root.render(
+      <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[0].id} onSelect={vi.fn()} />,
+    ))
+
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
+    expect(linkOf('project:alpha')?.textContent).toBe('展开全部（还有2个）')
+
+    act(() => linkOf('project:alpha')?.click())
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2', '3', '4'])
+    expect(linkOf('project:alpha')?.textContent).toBe('收起（仅显示最近3个）')
+    expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupShowAll') || '{}')).toEqual({ 'project:alpha': true })
+
+    act(() => linkOf('project:alpha')?.click())
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
+    expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupShowAll') || '{}')).toEqual({})
+  })
+
+  it('keeps the current session inside the three-item preview when it sits past the edge', () => {
+    const many = drawerSessions(5, sessions[0])
+    act(() => root.render(
+      <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[4].id} onSelect={vi.fn()} />,
+    ))
+    // many[4] 是组内最旧：默认态把它顶入第 3 位，而不是整组跟着跳位
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '4'])
+
+    act(() => root.render(
+      <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[1].id} onSelect={vi.fn()} />,
+    ))
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
+  })
+
+  it('collapses and reopens a drawer from the chevron without ever landing on show-all', () => {
+    const many = drawerSessions(5, sessions[0])
+    const mount = (rows: HubSession[]) => act(() => root.render(
+      <SessionRail sessions={[...rows, sessions[1]]} runtimes={{}} currentId={rows[0].id} onSelect={vi.fn()} />,
+    ))
+
+    mount(many)
+    act(() => linkOf('project:alpha')?.click())
+    expect(shownInDrawer('alpha')).toHaveLength(5)
+
+    // E → C：chevron 收起，show-all 标志同时清除
+    const chevron = () => sectionOf('alpha')?.querySelector('button[aria-expanded]') as HTMLButtonElement
+    act(() => chevron().click())
+    expect(shownInDrawer('alpha')).toEqual([])
+    expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupShowAll') || '{}')).toEqual({})
+
+    // C → D：展开恒回默认预览（不落回 E）
+    act(() => chevron().click())
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
+
+    // 再进 E 后，组内活动抬升（乐观 updated_at）→ 自动回落 D
+    act(() => linkOf('project:alpha')?.click())
+    expect(shownInDrawer('alpha')).toHaveLength(5)
+    mount(many.map((item) => (item.id === many[4].id ? { ...item, updated_at: '2026-08-07T00:00:00Z' } : item)))
+    expect(shownInDrawer('alpha')).toEqual(['4', '0', '1'])
+    expect(linkOf('project:alpha')?.textContent).toBe('展开全部（还有2个）')
+    expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupShowAll') || '{}')).toEqual({})
+  })
+
+  it('restores a persisted show-all drawer on mount without treating the first paint as activation', () => {
+    localStorage.setItem('gahub.sessionRailGroupShowAll', JSON.stringify({ 'project:alpha': true }))
+    const many = drawerSessions(5, sessions[0])
+    act(() => root.render(
+      <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[0].id} onSelect={vi.fn()} />,
+    ))
+    expect(shownInDrawer('alpha')).toHaveLength(5)
+    expect(linkOf('project:alpha')?.textContent).toBe('收起（仅显示最近3个）')
+  })
+
+  it('reads a legacy collapsed=false flag as the default preview state', () => {
+    localStorage.setItem('gahub.sessionRailGroupCollapse', JSON.stringify({ 'project:alpha': false }))
+    const many = drawerSessions(4, sessions[0])
+    act(() => root.render(
+      <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[0].id} onSelect={vi.fn()} />,
+    ))
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
+    expect(linkOf('project:alpha')?.textContent).toBe('展开全部（还有1个）')
+  })
+
+  it('reopens a legacy fully-collapsed drawer to the default preview', () => {
+    localStorage.setItem('gahub.sessionRailGroupCollapse', JSON.stringify({ 'project:alpha': true }))
+    const many = drawerSessions(4, sessions[0])
+    act(() => root.render(
+      <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[0].id} onSelect={vi.fn()} />,
+    ))
+    expect(shownInDrawer('alpha')).toEqual([])
+    act(() => (sectionOf('alpha')?.querySelector('button[aria-expanded]') as HTMLButtonElement).click())
+    expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
+    expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupCollapse') || '{}')).toEqual({})
+  })
+
+  it('keeps the pure free area uncapped and without the footer link', () => {
+    const freeMany = drawerSessions(5, sessions[1])
+    act(() => root.render(
+      <SessionRail sessions={freeMany} runtimes={{}} currentId={freeMany[0].id} onSelect={vi.fn()} />,
+    ))
+    expect(host.querySelectorAll('[data-activity]')).toHaveLength(5)
+    expect(host.querySelectorAll('[data-testid^="group-show-all"]')).toHaveLength(0)
+  })
+
+  it('shows no footer link on drawers at or under the preview size', () => {
+    act(() => root.render(
+      <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} />,
+    ))
+    expect(host.querySelectorAll('[data-testid^="group-show-all"]')).toHaveLength(0)
+    expect(host.querySelectorAll('[data-activity]')).toHaveLength(3)
+  })
 })

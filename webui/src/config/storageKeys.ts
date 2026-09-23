@@ -19,6 +19,10 @@ export const storageKeys = {
   sessionRailTerminalState: 'gahub.sessionRailTerminalState',
   /** SessionRail: collapsed rail groups (JSON object). */
   sessionRailGroupCollapse: 'gahub.sessionRailGroupCollapse',
+  /** SessionRail: groups in "show all" state — v3 tri-state companion of
+   * sessionRailGroupCollapse (JSON object; the two flags are written mutually
+   * exclusively, absent = default three-item preview). */
+  sessionRailGroupShowAll: 'gahub.sessionRailGroupShowAll',
   /** SessionRail: pinned group keys in pin order (JSON string array). */
   sessionRailGroupPinned: 'gahub.sessionRailGroupPinned',
   /** LEGACY: pre-terminal-state recent-activity list, removed on boot. */
