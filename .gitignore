@@ -70,3 +70,16 @@ project_memory.md
 
 # pytest local temp dirs (any variant, e.g. .pytest_tmp_update_audit/)
 .pytest_tmp*/
+
+# 根目录本机散件（2026-09-23 仓库卫生审查增补：git status 长期污染源）
+.tmp/
+/msg_*.json
+/pytest-*/
+/*-final.log
+/phone_bridge*.log
+/proxy*.log
+/sim_run*.log
+/smoke_run*.log
+/vite_dev.log
+/preflight.log
+webui/pnpm-*.yaml

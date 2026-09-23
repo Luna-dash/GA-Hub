@@ -7,6 +7,7 @@
 > **本文保留为设计记录。** 后续动作见 `docs/plans/TODO_REMAINING.md`；索引见 `docs/plans/README.md`。
 > ⚠️ 附带发现：前端已无任何 `restoreConversation` 调用方，`POST /api/conversations/{cid}/restore` 目前
 > **无 UI 消费者**，去留待定（待办计划决策 ④）。
+> 已归档（2026-09-23 移入 `docs/archive/`）。
 
 - **日期**：2026-09-15
 - **状态**：~~设计已冻结，尚未开始步骤 2；当前工作树保留既有步骤 1 改动~~

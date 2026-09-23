@@ -1,6 +1,6 @@
 # 计划文档索引（docs/plans）
 
-- 最后整理：2026-09-20
+- 最后整理：2026-09-23
 - 口径：**以代码、提交与构建产物为准**，不采信计划文档的自述状态。历史上已抓到 5 处自述与事实不符（清单见 §3）。
 - **关系治理唯一方案**：[`gahub-frontend-implementation-plan.md`](./gahub-frontend-implementation-plan.md)。
 - **待办唯一入口**：[`TODO_REMAINING.md`](./TODO_REMAINING.md)。其他文档只保留规格、证据或历史记录，进度一律回到那里更新。
@@ -23,14 +23,14 @@
 
 | 文档 | 状态 | 结论与证据 |
 |---|---|---|
-| `restore-session-scoped-fix-plan.md` | ✅ 已完成 | 步骤 1–5 全部落地并提交 `46ffcb4`（09-15）。`conversations.py:342/:369` 使用 `session_id` + `archive_override`；`session_runtime_factory.py:170` 支持 override |
-| `restore-session-scoped-fix-checkpoint-2026-09-15.md` | ⏹ 已过期 | 文中「route 仍调进程级 `AgentService.instance()`」已不成立 |
+| `restore-session-scoped-fix-plan.md` | ✅ 已完成 → 已归档 | 步骤 1–5 全部落地并提交 `46ffcb4`（09-15）。`conversations.py:342/:369` 使用 `session_id` + `archive_override`；`session_runtime_factory.py:170` 支持 override |
+| `restore-session-scoped-fix-checkpoint-2026-09-15.md` | ⏹ 已过期 → 已归档 | 文中「route 仍调进程级 `AgentService.instance()`」已不成立 |
 | `restore-ui-interaction-spec.md` | 🟡 部分完成 | adopt / 来源徽标 / 入口 / 后端契约已落地（`a7c3cab`、`f2061ff`、`64df128`）；§1.1、§2.2、§2.3、§2.4 因「restore 动作整体下线」而作废；剩 §6.3 一个决策 |
 | `feishu-import-task-brief.md` | ✅ 主体完成 | T1 / T2 / T3 均落地；§3 五条待办只剩决策项 |
 | `conductor-task-model.md` | 🟡 部分完成 | H1–H3 ✅（`a1d5659`）、G1+G2 ✅（GA `04f0d9d`）；**G3 未开工**、G4 待复核、追加 reopen 缺口 |
 | `child-process-lifecycle.md` | 🟡 代码已实施并进包 | 实现已提交（`f6f5732`、`20ad092`）；**2026-09-18 重建后新包已含 `20ad092`**（见 §4.1）；**§8.5 实机验收仍未做** |
-| `ga-supervisor-protocol-patch.md` | ✅ 已完成 | 补丁包已执行完毕：GA `04f0d9d`（2026-09-18 06:25） |
-| `ga-side-handover-g1g2.md` | ✅ 已完成 | 交接单已被接收方执行（GA `04f0d9d`）；文中「GA HEAD `aba30f7`」已过期 |
+| `ga-supervisor-protocol-patch.md` | ✅ 已完成 → 已归档 | 补丁包已执行完毕：GA `04f0d9d`（2026-09-18 06:25） |
+| `ga-side-handover-g1g2.md` | ✅ 已完成 → 已归档 | 交接单已被接收方执行（GA `04f0d9d`）；文中「GA HEAD `aba30f7`」已过期 |
 | `PLAN_REMAINING_AUDIT_20260918.md` | 📌 历史分析记录 | 保留盘点过程与证据；其中旧边界批次已被 2026-09-20 方案取代，不再执行 |
 | `gahub-frontend-implementation-plan.md` | 📌 权威方案 | **GA/GA-Hub 关系治理唯一架构与实施依据**：特殊 frontend + 双连接面 + Memory 授权编辑 |
 | `TODO_REMAINING.md` | 📌 活文档 | **唯一待办入口**（波次顺序 + 决策区 + 已收口清单）。原 W0（key 轮换）/ W1（重建与验收）已于 2026-09-18 按用户决定移出，故波次从 W2 起 |
@@ -93,13 +93,13 @@
 
 ---
 
-## 5. 下一步（需用户确认后才执行）
+## 5. 归档（2026-09-23 已执行）
 
-以下 4 份已完成 / 已过期的文档**目前只做了标记，未移动**。按本仓 `docs/archive/` 约定，建议收进归档：
+以下 4 份已完成 / 已过期文档已移入 `docs/archive/`：
 
-- `restore-session-scoped-fix-plan.md`（已完成）
-- `restore-session-scoped-fix-checkpoint-2026-09-15.md`（已过期）
-- `ga-supervisor-protocol-patch.md`（已完成）
-- `ga-side-handover-g1g2.md`（已完成）
+- `docs/archive/restore-session-scoped-fix-plan.md`（已完成）
+- `docs/archive/restore-session-scoped-fix-checkpoint-2026-09-15.md`（已过期）
+- `docs/archive/ga-supervisor-protocol-patch.md`（已完成）
+- `docs/archive/ga-side-handover-g1g2.md`（已完成）
 
-移动时需同步修两处相对引用：`restore-ui-interaction-spec.md:6`（指向 fix-plan）、`ga-side-handover-g1g2.md:5`（指向 patch 包）。
+引用修正：`ga-side-handover-g1g2.md` 内两处指向 patch 包的引用已改为 `../archive/`、`docs/archive/` 形式；原列出的 `restore-ui-interaction-spec.md:6` 引用经核已不存在，无需处理。

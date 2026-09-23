@@ -11,6 +11,8 @@ python scripts\build_all.py
 脚本完全路径无关：仓库放任何盘符任何目录都可以，解释器用"启动它的那个
 python"，唯一硬性要求是它装了 `requirements.txt` 里的依赖。
 
+> ⚠️ **桌面构建唯一入口 = `build_all.bat`（或 `python scripts\build_all.py`）。严禁直接运行 `npm run desktop:build`**——root script 是裸 `tauri build`，产物会落 host-target `src-tauri\target\release\`（非正式区，已两次污染仓库：2026-08-22、2026-09-23）。正式产物唯一路径 = `src-tauri\target\x86_64-pc-windows-msvc\release\`（build_all 链自动传 `--target`）。
+
 ### 2. 另一台电脑本地构建（有基础工具链）
 
 前置：Node.js 18+、Rust（rustup，Windows 需 MSVC Build Tools）、Python 3.11+。

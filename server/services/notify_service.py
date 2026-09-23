@@ -1,9 +1,9 @@
 """Cross-platform desktop notifications.
 
-The webui runs inside PyWebView on the user's machine, so the browser-side
-``Notification`` API is unusable (WKWebView/WebView2 pin permission to
-``denied``). Instead the frontend POSTs to ``/api/notify`` and we shell out
-to the native notifier here.
+The webui runs inside the desktop shell's webview (Tauri; PyWebView has
+been retired, see docs/adr/0003), so the browser-side ``Notification`` API is
+unusable (WKWebView/WebView2 pin permission to ``denied``). Instead the
+frontend POSTs to ``/api/notify`` and we shell out to the native notifier here.
 
 Backends, in order of preference per OS:
 

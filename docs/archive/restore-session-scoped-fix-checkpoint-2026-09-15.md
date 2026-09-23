@@ -3,7 +3,7 @@
 > **状态标记（2026-09-18 复核）：⏹ 已过期。**
 > 本文记录的中途状态（「`restore_conversation` 仍调用进程级 `AgentService.instance()`」）**已不成立** ——
 > 该收敛已于 2026-09-15 提交 `46ffcb4`。终态见 `restore-session-scoped-fix-plan.md`。
-> 按本仓 `docs/archive/` 约定应归档（当前只做了标记，未移动文件）。
+> 已归档（2026-09-23 移入 `docs/archive/`）。
 
 - Date: 2026-09-15
 - Status: ~~implementation resumed after user authorization.~~ → **已过期（2026-09-18 复核）**
