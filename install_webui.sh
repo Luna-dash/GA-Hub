@@ -2,7 +2,7 @@
 # 一键安装 GenericAgent Web 管理后台所需的全部依赖。
 #
 #   1) Python：pip install -e ".[webui]"
-#   2) 前端：  pnpm install && pnpm build  (或 npm)
+#   2) 前端：  npm install && npm run build  (统一 npm)
 #
 # 已经装过会跳过；前端构建产物落到 webui/dist/。
 # 跑完后双击 start.command 即可启动。
@@ -33,10 +33,11 @@ say "安装 Python 依赖（pip install -e .）..."
 # ── Node ────────────────────────────────────────────────
 say "检查 Node.js 工具链..."
 PKG=""
-if command -v pnpm >/dev/null 2>&1; then PKG=pnpm
-elif command -v npm  >/dev/null 2>&1; then PKG=npm
+# 统一使用 npm（主路径）；pnpm 仅作无 npm 环境的兜底
+if command -v npm >/dev/null 2>&1; then PKG=npm
+elif command -v pnpm >/dev/null 2>&1; then PKG=pnpm
 else
-  warn "未检测到 pnpm / npm。"
+  warn "未检测到 npm / pnpm。"
   warn "请安装 Node.js 18+（https://nodejs.org），然后重跑本脚本。"
   warn "若你只想用后端 API（http://127.0.0.1:8765/docs），可以跳过这一步。"
   exit 0

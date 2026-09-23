@@ -28,12 +28,13 @@ if errorlevel 1 exit /b 1
 
 echo == Detect Node.js package manager ==
 set "PKG="
-where pnpm >nul 2>&1 && set "PKG=pnpm"
+rem 统一使用 npm（主路径）；pnpm 仅作无 npm 环境的兜底
+where npm >nul 2>&1 && set "PKG=npm"
 if "%PKG%"=="" (
-  where npm >nul 2>&1 && set "PKG=npm"
+  where pnpm >nul 2>&1 && set "PKG=pnpm"
 )
 if "%PKG%"=="" (
-  echo [ERR] 未检测到 pnpm/npm，请先安装 Node.js 18+
+  echo [ERR] 未检测到 npm/pnpm，请先安装 Node.js 18+
   exit /b 1
 )
 echo Using %PKG%
@@ -44,7 +45,8 @@ echo == Install frontend deps ==
 if "%PKG%"=="npm" (
   call %PKG% ci --legacy-peer-deps --no-audit --no-fund
 ) else (
-  call %PKG% install --frozen-lockfile
+  rem 纯 pnpm 环境兜底：不冻结锁文件
+  call %PKG% install
 )
 if errorlevel 1 ( popd & exit /b 1 )
 

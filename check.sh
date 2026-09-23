@@ -24,12 +24,13 @@ say "运行 pytest..."
 "$PY" -m pytest -q
 
 say "检查 Node.js 工具链..."
-if command -v pnpm >/dev/null 2>&1; then
-  PKG=pnpm
-elif command -v npm >/dev/null 2>&1; then
+# 统一使用 npm（主路径）；pnpm 仅作无 npm 环境的兜底
+if command -v npm >/dev/null 2>&1; then
   PKG=npm
+elif command -v pnpm >/dev/null 2>&1; then
+  PKG=pnpm
 else
-  die "未检测到 pnpm/npm，请先安装 Node.js 18+"
+  die "未检测到 npm/pnpm，请先安装 Node.js 18+"
 fi
 say "使用 $PKG · $($PKG -v)"
 
@@ -38,7 +39,8 @@ say "安装前端依赖..."
 if [ "$PKG" = "npm" ]; then
   "$PKG" ci --legacy-peer-deps --no-audit --no-fund
 else
-  "$PKG" install --frozen-lockfile
+  # 纯 pnpm 环境兜底：不冻结锁文件，允许自行解析
+  "$PKG" install
 fi
 
 say "运行前端测试..."
