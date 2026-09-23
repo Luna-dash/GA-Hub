@@ -7,6 +7,7 @@
     2. Python sidecar    <python> desktop/build_sidecar.py --target <triple>
     3. Tauri 桌面壳      npm run desktop:build -- --target <triple>
     4. 产物守卫          断言 ga-hub-desktop.exe 已被原位刷新
+   5. 泄漏检测          host-target（target/release）被生成/刷新时告警（不阻断）
 
 任何一步失败立即中止并保留前序日志。产物守卫对比构建前后的 mtime/size，
 防止"构建成功但产物没有刷新"的静默失效——桌面快捷方式固定指向该文件，
@@ -165,6 +166,49 @@ def artifact_guard(path: Path, before: tuple[int, int] | None) -> int:
     return 0
 
 
+def host_target_artifact_path() -> Path:
+    """无 --target 的裸构建（host triple）落点：src-tauri/target/release/。
+
+    正式链只使用 target/<triple>/release/（见 docs/BUILD.md）；此路径仅用于
+    防复发检测（2026-09-23 审查 §2.1 方案 b——第二次复发后的加固）。
+    """
+    suffix = ".exe" if os.name == "nt" else ""
+    return ROOT / "src-tauri" / "target" / "release" / f"ga-hub-desktop{suffix}"
+
+
+def host_target_snapshot() -> tuple[int, int] | None:
+    """构建前快照 host-target 产物；存在则提示（泄漏检测 1/2）。"""
+    path = host_target_artifact_path()
+    if not path.is_file():
+        return None
+    stat = path.stat()
+    _log(f"  [提示] 检测到非正式区构建产物：{path}")
+    _log("         正式链不使用 src-tauri/target/release/（可能来自裸 npm run desktop:build）；")
+    _log("         如非有意保留，建议删除该目录（见 docs/BUILD.md「桌面构建唯一入口」）。")
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def host_target_guard(before: tuple[int, int] | None) -> None:
+    """构建后检测 host-target 被本轮生成/刷新（泄漏检测 2/2）。
+
+    构建缺少 --target 时产物会落 host-target 而非正式区；打印显式警告，
+    但不改变退出码（2026-09-23 审查 §2.1 方案 b）。
+    """
+    path = host_target_artifact_path()
+    if not path.is_file():
+        return
+    stat = path.stat()
+    now = (stat.st_mtime_ns, stat.st_size)
+    if before is None:
+        reason = "本轮构建生成"
+    elif now[0] != before[0]:
+        reason = "本轮构建刷新（mtime 变化）"
+    else:
+        return
+    _log(f"  ⚠ host-target 泄漏：{path}（{reason}）")
+    _log("    疑似构建缺少 --target；桌面构建唯一入口 = build_all.bat（或 python scripts/build_all.py）。")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--target", default=DEFAULT_TARGET, help="Rust target triple")
@@ -183,6 +227,8 @@ def main(argv: list[str] | None = None) -> int:
         stat = artifact.stat()
         before = (stat.st_mtime_ns, stat.st_size)
 
+    host_before = host_target_snapshot()
+
     if args.full:
         # pytest 与 PyInstaller 同环境（requirements.txt 一并安装）
         run_stage("后端测试", [sidecar_python, "-m", "pytest", "-q"])
@@ -199,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     code = artifact_guard(artifact, before)
+    host_target_guard(host_before)
     _log(f"总耗时 {time.monotonic() - overall_started:.1f}s")
     return code
 
