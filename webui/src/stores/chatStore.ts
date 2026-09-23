@@ -277,7 +277,7 @@ function timestampsOverlap(archived: ChatMsg, snapshot: ChatMsg): boolean {
  * 标志等）也不该出现在文本里；时间证据不齐（任一侧无头时间）时才退回回答
  * 文本全等作为补充证据。导出仅供测试。
  */
-export function removeArchivedSnapshotOverlap(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
+function removeArchivedSnapshotOverlap(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
   const archived = base.filter((msg) => msg.source === 'history')
   const skipped = new Set<number>()
   for (let index = 0; index + 1 < live.length; index += 1) {

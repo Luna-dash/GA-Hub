@@ -274,7 +274,7 @@ export type SubagentPhase = 'running' | 'reworking' | 'reviewing' | 'accepted' |
 
 // The hub decides each worker's stage (conductor_vocabulary.subagent_stage);
 // the page only maps stage -> label/tone copy.
-export const WORKER_STAGE_VIEW: Record<string, { phase: SubagentPhase; label: string; detail: string }> = {
+const WORKER_STAGE_VIEW: Record<string, { phase: SubagentPhase; label: string; detail: string }> = {
   running: { phase: 'running', label: '执行中', detail: '子代理正在处理这项任务' },
   reworking: { phase: 'reworking', label: '返工中', detail: '正在按验收意见重新处理' },
   reviewing: { phase: 'reviewing', label: '待你验收', detail: '执行完成，等待验收' },
@@ -295,8 +295,8 @@ export type WorkflowTone = 'active' | 'review' | 'done' | 'error' | 'idle'
 // Terminal stages: nothing further will happen on this workflow. Keep the
 // cancelled/killed states here as a compatibility guard for older snapshots
 // whose `stage` was not normalized to `failed` yet.
-export const WORKFLOW_STAGE_CLOSED = new Set(['completed', 'failed', 'cancelled', 'killed'])
-export const WORKFLOW_STATUS_CLOSED = new Set(['cancelled', 'killed'])
+const WORKFLOW_STAGE_CLOSED = new Set(['completed', 'failed', 'cancelled', 'killed'])
+const WORKFLOW_STATUS_CLOSED = new Set(['cancelled', 'killed'])
 
 export function isWorkflowClosed(workflow: ConductorWorkflow | undefined): boolean {
   if (!workflow) return false
@@ -305,7 +305,7 @@ export function isWorkflowClosed(workflow: ConductorWorkflow | undefined): boole
     || WORKFLOW_STATUS_CLOSED.has(workflow.status)
 }
 // Stages that stall while the conductor itself is stopped.
-export const WORKFLOW_STAGE_PAUSABLE = new Set([
+const WORKFLOW_STAGE_PAUSABLE = new Set([
   'planning', 'supervising', 'reworking', 'awaiting_review', 'aggregating',
 ])
 
@@ -316,7 +316,7 @@ export const WORKFLOW_STAGE_PAUSABLE = new Set([
 // badge (子代理失败 is not terminal). Sentences that restate the badge or the
 // 已通过 numbers were dropped — the board keeps process numbers and
 // post-completion review facts, nothing else.
-export const WORKFLOW_STAGE_VIEW: Record<string, { label: string; detail: string; tone: WorkflowTone }> = {
+const WORKFLOW_STAGE_VIEW: Record<string, { label: string; detail: string; tone: WorkflowTone }> = {
   planning: { label: '正在规划', detail: '', tone: 'active' },
   supervising: { label: '执行中', detail: '', tone: 'active' },
   reworking: { label: '返工中', detail: '', tone: 'active' },
@@ -517,7 +517,7 @@ export function stripContractTail(reply: string): string {
     .trimEnd()
 }
 
-export type ReplySegment =
+type ReplySegment =
   | { kind: 'text'; text: string }
   | { kind: 'milestone'; milestone: WorkerMilestone }
 

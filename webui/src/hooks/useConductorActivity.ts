@@ -14,7 +14,7 @@ import { api } from '@/api/client'
 import { useConductorStore } from '@/stores/conductorStore'
 
 /** Rows per hub page. Bounded well under the route's limit. */
-export const ACTIVITY_PAGE_SIZE = 200
+const ACTIVITY_PAGE_SIZE = 200
 
 export type ConductorActivityHistory = {
   /** Rows older than the oldest one held may still exist on the hub. */

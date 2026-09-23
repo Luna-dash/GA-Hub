@@ -9,7 +9,7 @@ export interface LlmIdentity {
   index?: number
 }
 
-export function defaultMainLlmKey(llms: ReadonlyArray<LlmIdentity>): string | undefined {
+function defaultMainLlmKey(llms: ReadonlyArray<LlmIdentity>): string | undefined {
   return llms[0]?.key
 }
 

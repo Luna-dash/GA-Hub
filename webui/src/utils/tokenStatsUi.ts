@@ -1,7 +1,7 @@
 import type { TokenDayStats, TokenHistoryPoint, TokenThreadStats, TokenWeekStats } from '@/api/types'
 
-export const TOP_SESSION_COUNT = 6
-export const WEEK_PREVIEW_SIZE = 6
+const TOP_SESSION_COUNT = 6
+const WEEK_PREVIEW_SIZE = 6
 
 export type DailyUsageRange = 'week' | '30d'
 

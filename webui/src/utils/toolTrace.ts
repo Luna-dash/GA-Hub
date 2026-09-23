@@ -5,7 +5,7 @@
 /** Strip outer markdown fences that wrap an entire tool block.
  *  只剥「首行开栏 + 末行闭栏」的最外层壳（可多层）；正文内部的合法
  *  代码块围栏一律保留——全局逐行剥壳曾把目录树 ```text 围栏吃掉。 */
-export function stripWrapperFences(s: string): string {
+function stripWrapperFences(s: string): string {
   let text = (s || '').trim()
   let prev = ''
   while (text && text !== prev) {

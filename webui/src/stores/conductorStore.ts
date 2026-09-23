@@ -14,6 +14,7 @@
 
 import { create } from 'zustand'
 import type {
+  ConductorActivityEvent as ServerConductorActivityEvent,
   ConductorChatMessage,
   ConductorSubagent,
 } from '@/api/types'
@@ -44,14 +45,8 @@ export type KnownActivityKind =
 
 export type ConductorActivityKind = KnownActivityKind | (string & {})
 
-export type ConductorActivityEvent = {
-  id: string
-  request_id: string
+export type ConductorActivityEvent = Omit<ServerConductorActivityEvent, 'kind'> & {
   kind: ConductorActivityKind
-  at: number
-  atMs: number
-  text: string
-  worker_id?: string | null
 }
 
 // Mirrors the hub's own ACTIVITY_CAP so a hydrated history is never truncated

@@ -9,7 +9,7 @@ import { useMemo } from 'react'
 import cronstrue from 'cronstrue/i18n'
 import { CronExpressionParser } from 'cron-parser'
 
-export function formatLocal(d: Date): string {
+function formatLocal(d: Date): string {
   // YY-MM-DD HH:mm in local time, tight format
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
