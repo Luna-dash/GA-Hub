@@ -13,6 +13,12 @@ from ..event_topics import (
 from . import conductor_activity
 from .conductor_client import _engine_spawn_env
 from .conductor_protocol import validate_protocol
+from .conductor_vocabulary import (
+    REVIEW_ACCEPTED,
+    REVIEW_NONE,
+    REVIEW_PENDING,
+    REVIEW_REJECTED,
+)
 
 
 log = logging.getLogger(__name__)
@@ -221,7 +227,7 @@ class ConductorRecovery:
                         continue
                     record_item = merged.setdefault(sid, {
                         "id": sid, "prompt": "", "reply": "", "status": "stopped",
-                        "review_status": "none", "attempt": 1, "created_at": 0,
+                        "review_status": REVIEW_NONE, "attempt": 1, "created_at": 0,
                         "updated_at": 0, "plan_milestones": [],
                     })
                     record_item["updated_at"] = int(record.get("ts") or record_item["updated_at"] or 0)
@@ -240,20 +246,20 @@ class ConductorRecovery:
                         record_item["status"] = "stopped"
                         record_item["completed_at"] = int(record.get("ts") or 0)
                         if kind == "subagent_pending_review":
-                            record_item["review_status"] = "pending"
+                            record_item["review_status"] = REVIEW_PENDING
                     elif kind == "subagent_accepted":
                         record_item["status"] = "stopped"
-                        record_item["review_status"] = "accepted"
+                        record_item["review_status"] = REVIEW_ACCEPTED
                         record_item["accepted_at"] = int(record.get("ts") or 0)
                     elif kind == "subagent_rejected":
                         record_item["status"] = "stopped"
-                        record_item["review_status"] = "rejected"
+                        record_item["review_status"] = REVIEW_REJECTED
                     elif kind in ("subagent_failed", "subagent_cancelled", "subagent_timeout_total"):
                         record_item["status"] = "stopped"
-                        record_item["review_status"] = "none"
+                        record_item["review_status"] = REVIEW_NONE
                     elif kind == "subagent_reworked":
                         record_item["status"] = "running"
-                        record_item["review_status"] = "none"
+                        record_item["review_status"] = REVIEW_NONE
                         record_item["attempt"] = int(record_item.get("attempt") or 1) + 1
                     elif kind == "subagent_milestone":
                         milestones = record_item.setdefault("plan_milestones", [])

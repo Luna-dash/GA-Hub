@@ -9,7 +9,12 @@ import uuid
 from ..event_topics import CONDUCTOR_WORKFLOW_REOPENED
 from .conductor_client import GahubProcessError
 from .conductor_store import OperationConflict, command_fingerprint
-from .conductor_vocabulary import INSTR_DISPATCHED, INSTR_KEYINFO, ConductorNotRunning
+from .conductor_vocabulary import (
+    INSTR_DISPATCHED,
+    INSTR_KEYINFO,
+    REVIEW_PENDING,
+    ConductorNotRunning,
+)
 
 log = logging.getLogger(__name__)
 MODEL_KEYS = ("conductor_llm_index", "subagent_llm_index", "subagent_model_policy")
@@ -218,7 +223,7 @@ class ConductorCommands:
             if payload.get("expected_generation", generation) != generation:
                 raise GahubProcessError("worker generation changed", status_code=409,
                                        detail={"error": "worker_version_conflict"})
-            if payload.get("auto") and (state.get("review_status") != "pending"
+            if payload.get("auto") and (state.get("review_status") != REVIEW_PENDING
                     or state.get("deliverables_missing") or state.get("deliverables_stale")):
                 raise GahubProcessError("worker no longer eligible for automatic acceptance", status_code=409,
                                        detail={"error": "auto_accept_ineligible"})

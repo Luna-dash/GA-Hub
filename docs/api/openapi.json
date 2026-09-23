@@ -7421,28 +7421,6 @@
             ],
             "title": "Fsapp Path"
           },
-          "app_id_masked": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "App Id Masked"
-          },
-          "app_secret_masked": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "App Secret Masked"
-          },
           "allowed_users": {
             "anyOf": [
               {
@@ -7467,28 +7445,6 @@
               }
             ],
             "title": "Public Access"
-          },
-          "pattern_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pattern Count"
-          },
-          "agent_ok": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agent Ok"
           },
           "agent_error": {
             "anyOf": [

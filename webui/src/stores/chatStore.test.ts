@@ -39,7 +39,6 @@ describe('chatStore lifecycle', () => {
       msgs: [],
       conn: 'connecting',
       streaming: false,
-      hydrating: true,
       historyStatus: 'idle',
       historyError: null,
       historyRevision: null,
@@ -60,7 +59,6 @@ describe('chatStore lifecycle', () => {
 
   it('leaves hydration when the active session is stopped', () => {
     useChatStore.setState({
-      hydrating: true,
       historyStatus: 'loading_history',
       sessionId: 'session-a',
     })
@@ -71,7 +69,6 @@ describe('chatStore lifecycle', () => {
       sessionId: null,
       conn: 'closed',
       historyStatus: 'idle',
-      hydrating: false,
     })
   })
 
@@ -199,7 +196,6 @@ describe('chatStore lifecycle', () => {
     expect(getHistory).toHaveBeenCalledTimes(2)
     expect(useChatStore.getState()).toMatchObject({
       sessionId: 'session-a',
-      hydrating: false,
       historyStatus: 'ready',
       msgs: [expect.objectContaining({ content: 'cached session A' })],
     })
@@ -564,7 +560,6 @@ describe('chat_error_retry notice bubble reuse', () => {
       msgs: [],
       conn: 'connecting',
       streaming: false,
-      hydrating: true,
       historyStatus: 'idle',
       historyError: null,
       historyRevision: null,

@@ -19,6 +19,8 @@ SUBAGENT_RUNNING = "running"
 # ── hub-side review verdicts (review_status) ────────────────────────────
 REVIEW_PENDING = "pending"
 REVIEW_ACCEPTED = "accepted"
+REVIEW_REJECTED = "rejected"
+REVIEW_NONE = "none"
 
 # ── workflow status (WorkflowTracker workflow.state) ────────────────────
 WORKFLOW_ADMITTED = "admitted"

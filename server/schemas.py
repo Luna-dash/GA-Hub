@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from .services.conductor_vocabulary import REVIEW_NONE
 from .services.session_runtime_status import STATUS_IDLE
 
 if TYPE_CHECKING:  # SessionRuntimePayload.from_state annotation only
@@ -812,7 +813,7 @@ class ConductorSubagent(BaseModel):
     status: str
     created_at: int = 0
     updated_at: int = 0
-    review_status: str = "none"
+    review_status: str = REVIEW_NONE
     review_note: str = ""
     attempt: int = 1
     completed_at: int | None = None
@@ -1108,12 +1109,8 @@ class FsCheckResp(BaseModel):
     error: str | None = None
     raw: str | None = None
     fsapp_path: str | None = None
-    app_id_masked: str | None = None
-    app_secret_masked: str | None = None
     allowed_users: list[str] | None = None
     public_access: bool | None = None
-    pattern_count: int | None = None
-    agent_ok: bool | None = None
     agent_error: str | None = None
 
 

@@ -70,7 +70,6 @@ interface ChatState {
   conn: 'connecting' | 'open' | 'closed'
   streaming: boolean              // true if any stream still receiving
   retryPending: boolean           // true while a recoverable error retry is backing off (abortable, but coordinator reports idle)
-  hydrating: boolean              // legacy alias for historyStatus === 'loading_history'
   historyStatus: 'idle' | 'loading_history' | 'ready' | 'history_error'
   historyError: string | null
   historyRevision: string | null
@@ -636,7 +635,6 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
   conn: 'connecting',
   streaming: false,
   retryPending: false,
-  hydrating: true,
   historyStatus: 'idle',
   historyError: null,
   historyRevision: null,
@@ -702,7 +700,6 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       // per-session projection.  The cursor WebSocket catches up events that
       // arrived while this session was hidden; archive hydration is only for
       // a session whose projection has never been loaded.
-      hydrating: forceHistory || (resumeCachedView ? false : current.msgs.length === 0),
     })
 
     const generation = ++runtime.historyGeneration
@@ -808,7 +805,6 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
             return {
               msgs,
               streaming: anyStreaming(msgs),
-              hydrating: false,
             }
           })
           commitCursor(sessionId, m)
@@ -840,7 +836,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
         if (nextTimer != null) { window.clearTimeout(nextTimer); nextTimer = null }
         historyReady = false
         sock.close()
-        set({ sock: null, hydrating: true, historyStatus: 'loading_history' })
+        set({ sock: null, historyStatus: 'loading_history' })
         queueMicrotask(() => {
           if (generation === runtime.historyGeneration && get().sessionId === sessionId) get().start(sessionId)
         })
@@ -913,7 +909,6 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
         return {
           msgs,
           streaming: anyStreaming(msgs),
-          hydrating: false,
           historyStatus: 'ready',
           historyError: null,
           historyRevision: history.revision ?? null,
@@ -931,7 +926,6 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       set((st) => ({
         msgs: st.msgs,
         streaming: st.streaming,
-        hydrating: false,
         historyStatus: 'history_error',
         historyError: error instanceof Error ? error.message : '历史消息加载失败',
         historyRevision: null,
@@ -1100,7 +1094,6 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       msgs: [],
       conn: 'closed',
       streaming: false,
-      hydrating: false,
       historyStatus: 'idle',
       historyError: null,
       historyRevision: null,
@@ -1134,7 +1127,6 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       sock: null,
       sessionId: null,
       conn: 'closed',
-      hydrating: false,
       historyStatus: 'idle',
       historyError: null,
       historyRevision: null,

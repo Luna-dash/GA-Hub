@@ -3184,18 +3184,10 @@ export interface components {
             raw?: string | null;
             /** Fsapp Path */
             fsapp_path?: string | null;
-            /** App Id Masked */
-            app_id_masked?: string | null;
-            /** App Secret Masked */
-            app_secret_masked?: string | null;
             /** Allowed Users */
             allowed_users?: string[] | null;
             /** Public Access */
             public_access?: boolean | null;
-            /** Pattern Count */
-            pattern_count?: number | null;
-            /** Agent Ok */
-            agent_ok?: boolean | null;
             /** Agent Error */
             agent_error?: string | null;
         } & {

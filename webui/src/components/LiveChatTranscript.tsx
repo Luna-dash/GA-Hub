@@ -54,7 +54,6 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
   }, forwardedRef) {
     const msgs = useChatStore((state) => state.msgs)
     const streaming = useChatStore((state) => state.streaming)
-    const hydrating = useChatStore((state) => state.hydrating)
     const historyStatus = useChatStore((state) => state.historyStatus)
     const historyError = useChatStore((state) => state.historyError)
     const historyHasMore = useChatStore((state) => state.historyHasMore)
@@ -302,7 +301,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     // One-shot reading-position restore per hydrated session mount. Anchored
     // to the saved first-visible message key; falls back to default pinning.
     useEffect(() => {
-      if (!sessionId || hydrating || msgs.length === 0) return
+      if (!sessionId || historyStatus === 'loading_history' || msgs.length === 0) return
       if (restoredSessionsRef.current.has(sessionId)) return
       restoredSessionsRef.current.add(sessionId)
       const saved = freshLaunchPending ? null : scrollPositionsRef.current[sessionId]
@@ -338,7 +337,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         })
         return
       }
-    }, [sessionId, hydrating, msgs])
+    }, [sessionId, historyStatus, msgs])
 
     const handleLoadOlderHistory = useCallback(async () => {
       const el = scrollRef.current
@@ -498,13 +497,13 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           {sessionError && msgs.length === 0 && (
             <div className="flex h-full items-center justify-center text-sm text-status-danger">会话初始化失败：{sessionError}</div>
           )}
-          {!sessionError && hydrating && msgs.length === 0 && (
+          {!sessionError && historyStatus === 'loading_history' && msgs.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-ink-faint">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-600 border-t-accent" />
               <div>正在恢复历史对话…</div>
             </div>
           )}
-          {!hydrating && msgs.length === 0 && (
+          {historyStatus !== 'loading_history' && msgs.length === 0 && (
             <div className="flex h-full items-center justify-center text-sm text-ink-faint">
               开始一段对话，或粘贴一张图问个问题。
             </div>
