@@ -332,9 +332,14 @@ function isDanglingToolTurn(content: string): boolean {
 //
 // Some models occasionally miss the <summary> protocol (bad escapes, raw long
 // prose, truncated markdown). For those turns we derive a cheap title from the
-// leading prose — everything before the first tool dump — capped at 50 chars
-// and preferring a complete sentence. Rules locked with the user 2026-09-22;
-// rev2 (same day): a colon never ends a sentence — only a trailing ： renders as 。
+// leading prose — everything before the first tool dump — kept whole up to 80
+// chars; longer leads are cut only at a sentence end (。！？): the last one
+// within 80, else the first one after it, else the whole lead — never a mid-
+// sentence cut and never an appended ellipsis. Rules locked with the user
+// 2026-09-22, revised 2026-09-23 (rev4: newline-first lead; 80 limit; the bare
+// 'DSML' cut removed after the upstream leak fix; a cut below 15 chars falls
+// back to the whole lead); rev2 (same day): a colon never ends a sentence —
+// only a trailing ： renders as 。
 // tuned against the full archived corpus (423 derivable turns / 9266) with a
 // frozen Python reference (temp/fallback_reference.py) this port must match —
 // see assistantTranscriptFallback.test.ts for the conformance fixture.
@@ -342,21 +347,18 @@ function isDanglingToolTurn(content: string): boolean {
 // rendering as plain execution logs.
 // ---------------------------------------------------------------------------
 
-const FALLBACK_SUMMARY_LIMIT = 50
+const FALLBACK_SUMMARY_LIMIT = 80
 
 /** First cut points that end the leading prose block. */
 const fallbackToolCutRes: RegExp[] = [
   /`{4,}/, // multiline tool fence (only its start matters)
   /🛠️/, // GA tool-call glyph
-  /<\/arg_value>|<\/parameter>|DSML/, // escaped tool-call houses
+  /<\/arg_value>|<\/parameter>/, // escaped tool-call houses
   /^\[(?:Info|Warn|Error|Status|Stdout|Stderr|系统)\]/m, // GA log lines
 ]
 
 const fallbackErrorRe =
   /^\s*(?:[!！]{1,4}\s*)?(?:\[(?:ERROR|DANGER)\]|\[\s*!{2,}|流异常中断|Incomplete response|上一条回复|Error[:：])/i
-
-/** Clause-level break characters for the no-sentence-end downgrade. */
-const FALLBACK_PAUSE_CHARS = '，、；,;'
 
 function fallbackStripMarkdown(text: string): string {
   return text.replace(/\*\*|__|`|~~/g, '')
@@ -427,40 +429,30 @@ function fallbackColonTail(text: string): string {
   return text
 }
 
-/** Lead line title: ≤50 chars kept whole; longer leads get a sentence-first cut. */
+/** Lead line title: ≤80 chars kept whole; longer leads cut only at sentence ends. */
 function fallbackDerive(text: string): string {
   if (text.length < 2 || !/[0-9A-Za-z\u4e00-\u9fff]/.test(text)) return ''
-  // Short leads are the title as-is (cleanup + trailing-colon swap, no pause probing).
+  // ≤80 leads are the title as-is (cleanup + trailing-colon swap, no probing).
   if (text.length <= FALLBACK_SUMMARY_LIMIT) {
     const whole = fallbackColonTail(fallbackTrimTail(fallbackStripMarkdown(text)))
     if (whole.length >= 2 && /[0-9A-Za-z\u4e00-\u9fff]/.test(whole)) return whole
     return ''
   }
-  const stdEnd = /[。！？]/.exec(text)
-  if (stdEnd && stdEnd.index < FALLBACK_SUMMARY_LIMIT) {
-    const derived = fallbackTrimTail(fallbackStripMarkdown(text.slice(0, stdEnd.index + 1)))
-    if (derived.length >= 2) return fallbackColonTail(derived)
+  // >80: prefer the last sentence end within the limit, extend to the first
+  // one after it, otherwise keep the whole lead — never a mid-sentence cut and
+  // never an appended ellipsis. A cut below 15 chars keeps the whole lead too.
+  const positions: number[] = []
+  const sentinelRe = /[。！？]/g
+  for (let hit = sentinelRe.exec(text); hit; hit = sentinelRe.exec(text)) positions.push(hit.index)
+  const inLimit = positions.filter((index) => index < FALLBACK_SUMMARY_LIMIT)
+  const cut = inLimit.length ? inLimit[inLimit.length - 1] : positions[0]
+  if (cut !== undefined) {
+    const derived = fallbackTrimTail(fallbackStripMarkdown(text.slice(0, cut + 1)))
+    if (derived.length >= 15) return fallbackColonTail(derived)
   }
-  const window = text.slice(0, FALLBACK_SUMMARY_LIMIT)
-  let clauseCut = -1
-  for (const char of FALLBACK_PAUSE_CHARS) {
-    const index = window.lastIndexOf(char)
-    if (index > clauseCut) clauseCut = index
-  }
-  if (clauseCut >= 10) {
-    const derived = fallbackTrimTail(fallbackStripMarkdown(window.slice(0, clauseCut + 1)))
-    if (derived.length >= 2) return `${fallbackColonTail(derived)}…`
-  }
-  const spaceCut = window.lastIndexOf(' ')
-  if (spaceCut >= 20) {
-    const derived = fallbackTrimTail(fallbackStripMarkdown(window.slice(0, spaceCut)))
-    if (derived.length >= 2) return `${fallbackColonTail(derived)}…`
-  }
-  let derived = fallbackTrimTail(fallbackStripMarkdown(window), true)
-  if (text.length > FALLBACK_SUMMARY_LIMIT) derived += '…'
-  derived = fallbackColonTail(derived)
-  if (!derived || derived.length < 2 || !/[0-9A-Za-z\u4e00-\u9fff]/.test(derived)) return ''
-  return derived
+  const whole = fallbackColonTail(fallbackTrimTail(fallbackStripMarkdown(text)))
+  if (whole.length >= 2 && /[0-9A-Za-z\u4e00-\u9fff]/.test(whole)) return whole
+  return ''
 }
 
 /**
