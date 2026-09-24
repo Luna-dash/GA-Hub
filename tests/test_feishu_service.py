@@ -329,3 +329,34 @@ def test_feishu_chat_markers_are_product_neutral_first():
     assert FeishuService._CHAT_MARKERS[0] == "__GA_FRONTEND_EVENT__"
     assert "GAHUB" not in FeishuService._CHAT_MARKERS[0]
     assert len(FeishuService._CHAT_MARKERS) == 2
+
+
+def test_check_send_save_pin_devnull_stdin(tmp_path):
+    """Probe one-shots must not inherit the sidecar lifecycle stdin pipe.
+
+    The shell starts the sidecar with --owned-stdin and a watchdog keeps a
+    pending read on it; a child that inherits the handle stalls in stdio init
+    before running, so the check probe always hit its 25s timeout.
+    See docs/archive/desktop-sidecar-spawn-pipe-busy-20260924.md.
+    """
+    service = FeishuService()
+    fsapp = tmp_path / "fsapp.py"
+    fsapp.write_text("# test fixture", encoding="utf-8")
+    (tmp_path / "memory").mkdir()
+    (tmp_path / "memory" / "keychain.py").write_text("# test fixture", encoding="utf-8")
+    completed = SimpleNamespace(returncode=0, stdout='{"ready": true}')
+
+    with (
+        mock.patch.object(service, "fsapp_path", return_value=fsapp),
+        mock.patch.object(service, "_python", return_value="python.exe"),
+        mock.patch.object(service, "_publish_chat_events_from_text", return_value=0),
+        mock.patch("server.services.feishu_service._paths") as paths,
+        mock.patch("server.services.feishu_service.subprocess.run", return_value=completed) as run,
+    ):
+        paths.GA_ROOT = tmp_path
+        service.check(force=True)
+        service.save_keys("cli_test", "secret_value")
+        service.send_text("ou_1", "hello")
+
+    assert run.call_count == 3
+    assert all(call.kwargs.get("stdin") is subprocess.DEVNULL for call in run.call_args_list)

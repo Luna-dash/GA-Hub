@@ -396,6 +396,7 @@ class FeishuService:
             text=True,
             encoding="utf-8",
             errors="replace",
+            stdin=subprocess.DEVNULL,  # never inherit the sidecar's lifecycle stdin pipe
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             timeout=20,
@@ -432,6 +433,7 @@ class FeishuService:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                stdin=subprocess.DEVNULL,  # never inherit the sidecar's lifecycle stdin pipe
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 timeout=timeout,
@@ -575,6 +577,7 @@ class FeishuService:
             text=True,
             encoding="utf-8",
             errors="replace",
+            stdin=subprocess.DEVNULL,  # never inherit the sidecar's lifecycle stdin pipe
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             timeout=45,
