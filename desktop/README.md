@@ -38,12 +38,14 @@ A release bundle is not valid unless the matching target-specific sidecar exists
 The frozen sidecar bundles only GA-Hub's own Python dependencies. GA core's
 runtime dependencies (notably `rich`, imported by `frontends.worldline` for
 durable rewind checkpoints) come from the GA interpreter selected during
-setup. The shell therefore spawns the sidecar with
-`GA_HUB_ENABLE_EXTERNAL_SITE_PATHS=1` (see `src-tauri/src/main.rs`), and
-`server/_paths.py` appends that interpreter's site-packages to `sys.path`.
-If the site-packages probe subprocess cannot run (observed on frozen
-parents), a static fallback derives `Lib/site-packages` or
-`lib/python3.*/site-packages` from the interpreter location.
+setup. Frozen sidecars use that external environment by default; the shell
+still sets `GA_HUB_ENABLE_EXTERNAL_SITE_PATHS=1` explicitly (see
+`src-tauri/src/main.rs`) for an unambiguous launch contract. Set it to `0`
+only when diagnosing an environment conflict. `server/_paths.py` appends that
+interpreter's site-packages to `sys.path`. If the site-packages probe
+subprocess cannot run (observed on frozen parents), a static fallback derives
+`Lib/site-packages` or `lib/python3.*/site-packages` from the interpreter
+location.
 
 Troubleshooting a session-runtime restore failure:
 

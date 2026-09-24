@@ -406,9 +406,11 @@ def external_python_site_paths(ga_root: Path | None = None) -> list[str]:
     interpreter's site-packages to ``sys.path`` lets those in-process GA tools
     use the same environment that ``code_run`` will launch.
     """
+    # Frozen sidecars use GA's runtime environment by default. Keep an explicit
+    # opt-out for diagnosing an environment conflict without changing config.
     if getattr(sys, "frozen", False) and os.environ.get(
         ENV_ENABLE_EXTERNAL_SITE_PATHS, ""
-    ).strip() != "1":
+    ).strip() == "0":
         return []
     python = discover_user_python(ga_root)
     if not python:

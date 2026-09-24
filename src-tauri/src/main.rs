@@ -709,9 +709,9 @@ fn allocate_sidecar_identity() -> Result<(u16, String), String> {
 fn spawn_sidecar(port: u16, token: &str) -> Result<OwnedProcess, String> {
     let mut command = sidecar_command()?;
     // Packaged sidecars do not bundle GA's third-party dependencies. The
-    // Python bootstrap injects the discovered GA interpreter's site-packages,
-    // but only when this opt-in flag is set; default it on for the desktop
-    // app unless the environment already provides a value.
+    // Python bootstrap uses the discovered GA interpreter's site-packages by
+    // default; an explicit value of "0" remains available as a diagnostic
+    // opt-out. Set "1" here when the environment has not chosen a value.
     if env::var_os("GA_HUB_ENABLE_EXTERNAL_SITE_PATHS").is_none() {
         command.env("GA_HUB_ENABLE_EXTERNAL_SITE_PATHS", "1");
     }

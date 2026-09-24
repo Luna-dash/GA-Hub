@@ -62,11 +62,12 @@ python scripts\build_all.py
 
 sidecar 冻结包只打包 GA-Hub 自身依赖（`requirements.txt`）；GA 运行时依赖
 （如 `frontends.worldline` 唯一的第三方依赖 `rich`）由设置中指定的 GA
-解释器提供：主程序启动 sidecar 时默认注入
-`GA_HUB_ENABLE_EXTERNAL_SITE_PATHS=1`（`src-tauri/src/main.rs`），
-`server/_paths.py` 会把 GA 解释器的 site-packages 追加进 `sys.path`；若探测
-子进程无法启动（冻结父进程场景下曾观察到子解释器启动卡死），则按解释器
-位置静态回退查找 `Lib/site-packages` 或 `lib/python3.*/site-packages`。
+解释器提供。冻结 sidecar 默认使用该外部环境；主程序仍显式注入
+`GA_HUB_ENABLE_EXTERNAL_SITE_PATHS=1`（`src-tauri/src/main.rs`），让启动契约
+明确一致。仅在排查环境冲突时设置为 `0` 关闭；`server/_paths.py` 会把 GA
+解释器的 site-packages 追加进 `sys.path`；若探测子进程无法启动（冻结父进程
+场景下曾观察到子解释器启动卡死），则按解释器位置静态回退查找
+`Lib/site-packages` 或 `lib/python3.*/site-packages`。
 
 排障「会话运行环境恢复失败」：
 
