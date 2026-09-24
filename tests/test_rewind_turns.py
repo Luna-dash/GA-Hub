@@ -58,6 +58,10 @@ def _load_agent_service_module():
     fake_rewind_bridge = types.ModuleType("frontends.gahub.bridge.rewind")
     fake_rewind_bridge.bind_store = lambda *_a, **_kw: None
     fake_rewind_bridge.sync_store = lambda *_a, **_kw: 0
+    fake_runtime_bridge = types.ModuleType("frontends.gahub.bridge.runtime")
+    fake_runtime_bridge.create_main_agent = lambda *_a, **_kw: None
+    fake_runtime_bridge.register_turn_end_hook = lambda *_a, **_kw: None
+    fake_runtime_bridge.unregister_turn_end_hook = lambda *_a, **_kw: None
 
     def _apply_durable(agent, store, turn_count, **_kw):
         """Mirror the real bridge's orchestration so stubbed integration tests
@@ -67,6 +71,13 @@ def _load_agent_service_module():
         turn_nodes = store.linear_path()
         if turn_count > len(turn_nodes):
             raise RuntimeError("rewind exceeds recorded history")
+        if turn_count == 0:
+            backend_history = agent.llmclient.backend.history
+            return {
+                "kept": len(turn_nodes),
+                "history_lines": len(backend_history),
+                "removed_history_entries": 0,
+            }
         backend_history = agent.llmclient.backend.history
         old_len = len(backend_history)
         first_removed_node = turn_nodes[-turn_count]
@@ -113,6 +124,7 @@ def _load_agent_service_module():
     fake_bridge = types.ModuleType("frontends.gahub.bridge")
     fake_bridge.session = fake_session_bridge
     fake_bridge.rewind = fake_rewind_bridge
+    fake_bridge.runtime = fake_runtime_bridge
     fake_gahub = types.ModuleType("frontends.gahub")
     fake_gahub.bridge = fake_bridge
     fake_frontends = types.ModuleType("frontends")
@@ -126,6 +138,7 @@ def _load_agent_service_module():
         "frontends.gahub.bridge": fake_bridge,
         "frontends.gahub.bridge.session": fake_session_bridge,
         "frontends.gahub.bridge.rewind": fake_rewind_bridge,
+        "frontends.gahub.bridge.runtime": fake_runtime_bridge,
         "frontends.continue_cmd": fake_continue,
     }
     with TemporaryDirectory() as td:
@@ -632,6 +645,160 @@ class RealNativeArchiveSmoke(unittest.TestCase):
                 continue_cmd.parse_native_log(log_path, allow_empty=True),
                 history[:2],
             )
+
+
+
+class GhostAnchorRewindTests(unittest.TestCase):
+    """A rewind click on an aborted (never-committed) bubble must anchor the
+    cut: the projection snapshots from that bubble on are dropped, while the
+    durable archive keeps everything it has — even when completed turns
+    follow the ghost."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.svc_mod = _load_agent_service_module()
+
+    def _make_svc(self, history: list[dict], snapshots: list[tuple[str, bool]]):
+        svc = self.svc_mod.AgentService.for_tests()
+        svc._snapshots = OrderedDict()
+        for sid, done in snapshots:
+            svc._snapshots[sid] = types.SimpleNamespace(done=done)
+
+        backend = types.SimpleNamespace(history=list(history))
+        llmclient = types.SimpleNamespace(backend=backend)
+        svc.agent = types.SimpleNamespace(
+            is_running=False,
+            llmclient=llmclient,
+            history=[],
+            log_path="/tmp/model_responses_session-A.txt",
+        )
+        svc.session_id = "session-A"
+        svc._rewind_lock = threading.RLock()
+        return svc
+
+    class _Store:
+        """Durable-store stub shared by the ghost tests."""
+
+        def __init__(self, nodes):
+            self._nodes = list(nodes)
+            self.head = self._nodes[-1] if self._nodes else None
+            self.reconcile_calls = 0
+            self.saved = 0
+
+        def linear_path(self):
+            return list(self._nodes)
+
+        def first_user_message(self, node_id):
+            return {"text": "user-of-" + node_id}
+
+        def _msg_user_text(self, message):
+            return message["text"]
+
+        def reconcile(self, _rows):
+            self.reconcile_calls += 1
+
+        def save(self):
+            self.saved += 1
+
+        def rewind_head(self, head):
+            self.head = head
+
+    def test_ghost_sid_keeps_archive_and_drops_snapshots(self):
+        history = [
+            _make_user_msg("u1"), _make_assistant("a1"),
+            _make_user_msg("u2"), _make_assistant("a2"),
+        ]
+        svc = self._make_svc(history, [("t1", True), ("t2", True), ("ghost", False)])
+        svc._rewind_store = self._Store(["turn-1", "turn-2"])
+        archive_state = {"history": list(history)}
+
+        fake_worldline = types.ModuleType("frontends.worldline")
+        fake_worldline.restore_plan = mock.MagicMock(
+            side_effect=AssertionError("durable rewrite must not run for a ghost cut")
+        )
+        fake_worldline.rewrite_projection = mock.MagicMock(return_value=True)
+        fake_continue = types.ModuleType("frontends.continue_cmd")
+        fake_continue.parse_native_log = (
+            lambda _path, allow_empty=False: list(archive_state["history"])
+        )
+
+        with mock.patch.dict(sys.modules, {
+            "frontends.worldline": fake_worldline,
+            "frontends.continue_cmd": fake_continue,
+        }):
+            result = svc.rewind_turns(sid="ghost")
+
+        self.assertEqual(result["removed_sids"], ["ghost"])
+        self.assertEqual(result["kept"], 2)
+        self.assertEqual(result["removed_history_entries"], 0)
+        self.assertEqual(svc.agent.llmclient.backend.history, history)
+        self.assertEqual(archive_state["history"], history)
+        self.assertEqual(list(svc._snapshots.keys()), ["t1", "t2"])
+        fake_worldline.restore_plan.assert_not_called()
+        fake_worldline.rewrite_projection.assert_not_called()
+
+    def test_resolver_anchors_and_falls_back(self):
+        svc = self._make_svc([], [("t1", True), ("t2", True), ("g", False), ("t3", True)])
+        adapter = svc._rewind()
+        all_items = list(svc._snapshots.items())
+        done_items = adapter._completed_items(all_items)
+
+        self.assertEqual(
+            adapter._resolve_rewind_cut(all_items=all_items, done_items=done_items, sid="t2"),
+            (2, "t2"),
+        )
+        self.assertEqual(
+            adapter._resolve_rewind_cut(all_items=all_items, done_items=done_items, sid="g"),
+            (1, "g"),
+        )
+        self.assertEqual(
+            adapter._resolve_rewind_cut(all_items=all_items, done_items=done_items, sid="z", n=2),
+            (2, None),
+        )
+        with self.assertRaises(ValueError):
+            adapter._resolve_rewind_cut(all_items=all_items, done_items=done_items, sid="z")
+        self.assertEqual(
+            adapter._removed_sids_after(all_items, done_items, 1, anchor_sid="g"),
+            ["g", "t3"],
+        )
+
+    def test_ghost_followed_by_completed_turn_cuts_at_ghost(self):
+        history = [
+            _make_user_msg("u1"), _make_assistant("a1"),
+            _make_user_msg("u2"), _make_assistant("a2"),
+        ]
+        svc = self._make_svc(history, [("g", False), ("t2", True)])
+        svc._rewind_store = self._Store(["turn-1", "turn-2"])
+        archive_state = {"history": list(history)}
+
+        def _restore(store, node, **_kw):
+            archive_state["history"] = list(history[:2])
+            return {
+                "history": list(history[:2]),
+                "hist_info": ["restored"],
+                "key_info": "restored-key",
+                "target": node,
+            }
+
+        fake_worldline = types.ModuleType("frontends.worldline")
+        fake_worldline.restore_plan = mock.MagicMock(side_effect=_restore)
+        fake_worldline.rewrite_projection = mock.MagicMock(return_value=True)
+        fake_continue = types.ModuleType("frontends.continue_cmd")
+        fake_continue.parse_native_log = (
+            lambda _path, allow_empty=False: list(archive_state["history"])
+        )
+
+        with mock.patch.dict(sys.modules, {
+            "frontends.worldline": fake_worldline,
+            "frontends.continue_cmd": fake_continue,
+        }):
+            result = svc.rewind_turns(sid="g")
+
+        self.assertEqual(result["removed_sids"], ["g", "t2"])
+        self.assertEqual(result["kept"], 1)
+        self.assertEqual(svc.agent.llmclient.backend.history, history[:2])
+        self.assertEqual(archive_state["history"], history[:2])
+        self.assertEqual(list(svc._snapshots.keys()), [])
 
 
 if __name__ == "__main__":

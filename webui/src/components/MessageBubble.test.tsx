@@ -306,7 +306,7 @@ describe('MessageBubble render isolation', () => {
     ].join('\n')
 
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
-    const copyButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === '复制')
+    const copyButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) => (b.textContent || '').includes('复制'))
     await act(async () => { copyButton?.click(); await Promise.resolve() })
 
     expect(writeText).toHaveBeenCalledTimes(1)
@@ -314,6 +314,60 @@ describe('MessageBubble render isolation', () => {
     expect(copied).toContain('## 最终结论')
     expect(copied).not.toContain('🛠️ Tool:')
     expect(copied).not.toContain('执行搜索')
+  })
+
+  it('hides the copy chip instead of dumping the raw transcript when no conclusion exists', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '🛠️ Tool: `code_run`  📥 args:',
+      '````text',
+      '{"command":"rm -rf temp"}',
+      '````',
+    ].join('\n')
+
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+
+    // 无结论可复制（也无摘要）：不复刻原始转储，按钮直接隐藏
+    const copyButtons = [...host.querySelectorAll<HTMLButtonElement>('button')].filter((b) => (b.textContent || '').includes('复制'))
+    expect(copyButtons).toHaveLength(0)
+  })
+
+  it('copies the stopped summary instead of raw process bytes for an interrupted turn', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    ;(navigator as unknown as { clipboard: { writeText: (t: string) => Promise<void> } }).clipboard = { writeText }
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>命令仍在执行<' + '/summary>',
+      '🛠️ Tool: `code_run`  📥 args:',
+      '````text',
+      '{"command":"ls"}',
+      '````',
+    ].join('\n')
+
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+    const copyButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) => (b.textContent || '').includes('复制'))
+    await act(async () => { copyButton?.click(); await Promise.resolve() })
+
+    expect(writeText).toHaveBeenCalledTimes(1)
+    expect(writeText.mock.calls[0][0]).toBe('命令仍在执行')
+  })
+
+  it('strips summary blocks from a copied reply that lacks turn markers', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    ;(navigator as unknown as { clipboard: { writeText: (t: string) => Promise<void> } }).clipboard = { writeText }
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
+    const content = '<summary>内部摘要<' + '/summary>\n\n仅正文。'
+
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+    const copyButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) => (b.textContent || '').includes('复制'))
+    await act(async () => { copyButton?.click(); await Promise.resolve() })
+
+    expect(writeText).toHaveBeenCalledTimes(1)
+    const copied = writeText.mock.calls[0][0] as string
+    expect(copied).toBe('仅正文。')
+    expect(copied).not.toContain('内部摘要')
+    expect(copied.toLowerCase()).not.toContain('summary')
   })
 
   it('marks system-role bubbles with the left-edge dot and no GA Agent header', () => {

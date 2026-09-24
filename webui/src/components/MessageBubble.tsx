@@ -75,6 +75,29 @@ function projectConclusionBody(transcript: AssistantTranscript): string {
   return transcript.stopped ? summaryBody : transcript.finalBody || summaryBody
 }
 
+/** 复制专用：剥离摘要标签块（含中断留下的未闭合尾巴）。
+ *  闭合序列用拼接书写，避免被补丁/传输链吞掉。 */
+function stripSummaryBlocks(text: string): string {
+  const closeToken = '<' + '/summary>'
+  let out = text
+  for (let guard = 0; guard < 50; guard += 1) {
+    const openIdx = out.indexOf('<summary')
+    if (openIdx < 0) break
+    const gtIdx = out.indexOf('>', openIdx)
+    if (gtIdx < 0) {
+      out = out.slice(0, openIdx)
+      break
+    }
+    const closeIdx = out.indexOf(closeToken, gtIdx)
+    if (closeIdx < 0) {
+      out = out.slice(0, openIdx)
+      break
+    }
+    out = out.slice(0, openIdx) + out.slice(closeIdx + closeToken.length)
+  }
+  return out.trim()
+}
+
 /** Strip prompt-engineering tokens from a user message before showing it. */
 function cleanUserContent(s: string): string {
   if (!s) return ''
@@ -151,16 +174,16 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
     historyTranscript
     && (content.length > LONG_HISTORY_THRESHOLD || historyTranscript.turns.length > 0),
   )
-  // 复制按钮只带结论段：卡片上展示的结论是什么就复制什么，
-  // 不把整个多轮执行过程（工具转储/中间 turn）倒进剪贴板。
+  // 复制按钮只带结论段：正常任务=最终结论；中断任务=最后一条有效摘要（结论缺失时的兜底）。
+  // 两者都取不到 → 空串（chip 自隐），绝不回退原始转储/带摘要标记的全文。
   const copySource = useMemo(() => {
     if (role !== 'assistant') return content
     if (useHistoryProjection && historyTranscript) {
       if (historyTranscript.finalAskUser) return renderAskUserPayload(historyTranscript.finalAskUser)
-      return projectConclusionBody(historyTranscript) || content
+      return stripSummaryBlocks(projectConclusionBody(historyTranscript))
     }
     const answerSeg = [...foldTurns(content)].reverse().find((seg) => seg.type === 'text')
-    return answerSeg?.content || content
+    return stripSummaryBlocks(answerSeg?.content || '')
   }, [role, content, useHistoryProjection, historyTranscript])
 
   if (isUser) {
@@ -465,7 +488,7 @@ function CopyChip({ text }: { text: string }) {
                  bg-bg-soft border border-line text-ink-muted
                  hover:text-ink hover:bg-bg-card transition-colors"
     >
-      {copied ? '✓ 已复制' : '复制'}
+      {copied ? '✓ 已复制' : '⧉ 复制'}
     </button>
   )
 }

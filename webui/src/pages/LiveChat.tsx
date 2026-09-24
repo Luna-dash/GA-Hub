@@ -656,7 +656,10 @@ export default function LiveChat() {
     )
     if (!ok || sessionIdRef.current !== targetSessionId) return
     try {
-      const r = await api.rewindSession(targetSessionId, { n: turnCount })
+      // `sid` MUST be the clicked bubble's stream id — the archive anchor.
+      // (The session id would degrade to count-only and cut an extra turn
+      // when the click sits on an aborted, never-completed turn.)
+      const r = await api.rewindSession(targetSessionId, { n: turnCount, sid })
       if (sessionIdRef.current !== targetSessionId) return
       useChatStore.getState().retryHistory()
       pushSystem(`_已回退 ${turnCount} 轮（保留 ${r.kept} 轮）。_`, noticeKeys.rollback)

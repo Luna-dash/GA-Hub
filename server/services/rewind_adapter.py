@@ -104,10 +104,16 @@ class RewindAdapter:
         all_items: list[tuple[str, Any]],
         done_items: list[tuple[str, Any]],
         turn_count: int,
+        anchor_sid: str | None = None,
     ) -> list[str]:
         """Stream ids from the first removed turn to the end — shared by both
         the durable and the in-memory rewind paths."""
         removed_sids: list[str] = []
+        items = list(all_items)
+        if anchor_sid is not None:
+            for anchor_idx, (stream_id, _snapshot) in enumerate(items):
+                if stream_id == anchor_sid:
+                    return [sid2 for sid2, _snap in items[anchor_idx:]]
         if done_items:
             overlap = min(turn_count, len(done_items))
             first_removed_sid = done_items[-overlap][0]
@@ -155,6 +161,42 @@ class RewindAdapter:
                 raise ValueError("n must be at least 1")
             return n
         raise ValueError("either sid or n required")
+
+    def _resolve_rewind_cut(
+        self,
+        *,
+        all_items: list[tuple[str, Any]],
+        done_items: list[tuple[str, Any]],
+        sid: str | None = None,
+        n: int | None = None,
+    ) -> tuple[int, str | None]:
+        """Resolve ``(turn_count, anchor_sid)`` for a rewind request.
+
+        The Hub passes the clicked bubble's stream id.  A bubble belonging
+        to an ABORTED (never-completed) turn exists in the projection but
+        not in the durable worldline; nothing may be removed from the
+        archive, yet the snapshots from that bubble onward must still be
+        dropped — so the cut is anchored instead of counted.
+        """
+        items = list(all_items)
+        if sid:
+            for idx, (stream_id, _snap) in enumerate(done_items):
+                if stream_id == sid:
+                    return len(done_items) - idx, sid
+            done_ids = {stream_id for stream_id, _snap in done_items}
+            for idx, (stream_id, _snap) in enumerate(items):
+                if stream_id == sid:
+                    after = sum(1 for s, _ in items[idx:] if s in done_ids)
+                    return after, sid
+            # Unknown id (e.g. restored from history): fall back to a plain
+            # count; with no count provided this raises, matching the
+            # historical contract.
+        return self._resolve_turn_count(
+            sid=None,
+            n=n,
+            done_items=done_items,
+            scope="current runtime turns",
+        ), None
 
     def _drop_snapshots(self, removed_sids: list[str]) -> None:
         # ChatStreamProjection.pop(stream_id) already tolerates missing ids;
@@ -212,11 +254,11 @@ class RewindAdapter:
                 # must first unify the two locks.
                 all_items = self.snapshots.items()
                 done_items = self._completed_items(all_items)
-                turn_count = self._resolve_turn_count(
+                turn_count, anchor_sid = self._resolve_rewind_cut(
+                    all_items=all_items,
+                    done_items=done_items,
                     sid=sid,
                     n=n,
-                    done_items=done_items,
-                    scope="current runtime turns",
                 )
 
             store = self.store
@@ -225,7 +267,9 @@ class RewindAdapter:
             result = self.apply_durable(store, turn_count)
 
             with lock:
-                removed_sids = self._removed_sids_after(all_items, done_items, turn_count)
+                removed_sids = self._removed_sids_after(
+                    all_items, done_items, turn_count, anchor_sid=anchor_sid
+                )
                 self._drop_snapshots(removed_sids)
 
         return self._finalize_rewind(
