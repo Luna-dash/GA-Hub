@@ -31,3 +31,25 @@ cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
 A release bundle is not valid unless the matching target-specific sidecar exists in `src-tauri/binaries`. Generated executables and build output are ignored by Git.
+
+
+## GA runtime dependencies (rich)
+
+The frozen sidecar bundles only GA-Hub's own Python dependencies. GA core's
+runtime dependencies (notably `rich`, imported by `frontends.worldline` for
+durable rewind checkpoints) come from the GA interpreter selected during
+setup. The shell therefore spawns the sidecar with
+`GA_HUB_ENABLE_EXTERNAL_SITE_PATHS=1` (see `src-tauri/src/main.rs`), and
+`server/_paths.py` appends that interpreter's site-packages to `sys.path`.
+If the site-packages probe subprocess cannot run (observed on frozen
+parents), a static fallback derives `Lib/site-packages` or
+`lib/python3.*/site-packages` from the interpreter location.
+
+Troubleshooting a session-runtime restore failure:
+
+- `GET /api/health/core-contract` reports `rich` and the registered
+  `frontends.gahub.bridge.rewind` contract. If either fails, the configured
+  GA interpreter is wrong - verify with `<ga_python> -c "import rich"`.
+- Desktop logs go to `<admin-data>/logs/backend.log`, served by
+  `/api/logs/backend`. Restore failures also append a truncated cause
+  summary to the API payload.

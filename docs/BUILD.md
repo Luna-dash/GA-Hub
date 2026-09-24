@@ -56,3 +56,23 @@ python scripts\build_all.py
   路径注入 sys.path——这就是 `import agentmain` 在冻结包里也能工作的原因。
 - 也就是说：**构建产物通用，GA 核心按机器配置**。换机器 = 下载 exe +
   首次运行时指一下本机的 GA 仓库路径。
+
+
+### 冻结 sidecar 的 GA 运行依赖（rich / durable rewind）
+
+sidecar 冻结包只打包 GA-Hub 自身依赖（`requirements.txt`）；GA 运行时依赖
+（如 `frontends.worldline` 唯一的第三方依赖 `rich`）由设置中指定的 GA
+解释器提供：主程序启动 sidecar 时默认注入
+`GA_HUB_ENABLE_EXTERNAL_SITE_PATHS=1`（`src-tauri/src/main.rs`），
+`server/_paths.py` 会把 GA 解释器的 site-packages 追加进 `sys.path`；若探测
+子进程无法启动（冻结父进程场景下曾观察到子解释器启动卡死），则按解释器
+位置静态回退查找 `Lib/site-packages` 或 `lib/python3.*/site-packages`。
+
+排障「会话运行环境恢复失败」：
+
+- `GET /api/health/core-contract` 会报告 `rich` 与
+  `frontends.gahub.bridge.rewind` 契约的可导入性；任一项变红，先核对设置里
+  的 GA 解释器能否 `import rich`。
+- 桌面版后端日志落盘在 admin-data 目录的 `logs/backend.log`
+  （`GET /api/logs/backend` 可读），恢复失败同时会把截断原因写进接口返回
+  （`error_mapping`）。

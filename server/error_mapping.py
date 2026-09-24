@@ -74,8 +74,14 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RuntimeRestoreError)
     async def _restore_failed(request: Request, exc: RuntimeRestoreError) -> JSONResponse:
+        # Keep the user-facing copy stable; append a truncated cause summary so
+        # a wrapped failure (e.g. a missing GA runtime dependency) stays
+        # diagnosable through the API payload alone.
+        context: dict[str, str] = {}
+        if exc.__cause__ is not None:
+            context["cause"] = f"{type(exc.__cause__).__name__}: {exc.__cause__}"[:300]
         return _json(409, _payload(
-            "restore_failed", "会话运行环境恢复失败，请稍后重试。"))
+            "restore_failed", "会话运行环境恢复失败，请稍后重试。", **context))
 
     @app.exception_handler(SessionCoordinatorStoppedError)
     async def _lifecycle_stopping(request: Request, exc: SessionCoordinatorStoppedError) -> JSONResponse:

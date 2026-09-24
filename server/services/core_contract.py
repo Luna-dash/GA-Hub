@@ -89,6 +89,14 @@ _REQUIRED_MODEL_BRIDGE: tuple[str, ...] = (
     "switch_model",
 )
 
+# GA-owned durable-rewind bridge used by rewind_adapter / session restore.
+_REQUIRED_REWIND_BRIDGE: tuple[str, ...] = (
+    "bind_store",
+    "sync_store",
+    "sync_working_memory",
+    "apply_durable",
+)
+
 
 # ── result types ────────────────────────────────────────────────────────────
 @dataclass
@@ -288,6 +296,39 @@ def probe_core_contract() -> ContractReport:
                                           getattr(model_bridge, name, None), name))
             if not items[-1].ok:
                 errors.append(f"{model_module}.{name} missing or not callable")
+
+    # 6) GA runtime dependencies reachable from this interpreter. Frozen
+    # desktop sidecars do not bundle GA's third-party dependencies; they
+    # rely on _paths.bootstrap_sys_path injecting the discovered GA
+    # interpreter's site-packages. ``frontends.worldline`` (durable rewind,
+    # exercised on session restore) takes its only third-party hop into
+    # ``rich``; Hub reaches worldline solely through the registered
+    # ``frontends.gahub.bridge.rewind`` contract, so probe ``rich`` plus
+    # that bridge surface and let a broken environment show up as a red
+    # setup item instead of a generic "restore failed" on session open.
+    try:
+        import rich  # noqa: F401
+    except Exception as e:  # noqa: BLE001
+        items.append(Check("rich", False, f"import failed: {e!r}"))
+        errors.append(
+            "rich not importable (durable rewind will fail on session restore): "
+            f"{e!r}"
+        )
+    else:
+        items.append(Check("rich", True, "importable"))
+    rewind_module = "frontends.gahub.bridge.rewind"
+    try:
+        from frontends.gahub.bridge import rewind as rewind_bridge  # noqa: E402
+    except Exception as e:  # noqa: BLE001
+        items.append(Check(rewind_module, False, f"import failed: {e!r}"))
+        errors.append(f"{rewind_module} not importable: {e!r}")
+    else:
+        items.append(Check(rewind_module, True, "importable"))
+        for name in _REQUIRED_REWIND_BRIDGE:
+            items.append(_check_callable(rewind_module,
+                                          getattr(rewind_bridge, name, None), name))
+            if not items[-1].ok:
+                errors.append(f"{rewind_module}.{name} missing or not callable")
 
     ok = all(c.ok for c in items)
     return ContractReport(

@@ -216,6 +216,7 @@ class SessionRuntimeFactory:
                 bind_rewind_store()
             except Exception as exc:
                 self._release_current(runtime.agent)
+                log.exception("rewind_bind_failed session_id=%s", session_id)
                 raise RuntimeRestoreError(
                     "GA rewind checkpoint initialization failed"
                 ) from exc

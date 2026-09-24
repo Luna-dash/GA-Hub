@@ -81,3 +81,17 @@ def test_llm_families_map_to_409() -> None:
         response = _client(exc).post("/boom")
         assert response.status_code == 409, code
         assert response.json()["detail"]["code"] == code
+
+
+def test_restore_failure_surfaces_cause_summary() -> None:
+    inner = ImportError("No module named 'rich'")
+    exc = RuntimeRestoreError("restore blew up")
+    exc.__cause__ = inner
+
+    response = _client(exc).post("/boom")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "restore_failed"
+    assert detail["cause"].startswith("ImportError:")
+    assert "rich" in detail["cause"]

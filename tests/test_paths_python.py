@@ -293,5 +293,56 @@ class GaSubprocessPatchTests(unittest.TestCase):
                 ga_subprocess_patch._patch_ga_subprocess()
 
 
+class ExternalSitePathsFallbackTests(unittest.TestCase):
+    """Static site-packages derivation when the probe cannot run."""
+
+    @staticmethod
+    def _windows_venv(td: str) -> tuple[Path, Path]:
+        venv = Path(td) / "venv"
+        exe = _touch_python(venv / "Scripts" / "python.exe")
+        site = venv / "Lib" / "site-packages"
+        site.mkdir(parents=True)
+        return exe, site
+
+    def test_static_site_packages_finds_windows_venv_layout(self):
+        with TemporaryDirectory() as td:
+            exe, site = self._windows_venv(td)
+            self.assertEqual(
+                _paths._static_site_packages(str(exe)), [str(site.resolve())])
+
+    def test_static_site_packages_finds_posix_venv_layout(self):
+        with TemporaryDirectory() as td:
+            venv = Path(td) / "venv"
+            exe = _touch_python(venv / "bin" / "python3")
+            site = venv / "lib" / "python3.12" / "site-packages"
+            site.mkdir(parents=True)
+            self.assertEqual(
+                _paths._static_site_packages(str(exe)), [str(site.resolve())])
+
+    def test_external_site_paths_falls_back_when_probe_fails(self):
+        with TemporaryDirectory() as td:
+            exe, site = self._windows_venv(td)
+            with mock.patch.object(_paths, "discover_user_python",
+                                   return_value=str(exe)), \
+                 mock.patch.object(_paths.subprocess, "check_output",
+                                   side_effect=OSError("spawn failed")):
+                self.assertEqual(
+                    _paths.external_python_site_paths(), [str(site.resolve())])
+
+    def test_external_site_paths_falls_back_under_frozen_gate(self):
+        with TemporaryDirectory() as td:
+            exe, site = self._windows_venv(td)
+            with mock.patch.object(_paths.sys, "frozen", True, create=True), \
+                 mock.patch.dict(_paths.os.environ,
+                                 {"GA_HUB_ENABLE_EXTERNAL_SITE_PATHS": "1"}), \
+                 mock.patch.object(_paths, "discover_user_python",
+                                   return_value=str(exe)), \
+                 mock.patch.object(_paths.subprocess, "check_output",
+                                   side_effect=OSError("spawn failed")):
+                self.assertEqual(
+                    _paths.external_python_site_paths(Path("/ga")),
+                    [str(site.resolve())])
+
+
 if __name__ == "__main__":
     unittest.main()

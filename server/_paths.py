@@ -364,6 +364,40 @@ def python_status(ga_root: Path | None = None) -> dict[str, str | None]:
     }
 
 
+def _static_site_packages(python: str) -> list[str]:
+    """Best-effort site-packages derived from the interpreter location.
+
+    Fallback for when the probe subprocess cannot run (frozen parents on
+    some endpoints have been observed to stall child interpreter startup,
+    and the GA bridge still needs import paths).  Handles the common
+    layouts: venvs keep ``Lib`` / ``lib`` one level above the executable
+    (``Scripts`` / ``bin``), conda and system installs keep it beside it.
+    Anything unverifiable is left out rather than guessed.
+    """
+    exe_dir = Path(os.path.abspath(str(Path(python).expanduser()))).parent
+    # Windows venvs keep ``Lib`` one level above ``Scripts``; POSIX venvs
+    # keep ``lib/python3.*`` one level above ``bin``; conda and system
+    # installs keep their ``Lib`` / ``lib`` beside the executable.
+    candidates: list[Path] = []
+    for root in (exe_dir, exe_dir.parent):
+        candidates.append(root / "Lib" / "site-packages")
+        try:
+            candidates.extend(sorted(root.glob("lib/python3.*/site-packages")))
+        except OSError:
+            pass
+    result: list[str] = []
+    for cand in candidates:
+        try:
+            if not cand.is_dir():
+                continue
+            resolved = str(cand.resolve())
+        except OSError:
+            continue
+        if resolved not in result:
+            result.append(resolved)
+    return result
+
+
 def external_python_site_paths(ga_root: Path | None = None) -> list[str]:
     """Return import paths from the resolved external Python environment.
 
@@ -404,7 +438,10 @@ def external_python_site_paths(ga_root: Path | None = None) -> list[str]:
         paths = json.loads(out)
     except Exception as e:
         log.warning("failed to inspect external Python site-packages %s: %s", python, e)
-        return []
+        fallback = _static_site_packages(python)
+        if fallback:
+            log.info("using static site-packages fallback for %s: %s", python, fallback)
+        return fallback
 
     result: list[str] = []
     for raw in paths:

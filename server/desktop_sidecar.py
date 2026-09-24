@@ -174,6 +174,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.ga_root:
         os.environ["GA_ROOT"] = str(args.ga_root.resolve())
 
+    # Desktop builds run with their stderr routed to a null handle by the
+    # Tauri shell, so INFO-level failures would otherwise be invisible.
+    # Configure the same bounded backend.log that browser mode (server.run)
+    # uses - the file /api/logs serves - before importing the app so
+    # import-time WARNING+ records are captured too.
+    import logging
+
+    from server import _paths
+    from server.logging_config import configure_application_logging
+
+    log_path = configure_application_logging(_paths.ADMIN_DATA / "logs")
+    logging.getLogger(__name__).info("backend log file: %s", log_path)
+
     # Resolve and publish the listener before importing the app. Services such
     # as Conductor run outside request scope and need this exact random port to
     # call back into the owning Hub instance.
