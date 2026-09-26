@@ -1,6 +1,9 @@
 @echo off
 :: GA-Hub one-shot build (frontend, sidecar, Tauri shell, artifact guards).
-:: Real logic lives in scripts\build_all.py; this launcher only picks the interpreter.
+:: Real logic lives in scripts\build_all.py; this launcher only picks the interpreter:
+::   1) %GA_HUB_PYTHON% (explicit override)
+::   2) the machine-local build environment below, when present
+::   3) "python" from PATH
 :: Keep this file ASCII-only: cmd.exe parses .bat in the OEM codepage,
 :: and non-ASCII bytes here produce stray parse errors on some systems.
 setlocal

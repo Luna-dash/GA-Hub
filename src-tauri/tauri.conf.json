@@ -5,7 +5,6 @@
   "identifier": "io.genericagent.hub",
   "build": {
     "beforeDevCommand": "npm --prefix webui run dev -- --host 127.0.0.1",
-    "beforeBuildCommand": "npm --prefix webui run build",
     "devUrl": "http://127.0.0.1:5173",
     "frontendDist": "../webui/dist"
   },

@@ -8,9 +8,10 @@
 build_all.bat
 ```
 
-（等价：`python scripts\build_all.py`，解释器就用启动它的那个 python；
-`build_all.bat` 会自动选择本机已配置的构建解释器，也可
-`set GA_HUB_PYTHON=<解释器路径>` 显式指定。）
+（等价：`python scripts\build_all.py`，解释器就用启动它的那个 python。
+`build_all.bat` 只做一件事——挑解释器，顺序是：`GA_HUB_PYTHON` → 本机已配置的
+构建环境（本仓库默认 `D:\APP\anaconda3\envs\ga\python.exe`，其它机器上没有就跳过）
+→ PATH 里的 `python`。换解释器：`set GA_HUB_PYTHON=<解释器路径>`。）
 
 脚本完全路径无关：仓库放任何盘符任何目录都可以；唯一硬性要求是所选解释器装了
 `requirements.txt` 里的依赖——缺依赖时预检直接失败并给出修复命令，不会静默换环境。
@@ -64,19 +65,34 @@ build_all.bat
   预检会自动检测占用并明确报错，占用状态下反复重试没有意义。
 - **并发保护**：构建持有 `src-tauri\target\.build_all.lock`；两个构建
   并发时后到者预检直接失败，不会互踩 `target` 目录。
+- **前端构建归 build_all 独占**：它先构建 `webui/dist`（sidecar 要把前端打进包里），
+  因此 `tauri.conf.json` **不再配 `beforeBuildCommand`**——否则每次构建都会重复构建
+  前端（实测多花 ~9s），且主 exe 与 sidecar 内嵌的可能来自两次不同的构建。
+  也正因如此，绕过入口裸跑 `tauri build` 更危险：它不会再自动构建前端，只会把
+  当前 `webui/dist`（可能已过期）打进壳里。
 - **成功判定以退出码 + 守卫输出为准**，不要用「命令没报错」当成功：
   - `0` = 成功；`2` = 预检失败（缺工具/依赖/应用未退出/并发构建）；`3` = 某阶段失败；
     `5` = 产物守卫失败。
-  - 守卫三重校验（主 exe / sidecar 中间产物 / sidecar 交付副本）：缺失、为空 → 失败；
-    已有产物未刷新时——主 exe 早于最新构建输入 = 失败（构建遗漏），否则警告放行
-    （合法增量复用）；sidecar 中间产物已重建而交付副本未同步 = 失败。
+  - 守卫**三重校验**（主 exe / sidecar 中间产物 / sidecar 交付副本）语义一致：
+    缺失、为空 → 失败；**未被本次构建重写 → 失败**（说明写到了别的 target 目录，
+    或这一步被跳过）。2026-09-26 冷/热各一次真实全链实测（114.0s / 93.2s）：三件
+    产物每次都被重写——前端每次重写 `webui/dist`，Tauri build script 对 dist 每个
+    文件都发 `rerun-if-changed`，cargo 因此必然重链；sidecar 先 unlink 再打包。
+    所以「未重写」没有合法的增量复用解释，旧版的「警告放行」分支已删除。
   - 构建末尾打印三件产物的 **sha256 指纹**（前 16 位）+ 大小 + mtime，交付取证用。
-  - 日志出现「host-target 泄漏」提示 = 有人绕过唯一入口直跑了 `tauri build`，
-    产物落进了非正式区（`src-tauri\target\release\`），应清理并纠正流程。
+    注意：同一份源码两次构建的指纹不同（exe / sidecar 都嵌入了构建期信息），
+    指纹用来标识「哪一次构建」，不能用来判断两次构建是否一致。
+  - 预检打印「非正式区残留产物」= `src-tauri\target\release\` 下有 exe——那是裸
+    `tauri build` 的落点，应删除并纠正流程。
 - **发布前验证**：`python scripts\build_all.py --full` 会先跑后端 pytest（限定 `tests/`，
-  自动注入 `GA_ROOT`/`PYTHONPATH`）与前端 vitest，再进入构建阶段。
+  自动注入 `GA_ROOT`/`PYTHONPATH`）与前端 vitest，再进入构建阶段；缺 GA 仓库或
+  `webui/node_modules` 会在预检阶段（exit 2）就说清楚。
 - 正式产物只有两处（必须同目录）：`src-tauri\target\x86_64-pc-windows-msvc\release\`
-  下的 `ga-hub-desktop.exe` 与 `ga-hub-sidecar.exe`。
+  下的 `ga-hub-desktop.exe` 与 `ga-hub-sidecar.exe`。默认**不产出安装包**（tauri 传
+  `--no-bundle`：MSI/NSIS 每次 ~104MB、tauri 阶段多花 ~15-20s，而 CI 并不上传它们）；
+  需要时显式 `python scripts\build_all.py --bundle`，产物在 `release\bundle\{msi,nsis}\`。
+  同目录下还有构建副产物（`ga_hub_desktop.pdb`、`wix/`、`nsis/`、`resources/`），
+  它们不是交付内容。
 
 ## 运行时与构建时依赖的边界（为什么换机器构建是安全的）
 
