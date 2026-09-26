@@ -7,9 +7,23 @@ rust-version = "1.85"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# 仅用于 feature 统一，不直接调用。
+# 背景：tauri-build 依赖 schemars 0.8（开启其 preserve_order），schemars 又依赖
+# indexmap 1.x。indexmap 1.9.3 没有 default 特性，其 build.rs 在未显式开启 std 时
+# 会用 autocfg 探测 sysroot 来推导 has_std：
+#     match env::var_os("CARGO_FEATURE_STD") { Some(_) => emit("has_std"),
+#         None => autocfg().emit_sysroot_crate("std") }
+# 该探测在本机偶发失败（构建日志只写 rustc-check-cfg、不写 rustc-cfg=has_std），
+# 于是 indexmap 选中 #[cfg(not(has_std))] 的三泛型 IndexMap<K,V,S>，
+# 而 schemars 的 preserve_order 代码写的是 IndexMap<K,V> —— 直接编译失败：
+#     error[E0107]: struct takes 3 generic arguments but 2 were supplied
+# 显式开启 std 即走 Some(_) 分支，跳过探测，行为确定。
+indexmap = { version = "1", features = ["std"] }
 
 [dependencies]
 serde_json = "1"
+# 见 [build-dependencies] 同名条目：覆盖 target 侧依赖图（tauri-utils 也依赖 schemars）。
+indexmap = { version = "1", features = ["std"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
@@ -27,6 +41,7 @@ windows-sys = { version = "0.59", features = [
   "Win32_Security",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_JobObjects",
+  "Win32_System_Pipes",
   "Win32_System_Threading",
 ] }
 

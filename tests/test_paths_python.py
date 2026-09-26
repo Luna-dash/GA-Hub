@@ -42,6 +42,56 @@ class PythonDiscoveryTests(unittest.TestCase):
                  mock.patch.object(_paths, "load_config", return_value={"python_path": str(configured_python)}):
                 self.assertEqual(_paths.discover_user_python(ga_root), str(configured_python.resolve()))
 
+    def test_discover_user_python_prefers_gahub_python_over_path(self):
+        """GA's declared interpreter must beat an unrelated python found on PATH.
+
+        Regression (2026-09-24): ``config.gahub_python`` already named GA's
+        environment for the conductor engine, but this chain ignored it, so a
+        host whose PATH carried a tool-bundled runtime resolved every child
+        (feishu's fsapp.py, GA code_run, the external worker) to that runtime.
+        Children needing GA's optional dependencies then died with
+        ``No module named 'lark_oapi'`` while the engine ran fine on GA's.
+        """
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            ga_env_python = _touch_python(root / "ga-env-python")
+            path_python = _touch_python(root / "path-python")
+
+            with mock.patch.dict(_paths.os.environ, {}, clear=True), \
+                 mock.patch.object(_paths, "load_config",
+                                   return_value={"gahub_python": str(ga_env_python)}), \
+                 mock.patch.object(_paths, "_ga_venv_python_candidates", return_value=[]), \
+                 mock.patch.object(_paths, "_known_python_candidates", return_value=[]), \
+                 mock.patch.object(_paths.shutil, "which", return_value=str(path_python)):
+                resolved, source = _paths._discover_user_python_with_source()
+                self.assertEqual(resolved, str(ga_env_python.resolve()))
+                self.assertEqual(source, "config.gahub_python")
+
+    def test_discover_user_python_prefers_python_path_over_gahub_python(self):
+        """The UI-configured ``python_path`` stays the most specific override."""
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            ui_python = _touch_python(root / "ui-python")
+            engine_python = _touch_python(root / "engine-python")
+
+            with mock.patch.dict(_paths.os.environ, {}, clear=True), \
+                 mock.patch.object(_paths, "load_config",
+                                   return_value={"python_path": str(ui_python),
+                                                 "gahub_python": str(engine_python)}):
+                self.assertEqual(_paths.discover_user_python(), str(ui_python.resolve()))
+
+    def test_discover_user_python_ignores_invalid_gahub_python(self):
+        """A stale/removed gahub_python must not raise — discovery continues."""
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            ga_root = root / "GenericAgent"
+            ga_python = _touch_python(_paths._ga_venv_python_candidates(ga_root)[0])
+
+            with mock.patch.dict(_paths.os.environ, {}, clear=True), \
+                 mock.patch.object(_paths, "load_config",
+                                   return_value={"gahub_python": str(root / "gone" / "python.exe")}):
+                self.assertEqual(_paths.discover_user_python(ga_root), str(ga_python.resolve()))
+
     def test_discover_user_python_uses_ga_venv_before_path(self):
         with TemporaryDirectory() as td:
             root = Path(td)
@@ -217,11 +267,31 @@ class AgentServiceWebToolPatchTests(unittest.TestCase):
         fake_continue.install = lambda *_args, **_kwargs: None
         fake_continue.reset_conversation = lambda *_args, **_kwargs: None
 
+        fake_frontends = types.ModuleType("frontends")
+        fake_frontends.__path__ = []
+        fake_gahub = types.ModuleType("frontends.gahub")
+        fake_gahub.__path__ = []
+        fake_bridge = types.ModuleType("frontends.gahub.bridge")
+        fake_bridge.__path__ = []
+        fake_runtime = types.ModuleType("frontends.gahub.bridge.runtime")
+        fake_runtime.create_main_agent = lambda *_args, **_kwargs: None
+        fake_runtime.register_turn_end_hook = lambda *_args, **_kwargs: None
+        fake_runtime.unregister_turn_end_hook = lambda *_args, **_kwargs: None
+        fake_session = types.ModuleType("frontends.gahub.bridge.session")
+        fake_session.release_current = lambda *_args, **_kwargs: None
+        fake_session.reset_conversation = lambda *_args, **_kwargs: None
+        fake_rewind = types.ModuleType("frontends.gahub.bridge.rewind")
+
         modules = {
             "ga": fake_ga,
             "agentmain": fake_agentmain,
-            "frontends": types.ModuleType("frontends"),
+            "frontends": fake_frontends,
             "frontends.continue_cmd": fake_continue,
+            "frontends.gahub": fake_gahub,
+            "frontends.gahub.bridge": fake_bridge,
+            "frontends.gahub.bridge.runtime": fake_runtime,
+            "frontends.gahub.bridge.session": fake_session,
+            "frontends.gahub.bridge.rewind": fake_rewind,
         }
         with mock.patch.object(_paths, "GA_ROOT", ga_root), \
              mock.patch.object(_paths, "discover_user_python", return_value=python_path), \

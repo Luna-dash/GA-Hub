@@ -11,7 +11,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{
     Manager, RunEvent, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
@@ -29,7 +29,7 @@ use std::os::windows::{
 
 #[cfg(windows)]
 use windows_sys::Win32::{
-    Foundation::{HANDLE, INVALID_HANDLE_VALUE},
+    Foundation::{HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE},
     System::{
         Diagnostics::ToolHelp::{
             CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
@@ -39,9 +39,13 @@ use windows_sys::Win32::{
             SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         },
+        Pipes::CreatePipe,
         Threading::{OpenThread, ResumeThread, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME},
     },
 };
+
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::SetHandleInformation;
 
 #[cfg(all(windows, test))]
 use windows_sys::Win32::System::JobObjects::{
@@ -339,6 +343,11 @@ struct OwnedProcess {
     // the kill-on-close job first, while the root process handle is still live.
     #[cfg(windows)]
     job: KillOnCloseJob,
+    /// Owner end of the lifecycle pipe the sidecar reads on stdin.
+    ///
+    /// Created by the shell itself instead of `Stdio::piped()`: see
+    /// [`owner_stdin_pipe`] for why the standard-library path is unusable here.
+    owner_stdin: Option<OwnedHandle>,
     #[cfg(unix)]
     process_group: libc::pid_t,
     #[cfg(unix)]
@@ -347,16 +356,59 @@ struct OwnedProcess {
     cleanup_complete: bool,
 }
 
+/// Build the shell → sidecar lifecycle pipe and return the child end plus the
+/// owner end.
+///
+/// `Stdio::piped()` cannot be used for this: on some Windows hosts its internal
+/// pipe setup fails with `ERROR_PIPE_BUSY` (os error 231, "all pipe instances
+/// are busy"), which aborted the whole desktop startup with no visible error
+/// because both standard streams of a packaged shell are discarded. Creating
+/// the pipe with `CreatePipe` and handing the child end over through
+/// `Stdio::from(OwnedHandle)` is equivalent but reliable: the failure is in the
+/// standard library's pipe plumbing, not in the Win32 call.
+#[cfg(windows)]
+fn owner_stdin_pipe() -> Result<(Stdio, OwnedHandle), String> {
+    let mut child_end: HANDLE = std::ptr::null_mut();
+    let mut owner_end: HANDLE = std::ptr::null_mut();
+    let created = unsafe { CreatePipe(&mut child_end, &mut owner_end, std::ptr::null(), 0) };
+    if created == 0 {
+        return Err(format!(
+            "lifecycle CreatePipe failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // Only the child end is inherited by the sidecar; the owner end stays
+    // private to the shell so the pipe closes when the shell dies.
+    unsafe {
+        SetHandleInformation(child_end, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+        SetHandleInformation(owner_end, HANDLE_FLAG_INHERIT, 0);
+    }
+    let child_stdio = Stdio::from(unsafe { OwnedHandle::from_raw_handle(child_end as _) });
+    let owner_handle = unsafe { OwnedHandle::from_raw_handle(owner_end as _) };
+    Ok((child_stdio, owner_handle))
+}
+
 impl OwnedProcess {
     fn spawn(mut command: Command) -> Result<Self, String> {
         #[cfg(unix)]
         command.process_group(0);
+        #[cfg(unix)]
+        command.stdin(Stdio::piped());
 
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
 
         #[cfg(windows)]
         let job = KillOnCloseJob::new()?;
+
+        // The sidecar's stdin is its lifecycle channel. The shell always builds
+        // that pipe itself on Windows; see owner_stdin_pipe.
+        #[cfg(windows)]
+        let owner_stdin = {
+            let (child_stdio, owner_handle) = owner_stdin_pipe()?;
+            command.stdin(child_stdio);
+            Some(owner_handle)
+        };
 
         let mut child = command
             .spawn()
@@ -379,6 +431,7 @@ impl OwnedProcess {
             }
             Ok(Self {
                 job,
+                owner_stdin,
                 child,
                 cleanup_complete: false,
             })
@@ -402,6 +455,23 @@ impl OwnedProcess {
                 child,
                 cleanup_complete: false,
             });
+        }
+    }
+
+    /// Hand the owner end of the lifecycle pipe to the shutdown path.
+    fn take_owner_stdin(&mut self) -> Option<Box<dyn Write + Send>> {
+        #[cfg(windows)]
+        {
+            self.owner_stdin
+                .take()
+                .map(|handle| Box::new(fs::File::from(handle)) as Box<dyn Write + Send>)
+        }
+        #[cfg(unix)]
+        {
+            self.child
+                .stdin
+                .take()
+                .map(|stdin| Box::new(stdin) as Box<dyn Write + Send>)
         }
     }
 
@@ -519,13 +589,13 @@ impl OwnedSidecar {
         Ok(Some(exited))
     }
 
-    fn take_owner_stdin(&self) -> Option<std::process::ChildStdin> {
+    fn take_owner_stdin(&self) -> Option<Box<dyn Write + Send>> {
         self.lifecycle
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .process
             .as_mut()
-            .and_then(|process| process.child.stdin.take())
+            .and_then(|process| process.take_owner_stdin())
     }
 
     fn begin_shutdown(&self) -> ShutdownClaim<OwnedProcess> {
@@ -653,6 +723,21 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+/// Startup failures are otherwise invisible in packaged builds: the sidecar's
+/// stdio is discarded, the shell is a windows-subsystem binary with no console,
+/// and the SPA can only report "backend not ready". Persist a short trail so a
+/// failing launch can be diagnosed from disk instead of from a debugger.
+fn record_startup_diagnostic(message: &str) {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or(0);
+    let path = env::temp_dir().join("gahub_desktop_shell.log");
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(file, "[{millis}] {message}");
+    }
+}
+
 fn sidecar_working_dir() -> Result<PathBuf, String> {
     #[cfg(debug_assertions)]
     {
@@ -727,9 +812,19 @@ fn spawn_sidecar(port: u16, token: &str) -> Result<OwnedProcess, String> {
             token,
             "--owned-stdin",
         ])
-        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    record_startup_diagnostic(&format!(
+        "spawn_sidecar program={} cwd={} args={:?}",
+        command.get_program().to_string_lossy(),
+        sidecar_working_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|error| format!("<{error}>")),
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+    ));
     OwnedProcess::spawn(command)
 }
 
@@ -827,12 +922,14 @@ fn run_sidecar_supervisor<F>(
     F: FnOnce(u16, &str) -> Result<OwnedProcess, String>,
 {
     if !exit.is_running() {
+        record_startup_diagnostic("supervisor aborted: exit already requested");
         return;
     }
 
     let process = match spawn(port, &token) {
         Ok(process) => process,
         Err(error) => {
+            record_startup_diagnostic(&format!("supervisor: spawn failed: {error}"));
             let _ = sidecar.set_failed(format!("GA-Hub desktop startup: {error}"), &exit);
             return;
         }
@@ -843,16 +940,19 @@ fn run_sidecar_supervisor<F>(
     // and is stopped locally. If commit won first, shutdown must observe and
     // take the process from the same lock.
     if let Err(mut process) = sidecar.commit_spawn(process, &exit) {
+        record_startup_diagnostic("supervisor: commit_spawn rejected (shutdown won the race)");
         stop_owned_process(&mut process);
         return;
     }
 
     match wait_http_ready(&sidecar, port, &token, &exit) {
         Ok(ReadinessWait::Ready) => {
+            record_startup_diagnostic(&format!("sidecar ready on port {port}"));
             let _ = sidecar.set_ready(&exit);
         }
         Ok(ReadinessWait::Cancelled) => {}
         Err(error) => {
+            record_startup_diagnostic(&format!("sidecar never became ready: {error}"));
             if sidecar.set_failed(format!("GA-Hub desktop startup: {error}"), &exit) {
                 // Keep the Child in the shared owner slot so CloseRequested can
                 // still take it immediately. This quick request handles the usual
@@ -873,7 +973,11 @@ fn spawn_background_supervisor(
         .name("desktop-sidecar-supervisor".to_string())
         .spawn(move || run_sidecar_supervisor(sidecar, port, token, exit, spawn_sidecar))
         .map(|_| ())
-        .map_err(|error| format!("sidecar supervisor thread failed: {error}"))
+        .map_err(|error| {
+            let message = format!("sidecar supervisor thread failed: {error}");
+            record_startup_diagnostic(&message);
+            message
+        })
 }
 
 // ── Browser debug bridge ────────────────────────────────────────────────────
@@ -1302,6 +1406,7 @@ fn main() {
             restart_backend
         ])
         .setup(move |app| {
+            record_startup_diagnostic("setup: enter");
             // The existing frontend contract reads this identity synchronously
             // from the initialization script. Port reservation and UUID creation
             // are intentionally the only sidecar preparation left in setup.
@@ -1337,6 +1442,9 @@ fn main() {
                 .build()?;
 
             fit_main_window_to_work_area(&main_window);
+            record_startup_diagnostic(&format!(
+                "setup: window ready, spawning supervisor for port {port}"
+            ));
 
             // CreateProcess, Windows Job / Unix process-group setup, PyInstaller
             // extraction, and HTTP readiness all run off the Tauri setup thread.

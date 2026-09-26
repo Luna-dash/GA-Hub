@@ -291,8 +291,18 @@ def user_python_candidates(
     env = os.environ.get("GA_PYTHON", "").strip()
     add(env, "GA_PYTHON", report_invalid=True)
 
-    saved = load_config().get("python_path")
-    add(saved, "config.python_path", report_invalid=True)
+    config = load_config()
+    add(config.get("python_path"), "config.python_path", report_invalid=True)
+    # ``config.gahub_python`` is the interpreter the user already declared for
+    # GA itself: the conductor engine spawns ``gahub_app.py`` with it
+    # (conductor_client._resolve_python_exe). Honour it here too, and above
+    # every *inferred* source below. Otherwise a host whose PATH carries an
+    # unrelated Python (tool-bundled runtimes, MSYS, conda base, ...) resolves
+    # here to that runtime, and any child needing GA's optional dependencies
+    # (feishu's lark_oapi, mykey's cryptography, ...) fails to start — while
+    # the engine happily runs in GA's environment. One declaration, one
+    # interpreter, everywhere.
+    add(config.get("gahub_python"), "config.gahub_python", report_invalid=True)
 
     for cand in _ga_venv_python_candidates(target_root):
         add(cand, "ga_venv")
@@ -339,10 +349,12 @@ def discover_user_python(
 
       1. ``$GA_PYTHON`` env override (escape hatch for tests / weird setups)
       2. saved config: ``python_path`` (UI-configured path)
-      3. GenericAgent project virtualenvs (``.venv``, ``venv``, ``env``)
-      4. macOS Homebrew, pyenv shim, Apple stub, common Windows installs
-      5. ``python3`` / ``python`` against the parent process's PATH
-      6. the current process executable
+      3. saved config: ``gahub_python`` (the interpreter GA itself runs on,
+         i.e. what the conductor engine spawns ``gahub_app.py`` with)
+      4. GenericAgent project virtualenvs (``.venv``, ``venv``, ``env``)
+      5. macOS Homebrew, pyenv shim, Apple stub, common Windows installs
+      6. ``python3`` / ``python`` against the parent process's PATH
+      7. the current process executable
 
     Returns absolute path, or ``None`` if nothing usable was found. Callers
     should treat ``None`` as "fall back to ``sys.executable``" — acceptable
