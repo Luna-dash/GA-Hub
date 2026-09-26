@@ -40,15 +40,28 @@ def main() -> int:
             for dependency in sorted(conda_bin.glob(pattern)):
                 command.extend(["--add-binary", f"{dependency};."])
     command.append(str(ROOT / "server" / "desktop_sidecar.py"))
+    built = distpath / f"ga-hub-sidecar{suffix}"
+    # Never let a previous successful build masquerade as this run's output.
+    built.unlink(missing_ok=True)
     result = subprocess.run(command, cwd=ROOT)
     if result.returncode:
         return result.returncode
-    built = distpath / f"ga-hub-sidecar{suffix}"
     if not built.is_file():
         print(f"expected PyInstaller output missing: {built}", file=sys.stderr)
         return 2
+    if built.stat().st_size == 0:
+        print(f"PyInstaller output is empty: {built}", file=sys.stderr)
+        return 2
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(built, destination)
+    # Stage next to destination and atomically replace: a failed copy never
+    # truncates the last known-good sidecar; Windows also refuses replacement
+    # when a running process holds the image open.
+    staged = destination.with_name(destination.name + ".new")
+    try:
+        shutil.copy2(built, staged)
+        staged.replace(destination)
+    finally:
+        staged.unlink(missing_ok=True)
     print(destination)
     return 0
 

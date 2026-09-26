@@ -115,7 +115,7 @@ Memory 保存会检测版本冲突并先备份；执行 `git pull` 前仍应先�
 或者改 GA 目录 `mykey.py` 里 `webui_port=...`（如果 GA 配了的话）。
 
 **Q: 启动后提示"Desktop app not built yet"？**
-桌面版需要先构建一次：运行 `build_all.bat`（Windows）。之后 `start.bat` 会直接启动它。
+桌面版需要先构建一次：运行 `build_all.bat`（Windows；构建纪律与排障见 `docs/BUILD.md`）。之后 `start.bat` 会直接启动它。
 
 **Q: 浏览器模式下保存 GA 目录后要重启？**
 浏览器模式请手动重启后端（Ctrl+C 后重新执行启动命令）。Tauri 桌面版在设置页保存后会出现「重启后端」按钮，点击即原地重启，无需关窗。

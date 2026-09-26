@@ -1,6 +1,8 @@
 @echo off
-:: GA-Hub 一键交付构建：前端 → sidecar → Tauri 壳 → 产物守卫。
-:: 逻辑都在 scripts\build_all.py，这里只负责挑解释器。
+:: GA-Hub one-shot build (frontend, sidecar, Tauri shell, artifact guards).
+:: Real logic lives in scripts\build_all.py; this launcher only picks the interpreter.
+:: Keep this file ASCII-only: cmd.exe parses .bat in the OEM codepage,
+:: and non-ASCII bytes here produce stray parse errors on some systems.
 setlocal
 cd /d "%~dp0"
 set "PYTHONUTF8=1"

@@ -4,7 +4,7 @@
   "version": "0.3.4",
   "scripts": {
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "node scripts/refuse_desktop_build.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.0"
