@@ -1565,6 +1565,9 @@ describe('Conductor chat scroll restoration', () => {
     )
     renderPage()
     await waitFor(() => expect(host.querySelector('header .ga-badge')?.textContent).toBe('启动中…'))
+    // 启动中 也可能来自状态轮询：必须等 bring-up 真的发出（settle 被赋值）再结算，
+    // 否则机器繁忙时 settle 还是 undefined（build_all --full 实测踩到）。
+    await waitFor(() => expect(settle).toBeTypeOf('function'))
 
     act(() => settle({ ok: true, started: true }))
     await flushQueries()
@@ -1689,6 +1692,8 @@ describe('Conductor chat scroll restoration', () => {
     )
     renderPage()
     await waitFor(() => expect(host.querySelector('header .ga-badge')?.textContent).toBe('启动中…'))
+    // 同上：先确认 bring-up 已发出，再结算这个 promise。
+    await waitFor(() => expect(settle).toBeTypeOf('function'))
 
     // The bring-up has returned successfully — the engine is still not ready,
     // which is exactly the gap the two surfaces used to disagree in.
