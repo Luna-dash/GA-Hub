@@ -194,7 +194,11 @@ def test_detail_and_export_parsing_do_not_block_event_loop(tmp_path, monkeypatch
     asyncio.run(run_all())
 
 
-def test_restore_builds_session_runtime_via_coordinator(tmp_path, monkeypatch):
+def test_restore_builds_session_runtime_via_coordinator(
+    tmp_path, monkeypatch, session_domain
+):
+    from server.services import session_lifecycle as lifecycle_module
+
     archive = tmp_path / "session.txt"
     archive.write_text("body", encoding="utf-8")
     calls: dict = {}
@@ -233,8 +237,8 @@ def test_restore_builds_session_runtime_via_coordinator(tmp_path, monkeypatch):
             return "Title"
 
     monkeypatch.setattr(conversations, "_metadata", FakeMetadata())
-    monkeypatch.setattr(conversations, "SessionRuntimeFactory", FakeFactory)
-    monkeypatch.setattr(conversations, "_session_coordinator", lambda: FakeCoordinator())
+    monkeypatch.setattr(lifecycle_module, "SessionRuntimeFactory", FakeFactory)
+    monkeypatch.setattr(conversations, "_session_coordinator", lambda _lifecycle: FakeCoordinator())
     monkeypatch.setattr(
         conversations,
         "archive_session_by_id",
@@ -254,6 +258,7 @@ def test_restore_builds_session_runtime_via_coordinator(tmp_path, monkeypatch):
     async def run():
         result, _ = await asyncio.gather(
             conversations.restore_conversation(
+                session_domain,
                 "archive-1",
                 conversations.ConversationRestoreReq(session_id="sess-1"),
             ),
@@ -277,7 +282,11 @@ def test_restore_builds_session_runtime_via_coordinator(tmp_path, monkeypatch):
     assert events == ["heartbeat"]
 
 
-def test_restore_busy_refusal_discards_new_runtime(tmp_path, monkeypatch):
+def test_restore_busy_refusal_discards_new_runtime(
+    tmp_path, monkeypatch, session_domain
+):
+    from server.services import session_lifecycle as lifecycle_module
+
     archive = tmp_path / "session.txt"
     archive.write_text("body", encoding="utf-8")
     calls: dict = {}
@@ -310,8 +319,8 @@ def test_restore_busy_refusal_discards_new_runtime(tmp_path, monkeypatch):
             raise AssertionError("title must not be read after a refused restore")
 
     monkeypatch.setattr(conversations, "_metadata", FakeMetadata())
-    monkeypatch.setattr(conversations, "SessionRuntimeFactory", FakeFactory)
-    monkeypatch.setattr(conversations, "_session_coordinator", lambda: BusyCoordinator())
+    monkeypatch.setattr(lifecycle_module, "SessionRuntimeFactory", FakeFactory)
+    monkeypatch.setattr(conversations, "_session_coordinator", lambda _lifecycle: BusyCoordinator())
     monkeypatch.setattr(
         conversations,
         "archive_session_by_id",
@@ -321,6 +330,7 @@ def test_restore_busy_refusal_discards_new_runtime(tmp_path, monkeypatch):
     with pytest.raises(HTTPException) as excinfo:
         asyncio.run(
             conversations.restore_conversation(
+                session_domain,
                 "archive-1",
                 conversations.ConversationRestoreReq(session_id="sess-1"),
             )
@@ -396,9 +406,10 @@ def test_content_search_cache_invalidates_after_archive_append(tmp_path):
     assert archive_messages.archive_contains(str(archive), "new content") is True
 
 
-def test_restore_requires_target_session_id_in_request_body():
+def test_restore_requires_target_session_id_in_request_body(bind_session_domain):
     app = FastAPI()
     app.include_router(conversations.router)
+    bind_session_domain(app)
 
     with TestClient(app) as client:
         response = client.post("/api/conversations/archive-1/restore")
@@ -406,9 +417,12 @@ def test_restore_requires_target_session_id_in_request_body():
     assert response.status_code == 422
 
 
-def test_restore_rejects_unknown_target_session_before_loading_archive(monkeypatch):
+def test_restore_rejects_unknown_target_session_before_loading_archive(
+    monkeypatch, bind_session_domain
+):
     app = FastAPI()
     app.include_router(conversations.router)
+    bind_session_domain(app)
     archive_lookup_called = False
 
     def archive_lookup(_cid):

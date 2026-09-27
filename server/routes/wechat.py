@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ..schemas import (
     WxAllowlistReq,
@@ -19,67 +20,77 @@ from ..schemas import (
     WxSendResp,
     WxStatusResp,
 )
+from ..services.session_lifecycle import SessionLifecycle, session_lifecycle_of
 from ..services.wechat_service import WeChatService
 
 router = APIRouter()
 
 
-def svc() -> WeChatService:
-    from .sessions import system_channels
+def _request_lifecycle(request: Request) -> SessionLifecycle:
+    return session_lifecycle_of(request.app)
 
-    return WeChatService.instance(system_channels().channel("wechat"))
+
+# The session domain is owned by the composition root and bound to the app
+# (server.main). Resolving it here is what retired the sibling-route import
+# this module used to need for service location.
+SessionDomain = Annotated[SessionLifecycle, Depends(_request_lifecycle)]
+
+
+def svc(lifecycle: SessionLifecycle) -> WeChatService:
+    return WeChatService.instance(lifecycle.system_channels().channel("wechat"))
 
 
 @router.get("/api/wechat/status")
-def status() -> WxStatusResp:
-    return svc().status()
+def status(lifecycle: SessionDomain) -> WxStatusResp:
+    return svc(lifecycle).status()
 
 
 @router.post("/api/wechat/login")
-def login() -> WxQRState:
+def login(lifecycle: SessionDomain) -> WxQRState:
     """Begin QR login flow. Frontend should subscribe to /ws/events?prefix=wechat: for QR updates."""
-    return svc().start_qr_login()
+    return svc(lifecycle).start_qr_login()
 
 
 @router.post("/api/wechat/logout")
-def logout() -> WxLogoutResp:
-    svc().logout()
+def logout(lifecycle: SessionDomain) -> WxLogoutResp:
+    svc(lifecycle).logout()
     return {"ok": True}
 
 
 @router.post("/api/wechat/poll/start")
-def start_polling() -> WxPollStartResp:
-    return {"started": svc().start_polling()}
+def start_polling(lifecycle: SessionDomain) -> WxPollStartResp:
+    return {"started": svc(lifecycle).start_polling()}
 
 
 @router.post("/api/wechat/poll/stop")
-def stop_polling() -> WxPollStopResp:
-    svc().stop_polling()
+def stop_polling(lifecycle: SessionDomain) -> WxPollStopResp:
+    svc(lifecycle).stop_polling()
     return {"ok": True}
 
 
 @router.get("/api/wechat/contacts")
-def contacts() -> WxContactListResp:
-    return {"contacts": svc().list_contacts()}
+def contacts(lifecycle: SessionDomain) -> WxContactListResp:
+    return {"contacts": svc(lifecycle).list_contacts()}
 
 
 @router.get("/api/wechat/messages")
 def messages(
+    lifecycle: SessionDomain,
     uid: str | None = None,
     limit: int = Query(default=200, ge=1, le=1000),
 ) -> WxLogListResp:
-    return {"messages": svc().get_messages(uid=uid, limit=min(limit, 1000))}
+    return {"messages": svc(lifecycle).get_messages(uid=uid, limit=min(limit, 1000))}
 
 
 @router.delete("/api/wechat/messages")
-def clear_messages() -> WxLogoutResp:
-    svc().clear_log()
+def clear_messages(lifecycle: SessionDomain) -> WxLogoutResp:
+    svc(lifecycle).clear_log()
     return {"ok": True}
 
 
 @router.post("/api/wechat/send")
-async def send(req: WxSendReq) -> WxSendResp:
-    s = svc()
+async def send(req: WxSendReq, lifecycle: SessionDomain) -> WxSendResp:
+    s = svc(lifecycle)
     if not s.bot.has_token:
         raise HTTPException(400, "wechat not logged in")
     if req.text:
@@ -92,11 +103,11 @@ async def send(req: WxSendReq) -> WxSendResp:
 
 
 @router.get("/api/wechat/allowlist")
-def get_allowlist() -> WxAllowlistResp:
-    return {"allowlist": sorted(svc().allowlist) if svc().allowlist != {"*"} else ["*"]}
+def get_allowlist(lifecycle: SessionDomain) -> WxAllowlistResp:
+    return {"allowlist": sorted(svc(lifecycle).allowlist) if svc(lifecycle).allowlist != {"*"} else ["*"]}
 
 
 @router.put("/api/wechat/allowlist")
-def put_allowlist(req: WxAllowlistReq) -> WxAllowlistWriteResp:
-    svc().set_allowlist(req.allowlist)
-    return {"ok": True, "allowlist": sorted(svc().allowlist)}
+def put_allowlist(req: WxAllowlistReq, lifecycle: SessionDomain) -> WxAllowlistWriteResp:
+    svc(lifecycle).set_allowlist(req.allowlist)
+    return {"ok": True, "allowlist": sorted(svc(lifecycle).allowlist)}

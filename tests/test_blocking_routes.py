@@ -45,6 +45,20 @@ def test_mykey_sync_runs_in_worker_thread(tmp_path) -> None:
     assert result["ok"] is True
 
 
+def _domain(store=None, coordinator=None):
+    """A session domain for direct handler calls (the composition root's job).
+
+    Handlers receive the domain explicitly now, so these tests build the same
+    object the app binds instead of monkeypatching route module globals.
+    """
+    from server.services.session_lifecycle import SessionLifecycle
+
+    domain = SessionLifecycle(store=store if store is not None else mock.Mock())
+    if coordinator is not None:
+        domain.attach_coordinator(coordinator)
+    return domain
+
+
 def test_wechat_send_runs_in_worker_thread() -> None:
     service = SimpleNamespace(
         bot=SimpleNamespace(has_token=True),
@@ -54,7 +68,7 @@ def test_wechat_send_runs_in_worker_thread() -> None:
     request = wechat.WxSendReq(uid="user", text="hello")
 
     with mock.patch.object(wechat, "svc", return_value=service):
-        result = asyncio.run(_run_with_probe(wechat.send(request)))
+        result = asyncio.run(_run_with_probe(wechat.send(request, _domain())))
 
     assert result == {"ok": True}
 
@@ -74,14 +88,14 @@ def test_email_probe_runs_in_worker_thread() -> None:
 def test_autonomous_schedule_list_runs_in_worker_thread() -> None:
     service = SimpleNamespace(list=lambda: _slow_result([{"id": "s1"}]))
     with mock.patch.object(autonomous, "svc", return_value=service):
-        result = asyncio.run(_run_with_probe(autonomous.list_schedules()))
+        result = asyncio.run(_run_with_probe(autonomous.list_schedules(_domain())))
     assert result == {"schedules": [{"id": "s1"}]}
 
 
 def test_task_schedule_list_runs_in_worker_thread() -> None:
     service = SimpleNamespace(list=lambda: _slow_result([{"id": "t1"}]))
     with mock.patch.object(tasks, "svc", return_value=service):
-        result = asyncio.run(_run_with_probe(tasks.list_schedules()))
+        result = asyncio.run(_run_with_probe(tasks.list_schedules(_domain())))
     assert result == {"schedules": [{"id": "t1"}]}
 
 
@@ -192,6 +206,7 @@ def test_archive_page_projection_runs_in_worker_thread() -> None:
         result = asyncio.run(
             _run_with_probe(
                 sessions.get_session_messages(
+                    _domain(),
                     "session-id",
                     before=None,
                     limit=32,
@@ -302,12 +317,9 @@ def test_upload_write_runs_in_worker_thread(tmp_path) -> None:
 def test_session_delete_release_runs_in_worker_thread() -> None:
     coordinator = SimpleNamespace(release_runtime=lambda *_a, **_k: _slow_result(None))
     store = SimpleNamespace(get=lambda _sid: {"id": "s1"}, delete=mock.Mock())
-    with (
-        mock.patch.object(sessions, "_store", store),
-        mock.patch.object(sessions, "_coordinator", coordinator),
-        mock.patch.object(sessions, "_get_coordinator", return_value=coordinator),
-    ):
-        result = asyncio.run(_run_with_probe(sessions.delete_session("s1")))
+    domain = _domain(store=store, coordinator=coordinator)
+
+    result = asyncio.run(_run_with_probe(sessions.delete_session(domain, "s1")))
 
     assert result.status_code == 204
 
@@ -324,11 +336,12 @@ def test_conversation_delete_release_runs_in_worker_thread(tmp_path) -> None:
     with (
         mock.patch.object(conversations, "archive_session_by_id", return_value=(str(archive),)),
         mock.patch.object(conversations, "_metadata", metadata),
-        mock.patch.object(sessions, "_coordinator", coordinator),
         mock.patch.object(conversations, "invalidate_archive_catalogue", mock.Mock()),
     ):
         result = asyncio.run(
-            _run_with_probe(conversations.delete_conversation("conv.txt"))
+            _run_with_probe(
+                conversations.delete_conversation(_domain(coordinator=coordinator), "conv.txt")
+            )
         )
 
     assert result == {"ok": True, "id": "conv.txt"}
@@ -352,14 +365,10 @@ def test_session_rewind_runs_in_worker_thread() -> None:
         rewind=lambda *_a, **_k: _slow_result({"kept": 1, "history_lines": 2,
                                                "removed_history_entries": 2,
                                                "removed_sids": ["s2"]}))
-    with (
-        mock.patch.object(sessions, "_session", return_value={"id": "s1"}),
-        mock.patch.object(sessions, "_coordinator", coordinator),
-        mock.patch.object(sessions, "_get_coordinator", return_value=coordinator),
-        mock.patch.object(sessions, "_store", SimpleNamespace(touch=mock.Mock())),
-    ):
+    domain = _domain(store=SimpleNamespace(touch=mock.Mock()), coordinator=coordinator)
+    with mock.patch.object(sessions, "_session", return_value={"id": "s1"}):
         result = asyncio.run(
-            _run_with_probe(sessions.session_rewind("s1", RewindReq(n=1)))
+            _run_with_probe(sessions.session_rewind(domain, "s1", RewindReq(n=1)))
         )
 
     assert result["kept"] == 1
@@ -387,8 +396,8 @@ def test_agent_chat_retry_config_write_runs_in_worker_thread() -> None:
 
 def test_session_llm_reload_runs_in_worker_thread() -> None:
     entries = [("key-a", 3)]
+    domain = _domain(store=SimpleNamespace(update=mock.Mock(return_value={"id": "s1"})))
     with (
-        mock.patch.object(sessions, "_store", SimpleNamespace(update=mock.Mock(return_value={"id": "s1"}))),
         mock.patch("server.services.agent_service.get_agent_service"),
         mock.patch(
             "server.services.llm_registry.LlmRegistry.reload_and_snapshot",
@@ -398,7 +407,7 @@ def test_session_llm_reload_runs_in_worker_thread() -> None:
         result = asyncio.run(
             _run_with_probe(
                 sessions.update_session_model(
-                    "s1", sessions.SessionModelUpdate(llm_index=3)
+                    domain, "s1", sessions.SessionModelUpdate(llm_index=3)
                 )
             )
         )
@@ -422,21 +431,22 @@ def test_project_prepare_runs_in_worker_thread() -> None:
 
 def test_session_sidecar_list_runs_in_worker_thread() -> None:
     store = SimpleNamespace(list=lambda: _slow_result([]))
-    with mock.patch.object(sessions, "_store", store):
-        result = asyncio.run(_run_with_probe(sessions.list_sessions()))
+    result = asyncio.run(_run_with_probe(sessions.list_sessions(_domain(store=store))))
 
     assert result.total == 0
 
 
 def test_scheduled_chat_create_runs_in_worker_thread() -> None:
+    from server.services.session_lifecycle import SessionLifecycle
+
     service = SimpleNamespace(create=lambda **_k: _slow_result({"id": "t1"}))
     request = sessions.ScheduledChatCreate(text="hi", scheduled_for=time.time() + 60)
     with (
         mock.patch.object(sessions, "_session", return_value={"id": "s1"}),
-        mock.patch.object(sessions, "_get_scheduled_chats", return_value=service),
+        mock.patch.object(SessionLifecycle, "scheduled_chats", lambda _self: service),
     ):
         result = asyncio.run(
-            _run_with_probe(sessions.create_scheduled_chat("s1", request))
+            _run_with_probe(sessions.create_scheduled_chat(_domain(), "s1", request))
         )
 
     assert result == {"id": "t1"}
@@ -466,7 +476,7 @@ def test_conversation_import_copy_runs_in_worker_thread(tmp_path) -> None:
             return_value=(str(tmp_path / "source.txt"),),
         ),
         mock.patch.object(conversations, "_metadata", metadata),
-        mock.patch.object(conversations, "_session_coordinator", lambda: coordinator),
+        mock.patch.object(conversations, "_session_coordinator", lambda _lifecycle: coordinator),
         mock.patch.object(conversations, "first_user_preview", lambda _p: "标题"),
         mock.patch.object(
             conversations,
@@ -475,7 +485,7 @@ def test_conversation_import_copy_runs_in_worker_thread(tmp_path) -> None:
         ),
     ):
         result = asyncio.run(
-            _run_with_probe(conversations.import_conversation("source.txt"))
+            _run_with_probe(conversations.import_conversation(_domain(), "source.txt"))
         )
 
     assert result["session_id"] == "s1"

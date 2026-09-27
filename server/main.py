@@ -266,6 +266,13 @@ def create_app() -> FastAPI:
     )
     app.state.services = services
     app.state.service_registry = app_registry
+    # Process-lifetime session domain (metadata store, run coordinator,
+    # scheduled chats, system channels). The composition root builds it and
+    # every route resolves it from the app it serves: no route module owns it,
+    # and services/ never has to import routes/ to find it.
+    from .services.session_lifecycle import SessionLifecycle
+
+    app.state.session_lifecycle = SessionLifecycle()
 
     # Semantic service exceptions become their HTTP shape here, once, unless
     # a route translated them first (routes raise HTTPException, which wins).
@@ -324,9 +331,11 @@ def create_app() -> FastAPI:
         from .services.autonomous_scheduler import AutonomousScheduler
         from .services.scheduler_host import SchedulerHost
         from .services.task_scheduler import TaskScheduler
-        from .routes import sessions as session_routes
         from .services.feishu_service import FeishuService
-        session_routes.prepare_session_runtime_lifecycle()
+        from .services.session_lifecycle import session_lifecycle_of
+
+        lifecycle = session_lifecycle_of(app)
+        lifecycle.prepare()
 
         # P0: probe the GA core contract *before* AgentService wires itself to
         # it. Failure does NOT abort startup (per P0 spec: the service still
@@ -359,11 +368,11 @@ def create_app() -> FastAPI:
         services.scheduler_host = scheduler_host
         scheduler_host.register(
             "scheduled_chats",
-            lambda: session_routes.scheduled_chat_service(),
+            lambda: lifecycle.scheduled_chats(),
         )
         # Background producers run on system sessions through the SAME
         # SessionCoordinator admission gate as web sessions (chat-chain merge).
-        channels = session_routes.system_channels()
+        channels = lifecycle.system_channels()
         scheduler_host.register(
             "autonomous",
             lambda: AutonomousScheduler.instance(
@@ -406,15 +415,15 @@ def create_app() -> FastAPI:
         await asyncio.to_thread(conversations_routes.run_legacy_title_migration_once)
 
         # Phone projection: expose chat sessions as hub peers (plan §7.3).
-        # Coordinator accessors are injected here — the composition root —
-        # because services/ must not import routes/ (import-direction test).
+        # The composition root injects the accessors it owns — services/ must
+        # not import routes/ (import-direction test) — and the routes resolve
+        # this same domain from app.state.
         try:
             from .services.hub_session_projection import start_hub_session_projection
-            from .routes.sessions import _get_coordinator, peek_coordinator
 
             start_hub_session_projection(
-                get_coordinator=_get_coordinator,
-                peek_coordinator=peek_coordinator,
+                get_coordinator=lifecycle.coordinator,
+                peek_coordinator=lifecycle.peek_coordinator,
             )
         except Exception:
             log.exception("hub session projection start failed")
@@ -427,25 +436,22 @@ def create_app() -> FastAPI:
         except Exception:
             log.exception("hub session projection stop failed")
         if not setup_mode:
-            session_routes = None
+            from .services.session_lifecycle import session_lifecycle_of
+
+            lifecycle = session_lifecycle_of(app)
             session_runtime_shutdown_ok = False
             try:
                 try:
-                    from .routes import sessions as session_routes
-                    session_routes.begin_session_runtime_shutdown()
+                    lifecycle.begin_shutdown()
                 except Exception:
                     log.exception("session runtime admission gate failed")
                 # Stop task producers before the services they can invoke.
                 try:
-                    if session_routes is None:
-                        from .routes import sessions as session_routes
-                    shutdown_result = session_routes.stop_session_runtimes(
-                        keep_admission_closed=True
+                    # stop_runtimes() answers a bool: False means teardown
+                    # missed its deadline and admission must stay closed.
+                    session_runtime_shutdown_ok = bool(
+                        lifecycle.stop_runtimes(keep_admission_closed=True)
                     )
-                    # ``None`` is the legacy return value and mocks return a
-                    # sentinel object; only an explicit False means teardown
-                    # missed its deadline and must keep admission closed.
-                    session_runtime_shutdown_ok = shutdown_result is not False
                 except Exception:
                     log.exception("session runtime abort failed")
                 await _cancel_background_task(feishu_autostart_task)
@@ -462,9 +468,9 @@ def create_app() -> FastAPI:
                 except Exception:
                     log.exception("goalhive shutdown failed")
             finally:
-                if session_runtime_shutdown_ok and session_routes is not None:
+                if session_runtime_shutdown_ok:
                     try:
-                        session_routes.finish_session_runtime_shutdown()
+                        lifecycle.finish_shutdown()
                     except Exception:
                         log.exception("session runtime admission gate cleanup failed")
 

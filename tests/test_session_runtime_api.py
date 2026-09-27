@@ -104,14 +104,16 @@ class FakeCoordinator:
 
 def _client(tmp_path: Path, monkeypatch):
     from server.routes import sessions
+    from server.services.session_lifecycle import SessionLifecycle
 
     store = SessionMetadataStore(tmp_path)
     coordinator = FakeCoordinator()
-    monkeypatch.setattr(sessions, "_store", store)
-    monkeypatch.setattr(sessions, "_coordinator", coordinator)
     app = FastAPI()
     install_error_handlers(app)
     app.include_router(sessions.router)
+    domain = SessionLifecycle(store=store)
+    domain.attach_coordinator(coordinator)
+    app.state.session_lifecycle = domain
     return TestClient(app), store, coordinator
 
 
@@ -269,11 +271,12 @@ def test_unbound_session_run_inherits_preferred_llm_key(
     tmp_path: Path, monkeypatch
 ) -> None:
     from server.routes import sessions
+    from server.services import session_lifecycle as lifecycle_module
 
     client, store, coordinator = _client(tmp_path, monkeypatch)
     sid = store.create(title="Follow global")["id"]
     monkeypatch.setattr(
-        sessions,
+        lifecycle_module,
         "LlmPreferenceStore",
         lambda: type("Preferences", (), {"get_key": lambda self: "native_oai_config"})(),
     )
@@ -374,15 +377,15 @@ def test_deleting_idle_session_releases_cached_runtime_once(tmp_path: Path, monk
 
 
 def test_session_run_capacity_defaults_to_ten_and_allows_one_to_ten(monkeypatch) -> None:
-    from server.routes import sessions
+    from server.services import session_lifecycle as lifecycle_module
 
     monkeypatch.delenv("GAHUB_SESSION_RUN_CAPACITY", raising=False)
-    assert sessions._session_run_capacity() == 10
+    assert lifecycle_module._session_run_capacity() == 10
 
     for capacity in ("1", "2", "5", "9", "10"):
         monkeypatch.setenv("GAHUB_SESSION_RUN_CAPACITY", capacity)
-        assert sessions._session_run_capacity() == int(capacity)
+        assert lifecycle_module._session_run_capacity() == int(capacity)
 
     for invalid in ("0", "11", "many", ""):
         monkeypatch.setenv("GAHUB_SESSION_RUN_CAPACITY", invalid)
-        assert sessions._session_run_capacity() == 10
+        assert lifecycle_module._session_run_capacity() == 10

@@ -235,7 +235,8 @@ def test_deleting_bound_archive_releases_session_runtime_before_unlink(tmp_path,
                 after_release()
             return True
 
-    monkeypatch.setattr(sessions, "_coordinator", Coordinator())
+    from server.services.session_lifecycle import SessionLifecycle
+
     monkeypatch.setattr(conversations, "_metadata", sessions_store)
     monkeypatch.setattr(
         conversations,
@@ -245,6 +246,9 @@ def test_deleting_bound_archive_releases_session_runtime_before_unlink(tmp_path,
 
     app = FastAPI()
     app.include_router(conversations.router)
+    domain = SessionLifecycle(store=sessions_store)
+    domain.attach_coordinator(Coordinator())
+    app.state.session_lifecycle = domain
     with TestClient(app) as client:
         response = client.delete(f"/api/conversations/{archive.name}")
 

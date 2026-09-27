@@ -28,6 +28,7 @@ from server.services.archive_import import (
     trim_incomplete_tail,
 )
 from server.services.archive_messages import _FILE_HINT
+from server.services.session_lifecycle import SessionLifecycle
 from server.services.session_metadata import SessionMetadataStore
 from server.services.session_runtime_factory import RuntimeRestoreError
 
@@ -108,10 +109,14 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _app() -> FastAPI:
+def _app(tmp_path: Path) -> FastAPI:
     app = FastAPI()
     install_error_handlers(app)
     app.include_router(conversations.router)
+    # Binding the session domain to the app is the composition root's job.
+    app.state.session_lifecycle = SessionLifecycle(
+        store=SessionMetadataStore(tmp_path / "domain")
+    )
     return app
 
 
@@ -293,7 +298,7 @@ def _setup_import(tmp_path: Path, monkeypatch, archive: str, *, coordinator=None
     monkeypatch.setattr(
         archive_import.archive_bridge, "mint_native_log_path", lambda: str(target)
     )
-    monkeypatch.setattr(conversations, "_session_coordinator", lambda: coordinator)
+    monkeypatch.setattr(conversations, "_session_coordinator", lambda _lifecycle: coordinator)
     monkeypatch.setattr(
         conversations,
         "archive_session_by_id",
@@ -306,7 +311,7 @@ def test_import_creates_a_session_bound_to_a_clean_copy(tmp_path, monkeypatch) -
     store, source, target, coordinator = _setup_import(tmp_path, monkeypatch, _im_archive())
     before = _sha256(source)
 
-    with TestClient(_app()) as client:
+    with TestClient(_app(tmp_path)) as client:
         response = client.post(f"/api/conversations/{source.name}/import")
 
     assert response.status_code == 200
@@ -334,7 +339,7 @@ def test_import_prefers_the_archive_title_over_the_preview(tmp_path, monkeypatch
     )
     monkeypatch.setattr(conversations._metadata, "title_for_archive", lambda path: "手工命名")
 
-    with TestClient(_app()) as client:
+    with TestClient(_app(tmp_path)) as client:
         response = client.post(f"/api/conversations/{source.name}/import")
 
     assert store.get(response.json()["session_id"])["title"] == "手工命名"
@@ -354,7 +359,7 @@ def test_import_refuses_an_archive_that_already_belongs_to_a_session(
         lambda *a, **k: pytest.fail("a bound archive must not be copied"),
     )
 
-    with TestClient(_app()) as client:
+    with TestClient(_app(tmp_path)) as client:
         response = client.post(f"/api/conversations/{source.name}/import")
 
     assert response.status_code == 409
@@ -381,7 +386,7 @@ def test_import_ignores_a_title_only_row_left_by_renaming(
     titled = store.set_title_for_archive(source, "改过名的归档")
     assert titled["id"].startswith("archive-")
 
-    with TestClient(_app()) as client:
+    with TestClient(_app(tmp_path)) as client:
         response = client.post(f"/api/conversations/{source.name}/import")
 
     assert response.status_code == 200
@@ -398,7 +403,7 @@ def test_import_reports_unknown_conversations(tmp_path, monkeypatch) -> None:
     _setup_import(tmp_path, monkeypatch, _im_archive())
     monkeypatch.setattr(conversations, "archive_session_by_id", lambda cid: None)
 
-    with TestClient(_app()) as client:
+    with TestClient(_app(tmp_path)) as client:
         response = client.post("/api/conversations/model_responses_missing.txt/import")
 
     assert response.status_code == 404
@@ -418,7 +423,7 @@ def test_import_rolls_back_the_session_and_copy_when_the_copy_fails(
         lambda *a, **k: (_ for _ in ()).throw(OSError("disk on fire")),
     )
 
-    with TestClient(_app(), raise_server_exceptions=False) as client:
+    with TestClient(_app(tmp_path), raise_server_exceptions=False) as client:
         response = client.post(f"/api/conversations/{source.name}/import")
 
     assert response.status_code == 500
@@ -434,7 +439,7 @@ def test_import_rolls_back_when_the_cold_start_fails(tmp_path, monkeypatch) -> N
     )
     before = _sha256(source)
 
-    with TestClient(_app(), raise_server_exceptions=False) as client:
+    with TestClient(_app(tmp_path), raise_server_exceptions=False) as client:
         response = client.post(f"/api/conversations/{source.name}/import")
 
     assert response.status_code == 409
@@ -453,7 +458,7 @@ def test_import_refuses_an_archive_with_no_complete_turn(tmp_path, monkeypatch) 
     )
     before = _sha256(source)
 
-    with TestClient(_app()) as client:
+    with TestClient(_app(tmp_path)) as client:
         response = client.post(f"/api/conversations/{source.name}/import")
 
     assert response.status_code == 409
@@ -485,7 +490,7 @@ def test_listing_and_detail_report_the_bound_session(tmp_path, monkeypatch) -> N
     )
     monkeypatch.setattr(conversations, "_ga_extract", lambda path: [])
 
-    with TestClient(_app()) as client:
+    with TestClient(_app(tmp_path)) as client:
         listing = client.get("/api/conversations").json()
         detail = client.get(f"/api/conversations/{bound.name}").json()
 
@@ -511,7 +516,7 @@ def test_listing_and_detail_ignore_title_only_rows(tmp_path, monkeypatch) -> Non
     )
     monkeypatch.setattr(conversations, "_ga_extract", lambda path: [])
 
-    with TestClient(_app()) as client:
+    with TestClient(_app(tmp_path)) as client:
         listing = client.get("/api/conversations").json()
         detail = client.get(f"/api/conversations/{archive.name}").json()
 

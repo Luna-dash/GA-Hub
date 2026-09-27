@@ -212,7 +212,8 @@ e99bf6c、ba75acd、06cad0e、be03131、ea67753、d6ab384、cdb1664、6498211、
 - [x] conversations 服务目录违规三处（3b5cc28）：`_session_by_id` 私有
       复制、restore 手发 CHAT_RESET、delete 手抓 coordinator——全部改走
       archive 目录 / AgentService.reset_live_snapshots 门面 /
-      sessions.peek_coordinator（peek 不构造，保 shutdown 准入门）
+      sessions.peek_coordinator（peek 不构造，保 shutdown 准入门；该 helper
+      2026-09-27 随会话域重构迁至 services/session_lifecycle.SessionLifecycle）
 - [x] conductor 残余清尾（1f73fd9）：_init_fields 真实持有
       _journal_cursor/_cold_start_gate/_action_operations（三个 getattr
       回填 shim 删除）；start_subagent 的 INSTR_DISPATCHED 下沉服务层
@@ -588,3 +589,41 @@ Conductor 原有两条并行轨道——「命令轨」（指令先写 SQLite，
 删除事故恢复后复跑仍为 412 passed。
 核验中同时剔除一条不成立的审计项：LiveChat 的 `queryKey` 实测全部走
 `@/queries/queryKeys` 注册表（10 处），并非「硬编码 11 处绕过注册表」。
+
+## 2026-09-27 会话域归属重构（`routes/sessions.py` 不再持有进程级状态）
+
+来源：本机客户端定位下的架构复审（问题 4）。原状：`routes/sessions.py` 以模块全局
+持有 `_store` / `_coordinator` / `_get_scheduled_chats` / `_system_channels` /
+`_coordinator_stopping`，另有 4 个兄弟路由用**函数内懒导入**
+（`from .sessions import system_channels`）反向取用——路由模块因此成了进程级状态的
+**事实所有者**：谁要一份 store 就再建一份，测试只能靠 monkeypatch 路由全局来装配。
+
+- [x] 单所有者 `server/services/session_lifecycle.py`：`SessionLifecycle` 持有 store /
+      runtime factory / coordinator / scheduled-chat service / system channels，
+      并把生命周期（prepare / begin_shutdown / stop_runtimes / finish_shutdown /
+      准入门）收在同一处
+- [x] 组合根装配：`server/main.py::create_app` 建一个实例并写
+      `app.state.session_lifecycle`；路由经 `Depends(session_lifecycle_of)` 解析
+      （WS 路由从 `ws.app` 取，且在 origin 校验**之后**）。**没有懒回退**：未绑定即
+      `RuntimeError`——默认实例会指向真实用户数据目录，正是要消灭的那种漂移
+- [x] 兄弟路由消除：wechat / tasks / autonomous / conversations 改为接收域对象；
+      `conversations` 的 peek 不再经 sessions，restore 的 runtime 改从域取 factory
+      （此前它自建 `SessionRuntimeFactory(_metadata)`，被新增的契约测试当场抓出）
+- [x] 契约测试：`tests/test_import_direction.py` 收紧为**任何**兄弟路由导入都违规
+      （函数内懒导入原本是绕过模块级规则的漏洞）；新增
+      `tests/test_session_domain_contract.py`（路由不得构造
+      coordinator/factory/scheduler/channels、不得持有 `_store` 等模块全局、每个 app
+      一个域、未绑定必须报错、producer 单实例）
+- [x] 测试装配迁移：11 个测试文件由「patch 路由全局」改为「把域绑到 app / 以参数传入」，
+      `tests/conftest.py` 提供 `session_domain` / `bind_session_domain` 两个 fixture
+
+范围边界（**刻意保留**，非漏网）：`conversations._metadata`、
+`tokens._SESSION_METADATA`、`preferences._STORE` 仍由路由自建。前者被模块级纯函数共享、
+后两者是只读投影，`SessionMetadataStore` 读盘即刷新、多实例无一致性问题；收编它们是
+机械改动而非正确性修复，留到真需要时再做（届时按域拆契约测试，不要写成
+「routes 里禁止出现 `SessionMetadataStore()`」的一刀切）。
+
+验证：`python -m pytest tests -q` → **1034 passed / 2 skipped**（重构前基线
+1028 passed / 2 skipped，新增 6 条契约用例）。`tests/test_feishu_service.py` 的
+`test_status_external_pid_cache_expires` 在全量负载下偶发（单独重跑 3/3 通过，与本次
+改动无关）。

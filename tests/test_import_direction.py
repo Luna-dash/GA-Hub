@@ -2,12 +2,16 @@
 
 - services/ never import fastapi/pydantic (HTTP stays in routes) and never
   reach up into routes/
-- routes/ never import a sibling route at MODULE level — the four known
-  cross-route edges are function-local lazy imports on purpose (they defer
-  the heavy GA/frontends import chain), and a module-level sibling import
-  would be the sessions-as-service-locator drift reappearing
+- routes/ never import a sibling route AT ALL — not at module level and not as
+  a function-local lazy import either. Shared state belongs to a service the
+  composition root owns and binds to the app (`app.state.session_lifecycle`).
+  The function-local form was the loophole: `conversations` used
+  `from .sessions import peek_coordinator` inside a function to dodge the
+  module-level rule, which still made a route module the de-facto owner of
+  process-wide state.
 
 Modeled on test_event_topics / test_env_registry.
+Companion: tests/test_session_domain_contract.py (who owns the session domain).
 """
 from __future__ import annotations
 
@@ -18,9 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 _HTTP_IMPORT = re.compile(r"^\s*(?:import fastapi|from fastapi|import pydantic|from pydantic)\b", re.M)
 _ROUTES_UPIMPORT = re.compile(r"from \.\.routes\b|from server\.routes\b")
-# `from .sessions import ...` etc. at column 0 = module level (a function-local
-# import is indented and sanctioned).
-_SIBLING_ROUTE = re.compile(r"^from \.[a-z_]+ import ", re.M)
+# `from .sessions import ...` / `from ..routes import ...`, at any indentation.
+_SIBLING_ROUTE = re.compile(r"^\s*from \.[a-z_]+ import |^\s*from \.\.routes\b", re.M)
 
 
 def _iter(pkg: str):
@@ -45,14 +48,13 @@ def test_services_do_not_reach_up_into_routes() -> None:
     assert offenders == []
 
 
-def test_routes_import_siblings_only_inside_functions() -> None:
+def test_routes_never_import_a_sibling_route() -> None:
     offenders: list[str] = []
     for path in _iter("routes"):
         text = path.read_text(encoding="utf-8")
         for match in _SIBLING_ROUTE.finditer(text):
-            line_start = text.rfind("\n", 0, match.start()) + 1
-            # column 0 = module level; anything indented is a sanctioned lazy
-            # edge (sessions' heavy frontends chain, conversations' peek).
-            if match.start() == line_start:
-                offenders.append(f"{path.relative_to(ROOT)}: {match.group(0).strip()}")
+            line_no = text.count("\n", 0, match.start()) + 1
+            offenders.append(
+                f"{path.relative_to(ROOT)}:{line_no}: {match.group(0).strip()}"
+            )
     assert offenders == []

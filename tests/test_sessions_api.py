@@ -22,24 +22,34 @@ from server.error_mapping import install_error_handlers
 
 def _client(tmp_path: Path, monkeypatch) -> TestClient:
     from server.routes import sessions
+    from server.services.session_lifecycle import SessionLifecycle
     from server.services.session_metadata import SessionMetadataStore
 
-    monkeypatch.setattr(sessions, "_store", SessionMetadataStore(tmp_path))
     app = FastAPI()
     install_error_handlers(app)
     app.include_router(sessions.router)
+    # Binding the session domain to the app is the composition root's job; a
+    # bare test app does the same thing with a throwaway store instead of
+    # monkeypatching a route module global.
+    app.state.session_lifecycle = SessionLifecycle(store=SessionMetadataStore(tmp_path))
     return TestClient(app)
+
+
+def _store_of(client: TestClient):
+    """The store owned by the session domain bound to this test app."""
+    return client.app.state.session_lifecycle.store
 
 
 def test_session_list_hides_system_channels_unless_asked(tmp_path: Path, monkeypatch) -> None:
     from server.routes import sessions
+    from server.services.session_lifecycle import SessionLifecycle
     from server.services.session_metadata import SessionMetadataStore
 
     store = SessionMetadataStore(tmp_path)
-    monkeypatch.setattr(sessions, "_store", store)
     app = FastAPI()
     install_error_handlers(app)
     app.include_router(sessions.router)
+    app.state.session_lifecycle = SessionLifecycle(store=store)
     with TestClient(app) as client:
         visible = client.post("/api/sessions", json={"title": "用户会话"}).json()
         assert visible["kind"] == "user"
@@ -128,7 +138,7 @@ def test_bound_missing_archive_is_structured_error_without_path_leak(
     missing = tmp_path / "private" / "missing-model-responses.txt"
     with _client(tmp_path, monkeypatch) as client:
         created = client.post("/api/sessions", json={"title": "Missing"}).json()
-        sessions._store.bind_archive(created["id"], missing)
+        _store_of(client).bind_archive(created["id"], missing)
 
         response = client.get(f"/api/sessions/{created['id']}/messages")
         assert response.status_code == 409
@@ -163,7 +173,7 @@ def test_bound_archive_parser_failure_is_stable_error(
     with _client(tmp_path, monkeypatch) as client:
         monkeypatch.setattr(archives._archive_bridge(), "project_archive_text", parser)
         created = client.post("/api/sessions", json={"title": "Broken"}).json()
-        sessions._store.bind_archive(created["id"], archive)
+        _store_of(client).bind_archive(created["id"], archive)
         response = client.get(f"/api/sessions/{created['id']}/messages", params=params)
         parser.assert_called_once()
         assert response.status_code == 409
@@ -191,7 +201,7 @@ def test_bound_archive_projects_ga_messages_without_copying_body(
 
     with _client(tmp_path, monkeypatch) as client:
         created = client.post("/api/sessions", json={"title": "Bound"}).json()
-        sessions._store.bind_archive(created["id"], archive)
+        _store_of(client).bind_archive(created["id"], archive)
 
         response = client.get(f"/api/sessions/{created['id']}/messages")
         assert response.status_code == 200
@@ -255,7 +265,7 @@ def test_archive_messages_support_bounded_backwards_paging(
 
     with _client(tmp_path, monkeypatch) as client:
         created = client.post("/api/sessions", json={"title": "Paged"}).json()
-        sessions._store.bind_archive(created["id"], archive)
+        _store_of(client).bind_archive(created["id"], archive)
 
         newest = client.get(
             f"/api/sessions/{created['id']}/messages",
@@ -278,6 +288,7 @@ def test_archive_messages_support_bounded_backwards_paging(
 def test_cancel_scheduled_chat_maps_service_exceptions(tmp_path, monkeypatch) -> None:
     """The service signals by exception; the route must translate, not 500."""
     from server.routes import sessions
+    from server.services.session_lifecycle import SessionLifecycle
 
     class _CancelRaising:
         def cancel(self, session_id, task_id):
@@ -285,10 +296,10 @@ def test_cancel_scheduled_chat_maps_service_exceptions(tmp_path, monkeypatch) ->
                 raise KeyError(task_id)
             raise ValueError("only pending scheduled chats can be cancelled")
 
-    monkeypatch.setattr(sessions, "_get_scheduled_chats", lambda: _CancelRaising())
+    monkeypatch.setattr(SessionLifecycle, "scheduled_chats", lambda _self: _CancelRaising())
 
     client = _client(tmp_path, monkeypatch)
-    sid = sessions._store.create(title="Has tasks", llm_key="native_oai_config")["id"]
+    sid = _store_of(client).create(title="Has tasks", llm_key="native_oai_config")["id"]
     gone = client.delete(f"/api/sessions/{sid}/scheduled-chats/missing")
     assert gone.status_code == 404
     assert gone.json()["detail"]["code"] == "scheduled_chat_not_found"
@@ -302,6 +313,7 @@ def test_scheduled_dispatch_matches_coordinator_submit_contract(
 ) -> None:
     from server.routes import sessions
     from server.services.scheduled_chat_service import ScheduledChat
+    from server.services.session_lifecycle import SessionLifecycle
     from server.services.session_metadata import SessionMetadataStore
 
     store = SessionMetadataStore(tmp_path)
@@ -318,9 +330,9 @@ def test_scheduled_dispatch_matches_coordinator_submit_contract(
                 "llm_key": llm_key,
             })
 
-    monkeypatch.setattr(sessions, "_store", store)
-    monkeypatch.setattr(sessions, "_coordinator", StrictCoordinator())
-    sessions._dispatch_scheduled_chat(ScheduledChat(
+    domain = SessionLifecycle(store=store)
+    domain.attach_coordinator(StrictCoordinator())
+    domain._dispatch_scheduled_chat(ScheduledChat(
         id="task-1",
         session_id=row["id"],
         text="run later",
@@ -341,7 +353,9 @@ def test_scheduled_dispatch_matches_coordinator_submit_contract(
 def test_project_registry_create_and_session_binding_api(tmp_path: Path, monkeypatch) -> None:
     from frontends.gahub.bridge import workspace as workspace_bridge
     from server.routes import sessions
+    from server.services import session_lifecycle as lifecycle_module
     from server.services.session_coordinator import SessionCoordinator
+    from server.services.session_lifecycle import SessionLifecycle
     from server.services.session_metadata import SessionMetadataStore
 
     projects = [{
@@ -413,13 +427,14 @@ def test_project_registry_create_and_session_binding_api(tmp_path: Path, monkeyp
     )
     coordinator.configure_if_idle(row["id"], lambda _runtime: None)
     coordinator._runtimes[row["id"]] = runtime
-    monkeypatch.setattr(sessions, "_store", store)
-    monkeypatch.setattr(sessions, "_coordinator", coordinator)
-    monkeypatch.setattr(sessions.LlmPreferenceStore, "get_key", lambda _self: None)
+    monkeypatch.setattr(lifecycle_module.LlmPreferenceStore, "get_key", lambda _self: None)
 
     app = FastAPI()
     install_error_handlers(app)
     app.include_router(sessions.router)
+    domain = SessionLifecycle(store=store)
+    domain.attach_coordinator(coordinator)
+    app.state.session_lifecycle = domain
     with TestClient(app) as client:
         listed = client.get("/api/projects")
         assert listed.status_code == 200
@@ -508,6 +523,7 @@ def test_project_binding_rejects_unknown_or_running_session(tmp_path: Path, monk
     from frontends.gahub.bridge import workspace as workspace_bridge
     from server.routes import sessions
     from server.services.session_coordinator import SessionCoordinator
+    from server.services.session_lifecycle import SessionLifecycle
     from server.services.session_metadata import SessionMetadataStore
 
     project = {
@@ -527,12 +543,12 @@ def test_project_binding_rejects_unknown_or_running_session(tmp_path: Path, monk
     coordinator._active_by_session[row["id"]] = type("Active", (), {
         "session_id": row["id"], "run_id": "run-1", "stream_id": "stream-1",
     })()
-    monkeypatch.setattr(sessions, "_store", store)
-    monkeypatch.setattr(sessions, "_coordinator", coordinator)
-
     app = FastAPI()
     install_error_handlers(app)
     app.include_router(sessions.router)
+    domain = SessionLifecycle(store=store)
+    domain.attach_coordinator(coordinator)
+    app.state.session_lifecycle = domain
     with TestClient(app) as client:
         unknown_project = client.put(
             f"/api/sessions/{row['id']}/project",
@@ -592,16 +608,22 @@ def test_sessions_router_is_wired_in_normal_mode(tmp_path: Path, monkeypatch) ->
 
 
 def test_session_runtime_stop_releases_only_a_fully_stopped_coordinator(monkeypatch) -> None:
-    from server.routes import sessions
+    from server.services.session_lifecycle import SessionLifecycle
 
     coordinator = mock.Mock()
     coordinator.shutdown.side_effect = [False, True]
-    monkeypatch.setattr(sessions, "_coordinator", coordinator)
+    domain = SessionLifecycle(store=mock.Mock())
+    domain.attach_coordinator(coordinator)
 
-    assert sessions.stop_session_runtimes(timeout=0.25) is False
-    assert sessions._coordinator is coordinator
-    assert sessions.stop_session_runtimes(timeout=0.5) is True
-    assert sessions._coordinator is None
+    assert domain.stop_runtimes(timeout=0.25) is False
+    # A missed deadline keeps the coordinator and leaves admission closed, so
+    # the gated accessors keep refusing until a later lifespan reopens them.
+    assert domain.admission_open is False
+    assert domain.stop_runtimes(timeout=0.5) is True
+    assert domain.admission_open is True
+    # The fully stopped coordinator is dropped: there is nothing left to stop,
+    # so a later teardown answers True without touching it again.
+    assert domain.stop_runtimes(timeout=0.75) is True
     assert coordinator.shutdown.call_args_list == [
         mock.call(timeout=0.25),
         mock.call(timeout=0.5),

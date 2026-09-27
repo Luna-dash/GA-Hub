@@ -141,8 +141,15 @@ except Exception:
 | `state` | `peek_coordinator()`（**不构造**）；None→`{'run':False}`；否则 `runtime_state(sid).status != STATUS_IDLE` → `{'run':bool}` | 异常→ `{'run':False}` |
 
 依赖获取（均既有面 + 仓内先例）：
-- 协调器：函数内懒 `from .routes.sessions import _get_coordinator, peek_coordinator`（先例：conversations.py:330 同款懒 import）。
-- 会话存储：自建 `SessionMetadataStore()` 实例（先例：conversations.py:65 / tokens.py:17；`_shared_store_lock` + 跨实例缓存槽，安全）。
+- 协调器：**经 `app.state.session_lifecycle` 取**（`Depends(session_lifecycle_of)`，
+  WS 路由用 `ws.app`）。⚠️ 2026-09-27 会话域重构后，函数内懒
+  `from .routes.sessions import _get_coordinator, peek_coordinator` 已**不存在**且被
+  `tests/test_import_direction.py` 明令禁止（任何兄弟路由导入都算违规）；本行原引的
+  `conversations.py:330` 先例已随之删除。`peek_coordinator` / `coordinator` /
+  `runtime_factory` / `scheduled_chats` / `system_channels` 均为该域对象的方法。
+- 会话存储：自建 `SessionMetadataStore()` 实例（先例：conversations.py / tokens.py；
+  `_shared_store_lock` + 跨实例缓存槽，安全）——只读投影可以这样；写/生命周期状态
+  必须走域对象。
 
 ### 7.6 性能预算（硬约束，来自 hub 实测）
 - hub 服务端对 peer 轮询 `ask(timeout=3s)`，失败进 `pdead` 15s（**手机列表消失**）→ `get_outputs` 必须"stat 未变即回缓存"，仅变更时一次尾窗读取；启动对账时**全量预热**（首屏零懒加载）。

@@ -20,8 +20,9 @@ import os
 import threading
 import zipfile
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
 
 from .. import _paths
@@ -57,8 +58,8 @@ from ..services.session_coordinator import (
     SessionControlBusyError,
     SessionCoordinatorStoppedError,
 )
+from ..services.session_lifecycle import SessionLifecycle, session_lifecycle_of
 from ..services.session_metadata import SessionMetadataStore, is_archive_metadata_id
-from ..services.session_runtime_factory import SessionRuntimeFactory
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -66,6 +67,15 @@ _metadata = SessionMetadataStore()
 _legacy_titles_migrated = False
 _legacy_titles_lock = threading.Lock()
 _ZIP_ENTRY_MAX_SIZE = 10 * 1024 * 1024
+
+
+def _request_lifecycle(request: Request) -> SessionLifecycle:
+    return session_lifecycle_of(request.app)
+
+
+# The run coordinator belongs to the app-owned session domain; this route no
+# longer reaches into a sibling route for it.
+SessionDomain = Annotated[SessionLifecycle, Depends(_request_lifecycle)]
 _ZIP_READ_CHUNK_SIZE = 64 * 1024
 
 
@@ -253,7 +263,7 @@ async def update_conversation(cid: str, req: ConversationUpdate):
     "/api/conversations/{cid}",
     response_model=ConversationMutationResp,
 )
-async def delete_conversation(cid: str):
+async def delete_conversation(lifecycle: SessionDomain, cid: str):
     # Catalogue refresh stats/scans the archive dir — keep it off the loop.
     s = await asyncio.to_thread(archive_session_by_id, cid)
     if s is None:
@@ -261,10 +271,9 @@ async def delete_conversation(cid: str):
     path = Path(s[0]).resolve()
     bound_session = await asyncio.to_thread(_metadata.find_by_archive, path)
     if bound_session is not None:
-        from ..routes import sessions as session_routes
         # Peek (never construct) and keep the shutdown admission gate — same
         # refusal semantics as every other runtime-touching endpoint.
-        coordinator = session_routes.peek_coordinator()
+        coordinator = lifecycle.peek_coordinator()
         if coordinator is not None:
             def _delete_archive() -> None:
                 # The binding was resolved before this session reservation was
@@ -321,22 +330,18 @@ def _unlink_archive(cid: str, path: Path) -> None:
     _metadata.delete_by_archive(path)
 
 
-def _session_coordinator():
-    """Resolve the shared coordinator lazily.
-
-    Sibling-route imports must stay inside functions (import-direction
-    rule); this wrapper keeps a stable module attribute that tests stub.
-    """
-    from .sessions import _get_coordinator
-
-    return _get_coordinator()
+def _session_coordinator(lifecycle: SessionLifecycle):
+    """Resolve the shared coordinator from the app-owned session domain."""
+    return lifecycle.coordinator()
 
 
 @router.post(
     "/api/conversations/{cid}/restore",
     response_model=ConversationRestoreResp,
 )
-async def restore_conversation(cid: str, request: ConversationRestoreReq):
+async def restore_conversation(
+    lifecycle: SessionDomain, cid: str, request: ConversationRestoreReq
+):
     """Restore a GA archive as one chat session's working history.
 
     The archive is loaded into a *fresh* runtime built by the session-scoped
@@ -365,13 +370,13 @@ async def restore_conversation(cid: str, request: ConversationRestoreReq):
     # Build the replacement runtime outside the coordinator so a failure here
     # (RuntimeRestoreError — factory releases its own half-built agent) leaves
     # the currently installed runtime untouched.
-    factory = SessionRuntimeFactory(_metadata)
+    factory = lifecycle.runtime_factory()
     new_runtime = await asyncio.to_thread(
         factory, request.session_id, archive_override=str(path)
     )
     try:
         await asyncio.to_thread(
-            _session_coordinator().replace_runtime,
+            _session_coordinator(lifecycle).replace_runtime,
             request.session_id,
             new_runtime,
             shutdown=lambda runtime: runtime.shutdown(),
@@ -423,7 +428,7 @@ async def _rollback_import(session_id: str, new_path: Path | None) -> None:
     "/api/conversations/{cid}/import",
     response_model=ConversationImportResp,
 )
-async def import_conversation(cid: str):
+async def import_conversation(lifecycle: SessionDomain, cid: str):
     """Import one GA archive as a brand-new session (copy + bind).
 
     Import is the persistent counterpart of restore: instead of loading the
@@ -472,7 +477,7 @@ async def import_conversation(cid: str):
         # Cold start on the normal factory path: the bound copy is now the
         # session's archive, so this loads it exactly like any other session
         # (no override, no rebinding).
-        await asyncio.to_thread(_session_coordinator().ensure_runtime, session_id)
+        await asyncio.to_thread(_session_coordinator(lifecycle).ensure_runtime, session_id)
     except BaseException as exc:
         await _rollback_import(session_id, new_path)
         if isinstance(exc, ArchiveNotImportableError):

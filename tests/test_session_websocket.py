@@ -17,11 +17,11 @@ from server.services.session_metadata import SessionMetadataStore
 
 
 def test_coordinator_abort_timeout_publishes_identified_error_event(
-    monkeypatch, caplog
+    monkeypatch, caplog, tmp_path
 ):
     caplog.set_level(logging.INFO, logger="server.routes.sessions")
     from server import constants
-    from server.routes import sessions
+    from server.services import session_lifecycle as lifecycle_module
 
     event_bus = EventBus()
     captured = {}
@@ -31,12 +31,14 @@ def test_coordinator_abort_timeout_publishes_identified_error_event(
             captured["callback"] = on_state_change
             captured["capacity"] = capacity
 
-    monkeypatch.setattr(sessions, "bus", event_bus)
-    monkeypatch.setattr(sessions, "_coordinator", None)
-    monkeypatch.setattr(sessions, "SessionCoordinator", CapturingCoordinator)
-    monkeypatch.setattr(sessions, "SessionRuntimeFactory", lambda store: object())
+    monkeypatch.setattr(lifecycle_module, "bus", event_bus)
+    monkeypatch.setattr(lifecycle_module, "SessionCoordinator", CapturingCoordinator)
+    monkeypatch.setattr(lifecycle_module, "SessionRuntimeFactory", lambda store: object())
 
-    sessions._get_coordinator()
+    domain = lifecycle_module.SessionLifecycle(
+        store=SessionMetadataStore(tmp_path / "sessions.json")
+    )
+    domain.coordinator()
     assert captured["capacity"] == constants.SESSION_RUN_CAPACITY_DEFAULT
     captured["callback"](RuntimeState(
         "session-a", "error", "run-a", "stream-a", "abort_timeout"
@@ -58,12 +60,12 @@ def test_coordinator_abort_timeout_publishes_identified_error_event(
 
 
 def test_coordinator_completion_publishes_runtime_event(monkeypatch):
-    from server.routes import sessions
+    from server.services import session_lifecycle as lifecycle_module
 
     event_bus = EventBus()
-    monkeypatch.setattr(sessions, "bus", event_bus)
+    monkeypatch.setattr(lifecycle_module, "bus", event_bus)
 
-    sessions._publish_runtime_state(RuntimeState(
+    lifecycle_module._publish_runtime_state(RuntimeState(
         "session-a", completed_run_id="run-a"
     ))
 
@@ -89,13 +91,16 @@ class FakeCoordinator:
 
 def _app(tmp_path, monkeypatch) -> tuple[FastAPI, str]:
     from server.routes import sessions
+    from server.services import session_lifecycle as lifecycle_module
 
     store = SessionMetadataStore(tmp_path / "sessions.json")
     sid = store.create(title="A")["id"]
-    monkeypatch.setattr(sessions, "_store", store)
-    monkeypatch.setattr(sessions, "_coordinator", FakeCoordinator())
     event_bus = EventBus()
+    # One process-wide bus, two modules holding a reference to it: the route
+    # serves the socket, the domain publishes. A test that swaps the bus has
+    # to swap both references or the frames go to different buses.
     monkeypatch.setattr(sessions, "bus", event_bus)
+    monkeypatch.setattr(lifecycle_module, "bus", event_bus)
     app = FastAPI()
     install_error_handlers(app)
 
@@ -105,6 +110,9 @@ def _app(tmp_path, monkeypatch) -> tuple[FastAPI, str]:
 
     app.state.test_bus = event_bus
     app.include_router(sessions.router)
+    domain = lifecycle_module.SessionLifecycle(store=store)
+    domain.attach_coordinator(FakeCoordinator())
+    app.state.session_lifecycle = domain
     return app, sid
 
 

@@ -107,6 +107,7 @@ class ScheduledChatServiceTests(unittest.TestCase):
 
     def test_list_route_uses_service_list_contract(self):
         from server.routes import sessions
+        from server.services.session_lifecycle import SessionLifecycle
 
         service = mock.Mock()
         service.list.return_value = [{
@@ -124,9 +125,11 @@ class ScheduledChatServiceTests(unittest.TestCase):
         }]
         with (
             mock.patch.object(sessions, "_session"),
-            mock.patch.object(sessions, "_get_scheduled_chats", return_value=service),
+            mock.patch.object(SessionLifecycle, "scheduled_chats", lambda _self: service),
         ):
-            response = asyncio.run(sessions.list_scheduled_chats("alpha"))
+            response = asyncio.run(
+                sessions.list_scheduled_chats(SessionLifecycle(store=mock.Mock()), "alpha")
+            )
 
         service.list.assert_called_once_with("alpha")
         self.assertEqual(response, {

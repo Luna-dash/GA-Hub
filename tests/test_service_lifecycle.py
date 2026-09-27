@@ -219,7 +219,7 @@ def test_delayed_feishu_autostart_uses_the_lifespan_owned_service() -> None:
 def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
     from fastapi.testclient import TestClient
     from server import _paths, main
-    from server.routes import sessions as session_routes
+    from server.services.session_lifecycle import SessionLifecycle
     from server.services import core_contract
 
     if _paths.GA_ROOT is None:
@@ -272,7 +272,7 @@ def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
         mock.patch("server.services.autonomous_scheduler.AutonomousScheduler.instance", side_effect=AssertionError("status constructed autonomous")) as autonomous_factory,
         mock.patch("server.services.task_scheduler.TaskScheduler.instance", side_effect=AssertionError("status constructed tasks")) as task_factory,
         mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
-        mock.patch.object(session_routes, "stop_session_runtimes"),
+        mock.patch.object(SessionLifecycle, "stop_runtimes"),
         mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
     ):
         app = main.create_app()
@@ -290,13 +290,13 @@ def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
     feishu.shutdown.assert_called_once_with()
     conductor.shutdown.assert_called_once_with()
     agent.shutdown.assert_called_once_with()
-    assert session_routes._coordinator_stopping is False
+    assert app.state.session_lifecycle.admission_open is True
 
 
 def test_reentered_lifespan_never_reaps_previous_round_services_twice() -> None:
     from fastapi.testclient import TestClient
     from server import _paths, main
-    from server.routes import sessions as session_routes
+    from server.services.session_lifecycle import SessionLifecycle
     from server.services import core_contract
 
     if _paths.GA_ROOT is None:
@@ -315,7 +315,7 @@ def test_reentered_lifespan_never_reaps_previous_round_services_twice() -> None:
                    mock.Mock(return_value=conductor)),
         mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
         mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
-        mock.patch.object(session_routes, "stop_session_runtimes"),
+        mock.patch.object(SessionLifecycle, "stop_runtimes"),
         mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
     ):
         app = main.create_app()
@@ -335,7 +335,7 @@ def test_reentered_lifespan_never_reaps_previous_round_services_twice() -> None:
 def test_partial_startup_failure_reaps_already_owned_services() -> None:
     from fastapi.testclient import TestClient
     from server import _paths, main
-    from server.routes import sessions as session_routes
+    from server.services.session_lifecycle import SessionLifecycle
     from server.services import core_contract
 
     if _paths.GA_ROOT is None:
@@ -355,7 +355,7 @@ def test_partial_startup_failure_reaps_already_owned_services() -> None:
                    conductor_factory),
         mock.patch("server.services.scheduler_host.SchedulerHost", return_value=scheduler_host),
         mock.patch.object(core_contract, "probe_core_contract", return_value=SimpleNamespace(ok=True, core_commit="test", errors=[])),
-        mock.patch.object(session_routes, "stop_session_runtimes"),
+        mock.patch.object(SessionLifecycle, "stop_runtimes"),
         mock.patch("server.services.goalhive_service.shutdown_goalhive_service", return_value=True),
     ):
         app = main.create_app()

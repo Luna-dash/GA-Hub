@@ -145,7 +145,9 @@ def test_legacy_title_migration_runs_once_through_the_catalogue(monkeypatch):
     assert resolved == ["/sessions/a.txt", None]
 
 
-def test_delete_conversation_invalidates_catalogue_after_unlink(tmp_path, monkeypatch):
+def test_delete_conversation_invalidates_catalogue_after_unlink(
+    tmp_path, monkeypatch, session_domain
+):
     import asyncio
 
     archive = tmp_path / "a.txt"
@@ -167,7 +169,7 @@ def test_delete_conversation_invalidates_catalogue_after_unlink(tmp_path, monkey
         lambda: events.append("invalidate"),
     )
 
-    result = asyncio.run(conversations.delete_conversation("a.txt"))
+    result = asyncio.run(conversations.delete_conversation(session_domain, "a.txt"))
 
     assert result == {"ok": True, "id": "a.txt"}
     assert not archive.exists()

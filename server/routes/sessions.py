@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import threading
 import time
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 
 # _paths must be imported before `frontends`: its module-level bootstrap
 # puts the GA checkout on sys.path, and a fresh process importing this
@@ -16,8 +15,6 @@ from fastapi import APIRouter, HTTPException, Query, Response, WebSocket, WebSoc
 from .. import _paths as _ga_paths_bootstrap  # noqa: F401  (bootstrap order)
 from frontends.gahub.bridge import workspace as workspace_bridge
 
-from .. import constants
-from ..event_topics import CHAT_ERROR, SESSION_RUNTIME
 from ..origin_policy import is_allowed_ui_origin
 from ..schemas import (
     BtwReq,
@@ -42,254 +39,48 @@ from ..schemas import (
     SessionMessagesResp,
 )
 from ..services.archive_messages import HistoryUnavailableError, read_archive_messages
-from ..services.session_runtime_status import STATUS_ERROR
 from ..services.event_bus import Event, bus
 from ..services.event_cursor import parse_event_cursor, subscribe_with_cursor
-from ..services.llm_preference_store import LlmPreferenceStore
 from ..services.llm_registry import (
     LlmRegistryError,
     LlmUnavailableError,
-    LlmUnconfirmedError,
 )
 from ..services.session_coordinator import (
     RuntimeState,
     SessionControlBusyError,
-    SessionCoordinator,
-    SessionCoordinatorStoppedError,
 )
-from ..services.session_metadata import SessionMetadataStore, SessionNotFoundError
+from ..services.session_lifecycle import SessionLifecycle, session_lifecycle_of
+from ..services.session_metadata import SessionNotFoundError
 from ..services.project_runtime import activate_project, deactivate_project
-from ..services.session_runtime_factory import RuntimeRestoreError, SessionRuntimeFactory
-from ..services.scheduled_chat_service import ScheduledChat, ScheduledChatService
-from ..services.system_channels import SystemChannels
+from ..services.session_runtime_factory import RuntimeRestoreError
 
 router = APIRouter()
 log = logging.getLogger(__name__)
-_store = SessionMetadataStore()
-_coordinator: SessionCoordinator | None = None
-_coordinator_lifecycle_lock = threading.Lock()
-_coordinator_stopping = False
-_scheduled_chats: ScheduledChatService | None = None
-_scheduled_chats_lock = threading.Lock()
-_system_channels: SystemChannels | None = None
 
 
-def _publish_runtime_state(state: RuntimeState) -> None:
-    bus.publish(
-        SESSION_RUNTIME,
-        {
-            "session_id": state.session_id,
-            "status": state.status,
-            "run_id": state.run_id,
-            "stream_id": state.stream_id,
-            "completed_run_id": state.completed_run_id,
-            "error": state.error,
-        },
-    )
-    if state.status != STATUS_ERROR or not state.run_id or not state.stream_id:
-        return
-    details = {
-        "abort_timeout": "停止请求超时；底层任务尚未终止，如持续占用请重启服务。",
-    }
-    log.warning(
-        "session_runtime_error session_id=%s run_id=%s stream_id=%s "
-        "code=%s runtime_before=aborting runtime_after=%s",
-        state.session_id, state.run_id, state.stream_id,
-        state.error or "runtime_error", state.status,
-    )
-    bus.publish(
-        CHAT_ERROR,
-        {
-            "session_id": state.session_id,
-            "run_id": state.run_id,
-            "stream_id": state.stream_id,
-            "code": state.error or "runtime_error",
-            "detail": details.get(state.error, "会话运行失败，请稍后重试。"),
-        },
-    )
+def _request_lifecycle(request: Request) -> SessionLifecycle:
+    return session_lifecycle_of(request.app)
 
 
-def _session_run_capacity() -> int:
-    """Return the bounded session-run capacity (default %d).
-
-    The gate is shared by webui chat, wechat, scheduled and autonomous
-    producers, so the default leaves headroom above interactive use alone.
-    """ % constants.SESSION_RUN_CAPACITY_DEFAULT
-    raw = os.environ.get(
-        constants.ENV_SESSION_RUN_CAPACITY,
-        str(constants.SESSION_RUN_CAPACITY_DEFAULT),
-    ).strip()
-    try:
-        capacity = int(raw)
-    except ValueError:
-        log.warning("invalid %s=%r; using %d",
-                    constants.ENV_SESSION_RUN_CAPACITY, raw,
-                    constants.SESSION_RUN_CAPACITY_DEFAULT)
-        return constants.SESSION_RUN_CAPACITY_DEFAULT
-    if not 1 <= capacity <= constants.SESSION_RUN_CAPACITY_MAX:
-        log.warning("unsupported %s=%r; using %d",
-                    constants.ENV_SESSION_RUN_CAPACITY, raw,
-                    constants.SESSION_RUN_CAPACITY_DEFAULT)
-        return constants.SESSION_RUN_CAPACITY_DEFAULT
-    return capacity
-
-
-def _get_coordinator() -> SessionCoordinator:
-    global _coordinator, _coordinator_stopping
-    with _coordinator_lifecycle_lock:
-        if _coordinator_stopping:
-            raise SessionCoordinatorStoppedError(
-                "session runtime lifecycle is stopping"
-            )
-        if _coordinator is None:
-            capacity = _session_run_capacity()
-            kwargs = {"on_state_change": _publish_runtime_state}
-            if capacity != 1:
-                kwargs["capacity"] = capacity
-            _coordinator = SessionCoordinator(
-                SessionRuntimeFactory(_store),
-                **kwargs,
-            )
-        return _coordinator
-
-
-def peek_coordinator() -> SessionCoordinator | None:
-    """Current coordinator without constructing one (peek-only callers).
-
-    Applies the same shutdown admission gate as :func:`_get_coordinator` —
-    callers must not touch a coordinator that is being torn down — but never
-    constructs one. Runtime-touching work should use the full accessor.
-    """
-    with _coordinator_lifecycle_lock:
-        if _coordinator_stopping:
-            raise SessionCoordinatorStoppedError(
-                "session runtime lifecycle is stopping"
-            )
-        return _coordinator
-
-
-def prepare_session_runtime_lifecycle() -> None:
-    """Allow a fresh lifespan to construct runtimes after clean teardown."""
-    global _coordinator_stopping
-    with _coordinator_lifecycle_lock:
-        if _coordinator is None:
-            _coordinator_stopping = False
-
-
-def begin_session_runtime_shutdown() -> None:
-    """Close the route-level admission gate before stopping task producers."""
-    global _coordinator_stopping
-    with _coordinator_lifecycle_lock:
-        _coordinator_stopping = True
-
-
-def finish_session_runtime_shutdown() -> None:
-    """Reopen runtime admission after the owning app lifespan has torn down."""
-    global _coordinator_stopping
-    with _coordinator_lifecycle_lock:
-        _coordinator_stopping = False
-
-
-def _dispatch_scheduled_chat(task: ScheduledChat) -> None:
-    row = _store.get(task.session_id)
-    try:
-        llm_key = _effective_llm_key(row)
-    except LlmUnconfirmedError:
-        log.warning(
-            "scheduled chat skipped: session model must be reconfirmed session_id=%s",
-            task.session_id,
-        )
-        return
-    _get_coordinator().submit(
-        task.text,
-        session_id=task.session_id,
-        images=task.images,
-        source="scheduled",
-        llm_key=llm_key,
-    )
-    _store.touch(task.session_id)
-
-
-def _effective_llm_key(row: dict) -> str | None:
-    key = row.get("llm_key")
-    if isinstance(key, str) and key.strip():
-        return key.strip()
-    if row.get("llm_index") is not None:
-        raise LlmUnconfirmedError("session llm binding must be reconfirmed")
-    return LlmPreferenceStore().get_key()
-
-
-def _get_scheduled_chats() -> ScheduledChatService:
-    global _scheduled_chats
-    if _scheduled_chats is None:
-        with _scheduled_chats_lock:
-            if _scheduled_chats is None:
-                _scheduled_chats = ScheduledChatService(_dispatch_scheduled_chat)
-    return _scheduled_chats
-
-
-def scheduled_chat_service() -> ScheduledChatService:
-    """Return the process-owned scheduled-chat domain for lifecycle hosts."""
-    return _get_scheduled_chats()
-
-
-def system_channels() -> SystemChannels:
-    """Process-owned system-channel registry (wechat / autonomous / tasks)."""
-    global _system_channels
-    if _system_channels is None or _system_channels.store is not _store:
-        # Rebind when the store identity changed (tests monkeypatch _store).
-        _system_channels = SystemChannels(
-            coordinator=_get_coordinator,
-            store=_store,
-            llm_key_resolver=_effective_llm_key,
-        )
-    return _system_channels
-
-
-def stop_session_runtimes(
-    timeout: float = 3.0, *, keep_admission_closed: bool = False
-) -> bool:
-    """Stop all session runtimes without letting teardown exceed ``timeout``."""
-    global _coordinator, _coordinator_stopping
-    begin_session_runtime_shutdown()
-    with _coordinator_lifecycle_lock:
-        coordinator = _coordinator
-    if coordinator is None:
-        if not keep_admission_closed:
-            with _coordinator_lifecycle_lock:
-                _coordinator_stopping = False
-        return True
-    try:
-        stopped = coordinator.shutdown(timeout=timeout)
-    except Exception:
-        log.exception("session runtime shutdown failed")
-        return False
-    if stopped:
-        with _coordinator_lifecycle_lock:
-            if _coordinator is coordinator:
-                # A fresh app lifespan must construct fresh AgentService
-                # runtimes; keeping this process-global coordinator would
-                # reuse stopped threads.
-                _coordinator = None
-            if not keep_admission_closed:
-                _coordinator_stopping = False
-    if not stopped:
-        log.warning("session runtime shutdown exceeded its graceful deadline")
-    return stopped
+# Route handlers take the process-owned session domain as an injected
+# dependency; server.main binds it to the app. The domain used to live in this
+# module as process globals, which made an HTTP module the composition root.
+SessionDomain = Annotated[SessionLifecycle, Depends(_request_lifecycle)]
 
 
 def _state_payload(state: RuntimeState, *, ok: bool | None = None) -> dict:
     """WS/REST frames share one assembly: SessionRuntimePayload.from_state.
 
-    The bus frame in _publish_runtime_state deliberately differs (error key
-    always present) — that shape is locked by test_session_websocket.py.
+    The bus frame published by ``services.session_lifecycle._publish_runtime_state``
+    deliberately differs (error key always present) — that shape is locked by
+    test_session_websocket.py.
     """
     return SessionRuntimePayload.from_state(state, ok=ok).model_dump(exclude_unset=True)
 
 
-def _session(session_id: str) -> dict:
+def _session(lifecycle: SessionLifecycle, session_id: str) -> dict:
     try:
-        return _store.get(session_id)
+        return lifecycle.store.get(session_id)
     except SessionNotFoundError:
         raise _not_found()
 
@@ -334,12 +125,12 @@ async def create_project(req: ProjectCreate) -> ProjectItem:
 
 
 @router.delete("/api/projects/{project_name}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_project(project_name: str):
+async def delete_project(lifecycle: SessionDomain, project_name: str):
     project = await asyncio.to_thread(workspace_bridge.get_workspace, project_name)
     if project is None:
         raise _api_error(404, "project_not_found", "项目索引不存在")
     bound_sessions = [
-        row for row in await asyncio.to_thread(_store.list)
+        row for row in await asyncio.to_thread(lifecycle.store.list)
         if row.get("project_name") == project_name
     ]
     if bound_sessions:
@@ -359,8 +150,10 @@ async def delete_project(project_name: str):
 
 
 @router.put("/api/sessions/{session_id}/project")
-async def bind_session_project(session_id: str, req: SessionProjectUpdate) -> HubSession:
-    await asyncio.to_thread(_session, session_id)
+async def bind_session_project(
+    lifecycle: SessionDomain, session_id: str, req: SessionProjectUpdate
+) -> HubSession:
+    await asyncio.to_thread(_session, lifecycle, session_id)
     project = await asyncio.to_thread(
         workspace_bridge.get_workspace, req.name, req.path
     )
@@ -370,7 +163,7 @@ async def bind_session_project(session_id: str, req: SessionProjectUpdate) -> Hu
     def configure(runtime):
         if runtime is not None:
             activate_project(runtime.agent, req.name)
-        return _store.update(session_id, {
+        return lifecycle.store.update(session_id, {
             "project_name": req.name,
             "project_path": req.path,
         })
@@ -380,32 +173,34 @@ async def bind_session_project(session_id: str, req: SessionProjectUpdate) -> Hu
     # AgentBusyError propagates to the app-level mapper (409
     # session_active/agent_busy).
     return await asyncio.to_thread(
-        _get_coordinator().configure_if_idle, session_id, configure
+        lifecycle.coordinator().configure_if_idle, session_id, configure
     )
 
 
 @router.delete("/api/sessions/{session_id}/project")
-async def unbind_session_project(session_id: str) -> HubSession:
-    await asyncio.to_thread(_session, session_id)
+async def unbind_session_project(lifecycle: SessionDomain, session_id: str) -> HubSession:
+    await asyncio.to_thread(_session, lifecycle, session_id)
 
     def configure(runtime):
         if runtime is not None:
             deactivate_project(runtime.agent)
-        return _store.update(session_id, {
+        return lifecycle.store.update(session_id, {
             "project_name": None,
             "project_path": None,
         })
 
     return await asyncio.to_thread(
-        _get_coordinator().configure_if_idle, session_id, configure
+        lifecycle.coordinator().configure_if_idle, session_id, configure
     )
 
 
 @router.get("/api/sessions")
-async def list_sessions(include_system: bool = False) -> SessionListResp:
+async def list_sessions(
+    lifecycle: SessionDomain, include_system: bool = False
+) -> SessionListResp:
     # Full-file JSON read of the sidecar — keep it off the loop, like every
     # other blocking call in this file.
-    rows = await asyncio.to_thread(_store.list)
+    rows = await asyncio.to_thread(lifecycle.store.list)
     if not include_system:
         # System channels (wechat / autonomous / scheduled tasks) are hub
         # plumbing, not user chats: hide them unless explicitly asked for.
@@ -414,29 +209,30 @@ async def list_sessions(include_system: bool = False) -> SessionListResp:
 
 
 @router.post("/api/sessions", status_code=status.HTTP_201_CREATED)
-async def create_session(req: SessionCreate) -> HubSession:
+async def create_session(lifecycle: SessionDomain, req: SessionCreate) -> HubSession:
     return await asyncio.to_thread(
-        _store.create, title=req.title, llm_key=req.llm_key, llm_index=req.llm_index
+        lifecycle.store.create, title=req.title, llm_key=req.llm_key, llm_index=req.llm_index
     )
 
 
 @router.get("/api/sessions/{session_id}")
-async def get_session(session_id: str) -> HubSession:
+async def get_session(lifecycle: SessionDomain, session_id: str) -> HubSession:
     try:
-        return await asyncio.to_thread(_store.get, session_id)
+        return await asyncio.to_thread(lifecycle.store.get, session_id)
     except SessionNotFoundError:
         raise _not_found()
 
 
 @router.get("/api/sessions/{session_id}/messages")
 async def get_session_messages(
+    lifecycle: SessionDomain,
     session_id: str,
     before: int | None = Query(default=None, ge=0),
     limit: int | None = Query(default=None, ge=1, le=200),
     max_chars: int | None = Query(default=None, ge=10_000, le=8_000_000),
     turns: int | None = Query(default=None, ge=1, le=500),
 ) -> SessionMessagesResp:
-    row = await asyncio.to_thread(_session, session_id)
+    row = await asyncio.to_thread(_session, lifecycle, session_id)
     try:
         projection = await asyncio.to_thread(
             read_archive_messages,
@@ -460,20 +256,24 @@ async def get_session_messages(
 
 
 @router.patch("/api/sessions/{session_id}")
-async def update_session(session_id: str, req: SessionUpdate) -> HubSession:
+async def update_session(
+    lifecycle: SessionDomain, session_id: str, req: SessionUpdate
+) -> HubSession:
     changes = req.model_dump(exclude_unset=True)
     if changes.get("title") is None:
         changes.pop("title", None)
     try:
-        return await asyncio.to_thread(_store.update, session_id, changes)
+        return await asyncio.to_thread(lifecycle.store.update, session_id, changes)
     except SessionNotFoundError:
         raise _not_found()
 
 
 @router.put("/api/sessions/{session_id}/model")
-async def update_session_model(session_id: str, req: SessionModelUpdate) -> HubSession:
+async def update_session_model(
+    lifecycle: SessionDomain, session_id: str, req: SessionModelUpdate
+) -> HubSession:
     if req.llm_key is None and req.llm_index is None:
-        return await _clear_session_llm_binding(session_id)
+        return await _clear_session_llm_binding(lifecycle, session_id)
     if req.llm_key is not None and req.llm_index is not None:
         raise _api_error(400, "llm_conflict", "llm_key 与 llm_index 不能同时提交。")
     if req.llm_key is not None:
@@ -494,16 +294,18 @@ async def update_session_model(session_id: str, req: SessionModelUpdate) -> HubS
         index = req.llm_index
     try:
         return await asyncio.to_thread(
-            _store.update, session_id, {"llm_key": key, "llm_index": index}
+            lifecycle.store.update, session_id, {"llm_key": key, "llm_index": index}
         )
     except SessionNotFoundError:
         raise _not_found()
 
 
-async def _clear_session_llm_binding(session_id: str) -> HubSession:
+async def _clear_session_llm_binding(
+    lifecycle: SessionLifecycle, session_id: str
+) -> HubSession:
     try:
         return await asyncio.to_thread(
-            _store.update, session_id, {"llm_key": None, "llm_index": None}
+            lifecycle.store.update, session_id, {"llm_key": None, "llm_index": None}
         )
     except SessionNotFoundError:
         raise _not_found()
@@ -514,40 +316,42 @@ async def _clear_session_llm_binding(session_id: str) -> HubSession:
     status_code=status.HTTP_202_ACCEPTED,
     response_model_exclude_unset=True,
 )
-async def submit_run(session_id: str, req: RunSubmit) -> SessionRuntimeResp:
-    row = await asyncio.to_thread(_session, session_id)
+async def submit_run(
+    lifecycle: SessionDomain, session_id: str, req: RunSubmit
+) -> SessionRuntimeResp:
+    row = await asyncio.to_thread(_session, lifecycle, session_id)
     # LlmUnconfirmedError/AgentBusyError/SessionControlBusyError/
     # RuntimeRestoreError/LlmUnavailableError/LlmRegistryError all carry the
     # same-session serial-guard semantics and propagate to the app-level
     # mapper (409 with their stable codes).
-    llm_key = _effective_llm_key(row)
+    llm_key = lifecycle.effective_llm_key(row)
     # submit_stream may cold-start the runtime (birth lock + GA restore)
     # inside its admission critical section — worker thread, like every
     # other runtime touch in this file.
     state = await asyncio.to_thread(
-        _get_coordinator().submit,
+        lifecycle.coordinator().submit,
         req.text,
         session_id=session_id,
         source=req.source,
         images=req.images,
         llm_key=llm_key,
     )
-    await asyncio.to_thread(_store.touch, session_id)
+    await asyncio.to_thread(lifecycle.store.touch, session_id)
     return SessionRuntimePayload.from_state(state)
 
 
 @router.post("/api/sessions/{session_id}/btw", response_model=BtwResp)
-async def session_btw(session_id: str, req: BtwReq):
+async def session_btw(lifecycle: SessionDomain, session_id: str, req: BtwReq):
     """Run a side question against the selected session runtime."""
-    await asyncio.to_thread(_session, session_id)
+    await asyncio.to_thread(_session, lifecycle, session_id)
     question = (req.text or "").strip()
     if not question:
         raise _api_error(400, "invalid_btw", "BTW 问题不能为空。")
     try:
         content = await asyncio.to_thread(
-            _get_coordinator().side_question, session_id, question
+            lifecycle.coordinator().side_question, session_id, question
         )
-        await asyncio.to_thread(_store.touch, session_id)
+        await asyncio.to_thread(lifecycle.store.touch, session_id)
         return BtwResp(ok=True, content=content)
     except (SessionControlBusyError, RuntimeRestoreError):
         # Explicit: the blanket catch below must not swallow these into
@@ -559,14 +363,14 @@ async def session_btw(session_id: str, req: BtwReq):
 
 
 @router.post("/api/sessions/{session_id}/rewind", response_model=RewindResp)
-async def session_rewind(session_id: str, req: RewindReq):
+async def session_rewind(lifecycle: SessionDomain, session_id: str, req: RewindReq):
     """Exclusively rewind one session and its GA-native archive."""
-    await asyncio.to_thread(_session, session_id)
+    await asyncio.to_thread(_session, lifecycle, session_id)
     if not req.sid and req.n is None:
         raise _api_error(400, "invalid_rewind", "必须提供 sid 或 n。")
     try:
         result = await asyncio.to_thread(
-            _get_coordinator().rewind,
+            lifecycle.coordinator().rewind,
             session_id,
             sid=req.sid,
             n=req.n,
@@ -575,14 +379,16 @@ async def session_rewind(session_id: str, req: RewindReq):
         raise _api_error(400, "invalid_rewind", str(exc))
     except RuntimeError as exc:
         raise _api_error(409, "rewind_unavailable", str(exc))
-    await asyncio.to_thread(_store.touch, session_id)
+    await asyncio.to_thread(lifecycle.store.touch, session_id)
     return result
 
 
 @router.get("/api/sessions/{session_id}/scheduled-chats")
-async def list_scheduled_chats(session_id: str) -> ScheduledChatListResp:
-    await asyncio.to_thread(_session, session_id)
-    items = await asyncio.to_thread(_get_scheduled_chats().list, session_id)
+async def list_scheduled_chats(
+    lifecycle: SessionDomain, session_id: str
+) -> ScheduledChatListResp:
+    await asyncio.to_thread(_session, lifecycle, session_id)
+    items = await asyncio.to_thread(lifecycle.scheduled_chats().list, session_id)
     return {"total": len(items), "items": items}
 
 
@@ -591,9 +397,9 @@ async def list_scheduled_chats(session_id: str) -> ScheduledChatListResp:
     status_code=status.HTTP_201_CREATED,
 )
 async def create_scheduled_chat(
-    session_id: str, req: ScheduledChatCreate
+    lifecycle: SessionDomain, session_id: str, req: ScheduledChatCreate
 ) -> ScheduledChatResp:
-    await asyncio.to_thread(_session, session_id)
+    await asyncio.to_thread(_session, lifecycle, session_id)
     now = time.time()
     if req.scheduled_for <= now:
         raise _api_error(422, "invalid_schedule", "定时时间必须晚于当前时间。")
@@ -601,7 +407,7 @@ async def create_scheduled_chat(
         raise _api_error(422, "invalid_schedule", "定时时间不能超过未来48小时。")
     try:
         return await asyncio.to_thread(
-            _get_scheduled_chats().create,
+            lifecycle.scheduled_chats().create,
             session_id=session_id,
             text=req.text,
             images=req.images,
@@ -616,12 +422,14 @@ async def create_scheduled_chat(
     "/api/sessions/{session_id}/scheduled-chats/{task_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def cancel_scheduled_chat(session_id: str, task_id: str):
-    await asyncio.to_thread(_session, session_id)
+async def cancel_scheduled_chat(
+    lifecycle: SessionDomain, session_id: str, task_id: str
+):
+    await asyncio.to_thread(_session, lifecycle, session_id)
     try:
         # The service signals by exception (missing id -> KeyError, non-
         # pending -> ValueError); it never returns a falsy value.
-        await asyncio.to_thread(_get_scheduled_chats().cancel, session_id, task_id)
+        await asyncio.to_thread(lifecycle.scheduled_chats().cancel, session_id, task_id)
     except KeyError:
         raise _api_error(404, "scheduled_chat_not_found", "定时消息不存在。")
     except ValueError:
@@ -630,13 +438,15 @@ async def cancel_scheduled_chat(session_id: str, task_id: str):
 
 
 @router.get("/api/session-runtimes", response_model_exclude_unset=True)
-async def list_session_runtimes() -> dict[str, SessionRuntimeResp]:
-    coordinator = _get_coordinator()
+async def list_session_runtimes(
+    lifecycle: SessionDomain,
+) -> dict[str, SessionRuntimeResp]:
+    coordinator = lifecycle.coordinator()
     return {
         row["id"]: SessionRuntimePayload.from_state(
             coordinator.runtime_state(row["id"])
         )
-        for row in await asyncio.to_thread(_store.list)
+        for row in await asyncio.to_thread(lifecycle.store.list)
     }
 
 
@@ -644,10 +454,10 @@ async def list_session_runtimes() -> dict[str, SessionRuntimeResp]:
     "/api/sessions/{session_id}/runtime",
     response_model_exclude_unset=True,
 )
-async def get_runtime(session_id: str) -> SessionRuntimeResp:
-    await asyncio.to_thread(_session, session_id)
+async def get_runtime(lifecycle: SessionDomain, session_id: str) -> SessionRuntimeResp:
+    await asyncio.to_thread(_session, lifecycle, session_id)
     return SessionRuntimePayload.from_state(
-        _get_coordinator().runtime_state(session_id)
+        lifecycle.coordinator().runtime_state(session_id)
     )
 
 
@@ -655,9 +465,9 @@ async def get_runtime(session_id: str) -> SessionRuntimeResp:
     "/api/sessions/{session_id}/abort",
     response_model_exclude_unset=True,
 )
-async def abort_run(session_id: str) -> SessionRuntimeResp:
-    await asyncio.to_thread(_session, session_id)
-    coordinator = _get_coordinator()
+async def abort_run(lifecycle: SessionDomain, session_id: str) -> SessionRuntimeResp:
+    await asyncio.to_thread(_session, lifecycle, session_id)
+    coordinator = lifecycle.coordinator()
     current = coordinator.abort_if_current(session_id=session_id)
     return SessionRuntimePayload.from_state(current, ok=True)
 
@@ -696,8 +506,12 @@ async def session_events(ws: WebSocket, session_id: str):
         )
         await ws.close(code=1008, reason="Forbidden origin")
         return
+    # WebSocket routes get no HTTP dependency; the domain still comes from the
+    # app that mounted this router. Resolved after the origin guard so an
+    # untrusted socket is refused before any app state is read.
+    lifecycle = session_lifecycle_of(ws.app)
     try:
-        await asyncio.to_thread(_session, session_id)
+        await asyncio.to_thread(_session, lifecycle, session_id)
     except HTTPException:
         await ws.close(code=4404, reason="session not found")
         return
@@ -718,7 +532,7 @@ async def session_events(ws: WebSocket, session_id: str):
     )
 
     async def send_snapshot() -> None:
-        state, active_message = _get_coordinator().session_snapshot(session_id)
+        state, active_message = lifecycle.coordinator().session_snapshot(session_id)
         runtime_payload = _state_payload(state)
         await ws.send_json({
             "type": "snapshot",
@@ -813,17 +627,17 @@ async def session_events(ws: WebSocket, session_id: str):
 
 
 @router.delete("/api/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_session(session_id: str):
+async def delete_session(lifecycle: SessionDomain, session_id: str):
     # Existence check only: get() raises SessionNotFoundError -> 404.
     try:
-        await asyncio.to_thread(_store.get, session_id)
+        await asyncio.to_thread(lifecycle.store.get, session_id)
     except SessionNotFoundError:
         raise _not_found()
 
     def _delete() -> None:
-        _store.delete(session_id)
+        lifecycle.store.delete(session_id)
 
-    if _coordinator is None:
+    if lifecycle.peek_coordinator() is None:
         await asyncio.to_thread(_delete)
     else:
         # Go through the accessor so the shutdown admission gate applies
@@ -831,7 +645,7 @@ async def delete_session(session_id: str):
         # turns AgentBusyError/SessionControlBusyError into 409s.
         # runtime.shutdown() joins worker threads — keep it off the loop.
         await asyncio.to_thread(
-            _get_coordinator().release_runtime,
+            lifecycle.coordinator().release_runtime,
             session_id,
             shutdown=lambda runtime: runtime.shutdown(),
             operation="delete",
