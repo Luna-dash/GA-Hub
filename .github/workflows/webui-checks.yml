@@ -1,0 +1,54 @@
+name: webui-checks
+
+# 前端信号通道。**故意不设门禁**：desktop-build 是「任何机器 push 后拿到可用 exe」
+# 的便捷通道，产物可用性优先，所以这里红了也不阻断打包（独立 workflow，不用 needs）。
+#
+# 覆盖三项不依赖 GA、且 desktop-build 覆盖不到的检查：
+#   tsc -b --noEmit（类型）、vitest（用例）、api:check（前端调用形状 ↔ 已提交的 OpenAPI）
+# 注：desktop-build 里的 vite build 会顺带跑 tsc，但 vitest 与 api:check 平时没人跑。
+#
+# 后端 pytest 不进 CI —— 套件在**采集期**就依赖 GA 仓库：3 个服务模块
+# （agent_service.py:25 / goalhive_service.py:20 / wechat_service.py:32）导入期就要求
+# GA_ROOT，另有测试模块直接 `from frontends...` 导入。实测无 GA 时 17 errors 中断整跑
+# （0 passed），加 --continue-on-collection-errors 也只能到 910 passed / 6 failed。
+# 后端验证仍在本地 `python scripts\build_all.py --full` 做（见 docs/BUILD.md）。
+#
+# runner 用 windows-latest：这三条命令的实测平台就是 Windows，换 ubuntu 要额外验证
+# Windows 生成的 package-lock 在 Linux 上的 optional 原生依赖解析。
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "webui/**"
+      - "docs/api/**"
+      - ".github/workflows/webui-checks.yml"
+  push:
+    branches: [main]
+    paths:
+      - "webui/**"
+      - "docs/api/**"
+      - ".github/workflows/webui-checks.yml"
+
+jobs:
+  webui:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Install webui dependencies
+        run: npm ci --prefix webui
+
+      - name: Typecheck (tsc -b --noEmit)
+        run: npm --prefix webui run lint
+
+      - name: Unit tests (vitest)
+        run: npm --prefix webui test -- --run
+
+      - name: API contract (frontend call shapes vs committed OpenAPI)
+        run: npm --prefix webui run api:check

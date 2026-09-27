@@ -865,3 +865,55 @@ P3 行为耦合显式化（这些是"能跑但没凭据"的耦合）
 改提示词 / 单方面升级协议 / 改块头 / 布局拼接回流 / 布局常量绝对化），注入后原文件
 字节级还原；vitest **519 passed**；lint（`tsc -b --noEmit`）exit 0；api:check 通过
 （89 调用形状 / 136 操作）。
+
+## 2026-09-28 CI：打包通道保持不设门禁，只补前端检查（问题 8）
+
+来源：同一轮架构复审（问题 8「CI 只打包不跑测试」）。先量「能不能跑」，再定「跑到
+什么程度」。
+
+改前现状：唯一 CI `.github/workflows/desktop-build.yml` 只有 build（checkout → py3.12
+→ node20 → Rust → pip install → npm ci ×2 → `build_all.py` → 传两个 exe）。没有
+`pull_request` 触发；路径过滤不含仓根 `package.json`/lock。测试面全无——但有一点要说准：
+`vite build` 的前置是 `tsc -b`，所以**类型检查其实被顺带覆盖**，真正裸奔的是 vitest 与
+api:check（后者连本地 `--full` 也不跑，`--full` 只跑 pytest + vitest）。
+
+实测「无 GA 能不能跑后端测试」（空 `ADMIN_DATA`、无 GA、无 config.json）：
+
+| 跑法 | 结果 |
+|---|---|
+| `pytest tests` | **17 errors during collection → Interrupted，0 passed**（整跑中断，连 GA 无关用例一起没跑） |
+| 加 `--continue-on-collection-errors` | 910 passed / 6 failed / 11 skipped / 17 errors |
+
+两类**采集期**依赖：3 个服务模块的导入期守卫（`agent_service.py:25`、
+`goalhive_service.py:20`、`wechat_service.py:32`，`RuntimeError: ... imported before
+GA_ROOT is configured`）+ 若干测试模块直接 `from frontends...` 导入（如
+`test_archive_file_hint.py:15` → `archive_messages` → `frontends.gahub.bridge.session`）。
+这正是问题 7 那批模块级 GA 耦合的另一面。另：`GA_ROOT` 环境变量（连 config.json 都不需要）
+就足以让套件跑起来（`--full` 用的就是这套，`build_all.py:389`），但本地 HEAD `cfb3f66`
+**不在任何远端**（origin 只差 1 个提交、upstream 落后 179、newga 领先 45），要 CI 忠实
+复现得先决定「给 CI 哪份 GA」。
+
+按「云端只要能把 exe 打出来」取舍后的决定：
+
+- [x] 新增 `.github/workflows/webui-checks.yml`：`push(main)` + `pull_request` + 手动；
+      三步 `tsc -b --noEmit` / vitest / api:check。**独立 workflow、不设 `needs`、不阻断
+      打包**——这条通道的价值就是「没有开发环境的机器也能拿到能双击的 exe」，不该拿它
+      换门禁
+- [x] 后端 pytest **不进 CI**：无 GA 必常红（上表数字），要它绿得先把导入期守卫改成
+      用时期（留作后续，届时同步更新 `docs/BUILD.md` 口径与本文件）
+- [x] `desktop-build` 路径过滤补 `package.json`/`package-lock.json`：Tauri CLI 来自仓根，
+      漏掉会让「依赖变了但产物没重建」的旧 exe 留在 Actions 页面
+- [x] `docs/BUILD.md` 的 CI 口径从「因为云端没有 GA 核心仓库」改为带实测数字的诚实版本，
+      并写明前端检查故意不设门禁的理由
+
+刻意不做：不加 `needs: checks`；不做「无 GA 也能启动套件」（那是生产语义改动，得单独
+一轮）；不引入 GA 到 CI。顺带记一条待办：`test_feishu_service.py::
+test_status_external_pid_cache_expires` 是负载敏感的 flake（TTL 0.02s 对
+`sleep(0.03)`，边距只有 10ms——第 1、2 次 `status()` 必须落在 20ms 内才会命中缓存；
+3 次整跑里红过 1 次，单独跑稳定），修法是把时钟注入而不是掐表。
+
+验证：两个 workflow 的 YAML 解析通过（job/runs-on/触发面已核对）；在本地按 CI 的步骤
+顺序真跑一遍（含 `npm ci --prefix webui` 重装）四步退出码 **0 / 0 / 0 / 0**
+（vitest 519 passed、api:check 89 形状 / 136 操作）；未触碰后端与构建链代码，重跑
+pytest **1101 passed / 2 skipped** 与 `build_all.py` 退出码 0（守卫输出
+「✓ 构建链全部通过」）确认无副作用。

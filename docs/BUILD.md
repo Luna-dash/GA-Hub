@@ -85,9 +85,19 @@ build_all.bat
   交付物就是这两个便携版 exe，安装包不在本链职责内。同目录下的 `ga_hub_desktop.pdb`、
   `resources/` 是构建副产物，不是交付内容。
 - **平台与 CI 口径**：只有 `x86_64-pc-windows-msvc` 端到端验证过（`--target` 与
-  `build_all.command` 的其它平台分支未实测）。Actions 的 desktop-build 是**便捷构建
-  通道**（只跑 `build_all.py`，不带 `--full`，因为云端没有后端测试需要的 GA 核心仓库），
-  发布前验证在本地做。
+  `build_all.command` 的其它平台分支未实测）。Actions 有两个 workflow：
+  `desktop-build` 是**便捷构建通道**（任何机器 push 后到 Actions 页面下载 exe），
+  只跑 `build_all.py`，不带 `--full`；`webui-checks` 跑三项不依赖 GA 的前端检查
+  （`tsc -b --noEmit`、vitest、api:check），**故意不阻断打包**（独立 workflow，
+  产物可用性优先——这条通道的价值就是「没有开发环境的机器也能拿到能双击的 exe」）。
+- **后端 pytest 不进 CI**（口径要诚实）：套件在**采集期**就依赖 GA 仓库——3 个服务
+  模块（`agent_service.py:25`、`goalhive_service.py:20`、`wechat_service.py:32`）在导入
+  期就要求 `GA_ROOT`，另有若干测试模块直接 `from frontends...` 导入。实测（空
+  `ADMIN_DATA`、无 GA）：**17 errors 中断整跑，0 passed**；加
+  `--continue-on-collection-errors` 也只能到 910 passed / 6 failed / 11 skipped
+  （后端契约、token 台账、调度器关停那几条仍要 GA）。要让云端跑后端测试，得先把
+  这批导入期耦合改成用时期（届时本段与 `webui-checks.yml` 的注释一起更新）。
+  后端验证因此在本地做：`python scripts\build_all.py --full`（需 GA 仓库）。
 
 > 这些规矩是怎么来的（每次污染、每个报错的完整排查过程）：
 > [`archive/build-chain-incidents-20260927.md`](archive/build-chain-incidents-20260927.md)。

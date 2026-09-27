@@ -14,6 +14,10 @@ on:
       - "desktop/**"
       - "scripts/**"
       - "requirements.txt"
+      # Tauri CLI 来自仓根的 package.json / lock：它们的改动同样是构建输入，
+      # 漏掉会让「依赖变了但没重建」的旧产物留在 Actions 页面。
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/desktop-build.yml"
 
 jobs:
