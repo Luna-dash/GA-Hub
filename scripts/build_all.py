@@ -6,7 +6,6 @@
     1. 前端生产构建      npm --prefix webui run build
     2. Python sidecar    <sidecar_python> desktop/build_sidecar.py --target <triple>
     3. Tauri 桌面壳      node_modules/.bin/tauri build --target <triple> --no-bundle
-                         （--bundle 时额外产出 MSI/NSIS 安装包）
     4. 产物守卫          三件产物均须存在、非空、且被本次构建重写
     5. 非正式区排查      target/release 残留（裸 tauri build 痕迹）预检期告警（不阻断）
 
@@ -15,6 +14,9 @@
     - 唯一入口：build_all.bat（Windows）/ build_all.command（macOS）/
       python scripts/build_all.py。npm run desktop:build 已改为拒绝式。
       裸 tauri build 的产物会落到非正式区（已两次污染仓库）。
+    - 交付物只有便携版两个 exe（主程序 + sidecar）：Tauri 阶段恒传 --no-bundle。
+      MSI/NSIS 实测每次多产出 ~104MB、多花 15-24s，而 CI 不上传、文档也不当交付物，
+      所以安装包不在本链职责内——需要时另行打包，别把它塞回每次构建的固定代价。
     - 前端归本脚本独占构建（sidecar 要把 webui/dist 打进包里），tauri.conf.json
       不再配 beforeBuildCommand：否则同一份前端会被构建两次，且主 exe 与 sidecar
       内嵌的可能来自两次不同的构建。
@@ -32,7 +34,6 @@
 用法：
     python scripts/build_all.py                 # 标准交付（便携版两个 exe）
     python scripts/build_all.py --full          # 先跑后端 pytest + 前端 vitest
-    python scripts/build_all.py --bundle        # 额外产出 MSI/NSIS 安装包
     python scripts/build_all.py --target aarch64-apple-darwin
 
 环境变量：
@@ -55,6 +56,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Callable, NamedTuple
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TARGET = "x86_64-pc-windows-msvc"
@@ -62,6 +64,14 @@ DEFAULT_TARGET = "x86_64-pc-windows-msvc"
 EXIT_PREFLIGHT = 2
 EXIT_STAGE_FAILED = 3
 EXIT_ARTIFACT_GUARD = 5
+
+
+class StageFailed(RuntimeError):
+    """某个构建阶段失败。抛异常而不是直接 exit：让 main 把产物体检也跑到失败路径上。"""
+
+    def __init__(self, stage: str) -> None:
+        super().__init__(stage)
+        self.stage = stage
 
 
 def _log(msg: str) -> None:
@@ -113,7 +123,7 @@ def run_stage(title: str, cmd: list[str], *, extra_env: dict[str, str] | None = 
     elapsed = time.monotonic() - started
     if result.returncode != 0:
         _log(f"✗ {title} 失败（exit {result.returncode}，耗时 {elapsed:.1f}s）— 链式中止")
-        raise SystemExit(EXIT_STAGE_FAILED)
+        raise StageFailed(title)
     _log(f"✓ {title} 完成（{elapsed:.1f}s）")
     return elapsed
 
@@ -163,16 +173,13 @@ def resolve_tauri() -> str:
     return ""
 
 
-def tauri_stage_command(tauri: str, target: str, *, bundle: bool = False) -> list[str]:
+def tauri_stage_command(tauri: str, target: str) -> list[str]:
     """构造 Tauri 构建命令；Windows 下 .cmd 需经 cmd /c 才能直接执行。
 
-    默认 ``--no-bundle``：交付物是便携版两个 exe，安装包（MSI/NSIS，实测每次
-    ~104MB、tauri 阶段多花 ~15-20s，且 CI 并不上传）不该是每次构建的固定代价。
-    需要安装包时显式 ``--bundle``。
+    恒传 ``--no-bundle``：本链交付物只有便携版两个 exe。安装包（MSI/NSIS，实测
+    每次 ~104MB、tauri 阶段多花 15-24s）不在交付范围内，要打包请另行处理。
     """
-    command = [tauri, "build", "--target", target]
-    if not bundle:
-        command.append("--no-bundle")
+    command = [tauri, "build", "--target", target, "--no-bundle"]
     if os.name == "nt" and tauri.lower().endswith((".cmd", ".bat")):
         return ["cmd", "/c", *command]
     return command
@@ -434,24 +441,6 @@ def sidecar_delivery_guard(path: Path, before: tuple[int, int] | None) -> int:
     )
 
 
-def bundle_guard(target: str) -> int:
-    """--bundle 的产物守卫：声明要打包却没产出安装包 → 失败（bundler 没跑成）。"""
-    root = ROOT / "src-tauri" / "target" / target / "release" / "bundle"
-    found = sorted(
-        path
-        for path in root.rglob("*")
-        if path.is_file() and path.suffix.lower() in (".msi", ".exe")
-    )
-    _stage("安装包（--bundle）")
-    if not found:
-        _log(f"✗ 请求了 --bundle，但 {root} 下没有 MSI/NSIS 产物")
-        _log("  Tauri bundler 可能没跑成（缺 WiX/NSIS，或 --no-bundle 被传入）。")
-        return EXIT_ARTIFACT_GUARD
-    for path in found:
-        _log(f"✓ {path.relative_to(ROOT)} · {_human_size(path.stat().st_size)}")
-    return 0
-
-
 def report_host_target_leak() -> bool:
     """预检期排查非正式区产物（src-tauri/target/release/）。
 
@@ -470,6 +459,51 @@ def report_host_target_leak() -> bool:
     return True
 
 
+class _Target(NamedTuple):
+    """一件交付产物：标签、路径、构建前快照、对应守卫。
+
+    守卫循环与失败后的产物体检共用这一份定义，避免两处各写一遍路径而漂移。
+    """
+
+    label: str
+    path: Path
+    before: tuple[int, int] | None
+    guard: Callable[[Path, tuple[int, int] | None], int]
+
+
+def report_artifact_consistency(targets: tuple[_Target, ...]) -> None:
+    """阶段失败后的产物体检：说清磁盘上现在是哪一套产物（退出码仍是 3）。
+
+    守卫只覆盖成功路径，阶段失败时根本走不到；而「主 exe 是上一次构建的、
+    sidecar 已是这一次的」正是中断留下的典型形态——2026-09-27 冒烟实测踩到过
+    （应用运行中构建，sidecar 交付副本被替换、主 exe 仍是旧的）。这种混搭功能上
+    也能跑，但形式上已不是一次构建的产物，不报告出来就会被当成交付物。
+    只报告、不阻断，也不把退出码改成 5：「阶段失败」与「产物守卫失败」是两条
+    不同的排查方向，混在一起只会误导定位。
+    """
+    _stage("产物一致性体检（阶段失败后）")
+    fresh: list[str] = []
+    missing: list[str] = []
+    stale: list[str] = []
+    for item in targets:
+        if not item.path.is_file():
+            missing.append(item.label)
+            _log(f"  ✗ {item.label}：不存在")
+        elif _refreshed(item.path, item.before):
+            fresh.append(item.label)
+            _log(f"  ✓ {item.label}：本次已重写（{_human_size(item.path.stat().st_size)}）")
+        else:
+            stale.append(item.label)
+            _log(f"  · {item.label}：仍是构建前的版本")
+    if not fresh:
+        _log("本次没有写入任何产物：磁盘上仍是上一套交付，可放心排查后重跑。")
+    elif stale or missing:
+        _log("⚠ 产物集不配套：本次只刷新了一部分 —— 不要把这几件当交付物。")
+        _log("  修好失败原因后重跑构建；守卫要求三件产物被同一次构建重写。")
+    else:
+        _log("三件产物都是本次产出（失败发生在写产物之后），修好原因后重跑复核。")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--target", default=DEFAULT_TARGET, help="Rust target triple")
@@ -477,11 +511,6 @@ def main(argv: list[str] | None = None) -> int:
         "--full",
         action="store_true",
         help="先跑后端 pytest（tests/）与前端 vitest，再进入构建阶段",
-    )
-    parser.add_argument(
-        "--bundle",
-        action="store_true",
-        help="额外产出 MSI/NSIS 安装包（默认只产出便携版两个 exe）",
     )
     args = parser.parse_args(argv)
 
@@ -522,35 +551,36 @@ def main(argv: list[str] | None = None) -> int:
     sidecar_delivery_before = _snapshot(sidecar_delivery)
     sidecar_artifact = sidecar_artifact_path(args.target)
     sidecar_before = _snapshot(sidecar_artifact)
-
-    if args.full:
-        test_env = {"GA_ROOT": str(ga_root), "PYTHONPATH": str(ga_root)}
-        # pytest 与 PyInstaller 同环境：requirements.txt 里两者一并安装
-        run_stage(
-            "后端测试",
-            [sidecar_python, "-m", "pytest", "tests/", "-q"],
-            extra_env=test_env,
-        )
-        run_stage("前端测试", [npm, "--prefix", "webui", "test", "--", "--run"])
-
-    run_stage("前端生产构建", [npm, "--prefix", "webui", "run", "build"])
-    run_stage(
-        "Python sidecar",
-        [sidecar_python, "desktop/build_sidecar.py", "--target", args.target],
+    targets = (
+        _Target("sidecar 中间产物", sidecar_artifact, sidecar_before, sidecar_artifact_guard),
+        _Target("sidecar 交付副本", sidecar_delivery, sidecar_delivery_before, sidecar_delivery_guard),
+        _Target("主程序产物", artifact, before, artifact_guard),
     )
-    run_stage("Tauri 桌面壳", tauri_stage_command(tauri, args.target, bundle=args.bundle))
+
+    try:
+        if args.full:
+            test_env = {"GA_ROOT": str(ga_root), "PYTHONPATH": str(ga_root)}
+            # pytest 与 PyInstaller 同环境：requirements.txt 里两者一并安装
+            run_stage(
+                "后端测试",
+                [sidecar_python, "-m", "pytest", "tests/", "-q"],
+                extra_env=test_env,
+            )
+            run_stage("前端测试", [npm, "--prefix", "webui", "test", "--", "--run"])
+
+        run_stage("前端生产构建", [npm, "--prefix", "webui", "run", "build"])
+        run_stage(
+            "Python sidecar",
+            [sidecar_python, "desktop/build_sidecar.py", "--target", args.target],
+        )
+        run_stage("Tauri 桌面壳", tauri_stage_command(tauri, args.target))
+    except StageFailed:
+        report_artifact_consistency(targets)
+        return EXIT_STAGE_FAILED
 
     _stage("产物守卫")
-    for guard, path, snapshot in (
-        (sidecar_artifact_guard, sidecar_artifact, sidecar_before),
-        (sidecar_delivery_guard, sidecar_delivery, sidecar_delivery_before),
-        (artifact_guard, artifact, before),
-    ):
-        code = guard(path, snapshot)
-        if code:
-            return code
-    if args.bundle:
-        code = bundle_guard(args.target)
+    for item in targets:
+        code = item.guard(item.path, item.before)
         if code:
             return code
 

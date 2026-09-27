@@ -7,17 +7,23 @@ rust-version = "1.85"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-# 仅用于 feature 统一，不直接调用。
-# 背景：tauri-build 依赖 schemars 0.8（开启其 preserve_order），schemars 又依赖
-# indexmap 1.x。indexmap 1.9.3 没有 default 特性，其 build.rs 在未显式开启 std 时
-# 会用 autocfg 探测 sysroot 来推导 has_std：
+# 仅用于 feature 统一，不直接调用；**不要删**（删了会偶发编译失败，见下）。
+# 链路：tauri-build / tauri-utils / tauri-plugin 2.x → schemars 0.8（preserve_order）
+# → indexmap 1.x。schemars 的 preserve_order = ["indexmap"] 只开 indexmap 的 serde-1，
+# 不开 std；而 indexmap 1.9.3 的 build.rs 在 CARGO_FEATURE_STD 缺席时跑 autocfg 探针：
 #     match env::var_os("CARGO_FEATURE_STD") { Some(_) => emit("has_std"),
 #         None => autocfg().emit_sysroot_crate("std") }
-# 该探测在本机偶发失败（构建日志只写 rustc-check-cfg、不写 rustc-cfg=has_std），
-# 于是 indexmap 选中 #[cfg(not(has_std))] 的三泛型 IndexMap<K,V,S>，
-# 而 schemars 的 preserve_order 代码写的是 IndexMap<K,V> —— 直接编译失败：
-#     error[E0107]: struct takes 3 generic arguments but 2 were supplied
-# 显式开启 std 即走 Some(_) 分支，跳过探测，行为确定。
+# 探针 spawn `rustc -` 并把源码写进 Stdio::piped() 的 stdin，**失败是静默的**
+# （不报错，只是不 emit rustc-cfg=has_std）——本机正是 Stdio::piped() 的已知问题机器
+# （ERROR_PIPE_BUSY / os error 231，见 docs/archive/desktop-sidecar-spawn-pipe-busy-20260924.md）。
+#   → indexmap 落到 #[cfg(not(has_std))] 的三泛型 IndexMap<K,V,S>，
+#   → schemars 的 preserve_order 代码写的是 IndexMap<K,V>：
+#        error[E0107]: struct takes 3 generic arguments but 2 generic arguments were supplied
+#        error: could not compile `schemars` (lib)
+# 显式开启 std 即走 Some(_) 分支、跳过探针；2026-09-27 实测（temp/dsh_review/indexmap_probe/）：
+# 强制探针失败时无此依赖即复现上面两条报错，有它则编译通过且 indexmap 的 build 输出
+# 变成 rustc-cfg=has_std=True 且无 rustc-check-cfg（证明没起探针）。
+# 升到不依赖 schemars 0.8 的 tauri 版本后才可以删（indexmap 2.x 无此 build script 探针）。
 indexmap = { version = "1", features = ["std"] }
 
 [dependencies]

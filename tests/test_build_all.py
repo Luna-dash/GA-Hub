@@ -265,13 +265,15 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(env["PYTHONUTF8"], "1")
         self.assertIs(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
 
-    def test_failed_stage_exits_3(self):
+    def test_failed_stage_raises_stage_failed(self):
+        """阶段失败抛 StageFailed（不是直接 exit）：main 才能把产物体检跑到失败路径。"""
         with mock.patch.object(build_all.subprocess, "run", return_value=mock.Mock(returncode=7)):
             stream = io.StringIO()
             with redirect_stdout(stream):
-                with self.assertRaises(SystemExit) as raised:
+                with self.assertRaises(build_all.StageFailed) as raised:
                     build_all.run_stage("probe", ["fake"])
-        self.assertEqual(raised.exception.code, build_all.EXIT_STAGE_FAILED)
+        self.assertEqual(raised.exception.stage, "probe")
+        self.assertIn("链式中止", stream.getvalue())
 
     def test_resolve_sidecar_python_honours_override(self):
         with mock.patch.dict(os.environ, {"GA_HUB_PYTHON": "X:/custom/python"}, clear=False):
@@ -324,36 +326,117 @@ class EnvironmentTests(unittest.TestCase):
         self.assertIn("build", command)
         self.assertIn("--target", command)
 
-    def test_tauri_stage_skips_bundling_unless_requested(self):
-        """默认不打包安装包（便携版两个 exe 才是交付物）；--bundle 才交给 bundler。"""
-        self.assertIn("--no-bundle", build_all.tauri_stage_command("tauri", "t"))
-        self.assertNotIn(
-            "--no-bundle", build_all.tauri_stage_command("tauri", "t", bundle=True)
-        )
+    def test_tauri_stage_always_skips_bundling(self):
+        """交付物只有便携版两个 exe：安装包不在本链职责内（实测每次 ~104MB/+24s）。"""
+        command = build_all.tauri_stage_command("tauri", "t")
+        self.assertIn("--no-bundle", command)
+        self.assertNotIn("--bundle", command)
+        self.assertNotIn("--bundle", build_all.__doc__)
 
 
-class BundleGuardTests(unittest.TestCase):
-    def test_requested_bundle_without_output_fails(self):
+class ArtifactConsistencyTests(unittest.TestCase):
+    """阶段失败后的产物体检（守卫覆盖不到失败路径）。"""
+
+    def _target(self, label, path, before):
+        return build_all._Target(label, path, before, build_all.artifact_guard)
+
+    def test_no_stage_wrote_anything(self):
         with tempfile.TemporaryDirectory() as td:
-            with mock.patch.object(build_all, "ROOT", Path(td)):
-                stream = io.StringIO()
-                with redirect_stdout(stream):
-                    code = build_all.bundle_guard("x86_64-pc-windows-msvc")
-            self.assertEqual(code, build_all.EXIT_ARTIFACT_GUARD)
-            self.assertIn("--bundle", stream.getvalue())
+            path, snapshot = _touch(Path(td) / "ga-hub-desktop.exe")
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                build_all.report_artifact_consistency((self._target("主程序产物", path, snapshot),))
+            self.assertIn("本次没有写入任何产物", stream.getvalue())
 
-    def test_requested_bundle_lists_installers(self):
+    def test_partial_refresh_is_reported_as_mismatched(self):
+        """中断留下的「一半新一半旧」必须被点名（实测冒烟出现过这种混搭）。"""
         with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            msi = root / "src-tauri" / "target" / "t" / "release" / "bundle" / "msi" / "GA-Hub.msi"
-            msi.parent.mkdir(parents=True)
-            msi.write_bytes(b"m" * 1024)
-            with mock.patch.object(build_all, "ROOT", root):
-                stream = io.StringIO()
-                with redirect_stdout(stream):
-                    code = build_all.bundle_guard("t")
-            self.assertEqual(code, 0)
-            self.assertIn("GA-Hub.msi", stream.getvalue())
+            fresh_path, _ = _touch(Path(td) / "ga-hub-sidecar.exe", b"old")
+            fresh_before = build_all._snapshot(fresh_path)
+            fresh_path.write_bytes(b"new-sidecar")
+            stale_path, stale_before = _touch(Path(td) / "ga-hub-desktop.exe")
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                build_all.report_artifact_consistency(
+                    (
+                        self._target("sidecar 交付副本", fresh_path, fresh_before),
+                        self._target("主程序产物", stale_path, stale_before),
+                    )
+                )
+            output = stream.getvalue()
+            self.assertIn("本次已重写", output)
+            self.assertIn("仍是构建前的版本", output)
+            self.assertIn("产物集不配套", output)
+
+    def test_missing_artifact_also_counts_as_mismatched(self):
+        with tempfile.TemporaryDirectory() as td:
+            fresh_path, _ = _touch(Path(td) / "ga-hub-sidecar.exe")
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                build_all.report_artifact_consistency(
+                    (
+                        self._target("sidecar 交付副本", fresh_path, None),
+                        self._target("主程序产物", Path(td) / "gone.exe", None),
+                    )
+                )
+            output = stream.getvalue()
+            self.assertIn("不存在", output)
+            self.assertIn("产物集不配套", output)
+
+    def test_all_refreshed_is_reported_honestly(self):
+        with tempfile.TemporaryDirectory() as td:
+            path, _ = _touch(Path(td) / "ga-hub-sidecar.exe")
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                build_all.report_artifact_consistency((self._target("sidecar 交付副本", path, None),))
+            self.assertIn("都是本次产出", stream.getvalue())
+
+
+class MainFlowTests(unittest.TestCase):
+    def test_stage_failure_runs_artifact_checkup_and_returns_3(self):
+        """阶段失败 → 仍然报告产物一致性，但退出码保持 3（不是 5）。"""
+        with (
+            mock.patch.object(build_all, "acquire_build_lock", return_value=(mock.Mock(), "lock")),
+            mock.patch.object(build_all, "resolve_npm", return_value="npm"),
+            mock.patch.object(build_all, "resolve_tauri", return_value="tauri"),
+            mock.patch.object(build_all, "resolve_sidecar_python", return_value="python"),
+            mock.patch.object(build_all, "preflight"),
+            mock.patch.object(build_all, "report_host_target_leak"),
+            mock.patch.object(build_all, "_locked_by_process", return_value=False),
+            mock.patch.object(build_all, "_readonly_artifact", return_value=False),
+            mock.patch.object(
+                build_all, "run_stage", side_effect=build_all.StageFailed("前端生产构建")
+            ),
+            mock.patch.object(build_all, "report_artifact_consistency") as report,
+        ):
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                code = build_all.main([])
+        self.assertEqual(code, build_all.EXIT_STAGE_FAILED)
+        report.assert_called_once()
+
+    def test_successful_chain_runs_guards_and_returns_0(self):
+        with (
+            mock.patch.object(build_all, "acquire_build_lock", return_value=(mock.Mock(), "lock")),
+            mock.patch.object(build_all, "resolve_npm", return_value="npm"),
+            mock.patch.object(build_all, "resolve_tauri", return_value="tauri"),
+            mock.patch.object(build_all, "resolve_sidecar_python", return_value="python"),
+            mock.patch.object(build_all, "preflight"),
+            mock.patch.object(build_all, "report_host_target_leak"),
+            mock.patch.object(build_all, "_locked_by_process", return_value=False),
+            mock.patch.object(build_all, "_readonly_artifact", return_value=False),
+            mock.patch.object(build_all, "run_stage", return_value=1.0),
+            mock.patch.object(build_all, "artifact_guard", return_value=0) as guard,
+            mock.patch.object(build_all, "sidecar_artifact_guard", return_value=0),
+            mock.patch.object(build_all, "sidecar_delivery_guard", return_value=0),
+            mock.patch.object(build_all, "_log_fingerprints"),
+        ):
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                code = build_all.main([])
+        self.assertEqual(code, 0)
+        self.assertEqual(guard.call_count, 1)
+        self.assertIn("构建链全部通过", stream.getvalue())
 
 
 class FingerprintTests(unittest.TestCase):
