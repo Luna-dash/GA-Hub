@@ -592,6 +592,10 @@ Conductor 原有两条并行轨道——「命令轨」（指令先写 SQLite，
 
 ## 2026-09-27 会话域归属重构（`routes/sessions.py` 不再持有进程级状态）
 
+> 本轮复审（九问）的全景总览、逐条处置与遗留清单另见
+> [`docs/archive/architecture-review-20260928.md`](archive/architecture-review-20260928.md)；
+> 下面各节是本轮的逐条实施记录。
+
 来源：本机客户端定位下的架构复审（问题 4）。原状：`routes/sessions.py` 以模块全局
 持有 `_store` / `_coordinator` / `_get_scheduled_chats` / `_system_channels` /
 `_coordinator_stopping`，另有 4 个兄弟路由用**函数内懒导入**
