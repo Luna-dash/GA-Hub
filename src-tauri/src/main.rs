@@ -59,6 +59,11 @@ const FORCE_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(unix)]
 const GROUP_TERM_TIMEOUT: Duration = Duration::from_secs(1);
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Post-readiness liveness cadence. The supervisor thread now stays alive for
+/// the whole sidecar lifetime (see [`watch_ready_sidecar`]), so this interval
+/// trades detection latency against wakeups: 250 ms notices a crash long before
+/// a user would.
+const LIVENESS_POLL_INTERVAL: Duration = Duration::from_millis(250);
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -110,8 +115,19 @@ impl<P> SidecarLifecycle<P> {
         }
     }
 
+    /// Record a terminal failure.
+    ///
+    /// `Ready` is a legal source state because the supervisor keeps watching a
+    /// ready sidecar: a process that exits after readiness is a real failure,
+    /// and without this transition `desktop_backend_ready` would answer `true`
+    /// forever (see [`watch_ready_sidecar`]). `Stopping`/`Stopped` stay excluded
+    /// so shutdown coordination keeps exclusive ownership of the final
+    /// transition, and a late failure cannot revive a closing shell.
     fn mark_failed(&mut self, error: String) -> bool {
-        if matches!(self.phase, SidecarPhase::Spawning | SidecarPhase::Running) {
+        if matches!(
+            self.phase,
+            SidecarPhase::Spawning | SidecarPhase::Running | SidecarPhase::Ready
+        ) {
             self.phase = SidecarPhase::Failed(error);
             true
         } else {
@@ -658,6 +674,12 @@ fn save_text_export(target: String, contents: String) -> Result<(), String> {
     fs::write(&target, contents).map_err(|e| format!("export write failed: {e}"))
 }
 
+/// Report sidecar readiness to the SPA.
+///
+/// `true` only while the shell holds a live sidecar that already passed its HTTP
+/// readiness probe. A sidecar that dies *after* readiness is reported as an
+/// error rather than `false`, so the desktop gate can tell "still starting" apart
+/// from "gone" and offer a restart instead of an endless loader.
 #[tauri::command]
 fn desktop_backend_ready(sidecar: tauri::State<'_, OwnedSidecar>) -> Result<bool, String> {
     sidecar.ready()
@@ -728,6 +750,14 @@ fn repo_root() -> PathBuf {
 /// and the SPA can only report "backend not ready". Persist a short trail so a
 /// failing launch can be diagnosed from disk instead of from a debugger.
 fn record_startup_diagnostic(message: &str) {
+    if cfg!(test) {
+        // Unit tests exercise this path on purpose (the liveness watchdog turns a
+        // dead child into "sidecar exited after readiness"). A test run must not
+        // append to the real %TEMP% log a user reads while diagnosing an actual
+        // desktop failure — that trail has to stay trustworthy.
+        let _ = message;
+        return;
+    }
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis())
@@ -912,6 +942,59 @@ fn request_owned_shutdown(sidecar: &OwnedSidecar) {
     }
 }
 
+/// Watch a ready sidecar for the rest of its life.
+///
+/// The supervisor used to return as soon as readiness was confirmed, which left
+/// nothing observing the child afterwards. A sidecar that died later therefore
+/// left the shell in a permanent "ready" state: `desktop_backend_ready` kept
+/// answering `true`, the SPA had no error surface to show, and the only way out
+/// was killing the whole application. This loop closes that hole by turning a
+/// post-readiness exit into a terminal `Failed` phase — the state the readiness
+/// command already reports as an error, and that the desktop gate renders with
+/// a one-click restart.
+///
+/// The loop never holds the lifecycle lock while sleeping, and it stands down as
+/// soon as another owner takes the process (window shutdown or
+/// `restart_backend`), so those paths keep their exclusive claim on the next
+/// transition. A restart that completes entirely inside one 250 ms poll window
+/// could in principle leave this loop watching the *new* process alongside its
+/// own watcher; both then observe the same lifecycle and `set_failed` is
+/// idempotent, so the worst case is one redundant poller that drains on the next
+/// handover.
+fn watch_ready_sidecar(sidecar: &OwnedSidecar, exit: &ExitCoordinator) {
+    let mut probe_error_logged = false;
+    while exit.is_running() {
+        thread::sleep(LIVENESS_POLL_INTERVAL);
+        if !exit.is_running() {
+            return;
+        }
+        match sidecar.child_root_has_exited() {
+            // Still running — keep watching.
+            Ok(Some(false)) => {}
+            // Another owner took the process; it owns the next transition.
+            Ok(None) => return,
+            Ok(Some(true)) => {
+                record_startup_diagnostic("sidecar exited after readiness");
+                let _ = sidecar.set_failed(
+                    "GA-Hub 后端进程已退出（可能崩溃或被系统终止），请重启后端。".to_string(),
+                    exit,
+                );
+                return;
+            }
+            Err(error) => {
+                // A broken status probe is not evidence of death. Stay
+                // conservative — the same failure direction as the pid probes in
+                // server/process_utils.py — and keep watching rather than
+                // reporting a failure we cannot substantiate.
+                if !probe_error_logged {
+                    probe_error_logged = true;
+                    record_startup_diagnostic(&format!("sidecar liveness probe failed: {error}"));
+                }
+            }
+        }
+    }
+}
+
 fn run_sidecar_supervisor<F>(
     sidecar: OwnedSidecar,
     port: u16,
@@ -948,7 +1031,11 @@ fn run_sidecar_supervisor<F>(
     match wait_http_ready(&sidecar, port, &token, &exit) {
         Ok(ReadinessWait::Ready) => {
             record_startup_diagnostic(&format!("sidecar ready on port {port}"));
-            let _ = sidecar.set_ready(&exit);
+            if sidecar.set_ready(&exit) {
+                // Readiness is a milestone, not the end of supervision: the shell
+                // must still notice a sidecar that dies afterwards.
+                watch_ready_sidecar(&sidecar, &exit);
+            }
         }
         Ok(ReadinessWait::Cancelled) => {}
         Err(error) => {
@@ -1626,6 +1713,110 @@ mod tests {
         let mut failed = SidecarLifecycle::<()>::new();
         assert!(failed.mark_failed("failed".to_string()));
         assert_eq!(failed.readiness(), Err("failed".to_string()));
+    }
+
+    #[test]
+    fn ready_lifecycle_can_still_fail_and_then_restart() {
+        let mut lifecycle = SidecarLifecycle::new();
+        assert_eq!(lifecycle.commit_spawn(()), Ok(()));
+        assert!(lifecycle.mark_ready());
+        assert_eq!(lifecycle.readiness(), Ok(true));
+
+        // A ready sidecar that dies is a real failure — the phase must accept it,
+        // otherwise the shell would answer "ready" for a dead process.
+        assert!(lifecycle.mark_failed("gone".to_string()));
+        assert_eq!(lifecycle.readiness(), Err("gone".to_string()));
+        assert!(
+            restartable(&lifecycle.phase),
+            "a post-readiness failure must stay user-recoverable"
+        );
+    }
+
+    /// Build a command that exits immediately, for liveness-watch tests.
+    fn short_lived_command() -> Command {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/D", "/C", "exit", "0"]);
+            command
+        };
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "exit 0"]);
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    }
+
+    #[test]
+    fn watchdog_reports_a_sidecar_that_dies_after_readiness() {
+        let exit = ExitCoordinator::new();
+        let sidecar = OwnedSidecar::new();
+        let process = OwnedProcess::spawn(short_lived_command())
+            .expect("owned test process should start");
+        assert!(sidecar.commit_spawn(process, &exit).is_ok());
+        assert!(sidecar.set_ready(&exit));
+        assert_eq!(sidecar.ready(), Ok(true));
+
+        // The watch only returns once it has resolved the child's fate.
+        watch_ready_sidecar(&sidecar, &exit);
+
+        assert!(
+            matches!(sidecar.ready(), Err(message) if message.contains("退出")),
+            "a dead ready sidecar must be reported as failed, got {:?}",
+            sidecar.ready()
+        );
+    }
+
+    /// Build a command that stays alive until it is stopped, for handover tests.
+    fn long_lived_command() -> Command {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/D", "/C", "ping.exe 127.0.0.1 -n 30 >NUL"]);
+            command
+        };
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    }
+
+    #[test]
+    fn watchdog_stands_down_when_shutdown_takes_the_process() {
+        let exit = ExitCoordinator::new();
+        let sidecar = OwnedSidecar::new();
+        let process = OwnedProcess::spawn(long_lived_command())
+            .expect("owned test process should start");
+        assert!(sidecar.commit_spawn(process, &exit).is_ok());
+        assert!(sidecar.set_ready(&exit));
+
+        // Shutdown claims the live process; the watcher must hand over instead of
+        // reporting a failure against a lifecycle it no longer owns.
+        let ShutdownClaim::Owner(Some(mut owned)) = sidecar.begin_shutdown() else {
+            panic!("a ready lifecycle must yield its owned process");
+        };
+        watch_ready_sidecar(&sidecar, &exit);
+        assert_eq!(
+            sidecar.ready(),
+            Ok(false),
+            "the watcher must not fail a lifecycle owned by shutdown"
+        );
+
+        stop_owned_process(&mut owned);
+        sidecar.finish_shutdown();
     }
 
     #[test]
