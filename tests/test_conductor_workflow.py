@@ -310,7 +310,7 @@ def test_terminal_workflow_transition_publishes_completion():
         "item": {"id": "final", "msg": "done"},
     }
     with patch("server.services.conductor_service.bus.publish") as publish:
-        service._publish_workflow_transition(
+        service.publish_workflow_transition(
             ("conductor:workflow_completed", payload)
         )
 
@@ -338,7 +338,7 @@ def test_service_rejects_a_final_report_before_acceptance_without_persisting_it(
     service.client = engine
     service.pool.client = engine
     service._process_manager = None
-    service._ensure_relay = lambda: None
+    service.ensure_relay = lambda: None
     try:
         service.workflow_tracker.admit("request-1", boot_id="boot-a")
         service.workflow_tracker.bind_subagent("request-1", "worker", 1)
@@ -368,7 +368,7 @@ def test_service_final_report_publishes_the_single_workflow_completion(
     service.client = engine
     service.pool.client = engine
     service._process_manager = None
-    service._ensure_relay = lambda: None
+    service.ensure_relay = lambda: None
     try:
         service.workflow_tracker.admit("request-1", boot_id="boot-a")
         service.workflow_tracker.bind_subagent("request-1", "worker", 1)
@@ -489,7 +489,7 @@ def resume_engine(tmp_path, monkeypatch):
     service.client = engine
     service.pool.client = engine
     service._process_manager = None
-    service._ensure_relay = lambda: None
+    service.ensure_relay = lambda: None
     starts = []
 
     def ensure_started(**kwargs):

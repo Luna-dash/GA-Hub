@@ -21,8 +21,15 @@ MODEL_KEYS = ("conductor_llm_index", "subagent_llm_index", "subagent_model_polic
 
 
 class ConductorCommands:
-    def __init__(self, service, store, recovery):
-        self.service = service
+    """Guarded delivery of persisted commands to the engine.
+
+    Talks to the service only through ``ConductorKernel`` — see that module for
+    why. The three verbs the service calls (``submit``, ``execute_command``,
+    ``drain_commands``) are the whole public surface it needs.
+    """
+
+    def __init__(self, kernel, store, recovery):
+        self.kernel = kernel
         self.store = store
         self.recovery = recovery
         self._inflight_lock = threading.Lock()
@@ -39,7 +46,7 @@ class ConductorCommands:
                                    "boot_id": self.recovery.boot_id, "expected_generation": generation})
 
     def submit(self, operation_id: str | None, intent: dict) -> dict:
-        self.service._assert_open()
+        self.kernel.assert_open()
         operation_id = operation_id or uuid.uuid4().hex
         with self.store.transaction():
             existing = self.store.command(operation_id)
@@ -50,26 +57,26 @@ class ConductorCommands:
                 payload = {"intent": copy.deepcopy(intent), "boot_id": None}
                 if intent["kind"] == "chat" and intent.get("role") == "user":
                     hint = intent.get("request_id")
-                    if hint and self.service.workflow_tracker.is_open(hint):
+                    if hint and self.kernel.workflow_tracker.is_open(hint):
                         payload["request_id"] = hint
-                    elif hint and (transition := self.service.workflow_tracker.reopen(hint)) is not None:
+                    elif hint and (transition := self.kernel.workflow_tracker.reopen(hint)) is not None:
                         # W2.2: append to a finished workflow — reuse its
                         # identity and tell the engine to re-arm its closed
                         # request budget (the follow-up carries reopen=True).
                         payload["request_id"] = hint
                         payload["intent"]["reopen"] = True
-                        self.service.workflow_tracker.admit(payload["request_id"], admission_state="submitting")
-                        self.store.defer(lambda p=transition: self.service._publish_workflow_transition(
+                        self.kernel.workflow_tracker.admit(payload["request_id"], admission_state="submitting")
+                        self.store.defer(lambda p=transition: self.kernel.publish_workflow_transition(
                             (CONDUCTOR_WORKFLOW_REOPENED, p)))
                     else:
                         payload["request_id"] = uuid.uuid4().hex
-                        self.service.workflow_tracker.admit(payload["request_id"], admission_state="submitting")
+                        self.kernel.workflow_tracker.admit(payload["request_id"], admission_state="submitting")
                 self.store.put_command(operation_id, payload)
         return self.execute_command(operation_id, start_allowed=True)
 
     def execute_command(self, operation_id: str, *, start_allowed: bool = False) -> dict:
         with self._inflight_lock:
-            self.service._assert_open()
+            self.kernel.assert_open()
             if operation_id in self._inflight:
                 raise GahubProcessError("operation is in progress", status_code=409,
                     detail={"error": "operation_in_progress", "operation_id": operation_id})
@@ -94,7 +101,7 @@ class ConductorCommands:
                 # pending would let a later drain_commands() deliver a
                 # message the caller was already told was refused.
                 try:
-                    self.service.configure_models(llm_index=intent.get("llm_index"),
+                    self.kernel.configure_models(llm_index=intent.get("llm_index"),
                         subagent_llm_index=intent.get("subagent_llm_index"),
                         subagent_model_policy=intent.get("subagent_model_policy"))
                 except ValueError as exc:
@@ -104,7 +111,7 @@ class ConductorCommands:
                 # ensure_started failures stay transient: the engine may be
                 # cold-starting, and the command loop retries pending
                 # commands once recovery is ready.
-                self.service.ensure_started()
+                self.kernel.ensure_started()
             if not self.recovery.ready:
                 self.recovery.sync()
             if not self.recovery.ready or self.recovery.stop_event.is_set():
@@ -132,7 +139,7 @@ class ConductorCommands:
                 receipt = None
                 if command["state"] in ("sending", "unknown"):
                     scope = "worker_action" if intent["kind"] == "action" else intent["kind"]
-                    receipt = self.service.client.operation(operation_id, scope)
+                    receipt = self.kernel.client.operation(operation_id, scope)
                     if receipt.get("boot_id") != payload["boot_id"]:
                         raise GahubProcessError("engine changed", status_code=409,
                                                detail={"error": "engine_boot_changed"})
@@ -159,13 +166,13 @@ class ConductorCommands:
                 raise
             result = {**result, "operation_id": operation_id}
             with self.store.transaction():
-                tracker = self.service.workflow_tracker
+                tracker = self.kernel.workflow_tracker
                 rid = payload.get("request_id")
                 sid = intent.get("sid") or result.get("id")
                 if intent["kind"] == "chat":
                     if intent.get("role") == "user" and rid:
                         tracker.confirm_admission(rid, payload["boot_id"])
-                    self.service._on_remote_chat(result)
+                    self.kernel.on_remote_chat(result)
                 else:
                     result.setdefault("request_id", rid)
                     if rid and tracker.has_request(rid):
@@ -173,7 +180,7 @@ class ConductorCommands:
                             _, transition = tracker.record_subagent_event(sid, "accepted", request_id=rid,
                                                         generation=result.get("active_generation"))
                             if transition:
-                                self.service._publish_workflow_transition(transition)
+                                self.kernel.publish_workflow_transition(transition)
                         elif tracker.is_open(rid) and intent.get("action") in (None, "input", "rework"):
                             tracker.confirm_admission(rid, payload["boot_id"])
                             tracker.bind_subagent(rid, sid, int(result.get("active_generation") or 0))
@@ -204,11 +211,11 @@ class ConductorCommands:
     def _prepare(self, payload: dict) -> None:
         intent = dict(payload["intent"])
         kind = intent.pop("kind")
-        tracker = self.service.workflow_tracker
+        tracker = self.kernel.workflow_tracker
         rid = payload.get("request_id") or intent.get("request_id")
         if kind == "action":
             rid = rid or tracker.request_for_subagent(intent["sid"])
-            state = self.service.client.get_subagent(intent["sid"])
+            state = self.kernel.client.get_subagent(intent["sid"])
             if state.get("boot_id") != self.recovery.boot_id:
                 self.recovery.reconnect()
                 raise GahubProcessError("engine changed during action preparation", status_code=409)
@@ -230,18 +237,18 @@ class ConductorCommands:
             payload.update(expected_generation=generation,
                            expected_command_revision=state.get("command_revision", 0))
         if kind == "dispatch" or intent.get("action") in ("input", "rework"):
-            _, models, selected = self.service._admit_action_models(intent.get("llm_index"), rid,
+            _, models, selected = self.kernel.admit_action_models(intent.get("llm_index"), rid,
                 intent.get("conductor_llm_index"), intent.get("subagent_llm_index"), intent.get("subagent_model_policy"))
             intent["llm_index"] = selected
             payload["model_policy"] = models["subagent_model_policy"]
         elif kind == "chat" and intent.get("final"):
             tracker.assert_ready_for_final(rid)
         elif kind == "chat" and intent.get("role") == "user":
-            self.service._assert_engine_ready()
+            self.kernel.assert_engine_ready()
         elif kind in ("dispatch", "action"):
             # Subagent operations never cold-start the supervisor: a stopped
             # conductor must not gain workers it cannot wake (P1).
-            self.service._assert_engine_ready()
+            self.kernel.assert_engine_ready()
         payload["request_id"] = rid
         intent["request_id"] = rid
         for key in MODEL_KEYS:
@@ -252,16 +259,16 @@ class ConductorCommands:
         intent = dict(payload["prepared"])
         kind = payload["intent"]["kind"]
         if kind == "action":
-            return self.service.client.subagent_action(**intent, operation_id=operation_id,
+            return self.kernel.client.subagent_action(**intent, operation_id=operation_id,
                 expected_boot_id=payload["boot_id"], expected_generation=payload["expected_generation"],
                 expected_command_revision=payload["expected_command_revision"])
         if kind == "chat":
-            return self.service.client.post_chat(intent["msg"], intent.get("role", "user"),
+            return self.kernel.client.post_chat(intent["msg"], intent.get("role", "user"),
                 intent.get("request_id"), final=bool(intent.get("final")),
                 reopen=bool(intent.get("reopen")),
                 operation_id=operation_id, expected_boot_id=payload["boot_id"])
         if kind == "dispatch":
-            return self.service.client.start_subagent(**intent, operation_id=operation_id,
+            return self.kernel.client.start_subagent(**intent, operation_id=operation_id,
                                                       expected_boot_id=payload["boot_id"])
         raise ValueError(f"unknown command kind: {kind}")
 
@@ -269,7 +276,7 @@ class ConductorCommands:
         for command in self.store.pending_commands():
             if self.recovery.stop_event.is_set() or not self.recovery.ready:
                 break
-            if command["payload"].get("auto") and not self.service.auto_accept:
+            if command["payload"].get("auto") and not self.kernel.auto_accept:
                 continue
             if command["payload"].get("suspended"):
                 continue

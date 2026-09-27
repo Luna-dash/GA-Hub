@@ -79,7 +79,7 @@ def test_accept_http_409_preserves_verification_evidence_through_route(monkeypat
     monkeypatch.setattr(client_module.requests, "request", request)
     service = ConductorService.for_tests()
     service._process_manager = None
-    service._ensure_relay = lambda: None
+    service.ensure_relay = lambda: None
     service.client = _client()
     service.pool.client = service.client
     service.pool.update([{"id": "worker-1", "status": "stopped"}])

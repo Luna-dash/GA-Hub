@@ -73,8 +73,13 @@ CONDUCTOR_SUBAGENTS = "conductor:subagents"
 CONDUCTOR_LOG = "conductor:log"
 CONDUCTOR_REQUEST_OUTCOME = "conductor:request_outcome"
 CONDUCTOR_REQUEST_YIELD_REQUESTED = "conductor:request_yield_requested"
+# The store's post-commit publish can fail (a listener raised, the bus is
+# gone); the recovery loop then owns a resync and tells the page the board it
+# is showing may be stale. Was published as an inline literal until the
+# publish-site scan learned to see through ``self.kernel.publish``.
+CONDUCTOR_RESYNC_REQUIRED = "conductor:resync_required"
 # Terminal workflow transitions are built as (topic, payload) tuples inside
-# the WorkflowTracker and published later via _publish_workflow_transition —
+# the WorkflowTracker and published later via publish_workflow_transition —
 # they must be constants, not inline strings, or the publish-site scan
 # cannot see who owns them.
 CONDUCTOR_WORKFLOW_COMPLETED = "conductor:workflow_completed"

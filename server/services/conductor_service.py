@@ -39,10 +39,9 @@ from .conductor_vocabulary import (
     ConductorNotRunning,
 )
 from .conductor_workflow import WorkflowTracker
-from .conductor_store import ConductorStore, command_fingerprint
-from .conductor_recovery import ConductorRecovery
+from .conductor_store import command_fingerprint
 from . import conductor_activity
-from .conductor_commands import ConductorCommands
+from .conductor_kernel import ChatGuard, build_collaborators
 from .event_bus import bus
 from ..event_topics import (
     CONDUCTOR_CHAT,
@@ -288,7 +287,7 @@ class HubConductorCallbacks:
                 if snapshot == self._last_subagent_snapshot:
                     return
                 if isinstance(snapshot, dict):
-                    self.service._publish(CONDUCTOR_SUBAGENTS, snapshot)
+                    self.service.publish(CONDUCTOR_SUBAGENTS, snapshot)
                 else:
                     push_subagent_cards(snapshot)
                 # Keep the old value when publishing fails so a later event retries.
@@ -298,7 +297,7 @@ class HubConductorCallbacks:
                 log.exception("conductor_subagent_snapshot_publish_failed")
 
     # request lifecycle ------------------------------------------------------
-    def _fail_unhandled_request(self, request_id: str) -> None:
+    def fail_unhandled_request(self, request_id: str) -> None:
         """Close the false-success window for requests the turn never touched.
 
         The engine reports ``ok`` when a supervisor turn ends naturally, even
@@ -316,7 +315,7 @@ class HubConductorCallbacks:
             return
         if snapshot.get("subagents") or snapshot.get("item"):
             return
-        with self.service._chat_lock:
+        with self.service.chat_guard():
             answered = any(
                 item.get("role") == "conductor"
                 and item.get("request_id") == request_id
@@ -331,7 +330,7 @@ class HubConductorCallbacks:
                   "or answering this request",
         )
         if transition is not None:
-            self.service._publish_workflow_transition(transition)
+            self.service.publish_workflow_transition(transition)
 
     def on_conductor_log_frame(self, frame: object) -> None:
         """Bridge gahub_app log frames to the Hub event bus.
@@ -425,10 +424,12 @@ class ConductorService:
         self._relayed_ids_lock = threading.Lock()
         self._lifecycle_cache: dict = {}
         self._notifications_dirty = False
-        self.store = ConductorStore(store_path, self._process_manager.base_url(), self.workflow_tracker)
-        self.recovery = ConductorRecovery(self, self.store)
-        self.commands = ConductorCommands(self, self.store, self.recovery)
-        self.store.notification_failed = lambda: setattr(self, "_notifications_dirty", True)
+        self._chat_guard = ChatGuard()
+        self.store, self.recovery, self.commands = build_collaborators(
+            self,
+            store_path=store_path,
+            engine_base_url=self._process_manager.base_url(),
+        )
         self.chat_messages = self.store.chat_messages()
         self._relayed_chat_ids.update(item["id"] for item in self.chat_messages)
 
@@ -522,7 +523,7 @@ class ConductorService:
 
             # Background helpers must not outlive the closing engine client:
             # the relay would keep publishing into a retired loop, and a
-            # command still in flight would race _assert_open with noise.
+            # command still in flight would race assert_open with noise.
             helpers: list[threading.Thread] = []
             if self._relay_thread is not None:
                 helpers.append(self._relay_thread)
@@ -544,7 +545,7 @@ class ConductorService:
                 self._shutdown_in_progress = False
                 event.set()
 
-        # Every shutdown path is terminal (`_assert_open` refuses all later
+        # Every shutdown path is terminal (`assert_open` refuses all later
         # calls), so keeping the class singleton would poison the next app
         # lifecycle with a closed instance. Release it like AgentService does.
         if type(self)._instance is self:
@@ -561,19 +562,19 @@ class ConductorService:
             )
         return complete
 
-    def _assert_open(self) -> None:
+    def assert_open(self) -> None:
         with self._shutdown_lock:
             if self._closed:
                 raise RuntimeError("Conductor service is closed")
 
-    def _assert_engine_ready(self) -> None:
+    def assert_engine_ready(self) -> None:
         """Subagent operations require a running supervisor — refuse loudly.
 
         Mirrors ``ensure_started`` at the process level (engine respawn +
         relay), but unlike chat admission it never cold-starts the
         supervisor: a stopped conductor must not gain workers it cannot
         supervise (2026-09 audit P1)."""
-        self._assert_open()
+        self.assert_open()
         manager = self._process_manager
         if manager is not None:
             try:
@@ -589,15 +590,65 @@ class ConductorService:
                 ) from exc
         status = self.client.status()
         if not status.get("started"):
-            # Refuse BEFORE _ensure_relay: the relay thread spawns gahub_app
+            # Refuse BEFORE ensure_relay: the relay thread spawns gahub_app
             # asynchronously, so starting it for a refused operation would
             # cold-start the very supervisor this path must never start.
             raise ConductorNotRunning(
                 "conductor is not running; send a chat message or press "
                 "start before subagent operations")
-        self._ensure_relay()
+        self.ensure_relay()
 
-    def _publish(self, topic: str, payload: dict) -> None:
+    def chat_guard(self) -> ChatGuard:
+        """Guard for reading or writing ``chat_messages``.
+
+        Handed to collaborators (the callbacks class reads the mirror to decide
+        whether a request was answered) so they never hold the service's own
+        lock object.
+        """
+        return self._chat_guard
+
+    @property
+    def notifications_dirty(self) -> bool:
+        """True when a deferred notification failed and a resync is owed."""
+        return self._notifications_dirty
+
+    def mark_notifications_dirty(self) -> None:
+        """Flag the notification channel as degraded (resync will retry).
+
+        The store calls this from its post-commit effect path when a publish
+        listener raises, so the flag is settable without exposing the field.
+        """
+        self._notifications_dirty = True
+
+    def clear_notifications_dirty(self) -> None:
+        """Consume the flag once a resync has been published for it."""
+        self._notifications_dirty = False
+
+    def remember_lifecycle(self, status: dict, *, merge: bool = False) -> None:
+        """Remember an engine status probe for later degraded reads.
+
+        ``lifecycle_status`` serves this cache when a later probe fails, so a
+        dead engine reports the last known shape plus ``started=False`` instead
+        of an empty, misleading document. ``merge=True`` is the relay's partial
+        update: the recovery response carries only the fields the engine
+        re-sends, and dropping the rest would thin out the fallback document.
+        """
+        if merge:
+            self._lifecycle_cache.update(status)
+        else:
+            self._lifecycle_cache = status
+
+    @property
+    def lifecycle_cache(self) -> dict:
+        return dict(self._lifecycle_cache or {})
+
+    def publish(self, topic: str, payload: dict) -> None:
+        """Publish one bus notification, deferred until the commit lands.
+
+        Bodies never notify inside a transaction: a listener that reads the
+        board back would see the pre-commit state, and a rollback would leave
+        a notification standing for work that never happened.
+        """
         def publish():
             try:
                 bus.publish(topic, payload)
@@ -606,7 +657,7 @@ class ConductorService:
                 log.exception("conductor notification failed for %s", topic)
         self.store.defer(publish)
 
-    def _publish_workflow_transition(self, transition: tuple[str, dict]) -> None:
+    def publish_workflow_transition(self, transition: tuple[str, dict]) -> None:
         self.store.defer(lambda: self._publish_workflow_transition_now(transition))
 
     def _publish_workflow_transition_now(
@@ -634,13 +685,13 @@ class ConductorService:
                 self.store.save_activity([activity])
             except Exception:
                 log.exception("workflow activity could not be recorded")
-        self._publish(topic, payload if activity is None else {**payload, "activity": activity})
+        self.publish(topic, payload if activity is None else {**payload, "activity": activity})
 
     def _record_workflow_failure_message(
         self, request_id: str, *, phase: str, error: str
     ) -> dict:
         """Persist one visible failure report per request, even across retries."""
-        with self._chat_lock:
+        with self._chat_guard:
             existing = next(
                 (
                     item
@@ -660,7 +711,7 @@ class ConductorService:
                 request_id=request_id,
                 kind="error",
             )
-            self._publish(CONDUCTOR_CHAT, {"item": item})
+            self.publish(CONDUCTOR_CHAT, {"item": item})
             return item
 
     @staticmethod
@@ -727,10 +778,10 @@ class ConductorService:
             self._subagent_model_policy = next_policy
             snapshot = self.model_policy_snapshot()
 
-        self._push_models_to_engine(snapshot)
+        self.push_models_to_engine(snapshot)
         return snapshot
 
-    def _push_models_to_engine(self, snapshot: Optional[dict] = None) -> None:
+    def push_models_to_engine(self, snapshot: Optional[dict] = None) -> None:
         """Best-effort sync of the policy snapshot to gahub_app."""
         client = self.client
         snapshot = snapshot or self.model_policy_snapshot()
@@ -785,9 +836,9 @@ class ConductorService:
 
     # ===== engine session (gahub_app over HTTP) =====
 
-    def _ensure_relay(self) -> None:
+    def ensure_relay(self) -> None:
         # Check-then-start must be atomic: ensure_started (chat admission)
-        # and _assert_engine_ready (subagent verbs) race here on cold start,
+        # and assert_engine_ready (subagent verbs) race here on cold start,
         # and a second relay thread would double-process every SSE event.
         with self._relay_lock:
             if self._closed:
@@ -896,13 +947,13 @@ class ConductorService:
             try:
                 manager.ensure_running()
             except GahubProcessError:
-                # Typed passthrough — see _assert_engine_ready.
+                # Typed passthrough — see assert_engine_ready.
                 raise
             except Exception as exc:
                 raise RuntimeError(
                     rf"gahub_app unavailable (see %TEMP%\gahub_app.log): {exc}"
                 ) from exc
-        self._ensure_relay()
+        self.ensure_relay()
         status = self.client.status()
         if not status.get("started"):
             # Re-check under the cold-start lock: a concurrent admission may
@@ -916,7 +967,7 @@ class ConductorService:
                     # full hub-owned snapshot so the subagent policy survives
                     # the engine restart instead of silently resetting to
                     # follow_main.
-                    self._push_models_to_engine()
+                    self.push_models_to_engine()
                     # Fresh conductor: waking recovery here replays the
                     # durable journal and drains pending commands. On an
                     # already-running conductor this must NOT run — an
@@ -966,7 +1017,7 @@ class ConductorService:
             tracker = self.workflow_tracker
             for topic, payload in tracker.abandon_stranded(
                     reason="conductor stopped by user"):
-                self._publish_workflow_transition((topic, payload))
+                self.publish_workflow_transition((topic, payload))
         self.lifecycle_status()
         return stopped
 
@@ -977,14 +1028,14 @@ class ConductorService:
             # A stale started=True cache is actively misleading: the engine
             # may have exited after the last successful probe. Report a
             # degraded, stopped state so the UI exposes recovery controls.
-            status = dict(self._lifecycle_cache or {})
+            status = self.lifecycle_cache
             status["started"] = False
             status.setdefault("stopping", False)
             status.setdefault("admission_open", True)
             status.setdefault("loop_alive", False)
             status.setdefault("agent_alive", False)
         self._started = bool(status.get("started"))
-        self._lifecycle_cache = status
+        self.remember_lifecycle(status)
         status["recovery"] = self.recovery.status()
         return status
 
@@ -1012,7 +1063,7 @@ class ConductorService:
         memory on every boot, so hydration must not depend on the engine
         being alive long enough to have replayed (reliability plan §4.3).
         """
-        with self._chat_lock:
+        with self._chat_guard:
             return list(self.chat_messages[-last:])
 
     def get_activity(self, request_id: str, limit: int = 200,
@@ -1038,7 +1089,7 @@ class ConductorService:
         # reconcile path anymore.
         return self.recovery.on_event(event)
 
-    def _on_remote_chat(self, item: dict) -> None:
+    def on_remote_chat(self, item: dict) -> None:
         """Mirror an engine-side chat item into the hub log.
 
         Callers are the journal replay (chat records, including user
@@ -1061,7 +1112,7 @@ class ConductorService:
                 if tracker.has_request(item["request_id"]):
                     transition = tracker.record_final(item["request_id"], hub_item)
                     if transition is not None:
-                        self._publish_workflow_transition(transition)
+                        self.publish_workflow_transition(transition)
 
             def mirror():
                 with self._chat_lock:
@@ -1070,7 +1121,7 @@ class ConductorService:
                     self.chat_messages.append(hub_item)
                     del self.chat_messages[:-200]
                     self._remember_relayed(item.get("id"))
-                self._publish(CONDUCTOR_CHAT, {"item": hub_item})
+                self.publish(CONDUCTOR_CHAT, {"item": hub_item})
 
             self.store.save_chat(hub_item)
             self.store.defer(mirror)
@@ -1110,7 +1161,7 @@ class ConductorService:
             "goal": goal, "boundaries": boundaries, "deliverables": deliverables,
             "done_when": done_when, "checks": checks})
 
-    def _admit_action_models(
+    def admit_action_models(
         self,
         llm_index: Optional[int],
         request_id: str | None,
@@ -1138,7 +1189,7 @@ class ConductorService:
         accept duplicates none of it: without the model section it still
         must refuse the same way start/input/rework do.
         """
-        self._assert_engine_ready()
+        self.assert_engine_ready()
         tracker = self.workflow_tracker
         if request_id is not None and not tracker.has_request(request_id):
             raise ValueError(f"unknown conductor request_id: {request_id}")
@@ -1327,7 +1378,7 @@ class ConductorService:
         conductor is stopped (paused session) every row is deletable — the
         tombstone keeps the engine from re-admitting it after a restart.
         """
-        self._assert_open()
+        self.assert_open()
         self.workflow_tracker.forget_workflow(
             request_id, allow_active=not self._started)
 
@@ -1342,7 +1393,7 @@ class ConductorService:
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
         operation_id: Optional[str] = None,
     ) -> dict:
-        self._assert_open()
+        self.assert_open()
         if kind is not None and role != "conductor":
             raise ValueError("kind is only valid for conductor messages")
         if kind == "final" and not request_id:

@@ -31,7 +31,7 @@ def setup(tmp_path, monkeypatch):
         service.client = engine
         service.pool.client = engine
         service._process_manager = None
-        service._ensure_relay = lambda: None
+        service.ensure_relay = lambda: None
         services.append(service)
         return service
 
@@ -247,7 +247,7 @@ def test_cold_start_passes_only_the_model_index():
     service._relay_thread = None
     service._relay_stop = threading.Event()
     service._process_manager = Mock()
-    service._lifecycle_cache = {}
+    service.remember_lifecycle({})
     service.client.status.return_value = {"started": False}
     service.client.start.return_value = {"started": True}
 

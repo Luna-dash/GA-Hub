@@ -627,3 +627,72 @@ Conductor 原有两条并行轨道——「命令轨」（指令先写 SQLite，
 1028 passed / 2 skipped，新增 6 条契约用例）。`tests/test_feishu_service.py` 的
 `test_status_external_pid_cache_expires` 在全量负载下偶发（单独重跑 3/3 通过，与本次
 改动无关）。
+
+## 2026-09-27 Conductor 协作者收口（五对象友元团 → 单所有者接缝 + 窄内核）
+
+来源：同一轮架构复审（问题 5）。原状：五个对象互相掏口袋——`ConductorStore`
+直接改 `WorkflowTracker` 的私有投影（`_workflows` / `_owners` / `_lock` /
+`_max_workflows` / `_prune_terminal`，实测 10 处），tracker 又反向持有 store
+（`tracker.store = self` 由 store 自己塞进去，不经构造函数）；`ConductorCommands`
+/ `ConductorRecovery` 持有整个 `ConductorService` 并直呼其私有成员（实测 24 处
+`service._x`），`HubConductorCallbacks` 直接借 service 的 `_chat_lock`。后果：
+同一个 tracker 有两个引用却不保证相等（`test_conductor_event_lifecycle.py` 的
+装配已经把它换掉、store 仍指向旧对象，测试只断言新对象所以照样绿）；回滚逻辑
+住在 store 里却要改 tracker 的内存结构，`_owners` 索引公式被抄 4 份；锁顺序
+（tracker → store）只是隐式约定；232 条 conductor 测试**没有一条**能不经完整
+service 构造协作者，只能捅 `recovery._apply_record` / `commands._inflight` 这类
+私有成员。
+
+P1 单所有者（store 管行、tracker 管投影）
+- [x] `WorkflowTracker` 新增公开接缝：`capacity` / `attach()`（重复挂载抛
+      `RuntimeError`）/ `rollback_point()` / `restore_projection()` /
+      `prune_terminal()`，投影锁公开为 `tracker.lock`；`conductor_store.py`
+      里不再出现任何 `tracker._`
+- [x] 反向赋值转显式注入：`ConductorStore.__init__` 调 `tracker.attach(self)`，
+      「一个 tracker 一个 store」由代码强制，不再靠约定
+- [x] `_owners` 索引公式收成 `_rebuild_owners()` / `_forget_owners()` 两处，回滚
+      路径与 `restore_state` / `prune_terminal` / `forget_workflow` 共用（原抄 4 份）
+- [x] 锁顺序写进 `ConductorStore.transaction` 注释，并由契约测试断言事务内
+      持有投影锁（`tracker.lock._is_owned()`）
+
+P2 窄内核（协作者不再认识 service）
+- [x] 新增 `server/services/conductor_kernel.py`：`ConductorKernel`（Protocol，
+      只列协作者真正用到的成员，实测 22 个，全部公开）+ `ChatGuard`（锁对象不
+      再外借）+ 唯一装配点 `build_collaborators()`
+- [x] 方法去私有前缀 68 处（`assert_open` / `assert_engine_ready` / `publish` /
+      `publish_workflow_transition` / `ensure_relay` / `push_models_to_engine` /
+      `on_remote_chat` / `admit_action_models`），command/recovery 内 53 处
+      `self.service.` → `self.kernel.`（含跨对象的
+      `callbacks.fail_unhandled_request`，同步去私有）
+- [x] 私有字段写改方法：`mark_notifications_dirty` / `clear_notifications_dirty` +
+      `notifications_dirty`、`remember_lifecycle(merge=)` + `lifecycle_cache`、
+      `chat_guard()`；store 的 `notification_failed` 从
+      `setattr(self, "_notifications_dirty", True)` 改为绑定 `kernel.mark_notifications_dirty`
+- [x] 顺带修掉一处**被重命名暴露**的漂移：发布点扫描的正则只匹配 `.publish(`，
+      `._publish(` 一直是盲区；改名后 `conductor:resync_required` 与动态
+      `"conductor:" + kind` 立刻被抓出——前者补 `CONDUCTOR_RESYNC_REQUIRED`
+      常量，后者改成 f-string 家族形式（`DYNAMIC_FAMILIES` 覆盖）
+
+P3 护栏
+- [x] 新增 `tests/test_conductor_collaborators_contract.py`（32 条）：AST 静态契约
+      （受管四文件不得跨对象私有访问、协作者不得出现 `service` 标识符、store 不得
+      出现 `tracker._`、tracker 不得出现 `self.store._`）、内核契约（成员全公开、
+      用到的都声明过、声明的都被引用=不允许投机声明、真实 service 满足
+      `isinstance(..., ConductorKernel)`）、装配不变量（`store.tracker is
+      workflow_tracker`、`commands.kernel is recovery.kernel is service`、tracker
+      拒绝第二个 store、`notification_failed` 触达 service 标志）、回滚一致性
+      （失败事务后投影+索引+DB 行三处一起回退，已提交的不受影响），以及**假内核
+      直测**：`ConductorCommands` / `ConductorRecovery` 不经 `ConductorService`
+      就能构造与驱动（命令落库、503 待重试、日志帧派发、未知事件唤醒）
+- [x] 护栏自检：喂已知违规形状（reach-through 私有调用 / `self.service._x` /
+      `self.tracker._workflows`）确认会被抓、干净形状不误报——不会失败的护栏
+      什么也证明不了
+
+刻意保留（非漏网）：`conductor_client.py:541,724` 仍有 `self.pm._headers`（引擎
+传输层，属它自己的一轮）；`conductor_service.py` 的 `cls._instance` /
+`obj._init_fields` 是同类访问。`ConductorService` 的 god object 拆分（复审 A4）
+是**另一条**待办，本项只断耦合、窄化接口——协作者持有的内核面仍是实测面，没有
+顺手扩大也没有假装缩小。
+
+验证：`python -m pytest tests -q` → **1066 passed / 2 skipped**（问题 4 后基线
+1034，新增 32 条契约用例；conductor 相关由 275 条增至 307 条，全部通过）。

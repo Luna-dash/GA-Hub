@@ -81,7 +81,7 @@ def test_subagent_snapshot_publishes_once_per_change():
 
 def test_subagent_snapshot_publish_failure_is_observer_only():
     """A snapshot publish failure must not propagate into the caller's
-    already-committed pool action; _publish absorbs it and flags the
+    already-committed pool action; publish absorbs it and flags the
     notification channel dirty for the resync flow."""
     service = ConductorService.for_tests()
     service.pool = SimpleNamespace(
@@ -94,7 +94,7 @@ def test_subagent_snapshot_publish_failure_is_observer_only():
     ):
         callbacks.publish_subagent_snapshot()
 
-    assert service._notifications_dirty
+    assert service.notifications_dirty
 
 
 def test_relayed_user_chat_is_not_duplicated_by_the_journal_replay(
@@ -107,7 +107,7 @@ def test_relayed_user_chat_is_not_duplicated_by_the_journal_replay(
     service.client = engine
     service.pool.client = engine
     service._process_manager = None
-    service._ensure_relay = lambda: None
+    service.ensure_relay = lambda: None
     service.ensure_started = lambda **kwargs: True
     try:
         item = service.add_chat_message("hello", role="user", operation_id="op-1")
@@ -118,12 +118,12 @@ def test_relayed_user_chat_is_not_duplicated_by_the_journal_replay(
         assert [m["id"] for m in service.chat_messages] == [item["id"]]
 
         with patch("server.services.conductor_service.bus.publish"):
-            service._on_remote_chat({"id": item["id"], "role": "user",
+            service.on_remote_chat({"id": item["id"], "role": "user",
                                      "msg": "hello", "final": False})
         assert [m["id"] for m in service.chat_messages] == [item["id"]]
 
         with patch("server.services.conductor_service.bus.publish"):
-            service._on_remote_chat({"id": "ga-new-1", "role": "conductor",
+            service.on_remote_chat({"id": "ga-new-1", "role": "conductor",
                                      "msg": "plan", "final": False})
         assert [m["msg"] for m in service.chat_messages] == ["hello", "plan"]
     finally:
@@ -149,7 +149,7 @@ def test_ok_outcome_for_an_untouched_request_fails_the_stranded_workflow():
     callbacks = HubConductorCallbacks(service)
 
     with patch("server.services.conductor_service.bus.publish"):
-        callbacks._fail_unhandled_request("rid-stranded")
+        callbacks.fail_unhandled_request("rid-stranded")
 
     snapshot = service.workflow_tracker.snapshot("rid-stranded")
     assert snapshot["status"] == "failed"
@@ -167,7 +167,7 @@ def test_ok_outcome_for_a_dispatched_or_answered_request_stays_success():
     callbacks = HubConductorCallbacks(service)
 
     with patch("server.services.conductor_service.bus.publish") as publish:
-        callbacks._fail_unhandled_request("rid-worker")
+        callbacks.fail_unhandled_request("rid-worker")
 
     assert service.workflow_tracker.snapshot("rid-worker")["status"] in {
         "supervising", "awaiting_review", "completed"}
@@ -186,7 +186,7 @@ def test_ok_outcome_for_a_dispatched_or_answered_request_stays_success():
     })
     callbacks2 = HubConductorCallbacks(service2)
     with patch("server.services.conductor_service.bus.publish") as publish2:
-        callbacks2._fail_unhandled_request("rid-answered")
+        callbacks2.fail_unhandled_request("rid-answered")
     assert service2.workflow_tracker.snapshot("rid-answered")["status"] == "admitted"
     assert not [
         call for call in publish2.call_args_list
@@ -202,16 +202,16 @@ def test_cold_start_repushes_the_hub_model_policy():
     service._relay_thread = None
     service._relay_stop = threading.Event()
     service._process_manager = Mock()
-    service._lifecycle_cache = {}
+    service.remember_lifecycle({})
     service.client.status.return_value = {"started": False}
     service.client.start.return_value = {"started": True}
-    service._push_models_to_engine = Mock()
+    service.push_models_to_engine = Mock()
 
     service.ensure_started()
 
     service.client.start.assert_called_once_with(
         llm_index=1)
-    service._push_models_to_engine.assert_called_once()
+    service.push_models_to_engine.assert_called_once()
 
 
 def _service() -> ConductorService:
@@ -238,8 +238,8 @@ def _ensure_started_service(status_started: bool):
     service._relay_thread = None
     service._relay_stop = threading.Event()
     service._process_manager = None
-    service._push_models_to_engine = Mock()
-    service._ensure_relay = Mock()
+    service.push_models_to_engine = Mock()
+    service.ensure_relay = Mock()
     return service, service.client
 
 

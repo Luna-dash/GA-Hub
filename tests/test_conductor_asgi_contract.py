@@ -100,7 +100,7 @@ def chain(tmp_path, monkeypatch):
         hub._process_manager = manager
         hub.client = conductor_client.GaConductorClient(manager)
         hub.pool.client = hub.client
-        hub._ensure_relay = lambda: None
+        hub.ensure_relay = lambda: None
         hub.auto_accept = False
         services.append(hub)
         monkeypatch.setattr(routes, "svc", lambda: hub)

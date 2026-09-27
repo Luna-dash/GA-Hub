@@ -1,7 +1,6 @@
 """Transactional Conductor projections, journal checkpoints and command intents."""
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import logging
@@ -97,10 +96,10 @@ class ConductorStore:
         """)
         active = self.db.execute("""SELECT state_json FROM workflows WHERE engine_key=?
             AND json_extract(state_json, '$.terminal_event') IS NULL""", (engine_key,))
-        tracker.restore_state([json.loads(row[0]) for row in active] + self.recent_workflows(tracker._max_workflows))
-        tracker.store = self
+        tracker.restore_state([json.loads(row[0]) for row in active] + self.recent_workflows(tracker.capacity))
+        tracker.attach(self)
         tracker.tombstones.update(self.tombstones())
-        tracker._prune_terminal(committed=True)
+        tracker.prune_terminal(committed=True)
         if version == 1:
             with self.transaction():
                 for row in self.db.execute("""SELECT json_extract(state_json, '$.final_item') FROM workflows
@@ -114,7 +113,10 @@ class ConductorStore:
     @contextmanager
     def transaction(self):
         effects = []
-        with self.tracker._lock, self.lock:
+        # Lock order, always: the tracker's projection lock first, then this
+        # store's own lock. Reversing it deadlocks (the tracker opens the
+        # store's transaction from inside its own lock).
+        with self.tracker.lock, self.lock:
             if getattr(self._local, "active", False):
                 yield
                 return
@@ -126,7 +128,7 @@ class ConductorStore:
             try:
                 yield
                 for request_id, previous in before.items():
-                    workflow = self.tracker._workflows.get(request_id)
+                    workflow = self.tracker.rollback_point(request_id)
                     if workflow is not None and previous != workflow:
                         item = asdict(workflow)
                         self.db.execute("""INSERT INTO workflows(engine_key, request_id, state_json)
@@ -134,16 +136,10 @@ class ConductorStore:
                             DO UPDATE SET state_json=excluded.state_json""",
                             (self.engine_key, item["request_id"], json.dumps(item, ensure_ascii=False)))
                 self.db.commit()
-                self.tracker._prune_terminal(committed=True)
+                self.tracker.prune_terminal(committed=True)
             except BaseException:
                 self.db.rollback()
-                for request_id, previous in before.items():
-                    if previous is None:
-                        self.tracker._workflows.pop(request_id, None)
-                    else:
-                        self.tracker._workflows[request_id] = previous
-                self.tracker._owners = {sid: workflow.request_id
-                    for workflow in self.tracker._workflows.values() for sid in workflow.workers}
+                self.tracker.restore_projection(before)
                 raise
             finally:
                 self._local.active = False
@@ -159,7 +155,7 @@ class ConductorStore:
 
     def track_workflow(self, request_id: str) -> None:
         if getattr(self._local, "active", False) and request_id not in self._local.before:
-            self._local.before[request_id] = copy.deepcopy(self.tracker._workflows.get(request_id))
+            self._local.before[request_id] = self.tracker.rollback_point(request_id)
 
     def workflow(self, request_id: str) -> dict | None:
         with self.lock:

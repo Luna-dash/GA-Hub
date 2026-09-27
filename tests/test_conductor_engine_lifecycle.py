@@ -181,7 +181,7 @@ def _entry_ensure_service() -> ConductorService:
     service.client = mock.Mock()
     service.client.status.return_value = {"started": True}
     # The SSE relay would spawn a real thread; entry ensure must not need it.
-    service._ensure_relay = lambda: None  # type: ignore[method-assign]
+    service.ensure_relay = lambda: None  # type: ignore[method-assign]
     return service
 
 

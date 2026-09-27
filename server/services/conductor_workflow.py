@@ -1,11 +1,12 @@
 """Request-scoped Conductor workflow state for the GA-Hub adapter."""
 from __future__ import annotations
 
+import copy
 import threading
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 
 from ..event_topics import (
     CONDUCTOR_WORKER_FAILED,
@@ -44,6 +45,9 @@ from .conductor_vocabulary import (
     WORKFLOW_REWORKING,
     WORKFLOW_SUPERVISING,
 )
+
+if TYPE_CHECKING:  # the store imports nothing from here; keep the cycle out
+    from .conductor_store import ConductorStore
 
 
 Clock = Callable[[], float]
@@ -108,19 +112,80 @@ class WorkflowTracker:
     def __init__(self, *, clock: Clock = time.time, max_workflows: int = 256) -> None:
         self._clock = clock
         self._max_workflows = max(1, max_workflows)
-        self._lock = threading.RLock()
+        # Public because ConductorStore.transaction() shares it: the store's
+        # rows and this projection commit or roll back as one unit, and the
+        # lock order is always this lock first, then the store's own.
+        self.lock = threading.RLock()
         self._workflows: dict[str, WorkflowState] = {}
         self._owners: dict[str, str] = {}
         self.tombstones: set[str] = set()
+        # Bound by ConductorStore.__init__ through attach() — never assigned
+        # from outside, so the tracker and its rows cannot silently diverge.
         self.store = None
 
     @contextmanager
     def transaction(self):
-        with self.store.transaction() if self.store is not None else self._lock:
+        with self.store.transaction() if self.store is not None else self.lock:
             yield
 
+    # ── store-facing seam ────────────────────────────────────────────────
+    # ConductorStore owns the SQLite transaction, but the workflows it writes
+    # are this tracker's projection: both halves commit or roll back together.
+    # These members are the whole surface the store needs, so it never reaches
+    # into _workflows/_owners/_max_workflows directly — and the ownership-index
+    # formulas stay next to the data they index instead of being copied into
+    # the store's rollback path.
+
+    @property
+    def capacity(self) -> int:
+        """How many workflow rows the store is asked to seed back in."""
+        return self._max_workflows
+
+    def attach(self, store: "ConductorStore") -> None:
+        """Bind the persistence store (called by ConductorStore.__init__).
+
+        One tracker belongs to exactly one store: the store seeds this
+        projection from its rows and shares this lock for the duration of a
+        transaction, so rebinding a live tracker would split the board from
+        its history.
+        """
+        if self.store is not None and self.store is not store:
+            raise RuntimeError(
+                "WorkflowTracker is already attached to another ConductorStore"
+            )
+        self.store = store
+
+    def rollback_point(self, request_id: str) -> WorkflowState | None:
+        """Deep copy of one workflow — a transaction's rollback point."""
+        with self.lock:
+            return copy.deepcopy(self._workflows.get(request_id))
+
+    def restore_projection(self, before: dict[str, WorkflowState | None]) -> None:
+        """Undo in-memory edits whose transaction rolled back.
+
+        The store has already rolled its rows back; this restores the matching
+        projection and re-derives the ownership index from it, so a failed
+        transaction cannot leave a workflow without its row, or the reverse.
+        """
+        with self.lock:
+            for request_id, previous in before.items():
+                if previous is None:
+                    self._workflows.pop(request_id, None)
+                else:
+                    self._workflows[request_id] = previous
+            self._rebuild_owners()
+
+    def _rebuild_owners(self) -> None:
+        self._owners = {worker_id: workflow.request_id
+                        for workflow in self._workflows.values()
+                        for worker_id in workflow.workers}
+
+    def _forget_owners(self, request_ids: Iterable[str]) -> None:
+        self._owners = {agent_id: owner for agent_id, owner in self._owners.items()
+                        if owner not in request_ids}
+
     def export_state(self) -> list[dict]:
-        with self._lock:
+        with self.lock:
             return [asdict(workflow) for workflow in self._workflows.values()]
 
     def _touch(self, request_id: str) -> None:
@@ -128,14 +193,12 @@ class WorkflowTracker:
             self.store.track_workflow(request_id)
 
     def restore_state(self, items: list[dict]) -> None:
-        with self._lock:
+        with self.lock:
             self._workflows = {}
-            self._owners = {}
             for item in items:
                 workflow = self._decode_state(item)
                 self._workflows[workflow.request_id] = workflow
-                for sid in workflow.workers:
-                    self._owners[sid] = workflow.request_id
+            self._rebuild_owners()
 
     @staticmethod
     def _decode_state(item: dict) -> WorkflowState:
@@ -175,7 +238,7 @@ class WorkflowTracker:
                 WorkflowState(request_id=request_id, created_at=self._clock(),
                               admission_state=admission_state, boot_id=boot_id),
             )
-            self._prune_terminal()
+            self.prune_terminal()
 
     def forget_workflow(self, request_id: str, *,
                         allow_active: bool = False) -> None:
@@ -198,8 +261,7 @@ class WorkflowTracker:
                 self.store.forget_workflow(request_id)
             self.tombstones.add(request_id)
             self._workflows.pop(request_id, None)
-            self._owners = {agent_id: owner for agent_id, owner in self._owners.items()
-                            if owner != request_id}
+            self._forget_owners({request_id})
 
     def confirm_admission(self, request_id: str, boot_id: str | None) -> None:
         if request_id in self.tombstones:
@@ -212,7 +274,7 @@ class WorkflowTracker:
                 workflow.boot_id = boot_id
 
     def has_request(self, request_id: str) -> bool:
-        with self._lock:
+        with self.lock:
             return self._get(request_id) is not None
 
     def is_open(self, request_id: str) -> bool:
@@ -221,7 +283,7 @@ class WorkflowTracker:
         Recoverable failures count as open: the workflow can still gain a
         rework or fresh dispatch, so a user follow-up belongs to it.
         """
-        with self._lock:
+        with self.lock:
             workflow = self._get(request_id)
             return workflow is not None and workflow.terminal_event is None
 
@@ -259,7 +321,7 @@ class WorkflowTracker:
             return self._payload(workflow, phase="reopened")
 
     def request_for_subagent(self, agent_id: str) -> str | None:
-        with self._lock:
+        with self.lock:
             return self._owners.get(agent_id) or (self.store.worker_owner(agent_id) if self.store is not None else None)
 
     def bind_subagent(
@@ -390,7 +452,7 @@ class WorkflowTracker:
             return CONDUCTOR_WORKFLOW_COMPLETED, completed
 
     def assert_ready_for_final(self, request_id: str) -> None:
-        with self._lock:
+        with self.lock:
             self._assert_ready_for_final(self._require(request_id))
 
     def fail_supervisor(
@@ -412,13 +474,13 @@ class WorkflowTracker:
             )
 
     def snapshot(self, request_id: str) -> dict[str, Any] | None:
-        with self._lock:
+        with self.lock:
             workflow = self._get(request_id)
             return self._payload(workflow) if workflow is not None else None
 
     def snapshots(self, limit: int = 20) -> list[dict[str, Any]]:
         """Return recent workflows in creation order for UI recovery."""
-        with self._lock:
+        with self.lock:
             candidates = {}
             if self.store is not None:
                 candidates = {item["request_id"]: self._decode_state(item) for item in self.store.recent_workflows(limit)}
@@ -445,7 +507,7 @@ class WorkflowTracker:
         predicate and for future monitoring; its sibling ``abandon_stranded``
         is still the live manual-stop path.
         """
-        with self._lock:
+        with self.lock:
             stranded = sorted(
                 (
                     workflow
@@ -529,7 +591,13 @@ class WorkflowTracker:
                 "cannot finalize without at least one accepted subagent"
             )
 
-    def _prune_terminal(self, *, committed: bool = False) -> None:
+    def prune_terminal(self, *, committed: bool = False) -> None:
+        """Drop the oldest terminal workflows once the board is over capacity.
+
+        Public because the store calls it after its commit: rows and projection
+        are trimmed in the same step. Without a store there is nothing to
+        commit, so the guard only applies to the write-through path.
+        """
         if self.store is not None and not committed:
             return
         overflow = len(self._workflows) - self._max_workflows
@@ -547,11 +615,7 @@ class WorkflowTracker:
         for request_id in removed:
             self._workflows.pop(request_id, None)
         if removed:
-            self._owners = {
-                agent_id: owner
-                for agent_id, owner in self._owners.items()
-                if owner not in removed
-            }
+            self._forget_owners(removed)
 
     def _complete_if_ready(self, workflow: WorkflowState) -> dict[str, Any] | None:
         if workflow.terminal_event is not None or workflow.final_item is None:

@@ -9,6 +9,7 @@ from ..event_topics import (
     CONDUCTOR_CHAT_READ,
     CONDUCTOR_REQUEST_OUTCOME,
     CONDUCTOR_REQUEST_YIELD_REQUESTED,
+    CONDUCTOR_RESYNC_REQUIRED,
 )
 from . import conductor_activity
 from .conductor_client import _engine_spawn_env
@@ -41,8 +42,14 @@ ACTIVITY_BACKFILL_RECORDS = 20_000
 
 
 class ConductorRecovery:
-    def __init__(self, service, store):
-        self.service = service
+    """Ordered journal replay plus the wake/drain loops around the command track.
+
+    Holds only a ``ConductorKernel``: the engine client and the mirror live in
+    the kernel, so this loop cannot reach past them.
+    """
+
+    def __init__(self, kernel, store):
+        self.kernel = kernel
         self.store = store
         self.lock = threading.RLock()
         self.wake = threading.Event()
@@ -91,7 +98,7 @@ class ConductorRecovery:
                 break
             try:
                 if self.sync():
-                    self.service._ensure_relay()
+                    self.kernel.ensure_relay()
             except Exception as exc:
                 self.ready = False
                 if self.error != str(exc):
@@ -104,7 +111,7 @@ class ConductorRecovery:
             self.command_wake.clear()
             try:
                 if self.ready and not self.stop_event.is_set():
-                    self.service.commands.drain_commands()
+                    self.kernel.commands.drain_commands()
             except Exception:
                 self.ready = False
                 log.exception("Conductor command store unavailable")
@@ -116,14 +123,14 @@ class ConductorRecovery:
         elif kind == "subagents":
             with self._connection_lock:
                 if event.get("boot_id") == self.boot_id:
-                    if self.service.pool.update(event.get("items") or [],
+                    if self.kernel.pool.update(event.get("items") or [],
                             boot_id=self.boot_id, revision=event.get("snapshot_revision")):
-                        self.service.callbacks.publish_subagent_snapshot()
+                        self.kernel.callbacks.publish_subagent_snapshot()
                 else:
                     self.wake.set()
         elif kind == "log":
             if event.get("boot_id") == self.boot_id:
-                self.service.callbacks.on_conductor_log_frame(event.get("item"))
+                self.kernel.callbacks.on_conductor_log_frame(event.get("item"))
         else:
             self.wake.set()
         return True
@@ -137,7 +144,7 @@ class ConductorRecovery:
             self.ready = False
             with self._connection_lock:
                 connection = self._connection_generation
-            response = self.service.client.recovery()
+            response = self.kernel.client.recovery()
             self._validate_protocol(response)
             with self._connection_lock:
                 if connection != self._connection_generation:
@@ -145,27 +152,27 @@ class ConductorRecovery:
                 if self.boot_id != response["boot_id"]:
                     self.ready = False
                     self.boot_id = response["boot_id"]
-                    self.service.pool.select_boot(self.boot_id)
+                    self.kernel.pool.select_boot(self.boot_id)
                     # A fresh engine process forgot the hub-pushed model
                     # policy. The SSE-hello path used to re-assert it on every
                     # reconnect; on the journal track the boot change is the
                     # equivalent signal. Best-effort and idempotent.
-                    self.service._push_models_to_engine()
-            self.service._lifecycle_cache.update(response)
+                    self.kernel.push_models_to_engine()
+            self.kernel.remember_lifecycle(response, merge=True)
             if not self._catch_up():
                 return False
-            snapshot = self.service.client.get_subagents()
+            snapshot = self.kernel.client.get_subagents()
             with self._connection_lock:
                 if connection != self._connection_generation or snapshot.get("boot_id") != self.boot_id:
                     self.reconnect()
                     return False
                 if type(snapshot.get("snapshot_revision")) is not int:
                     raise RuntimeError("engine snapshot has no revision")
-                self.service.pool.update(snapshot.get("items") or [], boot_id=self.boot_id,
+                self.kernel.pool.update(snapshot.get("items") or [], boot_id=self.boot_id,
                                          revision=snapshot["snapshot_revision"])
                 # Change the saved boot only after reconciliation commits.
                 with self.store.transaction():
-                    tracker = self.service.workflow_tracker
+                    tracker = self.kernel.workflow_tracker
                     for record in response.get("requests") or []:
                         if record.get("request_id"):
                             tracker.confirm_admission(record["request_id"], self.boot_id)
@@ -176,18 +183,18 @@ class ConductorRecovery:
                             transition = tracker.fail_supervisor(workflow["request_id"], phase="engine_restarted",
                                 error="engine restarted; previous execution was interrupted")
                             if transition:
-                                self.service._publish_workflow_transition(transition)
+                                self.kernel.publish_workflow_transition(transition)
                     cursor = self.store.cursor()
                     self.store.checkpoint(cursor["epoch"], cursor["seq"], self.boot_id)
                 self.last_reconcile = time.time()
                 self.ready = True
                 self.error = None
-            if self.service._notifications_dirty:
-                self.service._notifications_dirty = False
-                self.service._publish("conductor:resync_required", {"reason": "notification_failed"})
+            if self.kernel.notifications_dirty:
+                self.kernel.clear_notifications_dirty()
+                self.kernel.publish(CONDUCTOR_RESYNC_REQUIRED, {"reason": "notification_failed"})
             self._backfill_subagent_archive()
             self._backfill_activity()
-            self.service.callbacks.publish_subagent_snapshot()
+            self.kernel.callbacks.publish_subagent_snapshot()
             self.command_wake.set()
             return True
 
@@ -201,7 +208,7 @@ class ConductorRecovery:
         records, and seed the archive so completed workflows keep per-worker
         detail even though the engine cleared its pool.
         """
-        store = self.service.store
+        store = self.kernel.store
         try:
             existing = store.archived_subagent_snapshots()
         except Exception:
@@ -213,7 +220,7 @@ class ConductorRecovery:
             merged: dict[str, dict] = {}
             after = 0
             while True:
-                page = self.service.client.journal(after_seq=after, limit=5000)
+                page = self.kernel.client.journal(after_seq=after, limit=5000)
                 records = page.get("events") or []
                 if not records:
                     break
@@ -302,11 +309,11 @@ class ConductorRecovery:
         already-persisted record is a no-op — rows are keyed by epoch+seq — so
         scanning again costs a read and cannot duplicate anything.
         """
-        store = self.service.store
+        store = self.kernel.store
         if self._activity_backfilled:
             return
         try:
-            head = self.service.client.journal(after_seq=0, limit=1)
+            head = self.kernel.client.journal(after_seq=0, limit=1)
             info = head.get("journal") or {}
             if info.get("disabled"):
                 # A disabled journal yields nothing to fold and will not come
@@ -323,7 +330,7 @@ class ConductorRecovery:
         try:
             rows: list[dict] = []
             while True:
-                page = self.service.client.journal(after_seq=after, limit=5000)
+                page = self.kernel.client.journal(after_seq=after, limit=5000)
                 info = page.get("journal") or {}
                 epoch = info.get("epoch")
                 records = page.get("events") or []
@@ -377,7 +384,7 @@ class ConductorRecovery:
 
     def _catch_up(self) -> bool:
         cursor = self.store.cursor()
-        response = self.service.client.journal(after_seq=cursor["seq"], limit=500)
+        response = self.kernel.client.journal(after_seq=cursor["seq"], limit=500)
         info = response.get("journal") or {}
         epoch = info.get("epoch")
         if info.get("disabled") or not epoch:
@@ -410,7 +417,7 @@ class ConductorRecovery:
                     self.wake.set()
                     return False
             if cursor["seq"] < target:
-                response = self.service.client.journal(after_seq=cursor["seq"], limit=500)
+                response = self.kernel.client.journal(after_seq=cursor["seq"], limit=500)
         with self.store.transaction():
             self.store.checkpoint(epoch, target, cursor["boot_id"])
         return True
@@ -465,8 +472,8 @@ class ConductorRecovery:
         # only a live hint for it.
         activity = self._activity_for(record, epoch)
         if activity is not None:
-            self.service.store.save_activity([activity])
-        tracker = self.service.workflow_tracker
+            self.kernel.store.save_activity([activity])
+        tracker = self.kernel.workflow_tracker
         rid = event.get("request_id")
         boot = event.get("boot_id") or self._journal_boot
         if kind == "request_admitted":
@@ -477,28 +484,28 @@ class ConductorRecovery:
             item = event.get("item") or {}
             if (item.get("final") or item.get("role") == "user") and item.get("request_id") and not tracker.has_request(item["request_id"]):
                 tracker.admit(item["request_id"], admission_state="recovered_incomplete", boot_id=boot)
-            self.service._on_remote_chat(item)
+            self.kernel.on_remote_chat(item)
         elif isinstance(kind, str) and kind.startswith("subagent_") and kind[9:] in WORKER_EVENTS:
             if rid:
                 tracker.confirm_admission(rid, boot)
             owner, transition = tracker.record_subagent_event(event.get("id", ""), kind[9:],
                 request_id=rid, generation=event.get("generation"))
-            self.service._publish("conductor:" + kind, self._with_activity(event, activity))
+            self.kernel.publish(f"conductor:{kind}", self._with_activity(event, activity))
             if transition:
-                self.service._publish_workflow_transition(transition)
-            if kind == "subagent_pending_review" and owner and self.service.auto_accept and boot == self.boot_id:
-                self.service.commands.enqueue_auto_accept(event["id"], owner, int(event.get("generation") or 0))
+                self.kernel.publish_workflow_transition(transition)
+            if kind == "subagent_pending_review" and owner and self.kernel.auto_accept and boot == self.boot_id:
+                self.kernel.commands.enqueue_auto_accept(event["id"], owner, int(event.get("generation") or 0))
         elif kind == "request_outcome":
             if rid and event.get("status") == "ok":
-                self.service.callbacks._fail_unhandled_request(rid)
+                self.kernel.callbacks.fail_unhandled_request(rid)
             if rid and tracker.has_request(rid) and event.get("status") not in ("ok", "yielded"):
                 transition = tracker.fail_supervisor(rid, phase=event.get("phase") or "finish",
                                                    error=event.get("error") or "supervisor failed")
                 if transition:
-                    self.service._publish_workflow_transition(transition)
-            self.service._publish(CONDUCTOR_REQUEST_OUTCOME, self._with_activity(event, activity))
+                    self.kernel.publish_workflow_transition(transition)
+            self.kernel.publish(CONDUCTOR_REQUEST_OUTCOME, self._with_activity(event, activity))
         elif kind in OBSERVATIONS:
-            self.service._publish(_OBSERVATION_TOPICS.get(kind) or "conductor:" + kind,
+            self.kernel.publish(_OBSERVATION_TOPICS.get(kind) or "conductor:" + kind,
                                   self._with_activity(event, activity))
         else:
             raise ValueError(f"unsupported journal event: {kind}")

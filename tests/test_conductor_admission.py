@@ -26,7 +26,7 @@ def setup(tmp_path, monkeypatch):
         service.client = engine
         service.pool.client = engine
         service._process_manager = None
-        service._ensure_relay = lambda: None
+        service.ensure_relay = lambda: None
         starts = []
 
         def ensure_started(**kwargs):

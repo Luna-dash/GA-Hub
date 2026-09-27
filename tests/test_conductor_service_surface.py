@@ -26,7 +26,7 @@ def test_get_chat_messages_serves_the_mirrored_history() -> None:
     """The store-loaded mirror is the hydration authority; the engine's
     chat memory is gone on every boot (reliability plan §4.3)."""
     service = _bare_service()
-    with service._chat_lock:
+    with service.chat_guard():
         service.chat_messages = [
             {"id": "old", "role": "user", "msg": "hi"},
             {"id": "new", "role": "conductor", "msg": "plan"},
@@ -47,11 +47,11 @@ def test_replayed_final_for_unknown_request_is_downgraded(monkeypatch) -> None:
 
     transitions: list = []
     monkeypatch.setattr(
-        service, "_publish_workflow_transition",
+        service, "publish_workflow_transition",
         lambda transition: transitions.append(transition),
     )
 
-    service._on_remote_chat({
+    service.on_remote_chat({
         "id": "old-final",
         "role": "conductor",
         "msg": "已完成：历史请求的最终回复",

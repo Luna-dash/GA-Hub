@@ -88,9 +88,9 @@ def _chain_service(monkeypatch: pytest.MonkeyPatch, engine: _FakeEngine) -> Cond
     service._process_manager = manager
     service.client = GaConductorClient(manager)
     # These tests script individual HTTP endpoints; keep the SSE relay
-    # thread (started by _assert_engine_ready once /status reports
+    # thread (started by assert_engine_ready once /status reports
     # started) out of the picture entirely.
-    service._ensure_relay = lambda: None  # type: ignore[method-assign]
+    service.ensure_relay = lambda: None  # type: ignore[method-assign]
     return service
 
 

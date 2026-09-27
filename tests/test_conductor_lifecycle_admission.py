@@ -22,7 +22,7 @@ from server.services.conductor_workflow import WorkflowTracker
 
 
 def _live_relay(service: ConductorService) -> None:
-    """A relay thread that blocks forever satisfies ``_ensure_relay``."""
+    """A relay thread that blocks forever satisfies ``ensure_relay``."""
     stop = threading.Event()
     service._relay_stop = stop
     relay = threading.Thread(target=stop.wait, daemon=True)
@@ -44,7 +44,7 @@ def test_subagent_ops_refuse_when_engine_not_started(tmp_path, monkeypatch):
 
     Both entry points are swept: the dispatch facade and every verb in the
     shared matrix. Two verbs reach the refusal by different routes — the
-    model-carrying ones (input/rework) through ``_admit_action_models`` and
+    model-carrying ones (input/rework) through ``admit_action_models`` and
     the rest (accept/keyinfo/abort) through the shared
     ``kind in (dispatch, action)`` readiness branch — so a verb that lost its
     assertion would otherwise be invisible.
@@ -60,7 +60,7 @@ def test_subagent_ops_refuse_when_engine_not_started(tmp_path, monkeypatch):
     service.client = engine
     service.pool.client = engine
     service._process_manager = None
-    service._ensure_relay = lambda: None
+    service.ensure_relay = lambda: None
     try:
         ops = [("dispatch", lambda: service.start_subagent("do work"))]
         ops += [
@@ -81,7 +81,7 @@ def test_subagent_ops_refuse_when_engine_not_started(tmp_path, monkeypatch):
 
 def test_assert_engine_ready_passes_when_started():
     service = _ready_service(started=True)
-    service._assert_engine_ready()  # must not raise
+    service.assert_engine_ready()  # must not raise
 
 
 def test_route_maps_conductor_not_running_to_409():
@@ -104,7 +104,7 @@ def _stoppable_service(tracker: WorkflowTracker) -> ConductorService:
     service.chat_messages = []
     service.client = Mock()
     service.client.stop.return_value = {"stopped": True}
-    service._publish_workflow_transition = Mock()
+    service.publish_workflow_transition = Mock()
     service.lifecycle_status = Mock(return_value={})
     return service
 
@@ -116,7 +116,7 @@ def test_stop_abandons_stranded_workflows():
 
     assert service.stop() is True
 
-    published = service._publish_workflow_transition.call_args_list
+    published = service.publish_workflow_transition.call_args_list
     assert len(published) == 1
     topic, payload = published[0].args[0]
     assert topic == "conductor:workflow_failed"
@@ -138,7 +138,7 @@ def test_stop_leaves_supervising_workflows_alone():
 
     assert service.stop() is True
 
-    service._publish_workflow_transition.assert_not_called()
+    service.publish_workflow_transition.assert_not_called()
     assert tracker.snapshot("rid-live")["status"] == "supervising"
 
 
@@ -150,5 +150,5 @@ def test_stop_failure_does_not_abandon_anything():
 
     assert service.stop() is False
 
-    service._publish_workflow_transition.assert_not_called()
+    service.publish_workflow_transition.assert_not_called()
     assert len(tracker.stranded_admitted()) == 1

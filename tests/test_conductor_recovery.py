@@ -29,7 +29,7 @@ def setup(tmp_path, monkeypatch):
         service.client = engine
         service.pool.client = engine
         service._process_manager = None
-        service._ensure_relay = lambda: None
+        service.ensure_relay = lambda: None
         service.ensure_started = lambda **kwargs: True
         services.append(service)
         return service
@@ -216,7 +216,7 @@ def test_chat_history_survives_restart_without_engine_history(setup):
     assert [item["id"] for item in restored.chat_messages] == ["user", "final"]
     assert restored.workflow_tracker.snapshot("request")["item"]["msg"] == "done"
     assert restored.workflow_tracker.snapshot("request")["title"] == "task"
-    restored._on_remote_chat(restored.chat_messages[-1])
+    restored.on_remote_chat(restored.chat_messages[-1])
     assert len(restored.chat_messages) == 2
 
 
@@ -277,7 +277,7 @@ def test_post_commit_effect_failure_requests_resync(setup):
         service.workflow_tracker.admit("request")
         service.store.defer(lambda: (_ for _ in ()).throw(RuntimeError("notification failed")))
     assert service.workflow_tracker.has_request("request")
-    assert service._notifications_dirty
+    assert service.notifications_dirty
 
 
 def test_prepare_string_error_is_a_durable_rejection(setup):
@@ -386,7 +386,7 @@ def test_chat_route_serves_store_history_when_engine_memory_is_gone(setup, monke
         raise AssertionError("store mode must not consult engine chat memory")
 
     engine.get_chat = no_engine_chat
-    service._on_remote_chat({"id": "chat-1", "role": "conductor", "msg": "stable",
+    service.on_remote_chat({"id": "chat-1", "role": "conductor", "msg": "stable",
                              "ts": 1000})
 
     monkeypatch.setattr(conductor_routes, "svc", lambda: service)
