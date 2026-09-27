@@ -18,6 +18,7 @@ from server.services.llm_registry import (
 )
 from server.services.session_coordinator import (
     AgentBusyError,
+    RunStartAbortedError,
     SessionControlBusyError,
     SessionCoordinatorStoppedError,
 )
@@ -57,6 +58,17 @@ def test_capacity_overflow_maps_to_agent_busy() -> None:
     response = _client(AgentBusyError("other", "run-9")).post("/boom")
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "agent_busy"
+
+
+def test_stopped_start_maps_to_409_with_both_identities() -> None:
+    """Stopping a run before its runtime finished cold-starting is a semantic
+    refusal, not a failure: the prompt never reached the agent."""
+    response = _client(RunStartAbortedError("s1", "run-1")).post("/boom")
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "run_start_aborted"
+    assert detail["session_id"] == "s1"
+    assert detail["run_id"] == "run-1"
 
 
 def test_restore_failure_maps_to_409() -> None:

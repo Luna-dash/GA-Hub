@@ -696,3 +696,82 @@ P3 护栏
 
 验证：`python -m pytest tests -q` → **1066 passed / 2 skipped**（问题 4 后基线
 1034，新增 32 条契约用例；conductor 相关由 275 条增至 307 条，全部通过）。
+
+## 2026-09-27 会话准入移出全局锁（一个问题恢复不再冻结全部会话）
+
+来源：同一轮架构复审（问题 6）。原状：`SessionCoordinator.submit_stream` 把
+「构造 runtime + 提交」整个压在**一把全局 RLock** 里。构造 runtime 是无界慢操作
+——`SessionRuntimeFactory.__call__` 构造 `AgentService` 并跑 GA 的
+`continue_inplace`（抢 archive 锁、**解析整个日志**、恢复工作记忆，开头还先
+`agent.abort()`）；`runtime.submit` 则要进 agent 的输入队列。而 UI 的读/停路径
+全在同一把锁上：`runtime_state` / `active_runs` / `session_snapshot`（WS 快照
+`routes/sessions.py:535`）/ `peek_runtime` / `abort_if_current` / `abort` /
+`ensure_runtime`（后台通道 wechat、调度器）。前端甚至已经为这个冻结做了妥协：
+`LiveChat.tsx:352-354` 注明"冷启动 submit 会挂住 HTTP 响应，所以先乐观上移会话
+顺序"，`routes/sessions.py:328` 也写明"submit_stream 可能在准入临界区内冷启动"。
+
+**实测**（注入 1.5s 慢工厂，探针在该会话冷启动开始 0.2s 后发出；另一会话当时
+**正在运行**）：
+
+| 路径 | 修前 | 修后 |
+|---|---|---|
+| `runtime_state` / `active_runs` / `session_snapshot` / `peek_runtime` / `abort_if_current`（B 正在跑）/ `ensure_runtime`（第三个会话） | 各 **1.300s**（6/6） | 各 **0.000s**（0/6） |
+| 仅让 `submit()` 慢（runtime 已预热，无恢复开销） | **1.300s**（2/2） | **0.000s** |
+
+顺带纠正复审里"30s 窗口"的提法：GA 的 `acquire_lock` 被活进程持有时是**立刻**
+`return False`（`continue_cmd.py:957-959`），`_STALE_AFTER = 30.0` 只决定"多久没
+心跳算持锁者已死、可被接管"。卡死来自 Hub 自己把无界慢操作放进了全局锁，不是等
+30 秒。
+
+P1 创建与提交移出全局锁
+- [x] `_runtime_for_session()`：锁内只查表；miss → 取**每会话创建闸**（锁内登记）
+      → 放锁 → 调工厂 → 回锁安装。并发保证改由三件事共同承担：调用方**先占位**的
+      预留（这才是"不超卖"的依据）、每会话创建闸（同一会话不会被建出两个 runtime）、
+      `_runtime_epoch`（会话在恢复期间被删除/替换时丢弃刚建好的 runtime，绝不复活
+      已删会话）
+- [x] `submit_stream`：容量检查 + 身份预留仍在锁内（`starting` 先行登记）；创建与
+      `runtime.submit` 移到锁外；回锁后复核预留仍属于本次准入
+- [x] `side_question` / `rewind` / `ensure_runtime` 同样改为锁外创建——它们的排他性
+      本来就由 BTW 预留 / control 预留承担，不依赖全局锁
+- [x] `_abort_locked` 从 `self._runtimes[...]` **直接下标**改为 `.get()`：冷启动期间
+      停止一个"runtime 还没建好"的 run 现在是合法输入（旧代码靠"创建在锁内"才保证
+      它永不为空——把锁移走必须同时处理这个隐含前提）
+- [x] 新增 `RunStartAbortedError`：用户在冷启动窗口内点停止 → **永不提交**，预留按
+      "已中止"结算（`_finish_aborted_start`，镜像 `_watch_completion` 的收尾，因此
+      不需要 watcher），并登记进 `error_mapping`（409 `run_start_aborted`）。前端停止
+      按钮在 `starting` 状态就可用（`LiveChat.tsx:210`），所以这条竞态真实可达
+- [x] 前端：`startAbortedFromError` 把这条 409 与"发送失败"分开，提示"本次运行在
+      启动完成前已停止，消息未发出，草稿已保留"——用户自己按的停止，不该被报成错误
+      （`sessionUi.ts` + `LiveChat.tsx` 的 catch 分支，各一条单测）
+- [x] 自查揪出并修掉两个**新引入**的漏洞：创建完成时若已请求关闭，会先抛错而把刚
+      建好的 runtime **泄漏**掉（未丢弃）；创建抛错时预留不释放，容量槽被永久占用
+
+P2 锁内其余运行时调用
+- [x] `session_snapshot`：`active_message_snapshot`（会取 runtime 自己的锁）移出
+      全局锁，回锁后按 `run_id` 复核，绝不让快照与另一条 run 的状态配对
+- [x] `configure_if_idle`：回调（激活 GA 项目 + 写 sidecar 行）移出锁，排他性改用
+      该会话的 control 预留——代价是并发提交由"等锁后成功"变为明确的 409
+      `session_control_active`，与 rewind/btw 既有语义一致
+- [x] 锁序写进文档与注释：协调器锁 → runtime 锁，且不得反向
+
+P3 护栏
+- [x] 新增 `tests/test_session_coordinator_nonblocking.py`（16 条）：工厂与 runtime
+      都阻塞在**测试自己控制的 Event** 上，于是"探针在放行之前就返回"是**构造性**
+      证明，而不是掐表赌运气（慢操作数秒后自释放，回归时表现为断言失败而非挂死）。
+      覆盖 6 条用户路径、慢 submit、慢 snapshot、慢 configure 回调、同会话并发准入
+      只建一个 runtime、**BTW 与提交抢同一个冷会话只建一个 runtime**（BTW 不占 run
+      预留，旧代码纯靠全局锁才没建出两个）、删除会话后不留孤儿 runtime（且把已建的
+      shutdown 掉）、冷启动期间停止、提交中停止交由 watcher 收尾、关闭中创建丢弃
+      runtime、创建失败释放容量槽
+- [x] 护栏自检（故障注入 **3/3 命中**）：把创建 / 快照 / configure 回调分别塞回锁内，
+      对应护栏立刻变红（6 failed / 1 failed / 1 failed），注入后原文件字节级还原
+- [x] `tests/test_error_mapping.py`：新增 409 `run_start_aborted` 映射用例
+
+刻意保留：`shutdown` 的有界 `acquire` 语义不变；容量与"同会话串行"语义不变；
+冷启动中停止后该会话会停留在 `aborting` 直到创建返回（只有那个会话等，其余会话
+已不受影响）。
+
+验证：pytest **1083 passed / 2 skipped**（问题 5 后基线 1066，+17）；并发用例连跑
+5 轮、既有 coordinator 套件连跑 3 轮均稳定；vitest **517 passed**；tsc `-b --noEmit`
+exit 0；api:check 通过（89 调用形状 / 136 操作）；`python scripts\build_all.py`
+退出码 0 且守卫输出「✓ 构建链全部通过（总耗时 63.3s）」。

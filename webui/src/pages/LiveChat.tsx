@@ -37,7 +37,7 @@ import { dialog } from '@/stores/dialogStore'
 import { noticeKeys, useChatStore } from '@/stores/chatStore'
 import { formatDateTime } from '@/utils/formatTime'
 import { useDraftStore } from '@/stores/draftStore'
-import { capacityConflictFromError, errorMessageFromError, openSessionChat, sessionChatHref } from '@/utils/sessionUi'
+import { capacityConflictFromError, errorMessageFromError, openSessionChat, sessionChatHref, startAbortedFromError } from '@/utils/sessionUi'
 import { buildSessionPromptText } from '@/utils/sessionPrompt'
 import { isTauriDesktop, selectDirectory } from '@/utils/desktop'
 import { defaultSessionLlmKey, resolveSessionLlmKey } from '@/utils/llm'
@@ -364,7 +364,11 @@ export default function LiveChat() {
         if (sessionIdRef.current !== sid) return
         rollbackWebui(stageId)
         const conflict = capacityConflictFromError(e)
-        if (conflict) {
+        if (startAbortedFromError(e)) {
+          // The user pressed stop while the runtime was still cold-starting:
+          // nothing was sent, so this is a stop, not a send failure.
+          pushSystem('_本次运行在启动完成前已停止，消息未发出。草稿已保留，可直接重试。_', noticeKeys.sendBlocked)
+        } else if (conflict) {
           if (conflict.reason === 'session_active') {
             pushSystem(`_当前会话仍有任务运行中（或正在停止中），请等待结束后重试。草稿已保留，可直接重试。_`, noticeKeys.sendBlocked)
           } else {

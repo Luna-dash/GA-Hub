@@ -172,6 +172,17 @@ export function capacityConflictFromError(error: unknown): CapacityConflict | nu
   }
 }
 
+/** 409 `run_start_aborted`: the user stopped the run while its runtime was
+ *  still cold-starting. Nothing was sent, so it is a deliberate stop, not a
+ *  send failure — reporting it as one would be wrong copy for an action the
+ *  user just took. */
+export function startAbortedFromError(error: unknown): boolean {
+  const value = error as { status?: unknown; body?: { detail?: unknown } } | null
+  const detail = value?.body?.detail
+  if (value?.status !== 409 || !detail || typeof detail !== 'object') return false
+  return (detail as Record<string, unknown>).code === 'run_start_aborted'
+}
+
 /** Rail 分组默认态（v3 三态之 D）的预览切片：取最近 `limit` 条。
  *
  * 当前会话在前 limit 条之外时不能被藏掉（它正是用户眼前在用的那条）：

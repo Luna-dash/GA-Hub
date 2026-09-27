@@ -100,6 +100,25 @@ class SessionCoordinatorStoppedError(RuntimeError):
     """Raised when a session run arrives after coordinator shutdown started."""
 
 
+class RunStartAbortedError(RuntimeError):
+    """Raised when a run is stopped while its runtime is still being created.
+
+    Admission reserves the run before its runtime exists (creation happens
+    outside the coordinator lock — see ``_runtime_for_session``), so a stop
+    request can land inside that window. The pending run never reaches the
+    runtime: nothing is submitted, the reservation is completed as if the run
+    had been aborted, and the caller is told its start was cancelled. Cleaning
+    the user's draft is the caller's business — the message was never run.
+    """
+
+    def __init__(self, session_id: str, run_id: str) -> None:
+        self.session_id = session_id
+        self.run_id = run_id
+        super().__init__(
+            f"run {run_id!r} for session {session_id!r} was stopped before it started"
+        )
+
+
 @dataclass(frozen=True)
 class RuntimeState:
     session_id: str
@@ -148,6 +167,18 @@ class SessionCoordinator:
         self._watchers: dict[str, threading.Thread] = {}
         self._shutdown_workers: dict[str, tuple[threading.Thread, dict[str, Any]]] = {}
         self._shutdown_abort_workers: dict[str, tuple[threading.Thread, dict[str, Any]]] = {}
+        # One creation gate per session. Runtime creation (GA archive restore
+        # plus AgentService construction) is unboundedly slow and therefore
+        # runs OUTSIDE ``self._lock``; the gate is what keeps two concurrent
+        # admissions for the same session from building two runtimes, while
+        # different sessions never wait for each other.
+        self._creation_gates: dict[str, threading.Lock] = {}
+        # Bumped whenever a session's runtime is replaced or released. A
+        # creation that outlived its session (deleted while the restore was in
+        # flight) compares its captured epoch and discards the fresh runtime
+        # instead of installing an orphan. Entries are never removed: dropping
+        # one would make an in-flight creation's captured epoch look current.
+        self._runtime_epoch: dict[str, int] = {}
 
     @property
     def capacity(self) -> int:
@@ -171,30 +202,44 @@ class SessionCoordinator:
         session_id: str,
         configure: Callable[[SessionRuntime | None], Any],
     ) -> Any:
-        """Atomically configure a session without creating an idle runtime."""
+        """Atomically configure a session without creating an idle runtime.
+
+        The callback runs outside the coordinator lock: it activates a project
+        on the GA agent and writes the sidecar row, and holding the lock across
+        that would stall every other session. Exclusivity comes from reserving
+        this session's control slot for the callback's duration instead — a
+        concurrent submit for the same session is refused with the usual 409
+        rather than being allowed to interleave with a project switch.
+        """
         with self._lock:
             self._raise_if_shutdown()
             active = self._active_by_session.get(session_id)
             if active is not None:
                 raise self._busy(active, reason=AgentBusyError.REASON_SESSION_ACTIVE)
             self._raise_if_control_busy(session_id, include_side_questions=True)
-            return configure(self._runtimes.get(session_id))
+            self._exclusive_controls[session_id] = "configure"
+            runtime = self._runtimes.get(session_id)
+        try:
+            return configure(runtime)
+        finally:
+            with self._lock:
+                if self._exclusive_controls.get(session_id) == "configure":
+                    self._exclusive_controls.pop(session_id, None)
 
     def side_question(self, session_id: str, question: str) -> str:
         """Run BTW against this session runtime without consuming run capacity.
 
-        Runtime lookup/creation and the BTW reservation are atomic, but the
-        potentially slow model call runs outside the coordinator lock. Normal
-        submissions remain allowed, preserving GA's snapshot-based BTW
+        The BTW reservation is taken atomically, but both runtime creation and
+        the potentially slow model call run outside the coordinator lock.
+        Normal submissions remain allowed, preserving GA's snapshot-based BTW
         concurrency semantics.
         """
         with self._lock:
             self._raise_if_shutdown()
             self._raise_if_control_busy(session_id)
-            runtime = self._runtime_for_session_locked(session_id)
             self._side_questions[session_id] = self._side_questions.get(session_id, 0) + 1
         try:
-            return runtime.btw(question)
+            return self._runtime_for_session(session_id).btw(question)
         finally:
             with self._lock:
                 remaining = self._side_questions.get(session_id, 0) - 1
@@ -218,12 +263,10 @@ class SessionCoordinator:
                 raise self._busy(active, reason=AgentBusyError.REASON_SESSION_ACTIVE)
             self._raise_if_control_busy(session_id, include_side_questions=True)
             self._exclusive_controls[session_id] = "rewind"
-            try:
-                runtime = self._runtime_for_session_locked(session_id)
-            except BaseException:
-                self._exclusive_controls.pop(session_id, None)
-                raise
         try:
+            # The control reservation above is what makes this exclusive; the
+            # runtime lookup (which may cold-start) must not hold the lock.
+            runtime = self._runtime_for_session(session_id)
             return runtime.rewind_turns(sid=sid, n=n)
         finally:
             with self._lock:
@@ -272,6 +315,12 @@ class SessionCoordinator:
             # in the process (session_snapshot re-defaults on the miss).
             with self._lock:
                 self._states.pop(session_id, None)
+                # Invalidate any creation still in flight for this session: a
+                # restore that started before the deletion must not resurrect
+                # the session by installing its runtime afterwards.
+                self._runtime_epoch[session_id] = (
+                    self._runtime_epoch.get(session_id, 0) + 1
+                )
             if runtime is not None and shutdown is not None:
                 shutdown(runtime)
             if after_release is not None:
@@ -281,7 +330,14 @@ class SessionCoordinator:
         return self.exclusive(session_id, operation, _release)
 
     def session_snapshot(self, session_id: str) -> tuple[RuntimeState, dict[str, Any] | None]:
-        """Return runtime identity and its matching active content together."""
+        """Return runtime identity and its matching active content together.
+
+        The runtime call runs outside the coordinator lock: this is the live
+        chat's snapshot/resync path and the runtime takes its own lock, so
+        holding the coordinator lock here would stall unrelated sessions and
+        nest two locks on every poll. Identity is re-checked afterwards so a
+        snapshot is never paired with a different run's state.
+        """
         with self._lock:
             state = replace(self._states.get(session_id, RuntimeState(session_id)))
             if state.status == STATUS_IDLE or not state.run_id or not state.stream_id:
@@ -290,14 +346,20 @@ class SessionCoordinator:
             if runtime is None:
                 return state, None
             snapshotter = getattr(runtime, "active_message_snapshot", None)
-            if snapshotter is None:
-                return state, None
-            active_message = snapshotter(
-                state.stream_id,
-                session_id=session_id,
-                run_id=state.run_id,
-            )
-            return state, active_message
+        if snapshotter is None:
+            return state, None
+        active_message = snapshotter(
+            state.stream_id,
+            session_id=session_id,
+            run_id=state.run_id,
+        )
+        with self._lock:
+            current = self._active_by_session.get(session_id)
+            if current is None or current.run_id != state.run_id:
+                # The run finished or was replaced while we copied it: report
+                # the current state and no content rather than a stale pair.
+                return replace(self._states.get(session_id, RuntimeState(session_id))), None
+            return replace(current), active_message
 
     def submit(
         self,
@@ -336,9 +398,13 @@ class SessionCoordinator:
         watch ``finished``/``final_text``), so admission must hand it back
         without a second lookup racing the watcher.
         """
-        # Admission, per-session identity reservation, runtime creation and
-        # submit are one critical section. No concurrent caller can overbook a
-        # slot or start a second run for this session.
+        # Admission — capacity check plus per-session identity reservation — is
+        # one critical section, and it is the reservation (not the lock) that
+        # makes overbooking impossible: the slot is taken before the lock is
+        # dropped. Runtime creation and the submit itself are deliberately NOT
+        # in that section, because both can block unboundedly (GA archive
+        # restore, then the agent's input queue); holding the lock across them
+        # froze every other session (architecture-review problem 6).
         with self._lock:
             self._raise_if_shutdown()
             self._raise_if_control_busy(session_id)
@@ -357,26 +423,58 @@ class SessionCoordinator:
             starting = RuntimeState(session_id, STATUS_STARTING, run_id)
             self._active_by_session[session_id] = starting
             self._states[session_id] = starting
-            try:
-                runtime = self._runtime_for_session_locked(session_id)
-                handle = runtime.submit(
-                    text,
-                    source=source,
-                    images=images,
-                    llm_index=llm_index,
-                    llm_key=llm_key,
-                    session_id=session_id,
-                    run_id=run_id,
-                )
-            except BaseException:
-                if self._active_by_session.get(session_id) == starting:
-                    self._active_by_session.pop(session_id, None)
-                    self._states[session_id] = RuntimeState(session_id)
-                raise
 
-            running = RuntimeState(session_id, STATUS_RUNNING, run_id, handle.stream_id)
-            self._active_by_session[session_id] = running
-            self._states[session_id] = running
+        try:
+            runtime = self._runtime_for_session(session_id)
+            # A stop may have landed while the runtime was being created — the
+            # exact window this refactor opened, and one the live chat's stop
+            # button can hit (it is offered while the status is "starting").
+            # Honour it: never submit, and settle the reservation as a
+            # completed abort so no watcher is needed to finish it.
+            pending = self._reservation_status(session_id, run_id)
+            if pending != STATUS_STARTING:
+                self._finish_aborted_start(session_id, run_id)
+                if pending == STATUS_ABORTING:
+                    raise RunStartAbortedError(session_id, run_id)
+                raise SessionControlBusyError(session_id, "release")
+            handle = runtime.submit(
+                text,
+                source=source,
+                images=images,
+                llm_index=llm_index,
+                llm_key=llm_key,
+                session_id=session_id,
+                run_id=run_id,
+            )
+        except RunStartAbortedError:
+            # Already settled as a completed abort by _finish_aborted_start.
+            raise
+        except BaseException:
+            # No run was admitted (creation or the submit itself failed), so
+            # this admission's slot must go back — including when creation was
+            # discarded because the session was released or we are shutting down.
+            self._release_reservation(session_id, run_id)
+            raise
+
+        with self._lock:
+            active = self._active_by_session.get(session_id)
+            if active is not None and active.run_id == run_id and (
+                active.status == STATUS_STARTING
+            ):
+                running = RuntimeState(
+                    session_id, STATUS_RUNNING, run_id, handle.stream_id
+                )
+                self._active_by_session[session_id] = running
+                self._states[session_id] = running
+            elif active is not None and active.run_id == run_id:
+                # Aborted between install and submit: the run exists, so the
+                # ordinary watcher completes the ABORTING transition.
+                running = active
+            else:
+                # The reservation vanished (session released while we were in
+                # the agent): nothing will watch this run, so retire it here.
+                self._abort_orphaned_run(runtime, session_id, run_id)
+                raise SessionControlBusyError(session_id, "release")
 
         watcher = threading.Thread(
             target=self._watch_completion,
@@ -416,7 +514,10 @@ class SessionCoordinator:
         """
         with self._lock:
             self._raise_if_shutdown()
-            return self._runtime_for_session_locked(session_id)
+        # Creation is slow and must not run under the lock. If this session is
+        # released while the restore is in flight, the epoch check discards the
+        # fresh runtime instead of resurrecting a deleted session.
+        return self._runtime_for_session(session_id)
 
     def replace_runtime(
         self,
@@ -439,6 +540,11 @@ class SessionCoordinator:
                 previous = self._runtimes.get(session_id)
                 self._runtimes[session_id] = runtime
                 self._states.pop(session_id, None)
+                # Invalidate any creation still in flight for this session: it
+                # must not install its runtime over this deliberate replacement.
+                self._runtime_epoch[session_id] = (
+                    self._runtime_epoch.get(session_id, 0) + 1
+                )
             if previous is not None:
                 disposer = shutdown or getattr(previous, "shutdown", None)
                 if disposer is not None:
@@ -452,12 +558,120 @@ class SessionCoordinator:
         with self._lock:
             return self._runtimes.get(session_id)
 
-    def _runtime_for_session_locked(self, session_id: str) -> SessionRuntime:
-        runtime = self._runtimes.get(session_id)
-        if runtime is None:
+    def _runtime_for_session(self, session_id: str) -> SessionRuntime:
+        """Return this session's runtime, creating it OUTSIDE the coordinator lock.
+
+        Creation is unboundedly slow: the factory builds an AgentService and
+        replays the session's GA archive (lock acquisition, full parse, working
+        memory restore). Holding ``self._lock`` across that froze every other
+        session — reading state, polling a snapshot or stopping an unrelated
+        run all queued behind one session's cold start (architecture-review
+        problem 6). The lock now guards the maps only.
+
+        Concurrency guarantees are preserved by three things:
+
+        * the per-session creation gate, so two admissions for the SAME session
+          cannot build two runtimes (and the loser reuses the winner's);
+        * ``self._runtime_epoch``, so a creation that outlived its session
+          (released or replaced while the restore was in flight) discards its
+          fresh runtime instead of installing an orphan for a deleted session;
+        * the caller's own reservation, which is taken before the lock is
+          dropped and is what actually prevents overbooking.
+        """
+        with self._lock:
+            runtime = self._runtimes.get(session_id)
+            if runtime is not None:
+                return runtime
+            epoch = self._runtime_epoch.get(session_id, 0)
+            gate = self._creation_gates.get(session_id)
+            if gate is None:
+                gate = threading.Lock()
+                self._creation_gates[session_id] = gate
+
+        with gate:
+            with self._lock:
+                runtime = self._runtimes.get(session_id)
+                if runtime is not None:
+                    return runtime
+
             runtime = self._runtime_factory(session_id)
-            self._runtimes[session_id] = runtime
-        return runtime
+
+            with self._lock:
+                if self._runtime_epoch.get(session_id, 0) == epoch and (
+                    not self._shutdown_is_requested()
+                ):
+                    self._runtimes[session_id] = runtime
+                    return runtime
+                stopping = self._shutdown_is_requested()
+
+            # This session was released or replaced while we were building, or
+            # the coordinator is shutting down: never install the runtime, and
+            # never leak the GA agent it holds.
+            self._discard_created_runtime(runtime)
+            if stopping:
+                raise SessionCoordinatorStoppedError(
+                    "session coordinator is shutting down"
+                )
+            raise SessionControlBusyError(session_id, "release")
+
+    def _discard_created_runtime(self, runtime: SessionRuntime) -> None:
+        """Dispose a runtime that must not become any session's runtime."""
+        shutdown = getattr(runtime, "shutdown", None)
+        if shutdown is None:
+            return
+        try:
+            shutdown()
+        except Exception:
+            log.exception("failed to discard an uninstalled session runtime")
+
+    def _reservation_status(self, session_id: str, run_id: str) -> str | None:
+        """Status of this admission's reservation, or None if it is gone."""
+        with self._lock:
+            active = self._active_by_session.get(session_id)
+            if active is None or active.run_id != run_id:
+                return None
+            return active.status
+
+    def _release_reservation(self, session_id: str, run_id: str) -> None:
+        """Drop one admission's reservation without touching anyone else's."""
+        with self._lock:
+            active = self._active_by_session.get(session_id)
+            if active is not None and active.run_id == run_id:
+                self._active_by_session.pop(session_id, None)
+                self._states[session_id] = RuntimeState(session_id)
+            self._abort_started.pop(run_id, None)
+
+    def _finish_aborted_start(self, session_id: str, run_id: str) -> None:
+        """Settle a stop that arrived before the run reached its runtime.
+
+        The run was never submitted, so no watcher exists to finish it. This
+        mirrors the completion half of ``_watch_completion`` so the state
+        machine lands exactly where a normal abort would.
+        """
+        completed: RuntimeState | None = None
+        with self._lock:
+            active = self._active_by_session.get(session_id)
+            if active is None or active.run_id != run_id:
+                return
+            self._abort_started.pop(run_id, None)
+            self._active_by_session.pop(session_id, None)
+            settled = RuntimeState(session_id, completed_run_id=run_id)
+            self._states[session_id] = settled
+            completed = replace(settled)
+        if completed is not None:
+            self._emit_state_change(completed)
+
+    def _abort_orphaned_run(
+        self, runtime: SessionRuntime, session_id: str, run_id: str
+    ) -> None:
+        """Retire a run whose session lost its reservation while submitting."""
+        try:
+            runtime.abort()
+        except Exception:
+            log.exception("orphaned run rollback: abort failed for %s", session_id)
+        with self._lock:
+            self._abort_started.pop(run_id, None)
+            self._watchers.pop(run_id, None)
 
     def _raise_if_control_busy(
         self, session_id: str, *, include_side_questions: bool = False
@@ -748,8 +962,14 @@ class SessionCoordinator:
     def _abort_locked(self, active: RuntimeState) -> RuntimeState:
         if active.status in {STATUS_ABORTING, STATUS_ERROR}:
             return replace(active)
-        runtime = self._runtimes[active.session_id]
-        runtime.abort()
+        # The runtime may not exist yet: admission reserves the run before its
+        # runtime is created (creation happens outside the lock), so a stop
+        # legitimately arrives while the restore is still running. Marking the
+        # reservation ABORTING is enough — the admitting thread sees it, never
+        # submits, and settles the run (``_finish_aborted_start``).
+        runtime = self._runtimes.get(active.session_id)
+        if runtime is not None:
+            runtime.abort()
         aborting = replace(active, status=STATUS_ABORTING)
         assert active.run_id is not None
         self._abort_started[active.run_id] = time.monotonic()

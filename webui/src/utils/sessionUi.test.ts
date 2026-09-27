@@ -11,6 +11,7 @@ import {
   sessionPreview,
   sessionRecencyMs,
   sessionStatusLabel,
+  startAbortedFromError,
   structuredErrorDetailFromError,
 } from './sessionUi'
 
@@ -187,6 +188,25 @@ describe('session UI contracts', () => {
     it('returns everything at or under the limit untouched', () => {
       expect(sessionPreview(rows.slice(0, 2), 'a', 3).map((item) => item.id)).toEqual(['a', 'b'])
       expect(sessionPreview(rows.slice(0, 3), 'e', 3).map((item) => item.id)).toEqual(['a', 'b', 'c'])
+    })
+  })
+
+  describe('startAbortedFromError', () => {
+    const conflict = (code: string, status = 409) => ({
+      status,
+      body: { detail: { code, detail: '本次运行在启动完成前已被停止，消息未发出。' } },
+    })
+
+    it('recognizes the cold-start stop refusal', () => {
+      expect(startAbortedFromError(conflict('run_start_aborted'))).toBe(true)
+    })
+
+    it('does not claim other 409s or non-409 responses', () => {
+      expect(startAbortedFromError(conflict('session_active'))).toBe(false)
+      expect(startAbortedFromError(conflict('agent_busy'))).toBe(false)
+      expect(startAbortedFromError(conflict('run_start_aborted', 500))).toBe(false)
+      expect(startAbortedFromError(new Error('network'))).toBe(false)
+      expect(startAbortedFromError(null)).toBe(false)
     })
   })
 })

@@ -20,6 +20,7 @@ from .services.llm_registry import (
 )
 from .services.session_coordinator import (
     AgentBusyError,
+    RunStartAbortedError,
     SessionControlBusyError,
     SessionCoordinatorStoppedError,
 )
@@ -82,6 +83,18 @@ def install_error_handlers(app: FastAPI) -> None:
             context["cause"] = f"{type(exc.__cause__).__name__}: {exc.__cause__}"[:300]
         return _json(409, _payload(
             "restore_failed", "会话运行环境恢复失败，请稍后重试。", **context))
+
+    @app.exception_handler(RunStartAbortedError)
+    async def _run_start_aborted(request: Request, exc: RunStartAbortedError) -> JSONResponse:
+        # The user stopped the run while its runtime was still cold-starting.
+        # Nothing reached the agent, so this is a semantic refusal (409), not a
+        # failure: the caller keeps the prompt and may send it again.
+        return _json(409, _payload(
+            "run_start_aborted",
+            "本次运行在启动完成前已被停止，消息未发出。",
+            session_id=exc.session_id,
+            run_id=exc.run_id,
+        ))
 
     @app.exception_handler(SessionCoordinatorStoppedError)
     async def _lifecycle_stopping(request: Request, exc: SessionCoordinatorStoppedError) -> JSONResponse:
