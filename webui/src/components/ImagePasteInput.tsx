@@ -256,7 +256,7 @@ export function ImagePasteInput({
         </div>
       )}
 
-      <div className="flex items-end gap-1 p-1">
+      <div className="flex items-end gap-2 p-1">
         {acceptFiles && (
           <label className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl text-2xl font-light leading-none text-accent hover:bg-accent/10 hover:text-accent transition" title="添加文件">
             +
