@@ -1,12 +1,17 @@
-"""WeChat iLink bot client — extracted from frontends/wechatapp.py.
+"""WeChat iLink bot client — the iLink protocol implementation Hub owns.
 
 Pure transport layer: QR login, long-poll updates, send text/image/file/video,
 download/decrypt incoming media. No agent integration here.
 
-This module is the single source of truth for the WeChat protocol — both
-frontends/wechatapp.py and server/services/wechat_service.py import from here.
-For backward-compat, frontends/wechatapp.py keeps its own inlined copy as
-fallback if this module is unavailable.
+Relationship to GA: ``frontends/wechatapp.py`` carries an *inlined copy* of
+this client (its banner reads "inline from wx_bot_client.py") rather than
+importing it — the two processes ship separately, so there is no import edge in
+either direction. The shared contract is therefore the wire protocol, and the
+wire-visible constants (API / CDN_BASE / VER / UA / ILINK_APP_CLIENT_VERSION)
+are pinned against GA's copy by ``tests/test_paired_repo_contract.py``: bump the
+protocol on one side only and that test fails. This module remains the source of
+truth for Hub's own WeChat support; a change here still has to be mirrored into
+GA by hand.
 """
 from __future__ import annotations
 

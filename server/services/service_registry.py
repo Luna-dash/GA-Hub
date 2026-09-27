@@ -124,7 +124,7 @@ class ServiceRegistry:
             service = FeishuService._instance
         if service is None:
             script = (
-                _paths.GA_ROOT / "frontends" / "fsapp.py"
+                _paths.ga_fsapp_path()
                 if _paths.GA_ROOT is not None else None
             )
             exists = bool(script is not None and script.is_file())

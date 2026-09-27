@@ -48,6 +48,14 @@ def _ga_session_bridge() -> Any:
 # cannot change those bytes, so these two refusals are the exact trigger for
 # L2 rotation. Everything else — transient read errors, genuine occupancy —
 # keeps raising so no healthy archive is ever rotated by accident.
+#
+# This is copy matching because the contract gives no reason code:
+# ``bridge.session.continue_inplace`` returns ``(message, ok)`` only.
+# ``tests/test_paired_repo_contract.py`` pins these strings against GA's
+# source, so rewording them in GA fails a named test — without that pin the
+# same edit would silently stop rotating and turn a recoverable session into
+# one that refuses to open forever. The real fix is a structured reason from
+# GA (tracked in docs/BACKLOG.md).
 _CONTENT_FAILURE_MARKERS = ("为空或格式不符", "无法解析")
 
 

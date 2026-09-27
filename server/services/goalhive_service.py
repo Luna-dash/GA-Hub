@@ -31,6 +31,11 @@ _DRAIN_POLL_SECONDS = 0.1
 
 # Goal/Hive prompts — replicated verbatim from frontends/slash_cmds.py
 # (build_goal_prompt / build_hive_prompt). User text is appended as the goal.
+# ``tests/test_paired_repo_contract.py`` compares these constants against GA's
+# functions, so rewording the prompt in GA fails a test here instead of letting
+# the same mode behave differently depending on which entry point started it.
+# Importing slash_cmds instead is not an option: it pulls GA's whole command
+# layer into the sidecar.
 _GOAL_PROMPT = (
     "请进入 Goal 模式：先读 memory/goal_mode_sop.md。"
     "若未给目标，先 ask_user 一次性问清：一句话目标 + condition 约束。"

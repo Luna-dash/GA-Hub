@@ -67,7 +67,7 @@ CONFIG_FILE = ADMIN_DATA / "config.json"
 def conductor_deliverables_dir() -> Path:
     root = GA_ROOT
     if root is not None:
-        return root / "temp"
+        return ga_layout_path("temp", root=root)
     return ADMIN_DATA / "deliverables"
 _UNSET = object()
 
@@ -534,6 +534,67 @@ def temp_dir() -> Path:
     p = GA_ROOT / "temp"
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+# ── GA on-disk layout ───────────────────────────────────────────────────
+# Paths inside the GA checkout that GA-Hub resolves by convention. GA
+# publishes no layout guarantee and the registered ``frontends.gahub.bridge``
+# contract does not cover them, so every such dependency is named once, here,
+# instead of being re-derived at the call site (they had already spread to
+# seven files). Each constant notes the GA-side owner; if GA moves one of
+# these, this block and its callers are the whole blast radius.
+#
+# The ``GA_LAYOUT_`` prefix keeps these readable as layout constants and
+# distinct from environment names: ``tests/test_env_registry.py`` scans for
+# env vars shaped like the mykey-sync ones, and a bare layout constant would
+# be read as an unregistered env name.
+# ``tests/test_ga_boundary_contract.py`` fails if a literal ``GA_ROOT / "..."``
+# join reappears outside this module.
+
+GA_LAYOUT_MYKEY_FILE = "mykey.py"                    # GA: model/key store loaded by llmcore
+GA_LAYOUT_ASSETS_DIR = "assets"                      # GA: bundled helper scripts
+GA_LAYOUT_MYKEY_SYNC_FILE = "assets/mykey_sync.py"   # GA: encrypted mykey sync helper
+GA_LAYOUT_FRONTENDS_DIR = "frontends"                # GA: legacy frontend package
+GA_LAYOUT_FSAPP_FILE = "frontends/fsapp.py"          # GA: Feishu frontend entry point
+GA_LAYOUT_KEYCHAIN_FILE = "memory/keychain.py"       # GA: keychain helper imported by scripts
+GA_LAYOUT_L4_SESSIONS_DIR = "memory/L4_raw_sessions" # GA: compressed session archive
+GA_LAYOUT_ARCHIVES_DIR = "temp/model_responses"      # GA: native conversation logs
+
+
+def ga_layout_path(relative: str, *, root: Path | None = None) -> Path:
+    """Resolve ``relative`` inside the GA checkout (layout convention, not contract).
+
+    ``root`` overrides the configured checkout for callers that already
+    resolved it; otherwise ``GA_ROOT`` is used and must be set.
+    """
+    base = GA_ROOT if root is None else root
+    if base is None:
+        raise RuntimeError("GA_ROOT not configured")
+    return Path(base) / relative
+
+
+def ga_mykey_path() -> Path:
+    return ga_layout_path(GA_LAYOUT_MYKEY_FILE)
+
+
+def ga_mykey_sync_script() -> Path:
+    return ga_layout_path(GA_LAYOUT_MYKEY_SYNC_FILE)
+
+
+def ga_fsapp_path() -> Path:
+    return ga_layout_path(GA_LAYOUT_FSAPP_FILE)
+
+
+def ga_keychain_path(root: Path | None = None) -> Path:
+    return ga_layout_path(GA_LAYOUT_KEYCHAIN_FILE, root=root)
+
+
+def ga_l4_sessions_dir(root: Path | None = None) -> Path:
+    return ga_layout_path(GA_LAYOUT_L4_SESSIONS_DIR, root=root)
+
+
+def ga_archives_dir() -> Path:
+    return ga_layout_path(GA_LAYOUT_ARCHIVES_DIR)
 
 
 def admin_uploads_dir() -> Path:

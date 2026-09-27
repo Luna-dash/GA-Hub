@@ -775,3 +775,93 @@ P3 护栏
 5 轮、既有 coordinator 套件连跑 3 轮均稳定；vitest **517 passed**；tsc `-b --noEmit`
 exit 0；api:check 通过（89 调用形状 / 136 操作）；`python scripts\build_all.py`
 退出码 0 且守卫输出「✓ 构建链全部通过（总耗时 63.3s）」。
+
+## 2026-09-27 GA 契约与实际触点对齐（声明 / 治理 / 耦合三层收口）
+
+来源：同一轮架构复审（问题 7「GA 契约与实际触点差距」）。复审结论不是"没有契约"，
+而是**契约只长了一条腿**：
+
+| 治理层 | 原状 |
+|---|---|
+| Conductor 线协议 | **有**：`bridge/contract.py` ↔ `conductor_protocol.py` 静态比对（PROTOCOL_VERSION / SERVICE_NAME / CAPABILITIES）+ 运行时 `validate_protocol`（版本、能力、boot_id、path_policy） |
+| GA 内核面（启动探针） | **有但过期**：`core_contract` 声明的面比真实调用点**旧**——详见 P1 |
+| bridge 符号面 | **无**：Hub 从 bridge 取的符号没有任何校验（21 个触点里 17 个无凭据） |
+| 导入边界 | **单向棘轮**：`test_ga_boundary_contract` 只挡"新增"，21 条上限里已有 **12 条是死条目** |
+
+实测（`server/**` 共 23 处 GA 触点 = 14 处经 bridge + 9 处直连；棘轮上限 21 条，
+其中 12 条早已不存在，0 条未登记）。三个后果都是**静默**的：bridge 改名 → 后端
+起不来（9 处模块级导入）或首次调用 500；探针过期 → 真正断掉的符号照样放行；
+棘轮死条目 → 没人知道现在的边界到底在哪。
+
+P1 启动探针：从"点名几个符号"改为"声明整张面"
+- [x] 删掉 `_REQUIRED_CONTINUE_CMD` / `_REQUIRED_MODEL_BRIDGE` / `_REQUIRED_REWIND_BRIDGE`
+      三组**过期**常量（`continue_cmd.install/reset_conversation` 早在问题 5/6 就换成
+      session bridge 了，探针却还在要求它们——GA 一旦删掉这两个函数，聊天会被以
+      "契约失败"拒绝，而 Hub 根本没在用）
+- [x] 改为一张 `_REQUIRED_GA_SYMBOLS`：**14 个模块 / 33 个具名符号**（8 个 bridge
+      子模块 + 5 个直连债务模块 + `agentmain`），逐符号 `importlib.import_module` +
+      `getattr`，缺一个就报一条**点名到符号**的红项；保留 `_REQUIRED_CLASS_MEMBERS`
+      （`GeneraticAgent` 的 8 个成员）与 `_REQUIRED_INIT_ATTRS`（8 个实例属性）
+- [x] 冻结安全：声明必须是**静态表**——onefile sidecar 里磁盘上没有 `.py`，运行时
+      无法从源码派生。所以同步性由测试承担（见 P2）
+- [x] 活体验证：`ok=True`、51 项、584ms；stub 注入（把 `bridge.workspace` 换成缺
+      `remove_workspace` 的假模块）→ `ok=False` 且恰好点名
+      `frontends.gahub.bridge.workspace.remove_workspace (missing)`
+- [x] 成本中性：旧集合 670ms / 新集合 658ms（`agentmain` 自身 ~525ms 占主要，
+      8 个 bridge 模块 + 4 个直连模块合计 ≈5ms）
+
+P2 边界治理：扫描面补全 + 棘轮换精确集合 + 探针声明与源码互证
+- [x] 扫描面从 `server/**` 扩到 `server/ + desktop/ + scripts/`，并**解析内嵌脚本字符串**
+      ——`ga_external_worker.py:43` 的 `import_module("ga")` 写在 worker 脚本文本里，
+      旧扫描看不见，于是这条真实依赖在棘轮里"已被还清"（假阴性）
+- [x] 棘轮 → **精确集合**：新增反向校验，已还清的条目必须删掉（12 条死条目当场暴露，
+      清理后债务清单 = 9 条，0 条过时）
+- [x] 新增探针声明 ↔ 源码互证（`core_contract` 自身除外）：源码里用到的每个 bridge
+      模块/符号都必须在声明里（漏声明 → 红）；声明里每一项都必须有源码依据（多声明 →
+      红）。后者正是能抓住 `_REQUIRED_CONTINUE_CMD` 的那条
+- [x] 静态看不见的触点（`_archive_bridge().list_native_sessions()` 这类经 helper 返回值
+      取符号的 8 处）单列 `INDIRECT_BRIDGE_REFERENCES`，并要求该文件里仍能按字面找到
+      `.<symbol>`——豁免清单自己不腐烂
+- [x] 模块名单自证：`GA_MODULE_ROOTS` 是手写的，漏一个名字就等于给扫描开后门。改为
+      从配对 GA checkout 派生顶层名并取交集校验。**自查揪出一个假阴性**：第一版
+      "导入根"仍用 `GA_MODULE_ROOTS` 过滤，于是把名单里的 `mykey` 删掉会同时删掉
+      "Hub 导入了 mykey"这个证据，护栏自己把自己绕过去了——改成**不过滤**地收集
+      导入名，再与 GA 实际顶层名取交集
+
+P3 行为耦合显式化（这些是"能跑但没凭据"的耦合）
+- [x] GA 磁盘布局漏斗：10 处字面量拼接散在 7 个文件 → `_paths.py` 里 8 个
+      `GA_LAYOUT_*` 常量 + `ga_layout_path()` + 6 个具名 helper；新增护栏禁止
+      `GA_ROOT / "..."` 再散回调用点。**自查揪出一个冲突**：`GA_MYKEY_FILE` 这类名字
+      会被 `test_env_registry` 的 `GA_MYKEY_[A-Z_]+` 环境名扫描当成未登记环境变量，
+      统一改为 `GA_LAYOUT_` 前缀（布局常量本就该一眼看出不是环境名）
+- [x] 归档块格式：bridge 只提供"整档投影"，Hub 需要**有界窗口**（多 GB 日志），于是
+      自己按 `=== Prompt ===` 切（`FIRST_USER_PREVIEW_READ_BYTES` 64KB /
+      `SEARCH_READ_CHUNK_SIZE` 256KB）。两边块头字面量现已对钉（GA 侧写者
+      `frontends/worldline.py:1101/1104`）
+- [x] 失败文案：`_CONTENT_FAILURE_MARKERS` 决定"轮转坏档"还是"抛错"，而 GA 只回
+      `(message, ok)` 没有 reason。已对钉到 GA 源码（容忍文件搬迁），并把
+      "要结构化 reason" 记成对 GA 的诉求
+- [x] Goal/Hive 提示词：`goalhive_service` 是逐字复制（`slash_cmds.build_goal_prompt` /
+      `build_hive_prompt`），现按**求值后的字符串全等**对钉，改写就让测试红
+- [x] iLink 协议常量：`wx_bot_client` 与 GA 的 `frontends/wechatapp.py` 是**互不 import
+      的内联副本**（GA 侧注释就写着 "inline from wx_bot_client.py"）。顺手纠正了
+      Hub 模块文档里"两边都 import 这里"的**错误描述**，并把 API / CDN_BASE / VER /
+      ILINK_APP_CLIENT_VERSION / UA 五个线上可见常量对钉
+
+给 GA 侧的两条诉求（Hub 侧的耦合都是这两条缺口的绕行）
+- `bridge.session.continue_inplace` 返回**结构化 reason**（现在 Hub 只能匹配中文文案）
+- `bridge.archive` 增加**有界窗口**投影原语（现在 Hub 只能自己切块头）
+
+刻意不做：不动 Conductor 线协议那一层（它本来就是唯一被治理好的）；
+不改 `llm_registry` 的 `importlib.import_module` 写法（对符号面无收益）；
+`archive_messages` 仍保留自己的块头正则（那是有界窗口能力的绕行，不是偷懒）。
+这一层治理只在有人跑 pytest 时才执行——所以问题 8（CI 只打包不跑测试）应当紧接着处理。
+
+验证：pytest **1101 passed / 2 skipped**（问题 6 后基线 1083，+18）；新增
+`tests/test_ga_layout_paths.py`（5 条），`test_ga_boundary_contract.py` 3 → 8 条，
+`test_paired_repo_contract.py` 1 → 5 条，`test_core_contract.py` 3 passed/4 skipped
+→ 7 passed（活体守卫生效，不再静默跳过）；护栏自检**故障注入 13/13 命中**
+（漏声明 / 多声明 / 探针不再点名 / 死条目 / 关掉内嵌扫描 / 名单漏名 / 改失败文案 /
+改提示词 / 单方面升级协议 / 改块头 / 布局拼接回流 / 布局常量绝对化），注入后原文件
+字节级还原；vitest **519 passed**；lint（`tsc -b --noEmit`）exit 0；api:check 通过
+（89 调用形状 / 136 操作）。

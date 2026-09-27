@@ -657,7 +657,7 @@ def _catalogue_signature() -> tuple:
     root = _paths.GA_ROOT
     if root is None:
         return ()
-    archive_dir = Path(root) / "temp" / "model_responses"
+    archive_dir = _paths.ga_archives_dir()
     entries = []
     try:
         paths = archive_dir.glob("model_responses_*.txt")

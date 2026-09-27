@@ -95,17 +95,21 @@ class LiveContractTests(unittest.TestCase):
 
     def setUp(self) -> None:
         import server._paths as paths
-        from pathlib import Path
 
         # The probe reads `_paths.GA_ROOT` (a module attr resolved at import),
-        # not os.environ — so we patch that attr directly. Prefer the real
-        # checkout if discover_ga_root() finds one; else fall back to GA_ROOT.
+        # not os.environ — so we patch that attr directly. Prefer the recent
+        # configured checkout; else a sibling ``../GA`` (the paired-checkout
+        # convention ``test_paired_repo_contract`` already relies on) so this
+        # guard actually runs on a dev box instead of silently skipping.
         discovered = paths.discover_ga_root()
         env_root = os.environ.get("GA_ROOT") or ""
+        sibling = Path(__file__).resolve().parents[1].parent / "GA"
         if discovered is not None:
             self._ga_root = discovered
         elif env_root and os.path.isdir(env_root):
             self._ga_root = Path(env_root)
+        elif (sibling / "agentmain.py").is_file():
+            self._ga_root = sibling
         else:
             self._ga_root = None
         if self._ga_root is not None:
@@ -140,6 +144,7 @@ class LiveContractTests(unittest.TestCase):
         """
         self._skip_if_no_core()
         from server.services import core_contract
+        import importlib
         import inspect
 
         report = core_contract.probe_core_contract()
@@ -161,24 +166,62 @@ class LiveContractTests(unittest.TestCase):
                 re.search(rf"\bself\.{re.escape(attr)}\b\s*[:=]", src),
                 f"drift: GeneraticAgent.__init__ no longer assigns self.{attr}",
             )
-        import frontends.continue_cmd as cc
-        for name in core_contract._REQUIRED_CONTINUE_CMD:
-            self.assertTrue(
-                callable(getattr(cc, name, None)),
-                f"drift: frontends.continue_cmd.{name} no longer callable in real core",
-            )
-        import frontends.gahub.bridge.model as model_bridge
-        for name in core_contract._REQUIRED_MODEL_BRIDGE:
-            self.assertTrue(
-                callable(getattr(model_bridge, name, None)),
-                f"drift: frontends.gahub.bridge.model.{name} no longer callable in real core",
-            )
-        import frontends.gahub.bridge.rewind as rewind_bridge
-        for name in core_contract._REQUIRED_REWIND_BRIDGE:
-            self.assertTrue(
-                callable(getattr(rewind_bridge, name, None)),
-                f"drift: frontends.gahub.bridge.rewind.{name} no longer callable in real core",
-            )
+        for module_name, names in core_contract._REQUIRED_GA_SYMBOLS.items():
+            module = importlib.import_module(module_name)
+            for name in names:
+                self.assertTrue(
+                    callable(getattr(module, name, None)),
+                    f"drift: {module_name}.{name} no longer callable in real core",
+                )
+
+    def test_probe_names_the_symbol_a_ga_upgrade_removed(self):
+        """A renamed bridge function must be reported as *that symbol*.
+
+        The whole point of the widened declaration is diagnosability: the user
+        sees which GA symbol is gone instead of an ``ImportError`` from a
+        worker thread. Simulate a GA upgrade that dropped one workspace
+        function and assert the probe names it.
+        """
+        self._skip_if_no_core()
+        import sys
+        import types
+
+        from server.services import core_contract
+
+        stub = types.ModuleType("frontends.gahub.bridge.workspace")
+        for name in ("list_workspaces", "prepare_workspace", "get_workspace"):
+            setattr(stub, name, lambda *a, **k: None)  # remove_workspace: gone
+
+        with mock.patch.dict(
+            sys.modules, {"frontends.gahub.bridge.workspace": stub}
+        ):
+            report = core_contract.probe_core_contract()
+
+        self.assertFalse(report.ok)
+        failed = [c.name for c in report.items if not c.ok]
+        self.assertIn("frontends.gahub.bridge.workspace.remove_workspace", failed)
+        self.assertTrue(
+            any("remove_workspace" in err for err in report.errors),
+            report.errors,
+        )
+
+    def test_declaration_does_not_require_ga_symbols_hub_stopped_calling(self):
+        """The startup gate must not fail chat for a symbol nothing calls.
+
+        ``frontends.continue_cmd.install`` / ``reset_conversation`` were pinned
+        here long after Hub moved to ``frontends.gahub.bridge.session``; GA
+        dropping them would have turned chat into a 503 for no reason.
+        """
+        self._skip_if_no_core()
+        from server.services import core_contract
+
+        declared = {
+            f"{module}.{name}"
+            for module, names in core_contract._REQUIRED_GA_SYMBOLS.items()
+            for name in names
+        }
+        self.assertNotIn("frontends.continue_cmd.install", declared)
+        self.assertNotIn("frontends.continue_cmd.reset_conversation", declared)
 
 
 if __name__ == "__main__":

@@ -107,8 +107,8 @@ def _path_candidates(raw: str) -> list[Path]:
         if _paths.GA_ROOT:
             root = Path(_paths.GA_ROOT)
             bases.append(root / path)
-            bases.append(root / "temp" / path)
-            bases.append(root / "memory" / "L4_raw_sessions" / path)
+            bases.append(_paths.ga_layout_path("temp", root=root) / path)
+            bases.append(_paths.ga_l4_sessions_dir(root=root) / path)
         bases.append(_paths.ADMIN_ROOT / path)
     seen: set[str] = set()
     unique: list[Path] = []

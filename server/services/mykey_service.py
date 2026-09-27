@@ -63,7 +63,7 @@ class MykeyHttpError(Exception):
 def _mykey_path() -> Path:
     if _paths.GA_ROOT is None:
         raise MykeyHttpError(503, "GA_ROOT 未配置")
-    return _paths.GA_ROOT / "mykey.py"
+    return _paths.ga_mykey_path()
 
 
 def _backup_dir() -> Path:
@@ -376,7 +376,7 @@ def restore_backup(name: str) -> dict:
 def _mykey_sync_script() -> Path:
     if _paths.GA_ROOT is None:
         raise MykeyHttpError(503, "GA_ROOT 未配置")
-    script = _paths.GA_ROOT / "assets" / "mykey_sync.py"
+    script = _paths.ga_mykey_sync_script()
     if not script.is_file():
         raise MykeyHttpError(500, f"同步脚本不存在: {script}")
     return script

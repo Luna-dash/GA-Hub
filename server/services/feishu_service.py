@@ -75,7 +75,7 @@ class FeishuService:
     def fsapp_path(self) -> Path:
         if _paths.GA_ROOT is None:
             raise RuntimeError("GA_ROOT not configured")
-        return _paths.GA_ROOT / "frontends" / "fsapp.py"
+        return _paths.ga_fsapp_path()
 
     def log_file(self) -> Path:
         return _paths.temp_dir() / "feishuapp.log"
@@ -376,7 +376,7 @@ class FeishuService:
         ga_root = _paths.GA_ROOT
         if ga_root is None:
             raise RuntimeError("GA_ROOT not configured")
-        keychain_path = ga_root / "memory" / "keychain.py"
+        keychain_path = _paths.ga_keychain_path(ga_root)
         if not keychain_path.is_file():
             raise FileNotFoundError(f"keychain.py not found: {keychain_path}")
 

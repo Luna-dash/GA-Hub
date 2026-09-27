@@ -1,11 +1,13 @@
 """GA core contract diagnostics (P0).
 
 GA-Hub's backend depends on a small, stable surface of the GenericAgent
-("GA core") project: the ``GeneraticAgent`` class, a handful of its methods,
-a few instance attributes set in ``__init__``, helpers exported by
-``frontends.continue_cmd``, and the GA-owned model bridge. When the user
-upgrades GA core, a rename or a removed symbol silently breaks chat with an
-opaque ``ImportError`` / ``AttributeError`` deep in a worker thread.
+("GA core") project: the ``GeneraticAgent`` class and a handful of its
+methods and instance attributes, the whole registered
+``frontends.gahub.bridge`` seam (session lifecycle, archive projection,
+workspace, usage, model, rewind, official hub), and the remaining direct GA
+modules the backend still imports. When the user upgrades GA core, a rename
+or a removed symbol silently breaks chat with an opaque ``ImportError`` /
+``AttributeError`` deep in a worker thread.
 
 This module makes that contract *explicit and observable*:
 
@@ -76,26 +78,74 @@ _REQUIRED_INIT_ATTRS: tuple[str, ...] = (
     "task_queue",
 )
 
-# frontends.continue_cmd helpers used by agent_service.
-_REQUIRED_CONTINUE_CMD: tuple[str, ...] = (
-    "install",            # install(GeneraticAgent) — class-level patch
-    "reset_conversation", # reset_conversation(agent) -> agent
-)
-
-# GA-owned model configuration bridge used by llm_registry.
-_REQUIRED_MODEL_BRIDGE: tuple[str, ...] = (
-    "mykey_revision",
-    "model_snapshot",
-    "switch_model",
-)
-
-# GA-owned durable-rewind bridge used by rewind_adapter / session restore.
-_REQUIRED_REWIND_BRIDGE: tuple[str, ...] = (
-    "bind_store",
-    "sync_store",
-    "sync_working_memory",
-    "apply_durable",
-)
+# Every GA module/name the backend imports, including the whole registered
+# bridge surface. An empty tuple means "importing this module IS the contract".
+#
+# This replaces an older declaration that pinned raw ``frontends.continue_cmd``
+# helpers (``install`` / ``reset_conversation``) which Hub no longer calls
+# directly — those requests now go through ``frontends.gahub.bridge.session``.
+# Pinning them meant a GA upgrade could fail the startup gate (chat 503) for a
+# symbol nothing in this repo touches, while the 17 bridge symbols Hub *does*
+# call were checked by nothing at all.
+#
+# Keep in sync with the real import sites: ``tests/test_ga_boundary_contract.py``
+# derives this surface from the source and fails on both a missing declaration
+# and an over-declaration.
+_REQUIRED_GA_SYMBOLS: dict[str, tuple[str, ...]] = {
+    # ── registered bridge: GA's declared seam for GA-Hub ────────────────────
+    "frontends.gahub.bridge.archive": (
+        "list_native_sessions",
+        "mint_native_log_path",
+        "project_archive_text",
+    ),
+    "frontends.gahub.bridge.model": (
+        "mykey_revision",
+        "model_snapshot",
+        "switch_model",
+    ),
+    "frontends.gahub.bridge.official_hub": (
+        "attach",
+        "detach",
+        "hub_client_class",
+    ),
+    "frontends.gahub.bridge.rewind": (
+        "apply_durable",
+        "bind_store",
+        "sync_store",
+        "sync_working_memory",
+    ),
+    "frontends.gahub.bridge.runtime": (
+        "create_main_agent",
+        "register_turn_end_hook",
+        "unregister_turn_end_hook",
+    ),
+    "frontends.gahub.bridge.session": (
+        "acquire_birth_lock",
+        "begin_fresh_session",
+        "continue_inplace",
+        "release_current",
+        "reset_conversation",
+        "restore_archive",
+        "takeover_stale_lock",
+    ),
+    "frontends.gahub.bridge.usage": (
+        "initialize_usage_tracking",
+        "read_usage_ledger",
+    ),
+    "frontends.gahub.bridge.workspace": (
+        "get_workspace",
+        "list_workspaces",
+        "prepare_workspace",
+        "remove_workspace",
+    ),
+    # ── remaining direct GA dependencies (debt registry in the boundary test) ─
+    "agentmain": (),  # class members are checked by _REQUIRED_CLASS_MEMBERS
+    "frontends.btw_cmd": ("handle_frontend_command",),
+    "frontends.chatapp_common": ("public_access", "to_allowed_set"),
+    "ga": (),      # GA's own package root, patched in-process by ga_subprocess_patch
+    "llmcore": ("resolve_client",),
+    "mykey": (),   # imported by server/run.py for GA's key bootstrap
+}
 
 
 # ── result types ────────────────────────────────────────────────────────────
@@ -266,46 +316,43 @@ def probe_core_contract() -> ContractReport:
         if not items[-1].ok:
             errors.append(f"GeneraticAgent.__init__ missing attr: {attr}")
 
-    # 4) frontends.continue_cmd helpers
-    try:
-        import frontends.continue_cmd as cc  # noqa: E402
-    except Exception as e:  # noqa: BLE001
-        for name in _REQUIRED_CONTINUE_CMD:
-            items.append(Check(f"frontends.continue_cmd.{name}", False,
-                               f"import_failed: {e!r}"))
-            errors.append(f"import_failed: frontends.continue_cmd: {e!r}")
-    else:
-        for name in _REQUIRED_CONTINUE_CMD:
-            items.append(_check_callable("frontends.continue_cmd",
-                                          getattr(cc, name, None), name))
-            if not items[-1].ok:
-                errors.append(f"frontends.continue_cmd.{name} missing or not callable")
+    # 4) every GA module Hub imports, and every name it takes from them.
+    #
+    # ``importlib.import_module`` (not a static ``import``) so a single missing
+    # module is one red item instead of an exception that hides the rest, and
+    # so the loop can report *which* module failed.
+    import importlib
 
-    # 5) GA-owned model configuration bridge
-    model_module = "frontends.gahub.bridge.model"
-    try:
-        from frontends.gahub.bridge import model as model_bridge  # noqa: E402
-    except Exception as e:  # noqa: BLE001
-        for name in _REQUIRED_MODEL_BRIDGE:
-            items.append(Check(f"{model_module}.{name}", False,
-                               f"import_failed: {e!r}"))
-        errors.append(f"import_failed: {model_module}: {e!r}")
-    else:
-        for name in _REQUIRED_MODEL_BRIDGE:
-            items.append(_check_callable(model_module,
-                                          getattr(model_bridge, name, None), name))
+    for module_name, names in _REQUIRED_GA_SYMBOLS.items():
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as e:  # noqa: BLE001 — any import failure is the finding
+            if not names:
+                items.append(Check(module_name, False, f"import failed: {e!r}"))
+                errors.append(f"{module_name} not importable: {e!r}")
+                continue
+            for name in names:
+                items.append(Check(f"{module_name}.{name}", False,
+                                    f"import_failed: {e!r}"))
+            errors.append(f"import_failed: {module_name}: {e!r}")
+            continue
+        if not names:
+            items.append(Check(module_name, True, "importable"))
+            continue
+        for name in names:
+            items.append(_check_callable(module_name, getattr(module, name, None), name))
             if not items[-1].ok:
-                errors.append(f"{model_module}.{name} missing or not callable")
+                errors.append(f"{module_name}.{name} missing or not callable")
 
-    # 6) GA runtime dependencies reachable from this interpreter. Frozen
+    # 5) GA runtime dependencies reachable from this interpreter. Frozen
     # desktop sidecars do not bundle GA's third-party dependencies; they
     # rely on _paths.bootstrap_sys_path injecting the discovered GA
     # interpreter's site-packages. ``frontends.worldline`` (durable rewind,
     # exercised on session restore) takes its only third-party hop into
     # ``rich``; Hub reaches worldline solely through the registered
-    # ``frontends.gahub.bridge.rewind`` contract, so probe ``rich`` plus
-    # that bridge surface and let a broken environment show up as a red
-    # setup item instead of a generic "restore failed" on session open.
+    # ``frontends.gahub.bridge.rewind`` contract, so probe ``rich`` and let a
+    # broken environment show up as a red setup item instead of a generic
+    # "restore failed" on session open.
     try:
         import rich  # noqa: F401
     except Exception as e:  # noqa: BLE001
@@ -316,19 +363,6 @@ def probe_core_contract() -> ContractReport:
         )
     else:
         items.append(Check("rich", True, "importable"))
-    rewind_module = "frontends.gahub.bridge.rewind"
-    try:
-        from frontends.gahub.bridge import rewind as rewind_bridge  # noqa: E402
-    except Exception as e:  # noqa: BLE001
-        items.append(Check(rewind_module, False, f"import failed: {e!r}"))
-        errors.append(f"{rewind_module} not importable: {e!r}")
-    else:
-        items.append(Check(rewind_module, True, "importable"))
-        for name in _REQUIRED_REWIND_BRIDGE:
-            items.append(_check_callable(rewind_module,
-                                          getattr(rewind_bridge, name, None), name))
-            if not items[-1].ok:
-                errors.append(f"{rewind_module}.{name} missing or not callable")
 
     ok = all(c.ok for c in items)
     return ContractReport(
