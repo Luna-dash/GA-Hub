@@ -200,8 +200,14 @@ def test_status_external_pid_probe_is_singleflight_and_negative_cached(tmp_path)
 
 
 def test_status_external_pid_cache_expires(tmp_path):
+    """缓存命中与过期重探，都不靠掐表。
+
+    原版把 TTL 设成 0.02s 再 sleep(0.03) —— 那要求第 1、2 次 status() 落在 20ms 内，
+    机器一忙第 2 次就会越过 TTL 再探一次（call_count 变 3）；3 次整跑里红过 1 次。
+    现在 TTL 设大（保证第 2 次不可能自然过期），过期靠把缓存时间戳往回推，与负载无关。
+    """
     service = FeishuService()
-    service._STATUS_PID_CACHE_TTL_SECONDS = 0.02
+    service._STATUS_PID_CACHE_TTL_SECONDS = 60.0
     fsapp = tmp_path / "fsapp.py"
     log_file = tmp_path / "feishuapp.log"
 
@@ -213,8 +219,18 @@ def test_status_external_pid_cache_expires(tmp_path):
         mock.patch.object(service, "_find_external_pid", return_value=None) as probe,
     ):
         service.status()
+        assert probe.call_count == 1
         service.status()
-        time.sleep(0.03)
+        assert probe.call_count == 1, "TTL 内应复用缓存，不重复扫描进程"
+
+        with service._status_pid_condition:
+            cached = service._status_pid_cache
+            assert cached is not None
+            service._status_pid_cache = (
+                cached[0] - service._STATUS_PID_CACHE_TTL_SECONDS - 1,
+                cached[1],
+            )
+
         service.status()
 
     assert probe.call_count == 2

@@ -907,10 +907,14 @@ GA_ROOT is configured`）+ 若干测试模块直接 `from frontends...` 导入�
       并写明前端检查故意不设门禁的理由
 
 刻意不做：不加 `needs: checks`；不做「无 GA 也能启动套件」（那是生产语义改动，得单独
-一轮）；不引入 GA 到 CI。顺带记一条待办：`test_feishu_service.py::
-test_status_external_pid_cache_expires` 是负载敏感的 flake（TTL 0.02s 对
-`sleep(0.03)`，边距只有 10ms——第 1、2 次 `status()` 必须落在 20ms 内才会命中缓存；
-3 次整跑里红过 1 次，单独跑稳定），修法是把时钟注入而不是掐表。
+一轮）；不引入 GA 到 CI。
+
+后续已办（`test(feishu)` 提交）：那条 flake 修掉了。原写法 TTL 0.02s + `sleep(0.03)`，
+要求第 1、2 次 `status()` 落在 20ms 内才命中缓存——机器一忙就越过 TTL 多探一次
+（3 次整跑里红过 1 次）。现写法：TTL 设 60s（保证第 2 次不可能自然过期），过期靠**手动把
+缓存时间戳往回推**，与负载无关；并补了「TTL 内必须复用缓存」的中间断言。用注入延迟对
+比两版取证：负载 0/5ms 两版都绿，50/200ms 时原版 `call_count=3`（红）、现写法恒为 2（绿）；
+单条连跑 25 次 0 失败。
 
 验证：两个 workflow 的 YAML 解析通过（job/runs-on/触发面已核对）；在本地按 CI 的步骤
 顺序真跑一遍（含 `npm ci --prefix webui` 重装）四步退出码 **0 / 0 / 0 / 0**
