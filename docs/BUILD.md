@@ -66,37 +66,31 @@ build_all.bat
 - **并发保护**：构建持有 `src-tauri\target\.build_all.lock`；两个构建
   并发时后到者预检直接失败，不会互踩 `target` 目录。
 - **前端构建归 build_all 独占**：它先构建 `webui/dist`（sidecar 要把前端打进包里），
-  因此 `tauri.conf.json` **不再配 `beforeBuildCommand`**——否则每次构建都会重复构建
-  前端（实测多花 ~9s），且主 exe 与 sidecar 内嵌的可能来自两次不同的构建。
-  也正因如此，绕过入口裸跑 `tauri build` 更危险：它不会再自动构建前端，只会把
-  当前 `webui/dist`（可能已过期）打进壳里。
+  因此 `tauri.conf.json` **不再配 `beforeBuildCommand`**。绕过硬跑 `tauri build` 更危险：
+  它不会自动构建前端，只会把当前（可能已过期的）`webui/dist` 打进壳里。
 - **成功判定以退出码 + 守卫输出为准**，不要用「命令没报错」当成功：
   - `0` = 成功；`2` = 预检失败（缺工具/依赖/应用未退出/并发构建）；`3` = 某阶段失败；
     `5` = 产物守卫失败。
-  - `3`（阶段失败）时守卫覆盖不到，脚本会在退出前补一次**产物体检**：逐件报告
-    本次已重写 / 仍是构建前的版本 / 不存在，出现「只刷新了一部分」会明确警告
-    不要把这几件当交付物。退出码仍是 `3`——「阶段失败」与「产物守卫失败」是两条
-    不同的排查方向。实测形态：sidecar 阶段成功、Tauri 阶段失败时，磁盘上就是
-    「sidecar 新、主 exe 旧」的混搭，功能能跑但形式上已不是一次构建的产物。
-  - 守卫**三重校验**（主 exe / sidecar 中间产物 / sidecar 交付副本）语义一致：
-    缺失、为空 → 失败；**未被本次构建重写 → 失败**（说明写到了别的 target 目录，
-    或这一步被跳过）。2026-09-26 冷/热各一次真实全链实测（114.0s / 93.2s）：三件
-    产物每次都被重写——前端每次重写 `webui/dist`，Tauri build script 对 dist 每个
-    文件都发 `rerun-if-changed`，cargo 因此必然重链；sidecar 先 unlink 再打包。
-    所以「未重写」没有合法的增量复用解释，旧版的「警告放行」分支已删除。
-  - 构建末尾打印三件产物的 **sha256 指纹**（前 16 位）+ 大小 + mtime，交付取证用。
-    注意：同一份源码两次构建的指纹不同（exe / sidecar 都嵌入了构建期信息），
-    指纹用来标识「哪一次构建」，不能用来判断两次构建是否一致。
-  - 预检打印「非正式区残留产物」= `src-tauri\target\release\` 下有 exe——那是裸
-    `tauri build` 的落点，应删除并纠正流程。
+  - 守卫**三重校验**语义一致（主 exe / sidecar 中间产物 / sidecar 交付副本）：
+    缺失、为空、**未被本次构建重写** → 失败。没有合法的增量复用——前端每次重写
+    `webui/dist` 使 cargo 必然重链，sidecar 先 unlink 再打包。
+  - `3`（阶段失败）时守卫覆盖不到，脚本退出前会补一次**产物体检**：逐件报告
+    本次已重写 / 仍是构建前的版本 / 不存在，出现「只刷新了一部分」会警告不要把
+    这几件当交付物；退出码保持 `3`（与 `5` 是两条排查方向）。
 - **发布前验证**：`python scripts\build_all.py --full` 会先跑后端 pytest（限定 `tests/`，
   自动注入 `GA_ROOT`/`PYTHONPATH`）与前端 vitest，再进入构建阶段；缺 GA 仓库或
   `webui/node_modules` 会在预检阶段（exit 2）就说清楚。
 - 正式产物只有两处（必须同目录）：`src-tauri\target\x86_64-pc-windows-msvc\release\`
   下的 `ga-hub-desktop.exe` 与 `ga-hub-sidecar.exe`。Tauri 阶段**恒传 `--no-bundle`**：
-  交付物就是这两个便携版 exe。安装包（MSI/NSIS 实测每次 ~104MB、tauri 阶段多花
-  15-24s，CI 也不上传）不在本链职责内——需要时另行打包，别把它塞回每次构建的固定
-  代价。同目录下还有构建副产物（`ga_hub_desktop.pdb`、`resources/`），它们不是交付内容。
+  交付物就是这两个便携版 exe，安装包不在本链职责内。同目录下的 `ga_hub_desktop.pdb`、
+  `resources/` 是构建副产物，不是交付内容。
+- **平台与 CI 口径**：只有 `x86_64-pc-windows-msvc` 端到端验证过（`--target` 与
+  `build_all.command` 的其它平台分支未实测）。Actions 的 desktop-build 是**便捷构建
+  通道**（只跑 `build_all.py`，不带 `--full`，因为云端没有后端测试需要的 GA 核心仓库），
+  发布前验证在本地做。
+
+> 这些规矩是怎么来的（每次污染、每个报错的完整排查过程）：
+> [`archive/build-chain-incidents-20260927.md`](archive/build-chain-incidents-20260927.md)。
 
 ## 运行时与构建时依赖的边界（为什么换机器构建是安全的）
 
@@ -131,32 +125,14 @@ sidecar 冻结包只打包 GA-Hub 自身依赖（`requirements.txt`）；GA 运�
   （`error_mapping`）。
 
 
-### 排障：`E0107 struct takes 3 generic arguments`（indexmap 的 autocfg 探针静默失败）
+### 排障：`E0107 struct takes 3 generic arguments`（indexmap / autocfg 探针）
 
-构建停在 `could not compile schemars`，报
-`error[E0107]: struct takes 3 generic arguments but 2 generic arguments were supplied`。
-它看起来像依赖版本冲突，实际是**探测失败**：
+构建停在 `could not compile schemars` 并报上面这条 E0107 时，**不要**去调依赖版本：
+这是 `indexmap 1.9.3` 的 build script 用 autocfg 探测 `has_std` 时**静默失败**（探针
+经 `Stdio::piped()` 起 rustc，本机是这条路线的已知问题机器），于是 indexmap 编译成
+no_std 形态、`IndexMap<K,V>` 变成三泛型。完整链路与 2026-09-27 复现实验见
+[`archive/build-chain-incidents-20260927.md`](archive/build-chain-incidents-20260927.md) 第 10 条。
 
-- `tauri-utils` / `tauri-build` / `tauri-plugin` 2.x 都依赖 `schemars 0.8`，而它的
-  `preserve_order = ["indexmap"]` 只开 indexmap 的 `serde-1`，**不开 `std`**；
-- `indexmap 1.9.3` 的 `build.rs` 在 `CARGO_FEATURE_STD` 缺席时会跑 autocfg 探针
-  （`autocfg::new().emit_sysroot_crate("std")`）。该探针 spawn `rustc -`，并把源码写进
-  **`Stdio::piped()`** 的 stdin；**探针失败是静默的**——不报错，只是不 emit
-  `rustc-cfg=has_std`；
-- 没有 `has_std` → indexmap 编译成 no_std 形态（`IndexMap<K, V, S>` 没有默认类型参数）
-  → schemars 里 `IndexMap<K, V>` 的写法就报 E0107。
-- 本机是 `Stdio::piped()` 的已知问题机器（`docs/archive/desktop-sidecar-spawn-pipe-busy-20260924.md`：
-  `ERROR_PIPE_BUSY` / os error 231），所以这条失败路径在这台机器上偶发。
-
-2026-09-27 实验（`temp/dsh_review/indexmap_probe/`）：无干扰连做 5 次
-「clean indexmap + 重建」全部 `has_std=True`（探针当前正常，与「偶发」一致）；用
-`RUSTC_WRAPPER` 强制探针失败即复现同一条 E0107 与 `could not compile schemars`；
-同一失败场景下加上本仓库的修法（`Cargo.toml` 里 indexmap 显式
-`features = ["std"]`，靠 feature 统一生效）编译通过，且 indexmap 的 build 输出为
-`rustc-cfg=has_std=True` 且**无** `rustc-check-cfg`——证明它走的是
-`Some(CARGO_FEATURE_STD)` 分支、**根本没起探针**，因此不受该失败面影响。
-
-结论：`src-tauri/Cargo.toml` 里那两处 `indexmap = { version = "1", features = ["std"] }`
-（`[dependencies]` 与 `[build-dependencies]`，仅用于 feature 统一，代码不直接调用）
-**不要删**，删了就回到探测路径。等升到不依赖 schemars 0.8 的 tauri 版本后才可以移除
-（indexmap 2.x 没有这个 build script 探针）。
+处置：`src-tauri/Cargo.toml` 里两处 `indexmap = { version = "1", features = ["std"] }`
+（`[dependencies]` 与 `[build-dependencies]`，仅用于 feature 统一、代码不直接调用）
+**不要删**——删了就回到探测路径。等升到不依赖 schemars 0.8 的 tauri 版本后才可移除。

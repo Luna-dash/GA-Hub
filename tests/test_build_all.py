@@ -1,11 +1,10 @@
-"""build_all 的契约测试：路径、守卫语义、预检、锁、编码、退出码。
+"""build_all 的契约测试：路径、守卫语义、预检、占用、失败体检、锁、退出码。
 
-这些用例锁的是 docs/BUILD.md「构建纪律与验收」与 AGENTS.md 构建红线的
-脚本侧实现——改语义必须同步改这里和那两份文档。
+锁的是 docs/BUILD.md「构建纪律与验收」与 AGENTS.md 构建红线的脚本侧实现——
+改语义必须同步改这里和那两份文档。
 """
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import io
 import os
@@ -23,6 +22,8 @@ spec = importlib.util.spec_from_file_location("build_all_under_test", SCRIPT)
 assert spec and spec.loader
 build_all = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build_all)
+
+ARTIFACTS = ("sidecar 中间产物", "sidecar 交付副本", "主程序产物")
 
 
 def _touch(path: Path, payload: bytes = b"old") -> tuple[Path, tuple[int, int]]:
@@ -53,117 +54,153 @@ time.sleep(float(sys.argv[2]))
 """
 
 
-class BuildAllPathTests(unittest.TestCase):
-    def test_sidecar_paths_match_target_platform(self):
-        windows = build_all.sidecar_artifact_path("x86_64-pc-windows-msvc")
-        self.assertTrue(str(windows).endswith("ga-hub-sidecar-x86_64-pc-windows-msvc.exe"))
-        mac = build_all.sidecar_artifact_path("aarch64-apple-darwin")
-        self.assertTrue(str(mac).endswith("ga-hub-sidecar-aarch64-apple-darwin"))
-
-    def test_delivery_sidecar_sits_next_to_main_artifact(self):
-        target = "x86_64-pc-windows-msvc"
+class PathTests(unittest.TestCase):
+    def test_artifact_paths_cover_the_three_deliverables(self):
+        paths = build_all.artifact_paths("x86_64-pc-windows-msvc")
+        self.assertEqual(tuple(paths), ARTIFACTS)
         self.assertEqual(
-            build_all.artifact_path(target).parent,
-            build_all.delivery_sidecar_path(target).parent,
+            paths["主程序产物"],
+            build_all.ROOT
+            / "src-tauri"
+            / "target"
+            / "x86_64-pc-windows-msvc"
+            / "release"
+            / "ga-hub-desktop.exe",
         )
+        self.assertEqual(
+            paths["sidecar 中间产物"],
+            build_all.ROOT
+            / "src-tauri"
+            / "binaries"
+            / "ga-hub-sidecar-x86_64-pc-windows-msvc.exe",
+        )
+        # 交付副本必须与主程序同目录（应用从主 exe 旁边解析 sidecar）
+        self.assertEqual(paths["sidecar 交付副本"].parent, paths["主程序产物"].parent)
 
-    def test_host_target_path_is_the_non_canonical_release_dir(self):
-        path = build_all.host_target_artifact_path()
-        self.assertEqual(path.parent, build_all.ROOT / "src-tauri" / "target" / "release")
+    def test_non_windows_target_drops_the_exe_suffix(self):
+        paths = build_all.artifact_paths("aarch64-apple-darwin")
+        self.assertEqual(paths["主程序产物"].name, "ga-hub-desktop")
+        self.assertEqual(paths["sidecar 中间产物"].name, "ga-hub-sidecar-aarch64-apple-darwin")
+
+    def test_tauri_stage_command_wraps_cmd_shim_on_windows(self):
+        shim = os.path.join("x", "tauri.cmd")
+        command = build_all.tauri_stage_command(shim, "t")
+        if os.name == "nt":
+            self.assertEqual(command[0:2], ["cmd", "/c"])
+            self.assertEqual(command[2], shim)
+        else:
+            self.assertEqual(command[0], shim)
+        self.assertIn("build", command)
+        self.assertIn("--target", command)
+
+    def test_tauri_stage_always_skips_bundling(self):
+        """交付物只有便携版两个 exe：安装包不在本链职责内（实测每次 ~104MB/+24s）。"""
+        command = build_all.tauri_stage_command("tauri", "t")
+        self.assertIn("--no-bundle", command)
+        self.assertNotIn("--bundle", command)
+        self.assertNotIn("--bundle", build_all.__doc__)
 
 
 class GuardTests(unittest.TestCase):
-    """三件产物共用一套语义：缺失 / 为空 / 未被本次构建重写 → 5，其余情况不通过。"""
-
-    GUARDS = ("artifact_guard", "sidecar_artifact_guard", "sidecar_delivery_guard")
+    """三件产物共用同一套守卫语义。"""
 
     def test_missing_artifact_fails(self):
-        with tempfile.TemporaryDirectory() as td:
-            for name in self.GUARDS:
-                with self.subTest(guard=name):
-                    guard = getattr(build_all, name)
-                    self.assertEqual(
-                        guard(Path(td) / "gone", None), build_all.EXIT_ARTIFACT_GUARD
-                    )
+        for label in ARTIFACTS:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as td:
+                stream = io.StringIO()
+                with redirect_stdout(stream):
+                    code = build_all.check_artifact(label, Path(td) / "gone.exe", None)
+                self.assertEqual(code, build_all.EXIT_ARTIFACT_GUARD)
+                self.assertIn("缺失", stream.getvalue())
 
     def test_empty_artifact_fails(self):
-        with tempfile.TemporaryDirectory() as td:
-            for name in self.GUARDS:
-                with self.subTest(guard=name):
-                    path, _ = _touch(Path(td) / name / "artifact", b"")
-                    self.assertEqual(
-                        getattr(build_all, name)(path, None), build_all.EXIT_ARTIFACT_GUARD
-                    )
+        for label in ARTIFACTS:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as td:
+                path, before = _touch(Path(td) / "artifact.exe", b"")
+                stream = io.StringIO()
+                with redirect_stdout(stream):
+                    code = build_all.check_artifact(label, path, before)
+                self.assertEqual(code, build_all.EXIT_ARTIFACT_GUARD)
+                self.assertIn("为空文件", stream.getvalue())
+
+    def test_unrefreshed_artifact_fails(self):
+        """未被本次构建重写 = 交付了上一次的旧产物——没有合法的增量复用。"""
+        for label in ARTIFACTS:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as td:
+                path, before = _touch(Path(td) / "artifact.exe")
+                stream = io.StringIO()
+                with redirect_stdout(stream):
+                    code = build_all.check_artifact(label, path, before)
+                self.assertEqual(code, build_all.EXIT_ARTIFACT_GUARD)
+                self.assertIn("未被本次构建重写", stream.getvalue())
+                self.assertIn(label, stream.getvalue())
 
     def test_artifact_produced_from_nothing_passes(self):
-        """构建前不存在、构建后存在 —— 首次构建的合法形态。"""
-        with tempfile.TemporaryDirectory() as td:
-            for name in self.GUARDS:
-                with self.subTest(guard=name):
-                    path, _ = _touch(Path(td) / name / "artifact")
-                    self.assertEqual(getattr(build_all, name)(path, None), 0)
+        for label in ARTIFACTS:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as td:
+                path, _ = _touch(Path(td) / "artifact.exe")
+                stream = io.StringIO()
+                with redirect_stdout(stream):
+                    code = build_all.check_artifact(label, path, None)
+                self.assertEqual(code, 0)
+                self.assertIn("已刷新", stream.getvalue())
 
     def test_refreshed_artifact_passes(self):
         with tempfile.TemporaryDirectory() as td:
-            for name in self.GUARDS:
-                with self.subTest(guard=name):
-                    path, before = _touch(Path(td) / name / "artifact")
-                    older = (before[0] - 10**9, before[1] - 1)
-                    self.assertEqual(getattr(build_all, name)(path, older), 0)
-
-    def test_unrefreshed_artifact_fails(self):
-        """未重写 = 没有产出新产物：写到了别处 / 这一步被跳过，一律不放行。
-
-        2026-09-26 两次真实全链（冷 114.0s、热 93.2s）实测三件产物每次都被重写，
-        所以「未重写」不可能是合法增量复用——旧的「警告放行」分支已删除。
-        """
-        with tempfile.TemporaryDirectory() as td:
-            for name in self.GUARDS:
-                with self.subTest(guard=name):
-                    path, before = _touch(Path(td) / name / "artifact")
-                    self.assertEqual(
-                        getattr(build_all, name)(path, before), build_all.EXIT_ARTIFACT_GUARD
-                    )
-
-    def test_refreshed_detection_uses_mtime_or_size(self):
-        with tempfile.TemporaryDirectory() as td:
-            path, before = _touch(Path(td) / "artifact", b"old")
-            self.assertFalse(build_all._refreshed(path, before))
-            self.assertTrue(build_all._refreshed(path, None), "构建前不存在 → 是本次产出")
+            path, before = _touch(Path(td) / "artifact.exe")
             path.write_bytes(b"new-and-longer")
-            self.assertTrue(build_all._refreshed(path, before))
-
-    def test_guard_reports_the_path_it_rejected(self):
-        with tempfile.TemporaryDirectory() as td:
             stream = io.StringIO()
             with redirect_stdout(stream):
-                code = build_all.artifact_guard(Path(td) / "ga-hub-desktop.exe", None)
-            self.assertEqual(code, build_all.EXIT_ARTIFACT_GUARD)
-            self.assertIn("ga-hub-desktop.exe", stream.getvalue())
+                code = build_all.check_artifact("主程序产物", path, before)
+            self.assertEqual(code, 0)
+            self.assertIn("已刷新", stream.getvalue())
+
+    def test_every_artifact_has_a_hint(self):
+        self.assertEqual(set(build_all.ARTIFACT_HINTS), set(ARTIFACTS))
+        self.assertEqual(set(build_all.artifact_paths("x86_64-pc-windows-msvc")), set(ARTIFACTS))
 
 
-class HostTargetLeakTests(unittest.TestCase):
-    """非正式区残留：存在即报告（旧实现等「构建中刷新」这个永远不会发生的事件）。"""
+class BlockerTests(unittest.TestCase):
+    """预检的占用/权限探测。"""
 
-    def test_reports_existing_host_target_artifact(self):
+    def test_absent_artifact_is_not_blocked(self):
         with tempfile.TemporaryDirectory() as td:
-            with mock.patch.object(build_all, "ROOT", Path(td)):
-                path, _ = _touch(build_all.host_target_artifact_path())
-                stream = io.StringIO()
-                with redirect_stdout(stream):
-                    found = build_all.report_host_target_leak()
-            self.assertTrue(found)
-            self.assertIn(str(path), stream.getvalue())
-            self.assertIn("非正式区", stream.getvalue())
+            self.assertEqual(build_all.artifact_blocker(Path(td) / "gone"), "")
 
-    def test_silent_when_absent(self):
+    def test_writable_unlocked_artifact_is_not_blocked(self):
         with tempfile.TemporaryDirectory() as td:
-            with mock.patch.object(build_all, "ROOT", Path(td)):
-                stream = io.StringIO()
-                with redirect_stdout(stream):
-                    found = build_all.report_host_target_leak()
-            self.assertFalse(found)
-            self.assertEqual(stream.getvalue(), "")
+            path, _ = _touch(Path(td) / "ga-hub-desktop.exe")
+            self.assertEqual(build_all.artifact_blocker(path), "")
+
+    def test_readonly_file_is_reported_as_permission_not_as_running_app(self):
+        """只读属性同样报 EACCES，不能误导成「GA-Hub 没退出」。"""
+        with tempfile.TemporaryDirectory() as td:
+            path, _ = _touch(Path(td) / "ga-hub-desktop.exe")
+            os.chmod(path, stat.S_IREAD)
+            try:
+                blocker = build_all.artifact_blocker(path)
+            finally:
+                os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+            self.assertIn("写权限", blocker)
+            self.assertNotIn("占用", blocker)
+
+    @unittest.skipUnless(os.name == "nt", "独占句柄共享语义仅 Windows")
+    def test_real_exclusive_handle_is_reported_as_running_app(self):
+        """真实 OS 拒绝（不是伪造的 winerror）必须判定为占用。"""
+        with tempfile.TemporaryDirectory() as td:
+            path, _ = _touch(Path(td) / "ga-hub-desktop.exe")
+            holder = subprocess.Popen(
+                [sys.executable, "-c", EXCLUSIVE_HOLDER, str(path), "10"],
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                assert holder.stdout is not None
+                self.assertIn("HOLDER True", holder.stdout.readline())
+                self.assertIn("占用", build_all.artifact_blocker(path))
+            finally:
+                holder.kill()
+                holder.wait(timeout=10)
 
 
 class PreflightTests(unittest.TestCase):
@@ -195,6 +232,20 @@ class PreflightTests(unittest.TestCase):
             self.assertIn("npm", output)
             self.assertIn("tauri CLI", output)
 
+    def test_missing_pyinstaller_points_at_the_fix(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "webui" / "node_modules").mkdir(parents=True)
+            with mock.patch.object(build_all, "ROOT", root), \
+                 mock.patch.object(build_all.shutil, "which", return_value="cargo"), \
+                 mock.patch.object(build_all, "_has_pyinstaller", return_value=False):
+                stream = io.StringIO()
+                with redirect_stdout(stream):
+                    with self.assertRaises(SystemExit) as raised:
+                        build_all.preflight("python", "npm", "tauri")
+            self.assertEqual(raised.exception.code, build_all.EXIT_PREFLIGHT)
+            self.assertIn("PyInstaller", stream.getvalue())
+
     def test_preflight_passes_without_full(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -208,53 +259,53 @@ class PreflightTests(unittest.TestCase):
             self.assertIn("✓ 预检通过", stream.getvalue())
 
 
-class OccupancyTests(unittest.TestCase):
-    def test_absent_artifact_is_not_busy(self):
-        with tempfile.TemporaryDirectory() as td:
-            self.assertFalse(build_all._locked_by_process(Path(td) / "gone"))
+class ConsistencyTests(unittest.TestCase):
+    """阶段失败后的产物体检：守卫覆盖不到失败路径。"""
 
-    def test_writable_unlocked_artifact_is_not_busy(self):
-        with tempfile.TemporaryDirectory() as td:
-            path, _ = _touch(Path(td) / "ga-hub-desktop.exe")
-            self.assertFalse(build_all._locked_by_process(path))
-            self.assertFalse(build_all._readonly_artifact(path))
+    def _run(self, paths, before):
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            build_all.report_consistency(paths, before)
+        return stream.getvalue()
 
-    def test_readonly_artifact_is_not_reported_as_busy(self):
-        """只读属性不是「应用没退出」：EACCES 也可能来自权限，别误导排查方向。"""
+    def test_no_stage_wrote_anything(self):
         with tempfile.TemporaryDirectory() as td:
-            path, _ = _touch(Path(td) / "ga-hub-desktop.exe")
-            os.chmod(path, stat.S_IREAD)
-            try:
-                self.assertTrue(build_all._readonly_artifact(path))
-                self.assertFalse(build_all._locked_by_process(path))
-            finally:
-                os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+            path, snapshot = _touch(Path(td) / "ga-hub-desktop.exe")
+            output = self._run({"主程序产物": path}, {"主程序产物": snapshot})
+            self.assertIn("本次没有写入任何产物", output)
 
-    @unittest.skipUnless(os.name == "nt", "独占句柄共享语义仅 Windows")
-    def test_real_exclusive_handle_is_reported_busy(self):
-        """真实 OS 拒绝（不是伪造的 winerror）必须判定为占用。
-
-        运行中的映像被写方式打开实测只报 errno 13 且没有 winerror——用伪造
-        winerror 的单测曾经在真实现场漏判（build_all --full 之后的冒烟实测），
-        所以这里让另一个进程持独占句柄，走真实的共享冲突路径。
-        """
+    def test_partial_refresh_is_reported_as_mismatched(self):
+        """「一半新一半旧」必须被点名（实测冒烟出现过这种混搭）。"""
         with tempfile.TemporaryDirectory() as td:
-            path, _ = _touch(Path(td) / "ga-hub-desktop.exe")
-            holder = subprocess.Popen(
-                [sys.executable, "-c", EXCLUSIVE_HOLDER, str(path), "10"],
-                stdout=subprocess.PIPE,
-                text=True,
+            fresh, fresh_before = _touch(Path(td) / "ga-hub-sidecar.exe")
+            fresh.write_bytes(b"new-sidecar")
+            stale, stale_before = _touch(Path(td) / "ga-hub-desktop.exe")
+            output = self._run(
+                {"sidecar 交付副本": fresh, "主程序产物": stale},
+                {"sidecar 交付副本": fresh_before, "主程序产物": stale_before},
             )
-            try:
-                assert holder.stdout is not None
-                self.assertIn("HOLDER True", holder.stdout.readline())
-                self.assertTrue(build_all._locked_by_process(path))
-            finally:
-                holder.kill()
-                holder.wait(timeout=10)
+            self.assertIn("本次已重写", output)
+            self.assertIn("仍是构建前的版本", output)
+            self.assertIn("产物集不配套", output)
+
+    def test_missing_artifact_also_counts_as_mismatched(self):
+        with tempfile.TemporaryDirectory() as td:
+            fresh, _ = _touch(Path(td) / "ga-hub-sidecar.exe")
+            output = self._run(
+                {"sidecar 交付副本": fresh, "主程序产物": Path(td) / "gone.exe"},
+                {"sidecar 交付副本": None, "主程序产物": None},
+            )
+            self.assertIn("不存在", output)
+            self.assertIn("产物集不配套", output)
+
+    def test_all_refreshed_is_reported_honestly(self):
+        with tempfile.TemporaryDirectory() as td:
+            path, _ = _touch(Path(td) / "ga-hub-sidecar.exe")
+            output = self._run({"sidecar 交付副本": path}, {"sidecar 交付副本": None})
+            self.assertIn("都是本次产出", output)
 
 
-class EnvironmentTests(unittest.TestCase):
+class StageTests(unittest.TestCase):
     def test_run_stage_merges_extra_environment(self):
         completed = mock.Mock(returncode=0)
         with mock.patch.object(build_all.subprocess, "run", return_value=completed) as run:
@@ -266,7 +317,7 @@ class EnvironmentTests(unittest.TestCase):
         self.assertIs(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
 
     def test_failed_stage_raises_stage_failed(self):
-        """阶段失败抛 StageFailed（不是直接 exit）：main 才能把产物体检跑到失败路径。"""
+        """阶段失败抛 StageFailed：main 才能把产物体检跑到失败路径上。"""
         with mock.patch.object(build_all.subprocess, "run", return_value=mock.Mock(returncode=7)):
             stream = io.StringIO()
             with redirect_stdout(stream):
@@ -275,6 +326,8 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(raised.exception.stage, "probe")
         self.assertIn("链式中止", stream.getvalue())
 
+
+class InterpreterTests(unittest.TestCase):
     def test_resolve_sidecar_python_honours_override(self):
         with mock.patch.dict(os.environ, {"GA_HUB_PYTHON": "X:/custom/python"}, clear=False):
             self.assertEqual(build_all.resolve_sidecar_python(), "X:/custom/python")
@@ -283,12 +336,14 @@ class EnvironmentTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GA_HUB_PYTHON": ""}, clear=False):
             self.assertEqual(build_all.resolve_sidecar_python(), sys.executable)
 
+
+class LockTests(unittest.TestCase):
     def test_build_lock_blocks_second_holder(self):
         """锁语义：第二个持有者被拒；持有者释放后不留僵尸锁。
 
         用临时锁文件而不是真实路径：``--full`` 正是「持有真实构建锁 → 跑整个
-        测试集」，测试若去抢同一把锁必然失败（实测 ``build_all.py --full`` 因此
-        以 rc=3 中止——发布前命令跑不通）。锁的**位置**由另一个用例单独锁住。
+        测试集」，测试若去抢同一把锁必然失败（发布前命令因此曾以 rc=3 中止）。
+        锁的**位置**由另一个用例单独锁住。
         """
         with tempfile.TemporaryDirectory() as td:
             lock_path = Path(td) / ".build_all.lock"
@@ -315,168 +370,81 @@ class EnvironmentTests(unittest.TestCase):
             build_all.ROOT / "src-tauri" / "target" / ".build_all.lock",
         )
 
-    def test_tauri_stage_command_wraps_cmd_shim_on_windows(self):
-        shim = os.path.join("x", "tauri.cmd")
-        command = build_all.tauri_stage_command(shim, "t")
-        if os.name == "nt":
-            self.assertEqual(command[0:2], ["cmd", "/c"])
-            self.assertEqual(command[2], shim)
-        else:
-            self.assertEqual(command[0], shim)
-        self.assertIn("build", command)
-        self.assertIn("--target", command)
-
-    def test_tauri_stage_always_skips_bundling(self):
-        """交付物只有便携版两个 exe：安装包不在本链职责内（实测每次 ~104MB/+24s）。"""
-        command = build_all.tauri_stage_command("tauri", "t")
-        self.assertIn("--no-bundle", command)
-        self.assertNotIn("--bundle", command)
-        self.assertNotIn("--bundle", build_all.__doc__)
-
-
-class ArtifactConsistencyTests(unittest.TestCase):
-    """阶段失败后的产物体检（守卫覆盖不到失败路径）。"""
-
-    def _target(self, label, path, before):
-        return build_all._Target(label, path, before, build_all.artifact_guard)
-
-    def test_no_stage_wrote_anything(self):
-        with tempfile.TemporaryDirectory() as td:
-            path, snapshot = _touch(Path(td) / "ga-hub-desktop.exe")
-            stream = io.StringIO()
-            with redirect_stdout(stream):
-                build_all.report_artifact_consistency((self._target("主程序产物", path, snapshot),))
-            self.assertIn("本次没有写入任何产物", stream.getvalue())
-
-    def test_partial_refresh_is_reported_as_mismatched(self):
-        """中断留下的「一半新一半旧」必须被点名（实测冒烟出现过这种混搭）。"""
-        with tempfile.TemporaryDirectory() as td:
-            fresh_path, _ = _touch(Path(td) / "ga-hub-sidecar.exe", b"old")
-            fresh_before = build_all._snapshot(fresh_path)
-            fresh_path.write_bytes(b"new-sidecar")
-            stale_path, stale_before = _touch(Path(td) / "ga-hub-desktop.exe")
-            stream = io.StringIO()
-            with redirect_stdout(stream):
-                build_all.report_artifact_consistency(
-                    (
-                        self._target("sidecar 交付副本", fresh_path, fresh_before),
-                        self._target("主程序产物", stale_path, stale_before),
-                    )
-                )
-            output = stream.getvalue()
-            self.assertIn("本次已重写", output)
-            self.assertIn("仍是构建前的版本", output)
-            self.assertIn("产物集不配套", output)
-
-    def test_missing_artifact_also_counts_as_mismatched(self):
-        with tempfile.TemporaryDirectory() as td:
-            fresh_path, _ = _touch(Path(td) / "ga-hub-sidecar.exe")
-            stream = io.StringIO()
-            with redirect_stdout(stream):
-                build_all.report_artifact_consistency(
-                    (
-                        self._target("sidecar 交付副本", fresh_path, None),
-                        self._target("主程序产物", Path(td) / "gone.exe", None),
-                    )
-                )
-            output = stream.getvalue()
-            self.assertIn("不存在", output)
-            self.assertIn("产物集不配套", output)
-
-    def test_all_refreshed_is_reported_honestly(self):
-        with tempfile.TemporaryDirectory() as td:
-            path, _ = _touch(Path(td) / "ga-hub-sidecar.exe")
-            stream = io.StringIO()
-            with redirect_stdout(stream):
-                build_all.report_artifact_consistency((self._target("sidecar 交付副本", path, None),))
-            self.assertIn("都是本次产出", stream.getvalue())
-
 
 class MainFlowTests(unittest.TestCase):
-    def test_stage_failure_runs_artifact_checkup_and_returns_3(self):
-        """阶段失败 → 仍然报告产物一致性，但退出码保持 3（不是 5）。"""
-        with (
+    def _patched(self):
+        return (
             mock.patch.object(build_all, "acquire_build_lock", return_value=(mock.Mock(), "lock")),
             mock.patch.object(build_all, "resolve_npm", return_value="npm"),
             mock.patch.object(build_all, "resolve_tauri", return_value="tauri"),
             mock.patch.object(build_all, "resolve_sidecar_python", return_value="python"),
             mock.patch.object(build_all, "preflight"),
-            mock.patch.object(build_all, "report_host_target_leak"),
-            mock.patch.object(build_all, "_locked_by_process", return_value=False),
-            mock.patch.object(build_all, "_readonly_artifact", return_value=False),
-            mock.patch.object(
-                build_all, "run_stage", side_effect=build_all.StageFailed("前端生产构建")
-            ),
-            mock.patch.object(build_all, "report_artifact_consistency") as report,
-        ):
+            mock.patch.object(build_all, "artifact_blocker", return_value=""),
+        )
+
+    def test_stage_failure_runs_artifact_checkup_and_returns_3(self):
+        """阶段失败 → 报告产物一致性，但退出码保持 3（不是 5）。"""
+        patches = self._patched()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             mock.patch.object(
+                 build_all, "run_stage", side_effect=build_all.StageFailed("前端生产构建")
+             ), \
+             mock.patch.object(build_all, "report_consistency") as report, \
+             mock.patch.object(build_all, "check_artifact") as guard:
             stream = io.StringIO()
             with redirect_stdout(stream):
                 code = build_all.main([])
         self.assertEqual(code, build_all.EXIT_STAGE_FAILED)
         report.assert_called_once()
+        guard.assert_not_called()
+
+    def test_blocked_artifact_returns_2_before_any_stage(self):
+        patches = self._patched()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+             mock.patch.object(build_all, "artifact_blocker", return_value="被占用"), \
+             mock.patch.object(build_all, "run_stage") as stage:
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                code = build_all.main([])
+        self.assertEqual(code, build_all.EXIT_PREFLIGHT)
+        stage.assert_not_called()
+        self.assertIn("被占用", stream.getvalue())
 
     def test_successful_chain_runs_guards_and_returns_0(self):
-        with (
-            mock.patch.object(build_all, "acquire_build_lock", return_value=(mock.Mock(), "lock")),
-            mock.patch.object(build_all, "resolve_npm", return_value="npm"),
-            mock.patch.object(build_all, "resolve_tauri", return_value="tauri"),
-            mock.patch.object(build_all, "resolve_sidecar_python", return_value="python"),
-            mock.patch.object(build_all, "preflight"),
-            mock.patch.object(build_all, "report_host_target_leak"),
-            mock.patch.object(build_all, "_locked_by_process", return_value=False),
-            mock.patch.object(build_all, "_readonly_artifact", return_value=False),
-            mock.patch.object(build_all, "run_stage", return_value=1.0),
-            mock.patch.object(build_all, "artifact_guard", return_value=0) as guard,
-            mock.patch.object(build_all, "sidecar_artifact_guard", return_value=0),
-            mock.patch.object(build_all, "sidecar_delivery_guard", return_value=0),
-            mock.patch.object(build_all, "_log_fingerprints"),
-        ):
+        patches = self._patched()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             mock.patch.object(build_all, "run_stage") as stage, \
+             mock.patch.object(build_all, "check_artifact", return_value=0) as guard:
             stream = io.StringIO()
             with redirect_stdout(stream):
                 code = build_all.main([])
         self.assertEqual(code, 0)
-        self.assertEqual(guard.call_count, 1)
+        self.assertEqual(stage.call_count, 3)  # 前端 / sidecar / tauri
+        self.assertEqual(guard.call_count, 3)
         self.assertIn("构建链全部通过", stream.getvalue())
 
-
-class FingerprintTests(unittest.TestCase):
-    def test_sha256_matches_hashlib(self):
-        with tempfile.TemporaryDirectory() as td:
-            path, _ = _touch(Path(td) / "artifact", b"ga-hub")
-            self.assertEqual(
-                build_all._sha256(path), hashlib.sha256(b"ga-hub").hexdigest()
-            )
-
-    def test_fingerprint_block_lists_size_and_digest(self):
-        with tempfile.TemporaryDirectory() as td:
-            path, _ = _touch(Path(td) / "ga-hub-desktop.exe", b"x" * 2048)
-            stream = io.StringIO()
-            with redirect_stdout(stream):
-                build_all._log_fingerprints((path, Path(td) / "missing"))
-            output = stream.getvalue()
-            self.assertIn("ga-hub-desktop.exe", output)
-            self.assertIn("sha256", output)
-            self.assertIn(build_all._sha256(path)[:16], output)
-            self.assertIn("2.0 KB", output)
+    def test_full_chain_adds_the_two_test_stages(self):
+        patches = self._patched()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             mock.patch.object(build_all, "run_stage") as stage, \
+             mock.patch.object(build_all, "check_artifact", return_value=0), \
+             mock.patch.object(Path, "is_dir", return_value=True):
+            with redirect_stdout(io.StringIO()):
+                code = build_all.main(["--full"])
+        self.assertEqual(code, 0)
+        self.assertEqual(stage.call_count, 5)  # pytest / vitest / 前端 / sidecar / tauri
 
 
-class LoggingTests(unittest.TestCase):
-    def test_log_survives_unencodable_stdout(self):
-        """控制台码页编码不了 ✓/✗/⚠ 时，日志必须降级而不是让构建崩在输出上。"""
-        buffer = io.BytesIO()
-        wrapper = io.TextIOWrapper(buffer, encoding="ascii", errors="strict")
-        with mock.patch.object(build_all.sys, "stdout", wrapper):
-            build_all._log("✗ sidecar 中间产物缺失")
-        wrapper.flush()
-        self.assertIn(b"[build_all]", buffer.getvalue())
-
+class SourceHygieneTests(unittest.TestCase):
     def test_module_import_pins_utf8(self):
-        """import 时即固定 UTF-8：守卫/--help 都可能先于 main() 输出。"""
-        self.assertTrue(hasattr(build_all, "_force_utf8_stdio"))
-        source = SCRIPT.read_text(encoding="utf-8").replace("\r\n", "\n")
-        call = source.index("\n_force_utf8_stdio()\n")  # 顶格的模块级调用
-        self.assertLess(call, source.index("def main("))
-        self.assertNotIn("    _force_utf8_stdio()\n", source, "main() 里不应再重复调用")
+        """import 时即固定 UTF-8：--help 与把模块当库调用都发生在 main() 之前。"""
+        recorder = mock.Mock()
+        fake = mock.Mock(reconfigure=recorder)
+        with mock.patch.object(sys, "stdout", fake), mock.patch.object(sys, "stderr", fake):
+            probe_spec = importlib.util.spec_from_file_location("build_all_pin_probe", SCRIPT)
+            assert probe_spec and probe_spec.loader
+            probe_spec.loader.exec_module(importlib.util.module_from_spec(probe_spec))
+        recorder.assert_called_with(encoding="utf-8", errors="replace")
 
 
 if __name__ == "__main__":

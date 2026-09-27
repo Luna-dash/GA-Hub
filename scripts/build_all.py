@@ -1,54 +1,23 @@
 #!/usr/bin/env python3
-"""GA-Hub 一键交付构建链（唯一构建入口；CI 与本地同源）。
+"""GA-Hub 交付构建链（唯一入口）。
 
-把交付所需全部步骤固化为一条命令：
+    npm 前端构建 → Python sidecar（PyInstaller）→ Tauri 壳（--no-bundle）
+    → 三件产物守卫（缺失 / 为空 / 未被本次构建重写 = 失败）
 
-    1. 前端生产构建      npm --prefix webui run build
-    2. Python sidecar    <sidecar_python> desktop/build_sidecar.py --target <triple>
-    3. Tauri 桌面壳      node_modules/.bin/tauri build --target <triple> --no-bundle
-    4. 产物守卫          三件产物均须存在、非空、且被本次构建重写
-    5. 非正式区排查      target/release 残留（裸 tauri build 痕迹）预检期告警（不阻断）
-
-不变式（与 docs/BUILD.md「构建纪律与验收」互为镜像，改动须同步两边）：
-
-    - 唯一入口：build_all.bat（Windows）/ build_all.command（macOS）/
-      python scripts/build_all.py。npm run desktop:build 已改为拒绝式。
-      裸 tauri build 的产物会落到非正式区（已两次污染仓库）。
-    - 交付物只有便携版两个 exe（主程序 + sidecar）：Tauri 阶段恒传 --no-bundle。
-      MSI/NSIS 实测每次多产出 ~104MB、多花 15-24s，而 CI 不上传、文档也不当交付物，
-      所以安装包不在本链职责内——需要时另行打包，别把它塞回每次构建的固定代价。
-    - 前端归本脚本独占构建（sidecar 要把 webui/dist 打进包里），tauri.conf.json
-      不再配 beforeBuildCommand：否则同一份前端会被构建两次，且主 exe 与 sidecar
-      内嵌的可能来自两次不同的构建。
-    - 解释器：启动本脚本的解释器（sys.executable），可用 GA_HUB_PYTHON 覆盖。
-      不做静默回退；缺依赖时预检失败并给出修复命令。
-    - 并发与占用：写锁 src-tauri/target/.build_all.lock 挡并发构建；预检检测
-      GA-Hub 运行中占用（产物文件锁）时直接失败。
-    - 子进程一律 stdin=DEVNULL：继承被悬挂读取的 stdin 管道会静默卡死子进程
-      （2026-09-24 stdin 探针系列事故同源）。
-
-退出码：2 = 预检失败（缺工具/依赖/应用未退出/并发构建）
-        3 = 某个构建阶段失败
-        5 = 产物守卫失败（缺失 / 为空 / 未被本次构建重写）
-
+退出码：0 成功 · 2 预检失败 · 3 阶段失败 · 5 产物守卫失败
 用法：
-    python scripts/build_all.py                 # 标准交付（便携版两个 exe）
+    python scripts/build_all.py                 # 标准交付：便携版两个 exe
     python scripts/build_all.py --full          # 先跑后端 pytest + 前端 vitest
-    python scripts/build_all.py --target aarch64-apple-darwin
-
+    python scripts/build_all.py --target <triple>   # 仅 Windows x86_64 实测过
 环境变量：
-    GA_HUB_PYTHON   sidecar 打包解释器；未设置时用启动本脚本的解释器。
+    GA_HUB_PYTHON   sidecar 打包解释器（默认用启动本脚本的解释器）
 
-通用性约定：
-    - 所有路径由 __file__ 推导，仓库放任何位置都能构建
-    - 依赖一次性写入 requirements.txt，pip install -r 后即可构建
-    - 完全没有环境的机器用 GitHub Actions
-      （.github/workflows/desktop-build.yml，云端步骤与本脚本相同）
+构建纪律见 docs/BUILD.md；历史上的事故与为什么这样写见
+docs/archive/build-chain-incidents-20260927.md。
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import shutil
 import stat
@@ -56,7 +25,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Callable, NamedTuple
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TARGET = "x86_64-pc-windows-msvc"
@@ -65,41 +33,34 @@ EXIT_PREFLIGHT = 2
 EXIT_STAGE_FAILED = 3
 EXIT_ARTIFACT_GUARD = 5
 
+# 三件交付产物；顺序即守卫与产物体检的报告顺序。值是守卫失败时的排查提示。
+ARTIFACT_HINTS = {
+    "sidecar 中间产物": "PyInstaller 没有产出新文件（build_sidecar.py 先 unlink 再打包）。",
+    "sidecar 交付副本": "Tauri externalBin 拷贝被跳过——产物目录与应用不配套。",
+    "主程序产物": "Tauri/cargo 可能跳过了链接，或产物写到了别的 target 目录。",
+}
+
 
 class StageFailed(RuntimeError):
-    """某个构建阶段失败。抛异常而不是直接 exit：让 main 把产物体检也跑到失败路径上。"""
+    """某个构建阶段失败。抛异常而不是直接退出，让 main 在失败路径上也报告产物体检。"""
 
     def __init__(self, stage: str) -> None:
         super().__init__(stage)
         self.stage = stage
 
 
+# 控制台默认码页（GBK/cp437）编码不了下面用的 ✓/✗/━。模块级固定 UTF-8：argparse 的
+# --help、以及把本模块当库调用（测试、排查脚本）都可能发生在 main() 之前。
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def _log(msg: str) -> None:
-    line = f"[build_all] {msg}"
-    try:
-        print(line, flush=True)
-    except UnicodeEncodeError:
-        # 控制台码页（GBK/cp437）编码不了 ✓/✗/⚠：退化成该码页能表示的字符，
-        # 绝不因为一行日志把构建搞崩——守卫的结论比符号的形状重要。
-        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
-        print(line.encode(encoding, "replace").decode(encoding, "replace"), flush=True)
-
-
-def _force_utf8_stdio() -> None:
-    """Windows consoles default to a legacy codepage (GBK/cp936) that cannot
-    encode the ✓/✗/━ glyphs used below; pin UTF-8 with replacement fallback."""
-    for stream in (sys.stdout, sys.stderr):
-        if stream is not None and hasattr(stream, "reconfigure"):
-            try:
-                stream.reconfigure(encoding="utf-8", errors="replace")
-            except (ValueError, OSError):
-                pass
-
-
-# 在任何输出发生之前固定 UTF-8。控制台默认码页（GBK/cp437）编码不了 ✓/✗/⚠，
-# 而 argparse 的 --help 输出、以及守卫函数被当作库直接调用时（测试、排查脚本）
-# 都发生在 main() 之前——把固定动作放在模块级，这些路径才不会炸编码。
-_force_utf8_stdio()
+    print(f"[build_all] {msg}", flush=True)
 
 
 def _stage(name: str) -> None:
@@ -107,37 +68,57 @@ def _stage(name: str) -> None:
     _log(f"━━ {name} " + "━" * max(0, 58 - len(name)))
 
 
-def run_stage(title: str, cmd: list[str], *, extra_env: dict[str, str] | None = None) -> float:
-    """Run one build stage, streaming output; abort the chain on failure."""
+def _mb(size: int) -> str:
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def run_stage(title: str, cmd: list[str], *, extra_env: dict[str, str] | None = None) -> None:
+    """跑一个构建阶段；非零退出抛 StageFailed，链式中止。"""
     _stage(title)
     _log("$ " + " ".join(cmd))
-    # Windows 控制台默认 GBK，子进程输出含 ✓ 或中文时会炸编码——全链路统一 UTF-8
     env = dict(os.environ)
     env.setdefault("PYTHONUTF8", "1")
     if extra_env:
         env.update(extra_env)
     started = time.monotonic()
-    # stdin 必须显式 DEVNULL：若继承的 stdin 管道被上游悬挂读取，子进程会静默卡死
-    # （2026-09-24 stdin 探针系列事故同源）。
+    # stdin 必须显式 DEVNULL：继承一个被上游悬挂读取的 stdin 管道会让子进程静默卡死。
     result = subprocess.run(cmd, cwd=str(ROOT), env=env, stdin=subprocess.DEVNULL)
     elapsed = time.monotonic() - started
     if result.returncode != 0:
         _log(f"✗ {title} 失败（exit {result.returncode}，耗时 {elapsed:.1f}s）— 链式中止")
         raise StageFailed(title)
     _log(f"✓ {title} 完成（{elapsed:.1f}s）")
-    return elapsed
+
+
+# ── 环境解析与预检 ──────────────────────────────────────────────────────────
 
 
 def resolve_sidecar_python() -> str:
-    """sidecar 打包解释器：显式 GA_HUB_PYTHON → 启动本脚本的解释器。
+    """sidecar 打包解释器：GA_HUB_PYTHON 优先，否则就是启动本脚本的解释器。
 
-    不做静默回退：缺依赖时交给预检失败并给出修复命令，保证
+    刻意不做静默回退：缺 PyInstaller 时让预检失败并给出修复命令，保证
     「用哪个 python 启动 build_all，就用哪个 python 打包」永远成立。
     """
-    env = os.environ.get("GA_HUB_PYTHON", "").strip()
-    if env:
-        return env
-    return sys.executable or "python"
+    return os.environ.get("GA_HUB_PYTHON", "").strip() or sys.executable or "python"
+
+
+def resolve_npm() -> str:
+    for name in ("npm", "npm.cmd"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return ""
+
+
+def resolve_tauri() -> str:
+    """定位仓库内 tauri CLI；绕开 npm 脚本层（避免递归与解析歧义）。"""
+    bindir = ROOT / "node_modules" / ".bin"
+    names = ("tauri.cmd", "tauri") if os.name == "nt" else ("tauri",)
+    for name in names:
+        candidate = bindir / name
+        if candidate.is_file():
+            return str(candidate)
+    return ""
 
 
 def _has_pyinstaller(python: str) -> bool:
@@ -154,193 +135,6 @@ def _has_pyinstaller(python: str) -> bool:
     return probe.returncode == 0
 
 
-def resolve_npm() -> str:
-    for name in ("npm", "npm.cmd"):
-        found = shutil.which(name)
-        if found:
-            return found
-    return ""
-
-
-def resolve_tauri() -> str:
-    """定位仓库内 tauri CLI；彻底绕开 npm 脚本层（避免递归与解析歧义）。"""
-    bindir = ROOT / "node_modules" / ".bin"
-    names = ("tauri.cmd", "tauri") if os.name == "nt" else ("tauri",)
-    for name in names:
-        candidate = bindir / name
-        if candidate.is_file():
-            return str(candidate)
-    return ""
-
-
-def tauri_stage_command(tauri: str, target: str) -> list[str]:
-    """构造 Tauri 构建命令；Windows 下 .cmd 需经 cmd /c 才能直接执行。
-
-    恒传 ``--no-bundle``：本链交付物只有便携版两个 exe。安装包（MSI/NSIS，实测
-    每次 ~104MB、tauri 阶段多花 15-24s）不在交付范围内，要打包请另行处理。
-    """
-    command = [tauri, "build", "--target", target, "--no-bundle"]
-    if os.name == "nt" and tauri.lower().endswith((".cmd", ".bat")):
-        return ["cmd", "/c", *command]
-    return command
-
-
-def artifact_path(target: str) -> Path:
-    suffix = ".exe" if "windows" in target else ""
-    return ROOT / "src-tauri" / "target" / target / "release" / f"ga-hub-desktop{suffix}"
-
-
-def delivery_sidecar_path(target: str) -> Path:
-    """sidecar 交付副本（Tauri externalBin 拷贝落点，必须与主 exe 同目录）。"""
-    suffix = ".exe" if "windows" in target else ""
-    return ROOT / "src-tauri" / "target" / target / "release" / f"ga-hub-sidecar{suffix}"
-
-
-def sidecar_artifact_path(target: str) -> Path:
-    """sidecar 中间产物（PyInstaller 输出 + Tauri 的 externalBin 输入）。"""
-    suffix = ".exe" if "windows" in target else ""
-    return ROOT / "src-tauri" / "binaries" / f"ga-hub-sidecar-{target}{suffix}"
-
-
-def host_target_artifact_path() -> Path:
-    """无 --target 的裸构建（host triple）落点：src-tauri/target/release/。
-
-    正式链只使用 target/<triple>/release/（见 docs/BUILD.md）；此路径仅用于
-    防复发检测（2026-09-23 审查 §2.1 方案 b——第二次复发后的加固）。
-    """
-    suffix = ".exe" if os.name == "nt" else ""
-    return ROOT / "src-tauri" / "target" / "release" / f"ga-hub-desktop{suffix}"
-
-
-def build_lock_path() -> Path:
-    return ROOT / "src-tauri" / "target" / ".build_all.lock"
-
-
-def acquire_build_lock() -> tuple[object | None, str]:
-    """跨进程构建互斥（src-tauri/target/.build_all.lock）。
-
-    成功返回 (handle, "pid=... · path")；锁被他人持有时返回
-    (None, "holder pid=... · path")。锁随进程退出自动释放；并发构建会互踩
-    target 目录，必须尽早挡住。
-    """
-    path = build_lock_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle = open(path, "a+", encoding="utf-8")
-    try:
-        if os.name == "nt":
-            import msvcrt
-
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        try:
-            handle.seek(0)
-            holder = handle.read().strip()
-        except OSError:
-            # Windows 区域锁连读都会被拒绝——拿不到 pid 就直接报告占用
-            holder = ""
-        handle.close()
-        if holder:
-            return None, f"holder pid={holder} · {path}"
-        return None, f"另一个构建进程持有锁（pid 不可读）· {path}"
-    handle.seek(0)
-    handle.truncate()
-    handle.write(f"{os.getpid()}\n")
-    handle.flush()
-    return handle, f"pid={os.getpid()} · {path}"
-
-
-def _snapshot(path: Path) -> tuple[int, int] | None:
-    if not path.is_file():
-        return None
-    stat = path.stat()
-    return (stat.st_mtime_ns, stat.st_size)
-
-
-def _refreshed(path: Path, before: tuple[int, int] | None) -> bool:
-    """本次构建是否重写了该产物（mtime/size 任一变化，或构建前根本不存在）。
-
-    这是产物守卫唯一的时间判据。不再拿产物 mtime 与「输入树最新 mtime」比对：
-    2026-09-26 冷/热各一次真实全链实测证明，前端每次都重写 webui/dist（vite
-    不做内容比对），而 tauri build script 对 dist 每个文件都发 rerun-if-changed，
-    cargo 因此必然重链；sidecar 中间产物则由 build_sidecar.py 先 unlink 再打包。
-    三件产物在正常链里必然被重写——「未重写」只可能是写到了别处、或这一步被
-    跳过，两种情况都不该放行。
-    """
-    if before is None:
-        return path.is_file()
-    return _snapshot(path) != before
-
-
-def _human_size(size: int) -> str:
-    if size >= 1024 * 1024:
-        return f"{size / (1024 * 1024):.1f} MB"
-    return f"{size / 1024:.1f} KB"
-
-
-def _sha256(path: Path, chunk_size: int = 1 << 20) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        while True:
-            chunk = handle.read(chunk_size)
-            if not chunk:
-                break
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _locked_by_process(path: Path) -> bool:
-    """目标产物是否被运行中的进程占用（Windows 映像锁语义；只读探测）。
-
-    实测（2026-09-27，运行中的 ga-hub-desktop.exe / ga-hub-sidecar.exe）：Python
-    对正在运行的映像做写方式打开只抛 ``PermissionError`` (errno 13)，**不带**
-    winerror——所以不能按 winerror 32/33 判定（那样会漏判，构建会一路跑到 Tauri
-    阶段才失败）。只读产物同样报 EACCES，用 Windows 只读属性区分：属性可写却被
-    拒 = 被运行中的进程占用；属性只读 = 权限问题，交给 ``_readonly_artifact``。
-    """
-    if not path.is_file():
-        return False
-    try:
-        with open(path, "r+b"):
-            return False
-    except OSError:
-        return _writable(path)
-
-
-def _writable(path: Path) -> bool:
-    """文件属性是否允许写入（Windows 就绪属性；POSIX 就看权限位）。"""
-    try:
-        return bool(path.stat().st_mode & stat.S_IWRITE)
-    except OSError:
-        return False
-
-
-def _readonly_artifact(path: Path) -> bool:
-    """产物存在但不可写（只读属性/权限）：后续阶段必然写不进去，提前说清楚。"""
-    return path.is_file() and not _writable(path)
-
-
-def _log_fingerprints(paths: tuple[Path, ...]) -> None:
-    _stage("交付指纹")
-    for path in paths:
-        if not path.is_file():
-            continue
-        stat = path.stat()
-        try:
-            label = path.relative_to(ROOT)
-        except ValueError:
-            label = path
-        _log(f"  {label}")
-        _log(
-            f"    {_human_size(stat.st_size)} · sha256 {_sha256(path)[:16]} · "
-            f"{time.strftime('%m-%d %H:%M:%S', time.localtime(stat.st_mtime))}"
-        )
-
-
 def preflight(
     sidecar_python: str,
     npm: str,
@@ -348,22 +142,20 @@ def preflight(
     *,
     ga_root: Path | None = None,
 ) -> None:
-    """环境预检：缺什么都在这里报出来并以 2 退出，而不是让某个阶段以 3 失败。
+    """环境预检：缺什么都在这里以 2 退出，而不是让某个阶段以 3 失败。
 
-    ``ga_root`` 只在 ``--full`` 时传入（后端测试需要注入 GA_ROOT/PYTHONPATH）。
+    ``ga_root`` 只在 ``--full`` 时传入（后端测试要注入 GA_ROOT/PYTHONPATH）。
     """
     _stage("预检")
     problems: list[str] = []
     if not npm:
         problems.append("未找到 npm —— 请安装 Node.js 18+ 并确保 npm 在 PATH 中")
     if not tauri:
-        problems.append(
-            "node_modules 缺少 tauri CLI —— 先在仓库根执行 npm ci（或 npm install）"
-        )
+        problems.append("node_modules 缺少 tauri CLI —— 先在仓库根执行 npm ci")
     if shutil.which("cargo") is None:
         problems.append(
             "未找到 cargo —— 请安装 Rust 工具链（https://rustup.rs）；"
-            "Windows 还需 MSVC Build Tools（x86_64-pc-windows-msvc 目标）"
+            "Windows 还需 MSVC Build Tools"
         )
     if not (ROOT / "webui").is_dir():
         problems.append("缺少 webui/ 目录")
@@ -392,182 +184,215 @@ def preflight(
     _log("✓ 预检通过")
 
 
-def _guard(title: str, path: Path, before: tuple[int, int] | None, hint: str) -> int:
-    """产物守卫（三件产物共用）：缺失 / 为空 / 未被本次构建重写 → 失败。"""
+# ── 产物路径、占用检查、守卫 ────────────────────────────────────────────────
+
+
+def tauri_stage_command(tauri: str, target: str) -> list[str]:
+    """Tauri 构建命令；Windows 下 .cmd 需经 cmd /c 才能直接执行。
+
+    恒传 ``--no-bundle``：交付物只有便携版两个 exe，安装包不在本链职责内。
+    """
+    command = [tauri, "build", "--target", target, "--no-bundle"]
+    if os.name == "nt" and tauri.lower().endswith((".cmd", ".bat")):
+        return ["cmd", "/c", *command]
+    return command
+
+
+def artifact_paths(target: str) -> dict[str, Path]:
+    """三件交付产物：label -> 路径。"""
+    suffix = ".exe" if "windows" in target else ""
+    release = ROOT / "src-tauri" / "target" / target / "release"
+    return {
+        "sidecar 中间产物": ROOT / "src-tauri" / "binaries" / f"ga-hub-sidecar-{target}{suffix}",
+        "sidecar 交付副本": release / f"ga-hub-sidecar{suffix}",
+        "主程序产物": release / f"ga-hub-desktop{suffix}",
+    }
+
+
+def artifact_blocker(path: Path) -> str:
+    """产物现在能不能被替换：``""`` = 可以；否则返回给使用者看的原因。
+
+    运行中的映像被写方式打开，实测只抛 PermissionError(errno 13) 且没有 winerror；
+    只读产物同样报 EACCES，所以用只读属性区分「应用没退出」与「文件不可写」。
+    """
     if not path.is_file():
-        _log(f"✗ {title}缺失：{path}")
-        _log(f"  {hint}")
+        return ""
+    try:
+        with open(path, "r+b"):
+            return ""
+    except OSError:
+        try:
+            writable = bool(path.stat().st_mode & stat.S_IWRITE)
+        except OSError:
+            writable = False
+        if writable:
+            return (
+                f"{path.name} 正被运行中的进程占用 —— 先退出 GA-Hub（含托盘/后台 "
+                "sidecar）再构建；若确认已退出仍报占用，稍后重试（杀毒软件扫描会短暂持有文件）。"
+            )
+        return f"{path.name} 没有写权限（只读属性？）—— 先 attrib -r（或直接删掉）再重试。"
+
+
+def _snapshot(path: Path) -> tuple[int, int] | None:
+    if not path.is_file():
+        return None
+    stat_result = path.stat()
+    return (stat_result.st_mtime_ns, stat_result.st_size)
+
+
+def _refreshed(path: Path, before: tuple[int, int] | None) -> bool:
+    """本次构建是否重写了该产物（mtime/size 有变化，或构建前根本不存在）。
+
+    正常链里三件产物必然被重写：前端每次都重写 webui/dist，Tauri 因此必然重链；
+    sidecar 先 unlink 再打包。「未重写」只可能是写到了别处或这一步被跳过。
+    """
+    if before is None:
+        return path.is_file()
+    return _snapshot(path) != before
+
+
+def check_artifact(label: str, path: Path, before: tuple[int, int] | None) -> int:
+    """产物守卫：缺失 / 为空 / 未被本次构建重写 → 5。"""
+    if not path.is_file():
+        _log(f"✗ {label}缺失：{path}")
+        _log(f"  {ARTIFACT_HINTS[label]}")
         return EXIT_ARTIFACT_GUARD
-    stat = path.stat()
-    if stat.st_size <= 0:
-        _log(f"✗ {title}为空文件：{path}")
+    size = path.stat().st_size
+    if size <= 0:
+        _log(f"✗ {label}为空文件：{path}")
         return EXIT_ARTIFACT_GUARD
     if not _refreshed(path, before):
-        _log(f"✗ {title}未被本次构建重写：{path}")
-        _log(f"  {hint}")
+        _log(f"✗ {label}未被本次构建重写：{path}")
+        _log(f"  {ARTIFACT_HINTS[label]}")
         _log("  交付上一次的旧产物没有意义——先查清这一步为什么没有产出新文件。")
         return EXIT_ARTIFACT_GUARD
-    _log(f"✓ {title}已刷新：{path} ({_human_size(stat.st_size)})")
+    _log(f"✓ {label}已刷新：{path} ({_mb(size)})")
     return 0
 
 
-def artifact_guard(path: Path, before: tuple[int, int] | None) -> int:
-    """主程序产物：桌面快捷方式 / start.bat 指向它。"""
-    return _guard(
-        "主程序产物",
-        path,
-        before,
-        "Tauri/cargo 可能跳过了链接，或把产物写到了别的 target 目录。",
-    )
+def report_consistency(
+    paths: dict[str, Path], before: dict[str, tuple[int, int] | None]
+) -> None:
+    """阶段失败后的产物体检：说清磁盘上现在是哪一套产物（只报告，退出码仍是 3）。
 
-
-def sidecar_artifact_guard(path: Path, before: tuple[int, int] | None) -> int:
-    """sidecar 中间产物（PyInstaller 输出，也是 Tauri externalBin 的输入）。"""
-    return _guard(
-        "sidecar 中间产物",
-        path,
-        before,
-        "PyInstaller 没有产出新文件（desktop/build_sidecar.py 先 unlink 再打包）。",
-    )
-
-
-def sidecar_delivery_guard(path: Path, before: tuple[int, int] | None) -> int:
-    """sidecar 交付副本（Tauri externalBin 拷到主 exe 旁边；缺它应用起不来）。"""
-    return _guard(
-        "sidecar 交付副本",
-        path,
-        before,
-        "Tauri externalBin 拷贝被跳过——产物目录与应用不配套。",
-    )
-
-
-def report_host_target_leak() -> bool:
-    """预检期排查非正式区产物（src-tauri/target/release/）。
-
-    正式链恒传 --target，绝不会写这里，所以「文件存在」就等于有人裸跑过
-    tauri build（2026-08-22、2026-09-23 两次污染仓库）。旧实现比较「构建前后
-    mtime 是否被刷新」——可绕过只会发生在 build_all 不在场的时候，那个事件永远
-    等不到，而已存在的残留又会被静默放过；改成「存在即报告」才对应真实的复发形态。
-    只告警不阻断：清理历史残留不是构建的前置条件。
-    """
-    path = host_target_artifact_path()
-    if not path.is_file():
-        return False
-    _log(f"⚠ 非正式区残留产物：{path}")
-    _log("  target/release/ 不是正式路径（裸 tauri build 的落点）；应用与交付只认")
-    _log("  target/<triple>/release/。请删掉它，并按 docs/BUILD.md 的入口构建。")
-    return True
-
-
-class _Target(NamedTuple):
-    """一件交付产物：标签、路径、构建前快照、对应守卫。
-
-    守卫循环与失败后的产物体检共用这一份定义，避免两处各写一遍路径而漂移。
-    """
-
-    label: str
-    path: Path
-    before: tuple[int, int] | None
-    guard: Callable[[Path, tuple[int, int] | None], int]
-
-
-def report_artifact_consistency(targets: tuple[_Target, ...]) -> None:
-    """阶段失败后的产物体检：说清磁盘上现在是哪一套产物（退出码仍是 3）。
-
-    守卫只覆盖成功路径，阶段失败时根本走不到；而「主 exe 是上一次构建的、
-    sidecar 已是这一次的」正是中断留下的典型形态——2026-09-27 冒烟实测踩到过
-    （应用运行中构建，sidecar 交付副本被替换、主 exe 仍是旧的）。这种混搭功能上
-    也能跑，但形式上已不是一次构建的产物，不报告出来就会被当成交付物。
-    只报告、不阻断，也不把退出码改成 5：「阶段失败」与「产物守卫失败」是两条
-    不同的排查方向，混在一起只会误导定位。
+    守卫只覆盖成功路径，而「主 exe 是上一次的、sidecar 已是这一次的」正是中断留下
+    的典型形态——不报告出来就会被当成交付物。
     """
     _stage("产物一致性体检（阶段失败后）")
     fresh: list[str] = []
-    missing: list[str] = []
     stale: list[str] = []
-    for item in targets:
-        if not item.path.is_file():
-            missing.append(item.label)
-            _log(f"  ✗ {item.label}：不存在")
-        elif _refreshed(item.path, item.before):
-            fresh.append(item.label)
-            _log(f"  ✓ {item.label}：本次已重写（{_human_size(item.path.stat().st_size)}）")
+    missing: list[str] = []
+    for label, path in paths.items():
+        if not path.is_file():
+            missing.append(label)
+            _log(f"  ✗ {label}：不存在")
+        elif _refreshed(path, before[label]):
+            fresh.append(label)
+            _log(f"  ✓ {label}：本次已重写（{_mb(path.stat().st_size)}）")
         else:
-            stale.append(item.label)
-            _log(f"  · {item.label}：仍是构建前的版本")
+            stale.append(label)
+            _log(f"  · {label}：仍是构建前的版本")
     if not fresh:
         _log("本次没有写入任何产物：磁盘上仍是上一套交付，可放心排查后重跑。")
     elif stale or missing:
-        _log("⚠ 产物集不配套：本次只刷新了一部分 —— 不要把这几件当交付物。")
-        _log("  修好失败原因后重跑构建；守卫要求三件产物被同一次构建重写。")
+        _log("⚠ 产物集不配套：本次只刷新了一部分 —— 不要把这几件当交付物；")
+        _log("  修好失败原因后重跑构建（守卫要求三件产物被同一次构建重写）。")
     else:
         _log("三件产物都是本次产出（失败发生在写产物之后），修好原因后重跑复核。")
 
 
+# ── 并发锁 ─────────────────────────────────────────────────────────────────
+
+
+def build_lock_path() -> Path:
+    return ROOT / "src-tauri" / "target" / ".build_all.lock"
+
+
+def acquire_build_lock() -> tuple[object | None, str]:
+    """跨进程构建互斥；并发构建会互踩 target 目录。
+
+    成功返回 (handle, "pid=… · path")（句柄要活到构建结束，锁随进程退出释放）；
+    已被持有时返回 (None, "holder pid=… · path")。
+    """
+    path = build_lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+", encoding="utf-8")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            handle.seek(0)
+            holder = handle.read().strip()
+        except OSError:
+            holder = ""
+        handle.close()
+        if holder:
+            return None, f"holder pid={holder} · {path}"
+        return None, f"另一个构建进程持有锁（pid 不可读）· {path}"
+    handle.seek(0)
+    handle.truncate()
+    handle.write(f"{os.getpid()}\n")
+    handle.flush()
+    return handle, f"pid={os.getpid()} · {path}"
+
+
+# ── 主流程 ─────────────────────────────────────────────────────────────────
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--target", default=DEFAULT_TARGET, help="Rust target triple")
+    parser.add_argument(
+        "--target",
+        default=DEFAULT_TARGET,
+        help="Rust target triple（目前只有 x86_64-pc-windows-msvc 实测过）",
+    )
     parser.add_argument(
         "--full",
         action="store_true",
         help="先跑后端 pytest（tests/）与前端 vitest，再进入构建阶段",
     )
     args = parser.parse_args(argv)
+    started = time.monotonic()
 
-    overall_started = time.monotonic()
-
-    # 并发构建会互踩 src-tauri/target —— 拿到锁之前不做任何事
-    lock_handle, lock_desc = acquire_build_lock()
-    if lock_handle is None:
+    handle, lock_desc = acquire_build_lock()
+    if handle is None:
         _log("✗ 已有另一个构建在进行（并发构建会互踩 src-tauri/target）")
         _log(f"  {lock_desc}")
-        _log("  锁随进程退出自动释放；确认无残留构建后直接重试。")
         return EXIT_PREFLIGHT
     _log(f"✓ 构建锁已获取（{lock_desc}）")
 
     npm = resolve_npm()
     tauri = resolve_tauri()
     sidecar_python = resolve_sidecar_python()
-    # Cross-repo imports (frontends/GA core) require both variables; avoid
-    # relying on a developer shell that happens to have them configured.
+    # --full 的后端测试需要 GA_ROOT/PYTHONPATH 指向 GA 核心仓库
     ga_root = Path(os.environ.get("GA_ROOT", str(ROOT.parent / "GA"))).resolve()
     preflight(sidecar_python, npm, tauri, ga_root=ga_root if args.full else None)
 
-    artifact = artifact_path(args.target)
-    sidecar_delivery = delivery_sidecar_path(args.target)
-    for busy in (artifact, sidecar_delivery):
-        if _locked_by_process(busy):
-            _log(f"✗ {busy.name} 正被运行中的进程占用（GA-Hub 没退出？）")
-            _log("  请先退出 GA-Hub 桌面应用（含托盘/后台 sidecar）再构建；")
-            _log("  若确认已退出仍报占用，稍后重试（杀毒软件扫描会短暂持有文件）。")
+    paths = artifact_paths(args.target)
+    for path in paths.values():
+        blocker = artifact_blocker(path)
+        if blocker:
+            _log("✗ " + blocker)
             return EXIT_PREFLIGHT
-        if _readonly_artifact(busy):
-            _log(f"✗ {busy.name} 没有写权限（只读属性？）：{busy}")
-            _log("  构建必须替换它：先 attrib -r（或直接删掉）再重试。")
-            return EXIT_PREFLIGHT
-    report_host_target_leak()
-
-    before = _snapshot(artifact)
-    sidecar_delivery_before = _snapshot(sidecar_delivery)
-    sidecar_artifact = sidecar_artifact_path(args.target)
-    sidecar_before = _snapshot(sidecar_artifact)
-    targets = (
-        _Target("sidecar 中间产物", sidecar_artifact, sidecar_before, sidecar_artifact_guard),
-        _Target("sidecar 交付副本", sidecar_delivery, sidecar_delivery_before, sidecar_delivery_guard),
-        _Target("主程序产物", artifact, before, artifact_guard),
-    )
+    before = {label: _snapshot(path) for label, path in paths.items()}
 
     try:
         if args.full:
             test_env = {"GA_ROOT": str(ga_root), "PYTHONPATH": str(ga_root)}
-            # pytest 与 PyInstaller 同环境：requirements.txt 里两者一并安装
             run_stage(
                 "后端测试",
                 [sidecar_python, "-m", "pytest", "tests/", "-q"],
                 extra_env=test_env,
             )
             run_stage("前端测试", [npm, "--prefix", "webui", "test", "--", "--run"])
-
         run_stage("前端生产构建", [npm, "--prefix", "webui", "run", "build"])
         run_stage(
             "Python sidecar",
@@ -575,17 +400,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         run_stage("Tauri 桌面壳", tauri_stage_command(tauri, args.target))
     except StageFailed:
-        report_artifact_consistency(targets)
+        report_consistency(paths, before)
         return EXIT_STAGE_FAILED
 
     _stage("产物守卫")
-    for item in targets:
-        code = item.guard(item.path, item.before)
+    for label, path in paths.items():
+        code = check_artifact(label, path, before[label])
         if code:
             return code
 
-    _log_fingerprints((artifact, sidecar_delivery, sidecar_artifact))
-    _log(f"✓ 构建链全部通过（总耗时 {time.monotonic() - overall_started:.1f}s）")
+    _log(f"✓ 构建链全部通过（总耗时 {time.monotonic() - started:.1f}s）")
+    _log("  交付物：src-tauri/target/<triple>/release/ 下的 ga-hub-desktop 与 ga-hub-sidecar")
     return 0
 
 
