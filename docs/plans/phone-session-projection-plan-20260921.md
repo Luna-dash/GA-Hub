@@ -101,7 +101,7 @@ GA-Hub 主后端进程内新增「会话投影服务」：把每个用户会话�
 |---|---|---|---|---|
 | 1 | `server/services/hub_session_projection.py` | 新增 | 投影服务核心（对账器 + 每会话 peer + 折叠 + 缓存 + 启停） | ~380-450 行 |
 | 2 | `tests/test_hub_session_projection.py` | 新增 | 单测 + 真实 hub 模块契约测试 | ~300 行 |
-| 3 | `temp/hub_projection_smoke.py` | 新增(临时/不入库) | Phase0 冒烟脚本（1 假 peer 演示 + 1 真会话） | ~150 行 |
+| 3 | `temp/archive-scattered-20260928/probes/hub_projection_smoke.py` | 新增(临时/不入库) | Phase0 冒烟脚本（1 假 peer 演示 + 1 真会话） | ~150 行 |
 | 4 | `server/main.py` | 修改 | `_startup()` 末尾（L406 后）启动；`_shutdown()` 开头停止 | 共 +10~12 行 |
 
 - **明确不碰**：GA 仓全部（hub.py / official_hub.py / p2p / gahub 其余）；GA-Hub 的 routes、session_coordinator、session_metadata、archive_messages、agent_service、app_services、前端 webui、打包脚本。

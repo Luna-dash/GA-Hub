@@ -133,7 +133,14 @@ npm run dev   # → http://localhost:5173
 
 ## 本地检查
 
-改动提交前建议跑完整检查：安装 Python 开发依赖、运行后端 pytest、前端类型检查、前端生产构建。
+改动提交前跑 `check.sh` / `check.bat`：装 Python 依赖（`requirements.txt`）→ 前端单测 +
+类型检查 + API 契约 + 生产构建 → 后端 pytest。**前端构建排在 pytest 之前不是随意的**：
+`tests/test_backend_api_smoke.py` 有一条断言构建后 SPA（`webui/dist`）的用例，新克隆上
+顺序反了必红。**后端套件还需要 GA 核心仓库**（`GA_ROOT` 指过去，或把 GA 克隆到本仓库
+同级，默认 `../GA`）；没有它 pytest 会在采集期就中断（17 errors / 0 passed）。
+
+发布前的全量验证与打包走另一条链：`python scripts\build_all.py --full`（口径与边界见
+[`docs/BUILD.md`](docs/BUILD.md)）。
 
 ```bash
 # macOS / Linux
@@ -145,14 +152,19 @@ npm run dev   # → http://localhost:5173
 check.bat
 ```
 
-也可以手动分步执行：
+也可以手动分步执行（注意顺序：构建在前、pytest 在后）：
 
 ```bash
-python -m pip install -e ".[dev]"
-python -m pytest -q
+python -m pip install -r requirements.txt   # 构建配方（钉版本，唯一可复现清单）
+python -m pip install -e . --no-deps
 cd webui
+npm ci
+npm test -- --run
 npm run lint
+npm run api:check
 npm run build
+cd ..
+python -m pytest -q          # 需要 GA：GA_ROOT 或 ../GA；且需要上面的 webui/dist
 ```
 
 ## 实时聊天的恢复协议

@@ -921,3 +921,89 @@ GA_ROOT is configured`）+ 若干测试模块直接 `from frontends...` 导入�
 （vitest 519 passed、api:check 89 形状 / 136 操作）；未触碰后端与构建链代码，重跑
 pytest **1101 passed / 2 skipped** 与 `build_all.py` 退出码 0（守卫输出
 「✓ 构建链全部通过」）确认无副作用。
+
+## 2026-09-28 仓根归位 + 护栏 + 入口归口（问题 9）
+
+来源：架构复审问题 9「根目录垃圾场」。做下来发现根目录的病灶和**入口脚本的病灶是同一个**：
+「看起来在跑，其实没跑」。
+
+现状：`git status` 长期 47 条未跟踪（46 文件 + 1 目录，全部产生于 09-21~09-25）：一次性探针
+22（飞书/stdio 悬挂调查 12、手机投影 Phase0 5、其他 5）、JSON 结果快照 12、diff 快照文本 9
+（~96KB，信息全在 git 历史里）、诊断/审查报告 2、截图 1（631KB）、`dsml_analysis/` 1
+（24 文件 6.6MB）。
+
+根因不是「忘了删」，而是**三次都只修了快照**：
+
+1. `.gitignore` 补过一节逐条点名（`/*-final.log`、`/msg_*.json`…）→ 47 条里 **32 条产生于
+   09-23 那次审查之后**（09-24 新增 19 条、09-25 新增 13 条）
+2. `docs/archive/` 归档惯例存在且闲置（20 份，含 09-24 的同类报告）；同类东西待遇还不一致：
+   `FEISHU_STDIN_FINDING.md` 在仓库里，`DIAGNOSIS.md` 在根目录飘
+3. `temp/archive-scattered-20260923/`（49 文件）是上次清运的落点，机制齐备但**没有护栏**
+
+代价可观测：信噪比 1:47（问题 3–8 每次 `git status` 都要先过滤）；快照含本机用户名
+`C:\Users\lunagent\.genericagent-admin`、anaconda 绝对路径、自建端点
+`ws://47.101.182.29:49157/ws`（逐个扫过 12 个 JSON 的键：**无 token/密码**，所以是
+「不该提交」而不是「已泄露」）。
+
+### P1 归位（移动不删除，沿用 09-23 先例，可回滚）
+
+- [x] 报告归档 `docs/archive/`：`feishu-check-timeout-diagnosis-20260924.md`（原
+      `DIAGNOSIS.md`）、`repo-hygiene-audit-20260923.md`、`feishu-stdin-finding-20260924.md`
+      （原 `FEISHU_STDIN_FINDING.md`，**已跟踪**，用 `git mv` 保留历史）
+- [x] 其余 45 项 → `temp/archive-scattered-20260928/{probes22,snapshots12,diffs9,images1,analysis1}/`
+      + 同目录 `MANIFEST.md` 清单（本机记录；`temp/` 已忽略，不进 `git status`）
+- [x] **同步修引用链 3 处**（否则断链，教训见本文件 2026-09-23 那条）：`feishu-stdin-finding`
+      指向旧 `DIAGNOSIS.md` 的句子、`desktop-sidecar-spawn-pipe-busy-20260924.md` 里的
+      `FEISHU_STDIN_FINDING.md`、`docs/plans/phone-session-projection-plan-20260921.md`
+      里的探针路径
+- [x] 结果：仓根未跟踪条目 **47 → 0**
+
+### P2 护栏（把「根目录干净」变成可验证契约，而不是习惯）
+
+- [x] 新增 `tests/test_repo_hygiene.py`：①仓根不得有未跟踪散件（失败信息直接说该放哪）
+      ②仓根**已跟踪文件**必须与 `ROOT_FILES` 白名单一致（多出/缺失两个方向都查）
+- [x] `AGENTS.md` 补「过程产物去哪」一节——**产出主体就是 agent 会话**，规矩得写在 agent
+      必读的地方；`.gitignore` 那一节加注「命名式补名字治不了根，护栏才是机制」
+
+### P3 入口归口（做下来挖出的东西比预期严重）
+
+- [x] **修掉 `check.bat` / `install_webui.bat` 的静默早退**（最严重的一条，既有 bug）：
+      `%PKG% -v` **漏了 `call`**。Windows 上 npm/pnpm 是 `.cmd`，批处理里不带 `call` 直接调会
+      *交出控制权且永不返回* → 脚本在 npm 检测那一行静默结束，**退出码还是 0**。后果：
+      `check.bat` 的前端半套（`npm ci` / vitest / `lint` / `api:check` / build）**从来没跑过**，
+      `[OK] All checks passed` 也从不可达；`install_webui.bat` 更直接——前端依赖与构建一条
+      都没执行。取证：对照实验（无 `call` 时 `echo B-REACHED` 永不打印，有 `call` 时打印）
+      + `check.bat` 实测 **7 秒 / exit 0 / `webui/dist` 未重建**
+- [x] **修掉步骤顺序**：原来 pytest 排在前端构建之前，而
+      `tests/test_backend_api_smoke.py::test_built_spa_deep_link_and_hashed_entry_asset`
+      断言的是 `webui/dist` 里的构建产物（实测：删掉 `dist` 后该用例 1 failed）→ 新克隆上
+      `check.bat` 必红。已把前端构建挪到 pytest 之前，README 的手动分步也标明顺序
+- [x] **依赖口径对齐构建配方**：`pip install -e ".[dev]" --upgrade` → `pip install -r
+      requirements.txt` + `pip install -e . --no-deps`。原写法的两个问题：用 pyproject 的
+      **松范围**（该文件自己写着 requirements.txt 才是「唯一可复现安装清单」）、且 `--upgrade`
+      会主动把运行时依赖升到比配方更新的版本——于是「提交前检查」会悄悄改变 PyInstaller
+      打包进去的东西。`install_webui.sh` 的头部注释还写着不存在的 `.[webui]` extra，一并修正
+- [x] **npm 口径**：`check.*` 的 `npm ci --legacy-peer-deps` → 与 CI / `build_all` 一致的
+      plain `npm ci`；`install_webui.*` 的 `npm install --legacy-peer-deps` → `npm ci
+      --legacy-peer-deps`（实测 `npm install` 哪怕已同步也会改写已跟踪的
+      `webui/package-lock.json`：把一堆 `peer:true` 翻成 `dev:true`，13 删 3 增、无版本变化）
+- [x] README「本地检查」同步：四步口径、GA 必需（`GA_ROOT` 或 `../GA`）、前端构建在前
+      pytest 在后及其原因、发布前验证指向 `build_all.py --full`
+
+刻意不做：不删任何散件（一律移动，可回滚）；不新增 `.gitignore` 命名条目（护栏兜住）；
+不引入 `chcp 65001` 解决中文提示乱码（`build_all.bat` 明写批处理非 ASCII 在 OEM 代码页有
+解析风险；实测那一版同样早退，真因是上面那条 `call`，撤掉 chcp 后一切正常）。
+
+**留作后续**（新发现，属构建链改动，需单独一轮 + 同步 `test_build_all.py`）：
+`scripts/build_all.py --full` 也是先跑 pytest、后做前端构建，所以**新克隆（无 `webui/dist`）
+上 `--full` 会在 pytest 阶段就红**，与 check.bat 原先是同一个坑。本次只改了 check/install
+两端，没动构建链。
+
+验证：仓根未跟踪 **47 → 0** 且逐类核对（22/12/9/1/1，另 2 份报告归档）；护栏**故障注入
+7/7 命中**（丢散件→未跟踪护栏红、把该散件 `git add`→白名单护栏红、`README.md` 脱离跟踪→
+白名单「缺失」方向红、还原后全绿），注入前后 `git status` 逐行一致；`check.bat` 从**没有
+`webui/dist`** 的状态完整跑通（98 秒，退出码 0）：npm ci → vitest **519 passed** →
+type-check → api:check **89 形状 / 136 操作** → build（`✓ built in 3.63s`，dist 重建）→
+pytest **1103 passed / 2 skipped** → **`[OK] All checks passed.`**（这行此前不可达）；
+`install_webui.bat` 实跑退出码 0 且**不再弄脏** `webui/package-lock.json`；两个 `.sh` 以
+仓库索引（LF）版本过 `bash -n` 语法检查；`python scripts\build_all.py --full` 退出码 0。

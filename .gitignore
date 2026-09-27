@@ -72,6 +72,9 @@ project_memory.md
 .pytest_tmp*/
 
 # 根目录本机散件（2026-09-23 仓库卫生审查增补：git status 长期污染源）
+# ⚠ 这节是「当时那批名字」的快照，再加名字治不了根：两天后根目录又长出 32 条
+# （2026-09-24/25，见 docs/BACKLOG.md 问题 9）。新散件请放 temp/（已忽略）或归
+# docs/archive/，越界由 tests/test_repo_hygiene.py 拦截。此处只留历史日志模式。
 .tmp/
 /msg_*.json
 /pytest-*/

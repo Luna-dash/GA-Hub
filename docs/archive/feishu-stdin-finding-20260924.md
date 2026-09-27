@@ -1,6 +1,6 @@
 # 飞书检查超时：stdin生命线因果实验（2026-09-24）
 
-本报告取代 DIAGNOSIS.md 中 stdout PIPE 致卡、收发全部正常等未经验证的断言。
+本报告取代 `feishu-check-timeout-diagnosis-20260924.md` 中 stdout PIPE 致卡、收发全部正常等未经验证的断言。（两份报告原名 `FEISHU_STDIN_FINDING.md` / `DIAGNOSIS.md`，2026-09-28 随仓根归位一并归档。）
 
 ## 新证据
 1. stdin_busy_probe.py：stdout始终PIPE；空闲stdin管道0.032s退出；父线程os.read同一管道时4s超时且无输出；仅改stdin=DEVNULL后0.031s正常。
@@ -26,3 +26,10 @@
 ## 部署状态（打包版验收待授权）
 - sidecar 为 PyInstaller onefile（45.4MB，内嵌 server 快照）→ 源码修复必须重新构建（`python scripts/build_all.py`，先退出 GA-Hub 以免产物被锁），重启应用后复测 `/api/feishu/check` 验收。
 - 构建配方与产物守卫见 scripts/build_all.py；今日 15:04/15:06 产物即为其输出（壳管道修复）。
+
+## 引用物位置（2026-09-28 仓根归位）
+本报告与被它取代的 `feishu-check-timeout-diagnosis-20260924.md` 现在都在 `docs/archive/`。
+上面点名的探针（`stdin_busy_probe.py`、`stdin_service_probe.py`、`stdin_release_probe.py`、
+`stdin_pin_after_fix_verify.py` 等）已移出仓根，暂存于本机
+`temp/archive-scattered-20260928/probes/`（`temp/` 不入库；清单见该目录 `MANIFEST.md`，
+需要时可直接搬回）。

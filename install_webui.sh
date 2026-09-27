@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 一键安装 GenericAgent Web 管理后台所需的全部依赖。
 #
-#   1) Python：pip install -e ".[webui]"
+#   1) Python：pip install -r requirements.txt（构建配方、钉版本）
 #   2) 前端：  npm install && npm run build  (统一 npm)
 #
 # 已经装过会跳过；前端构建产物落到 webui/dist/。
@@ -27,8 +27,11 @@ case "$PYVER" in
   *) warn "推荐 Python 3.10–3.13，当前是 $PYVER";;
 esac
 
-say "安装 Python 依赖（pip install -e .）..."
-"$PY" -m pip install -e . --upgrade
+say "安装 Python 依赖（构建配方 requirements.txt）..."
+# pyproject 声明的是松范围，requirements.txt 才是钉版本的唯一可复现清单；
+# 不用 --upgrade，避免把运行时依赖升到比构建配方更新的版本。
+"$PY" -m pip install -r requirements.txt
+"$PY" -m pip install -e . --no-deps
 
 # ── Node ────────────────────────────────────────────────
 say "检查 Node.js 工具链..."
@@ -49,10 +52,16 @@ cd webui
 say "安装前端依赖..."
 NPM_FLAGS=()
 if [ "$PKG" = "npm" ]; then
-  # vite 5 + @vitejs/plugin-react 的 peer 依赖在某些 npm 版本下会冲突，加 legacy 兼容
+  # --legacy-peer-deps：vite 5 + @vitejs/plugin-react 的 peer 依赖在某些 npm 版本下会冲突
   NPM_FLAGS+=(--legacy-peer-deps --no-audit --no-fund)
 fi
-"$PKG" install "${NPM_FLAGS[@]}"
+# 用 ci 而不是 install：实测 npm install（哪怕已同步）会改写已跟踪的
+# webui/package-lock.json（把一堆 peer:true 翻成 dev:true），把工作区弄脏。
+if [ "$PKG" = "npm" ]; then
+  "$PKG" ci "${NPM_FLAGS[@]}"
+else
+  "$PKG" install "${NPM_FLAGS[@]}"
+fi
 
 say "构建前端 → webui/dist/..."
 "$PKG" run build

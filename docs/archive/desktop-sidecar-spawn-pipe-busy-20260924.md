@@ -294,4 +294,4 @@ let owner_stdin = {
 
 壳改用 CreatePipe 后，这根匿名管道由 sidecar 的 desktop-owner-stdin 线程持挂起读取。修复前，sidecar 内的一次性子进程（飞书 check/save_keys/send_text 探针）若**继承**该管道，stdio 初始化同样阻塞：探针永不启动 → check 恒 25s 超时、子进程 CPU=0 僵死。
 
-修复：生命线上任何一次性子进程显式 `stdin=DEVNULL`（已修 feishu 三处；与引擎侧 20ad092a 同因同修）。实验与证据：`FEISHU_STDIN_FINDING.md`；回归：`tests/test_feishu_service.py::test_check_send_save_pin_devnull_stdin`。
+修复：生命线上任何一次性子进程显式 `stdin=DEVNULL`（已修 feishu 三处；与引擎侧 20ad092a 同因同修）。实验与证据：`feishu-stdin-finding-20260924.md`；回归：`tests/test_feishu_service.py::test_check_send_save_pin_devnull_stdin`。
