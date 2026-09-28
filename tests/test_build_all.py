@@ -432,7 +432,32 @@ class MainFlowTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 code = build_all.main(["--full"])
         self.assertEqual(code, 0)
-        self.assertEqual(stage.call_count, 5)  # pytest / vitest / 前端 / sidecar / tauri
+        self.assertEqual(stage.call_count, 5)  # 前端 / pytest / vitest / sidecar / tauri
+
+    def test_full_chain_builds_frontend_before_backend_tests(self):
+        """顺序不变式：--full 必须「先构建前端，再跑后端测试」。
+
+        ``test_built_spa_deep_link_and_hashed_entry_asset`` 依赖 ``webui/dist`` 的
+        hashed 入口，而 dist 正是「前端生产构建」的产物。测试先行 → 新克隆（无 dist）
+        在 pytest 阶段就 404 失败并以 rc=3 退出，永远走不到本该补上 dist 的那一步，
+        整个 --full 自锁。
+
+        上一条用例只锁阶段**数量**，抓不到这类回归，故单独立一条锁**顺序**。
+        """
+        patches = self._patched()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             mock.patch.object(build_all, "run_stage") as stage, \
+             mock.patch.object(build_all, "check_artifact", return_value=0), \
+             mock.patch.object(Path, "is_dir", return_value=True):
+            with redirect_stdout(io.StringIO()):
+                code = build_all.main(["--full"])
+        self.assertEqual(code, 0)
+        titles = [call.args[0] for call in stage.call_args_list]
+        self.assertEqual(
+            titles,
+            ["前端生产构建", "后端测试", "前端测试", "Python sidecar", "Tauri 桌面壳"],
+        )
+        self.assertLess(titles.index("前端生产构建"), titles.index("后端测试"))
 
 
 class SourceHygieneTests(unittest.TestCase):

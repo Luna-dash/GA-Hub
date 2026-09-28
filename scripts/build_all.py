@@ -7,7 +7,7 @@
 退出码：0 成功 · 2 预检失败 · 3 阶段失败 · 5 产物守卫失败
 用法：
     python scripts/build_all.py                 # 标准交付：便携版两个 exe
-    python scripts/build_all.py --full          # 先跑后端 pytest + 前端 vitest
+    python scripts/build_all.py --full          # 前端构建后追加后端 pytest + 前端 vitest
     python scripts/build_all.py --target <triple>   # 仅 Windows x86_64 实测过
 环境变量：
     GA_HUB_PYTHON   sidecar 打包解释器（默认用启动本脚本的解释器）
@@ -385,6 +385,11 @@ def main(argv: list[str] | None = None) -> int:
     before = {label: _snapshot(path) for label, path in paths.items()}
 
     try:
+        # 顺序纪律：前端构建必须排在 --full 的后端测试之前。
+        # test_built_spa_deep_link_and_hashed_entry_asset 需要 webui/dist 的 hashed 入口，
+        # 而 dist 正是下面这条命令的产物——测试先行会在新克隆上因 dist 缺失而 404，
+        # 使 --full 永远走不到本该补上 dist 的这一步（自锁）。check.bat 早已按此顺序。
+        run_stage("前端生产构建", [npm, "--prefix", "webui", "run", "build"])
         if args.full:
             test_env = {"GA_ROOT": str(ga_root), "PYTHONPATH": str(ga_root)}
             run_stage(
@@ -393,7 +398,6 @@ def main(argv: list[str] | None = None) -> int:
                 extra_env=test_env,
             )
             run_stage("前端测试", [npm, "--prefix", "webui", "test", "--", "--run"])
-        run_stage("前端生产构建", [npm, "--prefix", "webui", "run", "build"])
         run_stage(
             "Python sidecar",
             [sidecar_python, "desktop/build_sidecar.py", "--target", args.target],
