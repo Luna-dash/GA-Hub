@@ -299,13 +299,19 @@ def _list_skills(limit: int) -> dict:
     sd = _skill_dir()
     if not os.path.isdir(sd):
         return {"skills": [], "count": 0}
+    root = _skill_root()
     out = []
     LISTED_EXT = {".md", ".json", ".py"}
-    for root, _dirs, files in os.walk(sd):
+    for base, dirs, files in os.walk(sd):
+        _prune_escaping_dirs(dirs, base, root)
         for name in files:
             if os.path.splitext(name)[1].lower() not in LISTED_EXT:
                 continue
-            p = os.path.join(root, name)
+            p = os.path.join(base, name)
+            # Links (incl. Windows junctions) into the machine are not skills —
+            # skip them so the list never advertises a file read would refuse.
+            if _escapes_skill_root(p, root):
+                continue
             rel = os.path.relpath(p, sd)
             try:
                 st = os.stat(p)
@@ -332,18 +338,53 @@ async def list_skills(limit: int = Query(default=200, ge=1, le=1000)):
     return await asyncio.to_thread(_list_skills, limit)
 
 
-def _read_skill(path: str) -> dict:
-    if ".." in path or path.startswith("/"):
+def _skill_root() -> Path:
+    """Real (link-resolved) skill root — the single boundary for skill endpoints."""
+    return Path(_skill_dir()).resolve()
+
+
+def _escapes_skill_root(path: str | os.PathLike[str], root: Path | None = None) -> bool:
+    """True when the real path leaves the skill root.
+
+    Fails closed for unresolvable paths (broken link, symlink loop, NUL byte) so
+    callers skip the entry instead of touching the file. resolve() is what makes
+    this cover junctions: on Windows os.path.islink() is False for a junction,
+    so os.walk(followlinks=False) would still descend into one.
+    """
+    try:
+        Path(path).resolve().relative_to(_skill_root() if root is None else root)
+    except (ValueError, OSError, RuntimeError):
+        return True
+    return False
+
+
+def _prune_escaping_dirs(dirs: list[str], base: str, root: Path) -> None:
+    """Drop directory entries resolving outside the skill root (in-place)."""
+    dirs[:] = [d for d in dirs if not _escapes_skill_root(os.path.join(base, d), root)]
+
+
+def _safe_skill_path(raw_path: str) -> Path:
+    """Resolve one client-supplied path and keep it inside the skill root."""
+    if not raw_path or "\x00" in raw_path or "\\" in raw_path or ":" in raw_path:
         raise HTTPException(400, "bad path")
-    # Restrict to extensions we list (defensive — caller can't path-traverse,
-    # but we still don't want to serve arbitrary binaries).
-    ext = os.path.splitext(path)[1].lower()
+
+    root = _skill_root()
+    candidate = root / raw_path
+    if _escapes_skill_root(candidate, root):
+        raise HTTPException(400, "bad path")
+    return candidate.resolve()
+
+
+def _read_skill(path: str) -> dict:
+    p = _safe_skill_path(path)
+    # Defensive extension allow-list: the caller can no longer traverse paths,
+    # but we still don't want to serve arbitrary binaries through this endpoint.
+    ext = p.suffix.lower()
     if ext not in {".md", ".json", ".py", ".txt", ".yaml", ".yml"}:
         raise HTTPException(400, f"not a readable text file: {ext}")
-    p = os.path.join(_skill_dir(), path)
-    if not os.path.isfile(p):
+    if not p.is_file():
         raise HTTPException(404, "not found")
-    return {"path": path, "content": _read(p)}
+    return {"path": path, "content": _read(str(p))}
 
 
 @router.get("/api/memory/skills/read", response_model=SkillDetailResp)
@@ -357,6 +398,7 @@ def _search_skills(q: str, limit: int) -> dict:
     if not os.path.isdir(sd):
         return {"hits": [], "scanned": 0, "truncated": False}
 
+    root = _skill_root()
     READABLE_EXT = {".md", ".json", ".py", ".txt", ".yaml", ".yml", ".sh", ""}
     MAX_FILE_BYTES = 512 * 1024     # skip pathological files
     PER_FILE_HITS = 5               # cap matches per file in the preview
@@ -364,12 +406,17 @@ def _search_skills(q: str, limit: int) -> dict:
     scanned = 0
     truncated = False
 
-    for root, _dirs, files in os.walk(sd):
+    for base, dirs, files in os.walk(sd):
+        _prune_escaping_dirs(dirs, base, root)
         for name in files:
             ext = os.path.splitext(name)[1].lower()
             if ext not in READABLE_EXT:
                 continue
-            p = os.path.join(root, name)
+            p = os.path.join(base, name)
+            # A link into the rest of the machine is not a skill: never read it,
+            # or the match preview would leak content from outside the root.
+            if _escapes_skill_root(p, root):
+                continue
             try:
                 if os.path.getsize(p) > MAX_FILE_BYTES:
                     continue
