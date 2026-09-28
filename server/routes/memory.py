@@ -62,10 +62,15 @@ class _MemorySnapshot:
 
 
 def _read(path: str) -> str:
-    """Read a UTF-8 text file for the read-only skill endpoints."""
+    """Read one skill file as text, for the read-only skill endpoints.
+
+    Decoding is deliberately lossy (errors="replace"), matching what search
+    already did: a GBK-encoded note is still a searchable skill, and a strict
+    decode only turned it into a 500 in the viewer.
+    """
     if not os.path.isfile(path):
         return ""
-    with open(path, encoding="utf-8-sig", newline="") as fh:
+    with open(path, encoding="utf-8-sig", errors="replace", newline="") as fh:
         return fh.read()
 
 
@@ -295,22 +300,50 @@ async def write_sop(name: str, req: MemoryWriteReq):
 
 
 # ── skills ──────────────────────────────────────────────────────
+# One format contract for all three skill endpoints. They used to keep three
+# private extension sets (list {.md,.json,.py}; read that plus {.txt,.yaml,.yml};
+# search that plus {.sh,""}), so the UI was wrong in both directions: search
+# reported hits read answered 400 to, and read opened files the list never
+# mentioned. The two helpers below are now the single source of that decision.
+SKILL_TEXT_EXT = {".md", ".json", ".py", ".txt", ".yaml", ".yml", ".sh", ""}
+_SNIFF_BYTES = 8192
+
+
+def _is_skill_text(name: str) -> bool:
+    """Shared format gate for list / read / search."""
+    return os.path.splitext(name)[1].lower() in SKILL_TEXT_EXT
+
+
+def _is_binary_blob(path: str) -> bool:
+    """True when the head of a file rules it out as text; fails closed.
+
+    "" is in SKILL_TEXT_EXT so extensionless files such as README count as
+    skills, which also lets extensionless binaries in. A NUL byte is the cheap tell.
+    """
+    try:
+        with open(path, "rb") as fh:
+            return b"\x00" in fh.read(_SNIFF_BYTES)
+    except OSError:
+        return True
+
+
 def _list_skills(limit: int) -> dict:
     sd = _skill_dir()
     if not os.path.isdir(sd):
         return {"skills": [], "count": 0}
     root = _skill_root()
     out = []
-    LISTED_EXT = {".md", ".json", ".py"}
     for base, dirs, files in os.walk(sd):
         _prune_escaping_dirs(dirs, base, root)
         for name in files:
-            if os.path.splitext(name)[1].lower() not in LISTED_EXT:
+            if not _is_skill_text(name):
                 continue
             p = os.path.join(base, name)
             # Links (incl. Windows junctions) into the machine are not skills —
             # skip them so the list never advertises a file read would refuse.
             if _escapes_skill_root(p, root):
+                continue
+            if _is_binary_blob(p):
                 continue
             rel = os.path.relpath(p, sd)
             try:
@@ -334,7 +367,7 @@ def _list_skills(limit: int) -> dict:
 
 @router.get("/api/memory/skills", response_model=SkillListResp)
 async def list_skills(limit: int = Query(default=200, ge=1, le=1000)):
-    """Lightweight skill listing. Walks memory/skill_search/ for *.md / *.json / *.py."""
+    """Lightweight skill listing. Walks memory/skill_search/ for the shared skill text formats."""
     return await asyncio.to_thread(_list_skills, limit)
 
 
@@ -377,13 +410,15 @@ def _safe_skill_path(raw_path: str) -> Path:
 
 def _read_skill(path: str) -> dict:
     p = _safe_skill_path(path)
-    # Defensive extension allow-list: the caller can no longer traverse paths,
-    # but we still don't want to serve arbitrary binaries through this endpoint.
-    ext = p.suffix.lower()
-    if ext not in {".md", ".json", ".py", ".txt", ".yaml", ".yml"}:
-        raise HTTPException(400, f"not a readable text file: {ext}")
+    # Same format gate as list and search, so neither can advertise a file this
+    # endpoint refuses. The caller can no longer traverse paths; what is left is
+    # a format check, plus the NUL sniff that extensionless names now need.
+    if not _is_skill_text(p.name):
+        raise HTTPException(400, f"not a readable text file: {p.suffix.lower()}")
     if not p.is_file():
         raise HTTPException(404, "not found")
+    if _is_binary_blob(str(p)):
+        raise HTTPException(400, "not a readable text file: binary content")
     return {"path": path, "content": _read(str(p))}
 
 
@@ -399,8 +434,8 @@ def _search_skills(q: str, limit: int) -> dict:
         return {"hits": [], "scanned": 0, "truncated": False}
 
     root = _skill_root()
-    READABLE_EXT = {".md", ".json", ".py", ".txt", ".yaml", ".yml", ".sh", ""}
-    MAX_FILE_BYTES = 512 * 1024     # skip pathological files
+    MAX_FILE_BYTES = 512 * 1024     # skip pathological files (a scan cost, not a
+                                    # format rule, so this one stays search-only)
     PER_FILE_HITS = 5               # cap matches per file in the preview
     hits: list[SkillSearchHit] = []
     scanned = 0
@@ -409,19 +444,20 @@ def _search_skills(q: str, limit: int) -> dict:
     for base, dirs, files in os.walk(sd):
         _prune_escaping_dirs(dirs, base, root)
         for name in files:
-            ext = os.path.splitext(name)[1].lower()
-            if ext not in READABLE_EXT:
+            if not _is_skill_text(name):
                 continue
             p = os.path.join(base, name)
             # A link into the rest of the machine is not a skill: never read it,
             # or the match preview would leak content from outside the root.
             if _escapes_skill_root(p, root):
                 continue
+            if _is_binary_blob(p):
+                continue
             try:
                 if os.path.getsize(p) > MAX_FILE_BYTES:
                     continue
                 scanned += 1
-                with open(p, encoding="utf-8", errors="replace") as f:
+                with open(p, encoding="utf-8-sig", errors="replace") as f:
                     matches: list[SkillSearchMatch] = []
                     for i, line in enumerate(f, start=1):
                         if needle in line.lower():

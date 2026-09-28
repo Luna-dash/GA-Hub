@@ -690,7 +690,7 @@ export interface paths {
         };
         /**
          * List Skills
-         * @description Lightweight skill listing. Walks memory/skill_search/ for *.md / *.json / *.py.
+         * @description Lightweight skill listing. Walks memory/skill_search/ for the shared skill text formats.
          */
         get: operations["list_skills_api_memory_skills_get"];
         put?: never;

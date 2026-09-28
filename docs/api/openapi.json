@@ -1368,7 +1368,7 @@
     "/api/memory/skills": {
       "get": {
         "summary": "List Skills",
-        "description": "Lightweight skill listing. Walks memory/skill_search/ for *.md / *.json / *.py.",
+        "description": "Lightweight skill listing. Walks memory/skill_search/ for the shared skill text formats.",
         "operationId": "list_skills_api_memory_skills_get",
         "parameters": [
           {

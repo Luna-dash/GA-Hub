@@ -311,3 +311,71 @@ def test_skill_list_skips_links_outside_skill_root(memory_client) -> None:
     payload = response.json()
     assert [item["path"] for item in payload["skills"]] == ["real_skill.md"]
     assert payload["count"] == 1
+
+
+def test_skill_endpoints_agree_on_which_files_are_skills(memory_client) -> None:
+    """list, search and read must agree on the same set of text skills.
+
+    They used to carry three drifting copies of the extension allow-list, so
+    search could report a hit that read then refused to open, and read could
+    serve a file the list never advertised.
+    """
+    client, memory_dir, _admin_data = memory_client
+    skill_dir = memory_dir / "skill_search"
+    skill_dir.mkdir()
+    # name -> bytes: every extension the shared allow-list has to accept, plus
+    # one extensionless binary that has to stay out of all three endpoints.
+    planted = {
+        "plain.md": b"# plain needle\n",
+        "notes.txt": b"txt needle\n",
+        "conf.yml": b"yml needle\n",
+        "run.sh": b"echo needle\n",
+        "README": b"extensionless needle\n",
+        "legacy": "\u975eutf8 needle \u6807\u9898\n".encode("gbk"),
+        "bundle": b"\x89PNG\r\n\x1a\n\x00\x00binary\n",
+    }
+    for name, data in planted.items():
+        (skill_dir / name).write_bytes(data)
+
+    listed = {item["path"] for item in client.get("/api/memory/skills").json()["skills"]}
+    hits = {hit["path"] for hit in client.get("/api/memory/skills/search", params={"q": "needle"}).json()["hits"]}
+
+    expected = set(planted) - {"bundle"}
+    assert listed == expected
+    assert hits == expected
+
+    for name in sorted(expected):
+        detail = client.get("/api/memory/skills/read", params={"path": name})
+        assert detail.status_code == 200, f"{name} advertised but read refused it"
+        assert detail.json()["path"] == name
+        assert detail.json()["content"]
+
+
+def test_skill_read_serves_non_utf8_bytes_instead_of_failing(memory_client) -> None:
+    """A skill that is not valid UTF-8 is lossy-decoded, never a 500."""
+    client, memory_dir, _admin_data = memory_client
+    skill_dir = memory_dir / "skill_search"
+    skill_dir.mkdir()
+    (skill_dir / "gbk.md").write_bytes("\u6807\u9898 needle\n".encode("gbk"))
+
+    response = client.get("/api/memory/skills/read", params={"path": "gbk.md"})
+
+    assert response.status_code == 200
+    content = response.json()["content"]
+    assert "needle" in content
+    assert "\ufffd" in content
+
+
+def test_skill_endpoints_reject_binary_even_without_an_extension(memory_client) -> None:
+    """The allow-list admits extensionless names, so binary is sniffed out."""
+    client, memory_dir, _admin_data = memory_client
+    skill_dir = memory_dir / "skill_search"
+    skill_dir.mkdir()
+    (skill_dir / "bundle").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00binary\n")
+
+    detail = client.get("/api/memory/skills/read", params={"path": "bundle"})
+
+    assert detail.status_code == 400
+    assert "binary" in detail.json()["detail"]
+    assert client.get("/api/memory/skills").json()["skills"] == []
+    assert client.get("/api/memory/skills/search", params={"q": "binary"}).json()["hits"] == []
