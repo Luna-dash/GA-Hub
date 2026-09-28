@@ -327,6 +327,18 @@ def _is_binary_blob(path: str) -> bool:
         return True
 
 
+def _advertised_path(path: str, root: str) -> str:
+    """POSIX form of a skill path — the one shape all three endpoints speak.
+
+    os.path.relpath() returns native separators, so on Windows list and search
+    used to hand out 'family\\child\\deep.md' while read only ever accepted
+    'family/child/deep.md': every nested skill was advertised but unopenable.
+    The wire contract must not depend on the host OS, so both producers go
+    through here.
+    """
+    return Path(os.path.relpath(path, root)).as_posix()
+
+
 def _list_skills(limit: int) -> dict:
     sd = _skill_dir()
     if not os.path.isdir(sd):
@@ -345,7 +357,7 @@ def _list_skills(limit: int) -> dict:
                 continue
             if _is_binary_blob(p):
                 continue
-            rel = os.path.relpath(p, sd)
+            rel = _advertised_path(p, sd)
             try:
                 st = os.stat(p)
                 out.append(
@@ -396,13 +408,25 @@ def _prune_escaping_dirs(dirs: list[str], base: str, root: Path) -> None:
     dirs[:] = [d for d in dirs if not _escapes_skill_root(os.path.join(base, d), root)]
 
 
+def _client_path_form(raw_path: str) -> str:
+    """POSIX form of a client-supplied path; a backslash counts as a separator.
+
+    A client holding a path we advertised under the old native-separator
+    contract, or one that rebuilt a path with os.path.join, must still be able
+    to open it. Normalizing widens the accepted separator only: the traversal
+    check in _safe_skill_path runs on the normalized form, so a backslash
+    cannot smuggle a '..' segment past it.
+    """
+    return raw_path.replace("\\", "/")
+
+
 def _safe_skill_path(raw_path: str) -> Path:
     """Resolve one client-supplied path and keep it inside the skill root."""
-    if not raw_path or "\x00" in raw_path or "\\" in raw_path or ":" in raw_path:
+    if not raw_path or "\x00" in raw_path or ":" in raw_path:
         raise HTTPException(400, "bad path")
 
     root = _skill_root()
-    candidate = root / raw_path
+    candidate = root / _client_path_form(raw_path)
     if _escapes_skill_root(candidate, root):
         raise HTTPException(400, "bad path")
     return candidate.resolve()
@@ -419,7 +443,7 @@ def _read_skill(path: str) -> dict:
         raise HTTPException(404, "not found")
     if _is_binary_blob(str(p)):
         raise HTTPException(400, "not a readable text file: binary content")
-    return {"path": path, "content": _read(str(p))}
+    return {"path": _client_path_form(path), "content": _read(str(p))}
 
 
 @router.get("/api/memory/skills/read", response_model=SkillDetailResp)
@@ -469,7 +493,7 @@ def _search_skills(q: str, limit: int) -> dict:
                     if matches:
                         hits.append(
                             SkillSearchHit(
-                                path=os.path.relpath(p, sd),
+                                path=_advertised_path(p, sd),
                                 matches=matches,
                             )
                         )

@@ -297,7 +297,11 @@ def test_skill_search_still_reads_nested_files_inside_root(memory_client) -> Non
 
     assert response.status_code == 200
     payload = response.json()
-    assert [hit["path"] for hit in payload["hits"]] == [os.path.join("family", "child", "deep.md")]
+    # A fixed literal, never os.path.join("family", "child", "deep.md"):
+    # re-deriving the expectation with the same native-separator API the
+    # producer uses just re-asserts whatever the host OS does, which is how a
+    # Windows-only path shape passed review in the first place.
+    assert [hit["path"] for hit in payload["hits"]] == ["family/child/deep.md"]
     assert payload["hits"][0]["matches"][0]["line"] == 1
 
 
@@ -379,3 +383,83 @@ def test_skill_endpoints_reject_binary_even_without_an_extension(memory_client) 
     assert "binary" in detail.json()["detail"]
     assert client.get("/api/memory/skills").json()["skills"] == []
     assert client.get("/api/memory/skills/search", params={"q": "binary"}).json()["hits"] == []
+
+
+def test_skill_endpoints_advertise_nested_paths_with_posix_separators(memory_client) -> None:
+    """An advertised path must not carry the host's native separator.
+
+    list and search built their paths with os.path.relpath, so on Windows they
+    published 'family\\child\\deep.md' while read only ever accepted
+    'family/child/deep.md': every nested skill was listed but unopenable.
+    """
+    client, memory_dir, _admin_data = memory_client
+    skill_dir = memory_dir / "skill_search" / "family" / "child"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "deep.md").write_bytes(b"deep needle\n")
+
+    listed = client.get("/api/memory/skills").json()["skills"]
+    hits = client.get("/api/memory/skills/search", params={"q": "needle"}).json()["hits"]
+
+    assert [item["path"] for item in listed] == ["family/child/deep.md"]
+    assert [hit["path"] for hit in hits] == ["family/child/deep.md"]
+
+
+def test_every_advertised_skill_path_is_readable(memory_client) -> None:
+    """The round trip that was missing: whatever list/search advertises, read opens.
+
+    The three-endpoint agreement test only walked top-level names, so a nested
+    path could be advertised and then refused by read with 400.
+    """
+    client, memory_dir, _admin_data = memory_client
+    skill_dir = memory_dir / "skill_search"
+    (skill_dir / "family" / "child").mkdir(parents=True)
+    (skill_dir / "top.md").write_bytes(b"needle top\n")
+    (skill_dir / "family" / "mid.md").write_bytes(b"needle mid\n")
+    (skill_dir / "family" / "child" / "deep.md").write_bytes(b"needle deep\n")
+
+    listed = [item["path"] for item in client.get("/api/memory/skills").json()["skills"]]
+    hits = [
+        hit["path"]
+        for hit in client.get("/api/memory/skills/search", params={"q": "needle"}).json()["hits"]
+    ]
+
+    assert sorted(set(listed + hits)) == ["family/child/deep.md", "family/mid.md", "top.md"]
+    for path in listed + hits:
+        detail = client.get("/api/memory/skills/read", params={"path": path})
+        assert detail.status_code == 200, f"{path!r} advertised but read refused it"
+        assert detail.json()["path"] == path
+        assert "needle" in detail.json()["content"]
+
+
+def test_skill_read_accepts_a_native_separated_path(memory_client) -> None:
+    """Back-compat: a client holding an os.path.join-built path can still open."""
+    client, memory_dir, _admin_data = memory_client
+    skill_dir = memory_dir / "skill_search" / "family" / "child"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "deep.md").write_bytes(b"deep needle\n")
+
+    response = client.get(
+        "/api/memory/skills/read",
+        params={"path": os.path.join("family", "child", "deep.md")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["path"] == "family/child/deep.md"
+    assert "deep needle" in response.json()["content"]
+
+
+def test_skill_read_rejects_traversal_hidden_behind_native_separators(memory_client) -> None:
+    """Treating a backslash as a separator must not become a way to smuggle '..'.
+
+    Both forms are literals rather than os.path.join output: the backslash one
+    has to be rejected on POSIX too, where it used to be an ordinary filename
+    character rather than a separator.
+    """
+    client, memory_dir, _admin_data = memory_client
+    skill_dir = memory_dir / "skill_search"
+    skill_dir.mkdir()
+    (memory_dir / "outside.md").write_bytes(b"secret\n")
+
+    for path in ("..\\outside.md", "family\\..\\..\\outside.md", "nested/../../outside.md"):
+        response = client.get("/api/memory/skills/read", params={"path": path})
+        assert response.status_code == 400, f"{path!r} escaped the skill root"
