@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react'
 import type { ScheduledChat } from '@/api/types'
+import { decideViewportAction } from '@/utils/conversationViewport'
 import { useChatStore, type ChatMsg } from '@/stores/chatStore'
 import { formatDateTime } from '@/utils/formatTime'
 import { readPageState, writePageState } from '@/utils/pageState'
@@ -24,6 +25,12 @@ import { Z_LAYERS } from '@/config/zLayers'
 // top of the viewport); positions saved by a previous run are ignored. Route
 // remounts within the same run still restore the saved reading position.
 let freshLaunchPending = true
+
+// Degraded-landing escape for the projection barrier: if replay_done never
+// arrives (e.g. the transport is down and the managed socket keeps retrying),
+// declare the barrier failed after this grace period and land with the
+// cached view instead of stranding the reader at the top.
+const PROJECTION_FAILURE_GRACE_MS = 4000
 
 export interface LiveChatTranscriptHandle {
   /** Preserve the existing send behavior: a local submission follows the tail. */
@@ -54,6 +61,8 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
   }, forwardedRef) {
     const msgs = useChatStore((state) => state.msgs)
     const streaming = useChatStore((state) => state.streaming)
+    const resumePolicy = useChatStore((state) => state.resumePolicy)
+    const projectionReady = useChatStore((state) => state.projectionReady)
     const historyStatus = useChatStore((state) => state.historyStatus)
     const historyError = useChatStore((state) => state.historyError)
     const historyHasMore = useChatStore((state) => state.historyHasMore)
@@ -251,7 +260,10 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     // Re-aiming with the converged offsets is deterministic, so verify after
     // measurements settle and re-aim a bounded number of times. Stand down
     // immediately if the reader takes over with a real gesture.
-    const aimAtAnchor = useCallback((anchorKey: string | null, fallbackIndex: number, attempt = 0) => {
+    const aimAtAnchor = useCallback((anchorKey: string | null, fallbackIndex: number, attempt: number, session: string) => {
+      // A landing chain belongs to the session that scheduled it: a switch
+      // mid-flight must not re-aim (or re-scroll) the next session's list.
+      if (useChatStore.getState().sessionId !== session) return
       const list = virtualListRef.current
       if (!list) return
       const currentMsgs = msgsRef.current
@@ -263,6 +275,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       list.scrollToIndex(index, { behavior: 'auto', align: 'start' })
       if (attempt >= 12) return
       const verify = () => {
+        if (useChatStore.getState().sessionId !== session) return
         if (lastUserGestureAtRef.current !== restoreGestureMarkRef.current) return
         const first = virtualListRef.current?.getFirstVisibleIndex(48) ?? -1
         const firstMessage = currentMsgs[first]
@@ -283,11 +296,11 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           // passes; with settled offsets the re-aim is deterministic and
           // idempotent, so watching costs one no-op scroll at worst.
           if (anchorKey !== null && Date.now() < aimDeadlineRef.current && attempt < 12) {
-            setTimeout(() => aimAtAnchor(anchorKey, fallbackIndex, attempt + 1), 250)
+            setTimeout(() => aimAtAnchor(anchorKey, fallbackIndex, attempt + 1, session), 250)
           }
           return
         }
-        aimAtAnchor(anchorKey, fallbackIndex, attempt + 1)
+        aimAtAnchor(anchorKey, fallbackIndex, attempt + 1, session)
       }
       // Early passes ride animation frames; later passes give slow rows
       // (markdown, attachments) a beat to measure before the final verdict.
@@ -298,46 +311,70 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       }
     }, [])
 
-    // One-shot reading-position restore per hydrated session mount. Anchored
-    // to the saved first-visible message key; falls back to default pinning.
+    // Final landing is gated by the projection barrier: cached messages may
+    // render, but a running session waits for replay before following latest.
+    // Escape hatch: when the barrier never resolves within the grace period
+    // (e.g. the transport is down), land with the cached view instead of
+    // stranding the reader at the top; a late replay_done keeps that landing
+    // (pinning follows live growth, restores keep their anchor).
+    const [projectionFailed, setProjectionFailed] = useState(false)
     useEffect(() => {
-      if (!sessionId || historyStatus === 'loading_history' || msgs.length === 0) return
+      setProjectionFailed(false)
+      if (!sessionId || projectionReady || historyStatus === 'loading_history') return
+      const timer = window.setTimeout(() => setProjectionFailed(true), PROJECTION_FAILURE_GRACE_MS)
+      return () => window.clearTimeout(timer)
+    }, [sessionId, projectionReady, historyStatus])
+
+    useEffect(() => {
+      const action = decideViewportAction({
+        resumePolicy,
+        hydration: projectionReady
+          ? 'ready'
+          : (historyStatus === 'loading_history'
+            ? 'loading-history'
+            : (projectionFailed ? 'failed' : 'replaying')),
+        hasMessages: msgs.length > 0,
+      })
+      if (action === 'wait' || !sessionId) return
       if (restoredSessionsRef.current.has(sessionId)) return
       restoredSessionsRef.current.add(sessionId)
       const saved = freshLaunchPending ? null : scrollPositionsRef.current[sessionId]
       freshLaunchPending = false
       restoreGestureMarkRef.current = lastUserGestureAtRef.current
-      // Watch the landing until measurement has fully settled so late row
-      // growth cannot silently shift the restored viewport off the anchor.
       aimDeadlineRef.current = Date.now() + 1500
-      if (saved && !saved.stuck && saved.key) {
+
+      if (action === 'follow-latest') {
+        const lastIndex = msgs.length - 1
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (useChatStore.getState().sessionId !== sessionId) return
+          markProgrammaticScroll()
+          virtualListRef.current?.scrollToIndex(lastIndex, { behavior: 'auto', align: 'end' })
+          setStuckBottom(true)
+          setUnread(0)
+        }))
+        return
+      }
+
+      if (action === 'restore-position' && saved && !saved.stuck && saved.key) {
         const index = msgs.findIndex((message) => chatMessageKey(message) === saved.key)
         if (index >= 0) {
-          aimAtAnchor(saved.key, index)
+          aimAtAnchor(saved.key, index, 0, sessionId)
           setStuckBottom(false)
           return
         }
       }
-      // Default landing: the latest turn, starting at its user question. A
-      // short turn bottoms out and keeps the tail pinned; a long one leaves
-      // the reader mid-turn with the question visible first.
+
       for (let index = msgs.length - 1; index >= 0; index -= 1) {
         if (msgs[index].role !== 'user') continue
-        // Row heights are still estimated on the first pass; scrolling now
-        // would clamp into the "pinned" zone near the estimated bottom and
-        // measureRow would keep re-pinning to the real bottom. Wait two
-        // frames so measurements settle, then land and judge pinning on
-        // real metrics.
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            aimAtAnchor(null, index)
-            const el = scrollRef.current
-            if (el) setStuckBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
-          })
-        })
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (useChatStore.getState().sessionId !== sessionId) return
+          aimAtAnchor(null, index, 0, sessionId)
+          const el = scrollRef.current
+          if (el) setStuckBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
+        }))
         return
       }
-    }, [sessionId, historyStatus, msgs])
+    }, [sessionId, historyStatus, projectionReady, projectionFailed, resumePolicy, msgs, aimAtAnchor])
 
     const handleLoadOlderHistory = useCallback(async () => {
       const el = scrollRef.current

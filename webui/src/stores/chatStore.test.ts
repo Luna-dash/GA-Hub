@@ -785,3 +785,124 @@ describe('manual stop projection', () => {
     expect(afterError.some((m) => m.content.includes('运行错误（llm_refused）'))).toBe(true)
   })
 })
+
+describe('chatStore viewport resume handoff', () => {
+  beforeEach(() => {
+    FakeWebSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    useChatStore.setState({
+      msgs: [],
+      conn: 'connecting',
+      streaming: false,
+      historyStatus: 'idle',
+      historyError: null,
+      historyRevision: null,
+      historyHasMore: false,
+      historyBefore: null,
+      olderHistoryStatus: 'idle',
+      olderHistoryError: null,
+      sock: null,
+      sessionId: null,
+      sessionViews: {},
+      resumePolicy: 'open-latest',
+      projectionReady: false,
+    })
+  })
+
+  afterEach(() => {
+    useChatStore.getState().teardown()
+    vi.unstubAllGlobals()
+  })
+
+  it('parks a running session as follow-latest and re-gates it on the next replay_done', async () => {
+    vi.spyOn(api, 'getSessionMessages')
+      .mockResolvedValueOnce({
+        session_id: 'session-a', archive_bound: true, revision: 'a1',
+        items: [{ id: 'a-message', role: 'assistant', content: 'cached A', ordinal: 1 }],
+      })
+      .mockResolvedValueOnce({
+        session_id: 'session-b', archive_bound: true, revision: 'b1',
+        items: [{ id: 'b-message', role: 'assistant', content: 'cached B', ordinal: 1 }],
+      })
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    const socketA = FakeWebSocket.instances.at(-1)!
+    socketA.emit({ type: 'replay_done' })
+    await vi.waitFor(() => expect(useChatStore.getState().projectionReady).toBe(true))
+    socketA.emit({ type: 'next', stream_id: 'a-live', content: 'running answer' })
+    await vi.waitFor(() => expect(useChatStore.getState().streaming).toBe(true))
+
+    useChatStore.getState().start('session-b')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    expect(useChatStore.getState().sessionViews['session-a']).toMatchObject({
+      resumePolicy: 'follow-latest',
+      streaming: true,
+      projectionReady: true,
+    })
+
+    useChatStore.getState().start('session-a')
+    expect(useChatStore.getState()).toMatchObject({
+      sessionId: 'session-a',
+      resumePolicy: 'follow-latest',
+      projectionReady: false,
+    })
+
+    const resumed = FakeWebSocket.instances.at(-1)!
+    expect(resumed.url).toContain('session-a')
+    resumed.emit({ type: 'replay_done' })
+    await vi.waitFor(() => expect(useChatStore.getState().projectionReady).toBe(true))
+  })
+
+  it('clears the cursor and the projection barrier on resync_required', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
+      session_id: 'session-a', archive_bound: true, revision: 'a1', items: [],
+    })
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    const first = FakeWebSocket.instances.at(-1)!
+    first.emit({ type: 'next', stream_id: 'a-live', content: 'live', event_id: 7, epoch: 'e1' })
+    await vi.waitFor(() => expect(useChatStore.getState().msgs.some((m) => m.content === 'live')).toBe(true))
+    first.emit({ type: 'replay_done' })
+    await vi.waitFor(() => expect(useChatStore.getState().projectionReady).toBe(true))
+
+    const before = FakeWebSocket.instances.length
+    first.emit({ type: 'resync_required' })
+    await vi.waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(before))
+    expect(useChatStore.getState().projectionReady).toBe(false)
+
+    const reconnected = FakeWebSocket.instances.at(-1)!
+    expect(reconnected.url).not.toContain('after_event_id')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    reconnected.emit({ type: 'replay_done' })
+    await vi.waitFor(() => expect(useChatStore.getState().projectionReady).toBe(true))
+  })
+
+  it('parks a settled session as restore-position for its next visit', async () => {
+    vi.spyOn(api, 'getSessionMessages')
+      .mockResolvedValueOnce({
+        session_id: 'session-a', archive_bound: true, revision: 'a1',
+        items: [{ id: 'a-message', role: 'assistant', content: 'cached A', ordinal: 1 }],
+      })
+      .mockResolvedValueOnce({
+        session_id: 'session-b', archive_bound: true, revision: 'b1',
+        items: [{ id: 'b-message', role: 'assistant', content: 'cached B', ordinal: 1 }],
+      })
+
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    useChatStore.getState().start('session-b')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    expect(useChatStore.getState().sessionViews['session-a']).toMatchObject({
+      resumePolicy: 'restore-position',
+    })
+
+    useChatStore.getState().start('session-a')
+    expect(useChatStore.getState()).toMatchObject({
+      sessionId: 'session-a',
+      resumePolicy: 'restore-position',
+      projectionReady: false,
+    })
+  })
+})

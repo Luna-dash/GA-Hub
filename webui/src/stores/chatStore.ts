@@ -27,6 +27,7 @@ import type {
 import { api, ChatSocket } from '@/api/client'
 import type { PasteAttachment } from '@/api/types'
 import { replySegmentsContent, updateReplySegments, type ReplySegment } from '@/utils/replySegments'
+import { type ViewportResumePolicy } from '@/utils/conversationViewport'
 
 export type ChatMsgRole = 'user' | 'assistant' | 'system'
 
@@ -55,6 +56,10 @@ export interface ChatMsg {
 interface SessionView {
   msgs: ChatMsg[]
   streaming: boolean
+  /** Final landing policy for the next activation of this session. */
+  resumePolicy: ViewportResumePolicy
+  /** True only after the current history/snapshot/replay projection is complete. */
+  projectionReady: boolean
   historyStatus: ChatState['historyStatus']
   historyError: string | null
   historyRevision: string | null
@@ -69,6 +74,10 @@ interface ChatState {
   msgs: ChatMsg[]
   conn: 'connecting' | 'open' | 'closed'
   streaming: boolean              // true if any stream still receiving
+  /** Policy used when this session next becomes visible. */
+  resumePolicy: ViewportResumePolicy
+  /** Cached messages may render before reconnect replay is complete. */
+  projectionReady: boolean
   retryPending: boolean           // true while a recoverable error retry is backing off (abortable, but coordinator reports idle)
   historyStatus: 'idle' | 'loading_history' | 'ready' | 'history_error'
   historyError: string | null
@@ -634,6 +643,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
   msgs: [],
   conn: 'connecting',
   streaming: false,
+  resumePolicy: 'open-latest',
+  projectionReady: false,
   retryPending: false,
   historyStatus: 'idle',
   historyError: null,
@@ -668,6 +679,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       const previousView: SessionView = {
         msgs: current.msgs,
         streaming: current.streaming,
+        resumePolicy: current.streaming ? 'follow-latest' : 'restore-position',
+        projectionReady: current.projectionReady,
         historyStatus: current.historyStatus,
         historyError: current.historyError,
         historyRevision: current.historyRevision,
@@ -685,6 +698,10 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     set({
       msgs: switching ? (cached?.msgs ?? []) : current.msgs,
       streaming: switching ? (cached?.streaming ?? false) : current.streaming,
+      resumePolicy: switching
+        ? (cached?.resumePolicy ?? (cached?.streaming ? 'follow-latest' : 'restore-position'))
+        : current.resumePolicy,
+      projectionReady: false,
       retryPending: false,
       historyStatus: resumeCachedView ? cached.historyStatus : 'loading_history',
       historyError: resumeCachedView ? cached.historyError : null,
@@ -849,6 +866,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
         devTrace('replay', m.type)
         if (pendingNext.size > 0) flushNext()
         commitCursor(sessionId, m)
+        set((st) => st.sessionId === sessionId ? { projectionReady: true } : st)
         return
       }
 
