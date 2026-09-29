@@ -19,6 +19,8 @@ use tauri::{
 use url::Url;
 use uuid::Uuid;
 
+mod mei_cleanup;
+
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 #[cfg(windows)]
@@ -822,6 +824,11 @@ fn allocate_sidecar_identity() -> Result<(u16, String), String> {
 }
 
 fn spawn_sidecar(port: u16, token: &str) -> Result<OwnedProcess, String> {
+    // Reclaim onefile bundle directories left by earlier sidecars. This runs on
+    // every spawn, not once per process: a rebuild/restart loop reuses one
+    // desktop session, and that loop is exactly what piles up bundles inside
+    // a single %TEMP%. Never fail the launch on cleanup problems.
+    mei_cleanup::sweep_stale_bundles(&record_startup_diagnostic);
     let mut command = sidecar_command()?;
     // Packaged sidecars do not bundle GA's third-party dependencies. The
     // Python bootstrap uses the discovered GA interpreter's site-packages by
