@@ -73,6 +73,10 @@ ENV_GAHUB_KEEP_CHILDREN_ON_EXIT = "GAHUB_KEEP_CHILDREN_ON_EXIT"
 ENV_GAHUB_HUB_PROJECTION_MAX = "GAHUB_HUB_PROJECTION_MAX"
 ENV_GAHUB_HUB_PROJECTION_SUFFIX = "GAHUB_HUB_PROJECTION_SUFFIX"
 ENV_GAHUB_HUB_PROJECTION_INCLUDE_SYSTEM = "GAHUB_HUB_PROJECTION_INCLUDE_SYSTEM"
+# MEI cleanup test gates (src-tauri/src/mei_cleanup.rs): explicit opt-ins for
+# the ignored real-%TEMP% dry-run; these never enable cleanup by default.
+ENV_GAHUB_MEI_SWEEP_ALLOW_REAL_TEMP = "GAHUB_MEI_SWEEP_ALLOW_REAL_TEMP"
+ENV_GAHUB_MEI_SWEEP_DRY_RUN = "GAHUB_MEI_SWEEP_DRY_RUN"
 # mykey sync (routes/mykey.py): sync-site root URL and the credential env
 # entries the sync subprocess consumes; the probe strips both secrets from
 # the child environment.

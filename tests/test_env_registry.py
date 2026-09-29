@@ -45,6 +45,8 @@ def _registered_names() -> set[str]:
         constants.ENV_GAHUB_HUB_PROJECTION_MAX,
         constants.ENV_GAHUB_HUB_PROJECTION_SUFFIX,
         constants.ENV_GAHUB_HUB_PROJECTION_INCLUDE_SYSTEM,
+        constants.ENV_GAHUB_MEI_SWEEP_ALLOW_REAL_TEMP,
+        constants.ENV_GAHUB_MEI_SWEEP_DRY_RUN,
         constants.ENV_MYKEY_SYNC_URL,
         constants.ENV_MYKEY_SYNC_PASSPHRASE,
         constants.ENV_MYKEY_UPLOAD_TOKEN,
