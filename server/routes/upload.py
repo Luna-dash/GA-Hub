@@ -231,16 +231,9 @@ def _open_in_default_app(path: Path) -> None:
             raise HTTPException(500, "default application is unavailable") from exc
         return
 
-    try:
-        if system == "Windows":
-            os.startfile(str(path))  # type: ignore[attr-defined]
-        elif system == "Darwin":
-            subprocess.Popen(["open", str(path)], **hidden_process_kwargs())
-        else:
-            subprocess.Popen(["xdg-open", str(path)], **hidden_process_kwargs())
-    except OSError as exc:
-        log.warning("file_open_failed path=%s error=%s", path, exc)
-        raise HTTPException(500, "default application is unavailable") from exc
+    # Never hand files to OS associations: .py/.js can be configured to execute
+    # on Windows. Reveal files in their folder instead; Explorer selects them.
+    _show_in_file_manager(path)
 
 
 def _upload_dir() -> str:
@@ -253,6 +246,31 @@ def _upload_dir() -> str:
 _INLINE_IMAGE_EXT = {
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".tiff",
 }
+
+
+def _file_response_headers(path: str | Path) -> dict[str, str]:
+    """Return safe headers for a path-based file response."""
+    return {"X-Content-Type-Options": "nosniff"}
+
+
+def _file_response(path: str | Path) -> FileResponse:
+    """Serve only passive raster images inline; download everything else."""
+    response_path = path
+    path_obj = Path(path)
+    headers = _file_response_headers(path_obj)
+    if path_obj.suffix.lower() in _INLINE_IMAGE_EXT:
+        return FileResponse(
+            response_path,
+            media_type=mimetypes.guess_type(path_obj.name)[0] or "application/octet-stream",
+            headers=headers,
+        )
+    return FileResponse(
+        response_path,
+        media_type="application/octet-stream",
+        filename=path_obj.name,
+        content_disposition_type="attachment",
+        headers=headers,
+    )
 
 
 class UploadTooLarge(ValueError):
@@ -328,20 +346,7 @@ async def get_file(fname: str):
     p = os.path.join(_upload_dir(), fname)
     if not await asyncio.to_thread(os.path.isfile, p):
         raise HTTPException(404, "not found")
-    ext = Path(fname).suffix.lower()
-    if ext in _INLINE_IMAGE_EXT:
-        return FileResponse(
-            p,
-            media_type=mimetypes.guess_type(fname)[0] or "application/octet-stream",
-            headers={"X-Content-Type-Options": "nosniff"},
-        )
-    return FileResponse(
-        p,
-        media_type="application/octet-stream",
-        filename=fname,
-        content_disposition_type="attachment",
-        headers={"X-Content-Type-Options": "nosniff"},
-    )
+    return _file_response(p)
 
 
 def _show_in_file_manager(path: Path) -> None:
@@ -425,4 +430,4 @@ async def get_file_by_path(path: str):
     # realpath() on a user-supplied path can touch dead UNC/drive targets and
     # block for seconds on Windows — resolve in a worker thread.
     resolved = await asyncio.to_thread(_resolve_file_by_path, path)
-    return FileResponse(resolved)
+    return _file_response(resolved)

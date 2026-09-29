@@ -69,6 +69,36 @@ def test_cancelled_upload_removes_partial_file(tmp_path):
     assert not target.exists()
 
 
+def test_files_by_path_serves_active_content_as_attachment(tmp_path, monkeypatch):
+    client, _ = _client(tmp_path, monkeypatch)
+    temp_root = tmp_path / "ga-temp"
+    temp_root.mkdir()
+    target = temp_root / "preview.html"
+    target.write_text("<script>alert(1)</script>", encoding="utf-8")
+    monkeypatch.setattr(_paths, "temp_dir", lambda: temp_root)
+
+    response = client.get("/api/files-by-path", params={"path": str(target)})
+
+    assert response.status_code == 200
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert "attachment" in response.headers["content-disposition"].lower()
+
+
+def test_files_by_path_keeps_passive_raster_inline(tmp_path, monkeypatch):
+    client, _ = _client(tmp_path, monkeypatch)
+    temp_root = tmp_path / "ga-temp"
+    temp_root.mkdir()
+    target = temp_root / "preview.png"
+    target.write_bytes(b"not-a-real-png")
+    monkeypatch.setattr(_paths, "temp_dir", lambda: temp_root)
+
+    response = client.get("/api/files-by-path", params={"path": str(target)})
+
+    assert response.status_code == 200
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert "attachment" not in response.headers.get("content-disposition", "").lower()
+
+
 def test_files_by_path_rejects_symlink_outside_allowed_root(tmp_path, monkeypatch):
     client, _ = _client(tmp_path, monkeypatch)
     temp_root = tmp_path / "ga-temp"

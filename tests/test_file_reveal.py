@@ -59,16 +59,19 @@ def test_resolve_reveal_path_rejects_executables_and_missing(tmp_path, monkeypat
     assert exc3.value.status_code == 404
 
 
-def test_open_windows_file_uses_default_application(tmp_path, monkeypatch):
+def test_open_windows_file_reveals_in_file_manager_without_default_application(tmp_path, monkeypatch):
     target = tmp_path / "report.md"
     target.write_text("ok", encoding="utf-8")
     startfile = Mock()
+    popen = Mock()
     monkeypatch.setattr(upload.platform, "system", lambda: "Windows")
     monkeypatch.setattr(upload.os, "startfile", startfile, raising=False)
+    monkeypatch.setattr(upload.subprocess, "Popen", popen)
 
     upload._open_in_default_app(target)
 
-    startfile.assert_called_once_with(str(target))
+    startfile.assert_not_called()
+    popen.assert_called_once_with(f'explorer /select,"{target}"')
 
 
 def test_open_windows_folder_uses_default_application_without_explorer_process(tmp_path, monkeypatch):
