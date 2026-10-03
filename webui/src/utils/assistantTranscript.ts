@@ -312,19 +312,24 @@ function projectFinalBody(content: string, askReplacement: string | null = null)
   return [before, rendered, after].filter(Boolean).join('\n\n')
 }
 
-/** True when a turn consists ONLY of tool dumps (4/5-backtick fences +
- *  🛠️/bracket status lines) with no prose and no ask_user — the shape of a
- *  turn cut off by the stop button (its LLM tail never reaches the archive).
- *  ask_user turns are questions, never "dangling". */
+/** A tool-ended turn has no conclusion even when prose introduces the call.
+ * Inspect outside fences: tool output and Markdown examples are data, not
+ * protocol. A tail that evaporates to nothing (bare tool fences, status
+ * lines) is plumbing too — only prose after the last call is a conclusion. */
 function isDanglingToolTurn(content: string): boolean {
   if (lastAskUserMatch(content)) return false
-  const stripped = content
-    .replace(/^(`{4,})[^\r\n]*(?:\r?\n|$)[\s\S]*?^\1[ \t]*$/gm, '')
-    .replace(/^`{4,}[^\r\n]*(?:\r?\n|$)[\s\S]*$/m, '')
-    .replace(/^\s*🛠️[^\r\n]*$/gm, '')
-    .replace(/^\s*\[(?:Info|Warn|Error|Status|Stdout|Stderr|系统)\][^\r\n]*$/gim, '')
-    .trim()
-  return stripped === ''
+  const { safe } = protectToolFences(content)
+  const outsideFences = safe
+    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, 'MARKDOWN_CODE')
+    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n[\s\S]*)?$/m, 'MARKDOWN_CODE')
+  const calls = [...outsideFences.matchAll(/^[ \t]*🛠️\s*(?:Tool\s*[:：]\s*`?[\w.-]|\w+\s*\()[^\r\n]*$/gm)]
+  const lastCall = calls[calls.length - 1]
+  const tail = (lastCall
+    ? outsideFences.slice((lastCall.index ?? 0) + lastCall[0].length)
+    : outsideFences)
+    .replace(new RegExp(`${PLACEHOLDER_PREFIX}\\d+\\u0000`, 'g'), '')
+    .replace(/^[ \t]*\[(?:Info|Warn|Error|Status|Stdout|Stderr|系统)\][^\r\n]*$/gim, '')
+  return tail.trim() === ''
 }
 
 // ---------------------------------------------------------------------------

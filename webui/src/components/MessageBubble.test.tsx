@@ -382,6 +382,35 @@ describe('MessageBubble render isolation', () => {
     expect(host.querySelector('[data-system-dot]')).toBeTruthy()
   })
 
+  it.each([false, true])('keeps mixed interrupted tool details folded (manualStop=%s)', async (manualStop) => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    ;(navigator as unknown as { clipboard: { writeText: (t: string) => Promise<void> } }).clipboard = { writeText }
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
+    const content = [
+      '**LLM Running (Turn 83) ...**',
+      '<summary>检查卸载清理</summary>',
+      '看卸载清理effect：',
+      '🛠️ Tool: `file_read`  📥 args:',
+      '````text',
+      '{"path":"LiveChatTranscript.tsx"}',
+      '````',
+      '`````',
+      '111| useEffect(() => {',
+      '`````',
+      '**LLM Running (Turn 84) ...**',
+    ].join('\n')
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} stopped={manualStop} />))
+    expect(markdownRender).toHaveBeenCalledTimes(1)
+    expect(markdownRender.mock.calls[0][0].children).toBe('检查卸载清理')
+    expect(host.textContent).toContain('⏹任务中止')
+    expect(host.textContent).toContain('查看执行过程')
+    expect(host.textContent).not.toContain('111| useEffect')
+    const copy = host.querySelector('button[title="复制结论"]')
+    expect(copy).not.toBeNull()
+    await act(async () => { copy!.dispatchEvent(new MouseEvent('click', { bubbles: true })); await Promise.resolve() })
+    expect(writeText).toHaveBeenCalledWith('检查卸载清理')
+  })
+
   it('uses the last summary as the stopped conclusion and ends with the stop notice', () => {
     const content = [
       '**LLM Running (Turn 1) ...**',

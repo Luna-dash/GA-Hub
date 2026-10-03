@@ -7,6 +7,54 @@ import {
 } from './assistantTranscript'
 
 describe('assistant transcript projection', () => {
+  it.each([
+    '🛠️ Tool: `file_read`  📥 args:\n````text\n{"path":"view.tsx"}\n````\n`````\n111| useEffect\n`````',
+    '🛠️ code_run({"script":"test"})\n`````\noutput\n`````',
+    '🛠️ Tool: `code_run`  📥 args:\n````text\n{"script":',
+  ])('recognizes prose plus a terminal tool dump and empty trailing turn: %s', (tool) => {
+    const content = `**LLM Running (Turn 83) ...**\n<summary>检查清理</summary>\n看卸载清理effect：\n${tool}\n**LLM Running (Turn 84) ...**`
+    const transcript = parseAssistantTranscript(content)
+    expect(transcript.stopped).toBe(true)
+    expect(transcript.turns[0].content).toContain(tool)
+    expect(transcript.finalAskUser).toBeNull()
+  })
+
+  it.each([
+    '````text\n{"path":"view.tsx"}\n````',
+    '````text\n{"script":',
+    '`````\nout\n`````',
+  ])('treats a bare tool fence without readable prose as a dangling tail: %s', (tool) => {
+    const content = `**LLM Running (Turn 1) ...**\n<summary>执行命令</summary>\n${tool}`
+    const transcript = parseAssistantTranscript(content)
+    expect(transcript.stopped).toBe(true)
+    expect(transcript.finalBody).toBe('')
+  })
+
+  it('recognizes a name-mangled Tool: line as a call, not a conclusion', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '<summary>读取参数</summary>',
+      '🛠️ Tool: `...`  📥 args:',
+      '````text',
+      '{"x": 1}',
+      '````',
+    ].join('\n')
+    const transcript = parseAssistantTranscript(content)
+    expect(transcript.stopped).toBe(true)
+    expect(transcript.finalBody).toBe('')
+  })
+
+  it.each([
+    '正文中引用 🛠️ Tool: `code_run`，不是调用。',
+    '示例：\n```text\n🛠️ Tool: `code_run`\n```',
+    '🛠️ Tool: `code_run`\n````text\n{"script":"test"}\n````\n```js\nconsole.log(1)\n```',
+    '目录树：\n```text\nsrc/\n  index.ts\n```',
+    '🛠️ Tool: `code_run`\n````text\n{"script":"test"}\n````\n## 结论\n已验证通过。',
+  ])('preserves actual conclusions and tool references: %s', (body) => {
+    const transcript = parseAssistantTranscript(`**LLM Running (Turn 1) ...**\n${body}`)
+    expect(transcript.stopped).toBe(false)
+    expect(transcript.finalBody).toBe(body)
+  })
   it('extracts turn summaries and the user-facing final body', () => {
     const content = [
       '**LLM Running (Turn 1) ...**',
