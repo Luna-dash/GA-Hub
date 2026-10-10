@@ -768,8 +768,7 @@ export default function LiveChat() {
         />
       }
     >
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <div className="flex h-full min-h-0 flex-col md:flex-row">
         <SessionRail
           sessions={sessions}
           runtimes={runtimes}
@@ -781,34 +780,35 @@ export default function LiveChat() {
           onRename={renameSession}
           onDelete={deleteSession}
         />
-        <LiveChatTranscript
-          key={session?.id ?? 'transcript-empty'}
-          ref={transcriptRef}
-          sessionId={session?.id ?? null}
-          sessionError={sessionError}
-          scheduledChats={scheduledChats}
-          scheduleNow={scheduleNow}
-          onCancelSchedule={cancelSchedule}
-          onRewind={handleRewind}
-        />
-      </div>
-
-      <LiveChatComposer
-        draftKey={draftKey}
-        sessionId={session?.id}
-        onSubmit={submit}
-        onSchedule={openSchedule}
-        onStop={() => {
-          const sid = session?.id
-          if (!sid || sessionIdRef.current !== sid || (!sessionRunning && !retryPending)) return
-          void api.abortSession(sid).then(() => refreshRuntime(sid))
-        }}
-        stopActive={sessionRunning || retryPending}
-        onSlashCommand={handleSlashCommand}
-        placeholder="输入消息,或输入 / 查看命令"
-        disabled={creatingSession}
-        submitDisabled={streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair}
-      />
+        {/* Keep the composer in the transcript column so the rail spans the full height. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <LiveChatTranscript
+            key={session?.id ?? 'transcript-empty'}
+            ref={transcriptRef}
+            sessionId={session?.id ?? null}
+            sessionError={sessionError}
+            scheduledChats={scheduledChats}
+            scheduleNow={scheduleNow}
+            onCancelSchedule={cancelSchedule}
+            onRewind={handleRewind}
+          />
+          <LiveChatComposer
+            draftKey={draftKey}
+            sessionId={session?.id}
+            onSubmit={submit}
+            onSchedule={openSchedule}
+            onStop={() => {
+              const sid = session?.id
+              if (!sid || sessionIdRef.current !== sid || (!sessionRunning && !retryPending)) return
+              void api.abortSession(sid).then(() => refreshRuntime(sid))
+            }}
+            stopActive={sessionRunning || retryPending}
+            onSlashCommand={handleSlashCommand}
+            placeholder="输入消息,或输入 / 查看命令"
+            disabled={creatingSession}
+            submitDisabled={streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair}
+          />
+        </div>
       </div>
 
       {scheduleOpen && (
