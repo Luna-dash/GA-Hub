@@ -31,6 +31,9 @@ ENV_ENABLE_EXTERNAL_SITE_PATHS = "GA_HUB_ENABLE_EXTERNAL_SITE_PATHS"
 # Desktop build chain: interpreter used for the PyInstaller sidecar build
 # (scripts/build_all.py and src-tauri/src/main.rs).
 ENV_SIDECAR_PYTHON = "GA_HUB_PYTHON"
+# Build-only MSVC override and private cmd subprocess path transfer.
+ENV_BUILD_VCVARSALL = "GA_HUB_VCVARSALL"
+ENV_BUILD_VCVARS_SCRIPT = "GA_HUB_VCVARS_SCRIPT"
 # Desktop shell: dev-mode sidecar override and debug bridge port
 # (src-tauri/src/main.rs).
 ENV_SIDECAR = "GA_HUB_SIDECAR"

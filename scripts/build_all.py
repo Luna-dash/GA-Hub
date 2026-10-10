@@ -135,12 +135,131 @@ def _has_pyinstaller(python: str) -> bool:
     return probe.returncode == 0
 
 
+def _msvc_arch(target: str) -> str:
+    arch = target.split("-", 1)[0]
+    try:
+        return {"x86_64": "x64", "i686": "x86", "aarch64": "arm64"}[arch]
+    except KeyError:
+        raise RuntimeError(f"不支持自动初始化的 MSVC target：{target}") from None
+
+
+def _msvc_ready(env: dict[str, str], arch: str) -> bool:
+    """不能仅凭 PATH 有 link 判定：GNU link、错架构、缺 SDK 都不能构建。"""
+    values = {key.upper(): value for key, value in env.items()}
+    if values.get("VSCMD_ARG_TGT_ARCH", "").lower() != arch:
+        return False
+    vc = values.get("VCTOOLSINSTALLDIR", "")
+    sdk = values.get("WINDOWSSDKDIR", "")
+    if not vc or not sdk or not values.get("INCLUDE") or not values.get("LIB"):
+        return False
+    for tool, root in (("cl.exe", vc), ("link.exe", vc), ("rc.exe", sdk)):
+        found = shutil.which(tool, path=values.get("PATH", ""))
+        if not found or not Path(found).resolve().is_relative_to(Path(root).resolve()):
+            return False
+    libdirs = [Path(part) for part in values["LIB"].split(";") if part]
+    return all(any((directory / name).is_file() for directory in libdirs)
+               for name in ("kernel32.lib", "ucrt.lib", "libcmt.lib"))
+
+
+def _vcvars_candidates() -> list[Path]:
+    """vswhere 失败/空结果仍回退标准 VS2017+ 目录，不依赖 Everything。"""
+    override = os.environ.get("GA_HUB_VCVARSALL", "").strip()
+    if override:
+        path = Path(override)
+        if not path.is_file():
+            raise RuntimeError(f"GA_HUB_VCVARSALL 指定的文件不存在：{path}")
+        return [path]
+    candidates: list[Path] = []
+    program_roots = list(dict.fromkeys(filter(None, (
+        os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)"),
+        r"C:\Program Files", r"C:\Program Files (x86)",
+    ))))
+    where = shutil.which("vswhere.exe")
+    if not where:
+        where = next((str(Path(root) / "Microsoft Visual Studio/Installer/vswhere.exe")
+                      for root in program_roots
+                      if (Path(root) / "Microsoft Visual Studio/Installer/vswhere.exe").is_file()), None)
+    if where:
+        try:
+            result = subprocess.run(
+                [where, "-all", "-products", "*", "-prerelease", "-utf8", "-property", "installationPath"],
+                capture_output=True, encoding="utf-8", errors="replace",
+                stdin=subprocess.DEVNULL, timeout=15,
+            )
+            if result.returncode == 0:
+                candidates.extend(Path(line.strip()) / "VC/Auxiliary/Build/vcvarsall.bat"
+                                  for line in result.stdout.splitlines() if line.strip())
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    for root in program_roots:
+        base = Path(root) / "Microsoft Visual Studio"
+        if base.is_dir():
+            candidates.extend(sorted(base.glob("*/*/VC/Auxiliary/Build/vcvarsall.bat"), reverse=True))
+    return list(dict.fromkeys(path for path in candidates if path.is_file()))
+
+
+def _load_msvc_env(script: Path, arch: str) -> dict[str, str]:
+    """cmd /u 的 set 输出是 UTF-16；不受系统 GBK/UTF-8 码页或路径空格影响。"""
+    env = dict(os.environ)
+    env["GA_HUB_VCVARS_SCRIPT"] = str(script)
+    host = env.get("PROCESSOR_ARCHITEW6432", env.get("PROCESSOR_ARCHITECTURE", "AMD64")).upper()
+    host_arch = {"AMD64": "x64", "ARM64": "arm64", "X86": "x86"}.get(host, "x64")
+    argument = arch if host_arch == arch else f"{host_arch}_{arch}"
+    marker = "__GA_HUB_MSVC_ENV__"
+    command = f'call "%GA_HUB_VCVARS_SCRIPT%" {argument} >nul && echo {marker} && set'
+    result = subprocess.run(
+        # Windows list2cmdline 会把嵌套双引号变成 \"\\\"\"，cmd 不认识该转义。
+        # 这里明确使用 cmd 原生命令行；脚本路径通过环境变量传递。
+        f'"{env.get("COMSPEC", "cmd.exe")}" /d /u /v:off /s /c "{command}"',
+        env=env, capture_output=True, stdin=subprocess.DEVNULL, timeout=90,
+    )
+    output = result.stdout.decode("utf-16-le", errors="replace")
+    if result.returncode or marker not in (line.strip() for line in output.splitlines()):
+        diagnostic = result.stderr.decode("utf-16-le", errors="replace")[-1200:]
+        raise RuntimeError(f"vcvarsall 初始化失败（exit {result.returncode}）：{script}\n{diagnostic}")
+    loaded: dict[str, str] = {}
+    for line in output.split(marker, 1)[1].splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key and key != "GA_HUB_VCVARS_SCRIPT":
+            loaded[key] = value
+    return loaded
+
+
+def ensure_msvc_environment(target: str) -> None:
+    """只修改当前构建进程的环境；所有 run_stage 子进程自动继承。"""
+    if os.name != "nt" or not target.endswith("-windows-msvc"):
+        return
+    arch = _msvc_arch(target)
+    override = os.environ.get("GA_HUB_VCVARSALL", "").strip()
+    if not override and _msvc_ready(dict(os.environ), arch):
+        _log(f"✓ MSVC/SDK 环境已就绪（{arch}）")
+        return
+    failures: list[str] = []
+    for script in _vcvars_candidates():
+        try:
+            loaded = _load_msvc_env(script, arch)
+            if not _msvc_ready(loaded, arch):
+                raise RuntimeError("初始化后仍缺少匹配架构的 cl/link、Windows SDK 或系统/C运行库")
+        except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
+            failures.append(f"{script}: {exc}")
+            continue
+        os.environ.update(loaded)
+        _log(f"✓ 已自动加载 MSVC/SDK（{arch}）：{script}")
+        return
+    raise RuntimeError(
+        "MSVC/Windows SDK 环境不可用。安装 VS2017+ 的“使用 C++ 的桌面开发”及 Windows SDK，"
+        "或设置 GA_HUB_VCVARSALL 指向 VC\\Auxiliary\\Build\\vcvarsall.bat。\n"
+        + "\n".join(failures)
+    )
+
+
 def preflight(
     sidecar_python: str,
     npm: str,
     tauri: str,
     *,
     ga_root: Path | None = None,
+    target: str = DEFAULT_TARGET,
 ) -> None:
     """环境预检：缺什么都在这里以 2 退出，而不是让某个阶段以 3 失败。
 
@@ -148,6 +267,10 @@ def preflight(
     """
     _stage("预检")
     problems: list[str] = []
+    try:
+        ensure_msvc_environment(target)
+    except RuntimeError as exc:
+        problems.append(str(exc))
     if not npm:
         problems.append("未找到 npm —— 请安装 Node.js 18+ 并确保 npm 在 PATH 中")
     if not tauri:
@@ -374,7 +497,7 @@ def main(argv: list[str] | None = None) -> int:
     sidecar_python = resolve_sidecar_python()
     # --full 的后端测试需要 GA_ROOT/PYTHONPATH 指向 GA 核心仓库
     ga_root = Path(os.environ.get("GA_ROOT", str(ROOT.parent / "GA"))).resolve()
-    preflight(sidecar_python, npm, tauri, ga_root=ga_root if args.full else None)
+    preflight(sidecar_python, npm, tauri, ga_root=ga_root if args.full else None, target=args.target)
 
     paths = artifact_paths(args.target)
     for path in paths.values():

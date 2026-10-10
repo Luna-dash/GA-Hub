@@ -25,6 +25,16 @@ build_all.bat
 ### 2. 另一台电脑本地构建（有基础工具链）
 
 前置：Node.js 18+、Rust（rustup，Windows 需 MSVC Build Tools）、Python 3.11+。
+
+Windows MSVC 目标在统一 Python 入口的预检阶段自动加载 VS2017+ 的
+`vcvarsall.bat`；BAT 和直接运行 Python 均适用，无需手工打开开发者终端。
+预检按目标架构检查 cl/link、SDK rc 与系统/C 运行库，环境仅对当前构建进程及其
+子进程生效，不修改全局 PATH。已就绪的匹配架构环境直接复用。
+发现顺序：`GA_HUB_VCVARSALL` 显式路径 → vswhere（不以组件筛选空结果判未安装）
+→ Program Files 下标准 VS 安装目录。非标准位置可设置 `GA_HUB_VCVARSALL`
+指向 `VC\Auxiliary\Build\vcvarsall.bat`；显式指定失败不静默选择其它安装。
+缺少工具链、SDK 或初始化失败以预检退出码 **2** 中止，不会先打包再撞链接错误。
+自动架构选择支持 x64/x86/arm64，但完整构建仍仅 Windows x86_64 实测过。
 然后：
 
 ```bat

@@ -55,6 +55,8 @@
 - 前端构建归 build_all 独占——**不要**给 tauri.conf.json 加回 `beforeBuildCommand`
 - 交付物只有便携版两个 exe——Tauri 阶段恒传 `--no-bundle`
 - 并发锁 `.build_all.lock` 与占用预检
+- Windows MSVC 环境在 Python 统一入口预检自动加载、校验架构及 SDK；失败 exit 2，
+  仅当前进程及子进程生效，不修改全局 PATH；非标准 VS 可用 `GA_HUB_VCVARSALL`
 - 跨平台 sidecar 命名 `ga-hub-sidecar-<target>[.exe]`
 - `src-tauri/Cargo.toml` 里那两处 `indexmap = { version = "1", features = ["std"] }`
   看起来没人调用，但**不能删**（原因见事故记录第 10 条）

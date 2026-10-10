@@ -204,6 +204,12 @@ class BlockerTests(unittest.TestCase):
 
 
 class PreflightTests(unittest.TestCase):
+    def setUp(self):
+        # 旧预检用例不应真的运行机器上的 VS；MSVC 专项用例单独验证。
+        patcher = mock.patch.object(build_all, "ensure_msvc_environment")
+        self.addCleanup(patcher.stop)
+        patcher.start()
+
     def _preflight(self, root: Path, *, ga_root: Path | None, npm="npm", tauri="tauri"):
         with mock.patch.object(build_all, "ROOT", root), \
              mock.patch.object(build_all.shutil, "which", return_value="cargo"), \
