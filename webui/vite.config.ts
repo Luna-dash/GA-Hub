@@ -20,6 +20,7 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: false,
     rollupOptions: {
+      input: { main: path.resolve(__dirname, 'index.html'), dialog: path.resolve(__dirname, 'dialog.html') },
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-backend-ready"
+description = "Enables the desktop_backend_ready command without any pre-configured scope."
+commands.allow = ["desktop_backend_ready"]
+
+[[permission]]
+identifier = "deny-desktop-backend-ready"
+description = "Denies the desktop_backend_ready command without any pre-configured scope."
+commands.deny = ["desktop_backend_ready"]

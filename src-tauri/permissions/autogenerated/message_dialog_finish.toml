@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-message-dialog-finish"
+description = "Enables the message_dialog_finish command without any pre-configured scope."
+commands.allow = ["message_dialog_finish"]
+
+[[permission]]
+identifier = "deny-message-dialog-finish"
+description = "Denies the message_dialog_finish command without any pre-configured scope."
+commands.deny = ["message_dialog_finish"]

@@ -20,6 +20,7 @@ use url::Url;
 use uuid::Uuid;
 
 mod mei_cleanup;
+mod message_dialog;
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -1494,7 +1495,12 @@ fn main() {
         .manage(OwnedSidecar::new())
         .manage(SidecarIdentity::default())
         .manage(exit_state)
+        .manage(message_dialog::MessageDialogs::default())
         .invoke_handler(tauri::generate_handler![
+            message_dialog::show_message_dialog,
+            message_dialog::message_dialog_config,
+            message_dialog::message_dialog_ready,
+            message_dialog::message_dialog_finish,
             save_text_export,
             desktop_backend_ready,
             restart_backend
@@ -1552,7 +1558,12 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build GA-Hub desktop shell");
 
-    app.run(move |handle, event| match event {
+    app.run(move |handle, event| {
+        if matches!(&event, RunEvent::ExitRequested { .. })
+            || matches!(&event, RunEvent::WindowEvent { label, event: WindowEvent::CloseRequested { .. }, .. } if label == "main") {
+            message_dialog::shutdown(handle);
+        }
+        match event {
         RunEvent::WindowEvent {
             label,
             event: WindowEvent::CloseRequested { api, .. },
@@ -1580,6 +1591,7 @@ fn main() {
             ExitAction::AllowExit => {}
         },
         _ => {}
+        }
     });
 }
 
