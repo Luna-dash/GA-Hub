@@ -1,0 +1,4 @@
+# Generated artifacts are compared byte-for-byte in CI (api:check);
+# keep LF so Windows checkouts with autocrlf do not turn them into CRLF.
+webui/src/api/generated/*.d.ts text eol=lf
+docs/api/openapi.json text eol=lf
