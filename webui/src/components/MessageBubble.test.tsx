@@ -56,6 +56,28 @@ describe('MessageBubble render isolation', () => {
     host.remove()
   })
 
+  it('inserts recovery status after preceding turns and before retry text', () => {
+    const before = '**LLM Running (Turn 1) ...**\n<summary>前序步骤</summary>\n前序正文\n'
+    const after = '\n**LLM Running (Turn 2) ...**\n<summary>重试轮次</summary>\n续传正文'
+    act(() => root.render(<MessageBubble role="assistant" content={before + after} streaming
+      recoveryNotice="网络重试进行中" recoveryOffset={before.length} />))
+    const status = host.querySelector('[data-recovery-notice]')!
+    expect(status).not.toBeNull()
+    expect(host.textContent!.indexOf('前序正文')).toBeLessThan(host.textContent!.indexOf('网络重试进行中'))
+    expect(host.textContent!.indexOf('网络重试进行中')).toBeLessThan(host.textContent!.indexOf('续传正文'))
+    act(() => root.render(<MessageBubble role="assistant" content={before + after + '继续生长'} streaming
+      recoveryNotice="网络重试进行中" recoveryOffset={before.length} />))
+    expect(host.querySelectorAll('[data-recovery-notice]')).toHaveLength(1)
+    expect(host.textContent!.indexOf('前序正文')).toBeLessThan(host.textContent!.indexOf('网络重试进行中'))
+  })
+
+  it('places a waiting recovery status at the live tail, not above all turns', () => {
+    const content = '**LLM Running (Turn 1) ...**\n<summary>前序步骤</summary>\n前序正文'
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false}
+      recoveryNotice="等待自动重试" recoveryOffset={content.length} />))
+    expect(host.textContent!.indexOf('前序正文')).toBeLessThan(host.textContent!.indexOf('等待自动重试'))
+  })
+
   it('does not rebuild a static markdown subtree for an unrelated parent update', () => {
     act(() => root.render(<Harness />))
     expect(markdownRender).toHaveBeenCalledTimes(1)

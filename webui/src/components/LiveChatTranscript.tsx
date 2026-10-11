@@ -474,6 +474,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           <MessageBubble
             role={role}
             recoveryNotice={message.recoveryNotice}
+            recoveryOffset={message.recoveryOffset}
             content={message.content}
             streaming={message.streaming}
             stopped={role === 'assistant' ? (message.stopped ?? false) : undefined}

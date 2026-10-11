@@ -597,6 +597,8 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
 function ensureRetryStartNotice(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   if (evt.type !== 'next' && evt.type !== 'done') return prev
   if (evt.source !== 'chat_error_retry' && evt.source !== 'auto_continue') return prev
+  // Late cumulative events cannot revive recovery status on a completed stream.
+  if (prev.some((m) => m.segments?.some((part) => part.streamId === evt.stream_id && part.done))) return prev
   const attempt = evt.retry_attempt ?? 0
   const retryKey = evt.logical_id || evt.retry_of || evt.stream_id || ''
   const reason = evt.retry_reason === 'truncated' ? '截断续接' : '网络重试'

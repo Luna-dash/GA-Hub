@@ -38,6 +38,7 @@ interface Props {
   stopped?: boolean
   /** 来源标签（自动继续/定时任务等）：渲染为头部小字，不混入 content。 */
   recoveryNotice?: string
+  recoveryOffset?: number
   tagLabel?: string
   timestamp?: number | null
   startedAt?: number | null
@@ -134,7 +135,7 @@ function formatDuration(milliseconds: number): string {
     : `${minutes}:${String(rest).padStart(2, '0')}`
 }
 
-export const MessageBubble = memo(function MessageBubble({ role, content, streaming, stopped, recoveryNotice, tagLabel, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact, askUserDraftKey, askUserInteractive = true }: Props) {
+export const MessageBubble = memo(function MessageBubble({ role, content, streaming, stopped, recoveryNotice, recoveryOffset, tagLabel, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact, askUserDraftKey, askUserInteractive = true }: Props) {
   const [fontScale, setFontScale] = useState(getChatFontScale)
   const [clock, setClock] = useState(Date.now)
   const [longFinalExpanded, setLongFinalExpanded] = useState(false)
@@ -164,7 +165,8 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
   const shouldProjectTranscript = Boolean(
     role === 'assistant'
     && !compact
-    && !streaming,
+    && !streaming
+    && !recoveryNotice,
   )
   const historyTranscript = useMemo(
     () => shouldProjectTranscript ? parseAssistantTranscript(content) : null,
@@ -218,7 +220,18 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
     )
   }
 
-  const segs = useHistoryProjection ? [] : foldTurns(content)
+  const recoveryActive = Boolean(role === 'assistant' && recoveryNotice && !compact)
+  const boundary = Math.max(0, Math.min(content.length, recoveryOffset ?? content.length))
+  const beforeRecovery = recoveryActive ? foldTurns(content.slice(0, boundary)) : []
+  const segs = useHistoryProjection ? [] : recoveryActive
+    ? [...beforeRecovery, ...foldTurns(content.slice(boundary))] : foldTurns(content)
+  const recoveryIndex = beforeRecovery.length
+  const recoveryStatus = recoveryActive ? (
+    <div role="status" data-recovery-notice className="my-2 flex items-center gap-2 text-xs leading-5 text-status-warning-muted">
+      <span className="shrink-0 rounded border border-current px-1 text-[10px]">系统</span>
+      <span>{recoveryNotice}</span>
+    </div>
+  ) : null
   return (
     <div className="flex justify-start group/msg">
       <div className="max-w-full min-w-0 flex flex-col items-start gap-1.5">
@@ -248,12 +261,6 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
           {tagLabel && (
             <div className="mb-1.5 text-[11px] font-medium leading-4 text-ink-faint">{tagLabel}</div>
           )}
-          {role === 'assistant' && recoveryNotice && (
-            <div data-recovery-notice className="mb-2 flex items-center gap-2 text-xs leading-5 text-status-warning-muted">
-              <span className="shrink-0 rounded border border-current px-1 text-[10px]">系统</span>
-              <span>{recoveryNotice}</span>
-            </div>
-          )}
           <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
             {streamId && onRewind && !streaming && (
               <RewindChip onClick={() => onRewind(streamId)} />
@@ -271,8 +278,10 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
                 askUserDraftKey={askUserDraftKey}
                 askUserInteractive={askUserInteractive}
               />
-            ) : segs.map((seg, i) =>
-              seg.type === 'fold' ? (
+            ) : <>
+              {segs.map((seg, i) => <div key={i}>
+              {i === recoveryIndex && recoveryStatus}
+              {seg.type === 'fold' ? (
                 <LazyMarkdownFold
                   key={i}
                   title={seg.title || '中间步骤'}
@@ -284,8 +293,10 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
                   {/* Final segment: auto-detect tool-only tails vs real prose. */}
                   <MessageContent content={seg.content} format="markdown" cache={!streaming} />
                 </div>
-              ),
-            )}
+              )}
+              </div>)}
+              {recoveryIndex === segs.length && recoveryStatus}
+            </>}
           </div>
           {stopped && !useHistoryProjection && (
             <p className="mt-2 text-xs italic leading-5 text-status-warning-muted">⏹任务中止</p>

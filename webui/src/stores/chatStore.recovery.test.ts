@@ -2,6 +2,33 @@ import { describe, expect, it } from 'vitest'
 import { applyEvent, type ChatMsg } from './chatStore'
 
 describe('logical recovery reply', () => {
+  it('anchors a live retry at its stream boundary and clears it on successful completion', () => {
+    let msgs = applyEvent([], { type: 'started', stream_id: 'a', query: 'question' })
+    msgs = applyEvent(msgs, { type: 'done', stream_id: 'a', content: 'first' })
+    msgs = applyEvent(msgs, { type: 'started', stream_id: 'b', logical_id: 'a', source: 'chat_error_retry' })
+    msgs = applyEvent(msgs, { type: 'next', stream_id: 'b', logical_id: 'a', source: 'chat_error_retry', content: 'sec' })
+    expect(msgs.find((m) => m.role === 'assistant')?.recoveryOffset).toBe(5)
+    msgs = applyEvent(msgs, { type: 'next', stream_id: 'b', logical_id: 'a', source: 'chat_error_retry', content: 'second' })
+    expect(msgs.find((m) => m.role === 'assistant')?.recoveryOffset).toBe(5)
+    expect(msgs.find((m) => m.role === 'assistant')?.recoveryNotice).toBeTruthy()
+    msgs = applyEvent(msgs, { type: 'done', stream_id: 'b', logical_id: 'a', source: 'chat_error_retry', content: 'second' })
+    expect(msgs.find((m) => m.role === 'assistant')?.recoveryNotice).toBeUndefined()
+    expect(msgs.find((m) => m.role === 'assistant')?.recoveryOffset).toBeUndefined()
+    msgs = applyEvent(msgs, { type: 'next', stream_id: 'b', logical_id: 'a', source: 'chat_error_retry', content: 'late' })
+    expect(msgs.find((m) => m.role === 'assistant')?.recoveryNotice).toBeUndefined()
+    expect(msgs.find((m) => m.role === 'assistant')?.content).toBe('first\n\nsecond')
+  })
+
+  it('does not restore transient retry notices in a completed snapshot', () => {
+    const msgs = applyEvent([], { type: 'snapshot', streams: [
+      { stream_id: 'a', source: 'user', query: 'question', content: 'first', done: true, started_at: 1000, finished_at: 1001 },
+      { stream_id: 'b', retry_of: 'a', source: 'chat_error_retry', query: '[GA_CONTINUE]', content: 'second', done: true, retry_attempt: 1, started_at: 1002, finished_at: 1003 },
+    ] })
+    const reply = msgs.find((m) => m.role === 'assistant')!
+    expect(reply.content).toBe('first\n\nsecond')
+    expect(reply.streaming).toBe(false)
+    expect(reply.recoveryNotice).toBeUndefined()
+  })
   it('attaches snapshot status through retry_of without leaking it into content', () => {
     const msgs = applyEvent([], { type: 'snapshot', streams: [
       { stream_id: 'a', source: 'user', query: 'question', content: 'first', done: true, started_at: 1000, finished_at: 1001 },
