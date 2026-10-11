@@ -5,6 +5,22 @@
 - 文件名故意不带日期：待办是活的，避免「日期一过就自动变成过期文档」这个本仓反复发作的老毛病。
 - 已收口的事项见 §6 —— 动手前先看一眼，别重复劳动。
 
+## 2026-10-10 项目结构与 GA 集成审查
+
+证据与验收标准见 [项目结构审查报告](../archive/project-structure-review-20261010.md)（GA-Hub `2ad063f` / GA `cce32e2`）。按用户要求先优化非 Goal/Hive 部分，保留既定双连接面架构。
+
+- [x] **R1 · P1**（2026-10-10）：侧栏、`/new`、命令面板共用 `createAndOpenSession`；保留旧会话，新建失败不切换，迟到响应只更新目录。删除前端 `agentNew` 调用封装，旧服务端端点仍作为兼容接口保留。
+- [ ] **R2 · P1 · 按用户要求暂缓**：Goal/Hive 停止覆盖任务已入队但 runner 尚未开始的窗口，活动状态等待真实完成后释放。
+- [x] **R3 · P1**（2026-10-10）：兼容性探测通过后才装配 runtime、调度器和宿主补丁；路由导入失败、探测失败或异常均保留 setup/health。HTTP、WebSocket 与后台 system session 统一拒绝不可用运行能力；OpenAPI 导出拒绝覆盖完整契约为降级路由子集。
+- [ ] **R4 · P2 · 按用户要求暂缓**：Goal/Hive reset 复用 GA 原生完整上下文/会话清理语义，覆盖 backend history、工具状态和 working memory。
+- [x] **R5 · P2**（2026-10-10）：状态面板读取应用持有的 session coordinator 快照，统计启动、运行、停止和异常；状态查询不创建 runtime。
+
+已把 subprocess/web tool 补丁移到真实 Agent 构造阶段，用量台账初始化移到应用 lifespan。后续按业务域逐步整理目录、缩小大型 facade、分离测试环境；Goal/Hive 保持暂缓。结构建议与边界保留事项详见报告，不作为一次性全仓搬移清单。
+
+同轮回归发现并修复 Windows 配置保存的短暂文件占用：原子替换仅对 WinError 5/32/33 有界重试，永久失败保留旧文件并抛错；并发配置测试通过 Future 传播工作线程异常，避免只报 warning 却判成功。
+
+历史待办中的“生成 TS 契约新鲜度检查”“conftest 零共享 fixture”已据当前代码修正，见 P.2；完整验证结果记在审查报告末尾。
+
 ---
 
 ## 0. 执行顺序总览
@@ -111,10 +127,10 @@
   - *已排除*：「`TaskBoard`/`WorkerCard` 的 memo 因内联 `onSelect` 失效」**已修**（现靠 `(id)=>void` 稳定 handler + `useCallback`），别重复改
 - [ ] **P.2 BACKLOG 剩余 `[ ]` 项**（`docs/BACKLOG.md`）
   - `chatStore` 活跃会话 msgs 无上限（产品级内存取舍，做的话要同时保留 `historyBefore` 再取路径）
-  - TS 生成契约新鲜度锁（`api:generate` 产物无 CI/测试比对是否过期）
+  - *已完成，2026-10-10 复核*：TS 契约新鲜度由 `webui/scripts/check-api-contract.mjs` 生成临时类型比对；后端 `test_api_contract.py` 同时校验 OpenAPI 快照与前端检查。
   - HTTP 错误词汇收编（34 结构化 vs 64 裸串 raise；改前需逐路由核对前端是否字符串匹配 detail）
   - 结构搬移：`create_app`（`main.py` ~295 行）外迁 `routes/system.py`；`Conductor.tsx`（~1280 行）拆历史栏/转录/设置 Modal
-  - 测试面统一：conftest 零共享 fixture、double 命名三轨（Fake/Mock/_Stub）
+  - 测试环境与 double 继续按行为边界整理；`conftest.py` 已提供 `session_domain` / `bind_session_domain`，不再把“零共享 fixture”列为缺陷。命名差异按实际复用需要处理。
   - 观察项：`WorkflowTracker.stranded_admitted()` 无生产调用者（刻意保留作诊断面）
 - [ ] **P.3 长跑验证待排期**：真实模型长跑 / 桌面端 E2E / 全仓回归。
 - [ ] **P.4 09-15 审计「档 1」三条只分析未修**：LLM 偏好缓存断层、goalhive 独立执行链路、scheduled_chat 第三套持久化。
