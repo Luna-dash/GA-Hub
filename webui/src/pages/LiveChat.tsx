@@ -43,7 +43,8 @@ import { isTauriDesktop, selectDirectory } from '@/utils/desktop'
 import { defaultSessionLlmKey, resolveSessionLlmKey } from '@/utils/llm'
 import { MainModelSelect } from '@/components/ModelSelect'
 import { useHubEvent } from '@/hooks/useHubEvent'
-import { markSessionUsed } from '@/queries/sessions'
+import { useSessionSelectionGuard } from '@/hooks/useSessionSelectionGuard'
+import { createAndOpenSession, markSessionUsed } from '@/queries/sessions'
 import { queryKeys } from '@/queries/queryKeys'
 
 export default function LiveChat() {
@@ -51,6 +52,7 @@ export default function LiveChat() {
   // effect below resolves it against the session list.
   const location = useLocation()
   const nav = useNavigate()
+  const captureSelection = useSessionSelectionGuard()
 
   const streaming = useChatStore((s) => s.streaming)
   const retryPending = useChatStore((s) => s.retryPending)
@@ -322,10 +324,11 @@ export default function LiveChat() {
         creatingSessionRef.current = true
         setCreatingSession(true)
         const switchSeq = ++sessionSwitchSeqRef.current
+        const canSelect = captureSelection()
         try {
           if (!defaultLlmKey) throw new Error('当前没有可用模型，请先配置模型')
           const created = await api.createSession({ title: '', llm_key: defaultLlmKey })
-          if (sessionSwitchSeqRef.current !== switchSeq || sessionIdRef.current) {
+          if (!canSelect() || sessionSwitchSeqRef.current !== switchSeq || sessionIdRef.current) {
             useDraftStore.getState().failSubmission(transaction.id)
             return
           }
@@ -493,23 +496,17 @@ export default function LiveChat() {
     setCreatingSession(true)
     const switchSeq = ++sessionSwitchSeqRef.current
     const previousSid = sessionIdRef.current
+    const canSelect = captureSelection()
     try {
       const llmKey = session?.llm_key ?? defaultLlmKey
-      if (!llmKey) throw new Error('当前没有可用模型，请先配置模型')
-      const next = await api.createSession({ title: '', llm_key: llmKey })
-      if (sessionSwitchSeqRef.current !== switchSeq || sessionIdRef.current !== previousSid) return false
-      queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
-        total: (cached?.total ?? 0) + 1,
-        items: [next, ...(cached?.items ?? [])],
-      }))
-      localStorage.setItem(storageKeys.currentSessionId, next.id)
-      nav(sessionChatHref(next.id))
-      return true
+      return await createAndOpenSession(queryClient, nav, llmKey, () => (
+        canSelect() && sessionSwitchSeqRef.current === switchSeq && sessionIdRef.current === previousSid
+      ))
     } finally {
       creatingSessionRef.current = false
       setCreatingSession(false)
     }
-  }, [defaultLlmKey, nav, queryClient, session?.llm_key])
+  }, [defaultLlmKey, nav, queryClient, session?.llm_key, captureSelection])
 
   const selectSession = useCallback((id: string) => {
     if (id === sessionIdRef.current) return

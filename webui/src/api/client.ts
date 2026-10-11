@@ -281,7 +281,6 @@ export const api = {
   // ── agent ────────────────────────────────────────────
   agentStatus: (init?: Pick<RequestInit, 'signal'>) =>
     http<AgentStatus>('GET', '/api/agent/status', undefined, init),
-  agentNew: () => http<{ ok: boolean; message: string }>('POST', '/api/agent/new'),
   chatRetryConfig: () => http<ChatRetryConfig>('GET', '/api/agent/chat-retry-config'),
   saveChatRetryConfig: (cfg: ChatRetryConfig) =>
     http<ChatRetryConfig>('PUT', '/api/agent/chat-retry-config', cfg),

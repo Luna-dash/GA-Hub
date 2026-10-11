@@ -20,8 +20,11 @@ import { api } from '@/api/client'
 import { noticeKeys, useChatStore } from '@/stores/chatStore'
 import { dialog } from '@/stores/dialogStore'
 import { conversationKeys } from '@/queries/conversations'
+import { createAndOpenSession } from '@/queries/sessions'
+import { useSessionSelectionGuard } from '@/hooks/useSessionSelectionGuard'
 import { queryKeys } from '@/queries/queryKeys'
 import { errorMessageFromError } from '@/utils/sessionUi'
+import { resolveSessionLlmKey } from '@/utils/llm'
 
 interface Action {
   id: string
@@ -54,8 +57,9 @@ export function CommandPalette() {
   const listRef = useRef<HTMLDivElement>(null)
   const nav = useNavigate()
   const qc = useQueryClient()
+  const creatingSessionRef = useRef(false)
+  const captureSelection = useSessionSelectionGuard()
   const sessionId = useChatStore((s) => s.sessionId)
-  const clearLocal = useChatStore((s) => s.clearLocal)
   const pushSystem = useChatStore((s) => s.pushSystem)
 
   // Global open hotkey: Cmd+K (mac) or Ctrl+K (win/linux). Captures even
@@ -141,16 +145,23 @@ export function CommandPalette() {
     acts.push({
       id: 'agent:new', group: '快捷操作', icon: '✨',
       label: '新对话',
-      hint: '清空当前 Agent 上下文',
+      hint: '创建独立会话',
       run: async () => {
-        const ok = await dialog.confirm('开始新对话？', '当前 Agent 上下文会被清空。', {
-          confirmText: '新建', tone: 'danger',
-        })
-        if (!ok) return
-        const r = await api.agentNew()
-        clearLocal()
-        pushSystem(r.message)
-        nav('/chat')
+        if (creatingSessionRef.current) return
+        creatingSessionRef.current = true
+        const previousSid = useChatStore.getState().sessionId
+        const canSelect = captureSelection()
+        try {
+          const [sessions, models] = await Promise.all([
+            qc.fetchQuery({ queryKey: queryKeys.sessions, queryFn: api.sessions }),
+            qc.fetchQuery({ queryKey: queryKeys.llms, queryFn: api.llms }),
+          ])
+          const current = sessions.items.find((item) => item.id === previousSid)
+          await createAndOpenSession(qc, nav, resolveSessionLlmKey(models.llms, current?.llm_key),
+            canSelect)
+        } finally {
+          creatingSessionRef.current = false
+        }
       },
     })
     acts.push({
@@ -218,7 +229,7 @@ export function CommandPalette() {
     }
 
     return acts
-  }, [llms, schedules, sops, convs, nav, qc, sessionId, clearLocal, pushSystem])
+  }, [llms, schedules, sops, convs, nav, qc, sessionId, pushSystem, captureSelection])
 
   const filtered = useMemo(() => {
     if (!q.trim()) return actions
