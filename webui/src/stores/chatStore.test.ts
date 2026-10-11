@@ -88,6 +88,19 @@ describe('chatStore lifecycle', () => {
     expect(useChatStore.getState().streaming).toBe(false)
   })
 
+  it('rolls back a failed submission in a cached session without touching the active one', () => {
+    useChatStore.getState().start('old')
+    const stageId = useChatStore.getState().stageWebui('failed', [])
+    useChatStore.getState().start('other')
+    const activeId = useChatStore.getState().stageWebui('keep', [])
+    useChatStore.getState().rollbackWebui(stageId)
+    expect(useChatStore.getState().msgs[0].pendingWebuiId).toBe(activeId)
+    expect(useChatStore.getState().sessionViews.old.msgs).toEqual([])
+    expect(useChatStore.getState().sessionViews.old.streaming).toBe(false)
+    useChatStore.getState().start('old')
+    expect(useChatStore.getState().msgs).toEqual([])
+  })
+
   it('does not remove a staged message after the server has adopted it', () => {
     const stageId = useChatStore.getState().stageWebui('accepted', [])
     const staged = useChatStore.getState().msgs[0]

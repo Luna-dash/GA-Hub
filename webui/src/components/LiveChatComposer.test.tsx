@@ -30,7 +30,7 @@ describe('LiveChatComposer draft boundary', () => {
   let root: Root
 
   beforeEach(() => {
-    useDraftStore.setState({ texts: {}, attachments: {} })
+    useDraftStore.setState({ texts: {}, attachments: {}, revisions: {}, submissions: {} })
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -148,4 +148,38 @@ describe('LiveChatComposer draft boundary', () => {
     act(() => stop?.click())
     expect(onStop).toHaveBeenCalledOnce()
   })
+
+  it('clears the actual composer immediately and displays sending status while allowing typing', () => {
+    useDraftStore.getState().setText(DRAFT_KEY, 'hello')
+    useDraftStore.getState().setAttachments(DRAFT_KEY, [attachment])
+    act(() => root.render(<LiveChatComposer draftKey={DRAFT_KEY} onSubmit={(draft) => {
+      useDraftStore.getState().beginSubmission(draft.draftKey, draft.text, draft.attachments)
+    }} />))
+    const send = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent === '发送')!
+    act(() => send.click())
+    const textarea = host.querySelector('textarea')!
+    expect(textarea.value).toBe('')
+    expect(host.textContent).not.toContain('notes.txt')
+    expect(host.textContent).toContain('发送中')
+    expect(textarea.disabled).toBe(false)
+    act(() => changeTextarea(textarea, 'next'))
+    expect(send.disabled).toBe(true)
+    expect(textarea.value).toBe('next')
+  })
+
+  it('offers explicit failed-snapshot recovery without overwriting new input', () => {
+    useDraftStore.getState().setText(DRAFT_KEY, 'hello')
+    const item = useDraftStore.getState().beginSubmission(DRAFT_KEY, 'hello', [])!
+    useDraftStore.getState().setText(DRAFT_KEY, 'next')
+    useDraftStore.getState().failSubmission(item.id)
+    act(() => root.render(<LiveChatComposer draftKey={DRAFT_KEY} onSubmit={vi.fn()} />))
+    const recovery = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent === '恢复未发送内容')!
+    expect(recovery.disabled).toBe(true)
+    act(() => changeTextarea(host.querySelector('textarea')!, ''))
+    expect(recovery.disabled).toBe(false)
+    act(() => recovery.click())
+    expect(host.querySelector('textarea')!.value).toBe('hello')
+    expect(host.textContent).not.toContain('恢复未发送内容')
+  })
+
 })

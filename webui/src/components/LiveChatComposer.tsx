@@ -3,6 +3,7 @@ import { ImagePasteInput } from './ImagePasteInput'
 import type { PasteAttachment } from '@/api/types'
 import type { SlashCommand } from './slashCommands'
 import { useDraftStore } from '@/stores/draftStore'
+import { useChatStore } from '@/stores/chatStore'
 
 const EMPTY_ATTACHMENTS: PasteAttachment[] = []
 
@@ -56,6 +57,10 @@ export function LiveChatComposer({
 }: LiveChatComposerProps) {
   const text = useDraftStore((state) => state.texts[draftKey] ?? '')
   const attachments = useDraftStore((state) => state.attachments[draftKey] ?? EMPTY_ATTACHMENTS)
+  const submissions = useDraftStore((state) => state.submissions)
+  const pending = Object.values(submissions).filter((item) => item.key === draftKey)
+  const recovery = pending.filter((item) => item.status !== 'sending')
+  const submitting = pending.some((item) => item.status !== 'failed')
   const setText = useCallback(
     (value: string) => useDraftStore.getState().setText(draftKey, value),
     [draftKey],
@@ -83,8 +88,28 @@ export function LiveChatComposer({
             : undefined}
           placeholder={placeholder}
           disabled={disabled}
-          submitDisabled={submitDisabled}
+          submitDisabled={submitDisabled || submitting}
         />
+        {pending.some((item) => item.status === 'sending') && (
+          <div role="status" className="px-3 pb-2 text-xs text-text-muted">发送中…</div>
+        )}
+        {recovery.map((item) => (
+          <div key={item.id} role="status" className="flex items-center gap-2 px-3 pb-2 text-xs text-text-muted">
+            <span>{item.status === 'uncertain'
+              ? '发送状态未确认，请先核对对话，避免重复发送。'
+              : '未发送内容已保留；当前草稿不会被覆盖。'}</span>
+            <button
+              type="button"
+              className="shrink-0 text-accent disabled:opacity-40"
+              disabled={disabled || text !== '' || attachments.length > 0}
+              onClick={() => {
+                if (useDraftStore.getState().restoreSubmission(item.id) && item.stageId) {
+                  useChatStore.getState().rollbackWebui(item.stageId)
+                }
+              }}
+            >恢复未发送内容</button>
+          </div>
+        ))}
       </div>
     </div>
   )

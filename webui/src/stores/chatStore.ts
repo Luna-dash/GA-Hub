@@ -16,6 +16,7 @@
 //     when the matching `started` event arrives.
 
 import { create } from 'zustand'
+import { useDraftStore } from './draftStore'
 import { subscribeWithSelector } from 'zustand/middleware'
 import type {
   ChatEventCursor,
@@ -38,6 +39,8 @@ export interface ChatMsg {
   logicalId?: string
   /** Hub recovery status, rendered inside the answer, never part of LLM text. */
   recoveryNotice?: string
+  recoveryOffset?: number
+  recoveryStreamId?: string
   segments?: ReplySegment[]
   timestamp?: number | null          // epoch milliseconds; null means archive has no real header time
   startedAt?: number | null
@@ -176,6 +179,7 @@ function upsertRetryNotice(
   retryKey: string,
   content: string,
   timestamp?: number,
+  retryStreamId?: string,
 ): ChatMsg[] {
   const idx = prev.findIndex((m) => m.role === 'assistant' && (
     m.logicalId === retryKey || m.streamId === retryKey
@@ -186,11 +190,17 @@ function upsertRetryNotice(
     return [
       ...prev,
       { role: 'assistant', content: '', streamId: retryKey, logicalId: retryKey,
-        recoveryNotice, segments: [], timestamp },
+        recoveryNotice, recoveryOffset: 0, recoveryStreamId: retryStreamId, segments: [], timestamp },
     ]
   }
   const next = prev.slice()
-  next[idx] = { ...next[idx], recoveryNotice }
+  const old = prev[idx]
+  const partIndex = retryStreamId ? old.segments?.findIndex((part) => part.streamId === retryStreamId) ?? -1 : -1
+  const offset = partIndex >= 0 ? replySegmentsContent(old.segments!.slice(0, partIndex)).length : old.content.length
+  next[idx] = { ...old, recoveryNotice,
+    recoveryOffset: retryStreamId && old.recoveryStreamId === retryStreamId ? old.recoveryOffset ?? offset : offset,
+    recoveryStreamId: retryStreamId,
+  }
   return next
 }
 
@@ -210,10 +220,10 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
       const done = !!s.done
       const retryKey = s.logical_id || s.retry_of || s.stream_id || ''
       const meta = retryNoticeEntries.get(retryKey)
-      if (meta === undefined || attempt > meta.attempt || (attempt === meta.attempt && done && !meta.done)) {
+      if (!done && (meta === undefined || attempt > meta.attempt)) {
         retryNoticeEntries.set(retryKey, { idx: 0, attempt, done })
         const withNotice = upsertRetryNotice(out, retryKey, retryNoticeLabel(s, attempt),
-          epochMilliseconds(done ? s.finished_at : s.started_at) ?? undefined)
+          epochMilliseconds(s.started_at) ?? undefined, s.stream_id)
         out.splice(0, out.length, ...withNotice)
       }
       if (s.content || !s.done) {
@@ -422,6 +432,7 @@ function updateLogicalReply(prev: ChatMsg[], evt: ReplyEvent, now: number): Chat
     timestamp: old?.timestamp ?? now,
     startedAt: old?.startedAt ?? now,
     finishedAt: streaming ? null : (old?.finishedAt ?? now),
+    ...(streaming ? {} : { recoveryNotice: undefined, recoveryOffset: undefined, recoveryStreamId: undefined }),
   }
   if (idx < 0) return [...prev, message]
   const next = prev.slice()
@@ -449,7 +460,7 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
       const retryKey = evt.logical_id || evt.retry_of || sid
       const reason = evt.retry_reason === 'truncated' ? '截断续接' : '网络重试'
       const note = `_系统${reason}（${retryAttempt || '?'}${evt.retry_max ? `/${evt.retry_max}` : ''}）。_`
-      const withNotice = upsertRetryNotice(prev, retryKey, note, now)
+      const withNotice = upsertRetryNotice(prev, retryKey, note, now, sid)
       return updateLogicalReply(withNotice, evt, epochMilliseconds(evt.ts) ?? now)
     }
     // 1. If our local pre-add bubble is still pending and source is webui,
@@ -463,7 +474,8 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
           ...adopted[realIdx],
           streamId: sid,
           pendingWebui: false,
-          pendingWebuiId: undefined,
+          // Keep the local identity as a receipt, even after WS adoption.
+          pendingWebuiId: adopted[realIdx].pendingWebuiId,
         }
         // Append empty assistant bubble for the streaming reply.
         return [...adopted, { role: 'assistant', content: '', streamId: sid, source, streaming: true, timestamp: now, startedAt: epochMilliseconds(evt.ts) ?? now, finishedAt: null }]
@@ -589,7 +601,7 @@ function ensureRetryStartNotice(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   const retryKey = evt.logical_id || evt.retry_of || evt.stream_id || ''
   const reason = evt.retry_reason === 'truncated' ? '截断续接' : '网络重试'
   const note = `_系统${reason}（${attempt || '?'}${evt.retry_max ? `/${evt.retry_max}` : ''}）。_`
-  return upsertRetryNotice(prev, retryKey, note)
+  return upsertRetryNotice(prev, retryKey, note, undefined, evt.stream_id)
 }
 
 function anyStreaming(msgs: ChatMsg[]): boolean {
@@ -1171,12 +1183,19 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
   },
 
   rollbackWebui: (stageId) => set((st) => {
-    const msgs = st.msgs.filter((msg) => !(msg.pendingWebui && msg.pendingWebuiId === stageId))
-    if (msgs.length === st.msgs.length) return st
-    return {
-      msgs,
-      streaming: msgs.some((msg) => msg.streaming || msg.pendingWebui),
+    const removePending = (msgs: ChatMsg[]) => msgs.filter((msg) => !(msg.pendingWebui && msg.pendingWebuiId === stageId))
+    const msgs = removePending(st.msgs)
+    let changed = msgs.length !== st.msgs.length
+    const sessionViews = { ...st.sessionViews }
+    for (const [key, view] of Object.entries(sessionViews)) {
+      const cachedMsgs = removePending(view.msgs)
+      if (cachedMsgs.length !== view.msgs.length) {
+        changed = true
+        sessionViews[key] = { ...view, msgs: cachedMsgs, streaming: cachedMsgs.some((msg) => msg.streaming || msg.pendingWebui) }
+      }
     }
+    if (!changed) return st
+    return { msgs, sessionViews, streaming: msgs.some((msg) => msg.streaming || msg.pendingWebui) }
   }),
 
   clearLocal: () => set({
@@ -1222,3 +1241,14 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     allHistoryLoadedItems: 0,
   }),
 })))
+
+// A receipt can arrive after the HTTP timeout or after the page unmounts.
+// Resolve the retained snapshot in the shared store, not a page-local effect.
+useChatStore.subscribe((state) => {
+  if (!Object.values(useDraftStore.getState().submissions).some((item) => item.stageId)) return
+  for (const message of state.msgs) {
+    if (message.pendingWebuiId && !message.pendingWebui && message.streamId) {
+      useDraftStore.getState().acceptSubmissionStage(message.pendingWebuiId)
+    }
+  }
+})

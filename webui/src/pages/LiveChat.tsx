@@ -65,6 +65,8 @@ export default function LiveChat() {
 
   const [session, setSession] = useState<HubSession | null>(null)
   const draftKey = session ? `liveChat:${session.id}` : 'liveChat:pending'
+  const draftKeyRef = useRef(draftKey)
+  draftKeyRef.current = draftKey
   const [sessionError, setSessionError] = useState('')
   const [llms, setLlms] = useState<LLMInfo[]>([])
   const [llmLoading, setLlmLoading] = useState(false)
@@ -312,9 +314,10 @@ export default function LiveChat() {
     const sourceKey = draft.draftKey
     const sourceText = draft.text
     const sourceAtts = draft.attachments
+    const transaction = useDraftStore.getState().beginSubmission(sourceKey, sourceText, sourceAtts)
+    if (!transaction) return
     void (async () => {
       let sid = session?.id
-      let submitKey = sourceKey
       if (!sid) {
         creatingSessionRef.current = true
         setCreatingSession(true)
@@ -322,12 +325,12 @@ export default function LiveChat() {
         try {
           if (!defaultLlmKey) throw new Error('当前没有可用模型，请先配置模型')
           const created = await api.createSession({ title: '', llm_key: defaultLlmKey })
-          if (sessionSwitchSeqRef.current !== switchSeq || sessionIdRef.current) return
+          if (sessionSwitchSeqRef.current !== switchSeq || sessionIdRef.current) {
+            useDraftStore.getState().failSubmission(transaction.id)
+            return
+          }
           sid = created.id
-          submitKey = `liveChat:${created.id}`
-          const drafts = useDraftStore.getState()
-          drafts.setText(submitKey, sourceText)
-          drafts.setAttachments(submitKey, sourceAtts)
+          useDraftStore.getState().moveSubmission(transaction.id, `liveChat:${created.id}`)
           queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
             total: (cached?.total ?? 0) + 1,
             items: [created, ...(cached?.items ?? [])],
@@ -343,11 +346,13 @@ export default function LiveChat() {
           setCreatingSession(false)
         }
       } else if (sessionIdRef.current !== sid) {
+        useDraftStore.getState().failSubmission(transaction.id)
         return
       }
 
       const promptText = buildSessionPromptText(t, sourceAtts)
       const stageId = stageWebui(t, sourceAtts)
+      useDraftStore.getState().bindSubmissionStage(transaction.id, stageId)
       transcriptRef.current?.pinToBottom()
       // Lift the row the moment the user sends. A cold-start submit holds its
       // HTTP response until the runtime is admitted, so waiting for the
@@ -355,30 +360,37 @@ export default function LiveChat() {
       markSessionUsed(queryClient, sid)
       try {
         await api.sessionRun(sid, promptText, sourceAtts.map((a) => a.path))
-        if (sessionIdRef.current !== sid) return
-        const drafts = useDraftStore.getState()
-        drafts.clearDraftIfMatch(sourceKey, sourceText, sourceAtts)
-        if (submitKey !== sourceKey) drafts.clearDraftIfMatch(submitKey, sourceText, sourceAtts)
-        refreshRuntime(sid)
+        useDraftStore.getState().finishSubmission(transaction.id)
+        if (sessionIdRef.current === sid) refreshRuntime(sid)
       } catch (e: any) {
-        if (sessionIdRef.current !== sid) return
-        rollbackWebui(stageId)
+        if (!useDraftStore.getState().submissions[transaction.id]) return // WS receipt outranks a lost HTTP response.
         const conflict = capacityConflictFromError(e)
+        const definiteFailure = !!conflict || startAbortedFromError(e)
+          || (typeof e?.status === 'number' && e.status >= 400 && e.status < 500)
+        const restored = useDraftStore.getState().failSubmission(transaction.id, !definiteFailure)
+        if (definiteFailure) rollbackWebui(stageId)
+        if (sessionIdRef.current !== sid) return
+        if (!definiteFailure) {
+          pushSystem(`_发送状态未确认：${errorMessageFromError(e)}。请先核对对话，避免重复发送；内容已保留，可在输入栏恢复。_`, noticeKeys.sendBlocked)
+          refreshRuntime(sid)
+          return
+        }
+        const recoveryHint = restored ? '草稿已恢复，可直接重试。' : '内容已保留，可在输入栏恢复；新草稿未被覆盖。'
         if (startAbortedFromError(e)) {
           // The user pressed stop while the runtime was still cold-starting:
           // nothing was sent, so this is a stop, not a send failure.
-          pushSystem('_本次运行在启动完成前已停止，消息未发出。草稿已保留，可直接重试。_', noticeKeys.sendBlocked)
+          pushSystem(`_本次运行在启动完成前已停止，消息未发出。${recoveryHint}_`, noticeKeys.sendBlocked)
         } else if (conflict) {
           if (conflict.reason === 'session_active') {
-            pushSystem(`_当前会话仍有任务运行中（或正在停止中），请等待结束后重试。草稿已保留，可直接重试。_`, noticeKeys.sendBlocked)
+            pushSystem(`_当前会话仍有任务运行中（或正在停止中），请等待结束后重试。${recoveryHint}_`, noticeKeys.sendBlocked)
           } else {
             const usage = conflict.activeCount != null && conflict.capacity != null
               ? `（${conflict.activeCount}/${conflict.capacity}）`
               : ''
-            pushSystem(`_会话运行容量已满${usage}，请先在左侧会话栏选择一个运行中的会话并停止任务。草稿已保留，可直接重试。_`, noticeKeys.sendBlocked)
+            pushSystem(`_会话运行容量已满${usage}，请先在左侧会话栏选择一个运行中的会话并停止任务。${recoveryHint}_`, noticeKeys.sendBlocked)
           }
         } else {
-          pushSystem(`_发送失败：${errorMessageFromError(e)}。草稿已保留，可直接重试。_`, noticeKeys.sendBlocked)
+          pushSystem(`_发送失败：${errorMessageFromError(e)}。${recoveryHint}_`, noticeKeys.sendBlocked)
         }
       } finally {
         // The optimistic bump above is only a guess: the sidecar stamps its own
@@ -387,7 +399,10 @@ export default function LiveChat() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
       }
     })().catch((e: any) => {
-      pushSystem(`_创建会话失败：${errorMessageFromError(e)}。草稿已保留，可直接重试。_`, noticeKeys.sessionCreateFail)
+      useDraftStore.getState().failSubmission(transaction.id)
+      if (draftKeyRef.current === sourceKey) {
+        pushSystem(`_创建会话失败：${errorMessageFromError(e)}。内容已保留，新草稿未被覆盖。_`, noticeKeys.sessionCreateFail)
+      }
     })
   }
 
