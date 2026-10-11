@@ -29,6 +29,7 @@ def main() -> int:
                "--name", "ga-hub-sidecar", "--paths", str(ROOT),
                "--workpath", str(workpath), "--distpath", str(distpath),
                "--specpath", str(specpath), "--collect-all", "server",
+               "--collect-all", "websockets",
                "--noconsole",
                "--add-data", f"{ROOT / 'webui' / 'dist'};webui/dist"]
     if suffix:

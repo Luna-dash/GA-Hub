@@ -48,6 +48,12 @@ def test_every_pyproject_runtime_dependency_is_pinned_in_requirements():
     )
 
 
+def test_websocket_backend_is_explicitly_declared_for_frozen_runtime():
+    """uvicorn's standard extra must not be the only source of WebSocket support."""
+    assert "websockets" in _pyproject_runtime_deps()
+    assert "websockets" in _requirements_names()
+
+
 def test_requirements_carries_no_ghost_runtime_packages():
     """Catch deps that linger in requirements.txt after pyproject removal."""
     ghosts = _requirements_names() - _pyproject_runtime_deps() - {

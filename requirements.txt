@@ -7,6 +7,7 @@
 # 两者不漂移（pyproject 新增依赖而此处漏钉时会失败）。
 fastapi==0.136.1
 uvicorn==0.46.0
+websockets==16.0
 pydantic==2.13.3
 psutil==7.2.2
 requests==2.34.0
