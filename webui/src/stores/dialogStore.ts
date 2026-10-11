@@ -81,11 +81,12 @@ export function requestDialog<T>(config: DialogConfig): Promise<T> {
 
 // ── Imperative helpers (use these from anywhere) ──────────────────
 export const dialog = {
-  alert: (title: string, message?: string) =>
+  alert: (title: string, message?: string, opts?: { detail?: string }) =>
     requestDialog<void>({
       kind: 'alert',
       title,
       message,
+      detail: opts?.detail,
       confirmText: '知道了',
     }),
 

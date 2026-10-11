@@ -82,7 +82,7 @@ fn start_next(app: &AppHandle) {
     let create = || -> Result<(), String> {
         let parent = app.get_webview_window("main").ok_or("Main window unavailable")?;
         let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("dialog.html".into()))
-            .title(&title).inner_size(480.0, 300.0).min_inner_size(400.0, 220.0)
+            .title(&title).inner_size(480.0, 240.0).min_inner_size(400.0, 160.0)
             .resizable(false).minimizable(false).maximizable(false)
             .visible(false).skip_taskbar(true).parent(&parent).map_err(|e| e.to_string())?
             .build().map_err(|e| e.to_string())?;
@@ -156,7 +156,7 @@ pub async fn message_dialog_ready(window: WebviewWindow, app: AppHandle, height:
             let window = handle.get_webview_window(&label).ok_or("Message window unavailable")?;
             let max_height = window.current_monitor().ok().flatten()
                 .map(|m| m.size().height as f64 / m.scale_factor() - 100.0).unwrap_or(650.0);
-            let height = if height.is_finite() { height.clamp(220.0, max_height.clamp(220.0, 650.0)) } else { 300.0 };
+            let height = if height.is_finite() { height.clamp(160.0, max_height.clamp(160.0, 650.0)) } else { 240.0 };
             window.set_size(tauri::LogicalSize::new(480.0, height)).map_err(|e| e.to_string())?;
             window.center().map_err(|e| e.to_string())?;
             window.show().map_err(|e| e.to_string())?;

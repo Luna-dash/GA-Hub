@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { invoke } from '@tauri-apps/api/core'
 import { MessageDialog } from './components/MessageDialog'
 import type { DialogConfig, DialogResult } from './stores/dialogStore'
+import { measureMessageDialogHeight } from './utils/messageDialogLayout'
 import './styles/index.css'
 
 // Separate entry: no App, router, API polling or desktop-runtime initialization.
@@ -22,9 +23,8 @@ function DesktopMessage() {
     // Measure the initial content before showing; further details scroll inside
     // the fixed native window instead of resizing it while the user interacts.
     const observer = new ResizeObserver(() => {
-      const body = panel.current?.querySelector('.message-dialog-content')
-      const height = Math.max(210, (body?.scrollHeight ?? 120) + 140)
-      void invoke('message_dialog_ready', { height: Math.min(640, height) }).catch(() => setFailure(true))
+      const height = panel.current ? measureMessageDialogHeight(panel.current) : 240
+      void invoke('message_dialog_ready', { height }).catch(() => setFailure(true))
     })
     if (panel.current) observer.observe(panel.current.querySelector('.message-dialog-content')!)
     return () => observer.disconnect()
