@@ -16,6 +16,7 @@
 // authoritative plaintext source if the user wants to read or copy it.
 
 import { useEffect, useMemo, useState } from 'react'
+import '@/styles/mykey.css'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { MyKeyData, MyKeySession, MyKeySessionTestResult, MyKeySessionType, MyKeyWriteResult } from '@/api/types'
@@ -26,10 +27,33 @@ import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
-import { getMyKeyShowUpload, MYKEY_SHOW_UPLOAD_EVENT } from '@/utils/mykeySyncUi'
-import { errorMessageFromError, myKeyParseErrorFromError, myKeySyncErrorFromError } from '@/utils/sessionUi'
+import { getMyKeyShowUpload, MYKEY_SHOW_UPLOAD_EVENT, MYKEY_SYNC_CONFIRM, myKeySyncSuccess, myKeySyncFailure } from '@/utils/mykeySyncUi'
+import { errorMessageFromError, myKeyParseErrorFromError } from '@/utils/sessionUi'
 
 type Tab = 'structured' | 'raw'
+
+// One source of truth for channel order, icons, labels and accent colors.
+const SESSION_META = {
+  mixin: { label: 'Mixin 路由', tone: 'mixin', order: 0 },
+  native_oai: { label: 'OpenAI (native)', tone: 'openai', order: 1 },
+  oai: { label: 'OpenAI (text)', tone: 'openai', order: 1 },
+  native_claude: { label: 'Claude (native)', tone: 'claude', order: 2 },
+  claude: { label: 'Claude (text)', tone: 'claude', order: 2 },
+} as const
+const CREATE_TYPES: MyKeySessionType[] = ['mixin', 'native_oai', 'native_claude']
+
+function ChannelLabel({ type }: { type: MyKeySessionType }) {
+  const meta = sessionMeta(type)
+  return <>
+    <svg className="mykey-channel-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {meta.tone === 'mixin' ? <path d="M3 5h3c4 0 4 10 8 10h3m-3-3 3 3-3 3M3 15h3c1.5 0 2.5-1.5 3.3-3M11 8c.8-1.5 1.8-3 3-3h3m-3-3 3 3-3 3" /> : <>
+        <circle cx="10" cy="10" r="8" />
+        {meta.tone === 'claude' ? <path d="M12.5 6.5a4 4 0 1 0 0 7" /> : <ellipse cx="10" cy="10" rx="3" ry="4" />}
+      </>}
+    </svg>
+    <span>{meta.label}</span>
+  </>
+}
 
 export default function MyKey() {
   const qc = useQueryClient()
@@ -67,17 +91,18 @@ export default function MyKey() {
 
   const handleUploadSync = async () => {
     const ok = await dialog.confirm(
-      '上传 mykey 到同步服务器？',
-      '将加密当前本机 mykey.py 并上传到同步服务器，其他设备之后可下载此版本。请确认当前内容是你要发布的版本。',
-      { confirmText: '上传' },
+      MYKEY_SYNC_CONFIRM.upload.title,
+      MYKEY_SYNC_CONFIRM.upload.message,
+      { confirmText: MYKEY_SYNC_CONFIRM.upload.confirmText },
     )
     if (!ok) return
     setSyncBusy('upload')
     try {
       const r = await api.uploadMyKeySync()
-      toast.success((r.stdout || 'mykey 上传完成').trim().split('\n').slice(-1)[0])
+      toast.success(myKeySyncSuccess('upload', r.stdout))
     } catch (e: any) {
-      dialog.alert('上传 mykey 失败', myKeySyncErrorFromError(e))
+      const feedback = myKeySyncFailure('upload', e)
+      void dialog.alert(feedback.title, feedback.message, { detail: feedback.detail })
     } finally {
       setSyncBusy(null)
     }
@@ -85,24 +110,27 @@ export default function MyKey() {
 
   const handleFetchSync = async () => {
     const ok = await dialog.confirm(
-      '下载并覆盖本机 mykey？',
-      '将从同步服务器下载最新加密 mykey.py，解密后覆盖本机文件。同步脚本会先备份旧文件，但请确认你确实要覆盖当前配置。',
-      { tone: 'danger', confirmText: '下载并覆盖' },
+      MYKEY_SYNC_CONFIRM.fetch.title,
+      MYKEY_SYNC_CONFIRM.fetch.message,
+      { tone: 'danger', confirmText: MYKEY_SYNC_CONFIRM.fetch.confirmText },
     )
     if (!ok) return
     setSyncBusy('fetch')
     try {
       const r = await api.fetchMyKeySync()
       if (r.warnings && r.warnings.length) {
-        dialog.alert('下载完成，但有警告', r.warnings.join('\n'))
+        void dialog.alert('配置已下载，部分模型需要检查',
+          '云端配置已同步到本机，但部分模型未能正常加载。请检查相关配置后再使用。',
+          { detail: r.warnings.join('\n') })
       } else {
-        toast.success((r.stdout || 'mykey 下载完成').trim().split('\n').slice(-1)[0])
+        toast.success(myKeySyncSuccess('fetch', r.stdout))
       }
       qc.invalidateQueries({ queryKey: queryKeys.mykey.data })
       qc.invalidateQueries({ queryKey: queryKeys.llms })
       qc.invalidateQueries({ queryKey: queryKeys.servicePanel })
     } catch (e: any) {
-      dialog.alert('下载 mykey 失败', myKeySyncErrorFromError(e))
+      const feedback = myKeySyncFailure('fetch', e)
+      void dialog.alert(feedback.title, feedback.message, { detail: feedback.detail })
     } finally {
       setSyncBusy(null)
     }
@@ -159,7 +187,10 @@ function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
 
   const sessions = data.structured.sessions
   const mixins = data.structured.mixins ?? (data.structured.mixin ? [data.structured.mixin] : [])
-  const allEntries = [...mixins, ...sessions]
+  const allEntries = useMemo(
+    () => [...mixins, ...sessions].sort((a, b) => sessionMeta(a.type).order - sessionMeta(b.type).order),
+    [mixins, sessions],
+  )
   const globals_ = data.structured.globals
 
   const startCreate = (type: MyKeySessionType) => {
@@ -201,18 +232,17 @@ function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
       <section>
         <div className="flex items-baseline justify-between mb-3">
           <h2 className="text-sm font-semibold text-slate-300">LLM 链路（{sessions.length}）</h2>
-          <div className="flex items-center gap-2">
-            <button onClick={() => startCreate('native_claude')}
-              className="px-3 py-1.5 text-xs rounded-lg border border-purple-300/60 bg-purple-100/80 text-purple-700 hover:bg-purple-100">+ Claude</button>
-            <button onClick={() => startCreate('native_oai')}
-              className="px-3 py-1.5 text-xs rounded-lg border border-emerald-300/60 bg-emerald-100/80 text-emerald-700 hover:bg-emerald-100">+ OpenAI</button>
-            <button onClick={() => startCreate('mixin')}
-              className="px-3 py-1.5 text-xs rounded-lg border border-amber-300/70 bg-amber-100/80 text-amber-700 hover:bg-amber-100"
-              title="新增一条故障转移路由；可同时保留多条 mixin 配置"
-            >+ Mixin 路由</button>
+          <div className="mykey-channel-actions" aria-label="新增渠道">
+            {CREATE_TYPES.map((type) => (
+              <button key={type} type="button" onClick={() => startCreate(type)}
+                data-channel-type={type} className={`mykey-channel-add mykey-channel--${sessionMeta(type).tone}`}
+                title={type === 'mixin' ? '新增一条故障转移路由；可同时保留多条 mixin 配置' : `新增 ${sessionMeta(type).label} 渠道`}>
+                <span aria-hidden="true">+</span><ChannelLabel type={type} />
+              </button>
+            ))}
           </div>
         </div>
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="mykey-card-grid grid gap-5 md:grid-cols-2">
           {allEntries.map((entry, idx) => {
             const row = Math.floor(idx / 2)
             const expanded = openRows.has(row)
@@ -279,35 +309,24 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
       setTesting(false)
     }
   }
-  const isClaude = s.type === 'native_claude'
-  const isOpenAI = s.type === 'native_oai' || s.type === 'oai'
-  const colorTone = isClaude
-    ? 'from-fuchsia-100/72 via-fuchsia-50/56 to-slate-200/84 shadow-[0_8px_22px_rgba(15,23,42,0.07)]'
-    : isOpenAI
-      ? 'from-cyan-300/95 via-cyan-200/88 to-slate-300/94 shadow-[0_8px_22px_rgba(15,23,42,0.08)]'
-      : 'from-amber-300/94 via-amber-200/86 to-slate-300/94 shadow-[0_8px_22px_rgba(15,23,42,0.08)]'
-  const accentTone = isClaude
-    ? 'bg-fuchsia-300 shadow-[0_0_10px_rgba(244,114,182,0.28)]'
-    : isOpenAI
-      ? 'bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,0.28)]'
-      : 'bg-amber-200 shadow-[0_0_10px_rgba(253,230,138,0.25)]'
+  const cardTone = meta.tone
   const mixinTargets = s.fields.llm_nos || []
   const summary = s.type !== 'mixin'
     ? String(s.fields.model || '未设置模型')
     : (mixinTargets.join(' → ') || '未设置路由目标')
 
   return (
-    <div className={`group overflow-hidden rounded-2xl border border-slate-300/85 bg-gradient-to-br from-slate-200/95 via-slate-200/90 to-slate-300/92 text-slate-900 shadow-sm shadow-slate-900/6 transition-all ${colorTone} ${expanded ? 'border-slate-400/90' : ''}`}>
-      <button type="button" onClick={onToggle} className="w-full text-left px-4 py-3 hover:bg-black/[0.02] transition-colors">
+    <div data-channel-type={s.type} className={`mykey-card mykey-channel--${cardTone} mykey-card--${cardTone} ${expanded ? 'mykey-card--expanded' : ''}`}>
+      <button type="button" onClick={onToggle} aria-expanded={expanded} aria-label={`${expanded ? '收起' : '展开'} ${title}`} className="mykey-card__toggle">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2.5 min-w-0">
-              <span className={`shrink-0 text-[10px] tracking-[0.12em] uppercase px-2 py-1 rounded-full border backdrop-blur-[2px] ${meta.tone}`}>{meta.label}</span>
-              <span className="min-w-0 truncate text-[15px] leading-5 font-semibold tracking-[0.01em] text-slate-900">{title}</span>
+              <span className="mykey-card__badge"><ChannelLabel type={s.type} /></span>
+              <span className="min-w-0 truncate text-[15px] leading-5 font-semibold tracking-[0.01em] text-ink">{title}</span>
             </div>
             {!expanded && (
               <div className="mt-1.5 flex items-center gap-2 min-w-0">
-                <div className={`h-2 w-2 rounded-full shrink-0 ${accentTone}`} />
+                <div className="mykey-card__dot" aria-hidden="true" />
                 <div className="min-w-0 truncate text-[13px] leading-5 text-slate-500 font-medium tracking-[0.01em]" title={String(summary)}>
                   {String(summary)}
                 </div>
@@ -318,7 +337,7 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
             {expanded && s.lineno != null && (
               <span className="text-[11px] text-slate-500 font-mono">L{String(s.lineno)}</span>
             )}
-            <span className={`flex h-8 w-8 items-center justify-center rounded-full border border-white/8 bg-white/[0.04] text-slate-300 shadow-inner shadow-white/5 transition-all duration-200 group-hover:bg-white/[0.07] ${expanded ? 'rotate-180 text-white' : ''}`}>
+            <span className="mykey-card__chevron" aria-hidden="true">
               <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
                 <path d="M5 7.5L10 12.5L15 7.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -328,7 +347,7 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
       </button>
 
       {expanded && (
-        <div className="border-t border-slate-300/80 bg-slate-200/90 px-4 py-3">
+        <div className="mykey-card__details">
           <div className={`grid gap-x-6 gap-y-3 ${s.type !== 'mixin' ? 'md:grid-cols-2' : ''}`}>
             {s.type !== 'mixin' ? (
               <dl className="space-y-1.5 text-xs">
@@ -358,11 +377,11 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
             ) : null}
           </div>
           <div className="mt-3 flex gap-2 flex-wrap">
-            <button onClick={onEdit} className="text-xs px-3 py-1.5 rounded-xl bg-accent text-white shadow-sm shadow-accent/20">编辑</button>
-            <button onClick={onDuplicate} className="text-xs px-3 py-1.5 rounded-xl border border-white/10 text-slate-300 hover:bg-white/5">复制</button>
-            <button onClick={onDelete} className="text-xs px-3 py-1.5 rounded-xl border border-status-danger-line text-status-danger hover:bg-status-danger-soft">删除</button>
+            <button onClick={onEdit} className="mykey-card__action text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:brightness-95">编辑</button>
+            <button onClick={onDuplicate} className="mykey-card__action text-xs px-3 py-1.5 rounded-lg border border-line bg-bg-card text-ink hover:bg-bg">复制</button>
+            <button onClick={onDelete} className="mykey-card__action text-xs px-3 py-1.5 rounded-lg border border-status-danger-line text-status-danger hover:bg-status-danger-soft">删除</button>
             {canTest && (
-              <button onClick={runTest} disabled={testing} className="text-xs px-3 py-1.5 rounded-xl border border-status-success-line text-status-success hover:bg-status-success-soft disabled:opacity-50">
+              <button onClick={runTest} disabled={testing} className="mykey-card__action text-xs px-3 py-1.5 rounded-lg border border-status-success-line text-status-success hover:bg-status-success-soft disabled:opacity-50">
                 {testing ? '测试中…' : '测 ping'}
               </button>
             )}
@@ -402,13 +421,7 @@ function KV({ k, v, mono }: { k: string; v: any; mono?: boolean }) {
 }
 
 function sessionMeta(type: MyKeySessionType) {
-  switch (type) {
-    case 'native_claude': return { label: '🅒 Claude (native)', tone: 'bg-purple-100/80 text-purple-700' }
-    case 'native_oai':    return { label: '🅞 OpenAI (native)', tone: 'bg-emerald-100/80 text-emerald-700' }
-    case 'claude':        return { label: '🅒 Claude (text)',  tone: 'bg-slate-700/60 text-slate-300' }
-    case 'oai':           return { label: '🅞 OpenAI (text)',  tone: 'bg-slate-700/60 text-slate-300' }
-    case 'mixin':         return { label: '🔀 Mixin 路由',       tone: 'bg-amber-100/80 text-amber-700' }
-  }
+  return SESSION_META[type]
 }
 
 // ── Edit / Create dialog ────────────────────────────────────────────
