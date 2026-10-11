@@ -97,10 +97,11 @@ class SystemChannel:
         images: list[str] | None = None,
     ) -> "StreamHandle":
         """Admit one task through the shared coordinator; return its stream."""
+        coordinator = self._coordinator()
         self._ensure_row()
         row = self._store.get(self.session_id)
         llm_key = self._llm_key_resolver(row)
-        _, handle = self._coordinator().submit_stream(
+        _, handle = coordinator.submit_stream(
             text,
             session_id=self.session_id,
             source=source,
@@ -111,8 +112,9 @@ class SystemChannel:
 
     def abort(self) -> "RuntimeState":
         """Abort this channel's current run (idempotent when idle)."""
+        coordinator = self._coordinator()
         self._ensure_row()
-        return self._coordinator().abort_if_current(session_id=self.session_id)
+        return coordinator.abort_if_current(session_id=self.session_id)
 
     @property
     def agent(self):

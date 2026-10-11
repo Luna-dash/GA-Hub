@@ -29,6 +29,10 @@ def main() -> int:
         raise SystemExit(
             "Refusing to export setup-mode OpenAPI; configure GA_ROOT and restart the exporter"
         )
+    if app.state.route_load_error:
+        raise SystemExit(
+            "Refusing to export incomplete OpenAPI: " + app.state.route_load_error
+        )
 
     # FastAPI's operation/schema ordering is deterministic for a given source
     # tree. Preserve it rather than sorting keys so regeneration produces a

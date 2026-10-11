@@ -188,6 +188,11 @@ class SessionCoordinator:
         with self._lock:
             return replace(self._states.get(session_id, RuntimeState(session_id)))
 
+    def runtime_states(self) -> tuple[RuntimeState, ...]:
+        """Observe all known states without creating runtimes or admitting work."""
+        with self._lock:
+            return tuple(replace(state) for state in self._states.values())
+
     def active_runs(self) -> tuple[RuntimeState, ...]:
         with self._lock:
             return tuple(replace(state) for state in self._active_by_session.values())

@@ -4,6 +4,96 @@ from unittest import mock
 from server.services.service_registry import ServicePanelItem, ServiceRegistry
 
 
+def test_session_panel_does_not_construct_idle_runtimes(session_domain) -> None:
+    registry = ServiceRegistry(sessions=session_domain)
+    with mock.patch.object(session_domain, "runtime_factory", side_effect=AssertionError("status created runtime")):
+        assert registry._agent().state == "ready"
+        assert registry._agent().summary == "等待任务"
+        assert session_domain.peek_coordinator() is None
+        session_domain.begin_shutdown()
+        assert registry._agent().activity == "standby"
+
+
+def test_session_panel_observes_concurrent_start_run_and_abort(session_domain) -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from server.services.session_coordinator import SessionCoordinator
+
+    starting = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+    handles = {sid: SimpleNamespace(stream_id=sid, finished=False) for sid in ("running", "starting")}
+
+    def runtime_factory(sid):
+        if sid == "starting":
+            starting.set()
+            assert release.wait(5), "test did not release runtime creation"
+        return SimpleNamespace(submit=lambda *a, **k: handles[sid], abort=lambda: None,
+                               shutdown=lambda **k: True)
+
+    def changed(state):
+        if state.session_id == "running" and state.status == "idle":
+            completed.set()
+
+    coordinator = SessionCoordinator(runtime_factory, capacity=2, poll_interval=0.001, on_state_change=changed)
+    session_domain.attach_coordinator(coordinator)
+    registry = ServiceRegistry(sessions=session_domain)
+    # An idle legacy singleton must no longer hide session work.
+    with mock.patch("server.services.agent_service.AgentService.instance", side_effect=AssertionError("legacy agent read")):
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            try:
+                coordinator.submit("first", session_id="running")
+                future = executor.submit(coordinator.submit, "second", session_id="starting")
+                assert starting.wait(5)
+                item = registry._agent()
+                assert item.activity == "active"
+                assert item.health == "healthy"
+                assert item.metrics == {"运行中": 1, "启动中": 1, "停止中": 0, "异常": 0}
+                assert item.summary == "2 个会话正在执行"
+                snapshot = session_domain.runtime_states()
+
+                coordinator.abort_if_current(session_id="running")
+                assert registry._agent().metrics == {"运行中": 0, "启动中": 1, "停止中": 1, "异常": 0}
+                assert next(s for s in snapshot if s.session_id == "running").status == "running"
+                handles["running"].finished = True
+                assert completed.wait(5)
+                assert registry._agent().metrics["停止中"] == 0
+                release.set()
+                future.result(timeout=5)
+                assert registry._agent().metrics["运行中"] == 1
+            finally:
+                release.set()
+                for handle in handles.values():
+                    handle.finished = True
+                assert coordinator.shutdown(timeout=2)
+
+
+def test_session_panel_reports_abort_timeout_as_needing_attention(session_domain) -> None:
+    import threading
+    from server.services.session_coordinator import SessionCoordinator
+
+    failed = threading.Event()
+    handle = SimpleNamespace(stream_id="stuck", finished=False)
+    runtime = SimpleNamespace(submit=lambda *a, **k: handle, abort=lambda: None,
+                              shutdown=lambda **k: True)
+    coordinator = SessionCoordinator(
+        lambda sid: runtime, poll_interval=0.001, abort_timeout=0,
+        on_state_change=lambda state: failed.set() if state.status == "error" else None,
+    )
+    session_domain.attach_coordinator(coordinator)
+    try:
+        coordinator.submit("test", session_id="stuck")
+        coordinator.abort_if_current(session_id="stuck")
+        assert failed.wait(5)
+        item = ServiceRegistry(sessions=session_domain)._agent()
+        assert item.health == "attention"
+        assert item.metrics["异常"] == 1
+        assert "1 个会话异常" in item.summary
+    finally:
+        handle.finished = True
+        assert coordinator.shutdown(timeout=2)
+
+
 def test_autonomous_panel_uses_stop_event_and_reports_running() -> None:
     service = SimpleNamespace(
         _sched=SimpleNamespace(running=True),

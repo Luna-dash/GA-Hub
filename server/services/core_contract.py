@@ -149,6 +149,15 @@ _REQUIRED_GA_SYMBOLS: dict[str, tuple[str, ...]] = {
 
 
 # ── result types ────────────────────────────────────────────────────────────
+class CoreRuntimeUnavailable(RuntimeError):
+    """The app has not established a compatible GA runtime."""
+
+
+def require_core_contract(report: ContractReport | None) -> None:
+    if report is None or not report.ok:
+        raise CoreRuntimeUnavailable("GA core 契约不可用，请在设置中检查 GA 路径和运行环境。")
+
+
 @dataclass
 class Check:
     name: str

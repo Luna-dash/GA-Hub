@@ -1,11 +1,11 @@
-"""AgentService — singleton wrapper around GeneraticAgent.
+"""AgentService — one GA runtime and its streaming adapter.
 
-Owns one GeneraticAgent instance for the whole web backend. Bridges its
-blocking ``put_task → display_queue.get()`` flow to async consumers via
-asyncio.to_thread polling.
+SessionRuntimeFactory creates isolated instances for web and system sessions.
+The legacy singleton remains for model configuration and compatibility routes.
+Each instance bridges blocking ``put_task → display_queue.get()`` to async
+consumers via asyncio.to_thread polling.
 
-Imports `agentmain` and `frontends.continue_cmd` from the GenericAgent
-project at the path resolved by ``_paths.GA_ROOT``. This module fails
+Uses the GA runtime/session bridges from ``_paths.GA_ROOT``. This module fails
 fast if GA_ROOT is not configured — the backend should run in setup mode
 in that case (see server.main).
 """
@@ -85,9 +85,6 @@ def _mask_secret(s: str) -> str:
 # in isolation. Re-exported here for backwards-compatible debugging.
 from .ga_subprocess_patch import _patch_ga_subprocess  # noqa: E402
 
-_patch_ga_subprocess()
-
-
 # ── External Python worker for GA browser tools ──────────────────────────────
 # The worker script and the synchronous ``call`` wrapper live in
 # ``ga_external_worker``. ``_patch_ga_web_tools`` stays here because tests
@@ -158,9 +155,6 @@ def _patch_ga_web_tools() -> None:
     _ga.web_scan = _admin_web_scan
     _ga.web_execute_js = _admin_web_execute_js
     log.info("patched GA web tools to external Python worker: %s", real_python)
-
-
-_patch_ga_web_tools()
 
 
 @dataclass
@@ -281,6 +275,11 @@ class AgentService:
         manage_global_preference: bool = True,
     ) -> None:
         self._init_fields()
+        if agent is None:
+            # Host adaptation belongs to runtime construction, after the app's
+            # compatibility check, not to importing a route or generating OpenAPI.
+            _patch_ga_subprocess()
+            _patch_ga_web_tools()
         self.agent = agent if agent is not None else create_main_agent()
         LlmRegistry.mark_agent_current(self.agent)
         self.session_id = session_id

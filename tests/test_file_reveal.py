@@ -189,7 +189,7 @@ def test_show_in_file_manager_selects_files_and_opens_dirs(tmp_path, monkeypatch
 
 
 def test_reveal_endpoint_supports_parent_mode(tmp_path, monkeypatch):
-    import server.main as server_main
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     folder = tmp_path / "docs"
@@ -202,7 +202,11 @@ def test_reveal_endpoint_supports_parent_mode(tmp_path, monkeypatch):
     opened = []
     monkeypatch.setattr(upload, "_open_in_default_app", lambda p: opened.append(p))
 
-    client = TestClient(server_main.create_app(), base_url="http://127.0.0.1")
+    # This is a file-route test; a full app requires a successful GA startup
+    # probe before serving normal endpoints (covered by test_core_startup).
+    app = FastAPI()
+    app.include_router(upload.router)
+    client = TestClient(app, base_url="http://127.0.0.1")
     resp = client.post("/api/files/reveal", json={"path": "docs/a.md", "mode": "parent"})
 
     assert resp.status_code == 200

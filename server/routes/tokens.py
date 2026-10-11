@@ -19,15 +19,18 @@ _TOTAL_KEYS = ("requests", "input", "output", "cache_create", "cache_read", "tot
 
 try:
     from frontends.gahub.bridge import usage as usage_bridge
-    if _paths.GA_ROOT is not None:
-        # Reuse GA's native JSONL ledger through its registered Hub boundary.
-        # GA-Hub remains only a reader/presenter of that ledger.
-        usage_bridge.initialize_usage_tracking(str(_paths.GA_ROOT))
 except Exception:  # GA versions without the usage bridge remain usable
     usage_bridge = None
     log.exception("token tracker unavailable")
 
 
+def initialize_usage_tracking() -> None:
+    """Initialize the GA ledger explicitly from the application lifespan."""
+    if usage_bridge is not None and _paths.GA_ROOT is not None:
+        try:
+            usage_bridge.initialize_usage_tracking(str(_paths.GA_ROOT))
+        except Exception:
+            log.exception("token tracker initialization failed")
 
 
 def _normalise_totals(value: Any) -> dict[str, int]:

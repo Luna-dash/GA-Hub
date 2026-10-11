@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from typing import Any
+from typing import Any, Callable
 
 from .. import constants
 from ..event_topics import CHAT_ERROR, SESSION_RUNTIME
@@ -109,8 +109,12 @@ def _publish_runtime_state(state: RuntimeState) -> None:
 class SessionLifecycle:
     """Owns the store, the run coordinator and every producer wired to them."""
 
-    def __init__(self, *, store: SessionMetadataStore | None = None) -> None:
+    def __init__(
+        self, *, store: SessionMetadataStore | None = None,
+        ensure_runtime_available: Callable[[], None] | None = None,
+    ) -> None:
         self._store = store if store is not None else SessionMetadataStore()
+        self._ensure_runtime_available = ensure_runtime_available
         self._coordinator: SessionCoordinator | None = None
         self._runtime_factory: SessionRuntimeFactory | None = None
         # Reentrant: coordinator() composes runtime_factory(), which locks too.
@@ -154,6 +158,7 @@ class SessionLifecycle:
         second owner of runtimes, and the two would disagree about which store
         minted them.
         """
+        self.assert_runtime_available()
         with self._lock:
             if self._runtime_factory is None:
                 self._runtime_factory = SessionRuntimeFactory(self._store)
@@ -165,6 +170,7 @@ class SessionLifecycle:
         Raises SessionCoordinatorStoppedError while the lifecycle is stopping:
         callers must not touch a coordinator that is being torn down.
         """
+        self.assert_runtime_available()
         with self._lock:
             if self._stopping:
                 raise SessionCoordinatorStoppedError(
@@ -194,6 +200,17 @@ class SessionLifecycle:
                     "session runtime lifecycle is stopping"
                 )
             return self._coordinator
+
+    def assert_runtime_available(self) -> None:
+        """Apply the app's compatibility gate to HTTP and background producers."""
+        if self._ensure_runtime_available is not None:
+            self._ensure_runtime_available()
+
+    def runtime_states(self) -> tuple[RuntimeState, ...]:
+        """Status reads observe existing runtimes, including during shutdown."""
+        with self._lock:
+            coordinator = self._coordinator
+        return coordinator.runtime_states() if coordinator is not None else ()
 
     def scheduled_chats(self) -> ScheduledChatService:
         """The process-owned scheduled-chat domain."""

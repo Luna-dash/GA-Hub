@@ -62,6 +62,20 @@ class GeneratedApiContractTests(unittest.TestCase):
 
         self.assertIn("Refusing to export setup-mode OpenAPI", str(refusal.exception))
 
+    def test_exporter_preserves_artifact_when_runtime_routes_failed(self) -> None:
+        script = runpy.run_path(str(ROOT / "scripts" / "export_openapi.py"))
+        script["main"].__globals__["app"] = SimpleNamespace(
+            openapi=lambda: {"info": {"title": "GA Hub API"}},
+            state=SimpleNamespace(route_load_error="missing runtime bridge"),
+        )
+        with TemporaryDirectory() as temporary:
+            output = Path(temporary) / "openapi.json"
+            output.write_text("existing complete contract", encoding="utf-8")
+            with mock.patch.object(sys, "argv", ["export_openapi.py", "--output", str(output)]):
+                with self.assertRaisesRegex(SystemExit, "Refusing to export incomplete OpenAPI"):
+                    script["main"]()
+            self.assertEqual(output.read_text(encoding="utf-8"), "existing complete contract")
+
 
 if __name__ == "__main__":
     unittest.main()

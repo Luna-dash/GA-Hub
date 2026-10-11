@@ -278,6 +278,8 @@ def test_app_status_and_shutdown_reuse_only_startup_owned_services() -> None:
         app = main.create_app()
         with TestClient(app, base_url="http://127.0.0.1") as client:
             response = client.get("/api/status")
+            # A passing startup probe opens normal APIs, not just diagnostics.
+            assert client.get("/api/sessions").status_code == 200
 
     assert response.status_code == 200
     assert response.json()["autonomous"] == {"schedule_count": 2}

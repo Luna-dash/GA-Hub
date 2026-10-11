@@ -47,6 +47,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
@@ -110,7 +111,17 @@ def save_config(cfg: dict) -> None:
     ADMIN_DATA.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), "utf-8")
-    tmp.replace(CONFIG_FILE)
+    # Windows can briefly refuse an atomic replace while another reader holds
+    # the destination. Keep the previous config intact and retry only that
+    # operation, with a bounded delay; permanent permission errors still fail.
+    for attempt in range(6):
+        try:
+            tmp.replace(CONFIG_FILE)
+            break
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 5:
+                raise
+            time.sleep(0.01 * (2 ** attempt))
     reset_config_cache()
 
 

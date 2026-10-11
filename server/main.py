@@ -37,6 +37,8 @@ from .routes import events as event_routes  # safe to import in setup mode
 from .schemas import AppStatusResp, SetupReq
 from .services.app_services import AppServices
 from .services.event_bus import bus
+from .services.core_contract import ContractReport, require_core_contract
+from .runtime_guard import CoreContractGuard
 
 log = logging.getLogger(__name__)
 
@@ -235,8 +237,23 @@ def _mount_static(app: FastAPI) -> None:
         return JSONResponse({"detail": "not found"}, status_code=404)
 
 
+def _normal_routers() -> tuple[APIRouter, ...]:
+    """Load the runtime routes atomically; diagnostics have no GA dependency."""
+    from .routes import (
+        agent, feishu, conversations, memory, autonomous, conductor, upload,
+        wechat, logs, mykey, services, sessions, preferences, notify, tasks,
+        tokens, goalhive,
+    )
+    return tuple(module.router for module in (
+        agent, feishu, conversations, memory, autonomous, conductor, upload,
+        wechat, logs, mykey, services, sessions, preferences, notify, tasks,
+        tokens, goalhive,
+    ))
+
+
 def create_app() -> FastAPI:
     setup_mode = _paths.GA_ROOT is None
+    runtime_initialized = False
     feishu_autostart_task: asyncio.Task[Any] | None = None
     services = AppServices()
     # Bind the status registry to the lifespan-owned instances BEFORE startup
@@ -244,7 +261,12 @@ def create_app() -> FastAPI:
     # objects this app created (no cross-app singleton leakage, no lazy
     # construction from a status read).
     from .services.service_registry import ServiceRegistry
-    app_registry = ServiceRegistry(services)
+    from .services.session_lifecycle import SessionLifecycle
+
+    lifecycle = SessionLifecycle(
+        ensure_runtime_available=lambda: require_core_contract(app.state.core_contract),
+    )
+    app_registry = ServiceRegistry(services, sessions=lifecycle)
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
@@ -266,13 +288,13 @@ def create_app() -> FastAPI:
     )
     app.state.services = services
     app.state.service_registry = app_registry
+    app.state.core_contract = None
+    app.state.route_load_error = None
     # Process-lifetime session domain (metadata store, run coordinator,
     # scheduled chats, system channels). The composition root builds it and
     # every route resolves it from the app it serves: no route module owns it,
     # and services/ never has to import routes/ to find it.
-    from .services.session_lifecycle import SessionLifecycle
-
-    app.state.session_lifecycle = SessionLifecycle()
+    app.state.session_lifecycle = lifecycle
 
     # Semantic service exceptions become their HTTP shape here, once, unless
     # a route translated them first (routes raise HTTPException, which wins).
@@ -282,6 +304,10 @@ def create_app() -> FastAPI:
     # CORS: browser/server mode is same-origin, while Vite and packaged Tauri
     # assets call the random-port sidecar cross-origin.  Keep both origin sets
     # explicit so arbitrary external pages cannot script the local API.
+    app.add_middleware(
+        CoreContractGuard, enabled=not setup_mode,
+        report=lambda: app.state.core_contract,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(TAURI_UI_ORIGINS),
@@ -302,8 +328,9 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     async def _startup():
-        nonlocal feishu_autostart_task
+        nonlocal feishu_autostart_task, runtime_initialized
         services.clear()
+        runtime_initialized = False
         feishu_autostart_task = None
         bus.attach_loop(asyncio.get_running_loop())
         # Collect long-lived children a previous GA-Hub left behind (crash or
@@ -326,17 +353,6 @@ def create_app() -> FastAPI:
             )
             return
 
-        # Lazy imports after _paths is set
-        from .services.agent_service import AgentService
-        from .services.autonomous_scheduler import AutonomousScheduler
-        from .services.scheduler_host import SchedulerHost
-        from .services.task_scheduler import TaskScheduler
-        from .services.feishu_service import FeishuService
-        from .services.session_lifecycle import session_lifecycle_of
-
-        lifecycle = session_lifecycle_of(app)
-        lifecycle.prepare()
-
         # P0: probe the GA core contract *before* AgentService wires itself to
         # it. Failure does NOT abort startup (per P0 spec: the service still
         # boots to the diagnostic page); the report is stored so
@@ -345,20 +361,33 @@ def create_app() -> FastAPI:
         try:
             from .services import core_contract
             app.state.core_contract = core_contract.probe_core_contract()
-            if not app.state.core_contract.ok:
-                log.error(
-                    "GA core contract probe FAILED — chat will return "
-                    "503 core_contract_failed. Missing: %s",
-                    ", ".join(app.state.core_contract.errors) or "unknown",
-                )
-            else:
-                log.info(
-                    "GA core contract probe passed (commit %s)",
-                    app.state.core_contract.core_commit,
-                )
-        except Exception:
+        except Exception as exc:
             log.exception("core contract probe crashed")
-            app.state.core_contract = None
+            app.state.core_contract = ContractReport(
+                ga_root=str(_paths.GA_ROOT), core_commit=None, ok=False,
+                errors=[f"probe_failed: {type(exc).__name__}: {exc}"],
+            )
+        if app.state.route_load_error:
+            app.state.core_contract.ok = False
+            app.state.core_contract.errors.append(app.state.route_load_error)
+        if not app.state.core_contract.ok:
+            log.error("GA core unavailable; diagnostic shell remains online: %s",
+                      ", ".join(app.state.core_contract.errors))
+            return
+
+        # All runtime creation and host adaptation happen after compatibility
+        # has been established. A failed probe never starts task producers.
+        from .services.agent_service import AgentService
+        from .services.autonomous_scheduler import AutonomousScheduler
+        from .services.scheduler_host import SchedulerHost
+        from .services.task_scheduler import TaskScheduler
+        from .services.feishu_service import FeishuService
+        from .routes.tokens import initialize_usage_tracking
+
+        lifecycle.prepare()
+        runtime_initialized = True
+        initialize_usage_tracking()
+        log.info("GA core contract probe passed (commit %s)", app.state.core_contract.core_commit)
 
         agent_svc = AgentService.instance()
         services.agent = agent_svc
@@ -429,6 +458,8 @@ def create_app() -> FastAPI:
             log.exception("hub session projection start failed")
 
     async def _shutdown():
+        if not runtime_initialized:
+            return
         # Stop the phone projection first: no new puts should enter admission.
         try:
             from .services.hub_session_projection import stop_hub_session_projection
@@ -532,44 +563,16 @@ def create_app() -> FastAPI:
         return report.to_dict()
 
     if not setup_mode:
-        from .routes import (
-            agent as agent_routes,
-            tokens as token_routes,
-            autonomous as autonomous_routes,
-            conductor as conductor_routes,
-            conversations as conv_routes,
-            logs as log_routes,
-            memory as memory_routes,
-            mykey as mykey_routes,
-            preferences as preference_routes,
-            services as service_routes,
-            sessions as session_routes,
-            notify as notify_routes,
-            tasks as task_routes,
-            upload as upload_routes,
-            wechat as wechat_routes,
-            feishu as feishu_routes,
-        )
-        app.include_router(agent_routes.router)
-        app.include_router(feishu_routes.router)
-        app.include_router(conv_routes.router)
-        app.include_router(memory_routes.router)
-        app.include_router(autonomous_routes.router)
-        app.include_router(conductor_routes.router)
-        app.include_router(upload_routes.router)
-        app.include_router(wechat_routes.router)
-        app.include_router(log_routes.router)
-        app.include_router(mykey_routes.router)
-        app.include_router(service_routes.router)
-        app.include_router(session_routes.router)
-        app.include_router(preference_routes.router)
-        app.include_router(notify_routes.router)
-        app.include_router(task_routes.router)
-        app.include_router(token_routes.router)
-
-        # GoalHive independent route
-        from .routes import goalhive as goalhive_routes
-        app.include_router(goalhive_routes.router)
+        try:
+            routers = _normal_routers()
+        except Exception as exc:
+            # Older or incomplete GA checkouts can fail while importing a
+            # bridge. Keep setup/health and the SPA alive for path repair.
+            app.state.route_load_error = f"route_import_failed: {type(exc).__name__}: {exc}"
+            log.exception("runtime routes unavailable; retaining diagnostic shell")
+        else:
+            for router in routers:
+                app.include_router(router)
 
     _mount_static(app)
     return app

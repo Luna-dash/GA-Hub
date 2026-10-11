@@ -25,6 +25,7 @@ from .services.session_coordinator import (
     SessionCoordinatorStoppedError,
 )
 from .services.session_runtime_factory import RuntimeRestoreError
+from .services.core_contract import CoreRuntimeUnavailable
 
 
 def _payload(code: str, message: str, **context) -> dict:
@@ -60,6 +61,10 @@ def install_error_handlers(app: FastAPI) -> None:
 
     def _json(status_code: int, payload: dict) -> JSONResponse:
         return JSONResponse(status_code=status_code, content={"detail": payload})
+
+    @app.exception_handler(CoreRuntimeUnavailable)
+    async def _core_unavailable(request: Request, exc: CoreRuntimeUnavailable) -> JSONResponse:
+        return _json(503, _payload("core_contract_failed", str(exc)))
 
     @app.exception_handler(SessionControlBusyError)
     async def _control_busy(request: Request, exc: SessionControlBusyError) -> JSONResponse:

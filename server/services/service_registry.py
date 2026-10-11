@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:  # pragma: no cover - runtime imports stay minimal
     from .app_services import AppServices
+    from .session_lifecycle import SessionLifecycle
 
 
 @dataclass
@@ -48,9 +49,13 @@ class ServicePanelItem:
 
 
 class ServiceRegistry:
-    def __init__(self, services: "AppServices | None" = None) -> None:
+    def __init__(
+        self, services: "AppServices | None" = None,
+        *, sessions: "SessionLifecycle | None" = None,
+    ) -> None:
         # Lifespan-owned instances win over singleton probes when present.
         self._services = services
+        self._sessions = sessions
         self._readers: list[Callable[[], ServicePanelItem | None]] = [
             self._agent, self._feishu, self._wechat, self._conductor,
             self._goalhive, self._autonomous, self._tasks,
@@ -99,6 +104,8 @@ class ServiceRegistry:
         return {"status": overall, "services": services, "timestamp": snapshot["timestamp"]}
 
     def _agent(self) -> ServicePanelItem:
+        if self._sessions is not None:
+            return self._session_activity()
         from .agent_service import AgentService
         service = getattr(self._owned_services(), "agent", None)
         if service is None:
@@ -114,6 +121,32 @@ class ServiceRegistry:
             "正在执行任务" if status.is_running else "等待任务", "/chat",
             {"LLM": status.llm_name, "队列": status.queued_tasks, "上下文": status.history_lines},
             expected_running=True,
+        )
+
+    def _session_activity(self) -> ServicePanelItem:
+        from .core_contract import CoreRuntimeUnavailable
+        from .session_runtime_status import STATUS_STARTING, STATUS_RUNNING, STATUS_ABORTING, STATUS_ERROR
+
+        try:
+            self._sessions.assert_runtime_available()
+        except CoreRuntimeUnavailable as exc:
+            return ServicePanelItem(
+                "agent", "Agent", "error", str(exc), "/settings",
+                health="attention", expected_running=True,
+            )
+        states = self._sessions.runtime_states()
+        starting = sum(state.status == STATUS_STARTING for state in states)
+        running = sum(state.status == STATUS_RUNNING for state in states)
+        aborting = sum(state.status == STATUS_ABORTING for state in states)
+        errors = sum(state.status == STATUS_ERROR for state in states)
+        active = starting + running + aborting
+        summary = f"{active} 个会话正在执行" if active else "等待任务"
+        if errors:
+            summary += f"；{errors} 个会话异常"
+        return ServicePanelItem(
+            "agent", "Agent", "running" if active else "ready", summary, "/chat",
+            {"运行中": running, "启动中": starting, "停止中": aborting, "异常": errors},
+            health="attention" if errors else "healthy", expected_running=True,
         )
 
     def _feishu(self) -> ServicePanelItem:
