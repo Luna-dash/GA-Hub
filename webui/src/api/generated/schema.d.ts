@@ -2984,6 +2984,16 @@ export interface components {
             title: string;
             /** Message Count */
             message_count: number;
+            /**
+             * Dialogue Count
+             * @description Human inputs, excluding tools and automatic injections
+             */
+            dialogue_count: number | null;
+            /**
+             * Turn Count
+             * @description Completed native Prompt/Response pairs, including tools and retries
+             */
+            turn_count: number | null;
             /** Last User Preview */
             last_user_preview: string;
             /** Original User Preview */

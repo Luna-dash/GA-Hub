@@ -112,7 +112,9 @@ describe('conversation route selection', () => {
       items: [{
         id: 'alpha beta',
         title: 'Alpha conversation',
-        message_count: 1,
+        message_count: 9,
+        dialogue_count: 2,
+        turn_count: 9,
         mtime: 0,
         last_user_preview: 'hello',
         original_user_preview: 'hello',
@@ -176,6 +178,14 @@ describe('conversation route selection', () => {
   const routedSessionId = () => new URLSearchParams(
     host.querySelector('[data-route-search]')?.textContent || '',
   ).get('session')
+
+  it('shows human dialogues separately from model turns, not message count', async () => {
+    await renderAt('/conversations')
+    await waitFor(() => expect(host.textContent).toContain('2 次对话 · 9 turns'))
+    expect(host.textContent).toContain('2 次对话 · 9 turns')
+    expect(host.textContent).not.toContain('9 条消息')
+    expect(host.querySelector('[title*="对话次数："]')).not.toBeNull()
+  })
 
   it('keeps the collection route unselected and puts a clicked id in the clean URL', async () => {
     await renderAt('/conversations')

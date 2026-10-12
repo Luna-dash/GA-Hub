@@ -70,6 +70,8 @@ def test_list_conversations_keeps_search_and_pagination_semantics(tmp_path, monk
             "id": "a.txt",
             "title": "",
             "message_count": 2,
+            "dialogue_count": 0,
+            "turn_count": 0,
             "mtime": 2,
             "last_user_preview": "preview a",
             "original_user_preview": "",

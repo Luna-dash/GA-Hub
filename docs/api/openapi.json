@@ -6963,6 +6963,30 @@
             "type": "integer",
             "title": "Message Count"
           },
+          "dialogue_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dialogue Count",
+            "description": "Human inputs, excluding tools and automatic injections"
+          },
+          "turn_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Count",
+            "description": "Completed native Prompt/Response pairs, including tools and retries"
+          },
           "last_user_preview": {
             "type": "string",
             "title": "Last User Preview"
@@ -7001,6 +7025,8 @@
           "id",
           "title",
           "message_count",
+          "dialogue_count",
+          "turn_count",
           "last_user_preview",
           "original_user_preview",
           "mtime",

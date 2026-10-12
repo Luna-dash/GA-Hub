@@ -73,6 +73,8 @@ class _ArchiveIndex:
     revision: str
     groups: tuple[_ArchiveGroup, ...]
     total: int
+    dialogue_count: int = 0
+    turn_count: int = 0
 
 
 def _parse_header_time(raw: str | None) -> str | None:
@@ -285,16 +287,19 @@ def _items_from_text(content: str, ordinal_start: int = 0) -> list[dict[str, Any
     return _items_from_messages(messages, timestamps, ordinal_start)
 
 
-def _prompt_is_user(data: mmap.mmap, start: int, end: int) -> bool:
-    """Classify one prompt through GA's public projection contract."""
+def _prompt_user_items(data: mmap.mmap, start: int, end: int) -> list[dict[str, Any]]:
+    """Classify a prompt using GA's projection, never tool-result text."""
     if _TOOL_RESULT_BYTES_RE.search(data, start, end):
-        return False
+        return []
     prompt = data[start:end].decode("utf-8", errors="replace")
     probe = f"=== Prompt ===\n{prompt}\n=== Response ===\n"
-    return any(
-        message.get("role") == "user"
-        for message in _extract_ui_messages_from_text(probe)
-    )
+    return [message for message in _extract_ui_messages_from_text(probe)
+            if message.get("role") == "user"]
+
+
+def _prompt_is_user(data: mmap.mmap, start: int, end: int) -> bool:
+    """Classify one prompt through GA's public projection contract."""
+    return bool(_prompt_user_items(data, start, end))
 
 
 @lru_cache(maxsize=64)
@@ -317,19 +322,22 @@ def _build_archive_index(
                 revision = hashlib.sha256(data).hexdigest()
                 headers = list(_NATIVE_HEADER_BYTES_RE.finditer(data))
                 pairs: list[tuple[int, int, int, bool]] = []
-                pending: tuple[int, int] | None = None
+                pending: tuple[int, int, bool] | None = None
+                dialogue_count = 0
                 for index, header in enumerate(headers):
                     body_end = headers[index + 1].start() if index + 1 < len(headers) else len(data)
                     label = header.group(1)
                     if label == b"Prompt":
-                        pending = (header.start(), header.end())
+                        users = _prompt_user_items(data, header.end(), body_end)
+                        dialogue_count += sum(_is_real_user_item(item) for item in users)
+                        pending = (header.start(), header.end(), bool(users))
                     elif pending is not None:
-                        prompt_start, prompt_body_start = pending
+                        prompt_start, prompt_body_start, is_user = pending
                         pairs.append((
                             prompt_start,
                             body_end,
                             prompt_body_start,
-                            _prompt_is_user(data, prompt_body_start, header.start()),
+                            is_user,
                         ))
                         pending = None
 
@@ -353,7 +361,7 @@ def _build_archive_index(
                 for start, end, item_count in raw_groups:
                     groups.append(_ArchiveGroup(start, end, item_start, item_count))
                     item_start += item_count
-                return _ArchiveIndex(path, revision, tuple(groups), item_start)
+                return _ArchiveIndex(path, revision, tuple(groups), item_start, dialogue_count, len(pairs))
     except (OSError, ValueError) as exc:
         raise HistoryUnavailableError from exc
 
@@ -370,6 +378,16 @@ def _archive_index(path: Path) -> _ArchiveIndex:
         int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
         int(stat.st_size),
     )
+
+
+def read_archive_counts(archive_path: str | Path) -> tuple[int, int]:
+    """Human inputs and completed Prompt/Response turns, cached by revision.
+
+    Tools and automatic retries count as model turns, not human dialogues.
+    A pending human input counts as a dialogue, not a completed model turn.
+    """
+    index = _archive_index(Path(archive_path).resolve())
+    return index.dialogue_count, index.turn_count
 
 
 def _read_indexed_window(

@@ -23,6 +23,7 @@ import {
   removeConversationFromCache,
 } from '@/queries/conversations'
 import { queryKeys } from '@/queries/queryKeys'
+import { conversationCountsText, CONVERSATION_COUNTS_HELP } from '@/utils/conversationCounts'
 
 type ViewMode = 'round' | 'flat'
 type Msg = ConversationMessage
@@ -789,7 +790,7 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
         </span>
       </div>
       <div className="text-xs text-slate-500 truncate mt-0.5">{previewText(c.last_user_preview || '')}</div>
-      <div className="text-[10px] text-slate-600 mt-0.5">{c.message_count} 条消息{lastActive ? ` · 最后活动 ${lastActive}` : ''}</div>
+      <div className="text-[10px] text-slate-600 mt-0.5" title={CONVERSATION_COUNTS_HELP}>{conversationCountsText(c)}{lastActive ? ` · 最后活动 ${lastActive}` : ''}</div>
     </button>
   )
 }

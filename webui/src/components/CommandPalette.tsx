@@ -12,6 +12,7 @@
 // by token-subsequence match (so "ai chat" matches "实时聊天 / live chat").
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { conversationCountsText } from '@/utils/conversationCounts'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -223,7 +224,7 @@ export function CommandPalette() {
       acts.push({
         id: `conv:${c.id}`, group: '历史对话', icon: '💬',
         label: c.title || c.id,
-        hint: `${c.message_count} 条`,
+        hint: conversationCountsText(c),
         run: () => nav('/conversations'),
       })
     }

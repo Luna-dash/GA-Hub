@@ -222,7 +222,10 @@ class ConversationUpdate(BaseModel):
 class ConversationSummaryResp(BaseModel):
     id: str
     title: str
+    # Legacy native round count retained for existing clients.
     message_count: int
+    dialogue_count: int | None = Field(description="Human inputs, excluding tools and automatic injections")
+    turn_count: int | None = Field(description="Completed native Prompt/Response pairs, including tools and retries")
     last_user_preview: str
     original_user_preview: str
     # Archive file mtime (epoch seconds) — the listing's last-activity stamp.

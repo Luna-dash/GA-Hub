@@ -43,6 +43,7 @@ from ..services.archive_import import (
     copy_archive_for_import,
 )
 from ..services.archive_messages import (
+    HistoryUnavailableError,
     archive_contains,
     archive_session_by_id,
     first_user_has_file_hint,
@@ -50,6 +51,7 @@ from ..services.archive_messages import (
     invalidate_archive_catalogue,
     list_archive_sessions,
     read_ui_messages,
+    read_archive_counts,
     refresh_archive_catalogue,
 )
 from ..services.conversation_titles import migrate_legacy_titles
@@ -207,6 +209,11 @@ def _list_conversations_sync(
     page = items[offset: offset + limit]
     for item in page:
         path = item.pop("_archive_path")
+        try:
+            item["dialogue_count"], item["turn_count"] = read_archive_counts(path)
+        except HistoryUnavailableError:
+            # Concurrent deletion/locking: unknown counts must not appear as zero.
+            item["dialogue_count"] = item["turn_count"] = None
         item["original_user_preview"] = (
             "" if item["title"] else first_user_preview(path)
         )
