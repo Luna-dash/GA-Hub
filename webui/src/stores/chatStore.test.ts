@@ -264,6 +264,76 @@ describe('chatStore lifecycle', () => {
     ])
   })
 
+  it.each([false, true])('adopts an active partial archive pair (buffered=%s)', async (buffered) => {
+    const history = deferred<SessionMessagesResponse>()
+    vi.spyOn(api, 'getSessionMessages').mockReturnValue(history.promise)
+    const ts = Date.parse('2026-10-12T16:00:00')
+    useChatStore.getState().start('session-a')
+    const socket = FakeWebSocket.instances.at(-1)!
+    const snapshot = {
+      type: 'snapshot', status: 'running',
+      active_message: {
+        stream_id: 'active-run', query: 'submit', source: 'webui', ts: ts / 1000,
+        content: '\nLLM Running (Turn 1) ...\n<summary>working</summary>\nfull live tool', done: false,
+      },
+    }
+    if (buffered) socket.emit(snapshot)
+    history.resolve({
+      session_id: 'session-a', archive_bound: true, revision: 'a1',
+      items: [
+        { id: 'question', role: 'user', content: 'submit', ordinal: 0, timestamp: '2026-10-12T16:00:00' },
+        { id: 'answer', role: 'assistant', content: '<summary>working</summary>partial archive tool', ordinal: 1, timestamp: '2026-10-12T16:00:12' },
+      ],
+    })
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    if (!buffered) socket.emit(snapshot)
+    await vi.waitFor(() => expect(useChatStore.getState().streaming).toBe(true))
+    expect(useChatStore.getState().msgs).toHaveLength(2)
+    expect(useChatStore.getState().msgs[1]).toMatchObject({
+      streamId: 'active-run', streaming: true, content: snapshot.active_message.content,
+    })
+    socket.emit(snapshot)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(useChatStore.getState().msgs).toHaveLength(2)
+    socket.emit({ type: 'next', stream_id: 'active-run', content: 'full second turn' })
+    await vi.waitFor(() => expect(useChatStore.getState().msgs[1].content).toBe('full second turn'))
+    socket.emit({ type: 'done', stream_id: 'active-run', content: 'final result' })
+    expect(useChatStore.getState().msgs).toHaveLength(2)
+    expect(useChatStore.getState().msgs[1]).toMatchObject({ streaming: false, content: 'final result' })
+    expect(useChatStore.getState().streaming).toBe(false)
+    vi.mocked(api.getSessionMessages).mockResolvedValue({
+      session_id: 'session-a', archive_bound: true, revision: 'a2',
+      items: [
+        { id: 'question', role: 'user', content: 'submit', ordinal: 0, timestamp: '2026-10-12T16:00:00' },
+        { id: 'answer', role: 'assistant', content: 'final result', ordinal: 1, timestamp: '2026-10-12T16:00:12' },
+      ],
+    })
+    useChatStore.getState().start('session-a', { forceHistory: true })
+    await vi.waitFor(() => expect(useChatStore.getState().historyRevision).toBe('a2'))
+    expect(useChatStore.getState().msgs).toHaveLength(2)
+    expect(useChatStore.getState().msgs[1]).toMatchObject({ content: 'final result' })
+    expect(useChatStore.getState().streaming).toBe(false)
+  })
+
+  it('does not adopt an older identical question as the active run', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
+      session_id: 'session-a', archive_bound: true, revision: 'a1',
+      items: [
+        { id: 'question', role: 'user', content: 'submit', ordinal: 0, timestamp: '2026-10-12T15:00:00' },
+        { id: 'answer', role: 'assistant', content: 'old completed result', ordinal: 1, timestamp: '2026-10-12T15:00:12' },
+      ],
+    })
+    useChatStore.getState().start('session-a')
+    await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+    FakeWebSocket.instances.at(-1)!.emit({ type: 'snapshot', active_message: {
+      stream_id: 'new-run', query: 'submit', source: 'webui',
+      ts: Date.parse('2026-10-12T16:00:00') / 1000, content: 'new live content', done: false,
+    } })
+    await vi.waitFor(() => expect(useChatStore.getState().msgs).toHaveLength(4))
+    expect(useChatStore.getState().msgs[1].content).toBe('old completed result')
+    expect(useChatStore.getState().msgs[3].streaming).toBe(true)
+  })
+
   it('does not duplicate a completed stream already present in archive history', async () => {
     vi.spyOn(api, 'getSessionMessages').mockResolvedValue({
       session_id: 'session-a', archive_bound: true, revision: 'a1',

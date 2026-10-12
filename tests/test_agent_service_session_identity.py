@@ -69,6 +69,21 @@ def test_session_runtime_skips_process_global_preference_hooks() -> None:
     restore.assert_not_called()
 
 
+def test_active_snapshot_carries_query_identity_for_partial_archive_adoption() -> None:
+    from server.services.chat_stream_projection import ChatSnapshot
+
+    service = svc_mod.AgentService(agent=FakeAgent(), session_id="session-A", manage_global_preference=False)
+    snapshot = ChatSnapshot(
+        stream_id="stream-A", source="webui", query="submit", started_at=1234.5,
+        content="full live tool record", session_id="session-A", run_id="run-A",
+    )
+    service._snapshots.add(snapshot)
+    assert service.active_message_snapshot("stream-A", session_id="session-A", run_id="run-A") == {
+        "stream_id": "stream-A", "query": "submit", "ts": 1234.5, "source": "webui",
+        "content": "full live tool record", "done": False,
+    }
+
+
 def test_submit_and_stream_events_keep_session_and_run_identity() -> None:
     agent = FakeAgent()
     with mock.patch.object(svc_mod.bus, "publish") as publish:

@@ -345,12 +345,37 @@ function livePositionKey(msg: ChatMsg): string | null {
 
 function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
   const out = [...base]
+  // The native archive is written turn-by-turn while a run is still active.
+  // Adopt that partial pair in place, rather than rendering it as a stopped
+  // history answer alongside a second, live answer. Match the server query
+  // and its start time; never infer identity from differently formatted tools.
+  const adopted = new Set<ChatMsg>()
+  for (let i = 0; i + 1 < live.length; i += 1) {
+    const query = live[i]
+    const answer = live[i + 1]
+    if (query.role !== 'user' || answer.role !== 'assistant' || !answer.streaming
+      || !query.streamId || query.streamId !== answer.streamId || query.timestamp == null) continue
+    for (let j = out.length - 2; j >= 0; j -= 1) {
+      const archivedQuery = out[j]
+      const archivedAnswer = out[j + 1]
+      if (archivedQuery.source !== 'history' || archivedAnswer.source !== 'history'
+        || archivedQuery.role !== 'user' || archivedAnswer.role !== 'assistant'
+        || archivedQuery.content !== query.content || archivedQuery.timestamp == null
+        || !timestampsOverlap(archivedQuery, query)) continue
+      out[j] = { ...archivedQuery, ...query }
+      out[j + 1] = { ...archivedAnswer, ...answer }
+      adopted.add(query)
+      adopted.add(answer)
+      break
+    }
+  }
   const positions = new Map<string, number>()
   out.forEach((m, index) => {
     const key = livePositionKey(m)
     if (key) positions.set(key, index)
   })
   for (const msg of removeArchivedSnapshotOverlap(base, live)) {
+    if (adopted.has(msg)) continue
     const key = livePositionKey(msg)
     if (key && positions.has(key)) {
       const index = positions.get(key)!
@@ -362,6 +387,30 @@ function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
     if (key) positions.set(key, out.length - 1)
   }
   return out
+}
+
+function mergeSessionSnapshot(base: ChatMsg[], event: Extract<ChatWSOut, { type: 'snapshot' }>): ChatMsg[] {
+  const active = event.active_message
+  if (active?.query && active.ts != null) {
+    const existing = event.streams?.find((s) => s.stream_id === active.stream_id)
+    const streams: ChatStreamSnapshot[] = [...(event.streams ?? []).filter((s) => s.stream_id !== active.stream_id), {
+      ...existing,
+      stream_id: active.stream_id,
+      source: active.source ?? existing?.source ?? 'webui',
+      query: active.query,
+      started_at: active.ts,
+      finished_at: existing?.finished_at ?? 0,
+      content: active.content,
+      done: active.done,
+    }]
+    return mergeLive(base, applySnapshot(streams))
+  }
+  let msgs = event.streams ? mergeLive(base, applySnapshot(event.streams)) : base
+  // Legacy backends have no query identity; do not guess an archived match.
+  if (active) msgs = applyEvent(msgs, {
+    type: active.done ? 'done' : 'next', stream_id: active.stream_id, content: active.content,
+  })
+  return msgs
 }
 
 // ── store 外的运行时单例 ────────────────────────────────────────────────
@@ -751,8 +800,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       let msgs = base
       for (const event of events) {
         // A session snapshot describes live streams, not archived scrollback.
-        msgs = event.type === 'snapshot' && event.streams
-          ? mergeLive(msgs, applySnapshot(event.streams))
+        msgs = event.type === 'snapshot'
+          ? mergeSessionSnapshot(msgs, event)
           : applyEvent(msgs, event)
       }
       return msgs
@@ -826,13 +875,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
           if (!active || get().sessionId !== sessionId) return
           set((st) => {
             if (st.sessionId !== sessionId) return st
-            let msgs = m.streams ? mergeLive(st.msgs, applySnapshot(m.streams)) : st.msgs
-            if (m.active_message) {
-              const activeEvent: ChatWSOut = m.active_message.done
-                ? { type: 'done', stream_id: m.active_message.stream_id, content: m.active_message.content }
-                : { type: 'next', stream_id: m.active_message.stream_id, content: m.active_message.content }
-              msgs = applyEvent(msgs, activeEvent)
-            }
+            const msgs = mergeSessionSnapshot(st.msgs, m)
             return {
               msgs,
               streaming: anyStreaming(msgs),

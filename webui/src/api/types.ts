@@ -226,7 +226,7 @@ export type ChatWSOut = (
       run_id?: string | null
       stream_id?: string | null
       runtime?: { status: string; run_id: string | null; stream_id: string | null; error: string | null }
-      active_message?: { stream_id: string; content: string; done: boolean } | null
+      active_message?: { stream_id: string; content: string; done: boolean; query?: string; ts?: number; source?: string } | null
     }
   | { type: 'reset'; reason?: string }
   | { type: 'started'; stream_id: string; source?: string; query?: string; ts?: number; logical_id?: string; retry_attempt?: number; retry_max?: number; retry_of?: string; retry_reason?: string }

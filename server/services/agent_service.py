@@ -1090,6 +1090,9 @@ class AgentService:
                 return None
             return {
                 "stream_id": snap.stream_id,
+                "query": snap.query,
+                "ts": snap.started_at,
+                "source": snap.source,
                 "content": snap.content,
                 "done": snap.done,
             }
