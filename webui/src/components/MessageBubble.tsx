@@ -22,7 +22,7 @@ import {
 } from '@/utils/assistantTranscript'
 import { foldTurns } from '@/utils/foldTurns'
 import { useCopy } from '@/utils/clipboard'
-import { CHAT_FONT_SCALE_EVENT, getChatFontScale } from '@/utils/chatAppearance'
+import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
 import { FILE_HINT } from '@/utils/sessionPrompt'
 import { MessageContent } from './MessageContent'
 import { TranscriptRecordContent } from './TranscriptRecordContent'
@@ -160,7 +160,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
   // 代码块/折叠头）做 calc 同步缩放，见 index.css 的 prose-chat 区块注释。
   const messageFontStyle = compact
     ? undefined
-    : { fontSize: `${fontScale}%`, '--chat-scale': fontScale / 100 } as CSSProperties
+    : { fontSize: `${chatFontPercent(fontScale)}%`, '--chat-scale': chatFontPercent(fontScale) / 100 } as CSSProperties
   const isUser = role === 'user'
   const isSystem = role === 'system'
   const tone = bubbleTone(role)

@@ -16,7 +16,7 @@ describe('chatAppearance', () => {
   it('clamps and rounds the scale to supported steps', () => {
     expect(clampChatFontScale(72)).toBe(75)
     expect(clampChatFontScale(103)).toBe(105)
-    expect(clampChatFontScale(153)).toBe(150)
+    expect(clampChatFontScale(253)).toBe(200)
     expect(clampChatFontScale(Number.NaN)).toBe(CHAT_FONT_SCALE_DEFAULT)
   })
 

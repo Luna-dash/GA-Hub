@@ -14,10 +14,10 @@ describe('railAppearance', () => {
   })
 
   it('clamps and rounds the scale to supported steps', () => {
-    expect(clampRailTitleScale(52)).toBe(60)
-    expect(clampRailTitleScale(72)).toBe(70)
+    expect(clampRailTitleScale(52)).toBe(75)
+    expect(clampRailTitleScale(72)).toBe(75)
     expect(clampRailTitleScale(103)).toBe(105)
-    expect(clampRailTitleScale(153)).toBe(120)
+    expect(clampRailTitleScale(253)).toBe(200)
     expect(clampRailTitleScale(Number.NaN)).toBe(RAIL_TITLE_SCALE_DEFAULT)
   })
 

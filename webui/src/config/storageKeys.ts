@@ -36,8 +36,12 @@ export const storageKeys = {
   modelSelectionSubagentLlm: 'gahub.modelSelection.subagentLlmKey.v1',
   /** chatAppearance: chat font-scale percent (number-as-string). */
   chatFontScale: 'gahub.chat-font-scale',
+  /** Relative to the desktop baseline (legacy chat scale 90%). */
+  chatFontScaleRelative: 'gahub.chat-font-scale.relative.v2',
   /** railAppearance: rail title font-scale percent (number-as-string). */
   railTitleScale: 'gahub.rail-title-scale',
+  /** Relative to the desktop baseline (legacy title scale 60%). */
+  railTitleScaleRelative: 'gahub.rail-title-scale.relative.v2',
   /** mykeySyncUi: '1'/'0' upload hint visibility. */
   mykeyShowUpload: 'gahub.mykey-show-upload',
   /** chatPerformance: '1' = performance mode enabled. */

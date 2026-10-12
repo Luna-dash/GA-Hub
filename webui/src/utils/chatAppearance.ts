@@ -1,10 +1,13 @@
 import { storageKeys } from '@/config/storageKeys'
+import { readRelativeFontScale } from './relativeFontScale'
 
-export const CHAT_FONT_SCALE_KEY = storageKeys.chatFontScale
+export const CHAT_FONT_SCALE_KEY = storageKeys.chatFontScaleRelative
+export const CHAT_FONT_BASELINE = 90
+export const chatFontPercent = (scale: number): number => CHAT_FONT_BASELINE * scale / 100
 export const CHAT_FONT_SCALE_EVENT = 'gahub:chat-font-scale'
 export const CHAT_FONT_SCALE_DEFAULT = 100
 export const CHAT_FONT_SCALE_MIN = 75
-export const CHAT_FONT_SCALE_MAX = 150
+export const CHAT_FONT_SCALE_MAX = 200
 export const CHAT_FONT_SCALE_STEP = 5
 
 export function clampChatFontScale(value: number): number {
@@ -14,12 +17,8 @@ export function clampChatFontScale(value: number): number {
 }
 
 export function getChatFontScale(): number {
-  try {
-    const stored = Number(localStorage.getItem(CHAT_FONT_SCALE_KEY))
-    return stored ? clampChatFontScale(stored) : CHAT_FONT_SCALE_DEFAULT
-  } catch {
-    return CHAT_FONT_SCALE_DEFAULT
-  }
+  return readRelativeFontScale(CHAT_FONT_SCALE_KEY, storageKeys.chatFontScale,
+    CHAT_FONT_BASELINE, CHAT_FONT_SCALE_MIN, CHAT_FONT_SCALE_MAX)
 }
 
 export function setChatFontScale(value: number): number {

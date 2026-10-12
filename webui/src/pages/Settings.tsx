@@ -13,11 +13,11 @@ import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import {
   CHAT_FONT_SCALE_DEFAULT, CHAT_FONT_SCALE_MAX, CHAT_FONT_SCALE_MIN, CHAT_FONT_SCALE_STEP,
-  getChatFontScale, setChatFontScale,
+  chatFontPercent, getChatFontScale, setChatFontScale,
 } from '@/utils/chatAppearance'
 import {
   RAIL_TITLE_SCALE_DEFAULT, RAIL_TITLE_SCALE_MAX, RAIL_TITLE_SCALE_MIN, RAIL_TITLE_SCALE_STEP,
-  getRailTitleScale, setRailTitleScale,
+  railTitlePercent, getRailTitleScale, setRailTitleScale,
 } from '@/utils/railAppearance'
 import {
   defaultNavPreferences,
@@ -365,7 +365,7 @@ function ChatAppearancePanel() {
   return (
     <div className="bg-bg-card border border-line rounded-xl p-4">
       <div className="font-medium mb-1">会话显示</div>
-      <div className="text-xs text-slate-500 mb-3">调整会话消息与会话管理栏标题的字体大小，仅影响当前设备。</div>
+      <div className="text-xs text-slate-500 mb-3">以桌面当前字号为默认基准（100%），按百分比缩小或放大，仅影响当前设备。</div>
       <div className="flex items-center gap-3 flex-wrap">
         <span className="text-sm text-slate-500">会话字体</span>
         <input
@@ -378,7 +378,7 @@ function ChatAppearancePanel() {
           aria-label="会话字体缩放"
           className="w-52 accent-accent"
         />
-        <output className="w-12 text-sm font-medium tabular-nums text-center">{scale}%</output>
+        <output className="w-12 text-sm font-medium tabular-nums text-center">{Math.round(scale)}%</output>
         <button
           type="button"
           onClick={() => updateScale(CHAT_FONT_SCALE_DEFAULT)}
@@ -388,7 +388,7 @@ function ChatAppearancePanel() {
           恢复默认
         </button>
       </div>
-      <div className="mt-3 rounded-lg border border-line bg-bg-soft px-3 py-2 text-ink" style={{ fontSize: `${scale}%` }}>
+      <div className="mt-3 rounded-lg border border-line bg-bg-soft px-3 py-2 text-ink" style={{ fontSize: `${chatFontPercent(scale)}%` }}>
         字体大小预览：GA 会话输出示例
       </div>
       <div className="mt-4 flex items-center gap-3 flex-wrap">
@@ -403,7 +403,7 @@ function ChatAppearancePanel() {
           aria-label="会话管理栏标题字号缩放"
           className="w-52 accent-accent"
         />
-        <output className="w-12 text-sm font-medium tabular-nums text-center">{titleScale}%</output>
+        <output className="w-12 text-sm font-medium tabular-nums text-center">{Math.round(titleScale)}%</output>
         <button
           type="button"
           onClick={() => updateTitleScale(RAIL_TITLE_SCALE_DEFAULT)}
@@ -414,7 +414,7 @@ function ChatAppearancePanel() {
         </button>
       </div>
       <div className="mt-3 rounded-lg border border-line bg-bg-soft px-3 py-2">
-        <div className="truncate font-medium text-slate-200" style={{ fontSize: `${titleScale}%` }}>
+        <div className="truncate font-medium text-slate-200" style={{ fontSize: `${railTitlePercent(titleScale)}%` }}>
           标题字号预览：会话管理栏条目标题
         </div>
       </div>

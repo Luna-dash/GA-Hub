@@ -12,7 +12,7 @@ import { VirtualMessageList } from '@/components/VirtualMessageList'
 import { parseAssistantTranscript, stripAssistantTranscriptTags } from '@/utils/assistantTranscript'
 import { previewText } from '@/utils/foldTurns'
 import { formatRelativeTime } from '@/utils/timeFormat'
-import { RAIL_TITLE_SCALE_EVENT, getRailTitleScale } from '@/utils/railAppearance'
+import { RAIL_TITLE_SCALE_EVENT, railTitlePercent, getRailTitleScale } from '@/utils/railAppearance'
 import { saveTextExport } from '@/utils/desktop'
 import { errorMessageFromError, openSessionChat, structuredErrorDetailFromError } from '@/utils/sessionUi'
 import { dialog } from '@/stores/dialogStore'
@@ -93,7 +93,7 @@ export default function Conversations() {
     window.addEventListener(RAIL_TITLE_SCALE_EVENT, sync)
     return () => window.removeEventListener(RAIL_TITLE_SCALE_EVENT, sync)
   }, [])
-  const titleStyle: CSSProperties = { fontSize: `${titleScale}%` }
+  const titleStyle: CSSProperties = { fontSize: `${railTitlePercent(titleScale)}%` }
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQ(q), 300)

@@ -1,11 +1,14 @@
 import { storageKeys } from '@/config/storageKeys'
+import { readRelativeFontScale } from './relativeFontScale'
 
-export const RAIL_TITLE_SCALE_KEY = storageKeys.railTitleScale
+export const RAIL_TITLE_SCALE_KEY = storageKeys.railTitleScaleRelative
+export const RAIL_TITLE_BASELINE = 60
+export const railTitlePercent = (scale: number): number => RAIL_TITLE_BASELINE * scale / 100
 export const RAIL_TITLE_SCALE_EVENT = 'gahub:rail-title-scale'
 export const RAIL_TITLE_SCALE_DEFAULT = 100
-// 200px 栏宽下默认字号对长标题偏大，量程以缩小为主
-export const RAIL_TITLE_SCALE_MIN = 60
-export const RAIL_TITLE_SCALE_MAX = 120
+// Percent of the captured desktop title size; allow both smaller and larger.
+export const RAIL_TITLE_SCALE_MIN = 75
+export const RAIL_TITLE_SCALE_MAX = 200
 export const RAIL_TITLE_SCALE_STEP = 5
 
 export function clampRailTitleScale(value: number): number {
@@ -15,12 +18,8 @@ export function clampRailTitleScale(value: number): number {
 }
 
 export function getRailTitleScale(): number {
-  try {
-    const stored = Number(localStorage.getItem(RAIL_TITLE_SCALE_KEY))
-    return stored ? clampRailTitleScale(stored) : RAIL_TITLE_SCALE_DEFAULT
-  } catch {
-    return RAIL_TITLE_SCALE_DEFAULT
-  }
+  return readRelativeFontScale(RAIL_TITLE_SCALE_KEY, storageKeys.railTitleScale,
+    RAIL_TITLE_BASELINE, RAIL_TITLE_SCALE_MIN, RAIL_TITLE_SCALE_MAX)
 }
 
 export function setRailTitleScale(value: number): number {
