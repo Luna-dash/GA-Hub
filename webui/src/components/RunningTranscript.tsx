@@ -1,126 +1,142 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import type { AssistantTranscript } from '@/utils/assistantTranscript'
-import { parseAssistantTranscript } from '@/utils/assistantTranscript'
+import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { renderAskUserPayload, type AssistantTranscript } from '@/utils/assistantTranscript'
+import { formatToolHint, projectRunningTurn } from '@/utils/runningTranscript'
 import { MessageContent } from './MessageContent'
 import { AskUserCard } from './AskUserCard'
 
-function OutputDetails({ title, content }: { title: string; content: string }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <details className="turn-fold" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>{title}</summary>
-      {open && <MessageContent content={content} format="markdown" cache />}
-    </details>
-  )
-}
-
-/** Only mounted for an executing assistant message. Completion uses the existing reply view. */
-export function RunningTranscript({ transcript, askUserDraftKey, askUserInteractive, recoveryStatus }: {
+/** One chronological process. Only the running view uses this light projection. */
+export function RunningTranscript({ transcript, askUserDraftKey, askUserInteractive, recoveryStatus, recoveryBeforeTurn }: {
+  recoveryBeforeTurn?: number
   recoveryStatus?: ReactNode
   transcript: AssistantTranscript
   askUserDraftKey?: string
   askUserInteractive: boolean
 }) {
-  const current = transcript.turns.at(-1)
-  const completed = transcript.turns.slice(0, -1)
-  const content = current ? current.content : transcript.finalBody
-  const askUser = parseAssistantTranscript(content).finalAskUser
+  const turns = useMemo(() => (transcript.turns.length ? transcript.turns : [
+    { turn: 1, summary: '', content: transcript.finalBody },
+  ]).map(turn => ({ ...turn, ...projectRunningTurn(turn.content) })), [transcript])
+  const visibleTurns = turns.filter(turn => turn.summary.trim() || turn.parts.length || turn.askUser)
+  const current = turns.at(-1)!
+  const askUser = current.askUser || transcript.finalAskUser
   const viewportRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
-  const highWater = useRef(0)
   const following = useRef(true)
-  const lastOutput = useRef({ turn: current?.turn ?? 1, content: '' })
+  const highWater = useRef(0)
   const [heldHeight, setHeldHeight] = useState(0)
-  const [paused, setPaused] = useState(false)
-  const [frozen, setFrozen] = useState<typeof lastOutput.current | null>(null)
-  const turn = current?.turn ?? 1
-  if (content.trim()) lastOutput.current = { turn, content }
-  const output = frozen || (content.trim() ? { turn, content } : lastOutput.current)
-  const previous = output.turn !== turn
-  const summary = current?.summary || completed.at(-1)?.summary || '正在继续…'
-  const summaryIsPrevious = !current?.summary && Boolean(completed.at(-1)?.summary)
+  const [heightCap, setHeightCap] = useState(() => window.innerHeight * 0.8)
+  useLayoutEffect(() => {
+    // Use the chat output viewport, not the whole window or the growing message body.
+    const output = viewportRef.current?.closest<HTMLElement>('[data-live-chat-scroll]')
+    const updateCap = () => setHeightCap((output?.clientHeight || window.innerHeight) * 0.8)
+    updateCap()
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateCap) : null
+    if (output) observer?.observe(output)
+    window.addEventListener('resize', updateCap)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', updateCap)
+    }
+  }, [])
+  const [detached, setDetached] = useState(false)
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({})
+  const [fullTurns, setFullTurns] = useState<Record<number, boolean>>({})
+  const collapseAnchor = useRef<number | null>(null)
+  const isOpen = (turn: number) => fullTurns[turn] || (expanded[turn] ?? visibleTurns.slice(-3).some(row => row.turn === turn))
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current
     const body = bodyRef.current
     if (!viewport || !body) return
-    const measure = () => {
-      // Responsive cap is controlled by CSS; remember only this preview's
-      // attained height, never the whole task or expanded history height.
-      const cap = parseFloat(getComputedStyle(viewport).maxHeight) || 240
-      const height = Math.min(cap, Math.max(44, body.getBoundingClientRect().height))
-      highWater.current = Math.min(cap, Math.max(highWater.current, height))
-      setHeldHeight(highWater.current)
-      if (following.current) viewport.scrollTop = viewport.scrollHeight
-    }
-    measure()
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
-    observer?.observe(body)
-    observer?.observe(viewport)
-    window.addEventListener('resize', measure)
-    return () => {
-      observer?.disconnect()
-      window.removeEventListener('resize', measure)
-    }
-  }, [output.content, turn])
+    const cap = heightCap
+    highWater.current = Math.max(highWater.current, Math.min(body.getBoundingClientRect().height, cap))
+    const height = Math.min(highWater.current, cap)
+    if (height !== heldHeight) setHeldHeight(height)
+    if (collapseAnchor.current !== null) {
+      const title = body.querySelector<HTMLElement>(`[data-running-turn="${collapseAnchor.current}"] > button`)
+      if (title) viewport.scrollTop += title.getBoundingClientRect().top - viewport.getBoundingClientRect().top - viewport.clientTop
+      collapseAnchor.current = null
+    } else if (following.current) viewport.scrollTop = viewport.scrollHeight
+  }, [transcript, expanded, fullTurns, heldHeight, heightCap])
 
+  const detach = () => {
+    if (!following.current) return
+    following.current = false
+    setDetached(true)
+    // Preserve the reader's expanded row across turn transitions; never freeze incoming text.
+    setExpanded(value => ({ ...value, [current.turn]: value[current.turn] ?? true }))
+  }
+  const toggleFull = (turn: number) => {
+    detach()
+    if (fullTurns[turn]) {
+      // Keep this row readable in simple mode, even if it is outside the latest three.
+      collapseAnchor.current = turn
+      setExpanded(value => ({ ...value, [turn]: true }))
+    }
+    setFullTurns(value => ({ ...value, [turn]: !value[turn] }))
+  }
   const resume = () => {
     following.current = true
-    setPaused(false)
-    setFrozen(null)
+    setDetached(false)
+    setExpanded({})
     const viewport = viewportRef.current
     if (viewport) viewport.scrollTop = viewport.scrollHeight
   }
 
   return (
-    <section data-running-transcript className="min-w-0 space-y-3">
-      <div className="flex items-center gap-2 text-xs text-ink-muted">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-success" aria-hidden="true" />
-        <span>执行中 · Turn {turn}</span>
-      </div>
-      <div className="h-10 overflow-y-auto break-words text-sm leading-relaxed" data-running-summary>
-        <span className="mr-1.5 text-ink-faint">{summaryIsPrevious ? '上一轮：' : '当前进展：'}</span>
-        {summary}
-      </div>
-      <details className="turn-fold" data-running-history>
-        <summary>已完成步骤 · {completed.length}轮</summary>
-        <div className="space-y-2 pt-2">
-          {transcript.leading && <OutputDetails title="前置内容" content={transcript.leading} />}
-          {completed.map((step) => (
-            <OutputDetails key={step.turn} title={`Turn ${step.turn} · ${step.summary || '执行过程'}`} content={step.content} />
-          ))}
-          {!completed.length && <p className="text-xs text-ink-faint">首轮正在执行</p>}
+    <section data-running-transcript className="relative min-w-0">
+      <div ref={viewportRef} data-running-preview hidden={!visibleTurns.length && !transcript.leading && !(recoveryStatus && recoveryBeforeTurn !== undefined && recoveryBeforeTurn < turns.length)} tabIndex={0} aria-label="执行过程"
+        style={{ minHeight: Math.min(heldHeight || 44, heightCap), maxHeight: heightCap }}
+        className="min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:none]"
+        onWheel={event => { if (event.deltaY < 0) detach() }}
+        onScroll={event => {
+          const el = event.currentTarget
+          if (el.scrollHeight - el.scrollTop - el.clientHeight > 24) detach()
+          // Only the explicit resume action re-enables following while inspecting a record.
+        }}>
+        <div ref={bodyRef} className="min-w-0 space-y-1 pb-1">
+          {transcript.leading && <MessageContent content={transcript.leading} format="markdown" cache />}
+          {turns.map((turn, index) => {
+            const active = index === turns.length - 1
+            const open = isOpen(turn.turn)
+            const full = !!fullTurns[turn.turn]
+            const visible = visibleTurns.includes(turn)
+            const toolTitle = !turn.summary && !open
+              ? formatToolHint(turn.parts.flatMap(part => part.kind === 'tools' ? part.labels : []))
+              : ''
+            return (
+              <Fragment key={turn.turn}>
+                {recoveryStatus && recoveryBeforeTurn === index && recoveryStatus}
+                {visible && <div data-running-turn={turn.turn} className="min-w-0">
+                <button type="button" aria-expanded={full} aria-label={`${full ? '收起完整记录' : '展开完整记录'} · Turn ${turn.turn}`} aria-controls={`running-${askUserDraftKey || 'turn'}-${turn.turn}`}
+                  className="flex w-full items-start gap-2 rounded px-1 py-2 text-left text-xs text-ink-muted hover:bg-bg-soft"
+                  onClick={() => toggleFull(turn.turn)}>
+                  <span aria-hidden="true" className="shrink-0 text-ink-faint">{full ? '▾' : '▸'}</span>
+                  <span className="shrink-0 text-ink-faint">Turn {turn.turn}</span>
+                  {(turn.summary || toolTitle) && <span className="min-w-0 break-words text-ink">{turn.summary || toolTitle}</span>}
+                  {active && <span aria-label="正在输出" className="ml-auto mt-1 h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />}
+                </button>
+                {open && <div id={`running-${askUserDraftKey || 'turn'}-${turn.turn}`} className="min-w-0 space-y-2 pb-2 pl-5 pr-2">
+                  {full ? <div data-full-record>
+                    <MessageContent content={turn.content} format="markdown" markdownMode="plain" cache={!active} />
+                    <button type="button" aria-label={`收起完整记录 · Turn ${turn.turn}`}
+                      className="mt-3 flex items-center gap-1 rounded px-2 py-1 text-xs text-ink-muted hover:bg-bg-soft"
+                      onClick={() => toggleFull(turn.turn)}><span aria-hidden="true">⌃</span> 收起完整记录</button>
+                  </div> : <>{turn.parts.map((part, partIndex) => part.kind === 'text'
+                    ? <MessageContent key={partIndex} content={part.text} format="markdown" cache={!active} />
+                    : <p key={partIndex} data-tool-hint className="break-words text-[11px] leading-relaxed text-ink-faint">↳ {formatToolHint(part.labels)}</p>)}
+                  {!active && turn.askUser && <MessageContent content={renderAskUserPayload(turn.askUser)} format="markdown" cache />}</>}
+                </div>}
+                </div>}
+              </Fragment>
+            )
+          })}
         </div>
-      </details>
-      {recoveryStatus}
-      {askUser && (
-        <AskUserCard question={askUser.question} candidates={askUser.candidates} draftKey={askUserDraftKey} interactive={askUserInteractive} />
-      )}
-      <div className="min-w-0" data-running-output>
-        <div className="mb-1.5 flex h-6 items-center justify-between gap-2 text-xs text-ink-muted">
-          <span>{paused ? `回看中 · Turn ${output.turn}` : previous ? `上一轮输出 · Turn ${output.turn}` : '实时输出'}</span>
-          <button type="button" onClick={resume} disabled={!paused}
-            className="shrink-0 text-accent disabled:invisible">回到最新</button>
-        </div>
-        <div ref={viewportRef} data-running-preview tabIndex={0} aria-label="实时输出预览"
-          style={{ minHeight: heldHeight || 44, maxHeight: 'min(240px, 35vh)' }}
-          className="min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain rounded-md border border-line bg-bg-soft [overflow-anchor:none]"
-          onScroll={(event) => {
-            const el = event.currentTarget
-            const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24
-            if (!atBottom && following.current) {
-              following.current = false
-              setPaused(true)
-              setFrozen(output)
-            }
-          }}>
-          <div ref={bodyRef} className="min-w-0 p-3">
-            {output.content ? <MessageContent content={output.content} format="markdown" cache={paused || previous} />
-              : <p className="text-xs text-ink-faint">正在继续…</p>}
-          </div>
-        </div>
-        <OutputDetails title={`查看详情 · Turn ${turn}`} content={content} />
       </div>
+      {detached && <div className="pointer-events-none absolute bottom-0 right-1 z-10">
+        <button type="button" onClick={resume} className="pointer-events-auto rounded-md border border-line bg-bg-card px-2 py-1 text-xs text-accent shadow-sm">回到最新</button>
+      </div>}
+      {recoveryStatus && (recoveryBeforeTurn === undefined || recoveryBeforeTurn >= turns.length) && <div className="mt-2 text-xs text-ink-muted">{recoveryStatus}</div>}
+      {askUser && <div className="mt-2"><AskUserCard question={askUser.question} candidates={askUser.candidates} draftKey={askUserDraftKey} interactive={askUserInteractive} /></div>}
     </section>
   )
 }

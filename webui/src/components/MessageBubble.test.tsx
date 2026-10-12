@@ -56,6 +56,86 @@ describe('MessageBubble render isolation', () => {
     host.remove()
   })
 
+  it('caps the running viewport at 80% of the output area and tracks resizing', () => {
+    host.setAttribute('data-live-chat-scroll', '')
+    let outputHeight = 600
+    Object.defineProperty(host, 'clientHeight', { get: () => outputHeight })
+    let notifyResize: (() => void) | undefined
+    const observe = vi.fn()
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { notifyResize = callback }
+      observe = observe
+      disconnect = disconnect
+    })
+    try {
+      const content = '**LLM Running (Turn 1) ...**\n🛠️ code_run({})\n正文'
+      act(() => root.render(<MessageBubble role="assistant" content={content} streaming />))
+      const viewport = host.querySelector<HTMLElement>('[data-running-preview]')!
+      expect(viewport.style.maxHeight).toBe('480px')
+      expect(observe).toHaveBeenCalledWith(host)
+      outputHeight = 400
+      act(() => notifyResize?.())
+      expect(viewport.style.maxHeight).toBe('320px')
+      outputHeight = 1000
+      act(() => window.dispatchEvent(new Event('resize')))
+      expect(viewport.style.maxHeight).toBe('800px')
+      act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+      expect(disconnect).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('does not reserve a viewport or turn label for an empty first turn', () => {
+    for (const tail of ['', '\n  ', '\n<sum', '\n<summary>还在生成', '\n🛠️ Tool: `']) {
+      act(() => root.render(<MessageBubble role="assistant" content={`**LLM Running (Turn 1) ...**${tail}`} streaming />))
+      expect(host.querySelector('[data-running-turn]')).toBeNull()
+      const viewport = host.querySelector<HTMLElement>('[data-running-preview]')
+      if (viewport) expect(viewport.hidden).toBe(true)
+      expect(host.textContent).not.toContain('Turn 1')
+    }
+  })
+
+  it('shows a turn as soon as a complete summary, prose, or tool is available', () => {
+    for (const tail of ['<summary>已开始检查</summary>', '实际正文', '🛠️ code_run({})']) {
+      act(() => root.render(<MessageBubble role="assistant" content={`**LLM Running (Turn 7) ...**\n${tail}`} streaming />))
+      expect(host.querySelector('[data-running-turn="7"]')).not.toBeNull()
+      expect(host.querySelector<HTMLElement>('[data-running-preview]')?.hidden).toBe(false)
+    }
+  })
+
+  it('counts only visible turns in the latest-three expansion window', () => {
+    const content = [1, 2, 3].map(n => `**LLM Running (Turn ${n}) ...**\n<summary>摘要${n}</summary>\n正文${n}`).join('\n')
+    const render = (tail: string) => act(() => root.render(<MessageBubble role="assistant" content={`${content}\n**LLM Running (Turn 4) ...**\n${tail}`} streaming />))
+    for (const tail of ['', '<summary>尚未完成', '🛠️ Tool: `']) {
+      render(tail)
+      expect(host.querySelector('[data-running-turn="4"]')).toBeNull()
+      expect(host.querySelector('[data-running-turn="1"] > div')).not.toBeNull()
+    }
+    render('🛠️ Tool: `file_read` 📥 args:')
+    expect(host.querySelector('[data-running-turn="4"]')).not.toBeNull()
+    expect(host.querySelector('[data-running-turn="1"] button')?.getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('[data-running-turn="4"] [data-tool-hint]')?.textContent).toContain('读取文件')
+  })
+
+  it('uses aggregated tool hints as the collapsed title of a summary-less tool turn', () => {
+    const content = [
+      '**LLM Running (Turn 1) ...**',
+      '🛠️ file_read({})', '🛠️ file_read({})', '🛠️ code_run({})',
+      ...[2, 3, 4].map(n => `**LLM Running (Turn ${n}) ...**\n<summary>摘要${n}</summary>\n正文`),
+    ].join('\n')
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming />))
+    const turn = host.querySelector('[data-running-turn="1"]')!
+    const button = turn.querySelector<HTMLButtonElement>('button')!
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    expect(button.textContent).toContain('读取文件 ×2 · 执行脚本')
+    act(() => button.click())
+    expect(button.textContent).not.toContain('读取文件')
+    expect(turn.querySelector('[data-full-record]')?.textContent).toContain('🛠️ file_read({})')
+    expect(turn.querySelector('[data-tool-hint]')).toBeNull()
+  })
+
   it('keeps ordinary streaming replies and finished answers out of the running card', () => {
     act(() => root.render(<MessageBubble role="assistant" content="普通回复" streaming />))
     expect(host.querySelector('[data-running-transcript]')).toBeNull()
@@ -77,11 +157,18 @@ describe('MessageBubble render isolation', () => {
     expect(viewport.style.minHeight).toBe('220px')
     expect(host.textContent).toContain('上一轮输出')
     expect(host.textContent).not.toContain('半截')
-    expect(host.textContent).toContain('上一轮：')
+    expect(host.textContent).not.toContain('Turn 2')
+    expect(host.querySelector('[data-running-turn="2"]')).toBeNull()
+    expect(host.textContent).not.toContain('第 2 轮')
+    const oldTurn = host.querySelector('[data-running-turn="1"] button') as HTMLButtonElement
+    act(() => oldTurn.click())
+    expect(host.textContent).toContain('上一轮输出')
+    expect(host.querySelector('[data-running-turn="1"] [data-full-record]')).not.toBeNull()
+    expect(host.textContent).not.toContain('上一轮：')
     measurement.mockRestore()
   })
 
-  it('freezes a scrolled preview across turns until return to latest', () => {
+  it('keeps updating while the reader scrolls back and resumes following on demand', () => {
     const first = '**LLM Running (Turn 1) ...**\n🛠️ code_run({})\n旧轮正文'
     act(() => root.render(<MessageBubble role="assistant" content={first} streaming />))
     const viewport = host.querySelector('[data-running-preview]') as HTMLElement
@@ -89,7 +176,8 @@ describe('MessageBubble render isolation', () => {
     act(() => { viewport.scrollTop = 100; viewport.dispatchEvent(new Event('scroll', { bubbles: true })) })
     act(() => root.render(<MessageBubble role="assistant" content={first + '\n**LLM Running (Turn 2) ...**\n新轮正文'} streaming />))
     expect(viewport.textContent).toContain('旧轮正文')
-    expect(viewport.textContent).not.toContain('新轮正文')
+    expect(viewport.textContent).toContain('新轮正文')
+    expect(viewport.scrollTop).toBe(100)
     const latest = [...host.querySelectorAll('button')].find(button => button.textContent === '回到最新')!
     act(() => latest.click())
     expect(viewport.textContent).toContain('新轮正文')
@@ -110,8 +198,7 @@ describe('MessageBubble render isolation', () => {
     const after = '\n**LLM Running (Turn 2) ...**\n<summary>重试轮次</summary>\n续传正文'
     act(() => root.render(<MessageBubble role="assistant" content={before + after} streaming
       recoveryNotice="网络重试进行中" recoveryOffset={before.length} />))
-    const history = host.querySelector('[data-running-history]') as HTMLDetailsElement
-    act(() => { history.open = true; history.dispatchEvent(new Event('toggle')) })
+    expect(host.querySelector('[data-running-history]')).toBeNull()
     const status = host.querySelector('[data-recovery-notice]')!
     expect(status).not.toBeNull()
     expect(host.textContent!.indexOf('前序正文')).toBeLessThan(host.textContent!.indexOf('网络重试进行中'))

@@ -166,7 +166,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
   const timeLabel = formatMessageTime(timestamp)
   const runningTranscript = useMemo(() => role === 'assistant' && !compact && streaming && !stopped
     ? parseAssistantTranscript(content, true) : null, [role, compact, streaming, stopped, content])
-  const runningTask = Boolean(runningTranscript && (runningTranscript.turns.length > 1 || hasAssistantExecutionTrace(content)))
+  const runningTask = Boolean(runningTranscript && (runningTranscript.turns.length > 0 || hasAssistantExecutionTrace(content)))
   const shouldProjectTranscript = Boolean(
     role === 'assistant'
     && !compact
@@ -275,7 +275,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
           </div>
           <div className="min-w-0 max-w-full" style={messageFontStyle}>
             {runningTask && runningTranscript ? (
-              <RunningTranscript transcript={runningTranscript} recoveryStatus={recoveryStatus} askUserDraftKey={askUserDraftKey} askUserInteractive={askUserInteractive} />
+              <RunningTranscript transcript={runningTranscript} recoveryStatus={recoveryStatus} recoveryBeforeTurn={recoveryActive ? parseAssistantTranscript(content.slice(0, boundary), true).turns.length : undefined} askUserDraftKey={askUserDraftKey} askUserInteractive={askUserInteractive} />
             ) : useHistoryProjection && historyTranscript ? (
               <HistoryTranscriptReply
                 transcript={historyTranscript}
