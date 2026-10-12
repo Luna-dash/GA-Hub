@@ -39,8 +39,8 @@ vi.mock('@/components/PageShell', () => ({
 }))
 
 vi.mock('@/components/ModelSelect', () => ({
-  MainModelSelect: ({ value, onChange }: { value?: string; onChange: (value: string) => void }) => (
-    <select aria-label="Goal / Hive 主模型" value={value ?? ''} onChange={(event) => onChange(event.target.value)}>
+  MainModelSelect: ({ value, onChange, className }: { value?: string; onChange: (value: string) => void; className?: string }) => (
+    <select className={className} aria-label="Goal / Hive 主模型" value={value ?? ''} onChange={(event) => onChange(event.target.value)}>
       <option value="main">主模型</option>
     </select>
   ),
@@ -157,6 +157,7 @@ describe('Goal Hive compact subagent settings', () => {
     renderPage()
 
     const header = host.querySelector('[data-testid="page-header"]')!
+    expect(header.querySelector('[aria-label="Goal / Hive 主模型"]')?.className).toBe('max-w-[400px]')
     expect(header.textContent).toContain('子代理设置')
     expect(header.textContent).not.toContain('子代理模型')
     expect(header.textContent).not.toContain('GOAL')

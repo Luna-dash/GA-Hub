@@ -1,56 +1,53 @@
-import type { SelectHTMLAttributes } from 'react'
+import { type ButtonHTMLAttributes } from 'react'
+import { CornerDownRight } from 'lucide-react'
 import clsx from 'clsx'
+import { ThemedSelect } from './ThemedSelect'
+import { SessionChannelIcon, sessionChannel } from './SessionChannelIcon'
+import '@/styles/model-select.css'
 
-interface ModelOption {
-  key: string
-  name: string
-}
-
-interface CommonModelSelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'onChange' | 'value'> {
+interface ModelOption { key: string; name: string }
+interface CommonModelSelectProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onChange' | 'value'> {
   llms: ReadonlyArray<ModelOption>
 }
-
 interface MainModelSelectProps extends CommonModelSelectProps {
   value: string | undefined
   onChange: (llmKey: string) => void
 }
-
 interface SubagentModelSelectProps extends CommonModelSelectProps {
   value: string | null
   onChange: (llmKey: string | null) => void
 }
 
-const SELECT_CLASS = 'min-w-0 shrink-0 truncate rounded border border-line bg-bg-card px-3 py-1.5 text-sm text-ink hover:border-accent focus:border-accent focus:outline-none disabled:opacity-50'
-
-export function MainModelSelect({ llms, value, onChange, className, disabled, ...props }: MainModelSelectProps) {
-  return (
-    <select
-      {...props}
-      value={value ?? ''}
-      onChange={(event) => onChange(event.target.value)}
-      disabled={disabled || llms.length === 0}
-      className={clsx(SELECT_CLASS, className)}
-    >
-      {llms.map((llm) => (
-        <option key={llm.key} value={llm.key}>{llm.name}</option>
-      ))}
-    </select>
-  )
+export function modelPresentation(name: string) {
+  const slash = name.indexOf('/')
+  const type = slash < 0 ? '' : name.slice(0, slash)
+  const channel = sessionChannel(type)
+  return { channel, label: channel ? name.slice(slash + 1) || name : name }
 }
 
-export function SubagentModelSelect({ llms, value, onChange, className, disabled, ...props }: SubagentModelSelectProps) {
-  return (
-    <select
-      {...props}
-      value={value ?? ''}
-      onChange={(event) => onChange(event.target.value || null)}
-      disabled={disabled || llms.length === 0}
-      className={clsx(SELECT_CLASS, className)}
-    >
-      <option value="">跟随主模型</option>
-      {llms.map((llm) => (
-        <option key={llm.key} value={llm.key}>{llm.name}</option>
-      ))}
-    </select>
-  )
+function ModelLabel({ name, follow = false }: { name: string; follow?: boolean }) {
+  const { channel, label } = modelPresentation(name)
+  return <>
+    <span className={clsx('model-select-mark', channel && `model-select-mark--${channel}`)}>
+      {follow ? <CornerDownRight size={16} aria-hidden="true" /> : <SessionChannelIcon type={channel ?? ''} />}
+    </span>
+    <span className="model-select-label">{label}</span>
+  </>
+}
+
+function ModelSelect({ llms, value, onChange, follow, ...props }: CommonModelSelectProps & {
+  value: string; onChange: (key: string) => void; follow?: boolean
+}) {
+  const options = follow ? [{ key: '', name: '跟随主模型' }, ...llms] : llms
+  return <ThemedSelect {...props} options={options} value={value} onChange={onChange}
+    disabled={props.disabled || llms.length === 0}
+    displayName={(option) => modelPresentation(option.name).label}
+    renderLabel={(option) => <ModelLabel name={option?.name ?? (llms.length ? '选择模型' : '暂无模型')} follow={follow && option?.key === ''} />} />
+}
+
+export function MainModelSelect({ value, onChange, ...props }: MainModelSelectProps) {
+  return <ModelSelect {...props} value={value ?? ''} onChange={onChange} />
+}
+export function SubagentModelSelect({ value, onChange, ...props }: SubagentModelSelectProps) {
+  return <ModelSelect {...props} value={value ?? ''} onChange={(key) => onChange(key || null)} follow />
 }

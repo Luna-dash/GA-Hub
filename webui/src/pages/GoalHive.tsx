@@ -179,7 +179,7 @@ export default function GoalHive() {
             llms={llms}
             value={mainLlmKey}
             onChange={selectMainLlm}
-            className="w-[240px] max-w-[32vw]"
+            className="max-w-[400px]"
             title="选择 Goal / Hive 使用的主模型"
             aria-label="Goal / Hive 主模型"
           />

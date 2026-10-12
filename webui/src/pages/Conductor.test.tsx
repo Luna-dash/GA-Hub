@@ -75,8 +75,8 @@ vi.mock('@/components/PageShell', () => ({
 }))
 
 vi.mock('@/components/ModelSelect', () => ({
-  MainModelSelect: ({ value, onChange }: { value?: string; onChange: (value: string) => void }) => (
-    <select aria-label="Conductor 主模型" value={value ?? ''} onChange={(event) => onChange(event.target.value)}>
+  MainModelSelect: ({ value, onChange, className }: { value?: string; onChange: (value: string) => void; className?: string }) => (
+    <select className={className} aria-label="Conductor 主模型" value={value ?? ''} onChange={(event) => onChange(event.target.value)}>
       <option value="main">主模型</option>
     </select>
   ),
@@ -399,6 +399,7 @@ describe('Conductor chat scroll restoration', () => {
     renderPage()
     await flushQueries()
 
+    expect(host.querySelector('[aria-label="Conductor 主模型"]')?.className).toBe('max-w-[400px]')
     expect(button('子代理设置').getAttribute('aria-haspopup')).toBe('dialog')
     expect(host.textContent).not.toContain('默认模型')
     expect(host.textContent).not.toContain('固定使用所选模型')

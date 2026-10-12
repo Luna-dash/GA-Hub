@@ -1,0 +1,64 @@
+/* Shared typography for both model/project triggers and their portal menus. */
+.model-select-trigger,
+.model-select-menu {
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+  letter-spacing: normal;
+}
+.model-select-trigger {
+  box-sizing: border-box;
+  height: 35px;
+  min-height: 35px;
+  max-height: 35px;
+  display: inline-grid;
+  grid-template-columns: 16px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--c-line);
+  border-radius: 9px;
+  color: var(--c-text);
+  background: linear-gradient(160deg, var(--c-bg-soft), var(--c-bg-card));
+  box-shadow: inset 0 1px #fffae8b3, 0 2px 3px #3a2a1c14;
+  text-align: left;
+  transition: border-color .15s, box-shadow .15s;
+}
+/* Preserve the original select's longest-option sizing. */
+.model-select-trigger::before { content: attr(data-sizing-label); grid-area: 1 / 2; visibility: hidden; white-space: nowrap; pointer-events: none; }
+.model-select-trigger > .model-select-mark { grid-area: 1 / 1; }
+.model-select-trigger > .model-select-label { grid-area: 1 / 2; }
+.model-select-trigger > .model-select-chevron { grid-area: 1 / 3; }
+.model-select-trigger:hover:not(:disabled), .model-select-trigger:focus { border-color: var(--c-accent); }
+.model-select-trigger:focus { outline: none; }
+.model-select-trigger:disabled { opacity: .5; cursor: not-allowed; }
+.model-select-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.model-select-mark { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex-shrink: 0; color: var(--c-text-muted); }
+/* Colored badges are visual only: keep the agreed 16px layout footprint. */
+.model-select-mark::before { content: ''; position: absolute; width: 23px; height: 23px; border-radius: 6px; background: #5d45290f; }
+.model-select-mark svg { position: relative; width: 16px; height: 16px; }
+.model-select-mark--mixin { color: var(--c-accent); }
+.model-select-mark--mixin::before { background: var(--c-accent-soft); }
+.model-select-mark--openai { color: #476b5c; }
+.model-select-mark--openai::before { background: #476b5c1a; }
+.model-select-mark--claude { color: #795769; }
+.model-select-mark--claude::before { background: #7957691a; }
+.model-select-chevron { flex-shrink: 0; }
+.model-select-menu { overflow-y: auto; overscroll-behavior: contain; padding: 4px; border: 1px solid var(--c-line); border-radius: 11px; background: var(--c-bg-card); color: var(--c-text); box-shadow: 0 8px 24px #3a2a1c2e, inset 0 1px #fffae8b3; font-size: 14px; }
+.model-select-menu .model-select-label { white-space: normal; overflow-wrap: anywhere; }
+.model-select-option { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 6px 8px; border-radius: 7px; cursor: pointer; }
+.model-select-option.is-active { background: var(--c-accent-soft); }
+.model-select-check { color: var(--c-accent); flex-shrink: 0; }
+.model-select-option.is-disabled { opacity: .45; cursor: not-allowed; }
+.model-select-mark--project { color: var(--c-accent); }
+.model-select-mark--project::before { background: var(--c-accent-soft); }
+.project-select-trigger { border-radius: 9px 0 0 9px; }
+.project-select-delete {
+  box-sizing: border-box;
+  height: 35px;
+  border-radius: 0 9px 9px 0;
+  background: linear-gradient(160deg, var(--c-bg-soft), var(--c-bg-card));
+  box-shadow: inset 0 1px #fffae8b3, 0 2px 3px #3a2a1c14;
+  transition: border-color .15s, box-shadow .15s;
+}

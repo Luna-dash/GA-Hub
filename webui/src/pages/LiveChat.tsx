@@ -42,6 +42,7 @@ import { buildSessionPromptText } from '@/utils/sessionPrompt'
 import { isTauriDesktop, selectDirectory } from '@/utils/desktop'
 import { defaultSessionLlmKey, resolveSessionLlmKey } from '@/utils/llm'
 import { MainModelSelect } from '@/components/ModelSelect'
+import { ProjectSelect } from '@/components/ProjectSelect'
 import { useHubEvent } from '@/hooks/useHubEvent'
 import { useSessionSelectionGuard } from '@/hooks/useSessionSelectionGuard'
 import { createAndOpenSession, markSessionUsed } from '@/queries/sessions'
@@ -729,28 +730,27 @@ export default function LiveChat() {
             绑定项目：
           </label>
           <div className="flex min-w-0 shrink-0 items-center">
-            <select
+            <ProjectSelect
               id="current-project-select"
               value={session?.project_path || ''}
-              onChange={(e) => { void changeProject(e.target.value) }}
+              onChange={(path) => { void changeProject(path) }}
               disabled={!session || projectSaving || projectsQuery.isLoading}
-              className="max-w-[220px] min-w-0 truncate rounded-l border border-line bg-bg-card px-3 py-1.5 text-sm text-ink hover:border-accent focus:z-10 focus:border-accent focus:outline-none disabled:opacity-50"
               title={activeProjectPath || '选择当前会话的项目'}
-              aria-label="当前项目"
-            >
-              <option value="">未绑定项目</option>
-              {projects.map((project) => (
-                <option key={`${project.name}:${project.path}`} value={project.path} disabled={project.dangling}>
-                  {projectDisplayName(project.path, project.name)}{project.dangling ? '（路径不可用）' : ''}
-                </option>
-              ))}
-              <option value="__new__">＋ 新建项目…</option>
-            </select>
+              options={[
+                { key: '', name: '未绑定项目' },
+                ...projects.map((project) => ({
+                  key: project.path,
+                  name: `${projectDisplayName(project.path, project.name)}${project.dangling ? '（路径不可用）' : ''}`,
+                  disabled: project.dangling,
+                })),
+                { key: '__new__', name: '新建项目…' },
+              ]}
+            />
             <button
               type="button"
               onClick={() => { void deleteCurrentProject() }}
               disabled={!session?.project_path || projectSaving || !projects.some((item) => item.path === session.project_path)}
-              className="-ml-px inline-flex h-[34px] w-9 shrink-0 items-center justify-center rounded-r border border-line bg-bg-card text-slate-500 hover:z-10 hover:border-status-danger-line hover:bg-status-danger-soft hover:text-status-danger disabled:cursor-not-allowed disabled:opacity-35"
+              className="project-select-delete -ml-px inline-flex h-[35px] w-9 shrink-0 items-center justify-center border border-line text-slate-500 hover:z-10 hover:border-status-danger-line hover:bg-status-danger-soft hover:text-status-danger disabled:cursor-not-allowed disabled:opacity-35"
               title="删除当前项目索引（不会删除目录文件）"
               aria-label="删除当前项目索引"
             >
