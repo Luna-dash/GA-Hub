@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # 仓根允许存在的已跟踪文件。新增/改名时请连这里一起改（否则本文件会红）。
 ROOT_FILES = {
+    ".gitattributes",  # 固定生成 API 产物为 LF，保证跨平台逐字节契约检查一致。
     ".gitignore",
     "AGENTS.md",
     "README.md",
