@@ -1,12 +1,30 @@
 import { describe, expect, it } from 'vitest'
 import {
   parseAssistantTranscript,
+  hasAssistantExecutionTrace,
   renderAskUserPayload,
   stripAssistantTranscriptTags,
   stripFinalResponseMarker,
 } from './assistantTranscript'
 
 describe('assistant transcript projection', () => {
+
+  it.each(['<', '<s', '<sum', '<summary', '<summary>未完成摘要'])('hides an unfinished streaming summary tail: %s', (tail) => {
+    const raw = `**LLM Running (Turn 1) ...**\n<summary>已完成摘要</summary>\n可读正文\n${tail}`
+    const transcript = parseAssistantTranscript(raw, true)
+    expect(transcript.turns[0].summary).toBe('已完成摘要')
+    expect(transcript.turns[0].content).toBe('可读正文')
+  })
+
+  it('does not interpret fenced protocol examples as execution calls', () => {
+    const raw = '```text\n🛠️ code_run({})\n<summary>示例\n```'
+    expect(hasAssistantExecutionTrace(raw)).toBe(false)
+    expect(parseAssistantTranscript(raw, true).finalBody).toContain('<summary>示例')
+    expect(hasAssistantExecutionTrace('🛠️ Tool: `code_run`  📥 args:')).toBe(true)
+    expect(hasAssistantExecutionTrace('🛠️ code_run({})')).toBe(true)
+  })
+
+
   it.each([
     '🛠️ Tool: `file_read`  📥 args:\n````text\n{"path":"view.tsx"}\n````\n`````\n111| useEffect\n`````',
     '🛠️ code_run({"script":"test"})\n`````\noutput\n`````',

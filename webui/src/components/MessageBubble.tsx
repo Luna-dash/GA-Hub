@@ -15,6 +15,7 @@ import { memo, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import {
   parseAssistantTranscript,
+  hasAssistantExecutionTrace,
   renderAskUserPayload,
   type AssistantTranscript,
   type AssistantTranscriptTurn,
@@ -25,6 +26,7 @@ import { CHAT_FONT_SCALE_EVENT, getChatFontScale } from '@/utils/chatAppearance'
 import { FILE_HINT } from '@/utils/sessionPrompt'
 import { MessageContent } from './MessageContent'
 import { AskUserCard } from './AskUserCard'
+import { RunningTranscript } from './RunningTranscript'
 import { bubbleTone } from './bubbleTone'
 import type { PasteAttachment } from '@/api/types'
 import { api } from '@/api/client'
@@ -162,6 +164,9 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
   const isSystem = role === 'system'
   const tone = bubbleTone(role)
   const timeLabel = formatMessageTime(timestamp)
+  const runningTranscript = useMemo(() => role === 'assistant' && !compact && streaming && !stopped
+    ? parseAssistantTranscript(content, true) : null, [role, compact, streaming, stopped, content])
+  const runningTask = Boolean(runningTranscript && (runningTranscript.turns.length > 1 || hasAssistantExecutionTrace(content)))
   const shouldProjectTranscript = Boolean(
     role === 'assistant'
     && !compact
@@ -234,8 +239,9 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
   ) : null
   return (
     <div className="flex justify-start group/msg">
-      <div className="max-w-full min-w-0 flex flex-col items-start gap-1.5">
+      <div className={clsx("max-w-full min-w-0 flex flex-col items-start gap-1.5", runningTask && "w-full")}>
         <div className={clsx(
+          runningTask && "w-full",
           "min-w-0 max-w-full relative rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.13)]",
           compact ? "px-3 py-2 text-xs" : "px-3.5 py-3",
           tone.surfaceClass
@@ -268,7 +274,9 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
             <CopyChip text={copySource} />
           </div>
           <div className="min-w-0 max-w-full" style={messageFontStyle}>
-            {useHistoryProjection && historyTranscript ? (
+            {runningTask && runningTranscript ? (
+              <RunningTranscript transcript={runningTranscript} recoveryStatus={recoveryStatus} askUserDraftKey={askUserDraftKey} askUserInteractive={askUserInteractive} />
+            ) : useHistoryProjection && historyTranscript ? (
               <HistoryTranscriptReply
                 transcript={historyTranscript}
                 rawContent={content}

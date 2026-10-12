@@ -56,11 +56,62 @@ describe('MessageBubble render isolation', () => {
     host.remove()
   })
 
+  it('keeps ordinary streaming replies and finished answers out of the running card', () => {
+    act(() => root.render(<MessageBubble role="assistant" content="普通回复" streaming />))
+    expect(host.querySelector('[data-running-transcript]')).toBeNull()
+    const content = '**LLM Running (Turn 1) ...**\n🛠️ code_run({})\n结果'
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming />))
+    expect(host.querySelector('[data-running-transcript]')).not.toBeNull()
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+    expect(host.querySelector('[data-running-transcript]')).toBeNull()
+  })
+
+  it('holds preview height across an empty turn and hides partial summary tags', () => {
+    const measurement = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ height: 220 } as DOMRect)
+    const first = '**LLM Running (Turn 1) ...**\n<summary>已检查</summary>\n🛠️ code_run({})\n上一轮输出'
+    act(() => root.render(<MessageBubble role="assistant" content={first} streaming />))
+    const viewport = host.querySelector('[data-running-preview]') as HTMLElement
+    expect(viewport.style.minHeight).toBe('220px')
+    measurement.mockReturnValue({ height: 40 } as DOMRect)
+    act(() => root.render(<MessageBubble role="assistant" content={first + '\n**LLM Running (Turn 2) ...**\n<summary>半截'} streaming />))
+    expect(viewport.style.minHeight).toBe('220px')
+    expect(host.textContent).toContain('上一轮输出')
+    expect(host.textContent).not.toContain('半截')
+    expect(host.textContent).toContain('上一轮：')
+    measurement.mockRestore()
+  })
+
+  it('freezes a scrolled preview across turns until return to latest', () => {
+    const first = '**LLM Running (Turn 1) ...**\n🛠️ code_run({})\n旧轮正文'
+    act(() => root.render(<MessageBubble role="assistant" content={first} streaming />))
+    const viewport = host.querySelector('[data-running-preview]') as HTMLElement
+    Object.defineProperties(viewport, { scrollHeight: { configurable: true, value: 1000 }, clientHeight: { configurable: true, value: 220 } })
+    act(() => { viewport.scrollTop = 100; viewport.dispatchEvent(new Event('scroll', { bubbles: true })) })
+    act(() => root.render(<MessageBubble role="assistant" content={first + '\n**LLM Running (Turn 2) ...**\n新轮正文'} streaming />))
+    expect(viewport.textContent).toContain('旧轮正文')
+    expect(viewport.textContent).not.toContain('新轮正文')
+    const latest = [...host.querySelectorAll('button')].find(button => button.textContent === '回到最新')!
+    act(() => latest.click())
+    expect(viewport.textContent).toContain('新轮正文')
+  })
+
+  it('keeps ask-user choices outside the scrolling preview', () => {
+    const content = '**LLM Running (Turn 1) ...**\n🛠️ ask_user({"question":"请选方案","candidates":["方案A","方案B"]})'
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming askUserDraftKey="running-test" />))
+    const card = host.querySelector('[data-ask-user-card]')!
+    expect(card).not.toBeNull()
+    expect(card.closest('[data-running-preview]')).toBeNull()
+    act(() => (card.querySelector('button') as HTMLButtonElement).click())
+    expect(useDraftStore.getState().texts['running-test']).toBe('方案A')
+  })
+
   it('inserts recovery status after preceding turns and before retry text', () => {
     const before = '**LLM Running (Turn 1) ...**\n<summary>前序步骤</summary>\n前序正文\n'
     const after = '\n**LLM Running (Turn 2) ...**\n<summary>重试轮次</summary>\n续传正文'
     act(() => root.render(<MessageBubble role="assistant" content={before + after} streaming
       recoveryNotice="网络重试进行中" recoveryOffset={before.length} />))
+    const history = host.querySelector('[data-running-history]') as HTMLDetailsElement
+    act(() => { history.open = true; history.dispatchEvent(new Event('toggle')) })
     const status = host.querySelector('[data-recovery-notice]')!
     expect(status).not.toBeNull()
     expect(host.textContent!.indexOf('前序正文')).toBeLessThan(host.textContent!.indexOf('网络重试进行中'))

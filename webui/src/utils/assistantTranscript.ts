@@ -477,18 +477,40 @@ export function fallbackSummary(raw: string): string {
  * Project a raw GA assistant transcript into cheap, user-facing semantics.
  * This scans strings only; Markdown parsing remains the rendering layer's job.
  */
-export function parseAssistantTranscript(text: string): AssistantTranscript {
+export function hasAssistantExecutionTrace(text: string): boolean {
+  const { safe } = protectToolFences(text || '')
+  const outside = safe
+    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, '')
+    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n[\s\S]*)?$/m, '')
+  return /^[ \t]*🛠️\s*(?:Tool\s*[:：]\s*`?[\w.-]|\w+\s*\()/m.test(outside)
+}
+
+export function parseAssistantTranscript(text: string, streaming = false): AssistantTranscript {
   const source = stripFinalResponseMarker(text)
-  const { safe, restore } = protectToolFences(source)
+  const { safe: protectedSource, restore } = protectToolFences(source)
+  let safe = protectedSource
+  if (streaming) {
+    // Hide an unfinished protocol summary, never an example in a tool fence.
+    const outsideFences = safe
+      .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, (block) => ' '.repeat(block.length))
+      .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n[\s\S]*)?$/m, (block) => ' '.repeat(block.length))
+    const start = outsideFences.toLowerCase().lastIndexOf('<summary>')
+    if (start >= 0 && !/<\/summary>/i.test(outsideFences.slice(start))) safe = safe.slice(0, start)
+    else {
+      const tail = /<(?:s(?:u(?:m(?:m(?:a(?:r(?:y)?)?)?)?)?)?)?$/i.exec(outsideFences)
+      if (tail) safe = safe.slice(0, tail.index)
+    }
+  }
   const matches = [...safe.matchAll(turnMarkerRe())]
 
   if (!matches.length) {
-    const payload = extractAskUserPayload(source)
+    const cleanedSource = restore(safe)
+    const payload = extractAskUserPayload(cleanedSource)
     const finalAskUser = payload && payload.candidates.length > 0 ? payload : null
     return {
       leading: '',
       turns: [],
-      finalBody: projectFinalBody(source, finalAskUser ? '' : null),
+      finalBody: projectFinalBody(cleanedSource, finalAskUser ? '' : null),
       finalTurnIndex: null,
       finalAskUser,
       stopped: false,
