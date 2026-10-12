@@ -87,7 +87,18 @@ describe('SessionRail', () => {
     expect(runningDelete.disabled).toBe(true)
 
     const idleDelete = host.querySelector('[aria-label="删除 未命名会话 · bbbbbbbb"]') as HTMLButtonElement
+    const actionGroup = idleDelete.parentElement!
+    const titleRow = actionGroup.parentElement!
+    expect(titleRow.classList.contains('relative')).toBe(true)
+    expect(actionGroup.classList.contains('top-1/2')).toBe(true)
+    expect(actionGroup.classList.contains('-translate-y-1/2')).toBe(true)
+    expect(actionGroup.classList.contains('top-2')).toBe(false)
+    expect(idleDelete.classList.contains('h-6')).toBe(true)
+    expect(idleDelete.classList.contains('w-6')).toBe(true)
+    expect(idleDelete.classList.contains('items-center')).toBe(true)
     act(() => idleDelete.click())
+    expect(host.querySelector('[role="alertdialog"]')?.parentElement).toBe(titleRow.parentElement)
+    expect(titleRow.querySelector('[role="alertdialog"]')).toBeNull()
     expect(host.querySelector('[role="alertdialog"]')?.getAttribute('aria-label')).toBe('确认删除 未命名会话 · bbbbbbbb')
     expect(host.querySelector('[role="alertdialog"]')?.textContent).toContain('删除索引？')
     const confirm = Array.from(host.querySelectorAll('[role="alertdialog"] button'))

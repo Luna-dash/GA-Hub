@@ -504,62 +504,64 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
 current && 'ring-2 ring-inset ring-accent/50',
                     )}
                   >
-                    {editing ? (
-                      <input
-                        autoFocus
-                        value={titleDraft}
-                        onChange={(event) => setTitleDraft(event.target.value)}
-                        onBlur={() => { void finishRename(session) }}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') event.currentTarget.blur()
-                          if (event.key === 'Escape') setEditingId(null)
-                        }}
-                        disabled={savingId === session.id}
-                        aria-label={`重命名 ${sessionTitle(session)}`}
-                        className="m-2 mb-1 w-[calc(100%-1rem)] rounded-md border border-accent/45 bg-white/90 px-2 py-1 text-sm text-ink outline-none ring-accent/20 focus:ring-2"
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => selectSession(session.id)}
-                        onDoubleClick={() => beginRename(session)}
-                        aria-current={current ? 'page' : undefined}
-                        title={`${sessionTitle(session)} · ${sessionStatusLabel(runtime)}${session.project_name ? ` · ${session.project_name}` : ''}`}
-                        className="block w-full px-2.5 py-1.5 text-left"
-                      >
-                        <span className="flex items-center gap-2 pr-8">
-                          <span aria-hidden="true" title={sessionStatusLabel(runtime)} className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
-                          <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ fontSize: `${titleScale}%` }} title={sessionTitle(session)}>{sessionTitle(session)}</span>
-                        </span>
-                      </button>
-                    )}
-                    {!editing && (
-                      <div
-                        className={clsx(
-                          // A permanent × on every row read as "everything here is
-                          // deletable". Reveal on hover or keyboard focus, and keep
-                          // it up on the selected row so a pointer-less/touch
-                          // surface can still reach it.
-                          'absolute right-2 top-2 flex items-center gap-0.5 transition-opacity duration-150',
-                          current
-                            ? 'opacity-100'
-                            : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100',
-                        )}
-                      >
-                        {onDelete && (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteId(session.id)}
-                            disabled={activity === 'active' || deletingId === session.id}
-                            aria-label={`删除 ${sessionTitle(session)}`}
-                            title={activity === 'active' ? '请先停止任务再删除' : '删除会话索引（不影响归档文件）'}
-                            className="rounded p-1 text-xs text-status-danger transition hover:bg-status-danger-soft disabled:cursor-not-allowed disabled:opacity-25"
-                          >
-                            ×
-                          </button>
-                        )}
-                      </div>
-                    )}
+                    <div className="relative">
+                      {editing ? (
+                        <input
+                          autoFocus
+                          value={titleDraft}
+                          onChange={(event) => setTitleDraft(event.target.value)}
+                          onBlur={() => { void finishRename(session) }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') event.currentTarget.blur()
+                            if (event.key === 'Escape') setEditingId(null)
+                          }}
+                          disabled={savingId === session.id}
+                          aria-label={`重命名 ${sessionTitle(session)}`}
+                          className="m-2 mb-1 w-[calc(100%-1rem)] rounded-md border border-accent/45 bg-white/90 px-2 py-1 text-sm text-ink outline-none ring-accent/20 focus:ring-2"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => selectSession(session.id)}
+                          onDoubleClick={() => beginRename(session)}
+                          aria-current={current ? 'page' : undefined}
+                          title={`${sessionTitle(session)} · ${sessionStatusLabel(runtime)}${session.project_name ? ` · ${session.project_name}` : ''}`}
+                          className="block w-full px-2.5 py-1.5 text-left"
+                        >
+                          <span className="flex items-center gap-2 pr-8">
+                            <span aria-hidden="true" title={sessionStatusLabel(runtime)} className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
+                            <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ fontSize: `${titleScale}%` }} title={sessionTitle(session)}>{sessionTitle(session)}</span>
+                          </span>
+                        </button>
+                      )}
+                      {!editing && (
+                        <div
+                          className={clsx(
+                            // A permanent × on every row read as "everything here is
+                            // deletable". Reveal on hover or keyboard focus, and keep
+                            // it up on the selected row so a pointer-less/touch
+                            // surface can still reach it.
+                            'absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-0.5 transition-opacity duration-150',
+                            current
+                              ? 'opacity-100'
+                              : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100',
+                          )}
+                        >
+                          {onDelete && (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(session.id)}
+                              disabled={activity === 'active' || deletingId === session.id}
+                              aria-label={`删除 ${sessionTitle(session)}`}
+                              title={activity === 'active' ? '请先停止任务再删除' : '删除会话索引（不影响归档文件）'}
+                              className="flex h-6 w-6 items-center justify-center rounded text-xs leading-none text-status-danger transition-colors hover:bg-status-danger-soft disabled:cursor-not-allowed disabled:opacity-25"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     {editing && (
                       <span className="block px-3 pb-2 pl-7 text-[10px] opacity-70">{savingId === session.id ? '保存中…' : sessionStatusLabel(runtime)}</span>
                     )}
