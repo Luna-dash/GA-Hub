@@ -1556,7 +1556,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/mykey/sessions": {
+    "/api/mykey/mutation": {
         parameters: {
             query?: never;
             header?: never;
@@ -1565,26 +1565,9 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Upsert Session */
-        post: operations["upsert_session_api_mykey_sessions_post"];
+        /** Mutate Mykey */
+        post: operations["mutate_mykey_api_mykey_mutation_post"];
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mykey/sessions/{var}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete Session */
-        delete: operations["delete_session_api_mykey_sessions__var__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3416,6 +3399,26 @@ export interface components {
             /** Mtime */
             mtime: number;
         };
+        /** MyKeyMutationReq */
+        MyKeyMutationReq: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "create" | "update" | "rename" | "duplicate" | "delete" | "proxy";
+            /** Var */
+            var?: string | null;
+            /** New Var */
+            new_var?: string | null;
+            /** Type */
+            type?: string | null;
+            /** Fields */
+            fields?: {
+                [key: string]: unknown;
+            } | null;
+            /** Expected Raw */
+            expected_raw?: string | null;
+        };
         /** MyKeyOpenResp */
         MyKeyOpenResp: {
             /** Ok */
@@ -3464,7 +3467,6 @@ export interface components {
             sessions: components["schemas"]["MyKeySession"][];
             /** Mixins */
             mixins: components["schemas"]["MyKeySession"][];
-            mixin?: components["schemas"]["MyKeySession"] | null;
             /** Globals */
             globals: {
                 [key: string]: unknown;
@@ -3931,17 +3933,6 @@ export interface components {
             llm_key?: string | null;
             /** Llm Index */
             llm_index?: number | null;
-        };
-        /** SessionUpsertReq */
-        SessionUpsertReq: {
-            /** Var */
-            var: string;
-            /** Type */
-            type: string;
-            /** Fields */
-            fields: {
-                [key: string]: unknown;
-            };
         };
         /** SetupReq */
         SetupReq: {
@@ -6867,7 +6858,7 @@ export interface operations {
             };
         };
     };
-    upsert_session_api_mykey_sessions_post: {
+    mutate_mykey_api_mykey_mutation_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -6876,40 +6867,9 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SessionUpsertReq"];
+                "application/json": components["schemas"]["MyKeyMutationReq"];
             };
         };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MyKeyWriteResp"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_session_api_mykey_sessions__var__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                var: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

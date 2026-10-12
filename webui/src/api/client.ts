@@ -32,6 +32,7 @@ import type {
   MemoryWriteResponse,
   MyKeyBackupListResponse,
   MyKeyData,
+  MyKeyMutation,
   MyKeyOpenResponse,
   MyKeySession,
   MyKeySessionTestResult,
@@ -297,10 +298,8 @@ export const api = {
   // ── mykey.py editor ──────────────────────────────────
   mykey: () => http<MyKeyData>('GET', '/api/mykey'),
   putMyKeyRaw: (raw: string) => http<MyKeyWriteResult>('PUT', '/api/mykey/raw', { raw }),
-  upsertMyKeySession: (s: MyKeySession) =>
-    http<MyKeyWriteResult>('POST', '/api/mykey/sessions', s),
-  deleteMyKeySession: (varName: string) =>
-    http<MyKeyWriteResult>('DELETE', `/api/mykey/sessions/${encodeURIComponent(varName)}`),
+  mutateMyKey: (mutation: MyKeyMutation) =>
+    http<MyKeyWriteResult>('POST', '/api/mykey/mutation', mutation),
   mykeyBackups: () => http<MyKeyBackupListResponse>('GET', '/api/mykey/backups'),
   restoreMyKeyBackup: (name: string) =>
     http<MyKeyWriteResult>('POST', `/api/mykey/backups/${encodeURIComponent(name)}/restore`),

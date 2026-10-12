@@ -153,7 +153,7 @@ export type ResolveFileResponse = ApiSchemas['ResolveFileResp']
 // ── mykey.py editor ──────────────────────────────────────
 export type MyKeySessionType =
   | 'native_claude' | 'native_oai' | 'claude' | 'oai' | 'mixin'
-export type MyKeySession = Omit<ApiSchemas['MyKeySession'], 'fields' | 'var' | 'type'> & {
+export type MyKeySession = Omit<ApiSchemas['MyKeySession'], 'fields' | 'var' | 'type'> & Pick<ApiSchemas['MyKeySession'], 'lineno' | 'end_lineno'> & {
   var: string
   type: MyKeySessionType
   fields: Record<string, any>
@@ -162,11 +162,19 @@ export type MyKeyData = Omit<ApiSchemas['MyKeyDataResp'], 'structured'> & {
   structured: {
     sessions: MyKeySession[]
     mixins: MyKeySession[]
-    mixin: MyKeySession | null
     globals: Record<string, any>
   }
 }
 export type MyKeyWriteResult = ApiSchemas['MyKeyWriteResp']
+export type MyKeyMutationAction = 'create' | 'update' | 'rename' | 'duplicate' | 'delete' | 'proxy'
+export type MyKeyMutation = {
+  action: MyKeyMutationAction
+  var?: string
+  new_var?: string
+  type?: MyKeySessionType
+  fields?: Record<string, any>
+  expected_raw?: string
+}
 export type MyKeySessionTestResult = ApiSchemas['MyKeySessionTestResp']
 export type MyKeyBackup = ApiSchemas['MyKeyBackup']
 export type MyKeyBackupListResponse = ApiSchemas['MyKeyBackupListResp']

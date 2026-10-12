@@ -1,4 +1,4 @@
-"""mykey.py 域服务 — read / write / sessions upsert / backup-restore / sync.
+"""mykey.py 域服务 — read / structured mutation / backup-restore / sync.
 
 mykey.py 是 GA 的核心配置：所有 LLM 链路、apikey、apibase、第三方平台 token
 都在这里。终端编辑门槛太高，把它搬到 webui；本模块持有全部业务逻辑，
@@ -24,6 +24,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -32,13 +33,15 @@ from .. import _paths, constants
 from ..process_utils import hidden_process_kwargs
 from .llm_registry import LlmRegistry
 from .mykey_codec import (
+    AssignmentConflictError,
     AssignmentNotFoundError,
     InvalidSourceError,
+    InvalidVariableNameError,
     classify_config as _classify,
-    delete_assignment,
     delete_base_assignment,
+    mutate_session_assignment,
+    update_proxy_assignment,
     structurize as _structurize,
-    upsert_assignment,
     validate_text as _validate_text,
 )
 
@@ -81,14 +84,20 @@ def _ensure_backup_dir() -> Path:
 def _backup_current(path: Path) -> str | None:
     """Snapshot the current file before overwrite. Returns backup name or None."""
     if not path.is_file(): return None
-    bdir = _ensure_backup_dir()
-    name = f"mykey.py.{time.strftime('%Y%m%d-%H%M%S')}.bak"
-    target = bdir / name
+    name = f"mykey.py.{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}.bak"
     try:
-        target.write_bytes(path.read_bytes())
+        bdir = _ensure_backup_dir()
+        target = bdir / name
+        with target.open("xb") as snapshot:
+            snapshot.write(path.read_bytes())
+            snapshot.flush()
+            os.fsync(snapshot.fileno())
     except Exception as e:
         log.warning("mykey backup failed: %s", e)
-        return None
+        raise MykeyHttpError(500, {
+            "error": "backup_failed",
+            "message": "备份失败，配置未保存；请检查磁盘空间和备份目录权限。",
+        }) from e
     # keep last 10
     snapshots = sorted(bdir.glob("mykey.py.*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
     for old in snapshots[10:]:
@@ -98,13 +107,16 @@ def _backup_current(path: Path) -> str | None:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    """tmp → fsync → replace. mtime jumps exactly once."""
+    """tmp -> fsync -> replace, without platform newline conversion."""
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _trigger_reload() -> tuple[list[dict], list[str]]:
@@ -131,17 +143,6 @@ def _trigger_reload() -> tuple[list[dict], list[str]]:
     return llms, []
 
 
-def _delete_session_assignment(raw: str, var: str) -> tuple[str, int]:
-    """Remove a base LLM or mixin, cleaning stale references for base LLMs."""
-    structured = _structurize(raw)
-    if any(item["var"] == var for item in structured["sessions"]):
-        return delete_base_assignment(raw, var)
-    if any(item["var"] == var for item in structured["mixins"]):
-        return delete_assignment(raw, var), 0
-    raise AssignmentNotFoundError(var)
-
-
-# ── read / write ops ────────────────────────────────────────────────────
 def read_mykey() -> dict:
     p = _mykey_path()
     if not p.is_file():
@@ -149,7 +150,7 @@ def read_mykey() -> dict:
             "path": str(p),
             "exists": False,
             "raw": "",
-            "structured": {"sessions": [], "mixins": [], "mixin": None, "globals": {}},
+            "structured": {"sessions": [], "mixins": [], "globals": {}},
             "mtime": 0,
         }
     raw = p.read_text(encoding="utf-8")
@@ -162,102 +163,89 @@ def read_mykey() -> dict:
     }
 
 
-def write_raw(text: str) -> dict:
-    p = _mykey_path()
-    if not text.endswith("\n"): text += "\n"
-
+def _commit_text(path: Path, text: str, error: str = "syntax_error") -> dict:
+    """Validate, snapshot, atomically replace and reload under the caller's lock."""
     ok, msg, line, col = _validate_text(text)
     if not ok:
         raise MykeyHttpError(400, {
-            "error": "syntax_error",
-            "message": msg,
-            "line": line,
-            "col": col,
+            "error": error, "message": msg, "line": line, "col": col,
         })
-
-    with LlmRegistry.synchronized():
-        backup = _backup_current(p)
-        _atomic_write(p, text)
-        llms, warnings = _trigger_reload()
+    backup = _backup_current(path)
+    _atomic_write(path, text)
+    llms, warnings = _trigger_reload()
     return {
-        "ok": True,
-        "backup": backup,
-        "llms": llms,
-        "warnings": warnings,
+        "ok": True, "backup": backup, "llms": llms, "warnings": warnings,
         "structured": _structurize(text),
     }
 
 
-def upsert_session(var: str, fields: dict[str, Any]) -> dict:
-    var = var.strip()
-    if not var.replace("_", "").isalnum():
-        raise MykeyHttpError(400, "变量名只允许字母 / 数字 / 下划线")
+def write_raw(text: str) -> dict:
     p = _mykey_path()
-
+    if not text.endswith("\n"):
+        text += "\n"
     with LlmRegistry.synchronized():
-        raw = p.read_text(encoding="utf-8") if p.is_file() else ""
+        return _commit_text(p, text)
+
+
+def mutate_mykey(
+    action: str,
+    var: str | None = None,
+    new_var: str | None = None,
+    fields: dict[str, Any] | None = None,
+    session_type: str | None = None,
+    expected_raw: str | None = None,
+) -> dict:
+    """Apply one structured mutation as a single locked file transaction."""
+    p = _mykey_path()
+    removed_references = 0
+    with LlmRegistry.synchronized():
+        if p.is_file():
+            with p.open(encoding="utf-8", newline="") as source:
+                original_raw = source.read()
+        else:
+            original_raw = ""
+        raw = original_raw.replace("\r\n", "\n").replace("\r", "\n")
         try:
-            new_text = upsert_assignment(raw, var, fields)
+            if action == "proxy":
+                if expected_raw is None or raw != expected_raw:
+                    raise MykeyHttpError(409, "配置已被外部更新，请刷新后重试；草稿未保存")
+                value = (fields or {}).get("proxy")
+                if not isinstance(value, str):
+                    raise MykeyHttpError(400, "proxy 必须是字符串")
+                new_text = update_proxy_assignment(raw, value)
+            elif action in {"create", "update", "rename", "duplicate"}:
+                new_text = mutate_session_assignment(raw, action, var, new_var, fields, session_type)
+            elif action == "delete":
+                if not var:
+                    raise MykeyHttpError(400, "缺少变量名")
+                new_text, removed_references = delete_base_assignment(raw, var)
+            else:
+                raise MykeyHttpError(400, f"不支持的 mykey 操作：{action}")
+        except MykeyHttpError:
+            raise
         except InvalidSourceError as e:
             raise MykeyHttpError(400, {
-                "error": "syntax_error_after_render",
-                "message": e.message,
-                "line": e.line,
-                "col": e.col,
-            })
-        ok, msg, line, col = _validate_text(new_text)
-        if not ok:
-            raise MykeyHttpError(400, {
-                "error": "syntax_error_after_render",
-                "message": msg,
-                "line": line,
-                "col": col,
-            })
-        backup = _backup_current(p)
-        _atomic_write(p, new_text)
-        llms, warnings = _trigger_reload()
-    return {
-        "ok": True,
-        "backup": backup,
-        "llms": llms,
-        "warnings": warnings,
-        "structured": _structurize(new_text),
-    }
+                "error": "syntax_error_before_mutation",
+                "message": str(e),
+            }) from e
+        except AssignmentNotFoundError as e:
+            raise MykeyHttpError(404, f"找不到变量 {e}") from e
+        except InvalidVariableNameError as e:
+            raise MykeyHttpError(400, f"非法变量名：{e}") from e
+        except AssignmentConflictError as e:
+            raise MykeyHttpError(409, {
+                "error": "assignment_conflict",
+                "var": str(e),
+                "message": f"变量 {e} 已存在",
+            }) from e
 
-
-def delete_session(var: str) -> dict:
-    p = _mykey_path()
-    if not p.is_file():
-        raise MykeyHttpError(404, "mykey.py 不存在")
-
-    with LlmRegistry.synchronized():
-        raw = p.read_text(encoding="utf-8")
-        try:
-            new_text, removed_references = _delete_session_assignment(raw, var)
-        except InvalidSourceError as e:
-            raise MykeyHttpError(400, f"当前 mykey.py 语法错误，无法定位：{e.message}")
-        except AssignmentNotFoundError:
-            raise MykeyHttpError(404, f"找不到变量 {var}")
-
-        ok, msg, line, col = _validate_text(new_text)
-        if not ok:
-            raise MykeyHttpError(400, {
-                "error": "syntax_error_after_delete",
-                "message": msg,
-                "line": line,
-                "col": col,
-            })
-        backup = _backup_current(p)
-        _atomic_write(p, new_text)
-        llms, warnings = _trigger_reload()
-    return {
-        "ok": True,
-        "backup": backup,
-        "removed_mixin_references": removed_references,
-        "llms": llms,
-        "warnings": warnings,
-        "structured": _structurize(new_text),
-    }
+        if "\r\n" in original_raw:
+            new_text = new_text.replace("\n", "\r\n")
+        result = _commit_text(p, new_text, "syntax_error_after_mutation")
+    result["action"] = action
+    if action == "delete":
+        result["removed_mixin_references"] = removed_references
+    return result
 
 
 def test_session_sync(var: str) -> dict:
@@ -349,27 +337,10 @@ def restore_backup(name: str) -> dict:
     if not src.is_file():
         raise MykeyHttpError(404, "备份不存在")
     p = _mykey_path()
-    text = src.read_text(encoding="utf-8")
-    ok, msg, line, col = _validate_text(text)
-    if not ok:
-        raise MykeyHttpError(400, {
-            "error": "backup_invalid",
-            "message": msg,
-            "line": line,
-            "col": col,
-        })
-    # snapshot current before restore (so user can re-roll-forward)
+    with src.open(encoding="utf-8", newline="") as source:
+        text = source.read()
     with LlmRegistry.synchronized():
-        backup = _backup_current(p)
-        _atomic_write(p, text)
-        llms, warnings = _trigger_reload()
-    return {
-        "ok": True,
-        "backup": backup,
-        "llms": llms,
-        "warnings": warnings,
-        "structured": _structurize(text),
-    }
+        return _commit_text(p, text, "backup_invalid")
 
 
 # ── encrypted sync via GA assets/mykey_sync.py ─────────────────────────
@@ -618,31 +589,22 @@ def sync_upload() -> dict:
     return {"ok": True, "action": "upload", "path": str(p), **result}
 
 
-def _read_and_reload_mykey(path: Path) -> tuple[str, list[dict], list[str]]:
-    raw = path.read_text(encoding="utf-8") if path.is_file() else ""
-    llms, warnings = _trigger_reload()
-    return raw, llms, warnings
-
-
 def sync_fetch() -> dict:
-    """Fetch, decrypt and replace GA_ROOT/mykey.py from the configured sync server."""
+    """Download into staging; only the shared transaction can replace mykey.py."""
     p = _mykey_path()
-    result = _run_mykey_sync([
-        "fetch",
-        "--base-url", _sync_base_url(),
-        "--target", str(p),
-        "--force",
-    ])
-    raw, llms, warnings = _read_and_reload_mykey(p)
-    return {
-        "ok": True,
-        "action": "fetch",
-        "path": str(p),
-        "llms": llms,
-        "warnings": warnings,
-        "structured": _structurize(raw),
-        **result,
-    }
+    _paths.ADMIN_DATA.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="mykey-fetch-", dir=_paths.ADMIN_DATA) as staging:
+        target = Path(staging) / "mykey.py"
+        result = _run_mykey_sync([
+            "fetch", "--base-url", _sync_base_url(), "--target", str(target), "--force",
+        ])
+        if not target.is_file():
+            raise MykeyHttpError(500, {"error": "sync_output_missing"})
+        with target.open(encoding="utf-8", newline="") as source:
+            raw = source.read()
+        with LlmRegistry.synchronized():
+            committed = _commit_text(p, raw, "sync_invalid")
+    return {**committed, "action": "fetch", "path": str(p), **result}
 
 
 def open_mykey_file() -> dict:

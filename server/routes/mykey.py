@@ -17,8 +17,8 @@ from ..schemas import (
     MyKeySessionTestResp,
     MyKeySyncResultResp,
     MyKeyWriteResp,
+    MyKeyMutationReq,
     RawWriteReq,
-    SessionUpsertReq,
 )
 from ..services import mykey_service
 
@@ -52,16 +52,18 @@ async def put_raw(req: RawWriteReq) -> MyKeyWriteResp:
     return await asyncio.to_thread(mykey_service.write_raw, req.raw)
 
 
-@router.post("/sessions")
+@router.post("/mutation")
 @_translated
-async def upsert_session(req: SessionUpsertReq) -> MyKeyWriteResp:
-    return await asyncio.to_thread(mykey_service.upsert_session, req.var, req.fields)
-
-
-@router.delete("/sessions/{var}")
-@_translated
-async def delete_session(var: str) -> MyKeyWriteResp:
-    return await asyncio.to_thread(mykey_service.delete_session, var)
+async def mutate_mykey(req: MyKeyMutationReq) -> MyKeyWriteResp:
+    return await asyncio.to_thread(
+        mykey_service.mutate_mykey,
+        req.action,
+        req.var,
+        req.new_var,
+        req.fields,
+        req.type,
+        req.expected_raw,
+    )
 
 
 @router.post("/sessions/{var}/test")

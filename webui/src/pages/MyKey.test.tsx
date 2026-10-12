@@ -5,11 +5,18 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MyKey from './MyKey'
+import { resetPageState } from '@/utils/pageState'
+import { queryKeys } from '@/queries/queryKeys'
+import { dialog } from '@/stores/dialogStore'
+import type { MyKeyData } from '@/api/types'
 import { MYKEY_SHOW_UPLOAD_KEY, setMyKeyShowUpload } from '@/utils/mykeySyncUi'
 
 const apiMock = vi.hoisted(() => ({
   mykey: vi.fn(),
   openMyKeyFile: vi.fn(),
+  mutateMyKey: vi.fn(),
+  mykeyBackups: vi.fn(),
+  restoreMyKeyBackup: vi.fn(),
 }))
 
 vi.mock('@/api/client', () => ({ api: apiMock }))
@@ -30,12 +37,14 @@ describe('MyKey upload button visibility', () => {
   let client: QueryClient
 
   beforeEach(() => {
+    resetPageState()
+    apiMock.mutateMyKey.mockReset().mockResolvedValue({ ok: true })
     localStorage.removeItem(MYKEY_SHOW_UPLOAD_KEY)
     apiMock.mykey.mockReset().mockResolvedValue({
       exists: true,
       path: '/tmp/mykey.py',
       raw: '',
-      structured: { sessions: [], globals: {} },
+      structured: { sessions: [], mixins: [], globals: {} },
     })
     apiMock.openMyKeyFile.mockReset()
     client = new QueryClient({
@@ -47,6 +56,7 @@ describe('MyKey upload button visibility', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     act(() => root.unmount())
     client.clear()
     host.remove()
@@ -156,4 +166,127 @@ describe('MyKey upload button visibility', () => {
     act(() => setMyKeyShowUpload(false))
     expect(host.querySelector('[data-testid="actions"]')!.textContent).not.toContain('上传mykey')
   })
+  const settle = async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 25)) }) }
+  function click(text: string) {
+    const button = Array.from(host.querySelectorAll('button')).find(b => b.textContent === text)
+    expect(button).toBeTruthy()
+    act(() => button!.click())
+  }
+  function input(element: HTMLInputElement, value: string) {
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(element, value)
+      element.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+  function fixture(proxy = 'old'): MyKeyData {
+    return { exists: true, path: '/synthetic/config.py', mtime: 0, raw: `proxy = '${proxy}'`, structured: {
+      sessions: [{ var: 'oai_config_a', type: 'oai', lineno: 2, fields: { name: 'A', apikey: '********' } }],
+      mixins: [], globals: { proxy },
+    } }
+  }
+  async function mountFixture(data = fixture()) {
+    apiMock.mykey.mockResolvedValue(data)
+    render()
+    await settle()
+  }
+
+  it('renames through the unified mutation and invalidates data and backup caches', async () => {
+    await mountFixture()
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    act(() => host.querySelector<HTMLButtonElement>('.mykey-card__toggle')!.click())
+    click('编辑')
+    input(host.querySelector<HTMLInputElement>('[role="dialog"] input')!, 'oai_config_b')
+    click('保存并热更新')
+    await settle()
+    expect(apiMock.mutateMyKey).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'rename', var: 'oai_config_a', new_var: 'oai_config_b', type: 'oai',
+    }))
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.mykey.data })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.mykey.backups })
+  })
+
+  it('proposes a noncolliding copy name and keeps the editor open on server conflicts', async () => {
+    const data = fixture()
+    data.structured.sessions.push({ var: 'oai_config_a_copy', type: 'oai', lineno: 3, fields: { name: 'copy' } })
+    await mountFixture(data)
+    act(() => host.querySelector<HTMLButtonElement>('.mykey-card__toggle')!.click())
+    click('复制')
+    expect(host.querySelector<HTMLInputElement>('[role="dialog"] input')!.value).toBe('oai_config_a_copy_2')
+    apiMock.mutateMyKey.mockRejectedValueOnce({ body: { detail: { message: '变量已存在' } } })
+    click('保存并热更新')
+    await settle()
+    expect(apiMock.mutateMyKey).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'duplicate', var: 'oai_config_a', new_var: 'oai_config_a_copy_2',
+    }))
+    expect(host.querySelector('[role="dialog"]')!.textContent).toContain('变量已存在')
+    expect(host.querySelector<HTMLInputElement>('[role="dialog"] input')!.value).toBe('oai_config_a_copy_2')
+  })
+
+  it('follows clean proxy refreshes but retains dirty drafts on conflicts', async () => {
+    await mountFixture()
+    const proxy = host.querySelector<HTMLInputElement>('input[placeholder*="127.0.0.1"]')!
+    act(() => client.setQueryData(queryKeys.mykey.data, fixture('external')))
+    await settle()
+    expect(proxy.value).toBe('external')
+    input(proxy, 'draft')
+    act(() => client.setQueryData(queryKeys.mykey.data, fixture('newer')))
+    await settle()
+    expect(proxy.value).toBe('draft')
+    expect(host.querySelector('[role="alert"]')!.textContent).toContain('草稿已保留')
+    expect(Array.from(host.querySelectorAll('button')).find(b => b.textContent === '保存 proxy')!.disabled).toBe(true)
+    click('使用最新值')
+    expect(proxy.value).toBe('newer')
+  })
+
+  it('saves proxy with optimistic raw precondition and does not revert after refresh', async () => {
+    await mountFixture()
+    const proxy = host.querySelector<HTMLInputElement>('input[placeholder*="127.0.0.1"]')!
+    input(proxy, 'draft')
+    apiMock.mykey.mockResolvedValue(fixture('draft'))
+    click('保存 proxy')
+    await settle()
+    expect(apiMock.mutateMyKey).toHaveBeenCalledWith({ action: 'proxy', fields: { proxy: 'draft' }, expected_raw: "proxy = 'old'" })
+    expect(proxy.value).toBe('draft')
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('refreshes backup history after restoring and reopening the drawer', async () => {
+    const oldBackup = { name: 'old.bak', mtime: 1, size: 100 }
+    const newBackup = { name: 'new.bak', mtime: 2, size: 100 }
+    apiMock.mykeyBackups.mockReset().mockResolvedValue({ backups: [oldBackup] })
+    apiMock.restoreMyKeyBackup.mockReset().mockImplementation(async () => {
+      apiMock.mykeyBackups.mockResolvedValue({ backups: [newBackup, oldBackup] })
+      return { ok: true }
+    })
+    vi.spyOn(dialog, 'confirm').mockResolvedValue(true)
+    await mountFixture()
+    click('原始')
+    await settle()
+    click('备份历史')
+    await settle()
+    expect(host.textContent).toContain('old.bak')
+    click('↩ 回滚')
+    await settle()
+    expect(apiMock.restoreMyKeyBackup).toHaveBeenCalledWith('old.bak')
+    click('备份历史')
+    await settle()
+    expect(host.textContent).toContain('new.bak')
+    expect(apiMock.mykeyBackups.mock.calls.length).toBeGreaterThan(1)
+  })
+
+  it('projects cards in source-line order within each channel', async () => {
+    const data = fixture()
+    data.structured.sessions = [
+      { var: 'oai_config_c', type: 'oai', lineno: 10, fields: { name: 'third' } },
+      { var: 'oai_config_a', type: 'oai', lineno: 2, fields: { name: 'first' } },
+      { var: 'oai_config_b', type: 'oai', lineno: 5, fields: { name: 'second' } },
+    ]
+    await mountFixture(data)
+    const cards = Array.from(host.querySelectorAll('.mykey-card')).map(card => card.textContent)
+    expect(cards[0]).toContain('first')
+    expect(cards[1]).toContain('second')
+    expect(cards[2]).toContain('third')
+  })
+
 })

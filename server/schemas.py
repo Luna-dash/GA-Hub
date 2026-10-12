@@ -963,7 +963,6 @@ class MyKeyStructured(BaseModel):
 
     sessions: list[MyKeySession]
     mixins: list[MyKeySession]
-    mixin: MyKeySession | None = None
     globals: dict[str, Any]
 
 
@@ -1162,10 +1161,13 @@ class FsSendResp(BaseModel):
 class RawWriteReq(BaseModel):
     raw: str
 
-class SessionUpsertReq(BaseModel):
-    var: str
-    type: str  # native_claude | native_oai | claude | oai | mixin
-    fields: dict[str, Any]
+class MyKeyMutationReq(BaseModel):
+    action: Literal["create", "update", "rename", "duplicate", "delete", "proxy"]
+    var: str | None = None
+    new_var: str | None = None
+    type: str | None = None
+    fields: dict[str, Any] | None = None
+    expected_raw: str | None = None
 
 # ── preferences / notify / setup ─────────────────────────────────
 

@@ -6,7 +6,7 @@
 //   * 原始    — raw editor with line numbers, atomic save with ast.parse
 //              validation, and a backup drawer for one-click rollback.
 //
-// All saves go through PUT /api/mykey/raw which:
+// Structured saves use POST /api/mykey/mutation; raw saves use PUT /api/mykey/raw:
 //   1. validates with ast.parse + compile
 //   2. snapshots the previous file to ~/.genericagent-admin/mykey-backups/
 //   3. atomically replaces mykey.py
@@ -75,6 +75,7 @@ export default function MyKey() {
       toast.success('已保存到 mykey.py')
     }
     qc.invalidateQueries({ queryKey: queryKeys.mykey.data })
+    qc.invalidateQueries({ queryKey: queryKeys.mykey.backups })
     qc.invalidateQueries({ queryKey: queryKeys.llms })
     qc.invalidateQueries({ queryKey: queryKeys.servicePanel })
   }
@@ -182,31 +183,41 @@ export default function MyKey() {
 // ── structured view ─────────────────────────────────────────────────
 function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKeyWriteResult) => void }) {
   const [editor, setEditor] = useState<MyKeySession | null>(null)
-  const [creating, setCreating] = useState<MyKeySessionType | null>(null)
+  const [editorMode, setEditorMode] = useState<'create' | 'edit' | 'duplicate' | null>(null)
+  const [sourceVar, setSourceVar] = useState<string | null>(null)
   const [openRows, setOpenRows] = useState<Set<number>>(new Set())
 
   const sessions = data.structured.sessions
-  const mixins = data.structured.mixins ?? (data.structured.mixin ? [data.structured.mixin] : [])
+  const mixins = data.structured.mixins
   const allEntries = useMemo(
-    () => [...mixins, ...sessions].sort((a, b) => sessionMeta(a.type).order - sessionMeta(b.type).order),
+    () => [...mixins, ...sessions].sort((a, b) =>
+      sessionMeta(a.type).order - sessionMeta(b.type).order ||
+      (a.lineno ?? Number.MAX_SAFE_INTEGER) - (b.lineno ?? Number.MAX_SAFE_INTEGER)),
     [mixins, sessions],
   )
   const globals_ = data.structured.globals
 
   const startCreate = (type: MyKeySessionType) => {
-    setCreating(type)
+    setEditorMode('create')
+    setSourceVar(null)
     setEditor({ var: defaultVarName(type, allEntries), type, fields: defaultFields(type) })
   }
 
   const startEdit = (s: MyKeySession) => {
-    setCreating(null)
+    setEditorMode('edit')
+    setSourceVar(s.var)
     setEditor({ ...s, fields: { ...s.fields } })
   }
 
   const startDuplicate = (s: MyKeySession) => {
-    setCreating(s.type)
+    const existing = new Set(allEntries.map(entry => entry.var))
+    const base = `${s.var}_copy`
+    let candidate = base
+    for (let suffix = 2; existing.has(candidate); suffix++) candidate = `${base}_${suffix}`
+    setEditorMode('duplicate')
+    setSourceVar(s.var)
     setEditor({
-      var: `${s.var}_copy`,
+      var: candidate,
       type: s.type,
       fields: { ...s.fields, apikey: undefined },
     })
@@ -220,7 +231,7 @@ function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
     )
     if (!ok) return
     try {
-      const r = await api.deleteMyKeySession(s.var)
+      const r = await api.mutateMyKey({ action: 'delete', var: s.var })
       onWrite(r)
     } catch (e: any) {
       dialog.alert('删除失败', errorMessageFromError(e))
@@ -242,7 +253,7 @@ function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
             ))}
           </div>
         </div>
-        <div className="mykey-card-grid grid gap-5 md:grid-cols-2">
+        <div className="mykey-card-grid grid gap-3 md:grid-cols-2">
           {allEntries.map((entry, idx) => {
             const row = Math.floor(idx / 2)
             const expanded = openRows.has(row)
@@ -271,13 +282,14 @@ function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
 
       <GlobalsSection globals_={globals_} onWrite={onWrite} rawText={data.raw} />
 
-      {editor && (
+      {editor && editorMode && (
         <SessionDialog
-          mode={creating ? 'create' : 'edit'}
+          mode={editorMode}
+          sourceVar={sourceVar}
           session={editor}
           allSessions={allEntries}
-          onClose={() => { setEditor(null); setCreating(null) }}
-          onSaved={(r) => { onWrite(r); setEditor(null); setCreating(null) }}
+          onClose={() => { setEditor(null); setEditorMode(null); setSourceVar(null) }}
+          onSaved={(r) => { onWrite(r); setEditor(null); setEditorMode(null); setSourceVar(null) }}
         />
       )}
     </div>
@@ -377,11 +389,11 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
             ) : null}
           </div>
           <div className="mt-3 flex gap-2 flex-wrap">
-            <button onClick={onEdit} className="mykey-card__action text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:brightness-95">编辑</button>
-            <button onClick={onDuplicate} className="mykey-card__action text-xs px-3 py-1.5 rounded-lg border border-line bg-bg-card text-ink hover:bg-bg">复制</button>
-            <button onClick={onDelete} className="mykey-card__action text-xs px-3 py-1.5 rounded-lg border border-status-danger-line text-status-danger hover:bg-status-danger-soft">删除</button>
+            <button onClick={onEdit} className="mykey-card__action mykey-card__action--primary">编辑</button>
+            <button onClick={onDuplicate} className="mykey-card__action">复制</button>
+            <button onClick={onDelete} className="mykey-card__action mykey-card__action--danger">删除</button>
             {canTest && (
-              <button onClick={runTest} disabled={testing} className="mykey-card__action text-xs px-3 py-1.5 rounded-lg border border-status-success-line text-status-success hover:bg-status-success-soft disabled:opacity-50">
+              <button onClick={runTest} disabled={testing} className="mykey-card__action mykey-card__action--success">
                 {testing ? '测试中…' : '测 ping'}
               </button>
             )}
@@ -425,8 +437,9 @@ function sessionMeta(type: MyKeySessionType) {
 }
 
 // ── Edit / Create dialog ────────────────────────────────────────────
-function SessionDialog({ mode, session, allSessions, onClose, onSaved }: {
-  mode: 'create' | 'edit'
+function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved }: {
+  mode: 'create' | 'edit' | 'duplicate'
+  sourceVar: string | null
   session: MyKeySession
   allSessions: MyKeySession[]
   onClose: () => void
@@ -446,7 +459,18 @@ function SessionDialog({ mode, session, allSessions, onClose, onSaved }: {
     try {
       // Normalize empty strings to undefined for non-required fields.
       const fields = stripUiOnly(s.fields)
-      const r = await api.upsertMyKeySession({ var: s.var, type: s.type, fields })
+      const action = mode === 'duplicate'
+        ? 'duplicate'
+        : mode === 'edit' && sourceVar && sourceVar !== s.var
+          ? 'rename'
+          : mode === 'create' ? 'create' : 'update'
+      const r = await api.mutateMyKey({
+        action,
+        var: action === 'duplicate' ? sourceVar ?? undefined : action === 'rename' ? sourceVar ?? undefined : s.var,
+        new_var: action === 'duplicate' || action === 'rename' ? s.var : undefined,
+        type: s.type,
+        fields,
+      })
       onSaved(r)
     } catch (e: unknown) {
       setErr(myKeyParseErrorFromError(e))
@@ -459,13 +483,13 @@ function SessionDialog({ mode, session, allSessions, onClose, onSaved }: {
     <ModalOverlay onClose={onClose} panelClassName="p-6 w-[40rem] max-w-[92vw] max-h-[88vh] overflow-y-auto">
         <div className="flex items-baseline justify-between mb-4">
           <h3 className="text-base font-semibold">
-            {mode === 'create' ? '新增链路' : '编辑链路'}
+            {mode === 'create' ? '新增链路' : mode === 'duplicate' ? '复制链路' : '编辑链路'}
             <span className="ml-2 text-xs text-slate-500">{sessionMeta(s.type).label}</span>
           </h3>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-200 text-xl leading-none">×</button>
         </div>
 
-        <Field label="变量名（mykey.py 里的 Python 变量）" hint="必须含 'config' 字样；以及 'native+claude' 或 'native+oai' 之类关键字才会被 GA 识别。">
+        <Field label="变量名（mykey.py 里的 Python 变量）" hint="必须包含 api/config/cookie 之一及所选渠道关键字（oai、claude、mixin；原生渠道另需 native）。">
           <input value={s.var} onChange={(e) => setS({ ...s, var: e.target.value })}
             className={inp + ' font-mono'} placeholder="native_claude_xxx_config" />
         </Field>
@@ -476,7 +500,7 @@ function SessionDialog({ mode, session, allSessions, onClose, onSaved }: {
               <input value={s.fields.name ?? ''} onChange={(e) => setField('name', e.target.value)}
                 className={inp} placeholder="如 claude / glm / gpt" />
             </Field>
-            <Field label="apikey" hint={mode === 'edit' ? '留空保留原值' : undefined}>
+            <Field label="apikey" hint={mode === 'create' ? undefined : '留空保留源配置的密钥'}>
               <div className="flex gap-2 items-stretch">
                 <input
                   value={s.fields.apikey ?? ''}
@@ -659,19 +683,26 @@ function GlobalsSection({ globals_, onWrite, rawText }: {
   // proxy is the most-common one — we surface it as an inline editor.
   const [proxy, setProxy] = useState<string>(typeof globals_.proxy === 'string' ? globals_.proxy : '')
   const [saving, setSaving] = useState(false)
-  const dirty = proxy !== (globals_.proxy ?? '')
+  const incoming = typeof globals_.proxy === 'string' ? globals_.proxy : ''
+  const [baseline, setBaseline] = useState(incoming)
+  const dirty = proxy !== baseline
+  const conflict = dirty && incoming !== baseline
+  useEffect(() => {
+    if (incoming === proxy) {
+      setBaseline(incoming)
+    } else if (!dirty) {
+      setProxy(incoming)
+      setBaseline(incoming)
+    }
+  }, [incoming, dirty, proxy])
 
   const saveProxy = async () => {
     setSaving(true)
     try {
-      // Splice the proxy assignment in raw text rather than building structure.
-      let next = rawText
-      const re = /^proxy\s*=\s*.+$/m
-      const newLine = proxy.trim()
-        ? `proxy = ${JSON.stringify(proxy.trim())}`
-        : '# proxy = ""'
-      next = re.test(next) ? next.replace(re, newLine) : next + (next.endsWith('\n') ? '' : '\n') + '\n' + newLine + '\n'
-      const r = await api.putMyKeyRaw(next)
+      const r = await api.mutateMyKey({
+        action: 'proxy', fields: { proxy }, expected_raw: rawText,
+      })
+      setProxy(proxy.trim())
       onWrite(r)
     } catch (e: any) {
       dialog.alert('保存失败', errorMessageFromError(e))
@@ -692,11 +723,15 @@ function GlobalsSection({ globals_, onWrite, rawText }: {
             <input value={proxy} onChange={(e) => setProxy(e.target.value)}
               className={inp + ' font-mono'} placeholder="http://127.0.0.1:7890（留空禁用）" />
           </div>
-          <button onClick={saveProxy} disabled={!dirty || saving}
+          <button onClick={saveProxy} disabled={!dirty || saving || conflict}
             className="px-3 py-1.5 rounded-lg bg-accent text-white text-sm disabled:opacity-40">
             {saving ? '保存中…' : '保存 proxy'}
           </button>
         </div>
+        {conflict && <p role="alert" className="text-sm text-amber-400">
+          proxy 已被外部更新；草稿已保留。
+          <button className="ml-2 underline" onClick={() => { setProxy(incoming); setBaseline(incoming) }}>使用最新值</button>
+        </p>}
         {otherGlobals.length > 0 && (
           <details>
             <summary className="text-xs text-slate-400 cursor-pointer">其它全局变量（{otherGlobals.length}）— 在「原始」tab 编辑</summary>

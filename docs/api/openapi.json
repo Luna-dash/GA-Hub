@@ -3111,65 +3111,23 @@
         }
       }
     },
-    "/api/mykey/sessions": {
+    "/api/mykey/mutation": {
       "post": {
         "tags": [
           "mykey"
         ],
-        "summary": "Upsert Session",
-        "operationId": "upsert_session_api_mykey_sessions_post",
+        "summary": "Mutate Mykey",
+        "operationId": "mutate_mykey_api_mykey_mutation_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SessionUpsertReq"
+                "$ref": "#/components/schemas/MyKeyMutationReq"
               }
             }
           },
           "required": true
         },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MyKeyWriteResp"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/mykey/sessions/{var}": {
-      "delete": {
-        "tags": [
-          "mykey"
-        ],
-        "summary": "Delete Session",
-        "operationId": "delete_session_api_mykey_sessions__var__delete",
-        "parameters": [
-          {
-            "name": "var",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Var"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -8127,6 +8085,83 @@
         ],
         "title": "MyKeyDataResp"
       },
+      "MyKeyMutationReq": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "create",
+              "update",
+              "rename",
+              "duplicate",
+              "delete",
+              "proxy"
+            ],
+            "title": "Action"
+          },
+          "var": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Var"
+          },
+          "new_var": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Var"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "fields": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fields"
+          },
+          "expected_raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Raw"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "MyKeyMutationReq"
+      },
       "MyKeyOpenResp": {
         "properties": {
           "ok": {
@@ -8282,16 +8317,6 @@
             },
             "type": "array",
             "title": "Mixins"
-          },
-          "mixin": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/MyKeySession"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "globals": {
             "additionalProperties": true,
@@ -9587,30 +9612,6 @@
         },
         "type": "object",
         "title": "SessionUpdate"
-      },
-      "SessionUpsertReq": {
-        "properties": {
-          "var": {
-            "type": "string",
-            "title": "Var"
-          },
-          "type": {
-            "type": "string",
-            "title": "Type"
-          },
-          "fields": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Fields"
-          }
-        },
-        "type": "object",
-        "required": [
-          "var",
-          "type",
-          "fields"
-        ],
-        "title": "SessionUpsertReq"
       },
       "SetupReq": {
         "properties": {
