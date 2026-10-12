@@ -42,6 +42,18 @@ describe('light running projection', () => {
     expect(projectRunningTurn(raw).askUser).toEqual({ question: '选择？', candidates: ['甲', '乙'] })
     expect(prose(raw)).toBe('请确认')
   })
+  it('hides streaming tool headers and fences at every character boundary', () => {
+    const raw = ['模型说明', '🛠️ Tool: `functions.code_run` 📥 args:', '````json', '{"script":"PRIVATE_ARGUMENT"}', '````', '`````text', 'PRIVATE_RESULT', '`````', '工具之后的说明'].join('\n')
+    for (let end = raw.indexOf('🛠'); end <= raw.length; end++) {
+      // WebSocket JSON never splits a Unicode code point into lone surrogates.
+      if (end > 0 && /[\uD800-\uDBFF]/.test(raw[end - 1])) continue
+      const text = prose(raw.slice(0, end))
+      expect(text, `prefix ${end}`).not.toMatch(/Tool:|functions\.|PRIVATE|📥|`{1,5}/)
+      expect(text, `prefix ${end}`).toMatch(/^模型说明(?:\n工具之后的说明?$|\n工.*)?$/)
+    }
+    expect(hints(raw)).toEqual(['执行脚本'])
+    expect(prose(raw)).toBe('模型说明\n工具之后的说明')
+  })
   it('groups tool labels without inferring success', () => {
     expect(formatToolHint(['读取文件', '执行脚本', '读取文件'])).toBe('读取文件 ×2 · 执行脚本')
     expect(hints('🛠️ unknown({})')).toEqual(['调用工具'])

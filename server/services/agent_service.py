@@ -284,9 +284,9 @@ class AgentService:
         LlmRegistry.mark_agent_current(self.agent)
         self.session_id = session_id
         self._manage_global_preference = manage_global_preference
-        # Default to incremental output for WS streaming
+        # Keep the transport lossless; compact tool hints belong to the UI projection.
         self.agent.inc_out = False
-        self.agent.verbose = False
+        self.agent.verbose = True
 
         # last_reply_time may be missing on older agentmain.py — patch defensively.
         if not hasattr(self.agent, "last_reply_time"):

@@ -64,6 +64,8 @@ def test_session_runtime_skips_process_global_preference_hooks() -> None:
     create_main.assert_not_called()
     assert service.agent is agent
     assert service.session_id == "session-A"
+    assert service.agent.verbose is True
+    assert service.agent.inc_out is False
     restore.assert_not_called()
 
 

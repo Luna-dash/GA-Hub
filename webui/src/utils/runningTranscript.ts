@@ -10,7 +10,6 @@ const LABELS: Record<string, string> = {
   start_long_term_update: '整理记忆',
 }
 const TOOL = /🛠️?\s*(?:Tool:\s*`([^`]+)`|([\w.]+)\s*\()/g
-const TOOL_START = /^\s*🛠️?\s*(?:Tool:|[\w.]+\s*\()/
 
 function label(name: string): string {
   const short = name.split('.').at(-1) || name
@@ -58,6 +57,9 @@ export function projectRunningTurn(content: string): RunningTurnContent {
   }
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]
+    // A tool fence can arrive one backtick at a time. Delay only the
+    // unfinished last line; completed three-backtick prose stays visible.
+    if (afterTool && !fence && i === lines.length - 1 && /^\s*`{1,3}\s*$/.test(line)) continue
     const edge = /^\s*(`{3,}|~{3,})(.*)$/.exec(line)
     if (fence) {
       if (!fence.hidden) text.push(line)
@@ -71,7 +73,10 @@ export function projectRunningTurn(content: string): RunningTurnContent {
       if (!hidden) { afterTool = false; text.push(line) }
       continue
     }
-    if (TOOL_START.test(line)) {
+    // A streaming tool header may stop before its name/backtick/parenthesis.
+    // Likewise a tool fence can arrive one backtick at a time. Neither is prose.
+    if (afterTool && /^\s*[`~]{1,2}\s*$/.test(line)) continue
+    if (/^\s*🛠️?/.test(line)) {
       const tail = lines.slice(i).join('\n')
       TOOL.lastIndex = 0
       let match: RegExpExecArray | null

@@ -25,6 +25,7 @@ import { useCopy } from '@/utils/clipboard'
 import { CHAT_FONT_SCALE_EVENT, getChatFontScale } from '@/utils/chatAppearance'
 import { FILE_HINT } from '@/utils/sessionPrompt'
 import { MessageContent } from './MessageContent'
+import { TranscriptRecordContent } from './TranscriptRecordContent'
 import { AskUserCard } from './AskUserCard'
 import { RunningTranscript } from './RunningTranscript'
 import { bubbleTone } from './bubbleTone'
@@ -434,7 +435,7 @@ function LazyTranscriptTurn({ turn }: { turn: AssistantTranscriptTurn }) {
       </summary>
       {open && (
         <div className="pb-3 pl-5">
-          <MessageContent content={turn.content} format="markdown" markdownMode="plain" />
+          <TranscriptRecordContent content={turn.content} />
         </div>
       )}
     </details>

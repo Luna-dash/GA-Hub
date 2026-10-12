@@ -2,6 +2,7 @@ import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } 
 import { renderAskUserPayload, type AssistantTranscript } from '@/utils/assistantTranscript'
 import { formatToolHint, projectRunningTurn } from '@/utils/runningTranscript'
 import { MessageContent } from './MessageContent'
+import { TranscriptRecordContent } from './TranscriptRecordContent'
 import { AskUserCard } from './AskUserCard'
 
 /** One chronological process. Only the running view uses this light projection. */
@@ -117,7 +118,7 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
                 </button>
                 {open && <div id={`running-${askUserDraftKey || 'turn'}-${turn.turn}`} className="min-w-0 space-y-2 pb-2 pl-5 pr-2">
                   {full ? <div data-full-record>
-                    <MessageContent content={turn.content} format="markdown" markdownMode="plain" cache={!active} />
+                    <TranscriptRecordContent content={turn.content} cache={!active} />
                     <button type="button" aria-label={`收起完整记录 · Turn ${turn.turn}`}
                       className="mt-3 flex items-center gap-1 rounded px-2 py-1 text-xs text-ink-muted hover:bg-bg-soft"
                       onClick={() => toggleFull(turn.turn)}><span aria-hidden="true">⌃</span> 收起完整记录</button>
