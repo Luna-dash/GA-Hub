@@ -1,9 +1,9 @@
-import type { TokenDayStats, TokenHistoryPoint, TokenThreadStats, TokenWeekStats } from '@/api/types'
+import type { TokenDayStats, TokenHistoryPoint, TokenThreadStats, TokenTotals, TokenWeekStats } from '@/api/types'
 
 const TOP_SESSION_COUNT = 6
 const WEEK_PREVIEW_SIZE = 6
 
-export type DailyUsageRange = 'week' | '30d'
+export type DailyUsageRange = '7d' | 'week' | '30d'
 
 export function compactTokens(value: number) {
   const number = Number.isFinite(value) ? value : 0
@@ -66,9 +66,11 @@ export function usageRangeDays(
   timestamp: number,
 ) {
   const byDate = new Map(rows.map(row => [row.date, row]))
-  const end = range === 'week' ? parseDate(currentWeek.week_end) : new Date(timestamp * 1000)
+  const today = parseDate(dateKey(new Date(timestamp * 1000)))
+  const weekEnd = parseDate(currentWeek.week_end)
+  const end = range === 'week' && weekEnd < today ? weekEnd : today
   const start = range === 'week' ? parseDate(currentWeek.week_start) : new Date(end)
-  if (range === '30d') start.setDate(end.getDate() - 29)
+  if (range !== 'week') start.setDate(end.getDate() - (range === '30d' ? 29 : 6))
 
   const result: TokenDayStats[] = []
   const date = new Date(start)
@@ -78,6 +80,25 @@ export function usageRangeDays(
     date.setDate(date.getDate() + 1)
   }
   return result
+}
+
+export function sumUsage(rows: TokenTotals[]): TokenTotals {
+  const totals: TokenTotals = { requests: 0, input: 0, output: 0, cache_create: 0, cache_read: 0, total: 0, cache_hit_rate: 0 }
+  for (const row of rows) {
+    for (const key of ['requests', 'input', 'output', 'cache_create', 'cache_read', 'total'] as const) totals[key] += row[key]
+  }
+  const cacheBase = totals.input + totals.cache_create + totals.cache_read
+  totals.cache_hit_rate = cacheBase > 0 ? totals.cache_read / cacheBase * 100 : 0
+  return totals
+}
+
+export function usageAxis(maximum: number): number[] {
+  if (maximum <= 0) return [0, 1, 2, 3, 4]
+  const raw = maximum / 4
+  const power = 10 ** Math.floor(Math.log10(raw))
+  const unit = [1, 2, 2.5, 5, 10].find(n => n * power >= raw) ?? 10
+  const step = unit * power
+  return [0, step, step * 2, step * 3, step * 4]
 }
 
 export function topSessions(rows: TokenThreadStats[], count = TOP_SESSION_COUNT) {

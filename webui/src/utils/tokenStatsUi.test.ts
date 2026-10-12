@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TokenDayStats, TokenThreadStats, TokenWeekStats } from '@/api/types'
-import { compactTokens, dailyUsage, sessionTitle, topSessions, usageRangeDays, visibleWeeks } from './tokenStatsUi'
+import { compactTokens, dailyUsage, sessionTitle, sumUsage, topSessions, usageAxis, usageRangeDays, visibleWeeks } from './tokenStatsUi'
 
 describe('compactTokens', () => {
   it('uses deterministic k, m, and b token units', () => {
@@ -60,7 +60,7 @@ describe('token stats presentation', () => {
     expect(sessionTitle({ ...thread('ignored', 100), title: '   ' })).toBe('未命名会话')
   })
 
-  it('uses the exact natural-week boundaries returned by the server', () => {
+  it('clips the natural week at today while preserving past zero days', () => {
     const rows: TokenDayStats[] = [
       { date: '2026-07-13', requests: 1, input: 10, output: 2, cache_create: 0, cache_read: 3, total: 15, cache_hit_rate: 20 },
       { date: '2026-07-15', requests: 2, input: 20, output: 4, cache_create: 0, cache_read: 6, total: 30, cache_hit_rate: 20 },
@@ -68,10 +68,11 @@ describe('token stats presentation', () => {
     ]
     const currentWeek = { week_start: '2026-07-13', week_end: '2026-07-19' }
     const shown = usageRangeDays(rows, 'week', currentWeek, new Date(2026, 6, 15, 12).getTime() / 1000)
-    expect(shown).toHaveLength(7)
+    expect(shown).toHaveLength(3)
     expect(shown.map(row => row.date)).toEqual([
-      '2026-07-13', '2026-07-14', '2026-07-15', '2026-07-16', '2026-07-17', '2026-07-18', '2026-07-19',
+      '2026-07-13', '2026-07-14', '2026-07-15',
     ])
+    expect(shown[1].total).toBe(0)
     expect(shown.reduce((sum, row) => sum + row.total, 0)).toBe(45)
   })
 
@@ -81,6 +82,38 @@ describe('token stats presentation', () => {
     expect(shown).toHaveLength(30)
     expect(shown[0].date).toBe('2026-06-16')
     expect(shown.at(-1)?.date).toBe('2026-07-15')
+  })
+
+  it('shows one day on Monday and seven rolling days across a year boundary', () => {
+    const stamp = new Date(2026, 9, 12, 12).getTime() / 1000
+    const week = { week_start: '2026-10-12', week_end: '2026-10-18' }
+    expect(usageRangeDays([], 'week', week, stamp).map(row => row.date)).toEqual(['2026-10-12'])
+    const rolling = usageRangeDays([], '7d', { week_start: '2025-12-29', week_end: '2026-01-04' }, new Date(2026, 0, 2, 12).getTime() / 1000)
+    expect(rolling).toHaveLength(7)
+    expect(rolling[0].date).toBe('2025-12-27')
+    expect(rolling.at(-1)?.date).toBe('2026-01-02')
+  })
+
+  it('sums all four token components and calculates a weighted cache rate', () => {
+    const zero = { requests: 0, input: 0, output: 0, cache_create: 0, cache_read: 0, total: 0, cache_hit_rate: 0 }
+    const result = sumUsage([
+      { ...zero, requests: 2, input: 100, cache_read: 100, cache_create: 20, output: 30, total: 250, cache_hit_rate: 50 },
+      { ...zero, requests: 1, input: 900, cache_read: 0, cache_create: 40, output: 10, total: 950 },
+    ])
+    expect(result).toMatchObject({ requests: 3, total: 1200, cache_create: 60, input: 1000, cache_read: 100 })
+    expect(result.cache_hit_rate).toBeCloseTo(100 / 1160 * 100)
+    expect(sumUsage([])).toEqual(zero)
+  })
+
+  it('uses readable axis ticks covering zero, tiny, and very large values', () => {
+    for (const maximum of [0, 1, 750001, 20_000_000_000]) {
+      const ticks = usageAxis(maximum)
+      expect(ticks).toHaveLength(5)
+      expect(ticks[0]).toBe(0)
+      expect(ticks[4]).toBeGreaterThanOrEqual(maximum)
+      expect(ticks.every(Number.isFinite)).toBe(true)
+    }
+    expect(usageAxis(750001)).toEqual([0, 200000, 400000, 600000, 800000])
   })
 
   it('shows the six newest weeks first until explicitly expanded', () => {
