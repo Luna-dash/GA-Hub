@@ -1993,47 +1993,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/notify": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Post Notify
-         * @description Fire an OS notification. Always 200 — failures are reported in body.
-         */
-        post: operations["post_notify_api_notify_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/notify/info": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Info
-         * @description Tells the Settings panel which native backend is wired up so it can
-         *     render copy like 'macOS · osascript'.
-         */
-        get: operations["info_api_notify_info_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/tasks/schedules": {
         parameters: {
             query?: never;
@@ -3555,19 +3514,6 @@ export interface components {
             configured: boolean;
             /** Preferences */
             preferences: components["schemas"]["NavPreference"][];
-        };
-        /** NotifyReq */
-        NotifyReq: {
-            /**
-             * Title
-             * @default
-             */
-            title: string;
-            /**
-             * Body
-             * @default
-             */
-            body: string;
         };
         /** ProjectCreate */
         ProjectCreate: {
@@ -7775,59 +7721,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_notify_api_notify_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NotifyReq"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    info_api_notify_info_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };

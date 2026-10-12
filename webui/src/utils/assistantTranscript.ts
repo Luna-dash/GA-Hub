@@ -212,7 +212,7 @@ function lastAskUserMatch(text: string): RegExpMatchArray | null {
 }
 
 /** Parse the last ask_user payload in *text*, or null when absent/unparseable. */
-function extractAskUserPayload(text: string): AskUserPayload | null {
+export function extractAskUserPayload(text: string): AskUserPayload | null {
   const match = lastAskUserMatch(text)
   if (!match) return null
   const tail = text.slice((match.index ?? 0) + match[0].length)

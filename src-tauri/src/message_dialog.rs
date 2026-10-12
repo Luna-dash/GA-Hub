@@ -23,7 +23,7 @@ fn cancelled(config: &Value) -> Value {
     if config["kind"] == "confirm" { json!(false) } else { Value::Null }
 }
 fn validate(config: &Value) -> Result<(), String> {
-    if !matches!(config["kind"].as_str(), Some("alert" | "confirm" | "prompt"))
+    if !matches!(config["kind"].as_str(), Some("alert" | "confirm" | "prompt" | "notification"))
         || config["title"].as_str().is_none() {
         return Err("Invalid message dialog config".into());
     }
@@ -42,6 +42,7 @@ fn validate(config: &Value) -> Result<(), String> {
 fn valid_result(config: &Value, result: &Value) -> bool {
     match config["kind"].as_str() {
         Some("confirm") => result.is_boolean(),
+        Some("notification") => result.is_null() || result.is_boolean(),
         Some("prompt") => result.is_null() || result.is_string(),
         Some("alert") => result.is_null(),
         _ => false,
@@ -58,10 +59,15 @@ fn complete(app: &AppHandle, label: &str, result: Option<Result<Value, String>>)
     };
     // Take before destroy: the Destroyed event cannot settle this request twice.
     if let Some(window) = app.get_webview_window(label) { let _ = window.destroy(); }
+    let notification = request.config["kind"] == "notification";
     if let Some(parent) = app.get_webview_window("main") {
-        let _ = parent.set_enabled(true);
+        if !notification { let _ = parent.set_enabled(true); }
+        let open = result.as_ref().is_some_and(|r| matches!(r, Ok(Value::Bool(true))));
         let closing = state.0.lock().unwrap().closing;
-        if !closing { let _ = parent.set_focus(); }
+        if !closing && (!notification || open) {
+            if notification { let _ = parent.show(); let _ = parent.unminimize(); }
+            let _ = parent.set_focus();
+        }
     }
     let result = result.unwrap_or_else(|| Ok(cancelled(&request.config)));
     let _ = request.reply.send(result);
@@ -70,22 +76,24 @@ fn complete(app: &AppHandle, label: &str, result: Option<Result<Value, String>>)
 
 fn start_next(app: &AppHandle) {
     let state = app.state::<MessageDialogs>();
-    let (label, title) = {
+    let (label, title, notification) = {
         let mut queue = state.0.lock().unwrap();
         if queue.closing || queue.active.is_some() { return; }
         let Some(request) = queue.pending.pop_front() else { return; };
         let label = request.label.clone();
         let title = request.config["title"].as_str().unwrap_or("GA-Hub").to_string();
+        let notification = request.config["kind"] == "notification";
         queue.active = Some(request);
-        (label, title)
+        (label, title, notification)
     };
     let create = || -> Result<(), String> {
         let parent = app.get_webview_window("main").ok_or("Main window unavailable")?;
-        let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("dialog.html".into()))
+        let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("dialog.html".into()))
             .title(&title).inner_size(480.0, 240.0).min_inner_size(400.0, 160.0)
             .resizable(false).minimizable(false).maximizable(false)
-            .visible(false).skip_taskbar(true).parent(&parent).map_err(|e| e.to_string())?
-            .build().map_err(|e| e.to_string())?;
+            .visible(false).focused(false).skip_taskbar(true).always_on_top(notification);
+        let builder = if notification { builder } else { builder.parent(&parent).map_err(|e| e.to_string())? };
+        let window = builder.build().map_err(|e| e.to_string())?;
         let handle = app.clone();
         let closed_label = label.clone();
         window.on_window_event(move |event| {
@@ -94,7 +102,7 @@ fn start_next(app: &AppHandle) {
             }
         });
         // Only disable after creating the owned window successfully.
-        parent.set_enabled(false).map_err(|e| e.to_string())?;
+        if !notification { parent.set_enabled(false).map_err(|e| e.to_string())?; }
         window.center().map_err(|e| e.to_string())?;
         Ok(())
     };
@@ -152,6 +160,7 @@ pub async fn message_dialog_ready(window: WebviewWindow, app: AppHandle, height:
             if request.ready { return; }
             request.ready = true;
         }
+        let notification = state.0.lock().unwrap().active.as_ref().is_some_and(|r| r.config["kind"] == "notification");
         let reveal = || -> Result<(), String> {
             let window = handle.get_webview_window(&label).ok_or("Message window unavailable")?;
             let max_height = window.current_monitor().ok().flatten()
@@ -160,10 +169,18 @@ pub async fn message_dialog_ready(window: WebviewWindow, app: AppHandle, height:
             window.set_size(tauri::LogicalSize::new(480.0, height)).map_err(|e| e.to_string())?;
             window.center().map_err(|e| e.to_string())?;
             window.show().map_err(|e| e.to_string())?;
-            window.set_focus().map_err(|e| e.to_string())?;
+            if !notification { window.set_focus().map_err(|e| e.to_string())?; }
             Ok(())
         };
         if let Err(error) = reveal() { complete(&handle, &label, Some(Err(error))); }
+        else if notification {
+            let timeout_handle = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(12));
+                let owner = timeout_handle.clone();
+                let _ = timeout_handle.run_on_main_thread(move || complete(&owner, &label, None));
+            });
+        }
     }).map_err(|e| e.to_string())
 }
 
@@ -216,6 +233,14 @@ mod tests {
         assert!(valid_result(&json!({"kind":"prompt"}), &json!("")));
         assert!(valid_result(&json!({"kind":"prompt"}), &Value::Null));
         assert!(valid_result(&json!({"kind":"confirm"}), &json!(false)));
+    }
+    #[test]
+    fn notification_contract() {
+        assert!(validate(&json!({"kind":"notification","title":"会话有新结果"})).is_ok());
+        assert_eq!(cancelled(&json!({"kind":"notification"})), Value::Null);
+        assert!(valid_result(&json!({"kind":"notification"}), &json!(true)));
+        assert!(valid_result(&json!({"kind":"notification"}), &Value::Null));
+        assert!(!valid_result(&json!({"kind":"notification"}), &json!("output")));
     }
     #[test]
     fn rejects_malformed_configs_and_wrong_results() {

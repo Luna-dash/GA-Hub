@@ -24,10 +24,11 @@ export function MessageDialog({ config, onResult, desktop = false }: Props) {
     settled.current = true
     onResult(result)
   }
-  const confirm = () => finish(isPrompt ? value : config.kind === 'confirm' ? true : null)
+  const confirm = () => finish(isPrompt ? value : config.kind === 'confirm' || config.kind === 'notification' ? true : null)
   const cancel = () => finish(cancelResult(config))
 
   useEffect(() => {
+    if (config.kind === 'notification') return
     const target = root.current?.querySelector<HTMLElement>(isPrompt ? 'input, textarea' : danger && config.kind !== 'alert' ? '[data-cancel]' : '[data-confirm]')
     target?.focus()
     if (target instanceof HTMLInputElement) target.select()
@@ -37,7 +38,7 @@ export function MessageDialog({ config, onResult, desktop = false }: Props) {
     <div ref={root} className={`message-dialog ${desktop ? 'message-dialog-desktop' : ''}`} onKeyDown={(event) => {
       if (event.nativeEvent.isComposing || event.keyCode === 229) return
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel(); return }
-      if (event.key === 'Tab') {
+      if (config.kind !== 'notification' && event.key === 'Tab') {
         event.stopPropagation() // this component owns the trap, not ModalOverlay
         const nodes = Array.from(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input, textarea, summary') ?? [])
         const first = nodes[0], last = nodes[nodes.length - 1]
@@ -53,13 +54,13 @@ export function MessageDialog({ config, onResult, desktop = false }: Props) {
       <div className="message-dialog-body">
         <div className={`message-dialog-icon ${danger ? 'message-dialog-danger' : ''}`}><Icon size={24} strokeWidth={1.7} /></div>
         <div className="message-dialog-content">
-          <div className="message-dialog-eyebrow">GA-HUB · {danger ? '操作确认' : isPrompt ? '编辑' : config.kind === 'alert' ? '消息' : '确认'}</div>
+          <div className="message-dialog-eyebrow">GA-HUB · {config.kind === 'notification' ? '提醒' : danger ? '操作确认' : isPrompt ? '编辑' : config.kind === 'alert' ? '消息' : '确认'}</div>
           <h2 id="message-dialog-title">{config.title}</h2>
           {config.message && <p className="message-dialog-text">{config.message}</p>}
           {isPrompt && (config.multiline
             ? <textarea aria-label={config.title} rows={4} value={value} placeholder={config.placeholder} onChange={e => setValue(e.target.value)} className="message-dialog-input" />
             : <input aria-label={config.title} value={value} placeholder={config.placeholder} onChange={e => setValue(e.target.value)} className="message-dialog-input" />)}
-          {config.detail && <div className="message-dialog-detail">
+          {config.kind !== 'notification' && config.detail && <div className="message-dialog-detail">
             <button type="button" aria-expanded={expanded} onClick={() => setExpanded(v => !v)}><ChevronDown size={14} />{expanded ? '收起详情' : '查看详情'}</button>
             {expanded && <><pre>{config.detail}</pre><button type="button" onClick={() => {
               void navigator.clipboard.writeText(config.detail!).then(() => setCopied(true)).catch(() => setCopied(false))
@@ -68,7 +69,7 @@ export function MessageDialog({ config, onResult, desktop = false }: Props) {
         </div>
       </div>
       <div className="message-dialog-footer">
-        {config.kind !== 'alert' && <button type="button" className="message-dialog-button" data-cancel onClick={cancel}>{config.cancelText ?? '取消'}</button>}
+        {config.kind !== 'alert' && <button type="button" className="message-dialog-button" data-cancel onClick={cancel}>{config.cancelText ?? (config.kind === 'notification' ? '稍后' : '取消')}</button>}
         <button type="button" className={`message-dialog-button message-dialog-primary ${danger ? 'message-dialog-primary-danger' : ''}`} data-confirm onClick={confirm}>{config.confirmText ?? (config.kind === 'alert' ? '知道了' : '确认')}</button>
       </div>
     </div>

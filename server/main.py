@@ -241,12 +241,12 @@ def _normal_routers() -> tuple[APIRouter, ...]:
     """Load the runtime routes atomically; diagnostics have no GA dependency."""
     from .routes import (
         agent, feishu, conversations, memory, autonomous, conductor, upload,
-        wechat, logs, mykey, services, sessions, preferences, notify, tasks,
+        wechat, logs, mykey, services, sessions, preferences, tasks,
         tokens, goalhive,
     )
     return tuple(module.router for module in (
         agent, feishu, conversations, memory, autonomous, conductor, upload,
-        wechat, logs, mykey, services, sessions, preferences, notify, tasks,
+        wechat, logs, mykey, services, sessions, preferences, tasks,
         tokens, goalhive,
     ))
 

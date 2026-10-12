@@ -1,86 +1,44 @@
-// Desktop / OS notifications — opt-in only, throttled, and silent when the
-// app window currently has focus (no point firing OS notifs the user is
-// staring at).
-//
-// Desktop shells need host support for notifications. Tauri uses its native
-// notification plugin; server/browser contexts use the backend notifier
-// below. See ``server/services/notify_service.py``.
-//
-// The OPT-IN flag still lives in localStorage — the toggle on the Settings
-// page just flips that bit; there's no permission state to track.
-
+// One themed notification entry; no OS plugin or backend notification fallback.
 import { create } from 'zustand'
-import { api } from '@/api/client'
-import { isTauriDesktop } from './desktop'
+import { requestDialog } from '@/stores/dialogStore'
 import { storageKeys } from '@/config/storageKeys'
 
 const LS_KEY = storageKeys.desktopNotifications
-
 function readOptIn(): boolean {
-  try {
-    const v = localStorage.getItem(LS_KEY)
-    // Default to ON if user never set it (null). They can turn it off in Settings.
-    return v === null ? true : v === '1'
-  } catch {
-    return true  // Default to enabled if localStorage unavailable
-  }
+  try { return localStorage.getItem(LS_KEY) !== '0' } catch { return true }
 }
-function writeOptIn(v: boolean) {
-  try { v ? localStorage.setItem(LS_KEY, '1') : localStorage.removeItem(LS_KEY) } catch {}
-}
-
 interface NotifyStore {
   optedIn: boolean
-  backendName: string             // e.g. "macOS · osascript"
+  backendName: string
   setOptIn: (v: boolean) => void
-  refresh: () => Promise<void>    // re-fetches backend info
+  refresh: () => Promise<void>
 }
-
 export const useNotifyStore = create<NotifyStore>((set) => ({
   optedIn: readOptIn(),
-  backendName: '',
-
-  refresh: async () => {
-    set({ optedIn: readOptIn() })
-    try {
-      const info = await api.notifyInfo()
-      set({ backendName: info.backend })
-    } catch {
-      set({ backendName: '后端不可用' })
-    }
-  },
-
-  setOptIn: (v: boolean): void => {
-    writeOptIn(v)
+  backendName: '主题消息窗',
+  refresh: async () => { set({ optedIn: readOptIn(), backendName: '主题消息窗' }) },
+  setOptIn: (v) => {
+    try { localStorage.setItem(LS_KEY, v ? '1' : '0') } catch { /* storage unavailable */ }
     set({ optedIn: v })
   },
 }))
-
-let lastNotifyAt = 0       // simple per-window throttle so we don't spam
-
-export function notify(
+// Per-event throttling: simultaneous completions of different sessions are retained.
+const lastByTag = new Map<string, number>()
+export async function notify(
   title: string,
-  opts: { body?: string; tag?: string; force?: boolean } = {},
-): void {
-  if (!useNotifyStore.getState().optedIn) return
-  // Don't disturb the user when they're already looking at the window,
-  // unless caller explicitly forces it (e.g. error toasts).
-  if (!opts.force) {
-    if (document.visibilityState === 'visible' && document.hasFocus()) return
-  }
+  opts: { body?: string; tag?: string; force?: boolean; onOpen?: () => void } = {},
+): Promise<boolean> {
+  if (!useNotifyStore.getState().optedIn) return false
+  if (!opts.force && document.visibilityState === 'visible' && document.hasFocus()) return false
+  const tag = opts.tag ?? title
   const now = Date.now()
-  if (now - lastNotifyAt < 800) return    // 800ms throttle, plenty for our use
-  lastNotifyAt = now
-
-  // Fire-and-forget — backend has its own throttle and never raises.
-  if (isTauriDesktop()) {
-    void (async () => {
-      const notification = await import('@tauri-apps/plugin-notification')
-      if (!(await notification.isPermissionGranted()) && !(await notification.requestPermission())) return
-      notification.sendNotification({ title, body: opts.body })
-    })().catch(() => undefined)
-    return
-  }
-
-  api.notify(title, opts.body || '').catch(() => { /* swallow */ })
+  if (!opts.force && now - (lastByTag.get(tag) ?? -Infinity) < 800) return false
+  lastByTag.set(tag, now)
+  for (const [key, time] of lastByTag) if (now - time > 60_000) lastByTag.delete(key)
+  const opened = await requestDialog<boolean | null>({
+    kind: 'notification', title: title.slice(0, 100), message: opts.body,
+    confirmText: opts.onOpen ? '查看会话' : '知道了', cancelText: '稍后',
+  })
+  if (opened && opts.onOpen) opts.onOpen()
+  return true
 }

@@ -8,7 +8,7 @@ from unittest import mock
 
 import pytest
 
-from server.routes import agent, autonomous, conductor, conversations, memory, mykey, notify, sessions, tasks, upload, wechat
+from server.routes import agent, autonomous, conductor, conversations, memory, mykey, sessions, tasks, upload, wechat
 from server.schemas import ChatRetryConfigReq, MemoryWriteReq, RewindReq
 from server.services import mykey_service
 
@@ -345,19 +345,6 @@ def test_conversation_delete_release_runs_in_worker_thread(tmp_path) -> None:
         )
 
     assert result == {"ok": True, "id": "conv.txt"}
-
-
-def test_notify_send_runs_in_worker_thread() -> None:
-    with mock.patch.object(
-        notify.notify_service,
-        "send",
-        side_effect=lambda *_args: _slow_result({"ok": True, "backend": "test"}),
-    ):
-        result = asyncio.run(
-            _run_with_probe(notify.post_notify(notify.NotifyReq(title="t", body="b")))
-        )
-
-    assert result == {"ok": True, "backend": "test"}
 
 
 def test_session_rewind_runs_in_worker_thread() -> None:

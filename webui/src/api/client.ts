@@ -290,11 +290,6 @@ export const api = {
   llms: () => http<{ llms: LLMInfo[] }>('GET', '/api/llms'),
   switchLLM: (index: number) => http<{ llm_no: number; name: string }>('POST', '/api/llms/switch', { index }),
 
-  // ── desktop notifications (backend OS notifier) ──────
-  notifyInfo: () => http<{ backend: string }>('GET', '/api/notify/info'),
-  notify: (title: string, body: string) =>
-    http<{ ok: boolean; backend: string; throttled?: boolean; error?: string }>('POST', '/api/notify', { title, body }),
-
   // ── mykey.py editor ──────────────────────────────────
   mykey: () => http<MyKeyData>('GET', '/api/mykey'),
   putMyKeyRaw: (raw: string) => http<MyKeyWriteResult>('PUT', '/api/mykey/raw', { raw }),

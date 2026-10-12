@@ -4301,66 +4301,6 @@
         }
       }
     },
-    "/api/notify": {
-      "post": {
-        "tags": [
-          "notify"
-        ],
-        "summary": "Post Notify",
-        "description": "Fire an OS notification. Always 200 — failures are reported in body.",
-        "operationId": "post_notify_api_notify_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NotifyReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/notify/info": {
-      "get": {
-        "tags": [
-          "notify"
-        ],
-        "summary": "Info",
-        "description": "Tells the Settings panel which native backend is wired up so it can\nrender copy like 'macOS · osascript'.",
-        "operationId": "info_api_notify_info_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/tasks/schedules": {
       "get": {
         "tags": [
@@ -8534,24 +8474,6 @@
           "preferences"
         ],
         "title": "NavPreferencesResp"
-      },
-      "NotifyReq": {
-        "properties": {
-          "title": {
-            "type": "string",
-            "maxLength": 120,
-            "title": "Title",
-            "default": ""
-          },
-          "body": {
-            "type": "string",
-            "maxLength": 400,
-            "title": "Body",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "title": "NotifyReq"
       },
       "ProjectCreate": {
         "properties": {

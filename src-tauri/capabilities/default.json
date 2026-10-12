@@ -10,7 +10,6 @@
     "allow-show-message-dialog",
     "core:default",
     "dialog:default",
-    "notification:default",
     "opener:default",
     "core:window:allow-show",
     "core:window:allow-set-focus",

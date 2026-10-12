@@ -9,7 +9,7 @@ import { create } from 'zustand'
 export type DialogTone = 'default' | 'danger'
 
 export interface DialogConfig {
-  kind: 'alert' | 'confirm' | 'prompt'
+  kind: 'alert' | 'confirm' | 'prompt' | 'notification'
   title: string
   message?: string                // body text (rendered with whitespace preserved)
   defaultValue?: string           // prompt initial value

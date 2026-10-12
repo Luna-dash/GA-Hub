@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { ChatRetryConfig } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
-import { useNotifyStore } from '@/utils/notify'
+import { notify, useNotifyStore } from '@/utils/notify'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import {
@@ -562,8 +562,8 @@ function NotifyPanel() {
   const test = async () => {
     setTesting('发送中…')
     try {
-      const r = await api.notify('🔔 测试通知', '通知通道工作正常。Agent 完成回复或飞书 Bot 新消息时会主动提醒。')
-      setTesting(r.ok ? `✅ 已发送（${r.backend}）` : `⚠ 发送失败：${r.error || r.backend}`)
+      const shown = await notify('测试提醒', { body: '会话有新结果或需要互动时，将使用此消息窗提醒。', force: true })
+      setTesting(shown ? '✅ 主题消息窗正常' : '提醒已关闭')
     } catch (e) {
       setTesting(`⚠ 网络异常：${(e as Error).message}`)
     } finally {
@@ -580,7 +580,7 @@ function NotifyPanel() {
     <div className="rounded-xl border border-line bg-bg-card p-4">
       <div className="text-sm font-semibold mb-1">桌面通知</div>
       <div className="text-xs text-slate-500 mb-3">
-        Agent 完成长任务、飞书 Bot 收到新消息时弹系统通知。仅在窗口失焦/最小化时触发，不会打断当前查看。
+        会话完成、有结果或需要互动时显示主题提醒，不展示具体输出。仅在窗口失焦/最小化时触发，不锁住主窗口。
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">

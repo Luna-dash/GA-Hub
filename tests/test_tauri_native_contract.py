@@ -22,7 +22,7 @@ def test_native_plugins_are_declared_and_initialized() -> None:
     cargo = _read("src-tauri/Cargo.toml")
     rust = _read("src-tauri/src/main.rs")
 
-    for plugin in ("dialog", "notification", "opener"):
+    for plugin in ("dialog", "opener"):
         assert f'tauri-plugin-{plugin} = "2"' in cargo
         assert f"tauri_plugin_{plugin}::init()" in rust
 
@@ -46,7 +46,6 @@ def test_capability_remains_minimal_and_local() -> None:
         "core:window:allow-maximize",
         "core:window:allow-unmaximize",
         "dialog:default",
-        "notification:default",
         "opener:default",
     }
 
@@ -300,6 +299,10 @@ def test_local_app_router_gate_and_csp_contract() -> None:
 def test_tauri_notifications_do_not_fall_back_to_backend() -> None:
     source = _read("webui/src/utils/notify.ts")
 
-    assert "isTauriDesktop()" in source
-    assert "sendNotification" in source
-    assert "api.notify(title, opts.body || '')" in source
+    assert "requestDialog<boolean | null>" in source
+    assert "kind: 'notification'" in source
+    assert "sendNotification" not in source
+    assert "api.notify" not in source
+    assert "plugin-notification" not in source
+    assert "api.notify" not in _read("webui/src/pages/Settings.tsx")
+    assert 'request.config["kind"] == "notification"' in _read("src-tauri/src/message_dialog.rs")

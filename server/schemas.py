@@ -1172,7 +1172,7 @@ class MyKeyMutationReq(BaseModel):
     fields: dict[str, Any] | None = None
     expected_raw: str | None = None
 
-# ── preferences / notify / setup ─────────────────────────────────
+# ── preferences / setup ─────────────────────────────────
 
 class NavPreference(BaseModel):
     id: str
@@ -1184,10 +1184,6 @@ class NavPreferencesReq(BaseModel):
 class NavPreferencesResp(BaseModel):
     configured: bool
     preferences: list[NavPreference]
-
-class NotifyReq(BaseModel):
-    title: str = Field("", max_length=120)
-    body: str = Field("", max_length=400)
 
 class SetupReq(BaseModel):
     ga_root: str

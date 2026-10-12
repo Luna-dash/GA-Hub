@@ -32,7 +32,7 @@ function DesktopMessage() {
   const finish = (result: DialogResult) => {
     void invoke('message_dialog_finish', { result: result ?? null }).catch(() => setFailure(true))
   }
-  return <div ref={panel} role="dialog" aria-modal="true" aria-labelledby="message-dialog-title">
+  return <div ref={panel} role="dialog" aria-modal={config?.kind !== 'notification'} aria-labelledby="message-dialog-title">
     {config && <MessageDialog config={config} onResult={finish} desktop />}
     {failure && <p role="alert" className="text-xs text-red-700 p-2">消息窗口连接失败，请关闭此窗口以取消操作。</p>}
   </div>
