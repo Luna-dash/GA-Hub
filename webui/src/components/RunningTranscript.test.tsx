@@ -36,15 +36,17 @@ it('defaults to simple hints; opens the exact raw record without duplicate prose
   expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
 })
 
-it('keeps manual full records open through streaming, new turns and explicit resume', () => {
+it('keeps manual full records within the current turn but retires them on new output', () => {
   render(turn(1)); click('[data-running-turn="1"] > button')
   render(turn(1, raw + '\n后续新增正文'))
   expect(host.querySelector('[data-full-record]')?.textContent).toContain('后续新增正文')
   render([turn(1, raw + '\n后续新增正文'), turn(2), turn(3), turn(4), turn(5)].join('\n'))
-  expect(host.querySelector('[data-running-turn="1"] [data-full-record]')).not.toBeNull()
+  expect(host.querySelector('[data-running-turn="1"] [data-full-record]')).toBeNull()
   act(() => [...host.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === '回到最新')!.click())
-  expect(host.querySelector('[data-running-turn="1"] [data-full-record]')).not.toBeNull()
+  expect(host.querySelector('[data-running-turn="1"] [data-full-record]')).toBeNull()
   expect(host.textContent).not.toContain('回到最新')
+  click('[data-running-turn="1"] > button')
+  expect(host.querySelector('[data-running-turn="1"] [data-full-record]')).not.toBeNull()
   click('[data-running-turn="1"] > button')
   expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
 })
@@ -137,4 +139,27 @@ it('renders ask_user as a passive record while keeping only one interactive entr
   expect(host.querySelectorAll('[data-ask-user-card]')).toHaveLength(1)
   expect(host.querySelector('[data-full-record] [data-ask-user-card]')).toBeNull()
   expect(host.querySelectorAll('[data-ask-user-card] button:not(:disabled)')).toHaveLength(2)
+})
+
+
+it('does not retire the current prose for a bare or partial next turn', () => {
+  const first = turn(1, '当前正文🛠️ code_run({})继续正文')
+  render(first + '\n**LLM Running (Turn 2) ...**')
+  expect(host.querySelector('[data-running-turn="1"] > div')).not.toBeNull()
+  expect(host.querySelector('[data-running-turn="2"]')).toBeNull()
+  render(first + '\n**LLM Running (Turn 2) ...**\n<think')
+  expect(host.querySelector('[data-running-turn="1"] > div')).not.toBeNull()
+  render(first + '\n**LLM Running (Turn 2) ...**\n新正文')
+  expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
+  expect(host.querySelector('[data-running-turn="2"]')?.textContent).toContain('新正文')
+})
+
+it('hides long incomplete thoughts while preserving the full record', () => {
+  const thought = '长思考内容'.repeat(2000)
+  render('**LLM Running (Turn 1) ...**\n<analysis>' + thought)
+  expect(host.textContent).not.toContain(thought)
+  expect(host.querySelector('[data-thinking-hint]')).not.toBeNull()
+  expect(host.querySelector('[data-running-turn="1"] > button')?.textContent).toContain('正在思考')
+  click('[data-running-turn="1"] > button')
+  expect(host.querySelector('[data-full-record]')?.textContent).toContain(thought)
 })

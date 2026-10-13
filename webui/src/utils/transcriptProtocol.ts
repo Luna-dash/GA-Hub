@@ -69,11 +69,11 @@ export function scanTranscript(source: string): TranscriptNode[] {
       flush(); push('turn', pos, pos + turn[0].length, { turn: Number(turn[1]) })
       pos += turn[0].length; textStart = pos; continue
     }
-    const meta = /^<(summary|thinking)>/i.exec(rest)
+    const meta = /^<(summary|thinking|think|analysis)>/i.exec(rest)
     if (meta) {
       const close = new RegExp(`</${meta[1]}>`, 'i').exec(rest.slice(meta[0].length))
       const end = close ? pos + meta[0].length + close.index + close[0].length : source.length
-      flush(); push(meta[1].toLowerCase() as 'summary' | 'thinking', pos, end, { complete: !!close })
+      flush(); push(meta[1].toLowerCase() === 'summary' ? 'summary' : 'thinking', pos, end, { complete: !!close })
       pos = end; textStart = pos; continue
     }
     let header = TOOL.exec(rest)
@@ -117,6 +117,9 @@ export function scanTranscript(source: string): TranscriptNode[] {
       pos = block.end; textStart = pos; continue
     }
     // Delay only protocol prefixes at the very end, not arbitrary text.
+    if (rest.startsWith('<') && ['<thinking>', '<think>', '<analysis>'].some(tag => tag.startsWith(rest.toLowerCase()))) {
+      flush(); push('pending', pos, source.length, { complete: false }); pos = source.length; textStart = pos; break
+    }
     if (/^(?:🛠️?\s*(?:T(?:o(?:o(?:l(?::\s*(?:`[\w.]*)?)?)?)?)?)?|<(?:s(?:u(?:m(?:m(?:a(?:r(?:y)?)?)?)?)?)?)?)$/i.test(rest)) {
       flush(); push('pending', pos, source.length, { complete: false }); pos = source.length; textStart = pos; break
     }

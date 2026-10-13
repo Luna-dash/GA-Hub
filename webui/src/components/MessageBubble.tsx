@@ -21,6 +21,7 @@ import {
   type AssistantTranscriptTurn,
 } from '@/utils/assistantTranscript'
 import { foldTurns } from '@/utils/foldTurns'
+import { runningTurnTitle } from '@/utils/runningTranscript'
 import { useCopy } from '@/utils/clipboard'
 import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
 import { FILE_HINT } from '@/utils/sessionPrompt'
@@ -276,7 +277,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
           </div>
           <div className="min-w-0 max-w-full" style={messageFontStyle}>
             {runningTask && runningTranscript ? (
-              <RunningTranscript transcript={runningTranscript} recoveryStatus={recoveryStatus} recoveryBeforeTurn={recoveryActive ? parseAssistantTranscript(content.slice(0, boundary), true).turns.length : undefined} askUserDraftKey={askUserDraftKey} askUserInteractive={askUserInteractive} />
+              <RunningTranscript transcript={runningTranscript} recoveryTitle={recoveryNotice && /max_tokens|上限|续接|截断/i.test(recoveryNotice) ? '输出达到上限 · 自动续接' : recoveryNotice && /重试|retry/i.test(recoveryNotice) ? '自动重试' : '自动重连'} recoveryStatus={recoveryStatus} recoveryBeforeTurn={recoveryActive ? parseAssistantTranscript(content.slice(0, boundary), true).turns.length : undefined} askUserDraftKey={askUserDraftKey} askUserInteractive={askUserInteractive} />
             ) : useHistoryProjection && historyTranscript ? (
               <HistoryTranscriptReply
                 transcript={historyTranscript}
@@ -417,8 +418,8 @@ function LazyProcessFold({ turns }: { turns: AssistantTranscriptTurn[] }) {
 
 function LazyTranscriptTurn({ turn }: { turn: AssistantTranscriptTurn }) {
   const [open, setOpen] = useState(false)
-  const title = turn.summary || '执行记录'
-  if (!turn.content.trim()) {
+  const title = runningTurnTitle(turn.summary, turn.rawContent ?? turn.content)
+  if (!(turn.rawContent ?? turn.content).trim()) {
     return (
       <div className="flex min-w-0 gap-2 py-2 text-xs leading-5 text-ink-muted">
         <span className="shrink-0 font-medium text-ink-faint">Turn {turn.turn}</span>
@@ -435,7 +436,7 @@ function LazyTranscriptTurn({ turn }: { turn: AssistantTranscriptTurn }) {
       </summary>
       {open && (
         <div className="pb-3 pl-5">
-          <TranscriptRecordContent content={turn.content} />
+          <TranscriptRecordContent content={turn.rawContent ?? turn.content} />
         </div>
       )}
     </details>

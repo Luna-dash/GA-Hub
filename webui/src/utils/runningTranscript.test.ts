@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatToolHint, projectRunningTurn } from './runningTranscript'
+import { formatToolHint, projectRunningTurn, runningTurnTitle } from './runningTranscript'
 
 const prose = (raw: string) => projectRunningTurn(raw).parts.filter(p => p.kind === 'text').map(p => p.text).join('\n')
 const hints = (raw: string) => projectRunningTurn(raw).parts.filter(p => p.kind === 'tools').flatMap(p => p.labels)
@@ -58,4 +58,22 @@ describe('light running projection', () => {
     expect(formatToolHint(['读取文件', '执行脚本', '读取文件'])).toBe('读取文件 ×2 · 执行脚本')
     expect(hints('🛠️ unknown({})')).toEqual(['调用工具'])
   })
+})
+
+
+it('keeps ordinary prose complete and hides thinking aliases', () => {
+  const long = '普通正文'.repeat(2000)
+  expect(prose(long)).toBe(long)
+  for (const tag of ['thinking', 'think', 'analysis']) {
+    expect(prose(`<${tag}>长思考</${tag}>正常正文`)).toBe('正常正文')
+    expect(projectRunningTurn(`<${tag}>长思考`).thinking).toBe(true)
+  }
+})
+
+it('classifies real errors without matching fenced examples or tool results', () => {
+  expect(runningTurnTitle('', '[Error] Response truncated: max_tokens')).toBe('输出达到上限 · 自动续接')
+  expect(runningTurnTitle('', 'ConnectionError: connection reset')).toContain('连接')
+  expect(runningTurnTitle('', 'HTTP 502: bad gateway')).toContain('502')
+  expect(runningTurnTitle('步骤', '```text\nHTTP 502: example\n```')).toBe('步骤')
+  expect(runningTurnTitle('步骤', '🛠️ code_run({"script":"HTTP 502"})')).toBe('步骤')
 })

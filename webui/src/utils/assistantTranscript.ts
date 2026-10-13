@@ -4,6 +4,8 @@ export interface AssistantTranscriptTurn {
   turn: number
   summary: string
   content: string
+  /** Original reasoning-bearing source for explicit full-record viewing. */
+  rawContent?: string
 }
 
 export interface AskUserPayload {
@@ -44,7 +46,7 @@ function extractSummary(text: string): string {
 }
 
 function stripTraceMeta(text: string): string {
-  return scanTranscript(text || '').filter(node => !node.complete || (node.kind !== 'thinking' && node.kind !== 'summary'))
+  return scanTranscript(text || '').filter(node => node.kind !== 'thinking' && (!node.complete || node.kind !== 'summary'))
     .map(node => node.raw).join('').trim()
 }
 
@@ -359,8 +361,8 @@ function fallbackTrimTail(text: string, hard = false): string {
 /** The first meaningful prose line before any tool dump; '' when none. */
 function fallbackLeadLine(raw: string): string {
   let text = raw
-  // Strip full thinking blocks up front (mirrors extractSummary's pre-pass).
-  text = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, ' ')
+  // Filter aliases and unfinished thinking through the same protocol scanner.
+  text = scanTranscript(text).filter(node => node.kind !== 'thinking' && node.kind !== 'pending').map(node => node.raw).join('')
   // Clear DSML residue before label peeling so it cannot shield opening labels.
   text = text.replace(/(?:\s*(?:<\/?)?\s*[｜|]+\s*DSML[^>]*>?)+/gi, ' ')
   // Peel opening label shells such as '<summary>' or '<parameter ...>'.
@@ -427,7 +429,7 @@ function fallbackDerive(text: string): string {
  * tool-only or empty). Emoji are preserved.
  */
 export function fallbackSummary(raw: string): string {
-  const trimmed = raw.trim()
+  const trimmed = scanTranscript(raw).filter(node => node.kind !== 'thinking' && node.kind !== 'pending').map(node => node.raw).join('').trim()
   if (fallbackErrorRe.test(trimmed)) return ''
   const lead = fallbackLeadLine(trimmed)
   if (!lead) return ''
@@ -445,7 +447,7 @@ export function hasAssistantExecutionTrace(text: string): boolean {
 export function parseAssistantTranscript(text: string, streaming = false): AssistantTranscript {
   const source = stripFinalResponseMarker(text)
   const safe = scanTranscript(source)
-    .filter(node => !streaming || !(!node.complete && ['summary', 'thinking', 'pending'].includes(node.kind)))
+    .filter(node => !streaming || !(!node.complete && ['summary', 'pending'].includes(node.kind)))
     .map(node => node.raw).join('')
   const restore = (value: string) => value
   const matches = scanTranscript(safe).filter(node => node.kind === 'turn')
@@ -474,6 +476,7 @@ export function parseAssistantTranscript(text: string, streaming = false): Assis
       turn: match.turn!,
       summary: extractSummary(rawContent) || fallbackSummary(rawContent),
       content: stripTraceMeta(rawContent),
+      ...(scanTranscript(rawContent).some(node => node.kind === 'thinking') ? { rawContent } : {}),
     }
   })
 

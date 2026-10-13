@@ -175,7 +175,7 @@ describe('MessageBubble render isolation', () => {
     Object.defineProperties(viewport, { scrollHeight: { configurable: true, value: 1000 }, clientHeight: { configurable: true, value: 220 } })
     act(() => { viewport.scrollTop = 100; viewport.dispatchEvent(new Event('scroll', { bubbles: true })) })
     act(() => root.render(<MessageBubble role="assistant" content={first + '\n**LLM Running (Turn 2) ...**\n新轮正文'} streaming />))
-    expect(viewport.textContent).toContain('旧轮正文')
+    expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
     expect(viewport.textContent).toContain('新轮正文')
     expect(viewport.scrollTop).toBe(100)
     const latest = [...host.querySelectorAll('button')].find(button => button.textContent === '回到最新')!
@@ -199,14 +199,18 @@ describe('MessageBubble render isolation', () => {
     act(() => root.render(<MessageBubble role="assistant" content={before + after} streaming
       recoveryNotice="网络重试进行中" recoveryOffset={before.length} />))
     expect(host.querySelector('[data-running-history]')).toBeNull()
-    const status = host.querySelector('[data-recovery-notice]')!
-    expect(status).not.toBeNull()
-    expect(host.textContent!.indexOf('前序正文')).toBeLessThan(host.textContent!.indexOf('网络重试进行中'))
-    expect(host.textContent!.indexOf('网络重试进行中')).toBeLessThan(host.textContent!.indexOf('续传正文'))
+    const recovery = host.querySelector('[data-recovery-turn]')!
+    expect(recovery).not.toBeNull()
+    expect(recovery.querySelector('button')?.getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('[data-recovery-notice]')).toBeNull()
+    expect(host.textContent!.indexOf('前序步骤')).toBeLessThan(host.textContent!.indexOf('自动重试'))
+    expect(host.textContent!.indexOf('自动重试')).toBeLessThan(host.textContent!.indexOf('续传正文'))
+    act(() => (recovery.querySelector('button') as HTMLButtonElement).click())
+    expect(host.querySelector('[data-recovery-notice]')?.textContent).toContain('网络重试进行中')
     act(() => root.render(<MessageBubble role="assistant" content={before + after + '继续生长'} streaming
       recoveryNotice="网络重试进行中" recoveryOffset={before.length} />))
     expect(host.querySelectorAll('[data-recovery-notice]')).toHaveLength(1)
-    expect(host.textContent!.indexOf('前序正文')).toBeLessThan(host.textContent!.indexOf('网络重试进行中'))
+    expect(host.textContent!.indexOf('前序步骤')).toBeLessThan(host.textContent!.indexOf('网络重试进行中'))
   })
 
   it('places a waiting recovery status at the live tail, not above all turns', () => {
