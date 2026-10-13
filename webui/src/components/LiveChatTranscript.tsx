@@ -15,6 +15,7 @@ import { formatDateTime } from '@/utils/formatTime'
 import { readPageState, writePageState } from '@/utils/pageState'
 import { lastProgrammaticScrollAt, markProgrammaticScroll } from '@/utils/programmaticScroll'
 import { createRafScheduler } from '@/utils/rafScheduler'
+import { routeChatWheel } from '@/utils/chatWheel'
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { useChatPerformanceProbe } from '@/utils/useChatPerformanceProbe'
 import { MessageBubble } from './MessageBubble'
@@ -76,6 +77,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
 
     // Smart auto-scroll state. Pin only while the user is already near the
     // bottom; otherwise retain their reading position and count new messages.
+    const wheelRegionRef = useRef<HTMLDivElement>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
     const [stuckBottom, setStuckBottom] = useState(true)
     const [unread, setUnread] = useState(0)
@@ -223,12 +225,16 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         navigationTargetRef.current = null
         lastUserGestureAtRef.current = performance.now()
       }
+      const wheelRegion = wheelRegionRef.current
+      const onWheel = (event: WheelEvent) => routeChatWheel(event, el, onUserGesture)
+      wheelRegion?.addEventListener('wheel', onWheel, { capture: true, passive: false })
       el.addEventListener('scroll', scrollScheduler.schedule, { passive: true })
       el.addEventListener('wheel', onUserGesture, { passive: true })
       el.addEventListener('touchstart', onUserGesture, { passive: true })
       el.addEventListener('pointerdown', onUserGesture, { passive: true })
       return () => {
         scrollScheduler.cancel()
+        wheelRegion?.removeEventListener('wheel', onWheel, { capture: true })
         el.removeEventListener('scroll', scrollScheduler.schedule)
         el.removeEventListener('wheel', onUserGesture)
         el.removeEventListener('touchstart', onUserGesture)
@@ -493,7 +499,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     }, [onRewind, sessionId, msgs.length])
 
     return (
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <div ref={wheelRegionRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         <div
           ref={scrollRef}
           data-live-chat-scroll
@@ -564,7 +570,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
             onPointerDown={(event) => focusChatScrollFromUtilityRail(event, scrollRef.current)}
           >
             {scheduledChats.length > 0 && (
-              <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5" aria-label="待发送定时消息">
+              <div data-chat-wheel-independent className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5" aria-label="待发送定时消息">
                 {scheduledChats.map((task) => (
                   <button
                     key={task.id}
