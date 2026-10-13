@@ -26,7 +26,7 @@ export const useNotifyStore = create<NotifyStore>((set) => ({
 const lastByTag = new Map<string, number>()
 export async function notify(
   title: string,
-  opts: { body?: string; tag?: string; force?: boolean; onOpen?: () => void } = {},
+  opts: { body?: string; tag?: string; force?: boolean; onOpen?: () => void; confirmText?: string } = {},
 ): Promise<boolean> {
   if (!useNotifyStore.getState().optedIn) return false
   if (!opts.force && document.visibilityState === 'visible' && document.hasFocus()) return false
@@ -37,7 +37,7 @@ export async function notify(
   for (const [key, time] of lastByTag) if (now - time > 60_000) lastByTag.delete(key)
   const opened = await requestDialog<boolean | null>({
     kind: 'notification', title: title.slice(0, 100), message: opts.body,
-    confirmText: opts.onOpen ? '查看会话' : '知道了', cancelText: '稍后',
+    confirmText: opts.confirmText ?? (opts.onOpen ? '查看会话' : '知道了'), cancelText: '稍后',
   })
   if (opened && opts.onOpen) opts.onOpen()
   return true

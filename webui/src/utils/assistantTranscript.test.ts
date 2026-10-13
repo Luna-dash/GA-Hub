@@ -1,11 +1,50 @@
 import { describe, expect, it } from 'vitest'
 import {
+  extractPendingAskUserPayload,
   parseAssistantTranscript,
   hasAssistantExecutionTrace,
   renderAskUserPayload,
   stripAssistantTranscriptTags,
   stripFinalResponseMarker,
 } from './assistantTranscript'
+
+describe('pending ask_user notification classification', () => {
+  const compact = '🛠️ ask_user(请选择环境\ncandidates:\n- 测试\n- 生产)'
+  const plain = '🛠️ ask_user(请补充部署目标。)'
+  const verbose = '🛠️ Tool: `ask_user`  📥 args:\n````text\n{"question":"请确认环境。","candidates":[]}\n````'
+  const turn = (n: number, text: string) => `**LLM Running (Turn ${n}) ...**\n<summary>检查状态</summary>\n${text}`
+
+  it.each([
+    compact, plain, verbose,
+    turn(2, compact),
+    `${turn(1, '已检查')}\n${turn(2, compact)}`,
+    `${turn(1, compact)}\n${turn(2, '')}`,
+    `${turn(1, verbose)}\n${turn(2, '')}`,
+    `${verbose}\n\`\`\`\`\`text\n工具状态\n\`\`\`\`\``,
+  ])('recognizes a terminal real question, including no candidates: %s', (text) => {
+    expect(extractPendingAskUserPayload(text)?.question).toBeTruthy()
+  })
+
+  it.each([
+    `${turn(1, compact)}\n${turn(2, '已经完成部署。')}`,
+    `${turn(1, compact)}\n${turn(2, '🛠️ code_run({})')}`,
+    `${compact}\n已经按你的选择完成部署。`,
+    `${verbose}\n已经完成部署。`,
+    `${compact}\n🛠️ code_run({})`,
+    `正文中引用 ${plain}`,
+    `\`\`\`text\n${compact}\n\`\`\``,
+    `\`\`\`\`text\n${compact}\n\`\`\`\``,
+    `🛠️ Tool: \`code_run\`  📥 args:\n\`\`\`\`text\n${compact}\n\`\`\`\``,
+    `示例：\n\`\`\`text\n${turn(1, plain)}\n\`\`\``,
+    `示例：\n\`\`\`text\n${turn(1, plain)}`,
+    `示例：\n\`\`\`text\n${plain}`,
+    `${turn(1, compact)}\n${turn(2, '最终回复：\n任务已完成。')}`,
+    '🛠️ ask_user(未闭合',
+    '🛠️ Tool: `ask_user`  📥 args:\n````text\n{"question":',
+  ])('does not revive historical, quoted or unfinished questions: %s', (text) => {
+    expect(extractPendingAskUserPayload(text)).toBeNull()
+  })
+})
 
 describe('assistant transcript projection', () => {
 

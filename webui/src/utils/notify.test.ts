@@ -44,6 +44,10 @@ describe('unified notification entry', () => {
     expect(first).toHaveBeenCalledOnce()
     expect(second).toHaveBeenCalledOnce()
   })
+  it('keeps a destination-specific primary button alongside the secondary button', async () => {
+    await notify('微信', { tag: 'wechat-label', onOpen: vi.fn(), confirmText: '查看微信' })
+    expect(m.request).toHaveBeenCalledWith(expect.objectContaining({ kind: 'notification', confirmText: '查看微信', cancelText: '稍后' }))
+  })
   it('deduplicates by event rather than globally', async () => {
     await notify('结果', { tag: 'one' }); await notify('结果', { tag: 'one' }); await notify('结果', { tag: 'two' })
     expect(m.request).toHaveBeenCalledTimes(2)

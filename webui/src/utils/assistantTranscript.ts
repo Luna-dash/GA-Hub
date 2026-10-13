@@ -560,6 +560,53 @@ export function parseAssistantTranscript(text: string, streaming = false): Assis
   return { leading, turns, finalBody, finalTurnIndex, finalAskUser, stopped }
 }
 
+/** Notification classification must not resurrect an earlier ask_user turn.
+ * Unlike finalAskUser (a card projection), this also accepts questions without
+ * candidates and requires ask_user to be the terminal executable call. */
+export function extractPendingAskUserPayload(text: string): AskUserPayload | null {
+  // Shield all fences before splitting turns, including an unfinished example
+  // containing turn markers. Restore only after selecting the terminal turn.
+  const fences: string[] = []
+  const stash = (value: string) => `${PLACEHOLDER_PREFIX}notify${fences.push(value) - 1}\u0000`
+  const protectedSource = stripFinalResponseMarker(text)
+    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, stash)
+    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n[\s\S]*)?$/m, stash)
+  const transcript = parseAssistantTranscript(protectedSource)
+  const selected = [...transcript.turns].reverse().find(turn => turn.content.trim())?.content
+    ?? (transcript.turns.length ? '' : stripTraceMeta(protectedSource))
+  const content = selected.replace(new RegExp(`${PLACEHOLDER_PREFIX}notify(\\d+)\\u0000`, 'g'),
+    (_, index: string) => fences[Number(index)] ?? '')
+  const mask = (value: string) => ' '.repeat(value.length)
+  const outside = content
+    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, mask)
+    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n[\s\S]*)?$/m, mask)
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, mask)
+  const calls = [...outside.matchAll(/^[ \t]*🛠️\s*(?:Tool\s*[:：]\s*`?([\w.-]+)`?|([\w.-]+)\s*\()/gim)]
+  const call = calls.at(-1)
+  if (!call || (call[1] || call[2]).toLowerCase() !== 'ask_user') return null
+  const source = content.slice(call.index ?? 0)
+  const payload = extractAskUserPayload(source)
+  if (!payload) return null
+  // A later conclusion in the same turn means this historical question is
+  // no longer the final result. Keep tool result fences/status lines opaque.
+  let tail: string
+  if (call[2]) {
+    const closing = /\)[ \t]*(?:\r?\n|$)/.exec(source)
+    if (!closing) return null
+    tail = source.slice((closing.index ?? 0) + closing[0].length)
+  } else {
+    const object = readJsonObjectAfter(source, call[0].length)
+    if (!object) return null
+    tail = source.slice(source.indexOf(object) + object.length)
+      .replace(/^\s*`{3,}[^\r\n]*(?:\r?\n|$)/, '')
+  }
+  tail = stripTraceMeta(tail)
+    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, '')
+    .replace(/^[ \t]*\[(?:Info|Warn|Error|Status|Stdout|Stderr|系统)\][^\r\n]*$/gim, '')
+    .trim()
+  return tail ? null : payload
+}
+
 export function stripAssistantTranscriptTags(text: string): string {
   return stripFinalResponseMarker(text)
     .replace(/<summary>[\s\S]*?<\/summary>/gi, ' ')

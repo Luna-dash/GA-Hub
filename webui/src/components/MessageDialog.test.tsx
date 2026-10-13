@@ -109,6 +109,37 @@ describe('MessageDialog keyboard and FIFO', () => {
   })
 })
 
+describe('notification presentation', () => {
+  it('renders both notification buttons and dismisses without confirming', () => {
+    const result = vi.fn()
+    render(<MessageDialog config={{ kind: 'notification', title: '需要你回复一下', confirmText: '前往回复' }} onResult={result} />)
+    expect(document.querySelectorAll('.message-dialog-button')).toHaveLength(2)
+    expect(screen.getByText('前往回复')).toBeTruthy()
+    fireEvent.click(screen.getByText('稍后'))
+    expect(result).toHaveBeenCalledOnce()
+    expect(result).toHaveBeenCalledWith(null)
+  })
+  it('supports Escape dismissal with both buttons present', () => {
+    const result = vi.fn()
+    render(<MessageDialog config={{ kind: 'notification', title: '会话有更新', confirmText: '查看会话' }} onResult={result} />)
+    fireEvent.keyDown(screen.getByText('查看会话'), { key: 'Escape' })
+    expect(result).toHaveBeenCalledWith(null)
+  })
+  it('expires after 12 seconds without confirming', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<DialogHost />)
+      let pending!: Promise<boolean | null>
+      act(() => { pending = requestDialog<boolean | null>({ kind: 'notification', title: '会话有更新', confirmText: '查看会话' }) })
+      act(() => { vi.advanceTimersByTime(11_999) })
+      expect(useDialogStore.getState().open).toBe(true)
+      act(() => { vi.advanceTimersByTime(1) })
+      await expect(pending).resolves.toBeNull()
+      expect(useDialogStore.getState().open).toBe(false)
+    } finally { vi.useRealTimers() }
+  })
+})
+
 describe('desktop dispatch', () => {
   it('serializes native calls until each result resolves', async () => {
     Object.assign(window, { __TAURI_INTERNALS__: {} })
