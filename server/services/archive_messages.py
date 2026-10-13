@@ -570,7 +570,7 @@ def _window_items(
     return items[start:end], has_more, start if has_more else None
 
 
-def read_archive_messages(
+def _read_archive_messages(
     archive_path: str | Path | None,
     *,
     before: int | None = None,
@@ -580,7 +580,7 @@ def read_archive_messages(
 ) -> dict[str, Any]:
     """Apply the same failure contract to full and indexed archive reads."""
     try:
-        return _read_archive_messages(
+        return _read_archive_messages_impl(
             archive_path, before=before, limit=limit,
             max_chars=max_chars, turns=turns,
         )
@@ -591,7 +591,7 @@ def read_archive_messages(
         raise HistoryUnavailableError from exc
 
 
-def _read_archive_messages(
+def _read_archive_messages_impl(
     archive_path: str | Path | None,
     *,
     before: int | None = None,
@@ -884,3 +884,9 @@ def archive_contains(archive_path: str | Path, query: str) -> bool:
     if signature is None:
         return False
     return _archive_contains_query(path, signature[0], signature[1], query)
+
+
+def read_archive_messages(archive_path: str | Path | None, **kwargs: Any) -> dict[str, Any]:
+    result = _read_archive_messages(archive_path, **kwargs)
+    from .archive_identity import project_identity
+    return project_identity(archive_path, result)

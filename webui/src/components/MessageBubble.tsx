@@ -340,9 +340,9 @@ function HistoryTranscriptReply({
   askUserDraftKey?: string
   askUserInteractive: boolean
 }) {
-  // 停止态统一呈现：正文=最后一条有效 summary（见 projectConclusionBody），不再回落
-  // "上一轮的完整正文"；提示行统一"⏹任务中止"并置于最后，与停止事实是否留存无关。
-  const stoppedState = manualStop || transcript.stopped
+  // Only an authoritative abort marks a task stopped. An unfinished transcript
+  // can be a paused worker, a reconnect baseline, or a retry in the same run.
+  const stoppedState = manualStop
   const finalBody = projectConclusionBody(transcript)
   const finalDeferred = finalBody.length > LONG_HISTORY_THRESHOLD && !finalExpanded
   const visibleFinal = finalDeferred

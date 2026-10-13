@@ -37,6 +37,8 @@ export interface ChatMsg {
   content: string
   /** Hub recovery streams share one logical answer; GA turns remain untouched. */
   logicalId?: string
+  runId?: string
+  outcome?: 'completed' | 'cancelled' | 'failed' | null
   /** Hub recovery status, rendered inside the answer, never part of LLM text. */
   recoveryNotice?: string
   recoveryOffset?: number
@@ -231,6 +233,7 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
           type: s.done ? 'done' : 'next',
           stream_id: s.stream_id,
           logical_id: s.logical_id,
+          run_id: s.run_id,
           retry_of: s.retry_of,
           source: s.source,
           content: s.content,
@@ -243,6 +246,7 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
       out.push({
         role: 'user',
         content: s.query,
+        logicalId: s.logical_id, runId: s.run_id,
         streamId: s.stream_id,
         source: s.source,
         timestamp: epochMilliseconds(s.started_at),
@@ -252,6 +256,8 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
       out.push({
         role: 'assistant',
         content: s.content,
+        logicalId: s.logical_id, runId: s.run_id, outcome: s.outcome,
+        segments: [{ streamId: s.stream_id, content: s.content, done: s.done }],
         streamId: s.stream_id,
         source: s.source,
         streaming: !s.done,
@@ -262,8 +268,8 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
   return out
 }
 
-function historyToMessages(items: SessionMessageProjection[]): ChatMsg[] {
-  return items
+export function historyToMessages(items: SessionMessageProjection[]): ChatMsg[] {
+  const projected: ChatMsg[] = items
     .filter((item) => item.role === 'user' || item.role === 'assistant')
     .sort((a, b) => a.ordinal - b.ordinal)
     .map((item) => ({
@@ -272,8 +278,41 @@ function historyToMessages(items: SessionMessageProjection[]): ChatMsg[] {
       // The archive id is the stable identity for deduplication on rehydrate.
       streamId: `history:${item.id}`,
       source: 'history',
+      logicalId: item.logical_id ?? undefined, runId: item.run_id ?? undefined,
+      outcome: item.outcome, stopped: item.outcome === 'cancelled',
+      segments: item.run_id && item.role === 'assistant'
+        ? [{ streamId: `history:${item.id}`, content: item.content, done: true }] : undefined,
       timestamp: parseArchiveTime(item.timestamp),
     }))
+
+  return coalesceArchiveRuns(projected)
+}
+
+function coalesceArchiveRuns(projected: ChatMsg[]): ChatMsg[] {
+  const out: ChatMsg[] = []
+  const positions = new Map<string, number>()
+  for (const msg of projected) {
+    const key = msg.runId ? `${msg.runId}\u0000${msg.role}` : null
+    const index = key ? positions.get(key) : undefined
+    if (index !== undefined) {
+      if (msg.role === 'assistant') {
+        const previous = out[index]
+        const seen = new Set<string>()
+        const segments = [...(previous.segments ?? []), ...(msg.segments ?? [])]
+          .filter((part) => {
+            if (seen.has(part.streamId)) return false
+            seen.add(part.streamId)
+            return true
+          })
+        out[index] = { ...previous, segments, content: replySegmentsContent(segments) }
+      }
+      // Continuation prompts belong to the same run, not a new user question.
+      continue
+    }
+    out.push(msg)
+    if (key) positions.set(key, out.length - 1)
+  }
+  return out
 }
 
 const ARCHIVE_SNAPSHOT_TIME_TOLERANCE_MS = 2 * 60 * 1000
@@ -326,6 +365,8 @@ function pairsDescribeSameTurn(
   answer: ChatMsg,
 ): boolean {
   if (archivedQuery.role !== 'user' || archivedAnswer.role !== 'assistant') return false
+  if (archivedQuery.runId || query.runId) return !!archivedQuery.runId && archivedQuery.runId === query.runId
+  if (archivedQuery.logicalId || query.logicalId) return !!archivedQuery.logicalId && archivedQuery.logicalId === query.logicalId
   if (archivedQuery.content !== query.content) return false
   if (!timestampsOverlap(archivedQuery, query) || !timestampsOverlap(archivedAnswer, answer)) return false
   const temporalEvidence = archivedQuery.timestamp != null && query.timestamp != null
@@ -339,8 +380,36 @@ function pairsDescribeSameTurn(
  *  overwritten by its own answer (回归：快照里新完成的提问在存档尚未收录的
  *  窗口期内从界面上消失). */
 function livePositionKey(msg: ChatMsg): string | null {
-  if (!msg.streamId) return null
-  return `${msg.streamId}\u0000${msg.role}`
+  const identity = msg.runId || msg.logicalId || msg.streamId
+  if (!identity) return null
+  return `${identity}\u0000${msg.role}`
+}
+
+/** Merge a recovery projection, never treating one physical stream as the
+ * entire logical answer. Archive keys are provisional: match them only inside
+ * this verified run, in order, with nonempty cumulative-content evidence. */
+function mergeRunReply(old: ChatMsg, incoming: ChatMsg): ChatMsg {
+  const segments = [...(old.segments ?? [])]
+  let archiveCursor = 0
+  for (const part of incoming.segments ?? []) {
+    let index = segments.findIndex((previous) => previous.streamId === part.streamId)
+    if (index < 0 && part.content) {
+      index = segments.findIndex((previous, i) => i >= archiveCursor
+        && previous.streamId.startsWith('history:') && !!previous.content
+        && (part.content.startsWith(previous.content) || previous.content.startsWith(part.content)))
+      if (index >= 0) archiveCursor = index + 1
+    }
+    if (index < 0) segments.push(part)
+    else {
+      const previous = segments[index]
+      segments[index] = { ...part,
+        content: previous.content.startsWith(part.content) ? previous.content : part.content,
+        // Archive completion is not physical-stream completion for an active run.
+        done: part.done || (!previous.streamId.startsWith('history:') && previous.done),
+      }
+    }
+  }
+  return { ...old, ...incoming, segments, content: replySegmentsContent(segments) }
 }
 
 function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
@@ -360,6 +429,7 @@ function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
       const archivedAnswer = out[j + 1]
       if (archivedQuery.source !== 'history' || archivedAnswer.source !== 'history'
         || archivedQuery.role !== 'user' || archivedAnswer.role !== 'assistant'
+        || archivedQuery.runId || query.runId || archivedQuery.logicalId || query.logicalId
         || archivedQuery.content !== query.content || archivedQuery.timestamp == null
         || !timestampsOverlap(archivedQuery, query)) continue
       out[j] = { ...archivedQuery, ...query }
@@ -380,7 +450,12 @@ function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
     if (key && positions.has(key)) {
       const index = positions.get(key)!
       // Never let an old partial replace a completed archive message.
-      if (msg.streaming || out[index].streamId?.startsWith('history:') === false) out[index] = msg
+      const old = out[index]
+      if (old.outcome) continue
+      // A stale partial may not shrink a newer cumulative projection.
+      if (old.content.startsWith(msg.content) && old.content.length > msg.content.length) continue
+      out[index] = old.role === 'assistant' && old.runId && old.runId === msg.runId
+        ? mergeRunReply(old, msg) : { ...old, ...msg }
       continue
     }
     out.push(msg)
@@ -389,12 +464,18 @@ function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
   return out
 }
 
-function mergeSessionSnapshot(base: ChatMsg[], event: Extract<ChatWSOut, { type: 'snapshot' }>): ChatMsg[] {
+export function mergeSessionSnapshot(base: ChatMsg[], event: Extract<ChatWSOut, { type: 'snapshot' }>): ChatMsg[] {
   const active = event.active_message
   if (active?.query && active.ts != null) {
     const existing = event.streams?.find((s) => s.stream_id === active.stream_id)
     const streams: ChatStreamSnapshot[] = [...(event.streams ?? []).filter((s) => s.stream_id !== active.stream_id), {
       ...existing,
+      run_id: active.run_id || event.run_id || undefined,
+      logical_id: active.logical_id || existing?.logical_id,
+      retry_of: active.retry_of || existing?.retry_of,
+      retry_attempt: active.retry_attempt ?? existing?.retry_attempt,
+      retry_max: active.retry_max ?? existing?.retry_max,
+      retry_reason: active.retry_reason || existing?.retry_reason,
       stream_id: active.stream_id,
       source: active.source ?? existing?.source ?? 'webui',
       query: active.query,
@@ -403,14 +484,29 @@ function mergeSessionSnapshot(base: ChatMsg[], event: Extract<ChatWSOut, { type:
       content: active.content,
       done: active.done,
     }]
-    return mergeLive(base, applySnapshot(streams))
+    return settleSnapshot(mergeLive(base, applySnapshot(streams)), event)
   }
   let msgs = event.streams ? mergeLive(base, applySnapshot(event.streams)) : base
-  // Legacy backends have no query identity; do not guess an archived match.
+  // Query-less adapters can still carry explicit run identity; never infer it.
   if (active) msgs = applyEvent(msgs, {
     type: active.done ? 'done' : 'next', stream_id: active.stream_id, content: active.content,
+    run_id: active.run_id, logical_id: active.logical_id, source: active.source,
+    retry_of: active.retry_of,
   })
-  return msgs
+  return settleSnapshot(msgs, event)
+}
+
+function settleSnapshot(msgs: ChatMsg[], event: Extract<ChatWSOut, { type: 'snapshot' }>): ChatMsg[] {
+  const state = { ...event, ...event.runtime }
+  // Old servers placed terminal identity only at the top level.
+  const completedRunId = event.runtime?.completed_run_id ?? event.completed_run_id
+  const outcome = event.runtime?.outcome ?? event.outcome
+  return applyEvent(msgs, {
+    type: 'session_runtime', session_id: event.session_id || '',
+    status: state.status || '', run_id: state.run_id || '', stream_id: state.stream_id || null,
+    completed_run_id: completedRunId,
+    outcome,
+  })
 }
 
 // ── store 外的运行时单例 ────────────────────────────────────────────────
@@ -459,13 +555,15 @@ function updateLogicalReply(prev: ChatMsg[], evt: ReplyEvent, now: number): Chat
   const sid = evt.stream_id
   const key = evt.logical_id || evt.retry_of || sid
   const idx = prev.findIndex((m) => m.role === 'assistant' && (
-    m.logicalId === key || m.streamId === key || m.streamId === sid
+    (evt.run_id && m.runId === evt.run_id) || m.logicalId === key || m.streamId === key || m.streamId === sid
     || m.segments?.some((part) => part.streamId === sid || part.streamId === evt.retry_of)
   ))
   const old = idx < 0 ? undefined : prev[idx]
+  if (old?.outcome) return prev // queued frames cannot resurrect a terminal run
   const initial = old?.segments ?? (old?.streamId ? [{
     streamId: old.streamId, content: old.content, done: !old.streaming && !old.stopped,
   }] : [])
+  if (evt.type === 'started' && initial.some((part) => part.streamId === sid)) return prev
   const segments = updateReplySegments(initial, sid, evt.type, 'content' in evt ? evt.content : undefined)
   const latest = segments[segments.length - 1]
   const streaming = !old?.stopped && !latest.done
@@ -473,6 +571,7 @@ function updateLogicalReply(prev: ChatMsg[], evt: ReplyEvent, now: number): Chat
     ...old,
     role: 'assistant',
     logicalId: old?.logicalId || key,
+    runId: evt.run_id || old?.runId,
     streamId: old?.streamId || sid,
     source: old?.source || evt.source,
     segments,
@@ -491,9 +590,34 @@ function updateLogicalReply(prev: ChatMsg[], evt: ReplyEvent, now: number): Chat
 
 // exported for tests: pure reducer over the message list
 export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
+  if (evt.type === 'session_runtime') {
+    // A stream can finish while its logical run is waiting for continuation.
+    // Only the coordinator owns run termination, not a transport stream's done.
+    if (evt.status === 'running' && evt.run_id) {
+      return prev.map((m) => m.role === 'assistant' && m.runId === evt.run_id && !m.outcome && !m.stopped
+        ? { ...m, streaming: true, finishedAt: null } : m)
+    }
+    if (evt.status !== 'idle' || !evt.completed_run_id || !evt.outcome) return prev
+    return prev.map((m) => m.role === 'assistant' && m.runId === evt.completed_run_id ? {
+      ...m, streaming: false, recoveryNotice: undefined, recoveryOffset: undefined, recoveryStreamId: undefined, outcome: evt.outcome,
+      stopped: evt.outcome === 'cancelled', finishedAt: m.finishedAt ?? Date.now(),
+    } : m)
+  }
+  if ((evt.type === 'next' || evt.type === 'done') && (evt.run_id || evt.logical_id)) {
+    if (isHiddenSource(evt.source)) return prev
+    return updateLogicalReply(prev, evt, Date.now())
+  }
+  const msgs = reduceEvent(prev, evt)
+  if (evt.type !== 'started') return msgs
+  return msgs.map((m) => m.streamId === evt.stream_id ? {
+    ...m, runId: evt.run_id || m.runId, logicalId: evt.logical_id || m.logicalId,
+  } : m)
+}
+
+function reduceEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   const now = Date.now()
   if (evt.type === 'snapshot') {
-    return evt.streams ? applySnapshot(evt.streams) : prev
+    return mergeSessionSnapshot(prev, evt)
   }
   if (evt.type === 'reset') {
     // Server-driven wipe (new conversation / session restore).
@@ -512,6 +636,11 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
       const withNotice = upsertRetryNotice(prev, retryKey, note, now, sid)
       return updateLogicalReply(withNotice, evt, epochMilliseconds(evt.ts) ?? now)
     }
+    if (prev.some((m) => m.role === 'assistant' && (
+      m.streamId === sid || (evt.run_id && m.runId === evt.run_id)
+      || (evt.logical_id && m.logicalId === evt.logical_id)))) {
+      return updateLogicalReply(prev, evt, epochMilliseconds(evt.ts) ?? now)
+    }
     // 1. If our local pre-add bubble is still pending and source is webui,
     //    adopt this stream_id rather than creating a duplicate.
     if (source === 'webui') {
@@ -522,22 +651,23 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
         adopted[realIdx] = {
           ...adopted[realIdx],
           streamId: sid,
+          runId: evt.run_id, logicalId: evt.logical_id,
           pendingWebui: false,
           // Keep the local identity as a receipt, even after WS adoption.
           pendingWebuiId: adopted[realIdx].pendingWebuiId,
         }
         // Append empty assistant bubble for the streaming reply.
-        return [...adopted, { role: 'assistant', content: '', streamId: sid, source, streaming: true, timestamp: now, startedAt: epochMilliseconds(evt.ts) ?? now, finishedAt: null }]
+        return [...adopted, { role: 'assistant', content: '', streamId: sid, runId: evt.run_id, logicalId: evt.logical_id, source, streaming: true, timestamp: now, startedAt: epochMilliseconds(evt.ts) ?? now, finishedAt: null }]
       }
     }
     // 2. Fresh stream from another source (or a webui submission whose pre-add
     //    is missing — happens after a tab reload). Add a user + assistant pair.
     const next = prev.slice()
     if (!next.some((m) => m.role === 'user' && m.streamId === sid)) {
-      next.push({ role: 'user', content: query, streamId: sid, source, timestamp: now })
+      next.push({ role: 'user', content: query, streamId: sid, runId: evt.run_id, logicalId: evt.logical_id, source, timestamp: now })
     }
     if (!next.some((m) => m.role === 'assistant' && m.streamId === sid)) {
-      next.push({ role: 'assistant', content: '', streamId: sid, source, streaming: true, timestamp: now, startedAt: epochMilliseconds(evt.ts) ?? now, finishedAt: null })
+      next.push({ role: 'assistant', content: '', streamId: sid, runId: evt.run_id, logicalId: evt.logical_id, source, streaming: true, timestamp: now, startedAt: epochMilliseconds(evt.ts) ?? now, finishedAt: null })
     }
     return next
   }
@@ -688,14 +818,18 @@ function pruneSessionViews(views: Record<string, SessionView>): Record<string, S
   return Object.fromEntries(kept)
 }
 
-function prependUniqueHistory(older: ChatMsg[], current: ChatMsg[]): ChatMsg[] {
+export function prependUniqueHistory(older: ChatMsg[], current: ChatMsg[]): ChatMsg[] {
   const seen = new Set<string>()
-  return [...older, ...current].filter((message) => {
-    if (!message.streamId) return true
-    if (seen.has(message.streamId)) return false
-    seen.add(message.streamId)
+  const archive = [...older, ...current.filter((m) => m.source === 'history')].filter((message) => {
+    // Grouped runs may overlap but carry additional segments: dedup inside
+    // coalesceArchiveRuns rather than throwing away the entire later group.
+    if (message.runId || !message.streamId) return true
+    const key = `${message.streamId}\u0000${message.role}`
+    if (seen.has(key)) return false
+    seen.add(key)
     return true
   })
+  return mergeLive(coalesceArchiveRuns(archive), current.filter((m) => m.source !== 'history'))
 }
 
 function delay(ms: number): Promise<void> {
@@ -861,7 +995,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     sock.onState = (s) => {
       if (active && get().sessionId === sessionId) set({ conn: s })
     }
-    const handleReadyMessage = (m: ChatWSOut, deferSnapshot = true) => {
+    const handleReadyMessage = (m: ChatWSOut, _deferSnapshot = true) => {
       if (!active || get().sessionId !== sessionId) return
       // Snapshot is large; defer past the next paint so the WebView
       // becomes interactive first (preserved from prior behaviour).
@@ -883,13 +1017,9 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
           })
           commitCursor(sessionId, m)
         }
-        if (deferSnapshot && typeof requestAnimationFrame === 'function') {
-          requestAnimationFrame(() => requestAnimationFrame(apply))
-        } else if (deferSnapshot) {
-          setTimeout(apply, 0)
-        } else {
-          apply()
-        }
+        // Apply synchronously before replay_done or newer live frames. Deferring
+        // the baseline can otherwise overwrite a next/done that arrived later.
+        apply()
         return
       }
 
@@ -979,8 +1109,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       if (generation !== runtime.historyGeneration || get().sessionId !== sessionId) return
       historyReady = true
       const queued = bufferedEvents.splice(0)
-      set(() => {
-        const msgs = historyToMessages(history.items)
+      set((st) => {
+        const msgs = mergeLive(historyToMessages(history.items), st.msgs.filter((m) => m.source !== 'history'))
         return {
           msgs,
           streaming: anyStreaming(msgs),

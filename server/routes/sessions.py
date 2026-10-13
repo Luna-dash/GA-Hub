@@ -537,13 +537,10 @@ async def session_events(ws: WebSocket, session_id: str):
         await ws.send_json({
             "type": "snapshot",
             **runtime_payload,
-            "runtime": {
-                "status": state.status,
-                "run_id": state.run_id,
-                "stream_id": state.stream_id,
-                "error": state.error,
-            },
-            "active_message": active_message,
+            "runtime": runtime_payload,
+            "streams": active_message.get("streams", []) if active_message else [],
+            "active_message": ({k: v for k, v in active_message.items() if k != "streams"}
+                               if active_message else None),
             "epoch": bus.epoch,
         })
 
@@ -562,13 +559,14 @@ async def session_events(ws: WebSocket, session_id: str):
                 "epoch": bus.epoch,
             })
 
-        if after_event_id is None or subscription.resync_reason is not None:
-            await send_snapshot()
-        else:
+        # Replay first; a fresh baseline is required even for a valid cursor:
+        # a transport cursor says nothing about whether the UI retained its view.
+        if after_event_id is not None and subscription.resync_reason is None:
             for event in subscription.replay:
                 frame = _session_event_frame(session_id, event)
                 if frame is not None:
                     await ws.send_json(frame)
+        await send_snapshot()
 
         await ws.send_json({
             "type": "replay_done",

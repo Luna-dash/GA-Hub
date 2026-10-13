@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -77,6 +78,7 @@ def test_coordinator_completion_publishes_runtime_event(monkeypatch):
         "run_id": None,
         "stream_id": None,
         "completed_run_id": "run-a",
+        "outcome": None,
         "error": None,
     }
 
@@ -153,10 +155,13 @@ def test_session_websocket_starts_with_runtime_snapshot_and_supports_ping(tmp_pa
                 "type": "snapshot", "session_id": sid, "status": "running",
                 "run_id": "run-a", "stream_id": "stream-a",
                 "completed_run_id": None,
+                "outcome": None,
                 "runtime": {
-                    "status": "running", "run_id": "run-a",
-                    "stream_id": "stream-a", "error": None,
+                    "session_id": sid, "status": "running", "run_id": "run-a",
+                    "stream_id": "stream-a", "completed_run_id": None,
+                    "outcome": None,
                 },
+                "streams": [],
                 "active_message": None,
                 "epoch": event_bus.epoch,
             }
@@ -268,3 +273,44 @@ def test_session_websocket_forwards_only_owned_events_and_cleans_subscription(
     log_text = caplog.text
     assert "owned" not in log_text
     assert "wrong" not in log_text
+
+
+@pytest.mark.parametrize('outcome', ['completed', 'cancelled', 'failed'])
+def test_recovery_snapshot_preserves_nested_terminal_identity(tmp_path, monkeypatch, outcome):
+    app, sid = _app(tmp_path, monkeypatch)
+
+    class CompletedCoordinator:
+        def session_snapshot(self, session_id):
+            return RuntimeState(session_id, completed_run_id='r', outcome=outcome), None
+
+    app.state.session_lifecycle.attach_coordinator(CompletedCoordinator())
+    with TestClient(app) as client:
+        with client.websocket_connect(f'/ws/sessions/{sid}') as ws:
+            snapshot = ws.receive_json()
+            assert snapshot['completed_run_id'] == 'r'
+            assert snapshot['outcome'] == outcome
+            assert snapshot['runtime']['completed_run_id'] == 'r'
+            assert snapshot['runtime']['outcome'] == outcome
+            assert snapshot['streams'] == []
+
+
+def test_recovery_snapshot_sends_all_segments_with_latest_active_message(tmp_path, monkeypatch):
+    app, sid = _app(tmp_path, monkeypatch)
+    parts = [
+        dict(stream_id='a', content='FIRST', done=True),
+        dict(stream_id='b', content='SECOND', done=False),
+    ]
+
+    class ContinuingCoordinator:
+        def session_snapshot(self, session_id):
+            return RuntimeState(session_id, 'running', 'r', 'a'), {
+                **parts[-1], 'run_id': 'r', 'streams': parts,
+            }
+
+    app.state.session_lifecycle.attach_coordinator(ContinuingCoordinator())
+    with TestClient(app) as client:
+        with client.websocket_connect(f'/ws/sessions/{sid}') as ws:
+            snapshot = ws.receive_json()
+            assert snapshot['streams'] == parts
+            assert snapshot['active_message']['stream_id'] == 'b'
+            assert 'streams' not in snapshot['active_message']

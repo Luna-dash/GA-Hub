@@ -562,7 +562,7 @@ describe('MessageBubble render isolation', () => {
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} stopped={manualStop} />))
     expect(markdownRender).toHaveBeenCalledTimes(1)
     expect(markdownRender.mock.calls[0][0].children).toBe('检查卸载清理')
-    expect(host.textContent).toContain('⏹任务中止')
+    expect(host.textContent.includes('⏹任务中止')).toBe(manualStop)
     expect(host.textContent).toContain('查看执行过程')
     expect(host.textContent).not.toContain('111| useEffect')
     const copy = host.querySelector('button[title="复制结论"]')
@@ -584,7 +584,7 @@ describe('MessageBubble render isolation', () => {
       '````',
     ].join('\n')
 
-    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} stopped />))
 
     // 停止态统一：正文=被截止轮的最后一条有效 summary；不再回落上一轮完整正文
     expect(host.textContent).toContain('⏹任务中止')
@@ -609,7 +609,7 @@ describe('MessageBubble render isolation', () => {
       '`````',
     ].join('\n')
 
-    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} stopped />))
 
     expect(host.textContent).toContain('⏹任务中止')
     // 该轮摘要作为"被打断时在做什么"的上下文兜底展示
@@ -620,7 +620,7 @@ describe('MessageBubble render isolation', () => {
     expect(host.textContent).not.toContain('该条历史回复未包含可提取的最终回答')
   })
 
-  it('renders the same stop notice whether the stop fact is present or the heuristic fires', () => {
+  it('does not infer cancellation from an incomplete transcript', () => {
     const content = [
       '**LLM Running (Turn 1) ...**',
       '<summary>执行清理命令</summary>',
@@ -637,7 +637,7 @@ describe('MessageBubble render isolation', () => {
 
     // 无事实位（事后重载/轮询/进程重启）：启发式触发同一条提示行，呈现完全一致
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
-    expect(host.textContent).toContain('⏹任务中止')
+    expect(host.textContent).not.toContain('⏹任务中止')
     expect(host.textContent).not.toContain('已手动停止')
     expect(host.textContent).not.toContain('本轮以工具调用收尾')
   })
@@ -679,7 +679,7 @@ describe('MessageBubble render isolation', () => {
       '````',
     ].join('\n')
 
-    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} stopped />))
     // 无有效 summary：正文不展示，仅保留过程折叠与停止提示行
     expect(host.textContent).toContain('⏹任务中止')
     expect(markdownRender).not.toHaveBeenCalled()

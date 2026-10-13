@@ -527,6 +527,7 @@ class SessionRuntimeResp(BaseModel):
     run_id: str | None
     stream_id: str | None
     completed_run_id: str | None = None
+    outcome: Literal["completed", "cancelled", "failed"] | None = None
     error: str | None = None
     ok: bool | None = None
 
@@ -541,6 +542,7 @@ class SessionRuntimePayload(SessionRuntimeResp):
             "run_id": state.run_id,
             "stream_id": state.stream_id,
             "completed_run_id": state.completed_run_id,
+            "outcome": state.outcome,
         }
         if state.error is not None:
             fields["error"] = state.error
@@ -554,6 +556,12 @@ class SessionMessageProjection(BaseModel):
     content: str
     ordinal: int
     timestamp: str | None = None
+    session_id: str | None = None
+    run_id: str | None = None
+    logical_id: str | None = None
+    stream_id: str | None = None
+    archive_generation: str | None = None
+    outcome: Literal["completed", "cancelled", "failed"] | None = None
 
 class SessionMessagesResp(BaseModel):
     session_id: str

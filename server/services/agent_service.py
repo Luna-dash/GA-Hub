@@ -190,6 +190,15 @@ class StreamHandle:
     run_id: str = ""
     _fanout_done: threading.Event = field(default_factory=threading.Event, repr=False)
     _continuation: "StreamHandle | None" = field(default=None, repr=False)
+    outcome: str | None = None
+
+    @property
+    def run_outcome(self) -> str | None:
+        """Terminal result of the final attempt, never of a retrying stream."""
+        current = self
+        while current._continuation is not None:
+            current = current._continuation
+        return current.outcome if self.run_finished else None
 
     @property
     def run_finished(self) -> bool:
@@ -656,6 +665,17 @@ class AgentService:
         if logical_id is None:
             logical_id = sid
         # The agent's own queue (drained by our fan-out below).
+        # Record the archive boundary before GA may append the new prompt.
+        if run_id and not retry_of:
+            try:
+                from .archive_messages import read_archive_messages
+                from .archive_identity import begin_run
+                archive_path = self.agent.log_path
+                begin_run(archive_path, session_id=effective_session_id,
+                          run_id=run_id, logical_id=logical_id, stream_id=sid,
+                          ordinal=read_archive_messages(archive_path)["total"])
+            except Exception:
+                log.warning("identity_begin_failed session=%s run=%s", effective_session_id, run_id, exc_info=True)
         src_q = self.agent.put_task(query, source=source, images=images or [])
         # The handle queue we hand to callers (kept in sync by the drainer).
         # ``next`` payloads are cumulative, so retaining every intermediate
@@ -761,6 +781,7 @@ class AgentService:
                             snap.aborted = True
                             snap.finished_at = time.time()
                         h.finished = True
+                        h.outcome = "failed"
                         h.final_text = error_content
                         self._mirror_stream_item(out_q, {"done": error_content, "source": snap.source})
                         terminal_committed = True
@@ -818,6 +839,11 @@ class AgentService:
                     terminal_committed = True
                     bus.publish(CHAT_DONE, _chat_done_payload(h, snap, content))
                     bus.publish(AGENT_DONE, {"stream_id": h.stream_id, "len": len(content)})
+                    h.outcome = "cancelled" if snap.aborted else (
+                        "failed" if classify_recoverable_error(content) is not None
+                        or any(marker in content for marker in _AUTO_CONTINUE_MARKERS)
+                        else "completed"
+                    )
                     try:
                         handled_recoverable_error = self._maybe_retry_recoverable_error(h, snap, content)
                         if not handled_recoverable_error:
@@ -839,6 +865,7 @@ class AgentService:
                 snap.aborted = True
                 snap.finished_at = time.time()
             h.finished = True
+            h.outcome = "failed"
             h.final_text = error_content
             self._mirror_stream_item(out_q, {"done": error_content, "source": snap.source})
             bus.publish(CHAT_DONE, _chat_done_payload(h, snap, error_content))
@@ -1075,6 +1102,34 @@ class AgentService:
             self.agent.abort()
 
     # ── replay ──────────────────────────────────────────────────
+    def run_message_snapshot(self, *, session_id: str, run_id: str) -> dict | None:
+        """Copy retained physical segments of a logical run under the content lock.
+
+        The coordinator's stream_id is the original handle, not necessarily the
+        stream currently executing after retry/continuation. Ownership filtering
+        prevents foreign runs from leaking into recovery; archive merging keeps
+        older segments evicted from the bounded live projection.
+        """
+        with self._lock:
+            snapshots = sorted(
+                (s for s in self._snapshots.values()
+                 if s.session_id == session_id and s.run_id == run_id),
+                key=lambda s: s.started_at,
+            )
+            streams = [{
+                "stream_id": s.stream_id, "source": s.source, "query": s.query,
+                "content": s.content, "done": s.done,
+                "started_at": s.started_at, "finished_at": s.finished_at,
+                "logical_id": s.logical_id, "session_id": s.session_id,
+                "run_id": s.run_id, "retry_of": s.retry_of,
+                "retry_attempt": s.retry_attempt, "retry_max": s.retry_max,
+                "retry_reason": s.retry_reason, "aborted": s.aborted,
+            } for s in snapshots]
+        if not streams:
+            return None
+        latest = streams[-1]
+        return {**latest, "ts": latest["started_at"], "streams": streams}
+
     def active_message_snapshot(
         self, stream_id: str, *, session_id: str, run_id: str
     ) -> dict | None:
@@ -1095,6 +1150,14 @@ class AgentService:
                 "source": snap.source,
                 "content": snap.content,
                 "done": snap.done,
+                "logical_id": snap.logical_id,
+                "retry_attempt": snap.retry_attempt,
+                "retry_max": snap.retry_max,
+                "retry_of": snap.retry_of,
+                "retry_reason": snap.retry_reason,
+                "session_id": snap.session_id,
+                "run_id": snap.run_id,
+                "aborted": snap.aborted,
             }
 
     async def stream(self, h: StreamHandle, *, poll_interval: float = 0.4) -> AsyncIterator[dict]:

@@ -80,6 +80,7 @@ def _publish_runtime_state(state: RuntimeState) -> None:
             "run_id": state.run_id,
             "stream_id": state.stream_id,
             "completed_run_id": state.completed_run_id,
+            "outcome": state.outcome,
             "error": state.error,
         },
     )

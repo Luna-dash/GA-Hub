@@ -138,6 +138,7 @@ def test_list_session_runtimes_returns_all_sessions_in_one_response(
             "run_id": None,
             "stream_id": None,
             "completed_run_id": None,
+            "outcome": None,
         },
         running_id: {
             "session_id": running_id,
@@ -145,6 +146,7 @@ def test_list_session_runtimes_returns_all_sessions_in_one_response(
             "run_id": "run-a",
             "stream_id": "stream-a",
             "completed_run_id": None,
+            "outcome": None,
         },
     }
 
@@ -227,6 +229,7 @@ def test_submit_run_uses_session_metadata_and_returns_runtime_state(
             "run_id": "run-1",
             "stream_id": "stream-1",
             "completed_run_id": None,
+            "outcome": None,
         }
         assert coordinator.submissions == [{
             "text": "hello",
@@ -330,6 +333,7 @@ def test_abort_is_idempotent_and_targets_only_current_session_run(tmp_path: Path
             "run_id": None,
             "stream_id": None,
             "completed_run_id": None,
+            "outcome": None,
         }
 
         coordinator.states[sid] = RuntimeState(sid, "running", "run-a", "stream-a")

@@ -127,6 +127,7 @@ class RuntimeState:
     stream_id: str | None = None
     error: str | None = None
     completed_run_id: str | None = None
+    outcome: str | None = None
 
 
 class SessionCoordinator:
@@ -350,14 +351,17 @@ class SessionCoordinator:
             runtime = self._runtimes.get(session_id)
             if runtime is None:
                 return state, None
+            run_snapshotter = getattr(runtime, "run_message_snapshot", None)
             snapshotter = getattr(runtime, "active_message_snapshot", None)
-        if snapshotter is None:
+        if callable(run_snapshotter):
+            active_message = run_snapshotter(session_id=session_id, run_id=state.run_id)
+        elif callable(snapshotter):
+            # Compatibility with older adapters; production returns the full run.
+            active_message = snapshotter(
+                state.stream_id, session_id=session_id, run_id=state.run_id,
+            )
+        else:
             return state, None
-        active_message = snapshotter(
-            state.stream_id,
-            session_id=session_id,
-            run_id=state.run_id,
-        )
         with self._lock:
             current = self._active_by_session.get(session_id)
             if current is None or current.run_id != state.run_id:
@@ -1024,7 +1028,22 @@ class SessionCoordinator:
                     return
                 self._abort_started.pop(run_id, None)
                 self._active_by_session.pop(session_id, None)
-                completed = RuntimeState(session_id, completed_run_id=run_id)
+                outcome = getattr(handle, "run_outcome", None)
+                if active.status == STATUS_ABORTING:
+                    outcome = "cancelled"
+                try:
+                    from .archive_messages import read_archive_messages
+                    from .archive_identity import finish_run
+                    archive_path = runtime.agent.log_path
+                    finish_run(archive_path, run_id,
+                               ordinal=read_archive_messages(archive_path)["total"],
+                               outcome=outcome or "completed")
+                except Exception:
+                    log.warning("identity_finish_failed session=%s run=%s", session_id, run_id, exc_info=True)
+                completed = RuntimeState(
+                    session_id, completed_run_id=run_id,
+                    outcome=outcome or "completed",
+                )
                 self._states[session_id] = completed
                 notification = replace(completed)
             self._emit_state_change(notification)

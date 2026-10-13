@@ -81,6 +81,8 @@ def test_active_snapshot_carries_query_identity_for_partial_archive_adoption() -
     assert service.active_message_snapshot("stream-A", session_id="session-A", run_id="run-A") == {
         "stream_id": "stream-A", "query": "submit", "ts": 1234.5, "source": "webui",
         "content": "full live tool record", "done": False,
+        "session_id": "session-A", "run_id": "run-A", "logical_id": "",
+        "retry_of": "", "retry_attempt": 0, "retry_max": 0, "retry_reason": "", "aborted": False,
     }
 
 

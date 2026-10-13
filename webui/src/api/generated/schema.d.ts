@@ -3826,6 +3826,18 @@ export interface components {
             ordinal: number;
             /** Timestamp */
             timestamp?: string | null;
+            /** Session Id */
+            session_id?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Logical Id */
+            logical_id?: string | null;
+            /** Stream Id */
+            stream_id?: string | null;
+            /** Archive Generation */
+            archive_generation?: string | null;
+            /** Outcome */
+            outcome?: ("completed" | "cancelled" | "failed") | null;
         };
         /** SessionMessagesResp */
         SessionMessagesResp: {
@@ -3876,6 +3888,8 @@ export interface components {
             stream_id: string | null;
             /** Completed Run Id */
             completed_run_id?: string | null;
+            /** Outcome */
+            outcome?: ("completed" | "cancelled" | "failed") | null;
             /** Error */
             error?: string | null;
             /** Ok */

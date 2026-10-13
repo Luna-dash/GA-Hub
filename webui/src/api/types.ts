@@ -80,12 +80,20 @@ export interface ProjectItem {
 }
 
 export type SessionRuntime = ApiSchemas['SessionRuntimeResp']
-export type SessionMessageProjection = ApiSchemas['SessionMessageProjection']
+export type SessionMessageProjection = ApiSchemas['SessionMessageProjection'] & {
+  session_id?: string | null
+  run_id?: string | null
+  logical_id?: string | null
+  stream_id?: string | null
+  archive_generation?: string | null
+  outcome?: 'completed' | 'cancelled' | 'failed' | null
+}
 type GeneratedSessionMessagesResponse = ApiSchemas['SessionMessagesResp']
 export type SessionMessagesResponse = Omit<
   GeneratedSessionMessagesResponse,
-  'total' | 'has_more' | 'next_before'
+  'total' | 'has_more' | 'next_before' | 'items'
 > & {
+  items: SessionMessageProjection[]
   /** Optional during rolling upgrades from a pre-pagination backend. */
   total?: number
   has_more?: boolean
@@ -196,6 +204,10 @@ export interface ChatStreamSnapshot {
   started_at: number
   finished_at: number
   logical_id?: string
+  run_id?: string
+  session_id?: string
+  outcome?: 'completed' | 'cancelled' | 'failed' | null
+  aborted?: boolean
   retry_attempt?: number
   retry_max?: number
   retry_of?: string
@@ -215,7 +227,7 @@ export interface BtwResp {
 }
 
 export type ChatEventCursor = { event_id: number; epoch: string }
-export type ChatWSMeta = { event_id?: number; epoch?: string }
+export type ChatWSMeta = { event_id?: number; epoch?: string; session_id?: string; run_id?: string; logical_id?: string; outcome?: 'completed' | 'cancelled' | 'failed' | null }
 
 export type ChatWSOut = (
   | {
@@ -225,9 +237,11 @@ export type ChatWSOut = (
       status?: string
       run_id?: string | null
       stream_id?: string | null
-      runtime?: { status: string; run_id: string | null; stream_id: string | null; error: string | null }
-      active_message?: { stream_id: string; content: string; done: boolean; query?: string; ts?: number; source?: string } | null
+      completed_run_id?: string | null
+      runtime?: { status: string; run_id: string | null; stream_id: string | null; error: string | null; completed_run_id?: string | null; outcome?: 'completed' | 'cancelled' | 'failed' | null }
+      active_message?: { stream_id: string; content: string; done: boolean; query?: string; ts?: number; source?: string; run_id?: string; logical_id?: string; retry_of?: string; retry_attempt?: number; retry_max?: number; retry_reason?: string } | null
     }
+  | { type: 'session_runtime'; session_id: string; status: string; run_id: string | null; stream_id: string | null; completed_run_id?: string | null; outcome?: 'completed' | 'cancelled' | 'failed' | null; error?: string | null }
   | { type: 'reset'; reason?: string }
   | { type: 'started'; stream_id: string; source?: string; query?: string; ts?: number; logical_id?: string; retry_attempt?: number; retry_max?: number; retry_of?: string; retry_reason?: string }
   | { type: 'heartbeat'; stream_id: string }
