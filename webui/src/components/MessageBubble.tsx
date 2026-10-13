@@ -34,6 +34,8 @@ import { bubbleTone } from './bubbleTone'
 import type { PasteAttachment } from '@/api/types'
 import { api } from '@/api/client'
 
+const StableMessageContent = memo(MessageContent)
+
 interface Props {
   role: 'user' | 'assistant' | string
   content: string
@@ -343,6 +345,7 @@ function HistoryTranscriptReply({
   askUserInteractive: boolean
 }) {
   const [collapseVersion, setCollapseVersion] = useState(0)
+  const [processExpanded, setProcessExpanded] = useState(false)
   const latestRef = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     if (collapseVersion) latestRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'instant' })
@@ -367,9 +370,9 @@ function HistoryTranscriptReply({
 
   return (
     <>
-      {visibleProcessTurns.length > 0 && <LazyProcessFold key={collapseVersion} turns={visibleProcessTurns} />}
+      {visibleProcessTurns.length > 0 && <LazyProcessFold key={collapseVersion} turns={visibleProcessTurns} onOpenChange={setProcessExpanded} />}
       {visibleFinal ? (
-        <MessageContent content={visibleFinal} format="markdown" />
+        <StableMessageContent content={visibleFinal} format="markdown" cache />
       ) : stoppedState || transcript.finalAskUser ? null : (
         <p className="text-sm leading-6 text-ink-muted">该条历史回复未包含可提取的最终回答。</p>
       )}
@@ -390,7 +393,10 @@ function HistoryTranscriptReply({
           最终回答较长，展开完整内容
         </button>
       )}
-      {visibleProcessTurns.length > 0 && <CollapseToLatestButton onClick={() => setCollapseVersion(value => value + 1)} />}
+      {visibleProcessTurns.length > 0 && processExpanded && <CollapseToLatestButton onClick={() => {
+        setProcessExpanded(false)
+        setCollapseVersion(value => value + 1)
+      }} />}
       <div ref={latestRef} data-transcript-latest />
       {stoppedState && (
         <p className="mt-2 text-xs italic leading-5 text-status-warning-muted">⏹任务中止</p>
@@ -400,14 +406,17 @@ function HistoryTranscriptReply({
   )
 }
 
-function LazyProcessFold({ turns }: { turns: AssistantTranscriptTurn[] }) {
+function LazyProcessFold({ turns, onOpenChange }: { turns: AssistantTranscriptTurn[]; onOpenChange: (open: boolean) => void }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="mb-3 border-b border-line/70 pb-2">
       <button
         type="button"
         aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          setOpen(!open)
+          onOpenChange(!open)
+        }}
         className="flex w-full items-center gap-2 rounded-md border border-line bg-bg-soft px-3 py-2 text-left text-xs font-medium text-ink-muted transition-colors hover:bg-bg-card hover:text-ink"
       >
         <span aria-hidden="true" className={clsx('inline-block transition-transform', open && 'rotate-90')}>›</span>

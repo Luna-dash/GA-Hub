@@ -178,9 +178,11 @@ describe('MessageBubble render isolation', () => {
     expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
     expect(viewport.textContent).toContain('新轮正文')
     expect(viewport.scrollTop).toBe(100)
-    const latest = [...host.querySelectorAll('button')].find(button => button.textContent === '收起全部并回到最新')!
-    act(() => latest.click())
-    expect(viewport.textContent).toContain('新轮正文')
+    expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
+    act(() => host.querySelector<HTMLButtonElement>('[data-running-turn="1"] > button')!.click())
+    act(() => host.querySelector<HTMLButtonElement>('[data-collapse-to-latest]')!.click())
+    expect(host.querySelectorAll('[data-running-turn] > div')).toHaveLength(0)
+    expect(viewport.scrollTop).toBe(1000)
   })
 
   it('keeps ask-user choices outside the scrolling preview', () => {
@@ -740,6 +742,13 @@ describe('MessageBubble render isolation', () => {
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scroll })
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
     const processButton = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.includes('执行过程'))!
+    expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
+    act(() => processButton().click())
+    const action = host.querySelector<HTMLButtonElement>('[data-collapse-to-latest]')!
+    expect(action.querySelector('svg')).not.toBeNull()
+    expect(action.textContent).toBe('')
+    act(() => processButton().click())
+    expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
     act(() => processButton().click())
     const records = [...host.querySelectorAll<HTMLDetailsElement>('details')]
     expect(records).toHaveLength(3)
@@ -754,8 +763,7 @@ describe('MessageBubble render isolation', () => {
     expect(host.querySelectorAll('details')).toHaveLength(0)
     expect(host.textContent).toContain('最终结论')
     expect(scroll).toHaveBeenCalledWith({ block: 'nearest', behavior: 'instant' })
-    act(() => latest().click())
-    expect(scroll).toHaveBeenCalledTimes(2)
+    expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
     act(() => processButton().click())
     expect(host.querySelectorAll('details[open]')).toHaveLength(0)
     delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView

@@ -160,7 +160,8 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
       </div>
       {recoveryStatus && (recoveryBeforeTurn === undefined || recoveryBeforeTurn >= turns.length) && <div className="mt-2 text-xs text-ink-muted">{recoveryRow}</div>}
       {askUser && <div className="mt-2"><AskUserCard question={askUser.question} candidates={askUser.candidates} draftKey={askUserDraftKey} interactive={askUserInteractive} /></div>}
-      <CollapseToLatestButton onClick={collapseToLatest} />
+      {(visibleTurns.some(turn => fullTurns[turn.turn]) || Boolean(recoveryStatus && recoveryExpanded === true && recoveryOpen)) &&
+        <CollapseToLatestButton onClick={collapseToLatest} />}
       <div ref={latestRef} data-transcript-latest />
     </section>
   )
