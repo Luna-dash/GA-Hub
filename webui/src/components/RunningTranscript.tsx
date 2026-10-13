@@ -111,7 +111,7 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
     <section data-running-transcript className="relative min-w-0">
       <div ref={viewportRef} data-running-preview hidden={!visibleTurns.length && !transcript.leading && !(recoveryStatus && recoveryBeforeTurn !== undefined && recoveryBeforeTurn < turns.length)} tabIndex={0} aria-label="执行过程"
         style={{ maxHeight: heightCap }}
-        className="min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:none]"
+        className="min-w-0 overflow-x-hidden overflow-y-auto overscroll-auto [overflow-anchor:none]"
         onWheel={event => { if (event.deltaY < 0) detach() }}
         onScroll={event => {
           const el = event.currentTarget

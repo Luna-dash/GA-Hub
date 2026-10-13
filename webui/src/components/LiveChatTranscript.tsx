@@ -77,7 +77,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
 
     // Smart auto-scroll state. Pin only while the user is already near the
     // bottom; otherwise retain their reading position and count new messages.
-    const wheelRegionRef = useRef<HTMLDivElement>(null)
+    const utilityRailRef = useRef<HTMLElement>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
     const [stuckBottom, setStuckBottom] = useState(true)
     const [unread, setUnread] = useState(0)
@@ -225,22 +225,22 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         navigationTargetRef.current = null
         lastUserGestureAtRef.current = performance.now()
       }
-      const wheelRegion = wheelRegionRef.current
+      const utilityRail = utilityRailRef.current
       const onWheel = (event: WheelEvent) => routeChatWheel(event, el, onUserGesture)
-      wheelRegion?.addEventListener('wheel', onWheel, { capture: true, passive: false })
+      utilityRail?.addEventListener('wheel', onWheel, { capture: true, passive: false })
       el.addEventListener('scroll', scrollScheduler.schedule, { passive: true })
       el.addEventListener('wheel', onUserGesture, { passive: true })
       el.addEventListener('touchstart', onUserGesture, { passive: true })
       el.addEventListener('pointerdown', onUserGesture, { passive: true })
       return () => {
         scrollScheduler.cancel()
-        wheelRegion?.removeEventListener('wheel', onWheel, { capture: true })
+        utilityRail?.removeEventListener('wheel', onWheel, { capture: true })
         el.removeEventListener('scroll', scrollScheduler.schedule)
         el.removeEventListener('wheel', onUserGesture)
         el.removeEventListener('touchstart', onUserGesture)
         el.removeEventListener('pointerdown', onUserGesture)
       }
-    }, [msgs.length, sessionId])
+    }, [msgs.length, sessionId, turnCount, scheduledChats.length])
 
     // Keep the existing prepend anchor and pinned-tail semantics synchronous
     // with layout so the user never sees a one-frame scroll jump.
@@ -499,7 +499,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     }, [onRewind, sessionId, msgs.length])
 
     return (
-      <div ref={wheelRegionRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         <div
           ref={scrollRef}
           data-live-chat-scroll
@@ -565,6 +565,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
 
         {(scheduledChats.length > 0 || turnCount > 0) && (
           <aside
+            ref={utilityRailRef}
             className="absolute inset-y-3 right-2 z-10 flex w-14 flex-col gap-2"
             aria-label="对话功能区"
             onPointerDown={(event) => focusChatScrollFromUtilityRail(event, scrollRef.current)}

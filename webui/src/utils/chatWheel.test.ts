@@ -5,73 +5,60 @@ import { routeChatWheel } from './chatWheel'
 function setup() {
   const scroller = document.createElement('div')
   const inner = document.createElement('div'); scroller.append(inner)
-  Object.defineProperties(scroller, { scrollHeight: { value: 1000 }, clientHeight: { value: 200 } })
+  const rail = document.createElement('aside')
+  Object.defineProperties(scroller, { scrollHeight: { value: 1000, configurable: true }, clientHeight: { value: 200, configurable: true } })
   scroller.scrollTop = 300
   const gesture = vi.fn()
-  function wheel(target: Element = inner, options: WheelEventInit = {}) {
+  function wheel(target: Element = rail, options: WheelEventInit = {}) {
     const event = new WheelEvent('wheel', { deltaY: 100, cancelable: true, ...options })
     Object.defineProperty(event, 'target', { value: target })
     routeChatWheel(event, scroller, gesture)
     return event
   }
-  return { scroller, inner, gesture, wheel }
+  return { scroller, inner, rail, gesture, wheel }
 }
 
-function makeScrollable(inner: HTMLElement, overflowY = 'auto') {
-  inner.style.overflowY = overflowY
-  Object.defineProperties(inner, { scrollHeight: { value: 600 }, clientHeight: { value: 100 } })
-  inner.scrollTop = 200
-}
-
-describe('chat vertical wheel routing', () => {
-  it.each([100, -100])('preserves inner native reading in direction %s', deltaY => {
-    const { scroller, inner, gesture, wheel } = setup(); makeScrollable(inner)
-    expect(wheel(undefined, { deltaY }).defaultPrevented).toBe(false)
-    expect(scroller.scrollTop).toBe(300); expect(inner.scrollTop).toBe(200)
-    expect(gesture).toHaveBeenCalledTimes(1)
+describe('chat utility rail wheel routing', () => {
+  it.each([0, 200, 500])('never intercepts transcript readers at scrollTop %s', top => {
+    const { scroller, inner, gesture, wheel } = setup()
+    inner.style.overflowY = 'auto'; inner.scrollTop = top
+    Object.defineProperties(inner, { scrollHeight: { value: 600 }, clientHeight: { value: 100 } })
+    for (const deltaY of [-100, 100]) {
+      expect(wheel(inner, { deltaY }).defaultPrevented).toBe(false)
+      expect(scroller.scrollTop).toBe(300); expect(inner.scrollTop).toBe(top)
+    }
+    expect(gesture).not.toHaveBeenCalled()
   })
-  it.each([{ top: 0, delta: -100, outer: 200 }, { top: 500, delta: 100, outer: 400 }])(
-    'hands off to the transcript at an inner directional edge: %j', ({ top, delta, outer }) => {
-      const { scroller, inner, gesture, wheel } = setup(); makeScrollable(inner); inner.scrollTop = top
-      expect(wheel(undefined, { deltaY: delta }).defaultPrevented).toBe(true)
-      expect(scroller.scrollTop).toBe(outer); expect(inner.scrollTop).toBe(top)
-      expect(gesture).toHaveBeenCalledTimes(1)
+  it('leaves ordinary transcript content native without reading layout', () => {
+    const { scroller, inner, gesture, wheel } = setup()
+    Object.defineProperties(scroller, {
+      scrollHeight: { get: () => { throw new Error('native path must not read layout') }, configurable: true },
+      clientHeight: { get: () => { throw new Error('native path must not read layout') }, configurable: true },
     })
-  it('finds a scrollable ancestor of nested text or buttons', () => {
-    const { scroller, inner, wheel } = setup(); makeScrollable(inner, 'scroll')
-    const child = document.createElement('button'); inner.append(child)
-    expect(wheel(child).defaultPrevented).toBe(false); expect(scroller.scrollTop).toBe(300)
-  })
-  it.each(['visible', 'hidden', 'clip'])('does not treat overflow-%s content as a native reader', overflowY => {
-    const { scroller, inner, wheel } = setup(); makeScrollable(inner, overflowY)
-    expect(wheel().defaultPrevented).toBe(true); expect(scroller.scrollTop).toBe(400)
-  })
-  it('checks higher readers when the closest reader is at its edge', () => {
-    const { scroller, inner, wheel } = setup(); makeScrollable(inner); inner.scrollTop = 500
-    const parent = document.createElement('div'); makeScrollable(parent)
-    scroller.append(parent); parent.append(inner)
-    expect(wheel().defaultPrevented).toBe(false); expect(scroller.scrollTop).toBe(300)
-  })
-  it('scrolls ordinary non-scrollable content once per gesture', () => {
-    const { scroller, inner, gesture, wheel } = setup(); inner.scrollTop = 50
-    expect(wheel().defaultPrevented).toBe(true)
-    expect(scroller.scrollTop).toBe(400); expect(inner.scrollTop).toBe(50)
-    expect(gesture).toHaveBeenCalledTimes(1)
+    const style = vi.spyOn(window, 'getComputedStyle')
+    try {
+      expect(wheel(inner).defaultPrevented).toBe(false)
+      expect(wheel(scroller).defaultPrevented).toBe(false)
+      expect(scroller.scrollTop).toBe(300)
+      expect(style).not.toHaveBeenCalled(); expect(gesture).not.toHaveBeenCalled()
+    } finally { style.mockRestore() }
   })
   it('scrolls from sibling navigation buttons and empty rail space', () => {
-    const { scroller, wheel } = setup()
-    expect(wheel(document.createElement('button')).defaultPrevented).toBe(true)
+    const { scroller, rail, gesture, wheel } = setup()
+    const button = document.createElement('button'); rail.append(button)
+    expect(wheel(button).defaultPrevented).toBe(true)
     expect(scroller.scrollTop).toBe(400)
-    wheel(document.createElement('aside'), { deltaY: -80 }); expect(scroller.scrollTop).toBe(320)
+    wheel(rail, { deltaY: -80 }); expect(scroller.scrollTop).toBe(320)
+    expect(gesture).toHaveBeenCalledTimes(2)
   })
-  it('allows inner native reading at the outer boundary but contains the rail', () => {
+  it('contains the rail at conversation boundaries without invoking gesture', () => {
     const { scroller, gesture, wheel } = setup(); scroller.scrollTop = 800
-    expect(wheel().defaultPrevented).toBe(false)
-    expect(wheel(document.createElement('button')).defaultPrevented).toBe(true)
+    expect(wheel().defaultPrevented).toBe(true)
+    scroller.scrollTop = 0
+    expect(wheel(undefined, { deltaY: -100 }).defaultPrevented).toBe(true)
     expect(gesture).not.toHaveBeenCalled()
-    scroller.scrollTop = 0; expect(wheel(undefined, { deltaY: -100 }).defaultPrevented).toBe(false)
   })
-  it('clamps overshoot and translates line/page deltas', () => {
+  it('clamps overshoot and translates line/page deltas on the rail', () => {
     const { scroller, wheel } = setup()
     wheel(undefined, { deltaMode: 1, deltaY: 2 }); expect(scroller.scrollTop).toBe(332)
     wheel(undefined, { deltaMode: 2, deltaY: 1 }); expect(scroller.scrollTop).toBe(532)
@@ -83,18 +70,18 @@ describe('chat vertical wheel routing', () => {
     expect(wheel(undefined, options).defaultPrevented).toBe(false)
     expect(scroller.scrollTop).toBe(300); expect(gesture).not.toHaveBeenCalled()
   })
-  it.each(['textarea', 'input', 'select', 'editable', 'schedule'])('keeps %s independent', type => {
-    const { scroller, inner, wheel } = setup()
+  it.each(['textarea', 'input', 'select', 'editable', 'schedule'])('keeps %s independent within the rail', type => {
+    const { scroller, rail, wheel } = setup()
     const parent = document.createElement(['editable', 'schedule'].includes(type) ? 'div' : type)
     if (type === 'editable') parent.setAttribute('contenteditable', 'true')
     if (type === 'schedule') parent.setAttribute('data-chat-wheel-independent', '')
-    parent.append(inner); scroller.append(parent)
-    expect(wheel().defaultPrevented).toBe(false); expect(scroller.scrollTop).toBe(300)
+    const child = document.createElement('span'); parent.append(child); rail.append(parent)
+    expect(wheel(child).defaultPrevented).toBe(false); expect(scroller.scrollTop).toBe(300)
   })
-  it('does not override previously consumed gestures', () => {
-    const { scroller, inner, gesture } = setup()
+  it('does not override previously consumed rail gestures', () => {
+    const { scroller, rail, gesture } = setup()
     const event = new WheelEvent('wheel', { deltaY: 100, cancelable: true })
-    Object.defineProperty(event, 'target', { value: inner }); event.preventDefault()
+    Object.defineProperty(event, 'target', { value: rail }); event.preventDefault()
     routeChatWheel(event, scroller, gesture)
     expect(scroller.scrollTop).toBe(300); expect(gesture).not.toHaveBeenCalled()
   })
