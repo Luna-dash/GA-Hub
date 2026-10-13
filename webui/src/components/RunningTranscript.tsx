@@ -22,8 +22,6 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
   const viewportRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const following = useRef(true)
-  const highWater = useRef(0)
-  const [heldHeight, setHeldHeight] = useState(0)
   const [heightCap, setHeightCap] = useState(() => window.innerHeight * 0.8)
   useLayoutEffect(() => {
     // Use the chat output viewport, not the whole window or the growing message body.
@@ -42,22 +40,19 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
   const [expanded, setExpanded] = useState<Record<number, boolean>>({})
   const [fullTurns, setFullTurns] = useState<Record<number, boolean>>({})
   const collapseAnchor = useRef<number | null>(null)
-  const isOpen = (turn: number) => fullTurns[turn] || (expanded[turn] ?? visibleTurns.slice(-3).some(row => row.turn === turn))
+  const isOpen = (turn: number) => fullTurns[turn] || (expanded[turn] ?? visibleTurns.at(-1)?.turn === turn)
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current
     const body = bodyRef.current
     if (!viewport || !body) return
-    const cap = heightCap
-    highWater.current = Math.max(highWater.current, Math.min(body.getBoundingClientRect().height, cap))
-    const height = Math.min(highWater.current, cap)
-    if (height !== heldHeight) setHeldHeight(height)
+    // Let CSS size the viewport from the current visible content, not a historical peak.
     if (collapseAnchor.current !== null) {
       const title = body.querySelector<HTMLElement>(`[data-running-turn="${collapseAnchor.current}"] > button`)
       if (title) viewport.scrollTop += title.getBoundingClientRect().top - viewport.getBoundingClientRect().top - viewport.clientTop
       collapseAnchor.current = null
     } else if (following.current) viewport.scrollTop = viewport.scrollHeight
-  }, [transcript, expanded, fullTurns, heldHeight, heightCap])
+  }, [transcript, expanded, fullTurns, heightCap])
 
   const detach = () => {
     if (!following.current) return
@@ -69,16 +64,17 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
   const toggleFull = (turn: number) => {
     detach()
     if (fullTurns[turn]) {
-      // Keep this row readable in simple mode, even if it is outside the latest three.
+      // Explicit collapse hides both the full record and its simple preview.
       collapseAnchor.current = turn
-      setExpanded(value => ({ ...value, [turn]: true }))
+      setExpanded(value => ({ ...value, [turn]: false }))
     }
     setFullTurns(value => ({ ...value, [turn]: !value[turn] }))
   }
   const resume = () => {
     following.current = true
     setDetached(false)
-    setExpanded({})
+    // Resume following without undoing an explicit full collapse.
+    setExpanded(value => Object.fromEntries(Object.entries(value).filter(([, open]) => !open)))
     const viewport = viewportRef.current
     if (viewport) viewport.scrollTop = viewport.scrollHeight
   }
@@ -86,7 +82,7 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
   return (
     <section data-running-transcript className="relative min-w-0">
       <div ref={viewportRef} data-running-preview hidden={!visibleTurns.length && !transcript.leading && !(recoveryStatus && recoveryBeforeTurn !== undefined && recoveryBeforeTurn < turns.length)} tabIndex={0} aria-label="执行过程"
-        style={{ minHeight: Math.min(heldHeight || 44, heightCap), maxHeight: heightCap }}
+        style={{ maxHeight: heightCap }}
         className="min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:none]"
         onWheel={event => { if (event.deltaY < 0) detach() }}
         onScroll={event => {
@@ -101,7 +97,7 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
             const open = isOpen(turn.turn)
             const full = !!fullTurns[turn.turn]
             const visible = visibleTurns.includes(turn)
-            const toolTitle = !turn.summary && !open
+            const toolTitle = !turn.summary && !open && expanded[turn.turn] !== false
               ? formatToolHint(turn.parts.flatMap(part => part.kind === 'tools' ? part.labels : []))
               : ''
             return (

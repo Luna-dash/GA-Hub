@@ -19,7 +19,7 @@ beforeEach(() => {
 })
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks() })
 
-it('defaults to simple hints; opens the exact raw record without duplicate prose and collapses back', () => {
+it('defaults to simple hints; opens the exact raw record without duplicate prose and fully collapses', () => {
   render(turn(1))
   expect(host.textContent).toContain('读取文件')
   expect(host.textContent).not.toContain('private-argument.txt')
@@ -32,7 +32,8 @@ it('defaults to simple hints; opens the exact raw record without duplicate prose
   click('[data-full-record] button')
   expect(host.querySelector('[data-full-record]')).toBeNull()
   expect(host.textContent).not.toContain('private-argument.txt')
-  expect(host.textContent).toContain('读取文件')
+  expect(host.textContent).not.toContain('读取文件')
+  expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
 })
 
 it('keeps manual full records open through streaming, new turns and explicit resume', () => {
@@ -45,16 +46,45 @@ it('keeps manual full records open through streaming, new turns and explicit res
   expect(host.querySelector('[data-running-turn="1"] [data-full-record]')).not.toBeNull()
   expect(host.textContent).not.toContain('回到最新')
   click('[data-running-turn="1"] > button')
-  expect(host.querySelector('[data-running-turn="1"] [data-tool-hint]')).not.toBeNull()
+  expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
 })
 
-it('opens an old title-only row as full, then leaves it readable in simple mode', () => {
+it('opens an old title-only row as full, then completely collapses it', () => {
   render([1, 2, 3, 4].map(n => turn(n)).join('\n'))
   expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
   click('[data-running-turn="1"] > button')
   expect(host.querySelector('[data-running-turn="1"] [data-full-record]')).not.toBeNull()
   click('[data-running-turn="1"] [data-full-record] button')
-  expect(host.querySelector('[data-running-turn="1"] [data-tool-hint]')).not.toBeNull()
+  expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
+})
+
+it('shows a simple preview only for the latest visible turn as new turns arrive', () => {
+  render([1, 2, 3, 4].map(n => turn(n)).join('\n'))
+  for (const n of [1, 2, 3]) expect(host.querySelector(`[data-running-turn="${n}"] > div`)).toBeNull()
+  expect(host.querySelector('[data-running-turn="4"] [data-tool-hint]')).not.toBeNull()
+  render([1, 2, 3, 4, 5].map(n => turn(n)).join('\n'))
+  expect(host.querySelector('[data-running-turn="4"] > div')).toBeNull()
+  expect(host.querySelector('[data-running-turn="5"] [data-tool-hint]')).not.toBeNull()
+})
+
+it('keeps explicit collapse through streaming and resume, hides fallback tool titles, and can reopen', () => {
+  const noSummary = (body = raw) => `**LLM Running (Turn 1) ...**\n${body}`
+  render(noSummary())
+  click('[data-running-turn="1"] > button')
+  click('[data-full-record] button')
+  expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
+  expect(host.textContent).not.toContain('读取文件')
+  render(noSummary(raw + '\n更新正文'))
+  expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
+  act(() => [...host.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === '回到最新')!.click())
+  expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
+  expect(host.textContent).not.toContain('读取文件')
+  click('[data-running-turn="1"] > button')
+  expect(host.querySelector('[data-full-record] [data-markdown]')?.textContent).toBe(raw + '\n更新正文')
+  click('[data-running-turn="1"] > button')
+  render(noSummary(raw + '\n更新正文') + '\n' + turn(2))
+  expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
+  expect(host.querySelector('[data-running-turn="2"] [data-tool-hint]')).not.toBeNull()
 })
 
 it('anchors bottom collapse to this row and never resumes following due to the resulting scroll event', () => {
@@ -70,6 +100,33 @@ it('anchors bottom collapse to this row and never resumes following due to the r
   viewport.scrollTop = 1000
   act(() => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
   expect(host.textContent).toContain('回到最新')
+})
+
+it('does not reserve the previous preview height when the latest visible turn changes', () => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ height: 360 } as DOMRect)
+  render(turn(1))
+  const viewport = host.querySelector<HTMLElement>('[data-running-preview]')!
+  expect(viewport.style.minHeight).toBe('')
+  render(turn(1) + '\n' + turn(2, '短正文'))
+  expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
+  expect(host.querySelector('[data-running-turn="2"] > div')).not.toBeNull()
+  expect(viewport.style.minHeight).toBe('')
+  expect(viewport.style.height).toBe('')
+})
+
+it('releases height after fully collapsing and keeps the explicit collapse on resume', () => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ height: 480, top: 0 } as DOMRect)
+  render(turn(1))
+  click('[data-running-turn="1"] > button')
+  const viewport = host.querySelector<HTMLElement>('[data-running-preview]')!
+  expect(host.querySelector('[data-full-record]')).not.toBeNull()
+  click('[data-full-record] button')
+  expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
+  expect(viewport.style.minHeight).toBe('')
+  const resume = [...host.querySelectorAll('button')].find(button => button.textContent === '回到最新')!
+  act(() => resume.click())
+  expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
+  expect(viewport.style.minHeight).toBe('')
 })
 
 it('renders ask_user as a passive record while keeping only one interactive entry', () => {

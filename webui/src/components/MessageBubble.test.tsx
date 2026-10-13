@@ -105,16 +105,19 @@ describe('MessageBubble render isolation', () => {
     }
   })
 
-  it('counts only visible turns in the latest-three expansion window', () => {
+  it('previews only the latest visible turn even while the next turn is empty', () => {
     const content = [1, 2, 3].map(n => `**LLM Running (Turn ${n}) ...**\n<summary>摘要${n}</summary>\n正文${n}`).join('\n')
     const render = (tail: string) => act(() => root.render(<MessageBubble role="assistant" content={`${content}\n**LLM Running (Turn 4) ...**\n${tail}`} streaming />))
     for (const tail of ['', '<summary>尚未完成', '🛠️ Tool: `']) {
       render(tail)
       expect(host.querySelector('[data-running-turn="4"]')).toBeNull()
-      expect(host.querySelector('[data-running-turn="1"] > div')).not.toBeNull()
+      expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
+      expect(host.querySelector('[data-running-turn="2"] > div')).toBeNull()
+      expect(host.querySelector('[data-running-turn="3"] > div')).not.toBeNull()
     }
     render('🛠️ Tool: `file_read` 📥 args:')
     expect(host.querySelector('[data-running-turn="4"]')).not.toBeNull()
+    expect(host.querySelector('[data-running-turn="3"] > div')).toBeNull()
     expect(host.querySelector('[data-running-turn="1"] button')?.getAttribute('aria-expanded')).toBe('false')
     expect(host.querySelector('[data-running-turn="4"] [data-tool-hint]')?.textContent).toContain('读取文件')
   })
@@ -146,15 +149,13 @@ describe('MessageBubble render isolation', () => {
     expect(host.querySelector('[data-running-transcript]')).toBeNull()
   })
 
-  it('holds preview height across an empty turn and hides partial summary tags', () => {
-    const measurement = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ height: 220 } as DOMRect)
+  it('uses natural preview height across an empty turn and hides partial summary tags', () => {
     const first = '**LLM Running (Turn 1) ...**\n<summary>已检查</summary>\n🛠️ code_run({})\n上一轮输出'
     act(() => root.render(<MessageBubble role="assistant" content={first} streaming />))
     const viewport = host.querySelector('[data-running-preview]') as HTMLElement
-    expect(viewport.style.minHeight).toBe('220px')
-    measurement.mockReturnValue({ height: 40 } as DOMRect)
+    expect(viewport.style.minHeight).toBe('')
     act(() => root.render(<MessageBubble role="assistant" content={first + '\n**LLM Running (Turn 2) ...**\n<summary>半截'} streaming />))
-    expect(viewport.style.minHeight).toBe('220px')
+    expect(viewport.style.minHeight).toBe('')
     expect(host.textContent).toContain('上一轮输出')
     expect(host.textContent).not.toContain('半截')
     expect(host.textContent).not.toContain('Turn 2')
@@ -165,7 +166,6 @@ describe('MessageBubble render isolation', () => {
     expect(host.textContent).toContain('上一轮输出')
     expect(host.querySelector('[data-running-turn="1"] [data-full-record]')).not.toBeNull()
     expect(host.textContent).not.toContain('上一轮：')
-    measurement.mockRestore()
   })
 
   it('keeps updating while the reader scrolls back and resumes following on demand', () => {
