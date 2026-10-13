@@ -178,7 +178,7 @@ describe('MessageBubble render isolation', () => {
     expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
     expect(viewport.textContent).toContain('新轮正文')
     expect(viewport.scrollTop).toBe(100)
-    const latest = [...host.querySelectorAll('button')].find(button => button.textContent === '回到最新')!
+    const latest = [...host.querySelectorAll('button')].find(button => button.textContent === '收起全部并回到最新')!
     act(() => latest.click())
     expect(viewport.textContent).toContain('新轮正文')
   })
@@ -731,5 +731,33 @@ describe('MessageBubble render isolation', () => {
 
     expect(markdownRender).toHaveBeenCalledTimes(2)
     expect(markdownRender.mock.calls[1][0].children).toContain('hidden tool trace')
+  })
+  it('closes all process records before scrolling, preserves the conclusion and supports reopening', () => {
+    const content = '**LLM Running (Turn 1) ...**\n第一轮正文\n🛠️ code_run({})\n'
+      + '**LLM Running (Turn 2) ...**\n第二轮正文\n🛠️ file_read({})\n'
+      + '**LLM Running (Turn 3) ...**\n最终结论\n[Info] Final response to user.'
+    const scroll = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scroll })
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+    const processButton = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.includes('执行过程'))!
+    act(() => processButton().click())
+    const records = [...host.querySelectorAll<HTMLDetailsElement>('details')]
+    expect(records).toHaveLength(3)
+    act(() => records.forEach(record => { record.open = true; record.dispatchEvent(new Event('toggle')) }))
+    expect(records.every(record => record.open)).toBe(true)
+    scroll.mockImplementation(() => {
+      expect(host.querySelectorAll('details[open]')).toHaveLength(0)
+      expect(processButton().getAttribute('aria-expanded')).toBe('false')
+    })
+    const latest = () => host.querySelector<HTMLButtonElement>('[data-collapse-to-latest]')!
+    act(() => latest().click())
+    expect(host.querySelectorAll('details')).toHaveLength(0)
+    expect(host.textContent).toContain('最终结论')
+    expect(scroll).toHaveBeenCalledWith({ block: 'nearest', behavior: 'instant' })
+    act(() => latest().click())
+    expect(scroll).toHaveBeenCalledTimes(2)
+    act(() => processButton().click())
+    expect(host.querySelectorAll('details[open]')).toHaveLength(0)
+    delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView
   })
 })

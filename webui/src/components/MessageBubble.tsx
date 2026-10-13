@@ -11,7 +11,7 @@
 //   • Fold / tool-trace segments render MarkdownView mode=plain (no math/hljs).
 //   • Hover-revealed "复制" button on assistant messages.
 
-import { memo, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import {
   parseAssistantTranscript,
@@ -29,6 +29,7 @@ import { MessageContent } from './MessageContent'
 import { TranscriptRecordContent } from './TranscriptRecordContent'
 import { AskUserCard } from './AskUserCard'
 import { RunningTranscript } from './RunningTranscript'
+import { CollapseToLatestButton } from './CollapseToLatestButton'
 import { bubbleTone } from './bubbleTone'
 import type { PasteAttachment } from '@/api/types'
 import { api } from '@/api/client'
@@ -341,6 +342,11 @@ function HistoryTranscriptReply({
   askUserDraftKey?: string
   askUserInteractive: boolean
 }) {
+  const [collapseVersion, setCollapseVersion] = useState(0)
+  const latestRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (collapseVersion) latestRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'instant' })
+  }, [collapseVersion])
   // Only an authoritative abort marks a task stopped. An unfinished transcript
   // can be a paused worker, a reconnect baseline, or a retry in the same run.
   const stoppedState = manualStop
@@ -361,7 +367,7 @@ function HistoryTranscriptReply({
 
   return (
     <>
-      {visibleProcessTurns.length > 0 && <LazyProcessFold turns={visibleProcessTurns} />}
+      {visibleProcessTurns.length > 0 && <LazyProcessFold key={collapseVersion} turns={visibleProcessTurns} />}
       {visibleFinal ? (
         <MessageContent content={visibleFinal} format="markdown" />
       ) : stoppedState || transcript.finalAskUser ? null : (
@@ -384,9 +390,12 @@ function HistoryTranscriptReply({
           最终回答较长，展开完整内容
         </button>
       )}
+      {visibleProcessTurns.length > 0 && <CollapseToLatestButton onClick={() => setCollapseVersion(value => value + 1)} />}
+      <div ref={latestRef} data-transcript-latest />
       {stoppedState && (
         <p className="mt-2 text-xs italic leading-5 text-status-warning-muted">⏹任务中止</p>
       )}
+
     </>
   )
 }

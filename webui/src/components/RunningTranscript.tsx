@@ -4,6 +4,7 @@ import { formatToolHint, projectRunningTurn, runningTurnTitle } from '@/utils/ru
 import { MessageContent } from './MessageContent'
 import { TranscriptRecordContent } from './TranscriptRecordContent'
 import { AskUserCard } from './AskUserCard'
+import { CollapseToLatestButton } from './CollapseToLatestButton'
 
 /** One chronological process. Only the running view uses this light projection. */
 export function RunningTranscript({ transcript, askUserDraftKey, askUserInteractive, recoveryStatus, recoveryBeforeTurn, recoveryTitle = '自动重连' }: {
@@ -37,7 +38,8 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
       window.removeEventListener('resize', updateCap)
     }
   }, [])
-  const [detached, setDetached] = useState(false)
+  const latestRef = useRef<HTMLDivElement>(null)
+  const [jumpRequest, setJumpRequest] = useState(0)
   const [expanded, setExpanded] = useState<Record<number, boolean>>({})
   const [fullTurns, setFullTurns] = useState<Record<number, boolean>>({})
   const collapseAnchor = useRef<number | null>(null)
@@ -77,7 +79,6 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
   const detach = () => {
     if (!following.current) return
     following.current = false
-    setDetached(true)
     // Detach only scrolling. Previous rounds still retire when real new output arrives.
   }
   const toggleFull = (turn: number) => {
@@ -91,14 +92,20 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
     }
     setFullTurns(value => ({ ...value, [turn]: !value[turn] }))
   }
-  const resume = () => {
+  const collapseToLatest = () => {
     following.current = true
-    setDetached(false)
-    // Resume following without undoing an explicit full collapse.
-    setExpanded(value => Object.fromEntries(Object.entries(value).filter(([, open]) => !open)))
+    collapseAnchor.current = null
+    setExpanded(Object.fromEntries(turns.map(turn => [turn.turn, false])))
+    setFullTurns({})
+    setRecoveryExpanded(false)
+    setJumpRequest(value => value + 1)
+  }
+  useLayoutEffect(() => {
+    if (!jumpRequest) return
     const viewport = viewportRef.current
     if (viewport) viewport.scrollTop = viewport.scrollHeight
-  }
+    latestRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'instant' })
+  }, [jumpRequest])
 
   return (
     <section data-running-transcript className="relative min-w-0">
@@ -109,7 +116,7 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
         onScroll={event => {
           const el = event.currentTarget
           if (el.scrollHeight - el.scrollTop - el.clientHeight > 24) detach()
-          // Only the explicit resume action re-enables following while inspecting a record.
+          // Only the explicit latest action re-enables following while inspecting a record.
         }}>
         <div ref={bodyRef} className="min-w-0 space-y-1 pb-1">
           {transcript.leading && <MessageContent content={transcript.leading} format="markdown" cache />}
@@ -151,11 +158,10 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
           })}
         </div>
       </div>
-      {detached && <div className="pointer-events-none absolute bottom-0 right-1 z-10">
-        <button type="button" onClick={resume} className="pointer-events-auto rounded-md border border-line bg-bg-card px-2 py-1 text-xs text-accent shadow-sm">回到最新</button>
-      </div>}
       {recoveryStatus && (recoveryBeforeTurn === undefined || recoveryBeforeTurn >= turns.length) && <div className="mt-2 text-xs text-ink-muted">{recoveryRow}</div>}
       {askUser && <div className="mt-2"><AskUserCard question={askUser.question} candidates={askUser.candidates} draftKey={askUserDraftKey} interactive={askUserInteractive} /></div>}
+      <CollapseToLatestButton onClick={collapseToLatest} />
+      <div ref={latestRef} data-transcript-latest />
     </section>
   )
 }
