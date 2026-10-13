@@ -34,8 +34,8 @@ describe('light running projection', () => {
     expect(prose('说明\n🛠️ code_run({\n"script":"private"\n})\n完成')).toBe('说明\n完成')
     expect(prose('说明\n🛠️ code_run({"script":"private')).toBe('说明')
   })
-  it('handles abbreviated compact output without losing subsequent prose', () => {
-    expect(prose('说明\n🛠️ code_run({"script":"long...)\n结果说明')).toBe('说明\n结果说明')
+  it('no longer guesses an abbreviated compact payload closing inside a string', () => {
+    expect(prose('说明\n🛠️ code_run({"script":"long...)\n结果说明')).toBe('说明')
   })
   it('extracts AskUser without exposing args', () => {
     const raw = '请确认\n🛠️ Tool: `functions.ask_user`  📥 args:\n````json\n{"question":"选择？","candidates":["甲","乙"]}\n````'

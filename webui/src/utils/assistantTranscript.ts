@@ -1,3 +1,5 @@
+import { scanTranscript } from './transcriptProtocol'
+
 export interface AssistantTranscriptTurn {
   turn: number
   summary: string
@@ -25,7 +27,6 @@ export interface AssistantTranscript {
 }
 
 const FINAL_MARKER_RE = /\n*(?:`{3,5}[^\r\n]*\r?\n?)?\[Info\]\s*Final response to user\.\s*(?:\r?\n?`{3,5})?\s*$/i
-const PLACEHOLDER_PREFIX = '\u0000GAHUB_FENCE_'
 
 function turnMarkerRe(): RegExp {
   return /(?:\*\*)?LLM Running \(Turn (\d+)\) \.{3}(?:\*\*)?/g
@@ -36,50 +37,15 @@ export function stripFinalResponseMarker(text: string): string {
   return (text || '').replace(FINAL_MARKER_RE, '').trim()
 }
 
-function protectToolFences(text: string): { safe: string; restore: (value: string) => string } {
-  const placeholders: string[] = []
-  const stash = (value: string) => {
-    placeholders.push(value)
-    return `${PLACEHOLDER_PREFIX}${placeholders.length - 1}\u0000`
-  }
-
-  // GA tool arguments/results use four or five backticks. Protect them so a
-  // log line that happens to mention a Turn marker cannot split the transcript.
-  let safe = text.replace(/^(`{4,})[^\r\n]*(?:\r?\n|$)[\s\S]*?^\1[ \t]*$/gm, stash)
-  safe = safe.replace(/^`{4,}[^\r\n]*(?:\r?\n|$)[\s\S]*$/m, stash)
-
-  return {
-    safe,
-    restore: (value: string) => value.replace(
-      new RegExp(`${PLACEHOLDER_PREFIX}(\\d+)\\u0000`, 'g'),
-      (_, index: string) => placeholders[Number(index)] ?? '',
-    ),
-  }
-}
-
-function stripFencedBlocks(text: string): string {
-  return text.replace(/^(`{3,})[^\r\n]*(?:\r?\n|$)[\s\S]*?^\1[ \t]*$/gm, ' ')
-}
-
-function normalizeSummary(text: string): string {
-  return (text || '')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join(' · ')
-}
-
 function extractSummary(text: string): string {
-  const searchable = stripFencedBlocks(text).replace(/<thinking>[\s\S]*?<\/thinking>/gi, ' ')
-  const match = /<summary>\s*([\s\S]*?)\s*<\/summary>/i.exec(searchable)
-  return normalizeSummary(match?.[1] || '')
+  const node = scanTranscript(text).find(node => node.kind === 'summary' && node.complete)
+  return (node?.raw.replace(/^<summary>\s*|\s*<\/summary>$/gi, '') || '')
+    .split(/\r?\n/).map(line => line.trim()).filter(Boolean).join(' · ')
 }
 
 function stripTraceMeta(text: string): string {
-  return (text || '')
-    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
-    .replace(/<summary>[\s\S]*?<\/summary>\s*/gi, '')
-    .trim()
+  return scanTranscript(text || '').filter(node => !node.complete || (node.kind !== 'thinking' && node.kind !== 'summary'))
+    .map(node => node.raw).join('').trim()
 }
 
 function readJsonObjectAfter(text: string, offset: number): string {
@@ -200,22 +166,19 @@ export function renderAskUserPayload(payload: AskUserPayload): string {
     : payload.question
 }
 
-function lastAskUserMatch(text: string): RegExpMatchArray | null {
-  const starts = [
-    ...text.matchAll(/🛠️\s*Tool:\s*`?ask_user`?/gi),
-    ...text.matchAll(/🛠️\s*ask_user\s*\(/gi),
-  ]
-  if (!starts.length) return null
-  return starts.reduce((latest, match) => (
-    (match.index ?? -1) > (latest.index ?? -1) ? match : latest
-  ))
+function lastAskUserMatch(text: string): RegExpExecArray | null {
+  const node = scanTranscript(text).filter(node => node.kind === 'tool' && node.name?.split('.').at(-1)?.toLowerCase() === 'ask_user').at(-1)
+  if (!node) return null
+  const match = [text.slice(node.start, node.headerEnd ?? node.end)] as unknown as RegExpExecArray
+  match.index = node.start
+  return match
 }
 
-/** Parse the last ask_user payload in *text*, or null when absent/unparseable. */
 export function extractAskUserPayload(text: string): AskUserPayload | null {
   const match = lastAskUserMatch(text)
   if (!match) return null
-  const tail = text.slice((match.index ?? 0) + match[0].length)
+  const node = scanTranscript(text).find(node => node.kind === 'tool' && node.start === match.index)!
+  const tail = text.slice(node.headerEnd ?? node.end, node.end)
   const encoded = readJsonObjectAfter(tail, 0)
   if (encoded) {
     try {
@@ -304,9 +267,7 @@ function projectFinalBody(content: string, askReplacement: string | null = null)
       })()
   if (askReplacement === null && !rendered) return withoutMeta
   const start = askMatch.index ?? 0
-  const tail = withoutMeta.slice(start)
-  const fence = /^`{4,}[^\r\n]*\r?\n[\s\S]*?^`{4,}[ \t]*$/m.exec(tail)
-  const end = fence ? start + (fence.index ?? 0) + fence[0].length : withoutMeta.length
+  const end = scanTranscript(withoutMeta).find(node => node.kind === 'tool' && node.start === start)!.end
   const before = withoutMeta.slice(0, start).trimEnd()
   const after = withoutMeta.slice(end).trim()
   return [before, rendered, after].filter(Boolean).join('\n\n')
@@ -317,17 +278,17 @@ function projectFinalBody(content: string, askReplacement: string | null = null)
  * protocol. A tail that evaporates to nothing (bare tool fences, status
  * lines) is plumbing too — only prose after the last call is a conclusion. */
 function isDanglingToolTurn(content: string): boolean {
-  if (lastAskUserMatch(content)) return false
-  const { safe } = protectToolFences(content)
-  const outsideFences = safe
-    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, 'MARKDOWN_CODE')
-    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n[\s\S]*)?$/m, 'MARKDOWN_CODE')
-  const calls = [...outsideFences.matchAll(/^[ \t]*🛠️\s*(?:Tool\s*[:：]\s*`?[\w.-]|\w+\s*\()[^\r\n]*$/gm)]
-  const lastCall = calls[calls.length - 1]
-  const tail = (lastCall
-    ? outsideFences.slice((lastCall.index ?? 0) + lastCall[0].length)
-    : outsideFences)
-    .replace(new RegExp(`${PLACEHOLDER_PREFIX}\\d+\\u0000`, 'g'), '')
+  const nodes = scanTranscript(content)
+  if (nodes.some(node => node.kind === 'tool' && node.name?.split('.').at(-1) === 'ask_user')) return false
+  let lastCall = -1
+  nodes.forEach((node, index) => { if (node.kind === 'tool') lastCall = index })
+  if (lastCall < 0) {
+    const visible = nodes.filter(node => !['summary', 'thinking'].includes(node.kind) && node.raw.trim())
+    return visible.length > 0 && visible.every(node => node.kind === 'code' && /^\s*`{4,}/.test(node.raw))
+  }
+  const tail = nodes.slice(lastCall + 1)
+    .filter(node => node.kind === 'text' || node.kind === 'code')
+    .map(node => node.kind === 'code' ? 'MARKDOWN_CODE' : node.raw).join('')
     .replace(/^[ \t]*\[(?:Info|Warn|Error|Status|Stdout|Stderr|系统)\][^\r\n]*$/gim, '')
   return tail.trim() === ''
 }
@@ -478,30 +439,16 @@ export function fallbackSummary(raw: string): string {
  * This scans strings only; Markdown parsing remains the rendering layer's job.
  */
 export function hasAssistantExecutionTrace(text: string): boolean {
-  const { safe } = protectToolFences(text || '')
-  const outside = safe
-    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, '')
-    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n[\s\S]*)?$/m, '')
-  return /^[ \t]*🛠️\s*(?:Tool\s*[:：]\s*`?[\w.-]|\w+\s*\()/m.test(outside)
+  return scanTranscript(text || '').some(node => node.kind === 'tool')
 }
 
 export function parseAssistantTranscript(text: string, streaming = false): AssistantTranscript {
   const source = stripFinalResponseMarker(text)
-  const { safe: protectedSource, restore } = protectToolFences(source)
-  let safe = protectedSource
-  if (streaming) {
-    // Hide an unfinished protocol summary, never an example in a tool fence.
-    const outsideFences = safe
-      .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, (block) => ' '.repeat(block.length))
-      .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n[\s\S]*)?$/m, (block) => ' '.repeat(block.length))
-    const start = outsideFences.toLowerCase().lastIndexOf('<summary>')
-    if (start >= 0 && !/<\/summary>/i.test(outsideFences.slice(start))) safe = safe.slice(0, start)
-    else {
-      const tail = /<(?:s(?:u(?:m(?:m(?:a(?:r(?:y)?)?)?)?)?)?)?$/i.exec(outsideFences)
-      if (tail) safe = safe.slice(0, tail.index)
-    }
-  }
-  const matches = [...safe.matchAll(turnMarkerRe())]
+  const safe = scanTranscript(source)
+    .filter(node => !streaming || !(!node.complete && ['summary', 'thinking', 'pending'].includes(node.kind)))
+    .map(node => node.raw).join('')
+  const restore = (value: string) => value
+  const matches = scanTranscript(safe).filter(node => node.kind === 'turn')
 
   if (!matches.length) {
     const cleanedSource = restore(safe)
@@ -517,14 +464,14 @@ export function parseAssistantTranscript(text: string, streaming = false): Assis
     }
   }
 
-  const leading = stripTraceMeta(restore(safe.slice(0, matches[0].index ?? 0)))
+  const leading = stripTraceMeta(restore(safe.slice(0, matches[0].start)))
 
   const turns = matches.map((match, index) => {
-    const start = (match.index ?? 0) + match[0].length
-    const end = index + 1 < matches.length ? (matches[index + 1].index ?? safe.length) : safe.length
+    const start = match.end
+    const end = index + 1 < matches.length ? matches[index + 1].start : safe.length
     const rawContent = restore(safe.slice(start, end)).trim()
     return {
-      turn: Number(match[1]),
+      turn: match.turn!,
       summary: extractSummary(rawContent) || fallbackSummary(rawContent),
       content: stripTraceMeta(rawContent),
     }
@@ -564,47 +511,16 @@ export function parseAssistantTranscript(text: string, streaming = false): Assis
  * Unlike finalAskUser (a card projection), this also accepts questions without
  * candidates and requires ask_user to be the terminal executable call. */
 export function extractPendingAskUserPayload(text: string): AskUserPayload | null {
-  // Shield all fences before splitting turns, including an unfinished example
-  // containing turn markers. Restore only after selecting the terminal turn.
-  const fences: string[] = []
-  const stash = (value: string) => `${PLACEHOLDER_PREFIX}notify${fences.push(value) - 1}\u0000`
-  const protectedSource = stripFinalResponseMarker(text)
-    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, stash)
-    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n[\s\S]*)?$/m, stash)
-  const transcript = parseAssistantTranscript(protectedSource)
-  const selected = [...transcript.turns].reverse().find(turn => turn.content.trim())?.content
-    ?? (transcript.turns.length ? '' : stripTraceMeta(protectedSource))
-  const content = selected.replace(new RegExp(`${PLACEHOLDER_PREFIX}notify(\\d+)\\u0000`, 'g'),
-    (_, index: string) => fences[Number(index)] ?? '')
-  const mask = (value: string) => ' '.repeat(value.length)
-  const outside = content
-    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, mask)
-    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*(?:\r?\n[\s\S]*)?$/m, mask)
-    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, mask)
-  const calls = [...outside.matchAll(/^[ \t]*🛠️\s*(?:Tool\s*[:：]\s*`?([\w.-]+)`?|([\w.-]+)\s*\()/gim)]
-  const call = calls.at(-1)
-  if (!call || (call[1] || call[2]).toLowerCase() !== 'ask_user') return null
-  const source = content.slice(call.index ?? 0)
-  const payload = extractAskUserPayload(source)
-  if (!payload) return null
-  // A later conclusion in the same turn means this historical question is
-  // no longer the final result. Keep tool result fences/status lines opaque.
-  let tail: string
-  if (call[2]) {
-    const closing = /\)[ \t]*(?:\r?\n|$)/.exec(source)
-    if (!closing) return null
-    tail = source.slice((closing.index ?? 0) + closing[0].length)
-  } else {
-    const object = readJsonObjectAfter(source, call[0].length)
-    if (!object) return null
-    tail = source.slice(source.indexOf(object) + object.length)
-      .replace(/^\s*`{3,}[^\r\n]*(?:\r?\n|$)/, '')
-  }
-  tail = stripTraceMeta(tail)
-    .replace(/^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n[\s\S]*?^[ \t]*\1[ \t]*$/gm, '')
-    .replace(/^[ \t]*\[(?:Info|Warn|Error|Status|Stdout|Stderr|系统)\][^\r\n]*$/gim, '')
-    .trim()
-  return tail ? null : payload
+  const transcript = parseAssistantTranscript(text)
+  const content = [...transcript.turns].reverse().find(turn => turn.content.trim())?.content
+    ?? (transcript.turns.length ? '' : stripTraceMeta(stripFinalResponseMarker(text)))
+  const nodes = scanTranscript(content)
+  const call = nodes.filter(node => node.kind === 'tool').at(-1)
+  if (!call || !call.complete || call.name?.split('.').at(-1)?.toLowerCase() !== 'ask_user') return null
+  const tail = nodes.filter(node => node.start >= call.end && ['text', 'code', 'pending'].includes(node.kind))
+    .map(node => node.raw).join('')
+    .replace(/^[ \t]*\[(?:Info|Warn|Error|Status|Stdout|Stderr|系统)\][^\r\n]*$/gim, '').trim()
+  return tail ? null : extractAskUserPayload(call.raw)
 }
 
 export function stripAssistantTranscriptTags(text: string): string {
