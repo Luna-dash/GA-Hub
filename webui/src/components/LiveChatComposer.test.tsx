@@ -149,7 +149,7 @@ describe('LiveChatComposer draft boundary', () => {
     expect(onStop).toHaveBeenCalledOnce()
   })
 
-  it('clears the actual composer immediately and displays sending status while allowing typing', () => {
+  it('clears the composer and announces sending without a visible layout row while allowing typing', () => {
     useDraftStore.getState().setText(DRAFT_KEY, 'hello')
     useDraftStore.getState().setAttachments(DRAFT_KEY, [attachment])
     act(() => root.render(<LiveChatComposer draftKey={DRAFT_KEY} onSubmit={(draft) => {
@@ -161,9 +161,15 @@ describe('LiveChatComposer draft boundary', () => {
     expect(textarea.value).toBe('')
     expect(host.textContent).not.toContain('notes.txt')
     expect(host.textContent).toContain('发送中')
+    expect(host.querySelector('[role="status"]')?.classList.contains('sr-only')).toBe(true)
     expect(textarea.disabled).toBe(false)
     act(() => changeTextarea(textarea, 'next'))
     expect(send.disabled).toBe(true)
+    expect(textarea.value).toBe('next')
+    const item = Object.values(useDraftStore.getState().submissions)[0]
+    act(() => useDraftStore.getState().finishSubmission(item.id))
+    expect(host.querySelector('[role="status"]')).toBeNull()
+    expect(send.disabled).toBe(false)
     expect(textarea.value).toBe('next')
   })
 

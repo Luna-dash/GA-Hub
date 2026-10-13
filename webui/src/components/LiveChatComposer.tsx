@@ -91,7 +91,7 @@ export function LiveChatComposer({
           submitDisabled={submitDisabled || submitting}
         />
         {pending.some((item) => item.status === 'sending') && (
-          <div role="status" className="px-3 pb-2 text-xs text-text-muted">发送中…</div>
+          <span role="status" className="sr-only">发送中…</span>
         )}
         {recovery.map((item) => (
           <div key={item.id} role="status" className="flex items-center gap-2 px-3 pb-2 text-xs text-text-muted">
