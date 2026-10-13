@@ -176,14 +176,20 @@ export type NoticeKey = (typeof noticeKeys)[keyof typeof noticeKeys]
  * Insert or update recovery status inside the explicitly identified answer.
  * Status stays separate from model content and does not create a notice bubble.
  */
+function belongsToRun(message: ChatMsg, runId?: string): boolean {
+  // Transport and logical IDs are only meaningful inside their run.
+  return message.runId === runId
+}
+
 function upsertRetryNotice(
   prev: ChatMsg[],
   retryKey: string,
   content: string,
   timestamp?: number,
   retryStreamId?: string,
+  runId?: string,
 ): ChatMsg[] {
-  const idx = prev.findIndex((m) => m.role === 'assistant' && (
+  const idx = prev.findIndex((m) => m.role === 'assistant' && belongsToRun(m, runId) && (
     m.logicalId === retryKey || m.streamId === retryKey
     || m.segments?.some((part) => part.streamId === retryKey)
   ))
@@ -191,7 +197,7 @@ function upsertRetryNotice(
   if (idx === -1) {
     return [
       ...prev,
-      { role: 'assistant', content: '', streamId: retryKey, logicalId: retryKey,
+      { role: 'assistant', content: '', streamId: retryKey, logicalId: retryKey, runId,
         recoveryNotice, recoveryOffset: 0, recoveryStreamId: retryStreamId, segments: [], timestamp },
     ]
   }
@@ -221,11 +227,12 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
       const attempt = s.retry_attempt || 0
       const done = !!s.done
       const retryKey = s.logical_id || s.retry_of || s.stream_id || ''
-      const meta = retryNoticeEntries.get(retryKey)
+      const noticeKey = `${s.run_id || "legacy"}:${retryKey}`
+      const meta = retryNoticeEntries.get(noticeKey)
       if (!done && (meta === undefined || attempt > meta.attempt)) {
-        retryNoticeEntries.set(retryKey, { idx: 0, attempt, done })
+        retryNoticeEntries.set(noticeKey, { idx: 0, attempt, done })
         const withNotice = upsertRetryNotice(out, retryKey, retryNoticeLabel(s, attempt),
-          epochMilliseconds(s.started_at) ?? undefined, s.stream_id)
+          epochMilliseconds(s.started_at) ?? undefined, s.stream_id, s.run_id)
         out.splice(0, out.length, ...withNotice)
       }
       if (s.content || !s.done) {
@@ -261,6 +268,7 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
         streamId: s.stream_id,
         source: s.source,
         streaming: !s.done,
+        startedAt: epochMilliseconds(s.started_at),
         timestamp: epochMilliseconds(s.done ? s.finished_at : s.started_at),
       })
     }
@@ -455,16 +463,88 @@ function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
       // A stale partial may not shrink a newer cumulative projection.
       if (old.content.startsWith(msg.content) && old.content.length > msg.content.length) continue
       out[index] = old.role === 'assistant' && old.runId && old.runId === msg.runId
-        ? mergeRunReply(old, msg) : { ...old, ...msg }
+        ? mergeRunReply(old, msg) : { ...old, ...msg,
+          // Snapshot retries may carry a later query timestamp for the same run.
+          timestamp: old.role === 'user' && old.runId && old.runId === msg.runId
+            ? Math.min(old.timestamp ?? Infinity, msg.timestamp ?? Infinity) === Infinity
+              ? null : Math.min(old.timestamp ?? Infinity, msg.timestamp ?? Infinity)
+            : msg.timestamp,
+        }
       continue
     }
     out.push(msg)
     if (key) positions.set(key, out.length - 1)
   }
-  return out
+  return orderConversationTurns(out)
+}
+
+/** Order whole turns, never individual bubbles by assistant completion time.
+ * Known run identity keeps retries and notices with their question. Legacy
+ * streams are paired locally, so recycled ids cannot join unrelated turns.
+ * Missing-time turns and local pending/system bubbles keep their stable slots.
+ */
+export function orderConversationTurns(messages: ChatMsg[]): ChatMsg[] {
+  type Turn = { messages: ChatMsg[]; anchor?: number }
+  const turns: Turn[] = []
+  const runs = new Map<string, Turn>()
+  let legacy: Turn | undefined
+  for (const message of messages) {
+    let turn: Turn | undefined
+    if (message.runId && !message.pendingWebui) {
+      turn = runs.get(message.runId)
+      if (!turn) {
+        turn = { messages: [] }
+        runs.set(message.runId, turn)
+        turns.push(turn)
+      }
+      legacy = undefined
+    } else if (message.role === 'assistant' && !message.runId
+      && message.source !== 'system' && message.source !== 'runtime_error_notice'
+      && legacy && (message.source === 'history'
+        || (message.streamId != null && legacy.messages[0].streamId === message.streamId))) {
+      turn = legacy
+    } else {
+      turn = { messages: [] }
+      turns.push(turn)
+      legacy = message.role === 'user' && !message.runId && !message.pendingWebui ? turn : undefined
+    }
+    turn.messages.push(message)
+    if (message.role === 'user' && !message.pendingWebui
+      && message.timestamp != null && Number.isFinite(message.timestamp)) {
+      turn.anchor = turn.anchor == null ? message.timestamp : Math.min(turn.anchor, message.timestamp)
+    }
+  }
+  for (const turn of turns) {
+    // Answer-only recovery frames still have a genuine stream-start anchor.
+    // Never use assistant timestamp here: completed replies carry finish time.
+    if (turn.anchor != null) continue
+    for (const message of turn.messages) {
+      if (message.role === 'assistant' && message.startedAt != null
+        && Number.isFinite(message.startedAt) && message.source !== 'system'
+        && message.source !== 'runtime_error_notice') {
+        turn.anchor = turn.anchor == null ? message.startedAt : Math.min(turn.anchor, message.startedAt)
+      }
+    }
+  }
+  const dated = turns.filter((turn) => turn.anchor != null)
+    .sort((a, b) => a.anchor! - b.anchor!)
+  let index = 0
+  const ordered = turns.flatMap((turn) => {
+    const selected = turn.anchor == null ? turn : dated[index++]
+    // A late question projection must precede its answer in the same run.
+    return selected.messages.some((message) => message.role === 'user')
+      ? [...selected.messages.filter((message) => message.role === 'user'),
+        ...selected.messages.filter((message) => message.role !== 'user')]
+      : selected.messages
+  })
+  return ordered.length === messages.length && ordered.every((message, i) => message === messages[i])
+    ? messages : ordered
 }
 
 export function mergeSessionSnapshot(base: ChatMsg[], event: Extract<ChatWSOut, { type: 'snapshot' }>): ChatMsg[] {
+  // Completed archive text is authoritative; live text must still accept its final frame.
+  base = base.map((message) => message.source === 'history'
+    ? settleSnapshot([message], event)[0] : message)
   const active = event.active_message
   if (active?.query && active.ts != null) {
     const existing = event.streams?.find((s) => s.stream_id === active.stream_id)
@@ -484,7 +564,7 @@ export function mergeSessionSnapshot(base: ChatMsg[], event: Extract<ChatWSOut, 
       content: active.content,
       done: active.done,
     }]
-    return settleSnapshot(mergeLive(base, applySnapshot(streams)), event)
+    return orderConversationTurns(settleSnapshot(mergeLive(base, applySnapshot(streams)), event))
   }
   let msgs = event.streams ? mergeLive(base, applySnapshot(event.streams)) : base
   // Query-less adapters can still carry explicit run identity; never infer it.
@@ -493,7 +573,7 @@ export function mergeSessionSnapshot(base: ChatMsg[], event: Extract<ChatWSOut, 
     run_id: active.run_id, logical_id: active.logical_id, source: active.source,
     retry_of: active.retry_of,
   })
-  return settleSnapshot(msgs, event)
+  return orderConversationTurns(settleSnapshot(msgs, event))
 }
 
 function settleSnapshot(msgs: ChatMsg[], event: Extract<ChatWSOut, { type: 'snapshot' }>): ChatMsg[] {
@@ -554,8 +634,8 @@ type ReplyEvent = Extract<ChatWSOut, { type: 'started' | 'next' | 'done' }>
 function updateLogicalReply(prev: ChatMsg[], evt: ReplyEvent, now: number): ChatMsg[] {
   const sid = evt.stream_id
   const key = evt.logical_id || evt.retry_of || sid
-  const idx = prev.findIndex((m) => m.role === 'assistant' && (
-    (evt.run_id && m.runId === evt.run_id) || m.logicalId === key || m.streamId === key || m.streamId === sid
+  const idx = prev.findIndex((m) => m.role === 'assistant' && belongsToRun(m, evt.run_id) && (
+    !!evt.run_id || m.logicalId === key || m.streamId === key || m.streamId === sid
     || m.segments?.some((part) => part.streamId === sid || part.streamId === evt.retry_of)
   ))
   const old = idx < 0 ? undefined : prev[idx]
@@ -564,7 +644,12 @@ function updateLogicalReply(prev: ChatMsg[], evt: ReplyEvent, now: number): Chat
     streamId: old.streamId, content: old.content, done: !old.streaming && !old.stopped,
   }] : [])
   if (evt.type === 'started' && initial.some((part) => part.streamId === sid)) return prev
-  const segments = updateReplySegments(initial, sid, evt.type, 'content' in evt ? evt.content : undefined)
+  const part = updateReplySegments([], sid, evt.type, 'content' in evt ? evt.content : undefined)
+  // Direct cumulative events and snapshots must adopt the same archived segment.
+  // Otherwise history:<id> + physical stream produce two overlapping replays.
+  const segments = old?.runId
+    ? mergeRunReply({ ...old, segments: initial }, { ...old, segments: part }).segments!
+    : updateReplySegments(initial, sid, evt.type, 'content' in evt ? evt.content : undefined)
   const latest = segments[segments.length - 1]
   const streaming = !old?.stopped && !latest.done
   const message: ChatMsg = {
@@ -609,7 +694,7 @@ export function applyEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   }
   const msgs = reduceEvent(prev, evt)
   if (evt.type !== 'started') return msgs
-  return msgs.map((m) => m.streamId === evt.stream_id ? {
+  return msgs.map((m) => m.streamId === evt.stream_id && (!m.runId || belongsToRun(m, evt.run_id)) ? {
     ...m, runId: evt.run_id || m.runId, logicalId: evt.logical_id || m.logicalId,
   } : m)
 }
@@ -633,11 +718,11 @@ function reduceEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
       const retryKey = evt.logical_id || evt.retry_of || sid
       const reason = evt.retry_reason === 'truncated' ? '截断续接' : '网络重试'
       const note = `_系统${reason}（${retryAttempt || '?'}${evt.retry_max ? `/${evt.retry_max}` : ''}）。_`
-      const withNotice = upsertRetryNotice(prev, retryKey, note, now, sid)
+      const withNotice = upsertRetryNotice(prev, retryKey, note, now, sid, evt.run_id)
       return updateLogicalReply(withNotice, evt, epochMilliseconds(evt.ts) ?? now)
     }
-    if (prev.some((m) => m.role === 'assistant' && (
-      m.streamId === sid || (evt.run_id && m.runId === evt.run_id)
+    if (prev.some((m) => m.role === 'assistant' && belongsToRun(m, evt.run_id) && (
+      m.streamId === sid || !!evt.run_id
       || (evt.logical_id && m.logicalId === evt.logical_id)))) {
       return updateLogicalReply(prev, evt, epochMilliseconds(evt.ts) ?? now)
     }
@@ -663,10 +748,10 @@ function reduceEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
     // 2. Fresh stream from another source (or a webui submission whose pre-add
     //    is missing — happens after a tab reload). Add a user + assistant pair.
     const next = prev.slice()
-    if (!next.some((m) => m.role === 'user' && m.streamId === sid)) {
+    if (!next.some((m) => m.role === 'user' && belongsToRun(m, evt.run_id) && m.streamId === sid)) {
       next.push({ role: 'user', content: query, streamId: sid, runId: evt.run_id, logicalId: evt.logical_id, source, timestamp: now })
     }
-    if (!next.some((m) => m.role === 'assistant' && m.streamId === sid)) {
+    if (!next.some((m) => m.role === 'assistant' && belongsToRun(m, evt.run_id) && m.streamId === sid)) {
       next.push({ role: 'assistant', content: '', streamId: sid, runId: evt.run_id, logicalId: evt.logical_id, source, streaming: true, timestamp: now, startedAt: epochMilliseconds(evt.ts) ?? now, finishedAt: null })
     }
     return next
@@ -703,6 +788,8 @@ function reduceEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
       evt.logical_id || evt.stream_id || '',
       `_检测到 ${reason}，正在自动重试（${evt.attempt}/${evt.max_attempts}）。_`,
       now,
+      undefined,
+      evt.run_id,
     )
   }
   if (evt.type === 'retry_exhausted') {
@@ -713,6 +800,8 @@ function reduceEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
       evt.logical_id || evt.stream_id || '',
       `_检测到 ${reason}，但自动重试已达到上限（${evt.max_attempts}/${evt.max_attempts}）。_`,
       now,
+      undefined,
+      evt.run_id,
     )
   }
   if (evt.type === 'retry_scheduled') {
@@ -724,6 +813,8 @@ function reduceEvent(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
       evt.logical_id || evt.stream_id || '',
       `_检测到 ${reason}，约 ${secs}s 后自动重试（${evt.attempt}/${evt.max_attempts}）。_`,
       now,
+      undefined,
+      evt.run_id,
     )
   }
   if (evt.type === 'error') {
@@ -777,12 +868,12 @@ function ensureRetryStartNotice(prev: ChatMsg[], evt: ChatWSOut): ChatMsg[] {
   if (evt.type !== 'next' && evt.type !== 'done') return prev
   if (evt.source !== 'chat_error_retry' && evt.source !== 'auto_continue') return prev
   // Late cumulative events cannot revive recovery status on a completed stream.
-  if (prev.some((m) => m.segments?.some((part) => part.streamId === evt.stream_id && part.done))) return prev
+  if (prev.some((m) => belongsToRun(m, evt.run_id) && m.segments?.some((part) => part.streamId === evt.stream_id && part.done))) return prev
   const attempt = evt.retry_attempt ?? 0
   const retryKey = evt.logical_id || evt.retry_of || evt.stream_id || ''
   const reason = evt.retry_reason === 'truncated' ? '截断续接' : '网络重试'
   const note = `_系统${reason}（${attempt || '?'}${evt.retry_max ? `/${evt.retry_max}` : ''}）。_`
-  return upsertRetryNotice(prev, retryKey, note, undefined, evt.stream_id)
+  return upsertRetryNotice(prev, retryKey, note, undefined, evt.stream_id, evt.run_id)
 }
 
 function anyStreaming(msgs: ChatMsg[]): boolean {
@@ -893,7 +984,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     if (switching) delete sessionViews[sessionId]
     const resumeCachedView = !forceHistory && switching && cached?.historyStatus === 'ready'
     set({
-      msgs: switching ? (cached?.msgs ?? []) : current.msgs,
+      msgs: orderConversationTurns(switching ? (cached?.msgs ?? []) : current.msgs),
       streaming: switching ? (cached?.streaming ?? false) : current.streaming,
       resumePolicy: switching
         ? (cached?.resumePolicy ?? (cached?.streaming ? 'follow-latest' : 'restore-position'))

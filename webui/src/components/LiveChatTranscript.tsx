@@ -671,7 +671,7 @@ function trimScrollPositions(
 
 function chatMessageKey(message: ChatMsg): string {
   const identity = message.streamId || message.pendingWebuiId
-  if (identity) return `${message.role}:${identity}`
+  if (identity) return `${message.runId || "legacy"}:${message.role}:${identity}`
   const source = `${message.role}|${message.source ?? ''}|${message.timestamp ?? ''}|${message.content.length}|${message.content.slice(0, 256)}|${message.content.slice(-256)}`
   let hash = 2_166_136_261
   for (let cursor = 0; cursor < source.length; cursor += 1) {
