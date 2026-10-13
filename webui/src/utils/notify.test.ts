@@ -24,6 +24,26 @@ describe('unified notification entry', () => {
     await notify('foreground', { tag: 'foreground' }); expect(m.request).not.toHaveBeenCalled()
     await notify('测试', { force: true }); expect(m.request).toHaveBeenCalledOnce()
   })
+  it('does not open a session when postponed or dismissed', async () => {
+    const onOpen = vi.fn()
+    m.request.mockResolvedValueOnce(false).mockResolvedValueOnce(null)
+    await notify('结果', { tag: 'later', onOpen })
+    await notify('结果', { tag: 'dismiss', onOpen })
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+  it('keeps queued confirmations bound to their own targets', async () => {
+    const pending: Array<(value: boolean) => void> = []
+    m.request.mockImplementation(() => new Promise<boolean>(resolve => pending.push(resolve)))
+    const first = vi.fn(), second = vi.fn()
+    const a = notify('结果 A', { tag: 'queue-a', onOpen: first })
+    const b = notify('结果 B', { tag: 'queue-b', onOpen: second })
+    pending[1](true); await b
+    expect(second).toHaveBeenCalledOnce()
+    expect(first).not.toHaveBeenCalled()
+    pending[0](true); await a
+    expect(first).toHaveBeenCalledOnce()
+    expect(second).toHaveBeenCalledOnce()
+  })
   it('deduplicates by event rather than globally', async () => {
     await notify('结果', { tag: 'one' }); await notify('结果', { tag: 'one' }); await notify('结果', { tag: 'two' })
     expect(m.request).toHaveBeenCalledTimes(2)

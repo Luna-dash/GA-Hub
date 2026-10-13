@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { queryKeys } from '@/queries/queryKeys'
 import type { SessionRuntime } from '@/api/types'
-import { useChatStore } from '@/stores/chatStore'
+import { openSessionChat } from '@/utils/sessionUi'
 import { hubEventClient } from '@/runtime/hubEventClient'
 import { extractAskUserPayload } from '@/utils/assistantTranscript'
 import { notify } from '@/utils/notify'
@@ -17,10 +17,7 @@ export function useDesktopNotifyEffects() {
     let alive = true
     const seen = new Set<string>()
     const aborted = new Set<string>()
-    const onOpen = (id: string) => () => {
-      useChatStore.getState().start(id)
-      navigate('/chat')
-    }
+    const onOpen = (id: string) => () => openSessionChat(navigate, id)
     const unsubscribeRuntime = hubEventClient.subscribe('session:runtime', (event) => {
       if (event.topic !== 'session:runtime') return
       const state = event.payload as unknown as SessionRuntime

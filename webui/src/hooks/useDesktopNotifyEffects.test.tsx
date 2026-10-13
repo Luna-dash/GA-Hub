@@ -11,6 +11,7 @@ vi.mock('@/utils/notify', () => ({ notify: m.notify }))
 vi.mock('@/api/client', () => ({ api: { sessions: vi.fn(), getSessionMessages: m.messages } }))
 vi.mock('@/stores/chatStore', () => ({ useChatStore: { getState: () => ({ start: m.start }) } }))
 import { useDesktopNotifyEffects } from './useDesktopNotifyEffects'
+import { storageKeys } from '@/config/storageKeys'
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 function Probe() { useDesktopNotifyEffects(); return null }
 const emit = (payload: any) => m.handlers.get('session:runtime')?.({ topic: 'session:runtime', payload })
@@ -29,7 +30,9 @@ describe('state notifications', () => {
     expect(m.notify).toHaveBeenCalledTimes(1)
     expect(m.notify).toHaveBeenCalledWith('会话有新结果', expect.objectContaining({ body: '「测试会话」已完成本轮任务，请进入会话查看结果。', tag: 's1:r1' }))
     m.notify.mock.calls[0][1].onOpen()
-    expect(m.start).toHaveBeenCalledWith('s1'); expect(m.navigate).toHaveBeenCalledWith('/chat')
+    expect(m.navigate).toHaveBeenCalledWith('/chat?session=s1')
+    expect(localStorage.getItem(storageKeys.currentSessionId)).toBe('s1')
+    expect(m.start).not.toHaveBeenCalled()
     expect(JSON.stringify(m.notify.mock.calls)).not.toContain('PRIVATE OUTPUT')
   })
   it('ignores snapshots, running, errors and stopped runs', async () => {
@@ -48,6 +51,24 @@ describe('state notifications', () => {
   it('retains different completions', async () => {
     await act(async () => { emit(settled); emit({ ...settled, completed_run_id: 'r2' }) })
     expect(m.notify).toHaveBeenCalledTimes(2)
+  })
+  it('opens each completion target instead of the last active session', async () => {
+    localStorage.setItem(storageKeys.currentSessionId, 'last-active')
+    await act(async () => {
+      emit(settled)
+      emit({ ...settled, session_id: 's2', completed_run_id: 'r2' })
+    })
+    expect(m.notify).toHaveBeenCalledTimes(2)
+    expect(m.navigate).not.toHaveBeenCalled()
+    const first = m.notify.mock.calls.find(([, opts]) => opts.tag === 's1:r1')![1]
+    const second = m.notify.mock.calls.find(([, opts]) => opts.tag === 's2:r2')![1]
+    second.onOpen()
+    expect(m.navigate).toHaveBeenLastCalledWith('/chat?session=s2')
+    expect(localStorage.getItem(storageKeys.currentSessionId)).toBe('s2')
+    first.onOpen()
+    expect(m.navigate).toHaveBeenLastCalledWith('/chat?session=s1')
+    expect(localStorage.getItem(storageKeys.currentSessionId)).toBe('s1')
+    expect(m.start).not.toHaveBeenCalled()
   })
   it('reports workflow completion without output, not per-turn outcomes', () => {
     m.handlers.get('conductor:workflow_completed')?.({ payload: { item: { msg: 'PRIVATE' } } })
