@@ -700,10 +700,10 @@ current && 'ring-2 ring-inset ring-accent/50',
         onClick={toggle}
         title={collapsed ? '展开会话管理' : '折叠会话管理'}
         className={clsx(
-          // 底色 = 滑动条 thumb 同色（--c-scrollbar-thumb #9E8965，hover 用 thumb-hover #806A48），箭头浅配色（米白 bg-card）。待用户确认后再提交。
-          'absolute z-30 flex items-center justify-center border border-line/70 bg-[var(--c-scrollbar-thumb)] text-bg-card shadow-md backdrop-blur-sm transition-[filter,background-color] duration-300 hover:brightness-105 hover:bg-[var(--c-scrollbar-thumb-hover)]',
-          'left-1/2 h-6 w-12 -translate-x-1/2 rounded-b-lg border-t-0',
-          'md:left-auto md:top-1/2 md:h-12 md:w-6 md:translate-x-0 md:-translate-y-1/2 md:rounded-b-none md:rounded-r-lg md:border-l-0 md:border-t',
+          // 与收起全部按钮统一滑动条配色、渐变内高光与柔和投影；贴栏边保持平直，外侧为半椭圆。
+          'absolute z-30 flex items-center justify-center border border-line/70 bg-[var(--c-scrollbar-thumb)] bg-gradient-to-b from-bg-card/20 to-transparent text-bg-card shadow-[inset_0_1px_0_rgb(255_255_255_/_0.3),0_2px_5px_rgb(0_0_0_/_0.16)] transition-[filter,background-color,box-shadow] duration-300 hover:bg-[var(--c-scrollbar-thumb-hover)] hover:brightness-105 hover:shadow-[inset_0_1px_0_rgb(255_255_255_/_0.4),0_3px_7px_rgb(0_0_0_/_0.2)] active:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+          'left-1/2 h-6 w-12 -translate-x-1/2 rounded-[0_0_50%_50%/0_0_100%_100%] border-t-0',
+          'md:left-auto md:top-1/2 md:h-12 md:w-6 md:translate-x-0 md:-translate-y-1/2 md:rounded-[0_100%_100%_0/0_50%_50%_0] md:border-l-0 md:border-t',
           collapsed ? 'top-0 md:-right-6' : 'top-32 md:-right-6 md:top-1/2',
         )}
       >
