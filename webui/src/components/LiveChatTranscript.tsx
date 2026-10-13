@@ -19,6 +19,7 @@ import { routeChatWheel } from '@/utils/chatWheel'
 import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { useChatPerformanceProbe } from '@/utils/useChatPerformanceProbe'
 import { MessageBubble } from './MessageBubble'
+import { ConversationCollapseProvider, ConversationCollapseControl } from './ConversationCollapse'
 import { VirtualMessageList, type VirtualMessageListHandle } from './VirtualMessageList'
 import { Z_LAYERS } from '@/config/zLayers'
 
@@ -441,6 +442,18 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       setUnread(0)
     }
 
+    const collapseToLatest = useCallback(() => {
+      navigationTargetRef.current = null
+      setStuckBottom(true)
+      setUnread(0)
+      setActiveTurn(turnMessageIndexesRef.current.length - 1)
+      const el = scrollRef.current
+      if (!el) return
+      markProgrammaticScroll()
+      virtualListRef.current?.scrollToIndex(Math.max(0, msgsRef.current.length - 1), { behavior: 'instant', align: 'end' })
+      el.scrollTop = el.scrollHeight
+    }, [])
+
     const jumpToTurn = (direction: -1 | 1) => {
       const el = scrollRef.current
       if (!el || turnCount === 0) return
@@ -499,6 +512,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     }, [onRewind, sessionId, msgs.length])
 
     return (
+      <ConversationCollapseProvider key={sessionId} onAfterCollapse={collapseToLatest}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         <div
           ref={scrollRef}
@@ -563,6 +577,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           />
         </div>
 
+        <ConversationCollapseControl />
         {(scheduledChats.length > 0 || turnCount > 0) && (
           <aside
             ref={utilityRailRef}
@@ -658,6 +673,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           </div>
         )}
       </div>
+      </ConversationCollapseProvider>
     )
   },
 )

@@ -744,9 +744,7 @@ describe('MessageBubble render isolation', () => {
     const processButton = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.includes('执行过程'))!
     expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
     act(() => processButton().click())
-    const action = host.querySelector<HTMLButtonElement>('[data-collapse-to-latest]')!
-    expect(action.querySelector('svg')).not.toBeNull()
-    expect(action.textContent).toBe('')
+    expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
     act(() => processButton().click())
     expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
     act(() => processButton().click())
@@ -754,6 +752,9 @@ describe('MessageBubble render isolation', () => {
     expect(records).toHaveLength(3)
     act(() => records.forEach(record => { record.open = true; record.dispatchEvent(new Event('toggle')) }))
     expect(records.every(record => record.open)).toBe(true)
+    const action = host.querySelector<HTMLButtonElement>('[data-collapse-to-latest]')!
+    expect(action.querySelector('svg')).not.toBeNull()
+    expect(action.textContent).toBe('')
     scroll.mockImplementation(() => {
       expect(host.querySelectorAll('details[open]')).toHaveLength(0)
       expect(processButton().getAttribute('aria-expanded')).toBe('false')

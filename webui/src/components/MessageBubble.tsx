@@ -30,6 +30,7 @@ import { TranscriptRecordContent } from './TranscriptRecordContent'
 import { AskUserCard } from './AskUserCard'
 import { RunningTranscript } from './RunningTranscript'
 import { CollapseToLatestButton } from './CollapseToLatestButton'
+import { useConversationCollapse } from './ConversationCollapse'
 import { bubbleTone } from './bubbleTone'
 import type { PasteAttachment } from '@/api/types'
 import { api } from '@/api/client'
@@ -345,11 +346,16 @@ function HistoryTranscriptReply({
   askUserInteractive: boolean
 }) {
   const [collapseVersion, setCollapseVersion] = useState(0)
-  const [processExpanded, setProcessExpanded] = useState(false)
+  const [detailsExpanded, setDetailsExpanded] = useState(false)
   const latestRef = useRef<HTMLDivElement>(null)
+  const collapseProcess = () => {
+    setDetailsExpanded(false)
+    setCollapseVersion(value => value + 1)
+  }
+  const conversationManaged = useConversationCollapse(detailsExpanded, collapseProcess)
   useLayoutEffect(() => {
-    if (collapseVersion) latestRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'instant' })
-  }, [collapseVersion])
+    if (collapseVersion && !conversationManaged) latestRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'instant' })
+  }, [collapseVersion, conversationManaged])
   // Only an authoritative abort marks a task stopped. An unfinished transcript
   // can be a paused worker, a reconnect baseline, or a retry in the same run.
   const stoppedState = manualStop
@@ -370,7 +376,7 @@ function HistoryTranscriptReply({
 
   return (
     <>
-      {visibleProcessTurns.length > 0 && <LazyProcessFold key={collapseVersion} turns={visibleProcessTurns} onOpenChange={setProcessExpanded} />}
+      {visibleProcessTurns.length > 0 && <LazyProcessFold key={collapseVersion} turns={visibleProcessTurns} onDetailsChange={setDetailsExpanded} />}
       {visibleFinal ? (
         <StableMessageContent content={visibleFinal} format="markdown" cache />
       ) : stoppedState || transcript.finalAskUser ? null : (
@@ -393,10 +399,7 @@ function HistoryTranscriptReply({
           最终回答较长，展开完整内容
         </button>
       )}
-      {visibleProcessTurns.length > 0 && processExpanded && <CollapseToLatestButton onClick={() => {
-        setProcessExpanded(false)
-        setCollapseVersion(value => value + 1)
-      }} />}
+      {!conversationManaged && visibleProcessTurns.length > 0 && detailsExpanded && <CollapseToLatestButton onClick={collapseProcess} />}
       <div ref={latestRef} data-transcript-latest />
       {stoppedState && (
         <p className="mt-2 text-xs italic leading-5 text-status-warning-muted">⏹任务中止</p>
@@ -406,8 +409,14 @@ function HistoryTranscriptReply({
   )
 }
 
-function LazyProcessFold({ turns, onOpenChange }: { turns: AssistantTranscriptTurn[]; onOpenChange: (open: boolean) => void }) {
+function LazyProcessFold({ turns, onDetailsChange }: { turns: AssistantTranscriptTurn[]; onDetailsChange: (open: boolean) => void }) {
   const [open, setOpen] = useState(false)
+  const expandedTurns = useRef(new Set<number>())
+  const onTurnOpenChange = (index: number, expanded: boolean) => {
+    if (expanded) expandedTurns.current.add(index)
+    else expandedTurns.current.delete(index)
+    onDetailsChange(expandedTurns.current.size > 0)
+  }
   return (
     <div className="mb-3 border-b border-line/70 pb-2">
       <button
@@ -415,7 +424,10 @@ function LazyProcessFold({ turns, onOpenChange }: { turns: AssistantTranscriptTu
         aria-expanded={open}
         onClick={() => {
           setOpen(!open)
-          onOpenChange(!open)
+          if (open) {
+            expandedTurns.current.clear()
+            onDetailsChange(false)
+          }
         }}
         className="flex w-full items-center gap-2 rounded-md border border-line bg-bg-soft px-3 py-2 text-left text-xs font-medium text-ink-muted transition-colors hover:bg-bg-card hover:text-ink"
       >
@@ -426,7 +438,7 @@ function LazyProcessFold({ turns, onOpenChange }: { turns: AssistantTranscriptTu
       {open && (
         <div className="mt-1 divide-y divide-line/70 border-t border-line/70">
           {turns.map((turn, index) => (
-            <LazyTranscriptTurn key={`${turn.turn}:${index}`} turn={turn} />
+            <LazyTranscriptTurn key={`${turn.turn}:${index}`} turn={turn} onOpenChange={expanded => onTurnOpenChange(index, expanded)} />
           ))}
         </div>
       )}
@@ -434,7 +446,7 @@ function LazyProcessFold({ turns, onOpenChange }: { turns: AssistantTranscriptTu
   )
 }
 
-function LazyTranscriptTurn({ turn }: { turn: AssistantTranscriptTurn }) {
+function LazyTranscriptTurn({ turn, onOpenChange }: { turn: AssistantTranscriptTurn; onOpenChange: (open: boolean) => void }) {
   const [open, setOpen] = useState(false)
   const title = runningTurnTitle(turn.summary, turn.rawContent ?? turn.content)
   if (!(turn.rawContent ?? turn.content).trim()) {
@@ -446,7 +458,11 @@ function LazyTranscriptTurn({ turn }: { turn: AssistantTranscriptTurn }) {
     )
   }
   return (
-    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details onToggle={(event) => {
+      const expanded = event.currentTarget.open
+      setOpen(expanded)
+      onOpenChange(expanded)
+    }}>
       <summary className="flex cursor-pointer list-none items-start gap-2 py-2 text-xs leading-5 text-ink-muted hover:text-ink [&::-webkit-details-marker]:hidden">
         <span aria-hidden="true" className={clsx('mt-0.5 inline-block transition-transform', open && 'rotate-90')}>›</span>
         <span className="shrink-0 font-medium text-ink-faint">Turn {turn.turn}</span>

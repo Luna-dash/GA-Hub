@@ -5,6 +5,7 @@ import { MessageContent } from './MessageContent'
 import { TranscriptRecordContent } from './TranscriptRecordContent'
 import { AskUserCard } from './AskUserCard'
 import { CollapseToLatestButton } from './CollapseToLatestButton'
+import { useConversationCollapse } from './ConversationCollapse'
 
 /** One chronological process. Only the running view uses this light projection. */
 export function RunningTranscript({ transcript, askUserDraftKey, askUserInteractive, recoveryStatus, recoveryBeforeTurn, recoveryTitle = '自动重连' }: {
@@ -100,12 +101,14 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
     setRecoveryExpanded(false)
     setJumpRequest(value => value + 1)
   }
+  const explicitlyExpanded = visibleTurns.some(turn => fullTurns[turn.turn] === true)
+  const conversationManaged = useConversationCollapse(explicitlyExpanded, collapseToLatest)
   useLayoutEffect(() => {
     if (!jumpRequest) return
     const viewport = viewportRef.current
     if (viewport) viewport.scrollTop = viewport.scrollHeight
-    latestRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'instant' })
-  }, [jumpRequest])
+    if (!conversationManaged) latestRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'instant' })
+  }, [jumpRequest, conversationManaged])
 
   return (
     <section data-running-transcript className="relative min-w-0">
@@ -160,7 +163,7 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
       </div>
       {recoveryStatus && (recoveryBeforeTurn === undefined || recoveryBeforeTurn >= turns.length) && <div className="mt-2 text-xs text-ink-muted">{recoveryRow}</div>}
       {askUser && <div className="mt-2"><AskUserCard question={askUser.question} candidates={askUser.candidates} draftKey={askUserDraftKey} interactive={askUserInteractive} /></div>}
-      {(visibleTurns.some(turn => fullTurns[turn.turn]) || Boolean(recoveryStatus && recoveryExpanded === true && recoveryOpen)) &&
+      {!conversationManaged && explicitlyExpanded &&
         <CollapseToLatestButton onClick={collapseToLatest} />}
       <div ref={latestRef} data-transcript-latest />
     </section>

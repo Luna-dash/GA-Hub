@@ -37,16 +37,14 @@ it('shows the gutter action only while a record is manually expanded', () => {
   expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
 })
 
-it('shows the action for an explicitly reopened recovery detail, not its automatic preview', () => {
+it('never shows the action for the recovery panel alone, including manual reopening', () => {
   act(() => root.render(<RunningTranscript transcript={parseAssistantTranscript('')} askUserInteractive recoveryStatus={<span>重连详情</span>} />))
   expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
   click('[data-recovery-turn] > button')
   expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
   click('[data-recovery-turn] > button')
-  expect(host.querySelector('[data-collapse-to-latest]')).not.toBeNull()
-  click('[data-collapse-to-latest]')
   expect(host.querySelector('[data-collapse-to-latest]')).toBeNull()
-  expect(host.querySelector('[data-recovery-turn] > button')?.getAttribute('aria-expanded')).toBe('false')
+  expect(host.querySelector('[data-recovery-turn] > button')?.getAttribute('aria-expanded')).toBe('true')
 })
 
 it('defaults to simple hints; opens the exact raw record without duplicate prose and fully collapses', () => {
