@@ -4,7 +4,8 @@
 //
 // Sources are loaded raw via import.meta.glob so this stays inside the app
 // TypeScript program (no node:fs / __dirname).
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { readThemeReportExpanded, storageKeys, writeThemeReportExpanded } from './storageKeys'
 
 const sources = import.meta.glob('../**/*.{ts,tsx}', {
   query: '?raw',
@@ -47,5 +48,49 @@ describe('storage key registry gate', () => {
         `unregistered-prefix key: ${value}`,
       ).toBe(true)
     }
+  })
+})
+
+describe('theme report preference', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  function fakeStorage(entries: Record<string, string> = {}) {
+    const values = new Map(Object.entries(entries))
+    const storage = {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => { values.set(key, value) }),
+    }
+    vi.stubGlobal('localStorage', storage)
+    return storage
+  }
+
+  it('defaults to expanded and writes the registered per-session key', () => {
+    const storage = fakeStorage()
+    expect(readThemeReportExpanded('one')).toBe(true)
+    writeThemeReportExpanded('one', false)
+    expect(storage.setItem).toHaveBeenCalledWith(storageKeys.themeReportPrefix + 'one', 'closed')
+    expect(readThemeReportExpanded('one')).toBe(false)
+    expect(readThemeReportExpanded('two')).toBe(true)
+  })
+
+  it('migrates old collapsed preferences without removing the old key', () => {
+    const storage = fakeStorage({ 'theme-report:one': 'closed' })
+    expect(readThemeReportExpanded('one')).toBe(false)
+    expect(storage.setItem).toHaveBeenCalledWith(storageKeys.themeReportPrefix + 'one', 'closed')
+    expect(storage.getItem('theme-report:one')).toBe('closed')
+  })
+
+  it('prefers a new value over a stale legacy value', () => {
+    fakeStorage({ 'theme-report:one': 'closed', [storageKeys.themeReportPrefix + 'one']: 'open' })
+    expect(readThemeReportExpanded('one')).toBe(true)
+  })
+
+  it('preserves legacy state if migration fails and tolerates blocked storage', () => {
+    const storage = fakeStorage({ 'theme-report:one': 'closed' })
+    storage.setItem.mockImplementation(() => { throw new Error('quota') })
+    expect(readThemeReportExpanded('one')).toBe(false)
+    expect(() => writeThemeReportExpanded('one', true)).not.toThrow()
+    storage.getItem.mockImplementation(() => { throw new Error('blocked') })
+    expect(readThemeReportExpanded('one')).toBe(true)
   })
 })

@@ -46,6 +46,8 @@ export const storageKeys = {
   mykeyShowUpload: 'gahub.mykey-show-upload',
   /** chatPerformance: '1' = performance mode enabled. */
   chatPerformance: 'gahub.chatPerformance',
+  /** ThemeTasks: per-session report expanded state ('open'/'closed'). */
+  themeReportPrefix: 'gahub.theme-report:',
   /** LEGACY pre-`gahub.` prefixes — frozen so saved prefs keep working. */
   desktopNotifications: 'ga.desktopNotifications.v1',
   /** main.tsx: dynamic-import chunk reload guard (epoch timestamp). */
@@ -54,3 +56,25 @@ export const storageKeys = {
 
 /** pageState.ts namespace prefix (sessionStorage, per-page key/values). */
 export const pageStatePrefix = 'gahub.pageState.v1:'
+
+/** Historical ThemeTasks key, retained only for backwards-compatible reads. */
+const legacyThemeReportPrefix = 'theme-report:'
+
+export function readThemeReportExpanded(sessionId: string): boolean {
+  try {
+    const key = storageKeys.themeReportPrefix + sessionId
+    const current = localStorage.getItem(key)
+    if (current !== null) return current !== 'closed'
+    const legacy = localStorage.getItem(legacyThemeReportPrefix + sessionId)
+    if (legacy !== null) {
+      try { localStorage.setItem(key, legacy) } catch { /* keep reading legacy if storage is full */ }
+    }
+    return legacy !== 'closed'
+  } catch { return true }
+}
+
+export function writeThemeReportExpanded(sessionId: string, expanded: boolean): void {
+  try {
+    localStorage.setItem(storageKeys.themeReportPrefix + sessionId, expanded ? 'open' : 'closed')
+  } catch { /* optional preference */ }
+}

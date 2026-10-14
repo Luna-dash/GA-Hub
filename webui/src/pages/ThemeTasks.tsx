@@ -7,6 +7,7 @@ import { PageShell } from '@/components/PageShell'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { MessageContent } from '@/components/MessageContent'
 import { queryKeys } from '@/queries/queryKeys'
+import { readThemeReportExpanded, writeThemeReportExpanded } from '@/config/storageKeys'
 import { errorMessageFromError, sessionChatHref } from '@/utils/sessionUi'
 
 const button = 'rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-bg-soft disabled:opacity-40'
@@ -66,7 +67,7 @@ function ThemeCard({ session, onSettings, refresh }: { session: HubSession; onSe
   const [adjust, setAdjust] = useState(false)
   const [draft, setDraft] = useState(session.theme_task!.instruction)
   const [saveDefault, setSaveDefault] = useState(false)
-  const [openReport, setOpenReport] = useState(() => { try { return localStorage.getItem(`theme-report:${session.id}`) !== 'closed' } catch { return true } })
+  const [openReport, setOpenReport] = useState(() => readThemeReportExpanded(session.id))
   const run = runQuery.data?.run
   const runtime = runtimeQuery.data
   const active = activeStatuses.includes(runtime?.status ?? '')
@@ -111,7 +112,7 @@ function ThemeCard({ session, onSettings, refresh }: { session: HubSession; onSe
     </div>
     {adjust && <div className="mt-4 space-y-2"><textarea aria-label="本次执行指令" className={`${field} min-h-24`} value={draft} onChange={e => setDraft(e.target.value)} /><label className="flex gap-2 text-xs"><input type="checkbox" checked={saveDefault} onChange={e => setSaveDefault(e.target.checked)} />同时保存为默认指令</label><button className={button} disabled={disabled || !draft.trim()} onClick={() => void execute(draft.trim())}>按本次指令运行</button></div>}
     {error && <p role="alert" className="mt-3 text-sm text-status-danger">{error}</p>}
-    {run && frozen && <section className="mt-5 border-t border-border pt-3"><button className="flex w-full items-center justify-between text-sm font-medium" aria-expanded={openReport} onClick={() => { const next = !openReport; setOpenReport(next); try { localStorage.setItem(`theme-report:${session.id}`, next ? 'open' : 'closed') } catch { /* optional preference */ } }}><span>本次报告 <span className="ml-2 text-xs font-normal text-slate-500">{new Date(run.started_at * 1000).toLocaleString()}</span></span><span>{openReport ? '收起 −' : '展开 +'}</span></button>{openReport && <div className="mt-3 max-h-80 overflow-auto rounded-lg bg-bg-soft p-3 text-sm">{run.report ? <MessageContent content={run.report} format="markdown" markdownMode="chat" /> : <p className="text-slate-500">{run.interrupted ? '运行状态未能确认，请进入过程与历史核对。' : '本次没有文字报告，请查看过程与历史。'}</p>}</div>}</section>}
+    {run && frozen && <section className="mt-5 border-t border-border pt-3"><button className="flex w-full items-center justify-between text-sm font-medium" aria-expanded={openReport} onClick={() => { const next = !openReport; setOpenReport(next); writeThemeReportExpanded(session.id, next) }}><span>本次报告 <span className="ml-2 text-xs font-normal text-slate-500">{new Date(run.started_at * 1000).toLocaleString()}</span></span><span>{openReport ? '收起 −' : '展开 +'}</span></button>{openReport && <div className="mt-3 max-h-80 overflow-auto rounded-lg bg-bg-soft p-3 text-sm">{run.report ? <MessageContent content={run.report} format="markdown" markdownMode="chat" /> : <p className="text-slate-500">{run.interrupted ? '运行状态未能确认，请进入过程与历史核对。' : '本次没有文字报告，请查看过程与历史。'}</p>}</div>}</section>}
   </article>
 }
 
