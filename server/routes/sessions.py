@@ -650,3 +650,24 @@ async def delete_session(lifecycle: SessionDomain, session_id: str):
             after_release=_delete,
         )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/api/sessions/{session_id}/theme-run")
+async def theme_run(lifecycle: SessionDomain, session_id: str) -> dict:
+    await asyncio.to_thread(_session, lifecycle, session_id)
+    from ..services import theme_task_runs
+    coordinator = lifecycle.peek_coordinator()
+    state = coordinator.runtime_state(session_id) if coordinator else None
+    active_id = state.run_id if state and state.status in {"starting", "running", "aborting", "recovering"} else None
+    return {"run": await asyncio.to_thread(theme_task_runs.get, session_id, active_id)}
+
+
+@router.post("/api/sessions/{session_id}/theme-run", status_code=status.HTTP_202_ACCEPTED)
+async def start_theme_run(lifecycle: SessionDomain, session_id: str, req: RunSubmit) -> SessionRuntimeResp:
+    row = await asyncio.to_thread(_session, lifecycle, session_id)
+    if not row.get("theme_task"):
+        raise _api_error(409, "not_theme_task", "该会话不是主题任务。")
+    key = str(row.get("llm_key") or "").strip()
+    if not key:
+        raise _api_error(409, "llm_unconfirmed", "请先在任务设置中选择执行模型。")
+    return await submit_run(lifecycle, session_id, req)

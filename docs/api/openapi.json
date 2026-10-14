@@ -4241,6 +4241,94 @@
         }
       }
     },
+    "/api/sessions/{session_id}/theme-run": {
+      "get": {
+        "summary": "Theme Run",
+        "operationId": "theme_run_api_sessions__session_id__theme_run_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Theme Run Api Sessions  Session Id  Theme Run Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Start Theme Run",
+        "operationId": "start_theme_run_api_sessions__session_id__theme_run_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunSubmit"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionRuntimeResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/preferences/navigation": {
       "get": {
         "tags": [
@@ -7743,6 +7831,16 @@
       },
       "HubSession": {
         "properties": {
+          "theme_task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeTaskConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "type": "string",
             "title": "Id"
@@ -9607,6 +9705,16 @@
       },
       "SessionUpdate": {
         "properties": {
+          "theme_task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeTaskConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "title": {
             "anyOf": [
               {
@@ -10085,6 +10193,27 @@
           "stream_id"
         ],
         "title": "TaskTriggerResp"
+      },
+      "ThemeTaskConfig": {
+        "properties": {
+          "instruction": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Instruction"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "instruction"
+        ],
+        "title": "ThemeTaskConfig"
       },
       "UploadResp": {
         "properties": {

@@ -10,6 +10,7 @@ export interface NavPreference { id: string; visible: boolean }
 export const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', to: '/dashboard', label: '状态面板', icon: 'dashboard' },
   { id: 'chat', to: '/chat', label: '实时聊天', icon: 'chat' },
+  { id: 'theme-tasks', to: '/theme-tasks', label: '主题任务', icon: 'tasks' },
   { id: 'conductor', to: '/conductor', label: '指挥模式', icon: 'conductor' },
   { id: 'goal-hive', to: '/goal-hive', label: 'Goal模式', icon: 'goalHive' },
   { id: 'conversations', to: '/conversations', label: '历史对话', icon: 'conversations' },

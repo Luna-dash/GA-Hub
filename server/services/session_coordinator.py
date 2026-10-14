@@ -446,6 +446,8 @@ class SessionCoordinator:
                 if pending == STATUS_ABORTING:
                     raise RunStartAbortedError(session_id, run_id)
                 raise SessionControlBusyError(session_id, "release")
+            from . import theme_task_runs
+            theme_task_runs.begin(session_id, run_id, llm_key)
             handle = runtime.submit(
                 text,
                 source=source,
@@ -462,6 +464,8 @@ class SessionCoordinator:
             # No run was admitted (creation or the submit itself failed), so
             # this admission's slot must go back — including when creation was
             # discarded because the session was released or we are shutting down.
+            from . import theme_task_runs
+            theme_task_runs.finish(session_id, run_id, "failed")
             self._release_reservation(session_id, run_id)
             raise
 
@@ -1046,7 +1050,13 @@ class SessionCoordinator:
                 )
                 self._states[session_id] = completed
                 notification = replace(completed)
+            # Notify immediately: optional metrics I/O must not delay runtime state.
             self._emit_state_change(notification)
+            from . import theme_task_runs
+            last = handle
+            while getattr(last, "_continuation", None) is not None:
+                last = last._continuation
+            theme_task_runs.finish(session_id, run_id, notification.outcome or "failed", getattr(last, "final_text", ""))
         finally:
             with self._lock:
                 if self._watchers.get(run_id) is threading.current_thread():

@@ -448,7 +448,13 @@ class SessionCreate(BaseModel):
     llm_key: str | None = Field(default=None, min_length=1, max_length=200)
     llm_index: int | None = Field(default=None, ge=0)
 
+class ThemeTaskConfig(BaseModel):
+    instruction: str = Field(min_length=1, max_length=20000)
+    description: str = Field(default="", max_length=1000)
+
+
 class SessionUpdate(BaseModel):
+    theme_task: ThemeTaskConfig | None = None
     title: str | None = Field(default=None, max_length=200)
     llm_key: str | None = Field(default=None, min_length=1, max_length=200)
     llm_index: int | None = Field(default=None, ge=0)
@@ -458,6 +464,7 @@ class SessionModelUpdate(BaseModel):
     llm_index: int | None = Field(default=None, ge=0)
 
 class HubSession(BaseModel):
+    theme_task: ThemeTaskConfig | None = None
     id: str
     title: str
     kind: str = "user"

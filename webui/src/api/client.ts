@@ -106,9 +106,9 @@ type HttpOptions = RequestInit & {
   query?: URLSearchParams
 }
 export type ApiComponents = GeneratedApiComponents
-type GeneratedHubSession = ApiComponents['schemas']['HubSession']
+type GeneratedHubSession = ApiComponents['schemas']['HubSession'] & { theme_task?: import('./types').ThemeTaskConfig | null }
 type NavigationPreferences = ApiComponents['schemas']['NavPreferencesResp']
-type SessionList = ApiComponents['schemas']['SessionListResp']
+type SessionList = Omit<ApiComponents['schemas']['SessionListResp'], 'items'> & { items: GeneratedHubSession[] }
 type AbortSource = 'timeout' | 'external' | null
 export type ConductorSubagentModelPolicy = 'follow_main' | 'default' | 'locked'
 export interface ConductorModelSettings {
@@ -476,6 +476,9 @@ export const api = {
   conductorResumeWorkflow: (requestId: string) =>
     http<ConductorLifecycleResponse>('POST', `/api/conductor/workflow/${encodeURIComponent(requestId)}/resume`),
   sessions: () => http<SessionList>('GET', '/api/sessions'),
+  themeConfig: (id: string, theme_task: import('./types').ThemeTaskConfig | null, title?: string) => http<GeneratedHubSession>('PATCH', `/api/sessions/${encodeURIComponent(id)}`, { theme_task, ...(title === undefined ? {} : { title }) }),
+  themeRun: (id: string) => http<{ run: import('./types').ThemeRun | null }>('GET', `/api/sessions/${encodeURIComponent(id)}/theme-run`),
+  startThemeRun: (id: string, text: string) => http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/theme-run`, { text }),
   createSession: (req: Partial<ApiComponents['schemas']['SessionCreate']> = {}) =>
     http<GeneratedHubSession>('POST', '/api/sessions', req),
   updateSession: (id: string, changes: { title?: string; llm_key?: string | null }) =>

@@ -1975,6 +1975,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/theme-run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Theme Run */
+        get: operations["theme_run_api_sessions__session_id__theme_run_get"];
+        put?: never;
+        /** Start Theme Run */
+        post: operations["start_theme_run_api_sessions__session_id__theme_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/preferences/navigation": {
         parameters: {
             query?: never;
@@ -3272,6 +3290,7 @@ export interface components {
         };
         /** HubSession */
         HubSession: {
+            theme_task?: components["schemas"]["ThemeTaskConfig"] | null;
             /** Id */
             id: string;
             /** Title */
@@ -3897,6 +3916,7 @@ export interface components {
         };
         /** SessionUpdate */
         SessionUpdate: {
+            theme_task?: components["schemas"]["ThemeTaskConfig"] | null;
             /** Title */
             title?: string | null;
             /** Llm Key */
@@ -4081,6 +4101,16 @@ export interface components {
             run_id: string;
             /** Stream Id */
             stream_id: string;
+        };
+        /** ThemeTaskConfig */
+        ThemeTaskConfig: {
+            /** Instruction */
+            instruction: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
         };
         /** UploadResp */
         UploadResp: {
@@ -7668,6 +7698,74 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionRuntimeResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    theme_run_api_sessions__session_id__theme_run_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_theme_run_api_sessions__session_id__theme_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunSubmit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };

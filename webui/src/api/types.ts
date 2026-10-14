@@ -58,7 +58,11 @@ export interface SessionSnapshot {
   rounds: number
 }
 
+export interface ThemeTaskConfig { instruction: string; description: string }
+export interface ThemeRun { session_id: string; run_id: string; started_at: number; finished_at: number | null; turns: number; model_key: string | null; model_name: string | null; outcome: string | null; report: string; interrupted?: boolean }
+
 export interface HubSession {
+  theme_task?: ThemeTaskConfig | null
   id: string
   title: string
   llm_key?: string | null

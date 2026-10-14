@@ -22,6 +22,7 @@ const routeFallback = (
 // sidebar, command palette) loads first; individual feature pages load on demand.
 const Dashboard = lazy(routeLoaders.dashboard)
 const LiveChat = lazy(routeLoaders.chat)
+const ThemeTasks = lazy(() => import('./pages/ThemeTasks'))
 const Conversations = lazy(routeLoaders.conversations)
 const Memory = lazy(routeLoaders.memory)
 const GoalHive = lazy(routeLoaders.goalHive)
@@ -121,6 +122,7 @@ export default function App() {
               <Route path="/" element={<Navigate to="/chat" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/chat" element={<LiveChat />} />
+              <Route path="/theme-tasks" element={<ThemeTasks />} />
               <Route path="/feishu" element={<Navigate to="/dashboard" replace />} />
               <Route path="/conversations" element={<Conversations />} />
               <Route path="/conversations/:id" element={<Conversations />} />

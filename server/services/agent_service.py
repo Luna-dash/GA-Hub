@@ -676,6 +676,11 @@ class AgentService:
                           ordinal=read_archive_messages(archive_path)["total"])
             except Exception:
                 log.warning("identity_begin_failed session=%s run=%s", effective_session_id, run_id, exc_info=True)
+        from . import theme_task_runs
+        try:
+            theme_task_runs.model_snapshot(effective_session_id, run_id, self.agent.get_llm_name())
+        except Exception:
+            log.warning("theme_model_snapshot_failed session=%s", effective_session_id, exc_info=True)
         src_q = self.agent.put_task(query, source=source, images=images or [])
         # The handle queue we hand to callers (kept in sync by the drainer).
         # ``next`` payloads are cumulative, so retaining every intermediate
@@ -1256,6 +1261,12 @@ class AgentService:
 
     # ── hooks ────────────────────────────────────────────────────
     def _on_turn_end(self, ctx: dict) -> None:
+        from . import theme_task_runs
+        with self._lock:
+            handles = [h for h in self._streams.values() if not h.finished and h.run_id]
+            handle = handles[-1] if handles else None
+        if handle is not None:
+            theme_task_runs.turn(handle.session_id, handle.run_id, handle.stream_id, ctx.get("turn"))
         bus.publish(AGENT_TURN, {
             "turn": ctx.get("turn"),
             "summary": ctx.get("summary"),

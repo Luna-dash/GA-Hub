@@ -782,7 +782,7 @@ export default function LiveChat() {
     >
       <div className="flex h-full min-h-0 flex-col md:flex-row">
         <SessionRail
-          sessions={sessions}
+          sessions={sessions.filter(s => !s.theme_task)}
           runtimes={runtimes}
           currentId={session?.id ?? null}
           onSelect={selectSession}

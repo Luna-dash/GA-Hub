@@ -210,6 +210,8 @@ class SessionMetadataStore:
                         row["llm_key"] = value.strip() if isinstance(value, str) and value.strip() else None
                     if "llm_index" in changes:
                         row["llm_index"] = changes["llm_index"]
+                    if "theme_task" in changes:
+                        row["theme_task"] = changes["theme_task"]
                     if "project_name" in changes:
                         value = changes["project_name"]
                         row["project_name"] = value.strip() if isinstance(value, str) and value.strip() else None
