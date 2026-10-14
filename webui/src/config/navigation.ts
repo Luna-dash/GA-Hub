@@ -2,7 +2,7 @@ import { storageKeys } from '@/config/storageKeys'
 
 export type NavIconName =
   | 'dashboard' | 'chat' | 'conversations' | 'memory'
-  | 'conductor' | 'goalHive' | 'mykey' | 'tasks' | 'autonomous' | 'tokens' | 'settings'
+  | 'conductor' | 'goalHive' | 'mykey' | 'themeTasks' | 'tasks' | 'autonomous' | 'tokens' | 'settings'
 
 export interface NavItem { id: string; to: string; label: string; icon: NavIconName }
 export interface NavPreference { id: string; visible: boolean }
@@ -10,7 +10,7 @@ export interface NavPreference { id: string; visible: boolean }
 export const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', to: '/dashboard', label: '状态面板', icon: 'dashboard' },
   { id: 'chat', to: '/chat', label: '实时聊天', icon: 'chat' },
-  { id: 'theme-tasks', to: '/theme-tasks', label: '主题任务', icon: 'tasks' },
+  { id: 'theme-tasks', to: '/theme-tasks', label: '主题任务', icon: 'themeTasks' },
   { id: 'conductor', to: '/conductor', label: '指挥模式', icon: 'conductor' },
   { id: 'goal-hive', to: '/goal-hive', label: 'Goal模式', icon: 'goalHive' },
   { id: 'conversations', to: '/conversations', label: '历史对话', icon: 'conversations' },
@@ -37,6 +37,11 @@ export function normalizeNavPreferences(value: unknown): NavPreference[] {
     }
   }
   for (const { id } of NAV_ITEMS) if (!result.some((item) => item.id === id)) result.push({ id, visible: true })
+  // Older saved layouts append newly introduced pages at the end. Keep the
+  // theme workspace beside chat without resetting other ordering/visibility.
+  const themeIndex = result.findIndex(item => item.id === 'theme-tasks')
+  const [theme] = result.splice(themeIndex, 1)
+  result.splice(result.findIndex(item => item.id === 'chat') + 1, 0, theme)
   return result
 }
 

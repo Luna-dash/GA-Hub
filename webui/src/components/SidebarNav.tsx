@@ -82,6 +82,15 @@ function NavIcon({ name }: { name: NavIconName }) {
           <path {...common} d="M10.6 11.8 20.6 21.4M15.8 17l1.8-1.8M18 19.2l1.5-1.5" />
         </>
       )}
+      {name === 'themeTasks' && (
+        <>
+          {/* 主题任务：叠放的主题卡 + 执行三角，不与定时任务钟面混用。 */}
+          <path {...common} d="M7 3.2h11.4a2 2 0 0 1 2 2v12.6" />
+          <rect {...common} x="3.4" y="6.2" width="13.8" height="14.6" rx="2.2" />
+          <path {...common} d="M6.8 10h6.8" />
+          <path {...common} d="m8.1 13.2 4.6 2.8-4.6 2.8z" />
+        </>
+      )}
       {name === 'tasks' && (
         <>
           {/* 定时任务：钟面 */}
