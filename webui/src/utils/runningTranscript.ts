@@ -51,6 +51,8 @@ export function runningTurnTitle(summary: string, content: string): string {
     return '执行出错'
   }
   if (summary.trim()) return summary
+  const tools = nodes.filter(node => node.kind === 'tool').map(node => label(node.name!))
+  if (tools.length) return formatToolHint(tools)
   if (nodes.some(node => node.kind === 'thinking')) return '正在思考'
   return '执行记录'
 }

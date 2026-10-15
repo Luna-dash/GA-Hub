@@ -99,7 +99,7 @@ it('shows a simple preview only for the latest visible turn as new turns arrive'
   expect(host.querySelector('[data-running-turn="5"] [data-tool-hint]')).not.toBeNull()
 })
 
-it('keeps explicit collapse through streaming and resume, hides fallback tool titles, and can reopen', () => {
+it('keeps explicit collapse through streaming and resume, preserves prose titles, and can reopen', () => {
   const noSummary = (body = raw) => `**LLM Running (Turn 1) ...**\n${body}`
   render(noSummary())
   click('[data-running-turn="1"] > button')
@@ -119,6 +119,28 @@ it('keeps explicit collapse through streaming and resume, hides fallback tool ti
   render(noSummary(raw + '\n更新正文') + '\n' + turn(2))
   expect(host.querySelector('[data-running-turn="1"] > div')).toBeNull()
   expect(host.querySelector('[data-running-turn="2"] [data-tool-hint]')).not.toBeNull()
+})
+
+it('keeps tool-only fallback titles through preview, full records, collapse and new turns', () => {
+  const content = '**LLM Running (Turn 1) ...**\n🛠️ file_read({})\n🛠️ code_run({})'
+  const selector = '[data-running-turn="1"] > button'
+  const title = () => host.querySelector(selector)?.textContent?.replace(/^[▾▸]/, '')
+  render(content)
+  const expected = title()
+  expect(expected).toContain('读取文件 · 执行脚本')
+  click(selector)
+  expect(title()).toBe(expected)
+  click('[data-full-record] button')
+  expect(title()).toBe(expected)
+  render(content)
+  expect(title()).toBe(expected)
+  click(selector)
+  click('[data-collapse-to-latest]')
+  expect(title()).toBe(expected)
+  render(content + '\n' + turn(2))
+  expect(title()).toBe(expected)
+  click(selector)
+  expect(title()).toBe(expected)
 })
 
 it('anchors bottom collapse to this row and never resumes following due to the resulting scroll event', () => {

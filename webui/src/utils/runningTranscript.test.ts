@@ -70,6 +70,16 @@ it('keeps ordinary prose complete and hides thinking aliases', () => {
   }
 })
 
+it('derives fallback titles from protocol tools, not results or fenced examples', () => {
+  expect(runningTurnTitle('', '🛠️ file_read({})\n🛠️ code_run({})\n🛠️ file_read({})')).toBe('读取文件 ×2 · 执行脚本')
+  expect(runningTurnTitle('', '🛠️ Tool: `functions.file_read` 📥 args:\n````json\n{}\n````\n📤 Result:\n````text\n🛠️ code_run({})\n````')).toBe('读取文件')
+  expect(runningTurnTitle('', '<analysis>隐藏思考</analysis>\n🛠️ file_patch({})')).toBe('修改文件')
+  expect(runningTurnTitle('', '🛠️ unknown({})')).toBe('调用工具')
+  expect(runningTurnTitle('真正摘要', '🛠️ code_run({})')).toBe('真正摘要')
+  expect(runningTurnTitle('', '```text\n🛠️ code_run({})\n```')).toBe('执行记录')
+  expect(runningTurnTitle('', '[Error] Response truncated: max_tokens\n🛠️ code_run({})')).toBe('输出达到上限 · 自动续接')
+})
+
 it('classifies real errors without matching fenced examples or tool results', () => {
   expect(runningTurnTitle('', '[Error] Response truncated: max_tokens')).toBe('输出达到上限 · 自动续接')
   expect(runningTurnTitle('', 'ConnectionError: connection reset')).toContain('连接')

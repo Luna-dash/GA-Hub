@@ -128,9 +128,8 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
             const open = isOpen(turn.turn)
             const full = !!fullTurns[turn.turn]
             const visible = visibleTurns.includes(turn)
-            const toolTitle = !turn.summary && !open && !full && expanded[turn.turn] !== false
-              ? formatToolHint(turn.parts.flatMap(part => part.kind === 'tools' ? part.labels : []))
-              : ''
+            // Live preview, full record and replay share the same content-derived title.
+            const title = runningTurnTitle(turn.summary, turn.rawContent ?? turn.content)
             return (
               <Fragment key={turn.turn}>
                 {recoveryStatus && recoveryBeforeTurn === index && recoveryRow}
@@ -140,7 +139,7 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
                   onClick={() => toggleFull(turn.turn)}>
                   <span aria-hidden="true" className="shrink-0 text-ink-faint">{full ? '▾' : '▸'}</span>
                   <span className="shrink-0 text-ink-faint">Turn {turn.turn}</span>
-                  <span className="min-w-0 break-words text-ink">{toolTitle || (runningTurnTitle(turn.summary, turn.rawContent ?? turn.content) === '执行记录' && expanded[turn.turn] === false ? '' : runningTurnTitle(turn.summary, turn.rawContent ?? turn.content))}</span>
+                  <span className="min-w-0 break-words text-ink">{title}</span>
                   {active && <span aria-label="正在输出" className="ml-auto mt-1 h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />}
                 </button>
                 {open && <div id={`running-${askUserDraftKey || 'turn'}-${turn.turn}`} className="min-w-0 space-y-2 pb-2 pl-5 pr-2">

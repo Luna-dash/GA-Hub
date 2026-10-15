@@ -134,7 +134,7 @@ describe('MessageBubble render isolation', () => {
     expect(button.getAttribute('aria-expanded')).toBe('false')
     expect(button.textContent).toContain('读取文件 ×2 · 执行脚本')
     act(() => button.click())
-    expect(button.textContent).not.toContain('读取文件')
+    expect(button.textContent).toContain('读取文件 ×2 · 执行脚本')
     expect(turn.querySelector('[data-full-record]')?.textContent).toContain('🛠️ file_read({})')
     expect(turn.querySelector('[data-tool-hint]')).toBeNull()
   })
@@ -700,6 +700,20 @@ describe('MessageBubble render isolation', () => {
     expect(host.textContent).toContain('🔁 [自动继续]')
     // content 本体不再携带标签前缀
     expect(markdownRender.mock.calls[0][0].children).toBe('正文保持纯净。')
+  })
+
+  it('keeps tool fallback titles stable when replay details open and close', () => {
+    const content = '**LLM Running (Turn 1) ...**\n🛠️ file_read({})\n🛠️ code_run({})\n**LLM Running (Turn 2) ...**\n最终答复'
+    act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
+    act(() => (host.querySelector('button[aria-expanded="false"]') as HTMLButtonElement).click())
+    const details = host.querySelector('details')!
+    const summary = details.querySelector('summary')!
+    const title = summary.textContent
+    expect(title).toContain('读取文件 · 执行脚本')
+    for (const open of [true, false, true, false]) {
+      act(() => { details.open = open; details.dispatchEvent(new Event('toggle')) })
+      expect(summary.textContent).toBe(title)
+    }
   })
 
   it('keeps the process entry for a just-completed live reply and lazily renders its raw turn', () => {
