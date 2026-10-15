@@ -141,6 +141,7 @@ class SessionCoordinator:
         poll_interval: float = 0.05,
         abort_timeout: float = 10.0,
         on_state_change: Callable[[RuntimeState], None] | None = None,
+        is_theme_task: Callable[[str], bool] | None = None,
     ) -> None:
         if not 1 <= capacity <= 10:
             raise ValueError("session run capacity must be between 1 and 10")
@@ -149,6 +150,7 @@ class SessionCoordinator:
         self._poll_interval = poll_interval
         self._abort_timeout = abort_timeout
         self._on_state_change = on_state_change
+        self._is_theme_task = is_theme_task or (lambda session_id: False)
         self._lock = threading.RLock()
         self._lifecycle_state_lock = threading.Lock()
         self._shutdown_lock = threading.Lock()
@@ -447,7 +449,8 @@ class SessionCoordinator:
                     raise RunStartAbortedError(session_id, run_id)
                 raise SessionControlBusyError(session_id, "release")
             from . import theme_task_runs
-            theme_task_runs.begin(session_id, run_id, llm_key)
+            if self._is_theme_task(session_id):
+                theme_task_runs.begin(session_id, run_id, llm_key)
             handle = runtime.submit(
                 text,
                 source=source,
@@ -1053,10 +1056,10 @@ class SessionCoordinator:
             # Notify immediately: optional metrics I/O must not delay runtime state.
             self._emit_state_change(notification)
             from . import theme_task_runs
-            last = handle
-            while getattr(last, "_continuation", None) is not None:
-                last = last._continuation
-            theme_task_runs.finish(session_id, run_id, notification.outcome or "failed", getattr(last, "final_text", ""))
+            theme_task_runs.finish(
+                session_id, run_id, notification.outcome or "failed",
+                getattr(handle, "run_final_text", ""),
+            )
         finally:
             with self._lock:
                 if self._watchers.get(run_id) is threading.current_thread():

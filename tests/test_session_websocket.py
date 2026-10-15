@@ -28,7 +28,8 @@ def test_coordinator_abort_timeout_publishes_identified_error_event(
     captured = {}
 
     class CapturingCoordinator:
-        def __init__(self, runtime_factory, *, on_state_change, capacity):
+        def __init__(self, runtime_factory, *, on_state_change, capacity, is_theme_task):
+            captured["is_theme_task"] = is_theme_task
             captured["callback"] = on_state_change
             captured["capacity"] = capacity
 
@@ -41,6 +42,10 @@ def test_coordinator_abort_timeout_publishes_identified_error_event(
     )
     domain.coordinator()
     assert captured["capacity"] == constants.SESSION_RUN_CAPACITY_DEFAULT
+    row = domain.store.create(title="Task")
+    assert not captured["is_theme_task"](row["id"])
+    domain.store.update(row["id"], {"theme_task": {"instruction": "test"}})
+    assert captured["is_theme_task"](row["id"])
     captured["callback"](RuntimeState(
         "session-a", "error", "run-a", "stream-a", "abort_timeout"
     ))

@@ -279,3 +279,14 @@ def test_submit_is_rejected_after_agent_service_shutdown() -> None:
     assert service.shutdown(timeout=0) is True
     with pytest.raises(RuntimeError, match="shutting down"):
         service.submit("late task")
+
+
+@pytest.mark.parametrize('reply', ['final reply', ''])
+def test_run_final_text_reads_only_terminal_continuation(reply):
+    parent = svc_mod.StreamHandle('parent', queue.Queue(), final_text='stale attempt')
+    middle = svc_mod.StreamHandle('middle', queue.Queue(), final_text='stale recovery')
+    child = svc_mod.StreamHandle('child', queue.Queue(), final_text=reply)
+    parent._continuation = middle
+    middle._continuation = child
+    assert parent.run_final_text == reply
+    assert child.run_final_text == reply

@@ -36,12 +36,14 @@ export function normalizeNavPreferences(value: unknown): NavPreference[] {
       result.push({ id, visible: visible !== false })
     }
   }
+  const hadTheme = result.some(item => item.id === 'theme-tasks')
   for (const { id } of NAV_ITEMS) if (!result.some((item) => item.id === id)) result.push({ id, visible: true })
-  // Older saved layouts append newly introduced pages at the end. Keep the
-  // theme workspace beside chat without resetting other ordering/visibility.
-  const themeIndex = result.findIndex(item => item.id === 'theme-tasks')
-  const [theme] = result.splice(themeIndex, 1)
-  result.splice(result.findIndex(item => item.id === 'chat') + 1, 0, theme)
+  // Migrate only layouts missing the page; preserve explicit order/visibility.
+  if (!hadTheme) {
+    const themeIndex = result.findIndex(item => item.id === 'theme-tasks')
+    const [theme] = result.splice(themeIndex, 1)
+    result.splice(result.findIndex(item => item.id === 'chat') + 1, 0, theme)
+  }
   return result
 }
 

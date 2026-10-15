@@ -263,7 +263,11 @@ async def update_session(
     if changes.get("title") is None:
         changes.pop("title", None)
     try:
-        return await asyncio.to_thread(lifecycle.store.update, session_id, changes)
+        row = await asyncio.to_thread(lifecycle.store.update, session_id, changes)
+        if "theme_task" in changes and changes["theme_task"] is None:
+            from ..services import theme_task_runs
+            await asyncio.to_thread(theme_task_runs.discard, session_id)
+        return row
     except SessionNotFoundError:
         raise _not_found()
 
@@ -634,6 +638,8 @@ async def delete_session(lifecycle: SessionDomain, session_id: str):
 
     def _delete() -> None:
         lifecycle.store.delete(session_id)
+        from ..services import theme_task_runs
+        theme_task_runs.discard(session_id)
 
     if lifecycle.peek_coordinator() is None:
         await asyncio.to_thread(_delete)

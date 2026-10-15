@@ -628,3 +628,22 @@ def test_session_runtime_stop_releases_only_a_fully_stopped_coordinator(monkeypa
         mock.call(timeout=0.25),
         mock.call(timeout=0.5),
     ]
+
+
+@pytest.mark.parametrize('action', ['remove_theme', 'delete'])
+def test_removing_task_cleans_latest_metrics(tmp_path, monkeypatch, action):
+    from server.services import theme_task_runs as metrics
+    monkeypatch.setattr(metrics._paths, 'ADMIN_DATA', tmp_path)
+    with _client(tmp_path, monkeypatch) as client:
+        row = client.post('/api/sessions', json={'title': 'Task'}).json()
+        sid = row['id']
+        _store_of(client).update(sid, {'theme_task': {'instruction': 'test'}})
+        metrics.begin(sid, 'r', None)
+        if action == 'remove_theme':
+            response = client.patch(f'/api/sessions/{sid}', json={'theme_task': None})
+        else:
+            response = client.delete(f'/api/sessions/{sid}')
+        assert response.status_code == (200 if action == 'remove_theme' else 204)
+        assert metrics.get(sid) is None
+        metrics.finish(sid, 'r', 'completed', 'late')
+        assert metrics.get(sid) is None

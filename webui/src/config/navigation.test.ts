@@ -12,4 +12,11 @@ describe('theme tasks navigation', () => {
     expect(result.slice(0, 4)).toEqual([saved[0], saved[1], { id: 'theme-tasks', visible: true }, saved[2]])
     expect(new Set(result.map(item => item.id)).size).toBe(NAV_ITEMS.length)
   })
+  it('preserves explicitly saved theme position and visibility', () => {
+    const saved = [{ id: 'theme-tasks', visible: false }, { id: 'memory', visible: true }, { id: 'chat', visible: true }]
+    const result = normalizeNavPreferences(saved)
+    expect(result.slice(0, 3)).toEqual(saved)
+    expect(normalizeNavPreferences(result)).toEqual(result)
+  })
+
 })

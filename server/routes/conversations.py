@@ -334,7 +334,11 @@ def _unlink_archive(cid: str, path: Path) -> None:
     except OSError as exc:
         log.exception("failed to delete conversation %s", cid)
         raise HTTPException(500, f"failed to delete conversation: {exc}")
+    bound_session = _metadata.find_by_archive(path)
     _metadata.delete_by_archive(path)
+    if bound_session is not None:
+        from ..services import theme_task_runs
+        theme_task_runs.discard(bound_session["id"])
 
 
 def _session_coordinator(lifecycle: SessionLifecycle):

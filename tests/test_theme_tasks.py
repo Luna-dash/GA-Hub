@@ -57,3 +57,33 @@ def test_metrics_io_failure_never_breaks_chat(monkeypatch):
         raise OSError('disk unavailable')
     monkeypatch.setattr(metrics, '_write', fail)
     assert metrics.begin('s', 'r', 'm') is None
+
+
+def test_untracked_callbacks_never_read_or_write_metrics(monkeypatch):
+    def fail(*args):
+        raise AssertionError('ordinary sessions must not touch theme storage')
+    monkeypatch.setattr(metrics, '_read', fail)
+    monkeypatch.setattr(metrics, '_write', fail)
+    metrics.turn('ordinary', 'r', 'stream', 1)
+    metrics.model_snapshot('ordinary', 'r', 'model')
+    metrics.finish('ordinary', 'r', 'completed', 'reply')
+
+
+def test_discard_blocks_late_callbacks_and_removes_report(tmp_path, monkeypatch):
+    monkeypatch.setattr(metrics._paths, 'ADMIN_DATA', tmp_path)
+    metrics.begin('s', 'r', 'model')
+    metrics.discard('s')
+    metrics.turn('s', 'r', 'stream', 1)
+    metrics.finish('s', 'r', 'completed', 'late reply')
+    assert metrics.get('s') is None
+
+
+def test_new_run_ignores_old_callbacks(tmp_path, monkeypatch):
+    monkeypatch.setattr(metrics._paths, 'ADMIN_DATA', tmp_path)
+    metrics.begin('s', 'old', 'model')
+    metrics.begin('s', 'new', 'model')
+    metrics.turn('s', 'old', 'stream', 1)
+    metrics.finish('s', 'old', 'failed', 'old reply')
+    assert metrics.get('s', 'new')['run_id'] == 'new'
+    assert metrics.get('s', 'new')['turns'] == 0
+    assert metrics.get('s', 'new')['report'] == ''

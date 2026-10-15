@@ -12,6 +12,17 @@ from uuid import uuid4
 from .. import _paths
 
 _lock = threading.RLock()
+# Only admitted theme runs can write. Path scoping isolates app/test stores;
+# callbacks for other runs return before any persistence I/O.
+_active: set[tuple[Path, str, str]] = set()
+
+
+def _key(session_id: str, run_id: str) -> tuple[Path, str, str]:
+    return (_path(), session_id, run_id)
+
+
+def _forget_active(session_id: str) -> None:
+    _active.difference_update(k for k in list(_active) if k[0] == _path() and k[1] == session_id)
 
 
 def _path() -> Path:
@@ -49,16 +60,20 @@ def _best_effort(fn):
 def begin(session_id: str, run_id: str, model_key: str | None) -> None:
     with _lock:
         rows = _read()
+        _forget_active(session_id)
         rows[session_id] = {"session_id": session_id, "run_id": run_id,
                             "started_at": time.time(), "finished_at": None,
                             "turns": 0, "turn_ids": [], "model_key": model_key,
                             "model_name": model_key, "outcome": None, "report": ""}
         _write(rows)
+        _active.add(_key(session_id, run_id))
 
 
 @_best_effort
 def model_snapshot(session_id: str, run_id: str, name: str) -> None:
     with _lock:
+        if _key(session_id, run_id) not in _active:
+            return
         rows = _read()
         row = rows.get(session_id)
         if row and row["run_id"] == run_id:
@@ -69,6 +84,8 @@ def model_snapshot(session_id: str, run_id: str, name: str) -> None:
 @_best_effort
 def turn(session_id: str, run_id: str, stream_id: str, number: object) -> None:
     with _lock:
+        if _key(session_id, run_id) not in _active:
+            return
         rows = _read()
         row = rows.get(session_id)
         if not row or row["run_id"] != run_id or row["finished_at"]:
@@ -83,10 +100,23 @@ def turn(session_id: str, run_id: str, stream_id: str, number: object) -> None:
 @_best_effort
 def finish(session_id: str, run_id: str, outcome: str, report: str = "") -> None:
     with _lock:
+        if _key(session_id, run_id) not in _active:
+            return
         rows = _read()
         row = rows.get(session_id)
         if row and row["run_id"] == run_id:
             row.update(finished_at=time.time(), outcome=outcome, report=report)
+            _write(rows)
+        _active.discard(_key(session_id, run_id))
+
+
+@_best_effort
+def discard(session_id: str) -> None:
+    """Forget removed/unconverted tasks, ignoring late run callbacks."""
+    with _lock:
+        _forget_active(session_id)
+        rows = _read()
+        if rows.pop(session_id, None) is not None:
             _write(rows)
 
 

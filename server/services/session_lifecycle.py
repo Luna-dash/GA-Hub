@@ -179,7 +179,10 @@ class SessionLifecycle:
                 )
             if self._coordinator is None:
                 capacity = _session_run_capacity()
-                kwargs = {"on_state_change": _publish_runtime_state}
+                kwargs = {
+                    "on_state_change": _publish_runtime_state,
+                    "is_theme_task": lambda session_id: bool(self._store.get(session_id).get("theme_task")),
+                }
                 if capacity != 1:
                     kwargs["capacity"] = capacity
                 self._coordinator = SessionCoordinator(

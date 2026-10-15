@@ -193,6 +193,17 @@ class StreamHandle:
     outcome: str | None = None
 
     @property
+    def run_final_text(self) -> str:
+        """Final logical-run reply, never an earlier recovery attempt.
+
+        Consume after run_finished; an empty final child stays empty.
+        """
+        current = self
+        while current._continuation is not None:
+            current = current._continuation
+        return current.final_text
+
+    @property
     def run_outcome(self) -> str | None:
         """Terminal result of the final attempt, never of a retrying stream."""
         current = self

@@ -984,3 +984,30 @@ def test_ensure_runtime_materializes_without_capacity_and_peek_does_not_create()
     with pytest.raises(Exception):
         coordinator.submit("overflow", session_id="Y")
     runtime.handle.finished = True
+
+
+@pytest.mark.parametrize('is_theme', [False, True])
+def test_only_theme_runs_enter_metrics(tmp_path, monkeypatch, is_theme):
+    from server.services import theme_task_runs as metrics
+    from server.services.session_coordinator import SessionCoordinator
+
+    monkeypatch.setattr(metrics._paths, 'ADMIN_DATA', tmp_path)
+    runtime = FakeRuntime('s')
+    coordinator = SessionCoordinator(
+        lambda _: runtime, poll_interval=0.001, is_theme_task=lambda _: is_theme,
+    )
+    state = coordinator.submit('request', session_id='s')
+    try:
+        assert (metrics.get('s', state.run_id) is not None) == is_theme
+        runtime.handle.run_final_text = 'terminal reply'
+        runtime.handle.finished = True
+        _wait_until(lambda: not coordinator._watchers)
+        report = metrics.get('s')
+        if is_theme:
+            assert report['report'] == 'terminal reply'
+            assert report['finished_at'] is not None
+        else:
+            assert not metrics._path().exists()
+    finally:
+        runtime.handle.finished = True
+        coordinator.shutdown()
