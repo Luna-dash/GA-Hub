@@ -61,6 +61,30 @@ describe('VirtualMessageList', () => {
     expect(list.style.height).toBe('10000px')
   })
 
+  it.each([false, true])('omits trailing row spacing with virtualization=%s', (virtualized) => {
+    function TailHarness() {
+      const scrollRef = useRef<HTMLDivElement>(null)
+      return (
+        <div ref={scrollRef}>
+          <VirtualMessageList
+            items={['first', 'last']}
+            scrollRef={scrollRef}
+            virtualizationThreshold={virtualized ? 0 : 80}
+            itemKey={(item) => item}
+            estimateSize={() => 100}
+            renderItem={(item) => <div>{item}</div>}
+          />
+        </div>
+      )
+    }
+    act(() => root.render(<TailHarness />))
+    const rows = host.querySelectorAll<HTMLElement>('[data-chat-message]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].style.paddingBottom).toBe('0.5rem')
+    expect(rows[1].style.paddingBottom).toBe('0px')
+    expect(host.querySelector<HTMLElement>('[data-chat-virtual-list]')?.dataset.virtualized).toBe(String(virtualized))
+  })
+
   it('can navigate to an unmounted message using the estimated layout', () => {
     act(() => root.render(<Harness />))
     const scroller = host.firstElementChild as HTMLDivElement

@@ -230,6 +230,7 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
             key={key}
             rowKey={key}
             index={index}
+            isLast={index === items.length - 1}
             top={virtualized ? offsets[index] : undefined}
             virtualized={virtualized}
             onMeasure={measureRow}
@@ -245,13 +246,14 @@ export const VirtualMessageList = forwardRef(function VirtualMessageList<T>(
 interface RowProps {
   rowKey: string
   index: number
+  isLast: boolean
   top?: number
   virtualized: boolean
   onMeasure: (key: string, index: number, measured: number) => void
   children: ReactNode
 }
 
-const MeasuredRow = memo(function MeasuredRow({ rowKey, index, top, virtualized, onMeasure, children }: RowProps) {
+const MeasuredRow = memo(function MeasuredRow({ rowKey, index, isLast, top, virtualized, onMeasure, children }: RowProps) {
   const nodeRef = useRef<HTMLDivElement>(null)
   const measure = useCallback(() => {
     const node = nodeRef.current
@@ -279,8 +281,8 @@ const MeasuredRow = memo(function MeasuredRow({ rowKey, index, top, virtualized,
       data-chat-key={rowKey}
       data-virtual-index={index}
       style={virtualized
-        ? { position: 'absolute', top, left: 0, right: 0, paddingBottom: '0.5rem' }
-        : { paddingBottom: '0.5rem' }}
+        ? { position: 'absolute', top, left: 0, right: 0, paddingBottom: isLast ? 0 : '0.5rem' }
+        : { paddingBottom: isLast ? 0 : '0.5rem' }}
     >
       {children}
     </div>

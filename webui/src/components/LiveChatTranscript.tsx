@@ -518,7 +518,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           ref={scrollRef}
           data-live-chat-scroll
           tabIndex={-1}
-          className="relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto py-4 pl-8 pr-[76px] outline-none [overflow-anchor:none] md:pl-10"
+          className="relative min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 pb-1 pl-8 pr-[76px] outline-none [overflow-anchor:none] md:pl-10"
         >
           {historyStatus === 'history_error' && (
             <div className="sticky top-0 z-10 mx-auto flex w-fit max-w-full items-center gap-3 rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-sm text-status-danger shadow-sm">
