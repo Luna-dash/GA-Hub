@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '@/api/client'
 import type { HubSession, ThemeRun } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
@@ -9,6 +9,8 @@ import { MessageContent } from '@/components/MessageContent'
 import { queryKeys } from '@/queries/queryKeys'
 import { readThemeReportExpanded, writeThemeReportExpanded } from '@/config/storageKeys'
 import { themeReportConclusion } from '@/utils/themeReport'
+import { hubEventClient } from '@/runtime/hubEventClient'
+import { formatRelativeTime } from '@/utils/timeFormat'
 import { errorMessageFromError, sessionChatHref } from '@/utils/sessionUi'
 
 const button = 'rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-bg-soft disabled:opacity-40'
@@ -48,7 +50,8 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
         {key && !llms.data?.llms.some(m => m.key === key) && <option value={key}>原绑定已失效：{key}（请重新选择）</option>}
         {llms.data?.llms.map(m => <option key={m.key} value={m.key}>{m.name} · {m.key}</option>)}
       </select></label>
-      <p className="text-xs text-slate-500">保留原会话上下文与项目绑定。模型按配置键保存；配置键改名后需重新关联，不会自动换用其他模型。</p>
+      {!session.theme_task && <p className="text-xs text-slate-500">保留原会话上下文与项目绑定。</p>}
+      {key && llms.data && !llms.data.llms.some(m => m.key === key) && <p className="text-xs text-status-warning">原绑定的模型已失效。模型按配置键保存，配置键改名后需重新关联，不会自动换用其他模型。</p>}
       {llms.isError && <p role="alert" className="text-sm text-status-danger">模型列表加载失败，请稍后重试。</p>}
       {error && <p role="alert" className="text-sm text-status-danger">{error}</p>}
       <div className="flex justify-end gap-2"><button className={button} disabled={saving} onClick={onClose}>取消</button><button className={`${button} bg-accent text-white`} disabled={saving || !instruction.trim() || !title.trim() || !llms.data?.llms.some(m => m.key === key)} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button></div>
@@ -56,10 +59,14 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
   </ModalOverlay>
 }
 
-function ThemeCard({ session, onSettings, refresh }: { session: HubSession; onSettings: () => void; refresh: () => void }) {
+function ThemeCard({ session, onSettings, refresh, autoOpen = false, onAutoOpened }: { session: HubSession; onSettings: () => void; refresh: () => void; autoOpen?: boolean; onAutoOpened?: () => void }) {
   const navigate = useNavigate()
-  const runQuery = useQuery({ queryKey: ['theme-run', session.id], queryFn: () => api.themeRun(session.id), refetchInterval: 2000 })
-  const runtimeQuery = useQuery({ queryKey: ['theme-runtime', session.id], queryFn: () => api.sessionRuntime(session.id), refetchInterval: 2000 })
+  // Idle cards make no requests: the page invalidates these keys on
+  // session:runtime events and after the event socket reconnects. Only a
+  // running card polls themeRun, because turn counts are not pushed.
+  const runtimeQuery = useQuery({ queryKey: ['theme-runtime', session.id], queryFn: () => api.sessionRuntime(session.id), staleTime: Infinity })
+  const running = activeStatuses.includes(runtimeQuery.data?.status ?? '')
+  const runQuery = useQuery({ queryKey: ['theme-run', session.id], queryFn: () => api.themeRun(session.id), staleTime: Infinity, refetchInterval: running ? 5000 : false, refetchIntervalInBackground: false })
   const llms = useQuery({ queryKey: ['theme-llms'], queryFn: api.llms })
   const [now, setNow] = useState(Date.now())
   const [pending, setPending] = useState(false)
@@ -70,6 +77,11 @@ function ThemeCard({ session, onSettings, refresh }: { session: HubSession; onSe
   const [saveDefault, setSaveDefault] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [openReport, setOpenReport] = useState(() => readThemeReportExpanded(session.id))
+  useEffect(() => {
+    // Opened from a completion notification: show this task's conclusion.
+    if (!autoOpen) return
+    setExpanded(true); setOpenReport(true); onAutoOpened?.()
+  }, [autoOpen, onAutoOpened])
   const run = runQuery.data?.run
   const runtime = runtimeQuery.data
   const active = activeStatuses.includes(runtime?.status ?? '')
@@ -99,13 +111,17 @@ function ThemeCard({ session, onSettings, refresh }: { session: HubSession; onSe
     setPending(true); setError('')
     try { await api.themeConfig(session.id, null); refresh() } catch (e) { setError(errorMessageFromError(e)) } finally { setPending(false) }
   }
+  const dotTone = uncertain ? 'bg-status-warning' : !run ? 'bg-border' : run.interrupted || run.outcome === 'failed' ? 'bg-status-danger' : run.outcome === 'completed' ? 'bg-status-success' : run.outcome === 'cancelled' ? 'bg-slate-400' : 'bg-status-warning'
   const disabled = active || pending || uncertain || !model || !runtimeQuery.data
   return <>
-    <button type="button" className="group flex min-h-32 w-full flex-col rounded-xl border border-border bg-bg p-4 text-left shadow-sm transition-colors hover:border-accent/50 hover:bg-bg-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" aria-label={`打开主题任务：${title}`} onClick={() => setExpanded(true)}>
-      <span className="flex w-full items-start justify-between gap-3"><span className="line-clamp-2 text-sm font-semibold">{title}</span><span aria-hidden className={`mt-1 h-3 w-3 shrink-0 rounded-full ${active ? 'border-2 border-accent border-t-transparent motion-safe:animate-spin' : 'bg-border'}`} /></span>
+    <div className="group relative">
+    <button type="button" className="flex min-h-32 w-full flex-col rounded-xl border border-border bg-bg p-4 text-left shadow-sm transition-colors hover:border-accent/50 hover:bg-bg-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" aria-label={`打开主题任务：${title}`} onClick={() => setExpanded(true)}>
+      <span className="flex w-full items-start justify-between gap-3"><span className="line-clamp-2 text-sm font-semibold">{title}</span><span aria-hidden className={`mt-1 h-3 w-3 shrink-0 rounded-full ${active ? 'border-2 border-accent border-t-transparent motion-safe:animate-spin' : dotTone}`} /></span>
       <span className="mt-2 truncate text-xs text-slate-500">{model?.name ?? (session.llm_key ? '需重新关联模型' : '未设置模型')}</span>
-      <span className="mt-4 flex w-full items-center justify-between gap-2 text-xs"><span className={active ? 'text-accent' : 'text-slate-500'}>{status}</span>{run && <span className="tabular-nums text-slate-500">{run.interrupted ? '—' : elapsed(run, now)} · {run.turns} turn</span>}</span>
+      <span className="mt-4 flex w-full items-center justify-between gap-2 text-xs"><span className={active ? 'text-accent' : 'text-slate-500'}>{status}</span>{run && <span className="tabular-nums text-slate-500">{active ? elapsed(run, now) : formatRelativeTime(run.finished_at ?? run.started_at)} · {run.turns} turn</span>}</span>
     </button>
+    {!active && <button type="button" aria-label={`运行主题任务：${title}`} disabled={disabled} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-accent px-3 py-1.5 text-xs text-white shadow-sm opacity-0 transition-opacity focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent group-hover:opacity-100 group-focus-within:opacity-100 disabled:hidden [@media(hover:none)]:opacity-100" onClick={() => void execute(session.theme_task!.instruction)}>▶ 运行</button>}
+    </div>
     {expanded && <ModalOverlay onClose={() => setExpanded(false)} align="right" panelClassName="fixed inset-0 flex h-[100dvh] w-screen flex-col bg-bg">
       <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-5 py-4"><h2 className="truncate font-semibold">{title}</h2><button className={button} onClick={() => setExpanded(false)} aria-label="收起任务卡片">收起</button></header>
       <article className="min-h-0 flex-1 overflow-y-auto" aria-label={`主题任务：${title}`}><div className="mx-auto max-w-5xl p-5 sm:p-8">
@@ -139,12 +155,37 @@ export default function ThemeTasks() {
   const [search, setSearch] = useState('')
   const refresh = () => { void client.invalidateQueries({ queryKey: queryKeys.sessions }) }
   const tasks = sessions.filter(s => s.theme_task)
+  const llms = useQuery({ queryKey: ['theme-llms'], queryFn: api.llms })
+  const modelName = (key?: string | null) => key ? llms.data?.llms.find(m => m.key === key)?.name ?? key : '未绑定模型'
+  const pickable = sessions
+    .filter(s => !s.theme_task && `${s.title} ${s.project_name ?? ''}`.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0))
+  const [params, setParams] = useSearchParams()
+  const openId = params.get('open')
+  const clearOpen = useCallback(() => setParams(p => { const next = new URLSearchParams(p); next.delete('open'); return next }, { replace: true }), [setParams])
+  useEffect(() => {
+    const isThemeKey = (key: readonly unknown[]) => key[0] === 'theme-run' || key[0] === 'theme-runtime'
+    const offRuntime = hubEventClient.subscribe('session:runtime', (event) => {
+      if (event.topic !== 'session:runtime') return
+      const id = (event.payload as { session_id?: unknown }).session_id
+      if (typeof id !== 'string') return
+      void client.invalidateQueries({ predicate: q => isThemeKey(q.queryKey) && q.queryKey[1] === id })
+    })
+    // Events missed while disconnected are recovered by one full refresh.
+    let wasOpen: boolean | undefined
+    const offState = hubEventClient.subscribeState((state) => {
+      const open = state === 'open'
+      if (open && wasOpen === false) void client.invalidateQueries({ predicate: q => isThemeKey(q.queryKey) })
+      wasOpen = open
+    })
+    return () => { offRuntime(); offState() }
+  }, [client])
   return <PageShell title="主题任务" actions={<button className={`${button} bg-accent text-white`} onClick={() => setPicking(true)}>＋ 从会话转入</button>}>
     <div className="mx-auto max-w-7xl p-4 sm:p-6">
       {sessionsQuery.isError && <p role="alert" className="text-status-danger">加载失败。<button className={button} onClick={() => void sessionsQuery.refetch()}>重试</button></p>}
-      {sessionsQuery.isLoading ? <p>正在加载…</p> : tasks.length === 0 ? <div className="rounded-xl border border-dashed border-border p-8 text-center"><p className="mb-4 text-sm text-slate-500">暂无主题任务</p><button className={button} onClick={() => setPicking(true)}>选择已有会话</button></div> : <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{tasks.map(s => <ThemeCard key={s.id} session={s} onSettings={() => setSetting(s)} refresh={refresh} />)}</div>}
+      {sessionsQuery.isLoading ? <p>正在加载…</p> : tasks.length === 0 ? <div className="rounded-xl border border-dashed border-border p-8 text-center"><p className="mb-4 text-sm text-slate-500">暂无主题任务</p><button className={button} onClick={() => setPicking(true)}>选择已有会话</button></div> : <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{tasks.map(s => <ThemeCard key={s.id} session={s} onSettings={() => setSetting(s)} refresh={refresh} autoOpen={openId === s.id} onAutoOpened={clearOpen} />)}</div>}
     </div>
-    {picking && <ModalOverlay onClose={() => setPicking(false)} panelClassName="w-[min(560px,94vw)] rounded-2xl border border-border bg-bg p-6"><div className="mb-4 flex justify-between"><h2 className="font-semibold">选择已有会话</h2><button onClick={() => setPicking(false)}>关闭</button></div><input aria-label="搜索会话" className={field} placeholder="搜索名称或项目" value={search} onChange={e => setSearch(e.target.value)} /><div className="mt-3 max-h-96 space-y-2 overflow-auto">{sessions.filter(s => !s.theme_task && `${s.title} ${s.project_name ?? ''}`.toLowerCase().includes(search.toLowerCase())).map(s => <button key={s.id} className="block w-full rounded-lg border border-border p-3 text-left hover:bg-bg-soft" onClick={() => { setPicking(false); setSetting(s) }}><div className="text-sm">{s.title || '未命名会话'}</div><div className="mt-1 text-xs text-slate-500">{s.project_name || '自由会话'} · {s.llm_key || '未绑定模型'}</div></button>)}</div></ModalOverlay>}
+    {picking && <ModalOverlay onClose={() => setPicking(false)} panelClassName="w-[min(560px,94vw)] rounded-2xl border border-border bg-bg p-6"><div className="mb-4 flex justify-between"><h2 className="font-semibold">选择已有会话</h2><button onClick={() => setPicking(false)}>关闭</button></div><input aria-label="搜索会话" className={field} placeholder="搜索名称或项目" value={search} onChange={e => setSearch(e.target.value)} /><div className="mt-3 max-h-96 space-y-2 overflow-auto">{pickable.map(s => <button key={s.id} className="block w-full rounded-lg border border-border p-3 text-left hover:bg-bg-soft" onClick={() => { setPicking(false); setSetting(s) }}><div className="text-sm">{s.title || '未命名会话'}</div><div className="mt-1 text-xs text-slate-500">{s.project_name || '自由会话'} · {modelName(s.llm_key)}</div></button>)}</div></ModalOverlay>}
     {setting && <ThemeTaskSettings key={setting.id} session={setting} onClose={() => setSetting(null)} onSaved={refresh} />}
   </PageShell>
 }

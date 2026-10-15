@@ -31,10 +31,12 @@ export function useDesktopNotifyEffects() {
       seen.add(key)
       if (seen.size > 500) seen.delete(seen.values().next().value!)
       void (async () => {
-        let name = qc.getQueryData<Awaited<ReturnType<typeof api.sessions>>>(queryKeys.sessions)?.items.find(s => s.id === state.session_id)?.title
-        if (!name) {
-          try { name = (await api.sessions()).items.find(s => s.id === state.session_id)?.title } catch { /* use id */ }
+        let session = qc.getQueryData<Awaited<ReturnType<typeof api.sessions>>>(queryKeys.sessions)?.items.find(s => s.id === state.session_id)
+        if (!session?.title) {
+          try { session = (await api.sessions()).items.find(s => s.id === state.session_id) ?? session } catch { /* use id */ }
         }
+        const name = session?.title
+        const themeTask = !!session?.theme_task
         const failed = state.outcome === 'failed' || !!state.error
         let needsInput = false
         let classified = false
@@ -53,8 +55,10 @@ export function useDesktopNotifyEffects() {
         if (!alive) return
         await notify(failed ? '会话处理失败' : needsInput ? '需要你回复一下' : classified ? '可以查看结果了' : '会话有更新', {
           body: `「${String(name || state.session_id).replace(/\s+/g, ' ').slice(0, 64)}」${failed ? '本次处理未能完成，请进入会话查看原因。' : needsInput ? '有问题需要你回答，回复后即可继续。' : classified ? '已结束本次处理，结果已可查看。' : '已结束本次处理，进去看看最新状态吧。'}`,
-          confirmText: needsInput ? '前往回复' : '查看会话',
-          tag: key, onOpen: onOpen(state.session_id),
+          // Theme tasks open their conclusion; questions still go to the chat.
+          confirmText: needsInput ? '前往回复' : themeTask ? '查看结论' : '查看会话',
+          tag: key,
+          onOpen: themeTask && !needsInput ? () => navigate(`/theme-tasks?open=${encodeURIComponent(state.session_id)}`) : onOpen(state.session_id),
         })
       })().catch(() => undefined)
     })

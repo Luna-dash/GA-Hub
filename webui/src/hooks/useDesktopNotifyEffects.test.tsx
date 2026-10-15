@@ -35,6 +35,14 @@ describe('state notifications', () => {
     expect(m.start).not.toHaveBeenCalled()
     expect(JSON.stringify(m.notify.mock.calls)).not.toContain('PRIVATE OUTPUT')
   })
+  it('opens a theme task conclusion instead of the chat', async () => {
+    vi.spyOn(qc, 'getQueryData').mockReturnValueOnce({ items: [{ id: 's1', title: '签到', theme_task: { title: '签到', instruction: '检查' } }] } as any)
+    await act(async () => emit(settled))
+    const options = m.notify.mock.calls[0][1]
+    expect(options.confirmText).toBe('查看结论')
+    options.onOpen()
+    expect(m.navigate).toHaveBeenCalledWith('/theme-tasks?open=s1')
+  })
   it('ignores snapshots, running and stopped runs', async () => {
     await act(async () => {
       emit({ session_id: 's1', status: 'idle' }); emit({ ...settled, status: 'running' })
