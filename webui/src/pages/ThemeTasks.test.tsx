@@ -6,8 +6,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import ThemeTasks from './ThemeTasks'
 import { api } from '@/api/client'
+import { writeClipboard } from '@/utils/clipboard'
+import { writeRecentInstructions, readRecentInstructions } from '@/utils/themeTaskActions'
 
+vi.mock('@/utils/clipboard', () => ({ writeClipboard: vi.fn() }))
 vi.mock('@/api/client', () => ({ api: {
+  getSessionMessages: vi.fn(),
+  startThemeRun: vi.fn(async () => ({})),
+  themeConfig: vi.fn(async () => ({})),
   sessions: vi.fn(async () => ({ items: [{ id: 'one', title: '签到', llm_key: 'model', theme_task: { title: '签到', instruction: '检查签到' } }] })),
   themeRun: vi.fn(async () => ({ run: { started_at: 10, finished_at: 20, turns: 2, outcome: 'completed', report: '**LLM Running (Turn 1) ...**\n<summary>检查</summary>\n过程转储\n**LLM Running (Turn 2) ...**\n<summary>完成</summary>\n最终：签到成功。' } })),
   sessionRuntime: vi.fn(async () => ({ status: 'idle' })),
@@ -23,6 +29,8 @@ vi.mock('@/components/MessageContent', () => ({ MessageContent: ({ content }: { 
 let host: HTMLDivElement, root: Root, client: QueryClient
 beforeEach(async () => {
   localStorage.clear()
+  vi.clearAllMocks()
+  vi.mocked(writeClipboard).mockReset().mockResolvedValue(true)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   await act(async () => { root.render(<QueryClientProvider client={client}><MemoryRouter><ThemeTasks /></MemoryRouter></QueryClientProvider>) })
@@ -47,6 +55,13 @@ it('starts compact, opens fullscreen with conclusion only, and returns to the gr
 })
 
 const wait = (ms = 25) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)) })
+const run = { run_id: 'r', started_at: 10, finished_at: 20, turns: 2, outcome: 'completed', report: '结论' }
+async function click(label: string) {
+  const target = Array.from(host.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === label || b.textContent?.includes(label))
+  expect(target, label).toBeTruthy()
+  await act(async () => { target!.click() })
+  await wait()
+}
 const runtimeCalls = () => vi.mocked(api.sessionRuntime).mock.calls.length
 
 it('shows a run shortcut on the compact card', () => {
@@ -74,8 +89,59 @@ it('refreshes every card once after the event socket reconnects', async () => {
 
 it('opens the conclusion requested by a notification link', async () => {
   act(() => root.unmount())
+  localStorage.clear()
+  vi.mocked(writeClipboard).mockReset().mockResolvedValue(true)
+  vi.mocked(api.getSessionMessages).mockReset()
   root = createRoot(host)
   await act(async () => { root.render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/theme-tasks?open=one']}><ThemeTasks /></MemoryRouter></QueryClientProvider>) })
   await wait(60)
   expect(host.querySelector('[role="dialog"]')?.textContent).toContain('最终：签到成功。')
+})
+
+
+it('copies only the projected conclusion even when collapsed and reports failures', async () => {
+  await wait(60); await click('打开主题任务：签到'); await click('最终结论'); await click('复制结论')
+  expect(writeClipboard).toHaveBeenLastCalledWith('最终：签到成功。')
+  expect(host.textContent).toContain('结论已复制')
+  vi.mocked(writeClipboard).mockResolvedValueOnce(false)
+  await click('复制结论')
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('复制失败：请检查剪贴板权限。')
+})
+
+it('retrieves the failed run request from session history, then requires explicit confirmation', async () => {
+  await wait(60)
+  await act(async () => { client.setQueryData(['theme-run', 'one'], { session_id: 'one', run: { ...run, outcome: 'failed', report: '!!! Error: login expired' } }) })
+  vi.mocked(api.getSessionMessages).mockResolvedValue({ session_id: 'one', archive_bound: true, items: [{ id: 'q', ordinal: 0, role: 'user', content: '只检查，不签到', run_id: 'r' }], has_more: false, revision: 'v' })
+  await click('打开主题任务：签到')
+  expect(host.textContent).toContain('login expired')
+  await click('取回原指令重试')
+  expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toBe('只检查，不签到')
+  expect(api.startThemeRun).not.toHaveBeenCalled()
+  expect(host.textContent).toContain('不会回滚')
+  await click('确认重试')
+  expect(api.startThemeRun).toHaveBeenCalledWith('one', '只检查，不签到')
+  expect(readRecentInstructions('one')).toEqual(['只检查，不签到'])
+  expect(api.themeConfig).not.toHaveBeenCalled()
+})
+
+it('does not substitute the default when the failed run request is missing', async () => {
+  await wait(60)
+  await act(async () => { client.setQueryData(['theme-run', 'one'], { session_id: 'one', run: { ...run, outcome: 'failed' } }) })
+  vi.mocked(api.getSessionMessages).mockResolvedValue({ session_id: 'one', archive_bound: true, items: [], has_more: false, revision: 'v' })
+  await click('打开主题任务：签到'); await click('取回原指令重试')
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('未在会话历史中找到')
+  expect(api.startThemeRun).not.toHaveBeenCalled()
+})
+
+it('reuses recent instructions without starting a run and supports removal and clearing', async () => {
+  act(() => root.unmount())
+  writeRecentInstructions('one', ['仅检查', '执行签到'])
+  root = createRoot(host)
+  await act(async () => { root.render(<QueryClientProvider client={client}><MemoryRouter><ThemeTasks /></MemoryRouter></QueryClientProvider>) })
+  await wait(60); await click('打开主题任务：签到'); await click('本次调整')
+  await click('仅检查')
+  expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toBe('仅检查')
+  expect(api.startThemeRun).not.toHaveBeenCalled()
+  await click('删除最近指令1'); expect(readRecentInstructions('one')).toEqual(['执行签到'])
+  await click('清空记录'); expect(readRecentInstructions('one')).toEqual([])
 })

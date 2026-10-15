@@ -11,6 +11,8 @@ import { readThemeReportExpanded, writeThemeReportExpanded } from '@/config/stor
 import { themeReportConclusion } from '@/utils/themeReport'
 import { hubEventClient } from '@/runtime/hubEventClient'
 import { formatRelativeTime } from '@/utils/timeFormat'
+import { writeClipboard } from '@/utils/clipboard'
+import { readRecentInstructions, writeRecentInstructions, readRunInstruction, themeFailureReason } from '@/utils/themeTaskActions'
 import { errorMessageFromError, sessionChatHref } from '@/utils/sessionUi'
 
 const button = 'rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-bg-soft disabled:opacity-40'
@@ -75,6 +77,9 @@ function ThemeCard({ session, onSettings, refresh, autoOpen = false, onAutoOpene
   const [adjust, setAdjust] = useState(false)
   const [draft, setDraft] = useState(session.theme_task!.instruction)
   const [saveDefault, setSaveDefault] = useState(false)
+  const [recent, setRecent] = useState(() => readRecentInstructions(session.id))
+  const [notice, setNotice] = useState('')
+  const [retryRunId, setRetryRunId] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [openReport, setOpenReport] = useState(() => readThemeReportExpanded(session.id))
   useEffect(() => {
@@ -92,13 +97,15 @@ function ThemeCard({ session, onSettings, refresh, autoOpen = false, onAutoOpene
   const title = session.title
   const status = uncertain ? '状态未知' : active ? '运行中' : pending ? '提交中' : run ? outcomes[run.outcome ?? ''] ?? '执行结束' : '待执行'
   useEffect(() => { if (!active) return; const t = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(t) }, [active])
-  async function execute(text: string) {
+  async function execute(text: string, customized = false) {
     if (lock.current) return
-    lock.current = true; setPending(true); setError('')
+    lock.current = true; setPending(true); setError(''); setNotice('')
     try {
-      if (saveDefault && adjust) { await api.themeConfig(session.id, { ...session.theme_task!, instruction: text }); refresh() }
+      if (customized && retryRunId && (run?.run_id !== retryRunId || (runtime?.completed_run_id && runtime.completed_run_id !== retryRunId))) throw new Error('运行状态已变化，请重新取回原指令。')
+      if (customized && saveDefault && adjust) { await api.themeConfig(session.id, { ...session.theme_task!, instruction: text }); refresh() }
       await api.startThemeRun(session.id, text)
-      setAdjust(false)
+      if (customized) changeRecent([text, ...readRecentInstructions(session.id)])
+      setRetryRunId(null); setAdjust(false)
       await Promise.all([runtimeQuery.refetch(), runQuery.refetch()])
     } catch (e) { setError(`${errorMessageFromError(e)} 请先核对运行状态，避免重复提交。`); await runtimeQuery.refetch() }
     finally { lock.current = false; setPending(false) }
@@ -113,6 +120,25 @@ function ThemeCard({ session, onSettings, refresh, autoOpen = false, onAutoOpene
   }
   const dotTone = uncertain ? 'bg-status-warning' : !run ? 'bg-border' : run.interrupted || run.outcome === 'failed' ? 'bg-status-danger' : run.outcome === 'completed' ? 'bg-status-success' : run.outcome === 'cancelled' ? 'bg-slate-400' : 'bg-status-warning'
   const disabled = active || pending || uncertain || !model || !runtimeQuery.data
+  const failed = frozen && run?.outcome === 'failed'
+  const failureReason = failed ? (runtime?.completed_run_id === run?.run_id ? runtime?.error : '') || themeFailureReason(run?.report ?? '') : ''
+  async function copyReport() {
+    try { setError(''); if (!await writeClipboard(report)) throw new Error('请检查剪贴板权限。'); setNotice('结论已复制。') }
+    catch (e) { setNotice(''); setError(`复制失败：${errorMessageFromError(e)}`) }
+  }
+  function changeRecent(values: string[]) {
+    try { setRecent(writeRecentInstructions(session.id, values)) }
+    catch { setNotice('无法保存本机指令记录，请检查浏览器存储权限。') }
+  }
+  async function prepareRetry() {
+    if (!run || disabled || lock.current) return
+    lock.current = true; setPending(true); setError(''); setNotice('')
+    try {
+      const instruction = await readRunInstruction(session.id, run.run_id)
+      setDraft(instruction); setSaveDefault(false); setRetryRunId(run.run_id); setAdjust(true)
+    } catch (e) { setError(errorMessageFromError(e)) }
+    finally { lock.current = false; setPending(false) }
+  }
   return <>
     <div className="group relative">
     <button type="button" className="flex min-h-32 w-full flex-col rounded-xl border border-border bg-bg p-4 text-left shadow-sm transition-colors hover:border-accent/50 hover:bg-bg-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" aria-label={`打开主题任务：${title}`} onClick={() => setExpanded(true)}>
@@ -135,13 +161,15 @@ function ThemeCard({ session, onSettings, refresh, autoOpen = false, onAutoOpene
     </div>
     {!model && <p className="mb-3 text-xs text-status-warning">执行模型未确认，请打开设置重新选择。</p>}
     <div className="flex flex-wrap gap-2">{active ? <button className={button} disabled={pending || runtime?.status === 'aborting'} onClick={() => void stop()}>停止执行</button> : <button className={`${button} bg-accent text-white`} disabled={disabled} onClick={() => void execute(session.theme_task!.instruction)}>立即运行</button>}
-      <button className={button} disabled={active || pending} onClick={() => { setDraft(session.theme_task!.instruction); setSaveDefault(false); setAdjust(!adjust) }}>本次调整</button>
+      <button className={button} disabled={active || pending} onClick={() => { setDraft(session.theme_task!.instruction); setSaveDefault(false); setRetryRunId(null); setAdjust(!adjust) }}>本次调整</button>
       <button className={button} onClick={() => navigate(sessionChatHref(session.id))}>过程与历史 ↗</button>
       <button className={`${button} ml-auto text-slate-500`} disabled={active || pending} onClick={() => void moveBack()}>移回聊天</button>
     </div>
-    {adjust && <div className="mt-4 space-y-2"><textarea aria-label="本次执行指令" className={`${field} min-h-24`} value={draft} onChange={e => setDraft(e.target.value)} /><label className="flex gap-2 text-xs"><input type="checkbox" checked={saveDefault} onChange={e => setSaveDefault(e.target.checked)} />同时保存为默认指令</label><button className={button} disabled={disabled || !draft.trim()} onClick={() => void execute(draft.trim())}>按本次指令运行</button></div>}
+    {(failed || (frozen && run?.interrupted)) && <section className="mt-3 rounded-lg border border-status-danger/30 p-3 text-sm"><p className="font-medium text-status-danger">{failed ? '本次执行失败' : '上次执行中断，结果未确认'}</p><p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-xs text-slate-500">{failureReason || '未记录具体失败原因，请在过程与历史中核对。'}</p>{failureReason && <details className="mt-2 text-xs"><summary>完整错误</summary><pre className="whitespace-pre-wrap break-words">{failureReason}</pre></details>}<button className={`${button} mt-2`} disabled={disabled} onClick={() => void prepareRetry()}>取回原指令重试</button></section>}
+    {adjust && <div className="mt-4 space-y-2"><textarea aria-label="本次执行指令" className={`${field} min-h-24`} value={draft} onChange={e => setDraft(e.target.value)} />{retryRunId && <p className="text-xs text-status-warning">已取回原指令。将在当前会话上下文中再次执行，不会回滚；请先核对上次是否已部分完成，避免重复操作。</p>}{recent.length > 0 && <div className="space-y-1"><div className="flex items-center justify-between text-xs text-slate-500"><span>最近指令 · 仅本机保留5条</span><button className={button} disabled={pending || active} onClick={() => changeRecent([])}>清空记录</button></div>{recent.map((text, index) => <div key={text} className="flex items-center gap-2"><button className={`${button} min-w-0 flex-1 truncate text-left`} title={text} disabled={pending || active} onClick={() => { setDraft(text); setSaveDefault(false); setRetryRunId(null) }}>{text}</button><button className={button} aria-label={`删除最近指令${index + 1}`} disabled={pending || active} onClick={() => changeRecent(recent.filter(v => v !== text))}>删除</button></div>)}</div>}<label className="flex gap-2 text-xs"><input type="checkbox" checked={saveDefault} onChange={e => setSaveDefault(e.target.checked)} />同时保存为默认指令</label><button className={button} disabled={disabled || !draft.trim()} onClick={() => void execute(draft.trim(), true)}>{retryRunId ? '确认重试' : '按本次指令运行'}</button></div>}
+    {notice && <p role="status" className="mt-3 text-xs text-slate-500">{notice}</p>}
     {error && <p role="alert" className="mt-3 text-sm text-status-danger">{error}</p>}
-    {run && frozen && <section className="mt-5 border-t border-border pt-3"><button className="flex w-full items-center justify-between text-sm font-medium" aria-expanded={openReport} onClick={() => { const next = !openReport; setOpenReport(next); writeThemeReportExpanded(session.id, next) }}><span>最终结论 <span className="ml-2 text-xs font-normal text-slate-500">{new Date(run.started_at * 1000).toLocaleString()}</span></span><span>{openReport ? '收起 −' : '展开 +'}</span></button>{openReport && <div className="mt-3 rounded-lg bg-bg-soft p-4 text-sm">{report ? <MessageContent content={report} format="markdown" markdownMode="chat" /> : <p className="text-slate-500">暂无最终结论</p>}</div>}</section>}
+    {run && frozen && <section className="mt-5 border-t border-border pt-3"><div className="flex items-center gap-3"><button className="flex flex-1 items-center justify-between text-sm font-medium" aria-expanded={openReport} onClick={() => { const next = !openReport; setOpenReport(next); writeThemeReportExpanded(session.id, next) }}><span>最终结论 <span className="ml-2 text-xs font-normal text-slate-500">{new Date(run.started_at * 1000).toLocaleString()}</span></span><span>{openReport ? '收起 −' : '展开 +'}</span></button><button className={button} disabled={!report} onClick={() => void copyReport()}>复制结论</button></div>{openReport && <div className="mt-3 rounded-lg bg-bg-soft p-4 text-sm">{report ? <MessageContent content={report} format="markdown" markdownMode="chat" /> : <p className="text-slate-500">暂无最终结论</p>}</div>}</section>}
     </div></article></ModalOverlay>}
   </>
 }

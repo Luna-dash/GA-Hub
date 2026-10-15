@@ -48,6 +48,7 @@ export const storageKeys = {
   chatPerformance: 'gahub.chatPerformance',
   /** ThemeTasks: per-session report expanded state ('open'/'closed'). */
   themeReportPrefix: 'gahub.theme-report:',
+  themeInstructionsPrefix: 'gahub.theme-instructions:',
   /** LEGACY pre-`gahub.` prefixes — frozen so saved prefs keep working. */
   desktopNotifications: 'ga.desktopNotifications.v1',
   /** main.tsx: dynamic-import chunk reload guard (epoch timestamp). */
