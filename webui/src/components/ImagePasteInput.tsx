@@ -7,6 +7,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
+import { LoaderCircle, RotateCw, X } from 'lucide-react'
 import { api } from '@/api/client'
 import type { PasteAttachment, UploadResult } from '@/api/types'
 import { errorMessageFromError } from '@/utils/sessionUi'
@@ -37,6 +38,14 @@ interface Props {
   autoFocus?: boolean
 }
 
+interface PendingUpload {
+  id: number
+  file: File
+  preview?: string
+  controller?: AbortController
+  error?: string
+}
+
 export function ImagePasteInput({
   text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, btwSessionId, onSlashCommand,
   placeholder = '输入消息，可粘贴/拖放图片或文件…',
@@ -57,8 +66,13 @@ export function ImagePasteInput({
   // any Enter that lands within ~80ms of it.
   const lastCompEndRef = useRef(0)
   const [dragOver, setDragOver] = useState(false)
-  const [uploading, setUploading] = useState(0)
-  const [uploadErrors, setUploadErrors] = useState<string[]>([])
+  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
+  const pendingUploadsRef = useRef<PendingUpload[]>([])
+  const nextUploadId = useRef(0)
+  const attachmentsBlocked = pendingUploads.length > 0
+  const attachmentHint = pendingUploads.some((item) => item.error)
+    ? '请重试或移除上传失败的附件'
+    : attachmentsBlocked ? '请等待附件上传完成' : undefined
   const [btwOpen, setBtwOpen] = useState(false)
   const [slashActiveIndex, setSlashActiveIndex] = useState(0)
   const [dismissedSlashText, setDismissedSlashText] = useState<string | null>(null)
@@ -128,33 +142,74 @@ export function ImagePasteInput({
   const attachmentsRef = useRef(attachments)
   useEffect(() => { attachmentsRef.current = attachments }, [attachments])
 
-  const upload = async (files: File[]) => {
-    if (!files.length) return
-    setUploadErrors([])
-    setUploading((n) => n + files.length)
-    try {
-      const results: PasteAttachment[] = []
-      const errors: string[] = []
-      for (const f of files) {
-        try {
-          const r = await api.upload(f)
-          const att: PasteAttachment = { ...r }
-          if (r.mime.startsWith('image/')) att.preview = r.url
-          results.push(att)
-        } catch (e) {
-          console.error('upload failed', e)
-          errors.push(`${f.name}：${errorMessageFromError(e, '上传失败')}`)
-        }
-      }
-      setUploadErrors(errors)
-      if (results.length) {
-        const next = [...attachmentsRef.current, ...results]
-        attachmentsRef.current = next
-        onAttachments(next)
-      }
-    } finally {
-      setUploading((n) => Math.max(0, n - files.length))
+  const updatePending = (items: PendingUpload[]) => {
+    pendingUploadsRef.current = items
+    setPendingUploads(items)
+  }
+
+  const releaseUpload = (item: PendingUpload) => {
+    item.controller?.abort()
+    if (item.preview) URL.revokeObjectURL(item.preview)
+  }
+
+  useEffect(() => () => {
+    for (const item of pendingUploadsRef.current) {
+      item.controller?.abort()
+      if (item.preview) URL.revokeObjectURL(item.preview)
     }
+    // Invalidate late completions even if the transport ignores abort.
+    pendingUploadsRef.current = []
+  }, [])
+
+  const removePending = (id: number) => {
+    const item = pendingUploadsRef.current.find((entry) => entry.id === id)
+    if (!item) return
+    updatePending(pendingUploadsRef.current.filter((entry) => entry.id !== id))
+    releaseUpload(item)
+  }
+
+  const removeAttachment = (id: string) => {
+    const next = attachmentsRef.current.filter((item) => item.file_id !== id)
+    attachmentsRef.current = next
+    onAttachments(next)
+  }
+
+  const runUpload = async (item: PendingUpload) => {
+    const controller = new AbortController()
+    updatePending(pendingUploadsRef.current.map((entry) => entry.id === item.id
+      ? { ...entry, controller, error: undefined } : entry))
+    try {
+      const result = await api.upload(item.file, { signal: controller.signal })
+      if (controller.signal.aborted || !pendingUploadsRef.current.some((entry) => entry.id === item.id)) return
+      const attachment: PasteAttachment = {
+        ...result,
+        ...(result.mime.startsWith('image/') ? { preview: result.url } : {}),
+      }
+      const next = [...attachmentsRef.current, attachment]
+      attachmentsRef.current = next
+      onAttachments(next)
+      removePending(item.id)
+    } catch (error) {
+      if (controller.signal.aborted) return
+      updatePending(pendingUploadsRef.current.map((entry) => entry.id === item.id
+        ? { ...entry, controller: undefined, error: errorMessageFromError(error, '上传失败') } : entry))
+    }
+  }
+
+  const upload = (files: File[]) => {
+    if (disabled || !acceptFiles || !files.length) return
+    const added = files.map((file) => ({
+      id: ++nextUploadId.current,
+      file,
+      preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+    }))
+    updatePending([...pendingUploadsRef.current, ...added])
+    for (const item of added) void runUpload(item)
+  }
+
+  const submit = () => {
+    if (!disabled && !submitDisabled && pendingUploadsRef.current.length === 0
+      && (text.trim() || attachmentsRef.current.length > 0)) onSubmit()
   }
 
   return (
@@ -178,7 +233,7 @@ export function ImagePasteInput({
         if (files.length) upload(files)
       }}
     >
-      {attachments.length > 0 && (
+      {(attachments.length > 0 || attachmentsBlocked) && (
         <div className="flex flex-wrap items-start gap-1.5 p-2 pb-0">
           {attachments.map((a) => a.preview ? (
             <div
@@ -194,7 +249,7 @@ export function ImagePasteInput({
               />
               <button
                 type="button"
-                onClick={() => onAttachments(attachments.filter((x) => x.file_id !== a.file_id))}
+                onClick={() => removeAttachment(a.file_id)}
                 className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border border-line bg-bg/90 text-xs leading-none text-slate-300 hover:border-status-danger-line hover:text-status-danger"
                 aria-label={`移除 ${a.name}`}
               >×</button>
@@ -209,21 +264,42 @@ export function ImagePasteInput({
               <span className="min-w-0 break-all text-xs leading-4 text-slate-200">{a.name}</span>
               <button
                 type="button"
-                onClick={() => onAttachments(attachments.filter((x) => x.file_id !== a.file_id))}
+                onClick={() => removeAttachment(a.file_id)}
                 className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-xs leading-none text-slate-400 hover:text-status-danger"
                 aria-label={`移除 ${a.name}`}
               >×</button>
             </div>
           ))}
+          {pendingUploads.map((item) => (
+            <div
+              key={`upload-${item.id}`}
+              data-upload-state={item.error ? 'failed' : 'uploading'}
+              title={`${item.file.name}：${item.error ?? '上传中'}`}
+              className={clsx('group relative', item.preview ? 'h-14 w-14 shrink-0' : 'inline-flex w-fit max-w-full items-center gap-1.5 rounded-lg border bg-bg-soft py-1.5 pl-2.5 pr-8', item.error ? 'border-status-danger-line' : 'border-line')}
+            >
+              {item.preview ? (
+                <img src={item.preview} alt={item.file.name} className={clsx('h-full w-full rounded-lg border object-cover opacity-60', item.error ? 'border-status-danger-line' : 'border-line')} />
+              ) : <span className="min-w-0 break-all text-xs leading-4 text-slate-200">{item.file.name}</span>}
+              <span className={clsx('flex shrink-0 items-center text-xs', item.preview ? 'absolute bottom-0 left-0 right-0 justify-center rounded-b-lg bg-bg/90 py-0.5' : 'order-first', item.error ? 'text-status-danger' : 'text-slate-400')}>
+                {item.error ? (
+                  <button type="button" disabled={disabled} onClick={() => { void runUpload(item) }} aria-label={`重试 ${item.file.name}`} title={item.error} className="flex items-center gap-1 disabled:opacity-40">
+                    <RotateCw className="h-3.5 w-3.5" /><span>重试</span>
+                  </button>
+                ) : <LoaderCircle aria-label="上传中" className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />}
+              </span>
+              <button
+                type="button"
+                onClick={() => removePending(item.id)}
+                disabled={disabled}
+                aria-label={`移除 ${item.file.name}`}
+                title={`移除 ${item.file.name}`}
+                className={clsx('absolute flex h-5 w-5 items-center justify-center rounded-full bg-bg/90 text-slate-300 hover:text-status-danger disabled:opacity-40', item.preview ? 'right-1 top-1' : 'right-1.5 top-1/2 -translate-y-1/2')}
+              ><X className="h-3 w-3" /></button>
+            </div>
+          ))}
         </div>
       )}
-
-      {uploadErrors.length > 0 && (
-        <div role="alert" className="mx-2 mt-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-xs text-status-danger">
-          <div className="font-medium">部分文件添加失败</div>
-          {uploadErrors.map((error) => <div key={error} className="mt-1 break-all">{error}</div>)}
-        </div>
-      )}
+      {attachmentsBlocked && <span className="sr-only" role={pendingUploads.some((item) => item.error) ? 'alert' : 'status'}>{attachmentHint}</span>}
 
       {slashCommands.length > 0 && (
         <div
@@ -319,7 +395,7 @@ export function ImagePasteInput({
 
             if (e.key !== 'Enter' || e.shiftKey) return
             e.preventDefault()
-            if (!disabled && !submitDisabled) onSubmit()
+            submit()
           }}
           role="combobox"
           aria-autocomplete="list"
@@ -332,20 +408,20 @@ export function ImagePasteInput({
         {onSchedule && !stopActive && (
           <button
             type="button"
-            onClick={onSchedule}
-            disabled={disabled || (!text.trim() && attachments.length === 0)}
+            onClick={() => { if (pendingUploadsRef.current.length === 0) onSchedule() }}
+            disabled={disabled || submitDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)}
             className="h-10 px-3 rounded-xl border border-line text-slate-300 text-sm font-medium hover:bg-white/5 disabled:opacity-40 transition"
             title="设置定时发送"
           >定时</button>
         )}
         <button
           type="button"
-          onClick={stopActive ? onStop : onSubmit}
-          disabled={disabled || (!stopActive && (submitDisabled || (!text.trim() && attachments.length === 0)))}
+          onClick={stopActive ? onStop : submit}
+          disabled={disabled || (!stopActive && (submitDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)))}
           className={stopActive
             ? 'h-10 px-4 rounded-xl bg-status-danger text-white text-sm font-medium hover:bg-status-danger-strong disabled:opacity-40 disabled:shadow-none transition flex items-center justify-center'
             : 'h-10 px-4 rounded-xl bg-accent text-white text-sm font-medium hover:brightness-110 disabled:opacity-40 disabled:shadow-none transition flex items-center justify-center'}
-          title={stopActive ? '停止当前会话任务' : '发送消息'}
+          title={stopActive ? '停止当前会话任务' : attachmentHint ?? '发送消息'}
         >{stopActive ? '停止' : '发送'}</button>
       </div>
 
@@ -353,11 +429,7 @@ export function ImagePasteInput({
         <BtwDialog key={btwSessionId} sessionId={btwSessionId} onClose={() => setBtwOpen(false)} />
       )}
 
-      {uploading > 0 && (
-        <div className="absolute -top-6 right-2 text-xs text-slate-400 bg-bg/80 backdrop-blur px-2 py-0.5 rounded">
-          上传中 {uploading}…
-        </div>
-      )}
+
       {dragOver && (
         <div className="pointer-events-none absolute inset-0 rounded-3xl border-2 border-dashed border-accent bg-accent/5 flex items-center justify-center text-accent text-sm">
           松开以上传

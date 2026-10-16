@@ -74,6 +74,7 @@ export function LiveChatComposer({
     <div className="shrink-0 border-t border-line/40 bg-transparent px-3 py-2.5">
       <div className="w-full rounded-xl border border-line/60 bg-bg-card shadow-sm">
         <ImagePasteInput
+          key={draftKey}
           btwSessionId={sessionId}
           text={text}
           onText={setText}
