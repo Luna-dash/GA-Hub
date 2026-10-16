@@ -59,10 +59,41 @@ body {
   transition: background-color 150ms ease, color 150ms ease;
 }
 
-::-webkit-scrollbar { width: 9px; height: 9px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--c-scrollbar-thumb); border-radius: 9999px; }
-::-webkit-scrollbar-thumb:hover { background: var(--c-scrollbar-thumb-hover); }
+/* Keep native scrolling and a constant gutter; only the thumb changes visibility.
+   The legacy scrollbar color tokens also style collapse buttons, so leave them intact. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--c-text-muted-rgb) / 0.25) transparent;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    * { scrollbar-color: transparent transparent; }
+    *:hover, *:focus-visible {
+      scrollbar-color: rgb(var(--c-text-muted-rgb) / 0.25) transparent;
+    }
+  }
+  @media (forced-colors: active) {
+    *, *:hover, *:focus-visible { scrollbar-color: auto; }
+  }
+}
+
+/* Do not mix standard colors with WebKit pseudo-elements: Chromium prioritizes the former. */
+@media (forced-colors: none) {
+  * { --ga-scroll-thumb: rgb(var(--c-text-muted-rgb) / 0.25); }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+  ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--ga-scroll-thumb);
+    border-radius: 9999px;
+    min-width: 24px;
+    min-height: 24px;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    * { --ga-scroll-thumb: transparent; }
+    *:hover, *:focus-visible { --ga-scroll-thumb: rgb(var(--c-text-muted-rgb) / 0.25); }
+  }
+}
 
 /* ─── Global text remap ────────────────────────────────────────
    The codebase heavily uses slate-* utilities tuned for dark UI.
