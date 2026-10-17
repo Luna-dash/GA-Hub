@@ -262,6 +262,27 @@ body {
 .prose-chat h2 { @apply font-semibold mt-3 mb-2; font-size: calc(1.125rem * var(--chat-scale, 1)); line-height: calc(1.75rem * var(--chat-scale, 1)); }
 .prose-chat h3 { @apply font-semibold mt-2 mb-1; font-size: calc(1rem * var(--chat-scale, 1)); line-height: calc(1.5rem * var(--chat-scale, 1)); }
 .prose-chat p  { @apply leading-7 my-1; }
+/* Theme-task tabs use a compact reading scale, independent of chat bubbles. */
+.theme-task-content {
+  font-size: 13px;
+  line-height: 1.7;
+}
+.theme-task-content .text-sm,
+.theme-task-content .prose-chat {
+  font-size: 13px;
+  line-height: 1.7;
+}
+.theme-task-content .prose-chat h1 { font-size: 16px; line-height: 1.5; }
+.theme-task-content .prose-chat h2 { font-size: 15px; line-height: 1.5; }
+.theme-task-content .prose-chat h3 { font-size: 14px; line-height: 1.5; }
+.theme-task-content .prose-chat h4,
+.theme-task-content .prose-chat h5,
+.theme-task-content .prose-chat h6 { font-size: 13px; line-height: 1.5; }
+.theme-task-content .prose-chat p,
+.theme-task-content .prose-chat li { line-height: 1.7; }
+.theme-task-content .prose-chat pre { font-size: 12px; line-height: 1.65; }
+.theme-task-content .prose-chat table { font-size: 13px; }
+
 /* list-outside: multi-line items align under text, not under bullet */
 .prose-chat ul {
   list-style-type: disc;
