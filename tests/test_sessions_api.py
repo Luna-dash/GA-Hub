@@ -25,6 +25,8 @@ def _client(tmp_path: Path, monkeypatch) -> TestClient:
     from server.services.session_lifecycle import SessionLifecycle
     from server.services.session_metadata import SessionMetadataStore
 
+    from server.services.ui_preferences_store import UiPreferencesStore
+    monkeypatch.setattr(sessions, "_project_names", UiPreferencesStore(tmp_path / "project_names.json"))
     app = FastAPI()
     install_error_handlers(app)
     app.include_router(sessions.router)
@@ -647,3 +649,38 @@ def test_removing_task_cleans_latest_metrics(tmp_path, monkeypatch, action):
         assert metrics.get(sid) is None
         metrics.finish(sid, 'r', 'completed', 'late')
         assert metrics.get(sid) is None
+
+
+def test_project_display_name_persists_without_changing_identity(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    from server.routes import sessions
+    from server.services.ui_preferences_store import UiPreferencesStore
+    monkeypatch.setattr(sessions.workspace_bridge, "prepare_workspace", lambda path: {
+        "ok": True, "name": "demo-1234", "path": path,
+    })
+    monkeypatch.setattr(sessions.workspace_bridge, "list_workspaces", lambda: [
+        {"name": "demo-1234", "path": "D:/demo"},
+        {"name": "legacy-5678", "path": "D:/legacy"},
+    ])
+    response = client.post("/api/projects", json={"path": "D:/demo", "display_name": "  我的项目  "})
+    assert response.status_code == 201
+    assert {key: response.json()[key] for key in ("name", "path", "display_name")} == {
+        "name": "demo-1234", "path": "D:/demo", "display_name": "我的项目",
+    }
+    # Reload the file using a new store: this must not depend on process memory.
+    monkeypatch.setattr(sessions, "_project_names", UiPreferencesStore(sessions._project_names.path))
+    items = client.get("/api/projects").json()["items"]
+    assert items[0]["display_name"] == "我的项目"
+    assert "display_name" not in items[1]
+    response = client.post("/api/projects", json={"path": "D:/demo"})
+    assert response.json()["display_name"] == "我的项目"
+
+
+@pytest.mark.parametrize("label", ["", "   ", "a" * 101, "bad\nname", "bad\x00name"])
+def test_invalid_project_display_name_does_not_create_workspace(tmp_path, monkeypatch, label):
+    client = _client(tmp_path, monkeypatch)
+    from server.routes import sessions
+    def unexpected(path):
+        pytest.fail("invalid name must be rejected before creating workspace")
+    monkeypatch.setattr(sessions.workspace_bridge, "prepare_workspace", unexpected)
+    assert client.post("/api/projects", json={"path": "D:/demo", "display_name": label}).status_code == 422

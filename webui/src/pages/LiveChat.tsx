@@ -565,7 +565,21 @@ export default function LiveChat() {
         if (!selection?.ok || !selection.path) {
           throw new Error(selection?.error || '未能打开目录选择器')
         }
-        const created = await api.createProject(selection.path)
+        let displayName = projectDisplayName(selection.path, '')
+        while (true) {
+          const entered = await dialog.prompt('命名项目', {
+            message: '为项目设置显示名称，不会修改实际目录。',
+            defaultValue: displayName,
+            placeholder: '项目名称（最多 100 字）',
+            confirmText: '创建并绑定',
+          })
+          if (entered === null) return
+          displayName = entered.trim()
+          if (displayName && Array.from(displayName).length <= 100 && !/[\x00-\x1f]/.test(displayName)) break
+          await dialog.alert('项目名称无效', '请输入 1–100 字的项目名称，不要包含换行或控制字符。')
+        }
+        if (sessionIdRef.current !== sid || projectChangeSeqRef.current !== changeSeq) return
+        const created = await api.createProject(selection.path, displayName)
         await queryClient.invalidateQueries({ queryKey: queryKeys.projects })
         updated = await api.bindProject(sid, created.name, created.path)
       } else if (!value) {
@@ -591,7 +605,7 @@ export default function LiveChat() {
     const sid = sessionIdRef.current
     const selected = projects.find((item) => item.path === session?.project_path)
     if (!sid || !selected || projectSaving) return
-    const displayName = projectDisplayName(selected.path, selected.name)
+    const displayName = selected.display_name || projectDisplayName(selected.path, selected.name)
     const confirmed = await dialog.confirm(
       `移除“${displayName}”的项目映射？`,
       '会移除 GA 工作区中的目录映射和项目注册，不会删除原始项目目录、代码、其中的 memory 或其他文件。当前会话将先取消绑定。',
@@ -740,7 +754,7 @@ export default function LiveChat() {
                 { key: '', name: '未绑定项目' },
                 ...projects.map((project) => ({
                   key: project.path,
-                  name: `${projectDisplayName(project.path, project.name)}${project.dangling ? '（路径不可用）' : ''}`,
+                  name: `${project.display_name || projectDisplayName(project.path, project.name)}${project.dangling ? '（路径不可用）' : ''}`,
                   disabled: project.dangling,
                 })),
                 { key: '__new__', name: '新建项目…' },
@@ -782,6 +796,7 @@ export default function LiveChat() {
     >
       <div className="flex h-full min-h-0 flex-col md:flex-row">
         <SessionRail
+          projects={projects}
           sessions={sessions.filter(s => !s.theme_task)}
           runtimes={runtimes}
           currentId={session?.id ?? null}

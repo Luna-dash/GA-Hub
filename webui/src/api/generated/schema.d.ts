@@ -3538,9 +3538,13 @@ export interface components {
         ProjectCreate: {
             /** Path */
             path: string;
+            /** Display Name */
+            display_name?: string | null;
         };
         /** ProjectItem */
         ProjectItem: {
+            /** Display Name */
+            display_name?: string | null;
             /** Name */
             name: string;
             /** Path */

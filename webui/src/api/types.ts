@@ -75,6 +75,7 @@ export interface HubSession {
 }
 
 export interface ProjectItem {
+  display_name?: string | null
   name: string
   path: string
   last_used?: number

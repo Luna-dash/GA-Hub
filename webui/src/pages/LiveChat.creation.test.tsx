@@ -11,6 +11,8 @@ import { applyEvent, useChatStore } from '@/stores/chatStore'
 import { useDraftStore } from '@/stores/draftStore'
 import { storageKeys } from '@/config/storageKeys'
 import { queryKeys } from '@/queries/queryKeys'
+import { dialog } from '@/stores/dialogStore'
+import { selectDirectory } from '@/utils/desktop'
 import type { SessionListData } from '@/queries/sessions'
 
 type CreatedSession = Awaited<ReturnType<typeof api.createSession>>
@@ -18,10 +20,13 @@ type CreatedSession = Awaited<ReturnType<typeof api.createSession>>
 
 vi.mock('@/api/client', () => ({ api: {
   sessions: vi.fn(), llms: vi.fn(), projects: vi.fn(), sessionRuntimes: vi.fn(), sessionRuntime: vi.fn(),
-  scheduledChats: vi.fn(), createSession: vi.fn(), sessionRun: vi.fn(),
+  scheduledChats: vi.fn(), createSession: vi.fn(), sessionRun: vi.fn(), createProject: vi.fn(), bindProject: vi.fn(),
 } }))
 vi.mock('@/hooks/useHubEvent', () => ({ useHubEvent: vi.fn() }))
-vi.mock('@/components/PageShell', () => ({ PageShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }))
+vi.mock('@/components/PageShell', () => ({ PageShell: ({ children, middleArea }: { children: ReactNode; middleArea: ReactNode }) => <div>{middleArea}{children}</div> }))
+vi.mock('@/components/ProjectSelect', () => ({ ProjectSelect: ({ onChange, options }: { onChange: (value: string) => void; options: { key: string; name: string }[] }) => <><button data-new-project onClick={() => onChange('__new__')}>New project</button><span data-project-options>{options.map(option => option.name).join('|')}</span></> }))
+vi.mock('@/stores/dialogStore', () => ({ dialog: { confirm: vi.fn(), prompt: vi.fn(), alert: vi.fn() } }))
+vi.mock('@/utils/desktop', () => ({ isTauriDesktop: () => true, selectDirectory: vi.fn() }))
 vi.mock('@/components/SessionRail', () => ({ SessionRail: ({ onCreate }: { onCreate: () => void }) => <button data-create onClick={onCreate}>Create</button> }))
 vi.mock('@/components/ModelSelect', () => ({ MainModelSelect: () => null }))
 vi.mock('@/components/LiveChatTranscript', () => ({ LiveChatTranscript: forwardRef(() => null) }))
@@ -218,6 +223,45 @@ describe('LiveChat creation ownership', () => {
     await act(async () => finish(row('new')))
     expect(useDraftStore.getState().texts['liveChat:pending']).toBe('next')
     expect(useDraftStore.getState().texts['liveChat:new']).toBe('hello')
+  })
+
+  it('prompts with the directory name, persists a custom label and binds by stable key', async () => {
+    await mount()
+    vi.mocked(dialog.confirm).mockResolvedValue(true)
+    vi.mocked(selectDirectory).mockResolvedValue({ ok: true, path: 'D:/work/demo' })
+    vi.mocked(dialog.prompt).mockResolvedValue('  我的项目  ')
+    vi.mocked(api.createProject).mockResolvedValue({ name: 'demo-abcd', path: 'D:/work/demo', dangling: false, display_name: '我的项目' })
+    vi.mocked(api.bindProject).mockResolvedValue({ ...row('old'), project_name: 'demo-abcd', project_path: 'D:/work/demo' })
+    await click('[data-new-project]')
+    expect(dialog.prompt).toHaveBeenCalledWith('命名项目', expect.objectContaining({ defaultValue: 'demo' }))
+    expect(api.createProject).toHaveBeenCalledWith('D:/work/demo', '我的项目')
+    expect(api.bindProject).toHaveBeenCalledWith('old', 'demo-abcd', 'D:/work/demo')
+  })
+
+  it('does not register or bind when naming is cancelled', async () => {
+    await mount()
+    vi.mocked(dialog.confirm).mockResolvedValue(true)
+    vi.mocked(selectDirectory).mockResolvedValue({ ok: true, path: 'D:/work/demo' })
+    vi.mocked(dialog.prompt).mockResolvedValue(null)
+    await click('[data-new-project]')
+    expect(api.createProject).not.toHaveBeenCalled()
+    expect(api.bindProject).not.toHaveBeenCalled()
+  })
+
+  it.each(['   ', 'a'.repeat(101), 'bad\nname'])('re-prompts for an invalid label %j', async (invalid) => {
+    await mount()
+    vi.mocked(dialog.confirm).mockResolvedValue(true)
+    vi.mocked(selectDirectory).mockResolvedValue({ ok: true, path: 'D:/work/demo' })
+    vi.mocked(dialog.prompt).mockResolvedValueOnce(invalid).mockResolvedValueOnce(null)
+    await click('[data-new-project]')
+    expect(dialog.alert).toHaveBeenCalledWith('项目名称无效', expect.any(String))
+    expect(api.createProject).not.toHaveBeenCalled()
+  })
+
+  it('shows a saved display name in project choices', async () => {
+    vi.mocked(api.projects).mockResolvedValue({ total: 1, items: [{ name: 'demo-abcd', path: 'D:/work/demo', dangling: false, display_name: '我的项目' }] })
+    await mount()
+    expect(host.querySelector('[data-project-options]')?.textContent).toContain('我的项目')
   })
 
 })

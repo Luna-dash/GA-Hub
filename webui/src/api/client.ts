@@ -486,8 +486,8 @@ export const api = {
   deleteSession: (id: string) =>
     http<void>('DELETE', `/api/sessions/${encodeURIComponent(id)}`),
   projects: () => http<{ total: number; items: ProjectItem[] }>('GET', '/api/projects'),
-  createProject: (path: string) =>
-    http<ProjectItem>('POST', '/api/projects', { path }),
+  createProject: (path: string, display_name?: string) =>
+    http<ProjectItem>('POST', '/api/projects', { path, display_name }),
   deleteProject: (name: string) =>
     http<void>('DELETE', `/api/projects/${encodeURIComponent(name)}`),
   bindProject: (id: string, name: string, path: string) =>

@@ -1,12 +1,13 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
-import type { HubSession, SessionRuntime } from '@/api/types'
+import type { HubSession, ProjectItem, SessionRuntime } from '@/api/types'
 import { sessionActivity, sessionPreview, sessionRecencyMs, sessionStatusLabel } from '@/utils/sessionUi'
 import { usePageState } from '@/utils/pageState'
 import { RAIL_TITLE_SCALE_EVENT, railTitlePercent, getRailTitleScale } from '@/utils/railAppearance'
 import { storageKeys } from '@/config/storageKeys'
 
 interface SessionRailProps {
+  projects?: ProjectItem[]
   sessions: HubSession[]
   runtimes: Record<string, SessionRuntime>
   currentId: string | null
@@ -81,7 +82,7 @@ function sessionTitle(session: HubSession) {
   return session.title.trim() || `未命名会话 · ${session.id.slice(0, 8)}`
 }
 
-function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreate, onImportFromHistory, onRename, onDelete, creating }: SessionRailProps) {
+function SessionRailComponent({ projects: projectItems, sessions, runtimes, currentId, onSelect, onCreate, onImportFromHistory, onRename, onDelete, creating }: SessionRailProps) {
   const [collapsed, setCollapsed] = usePageState('liveChat.sessionRailCollapsed', true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [titleDraft, setTitleDraft] = useState('')
@@ -180,7 +181,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
       { key: 'free', name: '自由会话', projectPath: null, sessions: free },
       ...Array.from(projects.entries()).map(([name, sessions]) => ({
         key: `project:${name}`,
-        name,
+        name: projectItems?.find(project => project.name === name)?.display_name || name,
         projectPath: sessions[0]?.project_path || null,
         sessions,
       })),
@@ -198,7 +199,7 @@ function SessionRailComponent({ sessions, runtimes, currentId, onSelect, onCreat
       return groupActivity(b.sessions) - groupActivity(a.sessions)
     })
     return groups
-  }, [orderedSessions, pinnedGroups])
+  }, [orderedSessions, pinnedGroups, projectItems])
   const hasPinnedGroups = sessionGroups.some((group) => pinnedGroups.includes(group.key))
   const hasProjectGroups = sessionGroups.some((group) => group.key !== 'free')
 

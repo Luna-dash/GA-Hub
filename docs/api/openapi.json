@@ -8580,6 +8580,18 @@
             "maxLength": 1000,
             "minLength": 1,
             "title": "Path"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
           }
         },
         "type": "object",
@@ -8590,6 +8602,17 @@
       },
       "ProjectItem": {
         "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
           "name": {
             "type": "string",
             "title": "Name"

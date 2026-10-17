@@ -35,6 +35,17 @@ describe('SessionRail', () => {
     host.remove()
   })
 
+  it('uses the display label without changing project group identity', () => {
+    const onSelect = vi.fn()
+    act(() => root.render(
+      <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={onSelect}
+        projects={[{ name: 'alpha', path: 'D:/projects/alpha', display_name: '我的项目', dangling: false }]} />,
+    ))
+    expect(host.textContent).toContain('我的项目')
+    act(() => (host.querySelector('[aria-current="page"]') as HTMLButtonElement).click())
+    expect(onSelect).toHaveBeenCalledWith(sessions[0].id)
+  })
+
   it('skips rendering when the parent updates with unchanged props', () => {
     let reads = 0
     const trackedSession = new Proxy(sessions[0], {

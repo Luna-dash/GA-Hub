@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .services.conductor_vocabulary import REVIEW_NONE
 from .services.session_runtime_status import STATUS_IDLE
@@ -482,6 +482,7 @@ class SessionListResp(BaseModel):
     items: list[HubSession]
 
 class ProjectItem(BaseModel):
+    display_name: str | None = None
     name: str
     path: str
     last_used: int = 0
@@ -496,6 +497,17 @@ class ProjectListResp(BaseModel):
 
 class ProjectCreate(BaseModel):
     path: str = Field(min_length=1, max_length=1000)
+    display_name: str | None = Field(default=None, max_length=100)
+
+    @field_validator("display_name")
+    @classmethod
+    def validate_display_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value or any(ord(char) < 32 for char in value):
+            raise ValueError("项目名称不能为空或包含控制字符")
+        return value
 
 class SessionProjectUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=200)

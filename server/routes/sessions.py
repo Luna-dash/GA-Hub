@@ -52,7 +52,19 @@ from ..services.session_coordinator import (
 from ..services.session_lifecycle import SessionLifecycle, session_lifecycle_of
 from ..services.session_metadata import SessionNotFoundError
 from ..services.project_runtime import activate_project, deactivate_project
+from ..services.ui_preferences_store import UiPreferencesStore
+from .. import _paths
 from ..services.session_runtime_factory import RuntimeRestoreError
+
+# Display metadata belongs to GA-Hub; the native workspace key stays immutable.
+_project_names = UiPreferencesStore(_paths.ADMIN_DATA / "project_names.json")
+
+
+def _with_project_display_name(item: dict, names: dict) -> dict:
+    saved = names.get(item["name"])
+    if isinstance(saved, dict) and saved.get("path") == item["path"]:
+        return {**item, "display_name": saved["display_name"]}
+    return item
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -102,7 +114,8 @@ def _not_found() -> HTTPException:
 async def list_projects() -> ProjectListResp:
     # Native listing opens workspaces.json plus one memory file per entry.
     items = await asyncio.to_thread(workspace_bridge.list_workspaces)
-    return ProjectListResp(total=len(items), items=items)
+    names = await asyncio.to_thread(_project_names.read)
+    return ProjectListResp(total=len(items), items=[_with_project_display_name(item, names) for item in items])
 
 
 @router.post(
@@ -116,12 +129,18 @@ async def create_project(req: ProjectCreate) -> ProjectItem:
     result = await asyncio.to_thread(workspace_bridge.prepare_workspace, req.path.strip())
     if not result.get("ok"):
         raise _api_error(400, "project_prepare_failed", result.get("error") or "项目创建失败。")
-    return ProjectItem(
+    item = ProjectItem(
         name=result["name"],
         path=result.get("path") or result.get("target") or req.path.strip(),
         memory_path=result.get("memory_path") or "",
         dangling=False,
     )
+    if req.display_name is not None:
+        await asyncio.to_thread(_project_names.update, {
+            item.name: {"path": item.path, "display_name": req.display_name},
+        })
+    names = await asyncio.to_thread(_project_names.read)
+    return ProjectItem(**_with_project_display_name(item.model_dump(exclude_unset=True), names))
 
 
 @router.delete("/api/projects/{project_name}", status_code=status.HTTP_204_NO_CONTENT)

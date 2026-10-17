@@ -219,12 +219,12 @@ describe('api request failure handling', () => {
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await api.createProject('D:/projects/alpha')
+    await api.createProject('D:/projects/alpha', '我的项目')
     await api.deleteProject('alpha name-1234')
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/projects', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ path: 'D:/projects/alpha' }),
+      body: JSON.stringify({ path: 'D:/projects/alpha', display_name: '我的项目' }),
     }))
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/projects/alpha%20name-1234', expect.objectContaining({
       method: 'DELETE',
