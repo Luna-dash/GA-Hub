@@ -111,6 +111,10 @@ build_all.bat
 
 > 这些规矩是怎么来的（每次污染、每个报错的完整排查过程）：
 > [`archive/build-chain-incidents-20260927.md`](archive/build-chain-incidents-20260927.md)。
+>
+> 打包 sidecar 在用户机器上弹「Could not create temporary directory!」的根因
+> （Windows 完整性标签沿工作区继承，导致产物以低完整性运行）：
+> [`archive/windows-integrity-label-sidecar-tempdir-20261019.md`](archive/windows-integrity-label-sidecar-tempdir-20261019.md)。
 
 ## 运行时与构建时依赖的边界（为什么换机器构建是安全的）
 
