@@ -98,6 +98,11 @@ describe('SidebarNav', () => {
     const logo = host.querySelector('.ga-brand-toggle') as HTMLButtonElement
     expect(logo).not.toBeNull()
     expect(logo.getAttribute('aria-label')).toBe('折叠导航栏')
+    const artwork = logo.querySelector('img') as HTMLImageElement
+    expect(artwork.getAttribute('src')).toContain('gahub-icon.png')
+    expect(artwork.getAttribute('alt')).toBe('')
+    expect(artwork.draggable).toBe(false)
+    expect(logo.querySelector('.ga-brand-ga')).toBeNull()
 
     act(() => logo.click())
     expect(aside.getAttribute('data-collapsed')).toBe('true')

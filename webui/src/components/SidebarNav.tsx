@@ -1,3 +1,4 @@
+import brandIcon from '../assets/gahub-icon.png'
 import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { preloadRoute } from '@/routes/routeLoaders'
@@ -167,7 +168,7 @@ export function SidebarNav() {
           >
             <div className="ga-brand-core">
               <div className="ga-brand-orb" aria-hidden="true">
-                <span className="ga-brand-ga">GA</span>
+                <img className="ga-brand-image" src={brandIcon} alt="" draggable={false} />
               </div>
               {!collapsed && <span className="ga-brand-hub">HUB</span>}
             </div>
