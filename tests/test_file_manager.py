@@ -126,3 +126,49 @@ def test_concurrent_reveals_serialize_com_and_initialize_each_thread(tmp_path, e
     assert launch.call_count == 1
     assert len(windows) == 2
     assert initialize.call_count == uninitialize.call_count == 12
+
+
+@pytest.mark.skipif(__import__('sys').platform != 'win32', reason='Windows focus adapter')
+@pytest.mark.parametrize('retry_succeeds', [True, False])
+def test_focus_retry_detaches_input_even_when_foreground_is_denied(monkeypatch, retry_succeeds):
+    import win32api
+    import win32gui
+    import win32process
+
+    foreground = [10]
+    attempts = []
+
+    def activate(hwnd):
+        attempts.append(hwnd)
+        if len(attempts) == 1 or not retry_succeeds:
+            raise OSError('foreground denied')
+        foreground[0] = hwnd
+
+    monkeypatch.setattr(win32gui, 'IsIconic', lambda hwnd: False)
+    monkeypatch.setattr(win32gui, 'GetForegroundWindow', lambda: foreground[0])
+    monkeypatch.setattr(win32gui, 'SetForegroundWindow', activate)
+    monkeypatch.setattr(win32api, 'GetCurrentThreadId', lambda: 100)
+    monkeypatch.setattr(win32process, 'GetWindowThreadProcessId', lambda hwnd: (200, 300))
+    attach, bring, flash = Mock(), Mock(), Mock()
+    monkeypatch.setattr(win32process, 'AttachThreadInput', attach)
+    monkeypatch.setattr(win32gui, 'BringWindowToTop', bring)
+    monkeypatch.setattr(win32gui, 'FlashWindow', flash)
+    fm.ExplorerWindow._activate(20)
+    assert attempts == [20, 20]
+    assert attach.call_args_list == [((100, 200, True),), ((100, 200, False),)]
+    bring.assert_called_once_with(20)
+    assert flash.call_count == (0 if retry_succeeds else 1)
+
+
+@pytest.mark.skipif(__import__('sys').platform != 'win32', reason='Windows focus adapter')
+def test_focus_success_does_not_attach_input(monkeypatch):
+    import win32gui
+    import win32process
+
+    monkeypatch.setattr(win32gui, 'IsIconic', lambda hwnd: False)
+    monkeypatch.setattr(win32gui, 'SetForegroundWindow', Mock())
+    monkeypatch.setattr(win32gui, 'GetForegroundWindow', lambda: 20)
+    attach = Mock()
+    monkeypatch.setattr(win32process, 'AttachThreadInput', attach)
+    fm.ExplorerWindow._activate(20)
+    attach.assert_not_called()

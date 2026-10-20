@@ -373,6 +373,23 @@ body {
   background: color-mix(in srgb, var(--c-bg-soft) 40%, transparent);
 }
 .prose-chat a { color: var(--c-accent); text-decoration: underline; }
+/* Local citations are buttons to avoid document navigation, but look like links
+   everywhere (including FILE markers rendered outside prose-chat). */
+.path-link {
+  display: inline;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--c-accent);
+  font: inherit;
+  text-align: inherit;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+.path-link:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.path-link:disabled { cursor: progress; opacity: 0.65; }
 /* KaTeX math (remark-math + rehype-katex) */
 .prose-chat .katex-display {
   overflow-x: auto;

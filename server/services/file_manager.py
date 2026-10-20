@@ -115,10 +115,40 @@ class ExplorerWindow:
 
         if win32gui.IsIconic(hwnd):
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-        # Foreground activation is best effort: Windows may deny focus stealing.
+        # A request runs on a worker thread, not the foreground UI thread.
+        # First use the ordinary API; only borrow the foreground input queue
+        # when Windows refuses it. Never change global focus-lock settings.
         try:
             win32gui.SetForegroundWindow(hwnd)
         except Exception:
+            pass
+        if win32gui.GetForegroundWindow() == hwnd:
+            return
+
+        import win32api
+        import win32process
+
+        current_thread = win32api.GetCurrentThreadId()
+        foreground = win32gui.GetForegroundWindow()
+        foreground_thread = (win32process.GetWindowThreadProcessId(foreground)[0]
+                             if foreground else 0)
+        attached = False
+        try:
+            if foreground_thread and foreground_thread != current_thread:
+                win32process.AttachThreadInput(current_thread, foreground_thread, True)
+                attached = True
+            win32gui.BringWindowToTop(hwnd)
+            win32gui.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+        finally:
+            if attached:
+                try:
+                    win32process.AttachThreadInput(current_thread, foreground_thread, False)
+                except Exception:
+                    pass
+        # Focus remains subject to Windows policy (e.g. another desktop).
+        if win32gui.GetForegroundWindow() != hwnd:
             win32gui.FlashWindow(hwnd, True)
 
 

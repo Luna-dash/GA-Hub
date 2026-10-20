@@ -228,6 +228,36 @@ describe('MarkdownView responsive wrapping', () => {
     expect(mocks.toastError).toHaveBeenCalled()
   })
 
+  it('allows the same link to be activated again after a completed reveal', async () => {
+    mocks.resolveFile.mockResolvedValue({ resolved: 'D:/docs/a.md', candidates: [], ambiguous: false })
+    act(() => root.render(<PathLink path="a.md" display="a" />))
+    const button = host.querySelector('button')!
+    for (let i = 0; i < 3; i++) {
+      await act(async () => { button.click() })
+      expect(button.disabled).toBe(false)
+      expect(mocks.revealFile).toHaveBeenCalledTimes(i + 1)
+    }
+    // Revalidate the path on every new activation; only concurrent lookups share work.
+    expect(mocks.resolveFile).toHaveBeenCalledTimes(3)
+  })
+
+  it('releases the activation lock after an error and suppresses only in-flight clicks', async () => {
+    mocks.resolveFile.mockResolvedValue({ resolved: 'D:/docs/a.md', candidates: [], ambiguous: false })
+    let rejectReveal!: (reason: Error) => void
+    mocks.revealFile.mockImplementationOnce(() => new Promise((_, reject) => { rejectReveal = reject }))
+    act(() => root.render(<PathLink path="a.md" display="a" />))
+    const button = host.querySelector('button')!
+    await act(async () => { button.click() })
+    expect(button.disabled).toBe(true)
+    act(() => button.click())
+    expect(mocks.revealFile).toHaveBeenCalledTimes(1)
+    await act(async () => { rejectReveal(new Error('temporary failure')) })
+    expect(button.disabled).toBe(false)
+    await act(async () => { button.click() })
+    expect(mocks.revealFile).toHaveBeenCalledTimes(2)
+    expect(button.disabled).toBe(false)
+  })
+
   it('requires selection when lookup has multiple candidates', async () => {
     mocks.resolveFile.mockResolvedValue({ resolved: null, candidates: ['D:/a.md', 'D:/docs/a.md'], ambiguous: true })
     act(() => root.render(<PathLink path="a.md" display="a" />))
