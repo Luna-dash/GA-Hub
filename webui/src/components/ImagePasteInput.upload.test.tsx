@@ -2,6 +2,7 @@
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as desktop from '@/utils/desktop'
 import { api } from '@/api/client'
 import type { PasteAttachment } from '@/api/types'
 import { ImagePasteInput } from './ImagePasteInput'
@@ -54,6 +55,32 @@ describe('attachment upload lifecycle', () => {
     host.remove()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('uses native picker paths without uploading local bytes', async () => {
+    vi.spyOn(desktop, 'canReferenceLocalFiles').mockReturnValue(true)
+    vi.spyOn(desktop, 'selectAttachmentPaths').mockResolvedValue(['C:\\data\\large.zip'])
+    vi.spyOn(desktop, 'referenceAttachments').mockResolvedValue([{ ...result('large.zip'), path: 'C:\\data\\large.zip', source: 'local_ref' }])
+    const upload = vi.spyOn(api, 'upload')
+    act(() => root.render(<Harness />))
+    await act(async () => host.querySelector<HTMLLabelElement>('label')!.click())
+    expect(desktop.referenceAttachments).toHaveBeenCalledWith(['C:\\data\\large.zip'])
+    expect(host.querySelectorAll('[data-attachment-kind=file]')).toHaveLength(1)
+    expect(upload).not.toHaveBeenCalled()
+  })
+
+  it('pastes Explorer files as references without upload', async () => {
+    vi.spyOn(desktop, 'canReferenceLocalFiles').mockReturnValue(true)
+    vi.spyOn(desktop, 'clipboardAttachmentPaths').mockResolvedValue(['C:\\data\\notes.txt'])
+    vi.spyOn(desktop, 'referenceAttachments').mockResolvedValue([{ ...result(), source: 'local_ref' }])
+    const upload = vi.spyOn(api, 'upload')
+    act(() => root.render(<Harness />))
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', { value: { items: [], types: ['Files'] } })
+    await act(async () => host.querySelector('textarea')!.dispatchEvent(event))
+    expect(desktop.referenceAttachments).toHaveBeenCalledWith(['C:\\data\\notes.txt'])
+    expect(upload).not.toHaveBeenCalled()
+    expect(event.defaultPrevented).toBe(true)
   })
 
   it('previews immediately and blocks Enter, send and schedule until successful', async () => {

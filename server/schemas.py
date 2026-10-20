@@ -513,17 +513,26 @@ class SessionProjectUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     path: str = Field(min_length=1, max_length=1000)
 
+class AttachmentRef(BaseModel):
+    path: str = Field(min_length=1, max_length=32768)
+    name: str = Field(default="", max_length=1024)
+    source: Literal["local_ref", "managed_upload"] = "managed_upload"
+    size: int | None = Field(default=None, ge=0)
+
 class RunSubmit(BaseModel):
+    attachments: list[AttachmentRef] = Field(default_factory=list, max_length=256)
     text: str = Field(min_length=1)
     images: list[str] = Field(default_factory=list)
     source: str = Field(default="webui", min_length=1, max_length=50)
 
 class ScheduledChatCreate(BaseModel):
+    attachments: list[AttachmentRef] = Field(default_factory=list, max_length=256)
     text: str = Field(min_length=1)
     images: list[str] = Field(default_factory=list)
     scheduled_for: float
 
 class ScheduledChatResp(BaseModel):
+    attachments: list[AttachmentRef] = Field(default_factory=list)
     id: str
     session_id: str
     text: str

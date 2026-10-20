@@ -20,6 +20,7 @@ use url::Url;
 use uuid::Uuid;
 
 mod mei_cleanup;
+mod file_attachments;
 mod message_dialog;
 
 #[cfg(unix)]
@@ -1500,6 +1501,8 @@ fn main() {
             message_dialog::message_dialog_config,
             message_dialog::message_dialog_ready,
             message_dialog::message_dialog_finish,
+            file_attachments::reference_files,
+            file_attachments::clipboard_file_paths,
             save_text_export,
             desktop_backend_ready,
             restart_backend

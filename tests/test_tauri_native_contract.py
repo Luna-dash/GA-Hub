@@ -34,8 +34,10 @@ def test_capability_remains_minimal_and_local() -> None:
     assert capability.get("remote") is None
     assert capability.get("urls", []) == []
     # The app manifest now puts custom commands behind capability checks.
-    # These four are used by main; message-window completion stays separate.
+    # Main-window commands stay explicit; message-window completion stays separate.
     assert set(capability["permissions"]) == {
+        "allow-reference-files",
+        "allow-clipboard-file-paths",
         "allow-save-text-export",
         "allow-desktop-backend-ready",
         "allow-restart-backend",
@@ -45,6 +47,10 @@ def test_capability_remains_minimal_and_local() -> None:
         "core:window:allow-set-focus",
         "core:window:allow-maximize",
         "core:window:allow-unmaximize",
+        "core:window:allow-toggle-maximize",
+        "core:window:allow-minimize",
+        "core:window:allow-close",
+        "core:window:allow-start-dragging",
         "dialog:default",
         "opener:default",
     }
@@ -75,7 +81,7 @@ def test_custom_commands_are_gated_by_explicit_app_permissions() -> None:
     expected = {
         "save_text_export", "desktop_backend_ready", "restart_backend",
         "show_message_dialog", "message_dialog_config", "message_dialog_ready",
-        "message_dialog_finish",
+        "message_dialog_finish", "reference_files", "clipboard_file_paths",
     }
     assert set(re.findall(r'"([a-z_]+)"', commands.group(1))) == expected
     for command in expected:

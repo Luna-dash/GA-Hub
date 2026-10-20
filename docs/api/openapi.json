@@ -4947,6 +4947,48 @@
         ],
         "title": "ArchiveZipResp"
       },
+      "AttachmentRef": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 32768,
+            "minLength": 1,
+            "title": "Path"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Name",
+            "default": ""
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "local_ref",
+              "managed_upload"
+            ],
+            "title": "Source",
+            "default": "managed_upload"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "AttachmentRef"
+      },
       "AutonomousMutationResp": {
         "properties": {
           "ok": {
@@ -8895,6 +8937,14 @@
       },
       "RunSubmit": {
         "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentRef"
+            },
+            "type": "array",
+            "maxItems": 256,
+            "title": "Attachments"
+          },
           "text": {
             "type": "string",
             "minLength": 1,
@@ -9073,6 +9123,14 @@
       },
       "ScheduledChatCreate": {
         "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentRef"
+            },
+            "type": "array",
+            "maxItems": 256,
+            "title": "Attachments"
+          },
           "text": {
             "type": "string",
             "minLength": 1,
@@ -9120,6 +9178,13 @@
       },
       "ScheduledChatResp": {
         "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentRef"
+            },
+            "type": "array",
+            "title": "Attachments"
+          },
           "id": {
             "type": "string",
             "title": "Id"

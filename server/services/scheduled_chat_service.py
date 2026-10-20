@@ -6,11 +6,12 @@ import logging
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
 
 from .._paths import ADMIN_DATA
+from .attachment_refs import validate_attachments
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ class ScheduledChat:
     images: list[str]
     scheduled_for: float
     created_at: float
+    attachments: list[dict] = field(default_factory=list)
     status: str = "pending"
     sent_at: float | None = None
     cancelled_at: float | None = None
@@ -74,10 +76,11 @@ class ScheduledChatService:
         if thread is None or not thread.is_alive():
             self._thread = None
 
-    def create(self, *, session_id: str, text: str, images: list[str], scheduled_for: float) -> dict:
+    def create(self, *, session_id: str, text: str, images: list[str], scheduled_for: float, attachments: list[dict] | None = None) -> dict:
         now = self._clock()
         if scheduled_for <= now:
             raise ValueError("scheduled time must be in the future")
+        validate_attachments(attachments or [])
         task = ScheduledChat(
             id=uuid.uuid4().hex,
             session_id=session_id,
@@ -85,6 +88,7 @@ class ScheduledChatService:
             images=list(images),
             scheduled_for=scheduled_for,
             created_at=now,
+            attachments=[dict(a) for a in (attachments or [])],
         )
         with self._lock:
             self._tasks[task.id] = task
@@ -133,6 +137,7 @@ class ScheduledChatService:
                 task.status = "dispatching"
                 self._save_locked()
             try:
+                validate_attachments(task.attachments)
                 self._submit(task)
             except Exception as exc:
                 log.warning("scheduled chat dispatch deferred task_id=%s: %s", task_id, exc)
@@ -201,6 +206,7 @@ class ScheduledChatService:
             "session_id": task.session_id,
             "text": task.text,
             "images": list(task.images),
+            "attachments": [dict(a) for a in task.attachments],
             "scheduled_for": task.scheduled_for,
             "created_at": task.created_at,
             "status": task.status,

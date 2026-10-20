@@ -210,6 +210,7 @@ class UploadTooLarge(ValueError):
 
 _UPLOAD_MAX_SIZE = 50 * 1024 * 1024
 _UPLOAD_CHUNK_SIZE = 1024 * 1024
+_UPLOAD_SLOTS = BoundedSemaphore(2)
 
 
 def _write_chunk(output, chunk: bytes) -> None:
@@ -231,7 +232,13 @@ async def _save_upload_stream(file: UploadFile, path: Path, *, max_size: int) ->
                     raise UploadTooLarge
                 # Disk writes must not run on the event loop; reads stay async
                 # so backpressure and cancellation keep their existing shape.
-                await asyncio.to_thread(_write_chunk, output, chunk)
+                job = asyncio.create_task(asyncio.to_thread(_write_chunk, output, chunk))
+                try:
+                    await asyncio.shield(job)
+                except asyncio.CancelledError:
+                    # Finish the real write before the context closes the handle.
+                    await job
+                    raise
     except BaseException:
         # Cancellation is a BaseException on supported Python versions; never
         # leave a partial file behind when the request task is cancelled.
@@ -253,10 +260,19 @@ async def upload(file: UploadFile = File(...)) -> UploadResp:
     file_id = uuid.uuid4().hex
     safe_name = f"{file_id}{ext}"
     path = os.path.join(_upload_dir(), safe_name)
+    if not _UPLOAD_SLOTS.acquire(blocking=False):
+        raise HTTPException(429, "upload service busy; please retry later")
+    temporary = Path(path).with_suffix(".part")
     try:
-        size = await _save_upload_stream(file, Path(path), max_size=_UPLOAD_MAX_SIZE)
+        size = await _save_upload_stream(file, temporary, max_size=_UPLOAD_MAX_SIZE)
+        os.replace(temporary, path)
     except UploadTooLarge as exc:
         raise HTTPException(413, "file is larger than 50 MB") from exc
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        finally:
+            _UPLOAD_SLOTS.release()
     mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
     return {
         "file_id": file_id,

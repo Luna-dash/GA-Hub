@@ -494,8 +494,8 @@ export const api = {
     http<GeneratedHubSession>('PUT', `/api/sessions/${encodeURIComponent(id)}/project`, { name, path }),
   unbindProject: (id: string) =>
     http<GeneratedHubSession>('DELETE', `/api/sessions/${encodeURIComponent(id)}/project`),
-  sessionRun: (id: string, text: string, images: string[] = []) =>
-    http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/runs`, { text, images }),
+  sessionRun: (id: string, text: string, images: string[] = [], attachments: { path: string; name: string; source?: 'local_ref' | 'managed_upload'; size: number }[] = []) =>
+    http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/runs`, { text, images, attachments }),
   sessionRuntime: (id: string) =>
     http<SessionRuntime>('GET', `/api/sessions/${encodeURIComponent(id)}/runtime`),
   sessionRuntimes: () =>
@@ -531,11 +531,12 @@ export const api = {
     http<SessionRuntime>('POST', `/api/sessions/${encodeURIComponent(id)}/abort`),
   scheduledChats: (id: string) =>
     http<ScheduledChatListResponse>('GET', `/api/sessions/${encodeURIComponent(id)}/scheduled-chats`),
-  createScheduledChat: (id: string, text: string, images: string[], scheduled_for: number) =>
+  createScheduledChat: (id: string, text: string, images: string[], scheduled_for: number, attachments: { path: string; name: string; source?: 'local_ref' | 'managed_upload'; size: number }[] = []) =>
     http<ScheduledChat>('POST', `/api/sessions/${encodeURIComponent(id)}/scheduled-chats`, {
       text,
       images,
       scheduled_for,
+      attachments,
     }),
   cancelScheduledChat: (id: string, taskId: string) =>
     http<void>('DELETE', `/api/sessions/${encodeURIComponent(id)}/scheduled-chats/${encodeURIComponent(taskId)}`),

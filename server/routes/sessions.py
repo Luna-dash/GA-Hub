@@ -38,6 +38,7 @@ from ..schemas import (
     SessionRuntimePayload,
     SessionMessagesResp,
 )
+from ..services.attachment_refs import validate_attachments
 from ..services.archive_messages import HistoryUnavailableError, read_archive_messages
 from ..services.event_bus import Event, bus
 from ..services.event_cursor import parse_event_cursor, subscribe_with_cursor
@@ -343,6 +344,10 @@ async def submit_run(
     lifecycle: SessionDomain, session_id: str, req: RunSubmit
 ) -> SessionRuntimeResp:
     row = await asyncio.to_thread(_session, lifecycle, session_id)
+    try:
+        await asyncio.to_thread(validate_attachments, [a.model_dump() for a in req.attachments])
+    except ValueError as exc:
+        raise _api_error(422, "attachment_unavailable", str(exc))
     # LlmUnconfirmedError/AgentBusyError/SessionControlBusyError/
     # RuntimeRestoreError/LlmUnavailableError/LlmRegistryError all carry the
     # same-session serial-guard semantics and propagate to the app-level
@@ -434,6 +439,7 @@ async def create_scheduled_chat(
             session_id=session_id,
             text=req.text,
             images=req.images,
+            attachments=[a.model_dump() for a in req.attachments],
             scheduled_for=req.scheduled_for,
         )
     except ValueError as exc:

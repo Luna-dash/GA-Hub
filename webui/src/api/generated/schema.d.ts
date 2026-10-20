@@ -2197,6 +2197,24 @@ export interface components {
             /** Mtime */
             mtime: number;
         };
+        /** AttachmentRef */
+        AttachmentRef: {
+            /** Path */
+            path: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Source
+             * @default managed_upload
+             * @enum {string}
+             */
+            source: "local_ref" | "managed_upload";
+            /** Size */
+            size?: number | null;
+        };
         /** AutonomousMutationResp */
         AutonomousMutationResp: {
             /** Ok */
@@ -3650,6 +3668,8 @@ export interface components {
         };
         /** RunSubmit */
         RunSubmit: {
+            /** Attachments */
+            attachments?: components["schemas"]["AttachmentRef"][];
             /** Text */
             text: string;
             /** Images */
@@ -3715,6 +3735,8 @@ export interface components {
         };
         /** ScheduledChatCreate */
         ScheduledChatCreate: {
+            /** Attachments */
+            attachments?: components["schemas"]["AttachmentRef"][];
             /** Text */
             text: string;
             /** Images */
@@ -3731,6 +3753,8 @@ export interface components {
         };
         /** ScheduledChatResp */
         ScheduledChatResp: {
+            /** Attachments */
+            attachments?: components["schemas"]["AttachmentRef"][];
             /** Id */
             id: string;
             /** Session Id */

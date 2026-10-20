@@ -158,6 +158,7 @@ export type EmailTestResponse = ApiSchemas['EmailTestResp']
 export type UploadResult = ApiSchemas['UploadResp']
 
 export interface PasteAttachment extends UploadResult {
+  source?: 'local_ref' | 'managed_upload'
   preview?: string
 }
 export type RevealFileResponse = ApiSchemas['RevealFileResp']

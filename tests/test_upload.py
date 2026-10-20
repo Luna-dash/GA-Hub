@@ -185,3 +185,33 @@ def test_raster_image_is_served_inline_for_preview(tmp_path, monkeypatch):
     assert response.headers["content-type"].startswith("image/png")
     assert "content-disposition" not in response.headers
     assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_upload_publishes_only_after_atomic_replace(tmp_path, monkeypatch):
+    client, uploads = _client(tmp_path, monkeypatch)
+    original = upload.os.replace
+    published = []
+    def observe(source, dest):
+        assert source.suffix == ".part"
+        assert source.read_bytes() == b"payload"
+        assert not __import__("pathlib").Path(dest).exists()
+        published.append(str(dest))
+        return original(source, dest)
+    monkeypatch.setattr(upload.os, "replace", observe)
+    response = client.post("/api/upload", files={"file": ("report.txt", b"payload")})
+    assert response.status_code == 200
+    assert published == [response.json()["path"]]
+    assert not list(uploads.glob("*.part"))
+
+
+def test_upload_rejects_when_disk_workers_busy(tmp_path, monkeypatch):
+    client, uploads = _client(tmp_path, monkeypatch)
+    assert upload._UPLOAD_SLOTS.acquire(False)
+    assert upload._UPLOAD_SLOTS.acquire(False)
+    try:
+        response = client.post("/api/upload", files={"file": ("report.txt", b"payload")})
+        assert response.status_code == 429
+        assert list(uploads.iterdir()) == []
+    finally:
+        upload._UPLOAD_SLOTS.release()
+        upload._UPLOAD_SLOTS.release()

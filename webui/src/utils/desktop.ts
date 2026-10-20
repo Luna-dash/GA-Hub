@@ -3,6 +3,7 @@
  * desktop entry; plain browser mode falls back to standard web behavior.
  */
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { getRuntimeConfig } from '@/runtime/runtimeConfig'
 
 export interface DesktopDirectorySelection {
   ok: boolean
@@ -21,6 +22,15 @@ export interface DesktopExportResult {
 /** True only inside the Tauri desktop shell. */
 export function isTauriDesktop(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
+/** Native paths are valid only for the shell's authenticated local sidecar. */
+export function canReferenceLocalFiles(): boolean {
+  if (!isTauriDesktop()) return false
+  const runtime = getRuntimeConfig()
+  if (!runtime.desktop || !runtime.instanceToken || !runtime.apiOrigin) return false
+  const url = new URL(runtime.apiOrigin)
+  return url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
 }
 
 /**
@@ -98,4 +108,21 @@ function fallbackDownload(filename: string, content: string): void {
   anchor.click()
   anchor.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+/** Original paths are obtained only by an explicit desktop user action. */
+export async function selectAttachmentPaths(): Promise<string[]> {
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const selected = await open({ directory: false, multiple: true })
+  return selected === null ? [] : typeof selected === 'string' ? [selected] : selected
+}
+export async function clipboardAttachmentPaths(): Promise<string[]> {
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<string[]>('clipboard_file_paths')
+}
+export async function referenceAttachments(paths: string[]): Promise<import('@/api/types').PasteAttachment[]> {
+  const { invoke } = await import('@tauri-apps/api/core')
+  const files = await invoke<import('@/api/types').UploadResult[]>('reference_files', { paths })
+  return files.map((file) => ({ ...file, source: 'local_ref',
+    mime: /\.(png|jpe?g|gif|webp)$/i.test(file.name) ? `image/${file.name.split('.').pop()?.toLowerCase().replace('jpg', 'jpeg')}` : file.mime }))
 }

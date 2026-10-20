@@ -40,7 +40,7 @@ import { formatDateTime } from '@/utils/formatTime'
 import { useDraftStore } from '@/stores/draftStore'
 import { capacityConflictFromError, errorMessageFromError, openSessionChat, sessionChatHref, startAbortedFromError } from '@/utils/sessionUi'
 import { buildSessionPromptText } from '@/utils/sessionPrompt'
-import { isTauriDesktop, selectDirectory } from '@/utils/desktop'
+import { isTauriDesktop, selectDirectory, referenceAttachments } from '@/utils/desktop'
 import { defaultSessionLlmKey, resolveSessionLlmKey } from '@/utils/llm'
 import { MainModelSelect } from '@/components/ModelSelect'
 import { ProjectSelect } from '@/components/ProjectSelect'
@@ -321,6 +321,9 @@ export default function LiveChat() {
     const transaction = useDraftStore.getState().beginSubmission(sourceKey, sourceText, sourceAtts)
     if (!transaction) return
     void (async () => {
+      // Re-stat local references; never read/copy their contents on send.
+      const localPaths = sourceAtts.filter((a) => a.source === 'local_ref').map((a) => a.path)
+      if (localPaths.length) await referenceAttachments(localPaths)
       let sid = session?.id
       if (!sid) {
         creatingSessionRef.current = true
@@ -364,7 +367,7 @@ export default function LiveChat() {
       // response left the rail showing the old order for seconds.
       markSessionUsed(queryClient, sid)
       try {
-        await api.sessionRun(sid, promptText, sourceAtts.map((a) => a.path))
+        await api.sessionRun(sid, promptText, [], sourceAtts.map(({ path, name, source, size }) => ({ path, name, source, size })))
         useDraftStore.getState().finishSubmission(transaction.id)
         if (sessionIdRef.current === sid) refreshRuntime(sid)
       } catch (e: any) {
@@ -448,6 +451,8 @@ export default function LiveChat() {
     setScheduleSaving(true)
     setScheduleError('')
     try {
+      const localPaths = sourceAtts.filter((a) => a.source === 'local_ref').map((a) => a.path)
+      if (localPaths.length) await referenceAttachments(localPaths)
       let sid = session?.id
       if (!sid) {
         if (!defaultLlmKey) throw new Error('当前没有可用模型，请先配置模型')
@@ -464,7 +469,7 @@ export default function LiveChat() {
         startChat(sid)
       }
       const promptText = buildSessionPromptText(t, sourceAtts)
-      await api.createScheduledChat(sid, promptText, sourceAtts.map((a) => a.path), scheduledFor / 1000)
+      await api.createScheduledChat(sid, promptText, [], scheduledFor / 1000, sourceAtts.map(({ path, name, source, size }) => ({ path, name, source, size })))
       useDraftStore.getState().clearDraftIfMatch(draft.draftKey, sourceText, sourceAtts)
       await queryClient.invalidateQueries({ queryKey: queryKeys.scheduledChats(sid) })
       setScheduleNow(Date.now())

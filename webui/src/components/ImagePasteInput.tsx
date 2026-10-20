@@ -1,6 +1,6 @@
 // Image-paste / drag-drop / file-picker enabled textarea.
 //
-// Listens to onPaste & onDrop, uploads images via /api/upload, exposes the
+// Desktop actions reference original paths; browser/blob inputs use /api/upload, exposing the
 // resulting list of attachments via `value`/`onChange`. Parent passes the
 // text input separately. Pressing Enter (without Shift, while not composing)
 // triggers onSubmit.
@@ -10,6 +10,7 @@ import clsx from 'clsx'
 import { LoaderCircle, RotateCw, X } from 'lucide-react'
 import { api } from '@/api/client'
 import type { PasteAttachment, UploadResult } from '@/api/types'
+import { canReferenceLocalFiles, selectAttachmentPaths, clipboardAttachmentPaths, referenceAttachments } from '@/utils/desktop'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import {
   filterSlashCommands,
@@ -69,7 +70,13 @@ export function ImagePasteInput({
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
   const pendingUploadsRef = useRef<PendingUpload[]>([])
   const nextUploadId = useRef(0)
-  const attachmentsBlocked = pendingUploads.length > 0
+  const [referenceBusy, setReferenceBusy] = useState(false)
+  const [referenceError, setReferenceError] = useState<string>()
+  const referenceBusyRef = useRef(false)
+  const alive = useRef(true)
+  const actionRef = useRef(0)
+  const addPathsRef = useRef<(paths: string[]) => Promise<void>>(async () => {})
+  const attachmentsBlocked = pendingUploads.length > 0 || referenceBusy
   const attachmentHint = pendingUploads.some((item) => item.error)
     ? '请重试或移除上传失败的附件'
     : attachmentsBlocked ? '请等待附件上传完成' : undefined
@@ -152,13 +159,18 @@ export function ImagePasteInput({
     if (item.preview) URL.revokeObjectURL(item.preview)
   }
 
-  useEffect(() => () => {
+  useEffect(() => {
+    alive.current = true
+    return () => {
+    alive.current = false
+    actionRef.current++
     for (const item of pendingUploadsRef.current) {
       item.controller?.abort()
       if (item.preview) URL.revokeObjectURL(item.preview)
     }
     // Invalidate late completions even if the transport ignores abort.
     pendingUploadsRef.current = []
+    }
   }, [])
 
   const removePending = (id: number) => {
@@ -174,7 +186,10 @@ export function ImagePasteInput({
     onAttachments(next)
   }
 
+  const activeUploads = useRef(new Set<number>())
   const runUpload = async (item: PendingUpload) => {
+    if (activeUploads.current.size >= 2 || activeUploads.current.has(item.id)) return
+    activeUploads.current.add(item.id)
     const controller = new AbortController()
     updatePending(pendingUploadsRef.current.map((entry) => entry.id === item.id
       ? { ...entry, controller, error: undefined } : entry))
@@ -183,6 +198,7 @@ export function ImagePasteInput({
       if (controller.signal.aborted || !pendingUploadsRef.current.some((entry) => entry.id === item.id)) return
       const attachment: PasteAttachment = {
         ...result,
+        source: 'managed_upload',
         ...(result.mime.startsWith('image/') ? { preview: result.url } : {}),
       }
       const next = [...attachmentsRef.current, attachment]
@@ -190,9 +206,16 @@ export function ImagePasteInput({
       onAttachments(next)
       removePending(item.id)
     } catch (error) {
-      if (controller.signal.aborted) return
+      if (controller.signal.aborted || !alive.current) return
       updatePending(pendingUploadsRef.current.map((entry) => entry.id === item.id
         ? { ...entry, controller: undefined, error: errorMessageFromError(error, '上传失败') } : entry))
+    } finally {
+      activeUploads.current.delete(item.id)
+      if (alive.current) {
+        for (const next of pendingUploadsRef.current) {
+          if (!next.controller && !next.error) void runUpload(next)
+        }
+      }
     }
   }
 
@@ -207,13 +230,62 @@ export function ImagePasteInput({
     for (const item of added) void runUpload(item)
   }
 
+  const withReference = async (action: () => Promise<void>) => {
+    if (disabled || !acceptFiles || referenceBusyRef.current) return
+    referenceBusyRef.current = true
+    setReferenceBusy(true)
+    setReferenceError(undefined)
+    try { await action() } catch (e) {
+      if (alive.current) setReferenceError(errorMessageFromError(e, '文件引用失败'))
+    } finally {
+      referenceBusyRef.current = false
+      if (alive.current) setReferenceBusy(false)
+    }
+  }
+  const addPaths = async (paths: string[]) => {
+    if (!paths.length) return
+    const token = actionRef.current
+    const items = await referenceAttachments(paths)
+    if (!alive.current || token !== actionRef.current) return
+    const next = [...attachmentsRef.current]
+    for (const item of items) if (!next.some((a) => a.path === item.path)) next.push(item)
+    attachmentsRef.current = next
+    onAttachments(next)
+  }
+  addPathsRef.current = async (paths) => withReference(() => addPaths(paths))
+  useEffect(() => {
+    if (!canReferenceLocalFiles() || !acceptFiles || disabled) return
+    let disposed = false
+    let stop: (() => void) | undefined
+    void import('@tauri-apps/api/webviewWindow').then(async ({ getCurrentWebviewWindow }) => {
+      const unlisten = await getCurrentWebviewWindow().onDragDropEvent((event) => {
+        if (event.payload.type === 'drop' && taRef.current && document.hasFocus()) {
+          const { x, y } = event.payload.position
+          const bounds = taRef.current.closest('[data-file-composer]')?.getBoundingClientRect()
+          const scale = window.devicePixelRatio || 1
+          if (bounds && x / scale >= bounds.left && x / scale <= bounds.right && y / scale >= bounds.top && y / scale <= bounds.bottom) {
+            void addPathsRef.current(event.payload.paths)
+          }
+        }
+      })
+      if (disposed) unlisten(); else stop = unlisten
+    }).catch((e) => { if (!disposed) setReferenceError(errorMessageFromError(e, '文件拖放不可用')) })
+    return () => { disposed = true; stop?.() }
+  }, [acceptFiles, disabled])
+  const pasteFiles = async (files: File[], clipboardVersion: number) => withReference(async () => {
+    const paths = await clipboardAttachmentPaths()
+    if (!alive.current || clipboardVersion !== actionRef.current) return
+    if (paths.length) await addPaths(paths)
+    else upload(files)
+  })
   const submit = () => {
-    if (!disabled && !submitDisabled && pendingUploadsRef.current.length === 0
+    if (!disabled && !submitDisabled && pendingUploadsRef.current.length === 0 && !referenceBusyRef.current
       && (text.trim() || attachmentsRef.current.length > 0)) onSubmit()
   }
 
   return (
     <div
+      data-file-composer
       className={clsx(
         'relative rounded-xl bg-transparent transition-colors',
         dragOver ? 'bg-accent/10 ring-2 ring-accent/30' : '',
@@ -230,16 +302,19 @@ export function ImagePasteInput({
         e.preventDefault(); e.stopPropagation()
         setDragOver(false)
         const files = Array.from(e.dataTransfer.files || [])
-        if (files.length) upload(files)
+        if (!canReferenceLocalFiles() && files.length) upload(files)
       }}
     >
+      {referenceBusy && <div role="status" className="px-3 pt-2 text-xs text-text-muted">正在读取文件引用…</div>}
+      {referenceError && <div role="alert" className="px-3 pt-2 text-xs text-status-danger">{referenceError}<button type="button" onClick={() => setReferenceError(undefined)} className="ml-2">关闭</button></div>}
+      {/* Align with the input: 4px row inset + 40px picker + 8px gap. */}
       {(attachments.length > 0 || attachmentsBlocked) && (
-        <div className="flex flex-wrap items-start gap-1.5 p-2 pb-0">
+        <div className={clsx('flex flex-wrap items-start gap-1.5 pr-1 pt-2', acceptFiles ? 'pl-[3.25rem]' : 'pl-1')}>
           {attachments.map((a) => a.preview ? (
             <div
               key={a.file_id}
               className="group relative h-14 w-14 shrink-0"
-              title={a.name}
+              title={`${a.name} · ${a.source === 'local_ref' ? '本地引用' : '已保存'} · ${a.size} 字节\n${a.path}`}
               data-attachment-kind="image"
             >
               <img
@@ -258,10 +333,10 @@ export function ImagePasteInput({
             <div
               key={a.file_id}
               className="group relative inline-flex w-fit max-w-full items-center rounded-lg border border-line bg-bg-soft py-1.5 pl-2.5 pr-8"
-              title={a.name}
+              title={`${a.name} · ${a.source === 'local_ref' ? '本地引用' : '已保存'} · ${a.size} 字节\n${a.path}`}
               data-attachment-kind="file"
             >
-              <span className="min-w-0 break-all text-xs leading-4 text-slate-200">{a.name}</span>
+              <span className="min-w-0 break-all text-xs leading-4 text-slate-200">{a.name}{a.source === 'local_ref' && <small className="ml-1 text-text-muted">本地引用</small>}</span>
               <button
                 type="button"
                 onClick={() => removeAttachment(a.file_id)}
@@ -334,7 +409,17 @@ export function ImagePasteInput({
 
       <div className="flex items-end gap-2 p-1">
         {acceptFiles && (
-          <label className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl text-2xl font-light leading-none text-accent hover:bg-accent/10 hover:text-accent transition" title="添加文件">
+          <label className="flex h-10 w-10 shrink-0 self-center cursor-pointer items-center justify-center rounded-xl text-2xl font-light leading-none text-accent hover:bg-accent/10 hover:text-accent transition" title="添加文件"
+            onClick={(e) => {
+              if (canReferenceLocalFiles()) {
+                e.preventDefault()
+                const token = actionRef.current
+                void withReference(async () => {
+                  const paths = await selectAttachmentPaths()
+                  if (alive.current && token === actionRef.current) await addPaths(paths)
+                })
+              }
+            }}>
             +
             <input
               type="file"
@@ -361,6 +446,7 @@ export function ImagePasteInput({
             setComposing(false)
           }}
           onPaste={(e) => {
+            if (disabled || !acceptFiles) return
             const items = Array.from(e.clipboardData.items || [])
             const files: File[] = []
             for (const it of items) {
@@ -369,7 +455,10 @@ export function ImagePasteInput({
                 if (f) files.push(f)
               }
             }
-            if (files.length) {
+            if (canReferenceLocalFiles() && (files.length || e.clipboardData.types.includes('Files'))) {
+              e.preventDefault()
+              void pasteFiles(files, actionRef.current)
+            } else if (files.length) {
               e.preventDefault()
               upload(files)
             }

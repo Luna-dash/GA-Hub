@@ -4,6 +4,8 @@
   "description": "Minimal capability set for the GA-Hub local Web UI window.",
   "windows": ["main"],
   "permissions": [
+    "allow-reference-files",
+    "allow-clipboard-file-paths",
     "allow-save-text-export",
     "allow-desktop-backend-ready",
     "allow-restart-backend",
