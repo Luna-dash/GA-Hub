@@ -1,0 +1,67 @@
+.ga-desktop-frame {
+  position: relative;
+  height: 100dvh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--c-bg);
+}
+.ga-desktop-titlebar {
+  display: flex;
+  justify-content: flex-end;
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 100%;
+  height: 48px;
+  pointer-events: none;
+  user-select: none;
+  color: var(--c-text);
+}
+.ga-desktop-drag { pointer-events: auto; flex: 1; min-width: 0; display: flex; align-items: center; }
+.ga-desktop-window-error { padding-left: 12px; font-size: 12px; color: var(--c-text-muted); }
+.ga-desktop-controls { pointer-events: auto; display: flex; flex-shrink: 0; align-items: flex-start; }
+.ga-desktop-controls button {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 40px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: default;
+}
+.ga-desktop-controls button:hover { background: rgb(var(--c-text-rgb) / 0.09); }
+.ga-desktop-controls button:active { background: rgb(var(--c-text-rgb) / 0.16); }
+.ga-desktop-controls button:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -3px; }
+.ga-desktop-controls .ga-desktop-close:hover { background: #c42b1c; color: #fff; }
+.ga-desktop-controls .ga-desktop-close:active { background: #a92317; color: #fff; }
+.ga-desktop-controls svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1; }
+.ga-desktop-content {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  /* Contain fixed dialogs within the full-height client area. */
+  transform: translateZ(0);
+  overflow: hidden;
+}
+.ga-desktop-content > .h-screen { height: 100%; }
+
+/* The sidebar and page reach the window edge: no separate titlebar row. */
+.ga-desktop-frame:has(.app-aurora) .ga-desktop-drag { display: none; }
+.ga-desktop-frame .ga-page-shell { padding: 0; }
+.ga-desktop-frame .ga-page-surface { border: 0; border-radius: 0; box-shadow: none; }
+.ga-desktop-frame .ga-page-header {
+  min-height: 48px;
+  padding: 6px 154px 6px 16px;
+  column-gap: 12px;
+  user-select: none;
+}
+.ga-desktop-frame .ga-page-header > * { min-width: 0; }
+.ga-desktop-frame .ga-page-header > :last-child { flex-shrink: 1; }
+.ga-desktop-frame .ga-page-header input,
+.ga-desktop-frame .ga-page-header textarea { user-select: text; }
+.ga-desktop-frame .ga-sidebar-brand-row { user-select: none; }
+.ga-desktop-window-error { position: fixed; right: 144px; top: 10px; z-index: 1; }

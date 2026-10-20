@@ -1533,6 +1533,7 @@ fn main() {
                 .initialization_script(runtime_script)
                 .on_navigation(is_allowed_main_navigation)
                 .title("GA-Hub")
+                .decorations(false)
                 .inner_size(1320.0, 860.0)
                 // min 与 ABSOLUTE_MIN 对齐：更小的逻辑工作区走最大化兜底
                 .min_inner_size(640.0, 480.0)

@@ -22,4 +22,6 @@ export const Z_LAYERS = {
   contextMenu: 65,
   toast: 70,
   gate: 80,
+  // Native controls remain available above the early boot loader (z-index 9999).
+  chrome: 10000,
 } as const

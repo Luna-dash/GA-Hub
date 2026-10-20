@@ -7,6 +7,7 @@ import './styles/index.css'
 import 'katex/dist/katex.min.css'
 import { installExternalLinkInterceptor } from './utils/openExternal'
 import { DesktopRuntimeGate } from './runtime/DesktopRuntimeGate'
+import { DesktopChrome } from './components/DesktopChrome'
 import { storageKeys } from './config/storageKeys'
 
 // A production rebuild replaces Vite's hashed lazy-route chunks. An already
@@ -39,12 +40,14 @@ installExternalLinkInterceptor()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <DesktopRuntimeGate>
-      <QueryClientProvider client={qc}>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
-      </QueryClientProvider>
-    </DesktopRuntimeGate>
+    <DesktopChrome>
+      <DesktopRuntimeGate>
+        <QueryClientProvider client={qc}>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </QueryClientProvider>
+      </DesktopRuntimeGate>
+    </DesktopChrome>
   </React.StrictMode>,
 )
