@@ -699,7 +699,7 @@ function buildRounds(messages: Msg[]): Round[] {
     const box = ensureCurrent()
     if (role === 'assistant') {
       box.assistants.push(m)
-      const transcript = parseAssistantTranscript(m.content || '')
+      const transcript = parseAssistantTranscript(m.content || '', false, m.turn_segs)
       const turnSummaries = transcript.turns
         .filter((turn) => turn.summary)
         .map(({ turn, summary }) => ({ turn, summary }))

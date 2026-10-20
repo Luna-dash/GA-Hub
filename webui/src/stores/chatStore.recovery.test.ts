@@ -146,3 +146,36 @@ describe('logical reply boundary guards', () => {
     expect(msgs[1].content).toBe('first\n\nsecond\n\nthird')
   })
 })
+
+
+describe('structured reconnect and archive parity', () => {
+  it('replays retry snapshots without duplicate turns and agrees with terminal history', () => {
+    const a = 'Quoted Turn 99 is not a boundary';
+    const b = 'retry first';
+    const c = 'retry final';
+    const snapshot = { type: 'snapshot' as const, streams: [
+      { stream_id: 'native-a', run_id: 'native-run', logical_id: 'native-a', source: 'webui',
+        query: 'question', content: a, turn_segs: [a], done: true, started_at: 1000, finished_at: 1001 },
+      { stream_id: 'native-b', run_id: 'native-run', logical_id: 'native-a', retry_of: 'native-a', source: 'chat_error_retry',
+        query: '[GA_CONTINUE]', content: b + c, turn_segs: [b, c], done: true, started_at: 1002, finished_at: 1003 },
+    ] };
+    let recovered = applyEvent([], snapshot);
+    recovered = applyEvent(recovered, snapshot);
+    const replies = recovered.filter((m) => m.role === 'assistant');
+    expect(recovered.filter((m) => m.role === 'user')).toHaveLength(1);
+    expect(replies).toHaveLength(1);
+    expect(replies[0].content).toBe(a + '\n\n' + b + c);
+    expect(replies[0].turnSegments).toEqual([a, '\n\n' + b, c]);
+    expect(replies[0].segments).toHaveLength(2);
+    expect(replies[0].streaming).toBe(false);
+    const history = historyToMessages([
+      { id: 'native-archive-a', ordinal: 0, role: 'assistant', content: a, turn_segs: [a], timestamp: null,
+        run_id: 'native-run', logical_id: 'native-a', outcome: 'completed' },
+      { id: 'native-archive-b', ordinal: 1, role: 'assistant', content: b + c, turn_segs: [b, c], timestamp: null,
+        run_id: 'native-run', logical_id: 'native-a', outcome: 'completed' },
+    ]);
+    expect(history).toHaveLength(1);
+    expect(history[0].content).toBe(replies[0].content);
+    expect(history[0].turnSegments).toEqual(replies[0].turnSegments);
+  });
+});

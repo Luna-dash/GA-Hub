@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import type { ConversationMessage, SessionMessagesResponse } from '@/api/types'
-import { noticeKeys, useChatStore, applyEvent } from './chatStore'
+import { noticeKeys, useChatStore, applyEvent, historyToMessages } from './chatStore'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -989,3 +989,39 @@ describe('chatStore viewport resume handoff', () => {
     })
   })
 })
+
+
+describe('native realtime turn structure', () => {
+  const first = 'Turn 88 is literal\nfirst body';
+  const second = '\nsecond body';
+  const content = first + second;
+  const event = { type: 'next', stream_id: 'native-physical', run_id: 'native-run', content, turn_segs: [first, second] } as const;
+
+  it('preserves trusted native boundaries on cumulative replay and done', () => {
+    const one = applyEvent([], event as never);
+    const replay = applyEvent(one, event as never);
+    const done = applyEvent(replay, { ...event, type: 'done' } as never);
+    expect(done).toHaveLength(1);
+    expect(done[0].content).toBe(content);
+    expect(done[0].turnSegments).toEqual([first, second]);
+    expect(done[0].segments).toHaveLength(1);
+    expect(done[0].streaming).toBe(false);
+  });
+
+  it('adopts active archive content without duplicating a physical stream', () => {
+    const history = historyToMessages([{ id: 'archive-native', role: 'assistant', ordinal: 0,
+      content: first, turn_segs: [first], run_id: 'native-run', timestamp: null } as never]);
+    const merged = applyEvent(history, event as never);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].content).toBe(content);
+    expect(merged[0].turnSegments).toEqual([first, second]);
+    expect(merged[0].segments).toHaveLength(1);
+  });
+
+  it('never lets queued live frames override terminal archive boundaries', () => {
+    const history = historyToMessages([{ id: 'archive-final', role: 'assistant', ordinal: 0,
+      content, turn_segs: [first, second], run_id: 'native-run', outcome: 'completed', timestamp: null } as never]);
+    const merged = applyEvent(history, { ...event, content: first, turn_segs: [first] } as never);
+    expect(merged).toEqual(history);
+  });
+});

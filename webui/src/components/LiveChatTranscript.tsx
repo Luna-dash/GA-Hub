@@ -514,6 +514,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
             recoveryNotice={message.recoveryNotice}
             recoveryOffset={message.recoveryOffset}
             content={message.content}
+            turnSegments={message.turnSegments}
             streaming={message.streaming}
             stopped={role === 'assistant' ? (message.stopped ?? false) : undefined}
             tagLabel={tag}

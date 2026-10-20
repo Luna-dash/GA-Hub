@@ -206,6 +206,7 @@ export interface ChatStreamSnapshot {
   source: string
   query: string
   content: string
+  turn_segs?: string[]
   done: boolean
   started_at: number
   finished_at: number
@@ -233,7 +234,7 @@ export interface BtwResp {
 }
 
 export type ChatEventCursor = { event_id: number; epoch: string }
-export type ChatWSMeta = { event_id?: number; epoch?: string; session_id?: string; run_id?: string; logical_id?: string; outcome?: 'completed' | 'cancelled' | 'failed' | null }
+export type ChatWSMeta = { turn_segs?: string[]; event_id?: number; epoch?: string; session_id?: string; run_id?: string; logical_id?: string; outcome?: 'completed' | 'cancelled' | 'failed' | null }
 
 export type ChatWSOut = (
   | {
@@ -245,7 +246,7 @@ export type ChatWSOut = (
       stream_id?: string | null
       completed_run_id?: string | null
       runtime?: { status: string; run_id: string | null; stream_id: string | null; error: string | null; completed_run_id?: string | null; outcome?: 'completed' | 'cancelled' | 'failed' | null }
-      active_message?: { stream_id: string; content: string; done: boolean; query?: string; ts?: number; source?: string; run_id?: string; logical_id?: string; retry_of?: string; retry_attempt?: number; retry_max?: number; retry_reason?: string } | null
+      active_message?: { turn_segs?: string[]; stream_id: string; content: string; done: boolean; query?: string; ts?: number; source?: string; run_id?: string; logical_id?: string; retry_of?: string; retry_attempt?: number; retry_max?: number; retry_reason?: string } | null
     }
   | { type: 'session_runtime'; session_id: string; status: string; run_id: string | null; stream_id: string | null; completed_run_id?: string | null; outcome?: 'completed' | 'cancelled' | 'failed' | null; error?: string | null }
   | { type: 'reset'; reason?: string }

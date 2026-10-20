@@ -20,9 +20,9 @@ function stripClosedSummary(s: string): string {
   return s.replace(/<summary>[\s\S]*?<\/summary>\s*/g, '')
 }
 
-export function foldTurns(text: string): Segment[] {
+export function foldTurns(text: string, turnSegments?: unknown): Segment[] {
   if (!text) return []
-  const transcript = parseAssistantTranscript(text)
+  const transcript = parseAssistantTranscript(text, false, turnSegments)
 
   const segments: Segment[] = []
   if (transcript.leading.trim()) {

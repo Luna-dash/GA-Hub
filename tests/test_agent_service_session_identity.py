@@ -290,3 +290,23 @@ def test_run_final_text_reads_only_terminal_continuation(reply):
     middle._continuation = child
     assert parent.run_final_text == reply
     assert child.run_final_text == reply
+
+
+def test_native_turns_reach_events_and_reconnect_snapshots() -> None:
+    class NativeAgent(FakeAgent):
+        def put_task(self, query, *, source, images):
+            q = queue.Queue()
+            q.put({"next": "first", "turn": 1, "outputs": ["first"]})
+            q.put({"next": "firstsecond", "turn": 2, "outputs": ["first", "second"]})
+            q.put({"done": "firstsecond", "turn": 2, "outputs": ["first", "second"]})
+            return q
+
+    with mock.patch.object(svc_mod.bus, "publish") as publish:
+        service = svc_mod.AgentService(agent=NativeAgent(), session_id="session-A", manage_global_preference=False)
+        handle = service.submit("hello", source="webui", session_id="session-A", run_id="run-native")
+        assert handle._fanout_done.wait(2)
+    frames = [(args[0], args[1]) for args, _ in publish.call_args_list if args[0] in {"chat:next", "chat:done"}]
+    assert [frame[1]["turn_segs"] for frame in frames] == [["first"], ["first", "second"], ["first", "second"]]
+    assert service.active_message_snapshot(handle.stream_id, session_id="session-A", run_id="run-native")["turn_segs"] == ["first", "second"]
+    snapshot = service.run_message_snapshot(session_id="session-A", run_id="run-native")
+    assert snapshot["streams"][0]["turn_segs"] == ["first", "second"]

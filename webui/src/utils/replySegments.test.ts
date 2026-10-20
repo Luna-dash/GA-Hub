@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { replySegmentsContent, updateReplySegments, type ReplySegment } from './replySegments'
+import { replySegmentsContent, replySegmentsTurns, updateReplySegments, type ReplySegment } from './replySegments'
 
 describe('reply stream segments', () => {
   it('replaces cumulative content per stream without losing earlier streams', () => {
@@ -33,5 +33,32 @@ describe('reply stream segments', () => {
     const after = updateReplySegments(before, 'a', 'done', 'abc')
     expect(before[0].content).toBe('a')
     expect(after[0].content).toBe('abc')
+  })
+})
+
+
+describe('native live turn snapshots', () => {
+  it('retains trusted boundaries through growth, repeated frames and stale replay', () => {
+    const a = 'Turn 1\nTurn 99 is literal\n'
+    const b = 'Turn 2\nanswer'
+    let parts = updateReplySegments([], 's', 'next', a, [a])
+    parts = updateReplySegments(parts, 's', 'next', a + b, [a, b])
+    parts = updateReplySegments(parts, 's', 'next', a + b, [a, b])
+    parts = updateReplySegments(parts, 's', 'next', a, [a])
+    expect(replySegmentsTurns(parts)).toEqual([a, b])
+    parts = updateReplySegments(parts, 's', 'done', a + b, [a, b])
+    expect(replySegmentsTurns(parts)).toEqual([a, b])
+  })
+  it('does not mutate metadata when combining retry or continuation streams', () => {
+    const a = ['one'], b = ['two']
+    let parts = updateReplySegments([], 'original', 'done', 'one', a)
+    parts = updateReplySegments(parts, 'retry', 'done', 'two', b)
+    expect(replySegmentsTurns(parts)).toEqual(['one', '\n\ntwo'])
+    expect(a).toEqual(['one'])
+    expect(b).toEqual(['two'])
+  })
+  it('falls back for legacy or malformed snapshots', () => {
+    expect(replySegmentsTurns(updateReplySegments([], 's', 'next', 'body'))).toBeUndefined()
+    expect(replySegmentsTurns(updateReplySegments([], 's', 'next', 'body', ['wrong']))).toBeUndefined()
   })
 })

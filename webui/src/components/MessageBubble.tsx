@@ -40,6 +40,7 @@ const StableMessageContent = memo(MessageContent)
 interface Props {
   role: 'user' | 'assistant' | string
   content: string
+  turnSegments?: string[]
   streaming?: boolean
   /** 事实标志：这条流被用户手动停止（来自 aborted 事件，客户端内存态）。
    *  与投影层的悬空尾启发式（transcript.stopped）相互独立。 */
@@ -143,7 +144,7 @@ function formatDuration(milliseconds: number): string {
     : `${minutes}:${String(rest).padStart(2, '0')}`
 }
 
-export const MessageBubble = memo(function MessageBubble({ role, content, streaming, stopped, recoveryNotice, recoveryOffset, tagLabel, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact, askUserDraftKey, askUserInteractive = true }: Props) {
+export const MessageBubble = memo(function MessageBubble({ role, content, turnSegments, streaming, stopped, recoveryNotice, recoveryOffset, tagLabel, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact, askUserDraftKey, askUserInteractive = true }: Props) {
   const [fontScale, setFontScale] = useState(getChatFontScale)
   const [clock, setClock] = useState(Date.now)
   const [longFinalExpanded, setLongFinalExpanded] = useState(false)
@@ -180,8 +181,8 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
     && !recoveryNotice,
   )
   const historyTranscript = useMemo(
-    () => shouldProjectTranscript ? parseAssistantTranscript(content) : null,
-    [content, shouldProjectTranscript],
+    () => shouldProjectTranscript ? parseAssistantTranscript(content, false, turnSegments) : null,
+    [content, turnSegments, shouldProjectTranscript],
   )
   const useHistoryProjection = Boolean(
     historyTranscript
@@ -195,9 +196,9 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
       if (historyTranscript.finalAskUser) return renderAskUserPayload(historyTranscript.finalAskUser)
       return stripSummaryBlocks(projectConclusionBody(historyTranscript))
     }
-    const answerSeg = [...foldTurns(content)].reverse().find((seg) => seg.type === 'text')
+    const answerSeg = [...foldTurns(content, turnSegments)].reverse().find((seg) => seg.type === 'text')
     return stripSummaryBlocks(answerSeg?.content || '')
-  }, [role, content, useHistoryProjection, historyTranscript])
+  }, [role, content, turnSegments, useHistoryProjection, historyTranscript])
 
   if (isUser) {
     const cleaned = cleanUserContent(content)
@@ -235,7 +236,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, stream
   const boundary = Math.max(0, Math.min(content.length, recoveryOffset ?? content.length))
   const beforeRecovery = recoveryActive ? foldTurns(content.slice(0, boundary)) : []
   const segs = useHistoryProjection ? [] : recoveryActive
-    ? [...beforeRecovery, ...foldTurns(content.slice(boundary))] : foldTurns(content)
+    ? [...beforeRecovery, ...foldTurns(content.slice(boundary))] : foldTurns(content, turnSegments)
   const recoveryIndex = beforeRecovery.length
   const recoveryStatus = recoveryActive ? (
     <div role="status" data-recovery-notice className="my-2 flex items-center gap-2 text-xs leading-5 text-status-warning-muted">

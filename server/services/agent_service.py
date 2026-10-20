@@ -37,6 +37,7 @@ from frontends.gahub.bridge.session import (  # noqa: E402
 from .chat_retry import SCHEDULED_RETRY_SOURCES, ChatRetryConfig, classify_recoverable_error, compute_backoff_delay, load_chat_retry_config  # noqa: E402
 from .chat_stream_projection import ChatSnapshot, ChatStreamProjection  # noqa: E402
 from .event_bus import bus  # noqa: E402
+from .native_turn_projection import NativeTurnProjection  # noqa: E402
 from .llm_preference_store import LlmPreferenceStore  # noqa: E402
 from .llm_registry import LlmRegistry, LlmUnavailableError  # noqa: E402
 from .rewind_adapter import RewindAdapter  # noqa: E402
@@ -235,6 +236,7 @@ def _chat_done_payload(h: StreamHandle, snap: object, content: str) -> dict:
         "stream_id": h.stream_id,
         "source": snap.source,
         "content": content,
+        **({"turn_segs": list(snap.turn_segs)} if getattr(snap, "turn_segs", None) else {}),
         "logical_id": h.logical_id,
         "retry_attempt": snap.retry_attempt,
         "retry_max": snap.retry_max,
@@ -780,6 +782,7 @@ class AgentService:
         """
         terminal_committed = False
         heartbeat_deadline = time.monotonic() + 300
+        native_turns = NativeTurnProjection()
         try:
             while True:
                 try:
@@ -793,6 +796,7 @@ class AgentService:
                         )
                         with self._lock:
                             snap.content = error_content
+                            snap.turn_segs = None
                             snap.done = True
                             snap.aborted = True
                             snap.finished_at = time.time()
@@ -819,10 +823,12 @@ class AgentService:
                     h.last_chunk = content
                     with self._lock:
                         snap.content = content
+                        snap.turn_segs = native_turns.update(item, content)
                     bus.publish(CHAT_NEXT, {
                         "stream_id": h.stream_id,
                         "source": snap.source,
                         "content": content,
+                        **({"turn_segs": list(snap.turn_segs)} if snap.turn_segs else {}),
                         "logical_id": h.logical_id,
                         "retry_attempt": snap.retry_attempt,
                         "retry_max": snap.retry_max,
@@ -840,6 +846,7 @@ class AgentService:
                     # RewindAdapter.rewind_session_turns).
                     with self._lock:
                         snap.content = content
+                        snap.turn_segs = native_turns.update(item, content, final=True)
                         snap.done = True
                         snap.finished_at = time.time()
                     # Keep the coordinator's session reservation until the
@@ -877,6 +884,7 @@ class AgentService:
             with self._lock:
                 error_content = snap.content + f"\n[stream error: {e}]"
                 snap.content = error_content
+                snap.turn_segs = None
                 snap.done = True
                 snap.aborted = True
                 snap.finished_at = time.time()
@@ -1135,6 +1143,7 @@ class AgentService:
             streams = [{
                 "stream_id": s.stream_id, "source": s.source, "query": s.query,
                 "content": s.content, "done": s.done,
+                **({"turn_segs": list(s.turn_segs)} if s.turn_segs else {}),
                 "started_at": s.started_at, "finished_at": s.finished_at,
                 "logical_id": s.logical_id, "session_id": s.session_id,
                 "run_id": s.run_id, "retry_of": s.retry_of,
@@ -1165,6 +1174,7 @@ class AgentService:
                 "ts": snap.started_at,
                 "source": snap.source,
                 "content": snap.content,
+                **({"turn_segs": list(snap.turn_segs)} if snap.turn_segs else {}),
                 "done": snap.done,
                 "logical_id": snap.logical_id,
                 "retry_attempt": snap.retry_attempt,

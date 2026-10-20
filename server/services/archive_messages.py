@@ -22,6 +22,8 @@ import re
 import threading
 from typing import Any, NamedTuple
 
+from .archive_turn_segments import valid_turn_segments
+
 from .. import _paths  # Bootstrap GA's import path for the native archive parser.
 from frontends.gahub.bridge.session import restore_archive
 
@@ -274,6 +276,10 @@ def _items_from_messages(
             "id": f"{ordinal_start + index}:{hashlib.sha256(str(message).encode('utf-8')).hexdigest()[:16]}",
             "role": message.get("role", "assistant"),
             "content": message.get("content", ""),
+            # Validate only the output; the legacy hash above includes the original GA dict.
+            **({"turn_segs": turns} if (turns := valid_turn_segments(
+                message.get("turn_segs"), message.get("content", ""), message.get("role", "assistant")
+            )) else {}),
             "ordinal": ordinal_start + index,
             "timestamp": timestamps[index] if index < len(timestamps) else None,
         }

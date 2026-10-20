@@ -2924,6 +2924,8 @@ export interface components {
         };
         /** ConversationMessageResp */
         ConversationMessageResp: {
+            /** Turn Segs */
+            turn_segs?: string[] | null;
             /**
              * Role
              * @enum {string}
@@ -3865,6 +3867,8 @@ export interface components {
         };
         /** SessionMessageProjection */
         SessionMessageProjection: {
+            /** Turn Segs */
+            turn_segs?: string[] | null;
             /** Id */
             id: string;
             /**

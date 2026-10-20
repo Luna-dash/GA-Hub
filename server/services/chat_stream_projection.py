@@ -14,6 +14,7 @@ class ChatSnapshot:
     query: str
     started_at: float
     content: str = ""
+    turn_segs: list[str] | None = None
     done: bool = False
     finished_at: float = 0.0
     aborted: bool = False

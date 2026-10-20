@@ -244,7 +244,20 @@ class ConversationListResp(BaseModel):
     limit: int
     items: list[ConversationSummaryResp]
 
-class ConversationMessageResp(BaseModel):
+class ArchiveTurnsMixin(BaseModel):
+    # Absent/null metadata leaves content as the sole legacy source.
+    turn_segs: list[str] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_archive_turns(cls, value: Any) -> Any:
+        from .services.archive_turn_segments import valid_turn_segments
+        if isinstance(value, dict):
+            return {**value, "turn_segs": valid_turn_segments(value.get("turn_segs"), value.get("content", ""), value.get("role", "assistant"))}
+        return value
+
+
+class ConversationMessageResp(ArchiveTurnsMixin):
     role: Literal["user", "assistant"]
     content: str
 
@@ -578,7 +591,7 @@ class SessionRuntimePayload(SessionRuntimeResp):
             fields["ok"] = ok
         return cls(**fields)
 
-class SessionMessageProjection(BaseModel):
+class SessionMessageProjection(ArchiveTurnsMixin):
     id: str
     role: Literal["user", "assistant"]
     content: str

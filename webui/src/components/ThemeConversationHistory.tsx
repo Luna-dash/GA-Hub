@@ -5,6 +5,7 @@ import { ChatSocket } from '@/runtime/chatSocket'
 import { applyEvent, historyToMessages, type ChatMsg } from '@/stores/chatStore'
 import { parseAssistantTranscript, renderAskUserPayload } from '@/utils/assistantTranscript'
 import { errorMessageFromError } from '@/utils/sessionUi'
+import { replySegmentsTurns } from '@/utils/replySegments'
 import { MessageContent } from './MessageContent'
 
 type ConversationSection = { id: string; question: string; answers: ChatMsg[] }
@@ -28,7 +29,9 @@ function conversationSections(messages: ChatMsg[], hasMore: boolean): Conversati
 function SectionConclusion({ answers }: { answers: ChatMsg[] }) {
   const answer = answers.at(-1)
   const pending = answers.some(message => message.streaming)
-  const transcript = useMemo(() => answer && !pending ? parseAssistantTranscript(answer.content) : null, [answer, pending])
+  const transcript = useMemo(() => answer && !pending ? parseAssistantTranscript(answer.content, false,
+    answer.segments?.length ? replySegmentsTurns(answer.segments) : answer.turnSegments,
+  ) : null, [answer, pending])
   const content = transcript ? [transcript.finalBody, transcript.finalAskUser && renderAskUserPayload(transcript.finalAskUser)].filter(Boolean).join('\n\n') : ''
   return content ? <MessageContent content={content} format="markdown" markdownMode="chat" /> : <p className="text-sm text-slate-500">{pending ? '正在执行，尚无结论' : '本节未记录结论'}</p>
 }

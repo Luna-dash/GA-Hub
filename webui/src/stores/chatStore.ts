@@ -27,7 +27,8 @@ import type {
 } from '@/api/types'
 import { api, ChatSocket } from '@/api/client'
 import type { PasteAttachment } from '@/api/types'
-import { replySegmentsContent, updateReplySegments, type ReplySegment } from '@/utils/replySegments'
+import { validTurnSegments } from '@/utils/archiveTurnSegments'
+import { replySegmentsTurns, replySegmentsContent, updateReplySegments, type ReplySegment } from '@/utils/replySegments'
 import { type ViewportResumePolicy } from '@/utils/conversationViewport'
 
 export type ChatMsgRole = 'user' | 'assistant' | 'system'
@@ -35,6 +36,8 @@ export type ChatMsgRole = 'user' | 'assistant' | 'system'
 export interface ChatMsg {
   role: ChatMsgRole
   content: string
+  /** Archive-only internal turns, separate from physical reply segments. */
+  turnSegments?: string[]
   /** Hub recovery streams share one logical answer; GA turns remain untouched. */
   logicalId?: string
   runId?: string
@@ -244,6 +247,7 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
           retry_of: s.retry_of,
           source: s.source,
           content: s.content,
+          turn_segs: s.turn_segs,
         }, epochMilliseconds(s.done ? s.finished_at : s.started_at) ?? Date.now())
         out.splice(0, out.length, ...merged)
       }
@@ -264,7 +268,9 @@ function applySnapshot(streams: ChatStreamSnapshot[]): ChatMsg[] {
         role: 'assistant',
         content: s.content,
         logicalId: s.logical_id, runId: s.run_id, outcome: s.outcome,
-        segments: [{ streamId: s.stream_id, content: s.content, done: s.done }],
+        turnSegments: validTurnSegments(s.turn_segs, s.content),
+        segments: [{ streamId: s.stream_id, content: s.content, done: s.done,
+          turnSegments: validTurnSegments(s.turn_segs, s.content) }],
         streamId: s.stream_id,
         source: s.source,
         streaming: !s.done,
@@ -283,13 +289,14 @@ export function historyToMessages(items: SessionMessageProjection[]): ChatMsg[] 
     .map((item) => ({
       role: item.role,
       content: item.content,
+      turnSegments: item.role === 'assistant' ? validTurnSegments(item.turn_segs, item.content) : undefined,
       // The archive id is the stable identity for deduplication on rehydrate.
       streamId: `history:${item.id}`,
       source: 'history',
       logicalId: item.logical_id ?? undefined, runId: item.run_id ?? undefined,
       outcome: item.outcome, stopped: item.outcome === 'cancelled',
       segments: item.run_id && item.role === 'assistant'
-        ? [{ streamId: `history:${item.id}`, content: item.content, done: true }] : undefined,
+        ? [{ streamId: `history:${item.id}`, content: item.content, done: true, turnSegments: validTurnSegments(item.turn_segs, item.content) }] : undefined,
       timestamp: parseArchiveTime(item.timestamp),
     }))
 
@@ -312,7 +319,7 @@ function coalesceArchiveRuns(projected: ChatMsg[]): ChatMsg[] {
             seen.add(part.streamId)
             return true
           })
-        out[index] = { ...previous, segments, content: replySegmentsContent(segments) }
+        out[index] = { ...previous, segments, content: replySegmentsContent(segments), turnSegments: replySegmentsTurns(segments) }
       }
       // Continuation prompts belong to the same run, not a new user question.
       continue
@@ -412,12 +419,15 @@ function mergeRunReply(old: ChatMsg, incoming: ChatMsg): ChatMsg {
       const previous = segments[index]
       segments[index] = { ...part,
         content: previous.content.startsWith(part.content) ? previous.content : part.content,
+        turnSegments: previous.content === part.content
+          ? (part.turnSegments ?? previous.turnSegments)
+          : previous.content.startsWith(part.content) ? previous.turnSegments : part.turnSegments,
         // Archive completion is not physical-stream completion for an active run.
         done: part.done || (!previous.streamId.startsWith('history:') && previous.done),
       }
     }
   }
-  return { ...old, ...incoming, segments, content: replySegmentsContent(segments) }
+  return { ...old, ...incoming, segments, content: replySegmentsContent(segments), turnSegments: replySegmentsTurns(segments) }
 }
 
 function mergeLive(base: ChatMsg[], live: ChatMsg[]): ChatMsg[] {
@@ -562,6 +572,7 @@ export function mergeSessionSnapshot(base: ChatMsg[], event: Extract<ChatWSOut, 
       started_at: active.ts,
       finished_at: existing?.finished_at ?? 0,
       content: active.content,
+      turn_segs: active.turn_segs ?? (active.content === existing?.content ? existing.turn_segs : undefined),
       done: active.done,
     }]
     return orderConversationTurns(settleSnapshot(mergeLive(base, applySnapshot(streams)), event))
@@ -570,6 +581,7 @@ export function mergeSessionSnapshot(base: ChatMsg[], event: Extract<ChatWSOut, 
   // Query-less adapters can still carry explicit run identity; never infer it.
   if (active) msgs = applyEvent(msgs, {
     type: active.done ? 'done' : 'next', stream_id: active.stream_id, content: active.content,
+    turn_segs: active.turn_segs,
     run_id: active.run_id, logical_id: active.logical_id, source: active.source,
     retry_of: active.retry_of,
   })
@@ -644,12 +656,12 @@ function updateLogicalReply(prev: ChatMsg[], evt: ReplyEvent, now: number): Chat
     streamId: old.streamId, content: old.content, done: !old.streaming && !old.stopped,
   }] : [])
   if (evt.type === 'started' && initial.some((part) => part.streamId === sid)) return prev
-  const part = updateReplySegments([], sid, evt.type, 'content' in evt ? evt.content : undefined)
+  const part = updateReplySegments([], sid, evt.type, 'content' in evt ? evt.content : undefined, evt.turn_segs)
   // Direct cumulative events and snapshots must adopt the same archived segment.
   // Otherwise history:<id> + physical stream produce two overlapping replays.
   const segments = old?.runId
     ? mergeRunReply({ ...old, segments: initial }, { ...old, segments: part }).segments!
-    : updateReplySegments(initial, sid, evt.type, 'content' in evt ? evt.content : undefined)
+    : updateReplySegments(initial, sid, evt.type, 'content' in evt ? evt.content : undefined, evt.turn_segs)
   const latest = segments[segments.length - 1]
   const streaming = !old?.stopped && !latest.done
   const message: ChatMsg = {
@@ -661,6 +673,7 @@ function updateLogicalReply(prev: ChatMsg[], evt: ReplyEvent, now: number): Chat
     source: old?.source || evt.source,
     segments,
     content: replySegmentsContent(segments),
+    turnSegments: replySegmentsTurns(segments),
     streaming,
     timestamp: old?.timestamp ?? now,
     startedAt: old?.startedAt ?? now,

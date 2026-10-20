@@ -6933,6 +6933,20 @@
       },
       "ConversationMessageResp": {
         "properties": {
+          "turn_segs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Segs"
+          },
           "role": {
             "type": "string",
             "enum": [
@@ -9514,6 +9528,20 @@
       },
       "SessionMessageProjection": {
         "properties": {
+          "turn_segs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Segs"
+          },
           "id": {
             "type": "string",
             "title": "Id"

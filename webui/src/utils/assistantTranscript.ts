@@ -1,4 +1,5 @@
 import { scanTranscript } from './transcriptProtocol'
+import { validTurnSegments } from './archiveTurnSegments'
 
 export interface AssistantTranscriptTurn {
   turn: number
@@ -444,7 +445,28 @@ export function hasAssistantExecutionTrace(text: string): boolean {
   return scanTranscript(text || '').some(node => node.kind === 'tool')
 }
 
-export function parseAssistantTranscript(text: string, streaming = false): AssistantTranscript {
+export function parseAssistantTranscript(text: string, streaming = false, turnSegments?: unknown): AssistantTranscript {
+  let trusted = !streaming ? validTurnSegments(turnSegments, text) : undefined
+  if (trusted) {
+    // A boundary inside an opaque token lacks standalone lexical context.
+    // Fall back as a whole rather than exposing reasoning or reinterpreting code.
+    const opaque = scanTranscript(text).filter(node => !['text', 'turn'].includes(node.kind))
+    let offset = 0
+    if (trusted.slice(0, -1).some(part => {
+      offset += part.length
+      return opaque.some(node => node.start < offset && offset < node.end)
+    })) trusted = undefined
+  }
+  if (trusted) return selectTranscriptTurns('', trusted.map((part, index) => {
+    // Only an anchored producer header is metadata; embedded markers are literal text.
+    const rawContent = stripFinalResponseMarker(part).trim().replace(/^\*?\*?LLM Running \(Turn \d+\) \.\.\.\*?\*?[^\S\r\n]*(?:\r?\n|$)/i, '').trim()
+    return {
+      turn: index + 1,
+      summary: extractSummary(rawContent) || fallbackSummary(rawContent),
+      content: stripTraceMeta(rawContent),
+      ...(scanTranscript(rawContent).some(node => node.kind === 'thinking') ? { rawContent } : {}),
+    }
+  }))
   const source = stripFinalResponseMarker(text)
   const safe = scanTranscript(source)
     .filter(node => !streaming || !(!node.complete && ['summary', 'pending'].includes(node.kind)))
@@ -480,6 +502,10 @@ export function parseAssistantTranscript(text: string, streaming = false): Assis
     }
   })
 
+  return selectTranscriptTurns(leading, turns)
+}
+
+function selectTranscriptTurns(leading: string, turns: AssistantTranscriptTurn[]): AssistantTranscript {
   // 选择器：从后往前找第一个有实质内容的 turn，原样上屏；ask_user turn 从
   // 折叠列表排除（它就是结论区本体）。只有工具转储、没有任何正文的尾轮 =
   // 被停止截断的悬空轮（LLM 尾巴不会写入存档）——不当结论，回退上一轮。
