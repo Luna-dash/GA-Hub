@@ -1,3 +1,4 @@
+import { FileLinkContext } from '@/components/FileCitation'
 // LiveChat — the UI for one durable GA-Hub session.
 //
 // chatStore owns only the selected session's receive-only WebSocket and
@@ -728,6 +729,7 @@ export default function LiveChat() {
   }
 
   return (
+    <FileLinkContext.Provider value={{ sessionId: session?.id, projectPath: activeProjectPath }}>
     <PageShell
       title="实时聊天"
       titleExtra={
@@ -876,6 +878,7 @@ export default function LiveChat() {
         </ModalOverlay>
       )}
     </PageShell>
+    </FileLinkContext.Provider>
   )
 }
 

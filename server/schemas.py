@@ -1086,11 +1086,13 @@ class ServicePanelResp(BaseModel):
 # Upload / local files
 class RevealFileReq(BaseModel):
     path: str
+    session_id: str | None = None
     mode: Literal["open", "folder", "parent"] = "open"
 
 
 class ResolveFileReq(BaseModel):
     path: str
+    session_id: str | None = None
 
 
 class ResolveFileResp(BaseModel):
@@ -1099,6 +1101,9 @@ class ResolveFileResp(BaseModel):
     exists: bool
     is_dir: bool
     ambiguous: bool
+    candidates: list[str] = Field(default_factory=list)
+    incomplete: bool = False
+    scope: str = ""
 
 
 class UploadResp(BaseModel):

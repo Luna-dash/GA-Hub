@@ -59,33 +59,40 @@ def test_resolve_reveal_path_rejects_executables_and_missing(tmp_path, monkeypat
     assert exc3.value.status_code == 404
 
 
-def test_open_windows_file_reveals_in_file_manager_without_default_application(tmp_path, monkeypatch):
-    target = tmp_path / "report.md"
-    target.write_text("ok", encoding="utf-8")
+@pytest.mark.parametrize("is_dir", [False, True])
+def test_windows_files_and_folders_use_shared_explorer(tmp_path, monkeypatch, is_dir):
+    from server.services.file_manager import explorer_window
+
+    target = tmp_path / ("reports" if is_dir else "report.md")
+    if is_dir:
+        target.mkdir()
+    else:
+        target.write_text("ok", encoding="utf-8")
+    reveal = Mock()
     startfile = Mock()
     popen = Mock()
     monkeypatch.setattr(upload.platform, "system", lambda: "Windows")
     monkeypatch.setattr(upload.os, "startfile", startfile, raising=False)
     monkeypatch.setattr(upload.subprocess, "Popen", popen)
+    monkeypatch.setattr(explorer_window, "reveal", reveal)
 
     upload._open_in_default_app(target)
 
+    reveal.assert_called_once_with(target)
     startfile.assert_not_called()
-    popen.assert_called_once_with(f'explorer /select,"{target}"')
+    popen.assert_not_called()
 
 
-def test_open_windows_folder_uses_default_application_without_explorer_process(tmp_path, monkeypatch):
-    target = tmp_path / "reports"
-    target.mkdir()
-    startfile = Mock()
-    popen = Mock()
+def test_windows_reuse_failure_does_not_spawn_another_window(tmp_path, monkeypatch):
+    from server.services.file_manager import explorer_window
+
     monkeypatch.setattr(upload.platform, "system", lambda: "Windows")
-    monkeypatch.setattr(upload.os, "startfile", startfile, raising=False)
+    monkeypatch.setattr(explorer_window, "reveal", Mock(side_effect=OSError("busy")))
+    popen = Mock()
     monkeypatch.setattr(upload.subprocess, "Popen", popen)
-
-    upload._open_in_default_app(target)
-
-    startfile.assert_called_once_with(str(target))
+    with pytest.raises(HTTPException) as exc:
+        upload._show_in_file_manager(tmp_path)
+    assert exc.value.status_code == 500
     popen.assert_not_called()
 
 
@@ -132,30 +139,28 @@ def test_resolve_path_info_citation_cascade(tmp_path, monkeypatch):
     assert info["is_dir"] is True
 
 
-def test_fuzzy_find_unique_tail_hit_and_ambiguity(tmp_path, monkeypatch):
-    ga_root = tmp_path / "ga"
-    ga_root.mkdir()
-    monkeypatch.setattr(_paths, "GA_ROOT", ga_root)
+def test_project_search_unique_tail_hit_and_ambiguity(tmp_path, monkeypatch):
+    ga = tmp_path / "ga"
+    ga.mkdir()
+    monkeypatch.setattr(_paths, "GA_ROOT", ga)
     monkeypatch.setattr(_paths, "ADMIN_ROOT", tmp_path / "hub")
-
-    # 唯一命中：裸文件名在深层目录里
-    deep = ga_root / "reports" / "deep"
+    project = tmp_path / "project"
+    deep = project / "reports" / "deep"
     deep.mkdir(parents=True)
-    (deep / "l4_archive_proposal.md").write_text("x", encoding="utf-8")
-    hit, ambiguous = upload._fuzzy_find("l4_archive_proposal.md")
-    assert hit == deep / "l4_archive_proposal.md"
-    assert ambiguous is False
-
-    # 多处命中 → 歧义即放弃
-    (ga_root / "temp").mkdir()
-    (ga_root / "temp" / "l4_archive_proposal.md").write_text("x", encoding="utf-8")
-    hit, ambiguous = upload._fuzzy_find("l4_archive_proposal.md")
-    assert hit is None
-    assert ambiguous is True
-
-    # 完全未命中
-    hit, ambiguous = upload._fuzzy_find("nope.md")
-    assert hit is None and ambiguous is False
+    target = deep / "diagram.svg"
+    target.write_text("x", encoding="utf-8")
+    assert upload._resolve_path_info("diagram.svg")["resolved"] is None
+    info = upload._resolve_path_info("diagram.svg", str(project))
+    assert info["resolved"] == str(target.resolve())
+    assert upload._resolve_path_info("reports/deep/diagram.svg", str(project))["resolved"] == str(target.resolve())
+    assert upload._resolve_path_info("unrelated/diagram.svg", str(project))["resolved"] is None
+    second = project / "other"
+    second.mkdir()
+    (second / "diagram.svg").write_text("x", encoding="utf-8")
+    info = upload._resolve_path_info("diagram.svg", str(project))
+    assert info["resolved"] is None and info["ambiguous"]
+    assert len(info["candidates"]) == 2
+    assert upload._resolve_path_info("nope.md", str(project))["resolved"] is None
 
 
 def test_resolve_reveal_path_404_when_unresolved(tmp_path, monkeypatch):
@@ -169,23 +174,21 @@ def test_resolve_reveal_path_404_when_unresolved(tmp_path, monkeypatch):
     assert exc.value.status_code == 404
 
 
-def test_show_in_file_manager_selects_files_and_opens_dirs(tmp_path, monkeypatch):
+@pytest.mark.parametrize("system, command", [("Darwin", "open"), ("Linux", "xdg-open")])
+def test_non_windows_reveal_opens_parent_or_directory(tmp_path, monkeypatch, system, command):
     target_file = tmp_path / "report.md"
     target_file.write_text("x", encoding="utf-8")
     target_dir = tmp_path / "reports"
     target_dir.mkdir()
     popen = Mock()
-    monkeypatch.setattr(upload.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(upload.platform, "system", lambda: system)
     monkeypatch.setattr(upload.subprocess, "Popen", popen)
 
     upload._show_in_file_manager(target_file)
     upload._show_in_file_manager(target_dir)
 
-    # 路径引号在 /select, 参数内部；不能整参数重加引号（带空格路径会被
-    # Explorer 解析坏），也不能带 SW_HIDE（GUI 进程窗口永不显示）。
-    assert popen.call_args_list[0].args[0] == f'explorer /select,"{target_file}"'
-    assert popen.call_args_list[1].args[0] == f'explorer "{target_dir}"'
-    assert "startupinfo" not in popen.call_args_list[0].kwargs
+    assert popen.call_args_list[0].args[0] == [command, str(tmp_path)]
+    assert popen.call_args_list[1].args[0] == [command, str(target_dir)]
 
 
 def test_reveal_endpoint_supports_parent_mode(tmp_path, monkeypatch):
@@ -211,3 +214,67 @@ def test_reveal_endpoint_supports_parent_mode(tmp_path, monkeypatch):
 
     assert resp.status_code == 200
     assert opened == [folder.resolve()]
+
+
+def test_exact_paths_do_not_scan_and_format_variants(tmp_path, monkeypatch):
+    from server.services import file_resolution as resolver
+    monkeypatch.setattr(_paths, "GA_ROOT", tmp_path)
+    target = tmp_path / "a space.md"
+    target.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(resolver.os, "scandir", Mock(side_effect=AssertionError("exact hit must not scan")))
+    for raw in [str(target), target.as_uri(), str(target) + ":12:3"]:
+        assert resolver.resolve(raw)["resolved"] == str(target.resolve())
+    assert resolver.resolve(str(tmp_path / "missing" / "a space.md"))["resolved"] is None
+
+
+def test_bounded_search_does_not_cross_projects_or_shared_temp(tmp_path, monkeypatch):
+    from server.services import file_resolution as resolver
+    monkeypatch.setattr(_paths, "GA_ROOT", tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    other = tmp_path / "temp" / "other-project"
+    other.mkdir(parents=True)
+    (other / "report.md").write_text("x", encoding="utf-8")
+    assert resolver.resolve("report.md", str(project))["resolved"] is None
+    nested = project / "docs"
+    nested.mkdir()
+    (nested / "report.md").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(resolver, "MAX_ENTRIES", 1)
+    info = resolver.resolve("report.md", str(project))
+    assert info["incomplete"] and info["resolved"] is None
+
+
+def test_file_work_admission_is_bounded_and_independent(monkeypatch):
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import BoundedSemaphore, Event
+
+    async def exercise():
+        started, release = Event(), Event()
+        slots = BoundedSemaphore(1)
+        other_slots = BoundedSemaphore(1)
+        def blocking():
+            started.set()
+            release.wait(5)
+            return 1
+        with ThreadPoolExecutor(max_workers=1) as pool, ThreadPoolExecutor(max_workers=1) as other:
+            monkeypatch.setitem(upload._FILE_POOLS, "test", (pool, slots))
+            monkeypatch.setitem(upload._FILE_POOLS, "other", (other, other_slots))
+            task = asyncio.create_task(upload._file_job("test", blocking))
+            try:
+                while not started.is_set():
+                    await asyncio.sleep(0.001)
+                with pytest.raises(HTTPException) as exc:
+                    await upload._file_job("test", lambda: 2)
+                assert exc.value.status_code == 429
+                assert await upload._file_job("other", lambda: 3) == 3
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                # Cancelling the waiter must not free a still-running worker.
+                assert not slots.acquire(blocking=False)
+            finally:
+                release.set()
+        assert slots.acquire(blocking=False)
+        slots.release()
+    asyncio.run(exercise())

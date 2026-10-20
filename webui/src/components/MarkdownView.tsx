@@ -1,3 +1,4 @@
+import { CitationLink, PathLink, citationUrlTransform } from './FileCitation'
 // MarkdownView — small wrapper over react-markdown that:
 //   1. Tightens spacing for chat bubbles (.prose-chat in styles/index.css)
 //   2. Fenced code: language label + hover copy + syntax highlight (rehype-highlight)
@@ -16,14 +17,8 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
-import { memo, ReactNode, useEffect, useMemo, useState, type MouseEvent } from 'react'
-import { createPortal } from 'react-dom'
-import { Z_LAYERS } from '@/config/zLayers'
-import { useCopy, writeClipboard } from '@/utils/clipboard'
-import { errorMessageFromError } from '@/utils/sessionUi'
-import { api } from '@/api/client'
-import { toast } from '@/stores/toastStore'
-import { isAppInternalUrl, isHttpUrl, openExternalIfNeeded } from '@/utils/openExternal'
+import { memo, ReactNode, useMemo } from 'react'
+import { useCopy } from '@/utils/clipboard'
 import { looksLikeToolTrace } from '@/utils/toolTrace'
 import { renderMarkdownTree } from '@/utils/markdownRenderCache'
 // Light paper-ish theme; token colors further tuned under .prose-chat in CSS
@@ -44,29 +39,7 @@ const MD_COMPONENTS = {
       <table {...props}>{children}</table>
     </div>
   ),
-  // External http(s) → OS browser; same-origin stays in WebView.
-  a: ({ href, children, ...props }: any) => {
-    // A bare filename is not a web destination. Deliverables use [FILE:path]
-    // and PathLink's resolver; never navigate the main WebView for these labels.
-    const target = typeof href === 'string' ? href.trim() : ''
-    const bareFile = /^(?:\.\/)?[^/\\:?#]+\.[^/\\:?#]+(?:[?#].*)?$/.test(target)
-    if (bareFile) return <>{children}</>
-    return (
-    <a
-      href={href}
-      {...props}
-      onClick={(e: MouseEvent<HTMLAnchorElement>) => {
-        if (href !== null && isHttpUrl(href) && !isAppInternalUrl(href)) {
-          void openExternalIfNeeded(href).catch(() => undefined)
-          e.preventDefault()
-          e.stopPropagation()
-        }
-      }}
-    >
-      {children}
-    </a>
-    )
-  },
+  a: ({ href, children }: any) => <CitationLink href={href}>{children}</CitationLink>,
   // Linkify paths in flowing prose
   p: ({ children }: any) => <p>{linkifyChildren(children)}</p>,
   li: ({ children, className, ...props }: any) => (
@@ -173,6 +146,7 @@ export const MarkdownView = memo(function MarkdownView({
     remarkPlugins,
     rehypePlugins,
     components: MD_COMPONENTS,
+    urlTransform: citationUrlTransform,
   }, cache), [cache, rehypePlugins, remarkPlugins, resolved, text])
 
   return (
@@ -293,168 +267,4 @@ function linkifyString(s: string): ReactNode {
   }
   if (last < s.length) out.push(s.slice(last))
   return out
-}
-
-type PathInfo = {
-  raw: string
-  resolved: string | null
-  exists: boolean
-  is_dir: boolean
-  ambiguous: boolean
-}
-
-// Resolve-once cache: agents cite the same paths repeatedly and resolution
-// is a server probe, so memoize by raw text for the session lifetime.
-const pathInfoCache = new Map<string, Promise<PathInfo | null>>()
-
-function resolvePathInfo(path: string): Promise<PathInfo | null> {
-  const cached = pathInfoCache.get(path)
-  if (cached) return cached
-  const pending = api.resolveFile(path).catch(() => null)
-  pathInfoCache.set(path, pending)
-  return pending
-}
-
-function PathLink({ path, display }: { path: string; display: string }) {
-  const [info, setInfo] = useState<PathInfo | null>(null)
-  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null)
-
-  useEffect(() => {
-    let alive = true
-    void resolvePathInfo(path).then((result) => {
-      if (alive && result) setInfo(result)
-    })
-    return () => { alive = false }
-  }, [path])
-
-  const open = async () => {
-    try {
-      await api.revealFile(path)
-    } catch (err) {
-      toast.error(errorMessageFromError(err, `无法打开 ${path}`))
-    }
-  }
-
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => { void open() }}
-        onContextMenu={(event) => {
-          event.preventDefault()
-          event.stopPropagation()
-          setMenuPos({ x: event.clientX, y: event.clientY })
-        }}
-        className="inline-flex items-baseline gap-0.5 text-accent hover:underline break-all text-left"
-        title={info?.resolved ?? `打开文件 ${path}`}
-      >
-        <span aria-hidden className="text-[0.75em] opacity-70">📄</span>
-        <span className="font-mono text-[0.9em]">{display}</span>
-      </button>
-      {menuPos && (
-        <PathLinkMenu
-          path={path}
-          info={info}
-          pos={menuPos}
-          onOpen={() => { setMenuPos(null); void open() }}
-          onClose={() => setMenuPos(null)}
-        />
-      )}
-    </>
-  )
-}
-
-function PathLinkMenu({ path, info, pos, onOpen, onClose }: {
-  path: string
-  info: PathInfo | null
-  pos: { x: number; y: number }
-  onOpen: () => void
-  onClose: () => void
-}) {
-  useEffect(() => {
-    const close = () => onClose()
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
-    window.addEventListener('click', close)
-    window.addEventListener('resize', close)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('click', close)
-      window.removeEventListener('resize', close)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [onClose])
-
-  const copyText = async (text: string, label: string) => {
-    const ok = await writeClipboard(text)
-    if (ok) toast.success(`${label}已复制`)
-    else toast.error('复制失败：剪贴板不可用')
-    onClose()
-  }
-
-  const exists = info?.exists ?? false
-  const resolved = info?.resolved ?? null
-  const parentDir = resolved ? resolved.replace(/[\\/][^\\/]+$/, '') : ''
-  // 视口内钳位：菜单约 190×150
-  const left = Math.min(pos.x, window.innerWidth - 200)
-  const top = Math.min(pos.y, window.innerHeight - 160)
-
-  return createPortal(
-    <div
-      className="fixed inset-0"
-      style={{ zIndex: Z_LAYERS.contextMenu }}
-      onClick={onClose}
-      onContextMenu={(event) => { event.preventDefault(); onClose() }}
-    >
-      <div
-        className="fixed min-w-[190px] rounded-lg border border-line bg-bg-card py-1 shadow-lg"
-        style={{ left, top, zIndex: Z_LAYERS.contextMenu }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <PathMenuItem
-          label={info?.is_dir ? '打开文件夹' : '打开文件'}
-          disabled={!exists}
-          onClick={() => { onClose(); onOpen() }}
-        />
-        <PathMenuItem
-          label="在资源管理器中显示"
-          disabled={!exists}
-          onClick={() => {
-            onClose()
-            api.revealFile(path, 'folder').catch((err: unknown) => {
-              toast.error(errorMessageFromError(err, '无法定位文件'))
-            })
-          }}
-        />
-        <div className="my-1 border-t border-line/70" />
-        <PathMenuItem
-          label="复制完整路径"
-          disabled={!resolved}
-          onClick={() => { void copyText(resolved as string, '完整路径') }}
-        />
-        <PathMenuItem
-          label="复制所在文件夹"
-          disabled={!parentDir}
-          onClick={() => { void copyText(parentDir, '文件夹路径') }}
-        />
-      </div>
-    </div>,
-    document.body,
-  )
-}
-
-function PathMenuItem({ label, disabled, onClick }: {
-  label: string
-  disabled?: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className="block w-full px-3 py-1.5 text-left text-sm text-[#3C2C19] hover:bg-bg-soft disabled:cursor-not-allowed disabled:opacity-40"
-    >
-      {label}
-    </button>
-  )
 }

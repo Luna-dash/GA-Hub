@@ -1268,18 +1268,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Reveal File
-         * @description Open a local path with the host's default application.
-         *
-         *     Any existing absolute path is allowed if its type is on the
-         *     document/image/media/text allowlist (or is a directory). Relative paths
-         *     resolve through the citation cascade (GA root, temp, L4 archives, the
-         *     GA-Hub checkout, then a bounded fuzzy search). ``mode`` selects the
-         *     action: open the file, reveal it in the file manager, or open its parent
-         *     folder. Content download via ``files-by-path`` remains root-restricted
-         *     separately.
-         */
+        /** Reveal File */
         post: operations["reveal_file_api_files_reveal_post"];
         delete?: never;
         options?: never;
@@ -3585,6 +3574,8 @@ export interface components {
         ResolveFileReq: {
             /** Path */
             path: string;
+            /** Session Id */
+            session_id?: string | null;
         };
         /** ResolveFileResp */
         ResolveFileResp: {
@@ -3598,11 +3589,25 @@ export interface components {
             is_dir: boolean;
             /** Ambiguous */
             ambiguous: boolean;
+            /** Candidates */
+            candidates?: string[];
+            /**
+             * Incomplete
+             * @default false
+             */
+            incomplete: boolean;
+            /**
+             * Scope
+             * @default
+             */
+            scope: string;
         };
         /** RevealFileReq */
         RevealFileReq: {
             /** Path */
             path: string;
+            /** Session Id */
+            session_id?: string | null;
             /**
              * Mode
              * @default open

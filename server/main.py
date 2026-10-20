@@ -231,6 +231,13 @@ def _mount_static(app: FastAPI) -> None:
             within = False
         if within and full.is_file():
             return FileResponse(str(full))
+        # Only registered SPA routes receive the shell. Missing resources
+        # and model-generated local paths must never replay the loader.
+        spa_routes = {"chat", "dashboard", "theme-tasks", "feishu", "conversations",
+                      "memory", "goal-hive", "conductor", "mykey", "tasks",
+                      "autonomous", "tokens", "settings"}
+        if path.split("/", 1)[0] not in spa_routes or Path(path).suffix:
+            return JSONResponse({"detail": "not found"}, status_code=404)
         idx = dist_root / "index.html"
         if idx.is_file():
             return FileResponse(str(idx), headers=_NO_CACHE)

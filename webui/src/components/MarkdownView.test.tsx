@@ -4,6 +4,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MarkdownView } from './MarkdownView'
+import { FileLinkContext, CitationLink, PathLink, isLocalCitation } from './FileCitation'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -67,12 +69,13 @@ describe('MarkdownView responsive wrapping', () => {
     String.raw`C:\Users\Luna\New project\final report.docx`,
     '/tmp/New project/final report.pdf',
   ])('opens a complete FILE marker path containing spaces: %s', async (path) => {
+    mocks.resolveFile.mockResolvedValue({ resolved: path, exists: true, is_dir: false })
     act(() => root.render(
       <MarkdownView mode="plain">{`交付物：[FILE:${path}] 后续说明`}</MarkdownView>,
     ))
 
     const link = [...host.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.title === `打开文件 ${path}`)
+      .find((button) => button.title.startsWith(path))
     expect(link).not.toBeNull()
     expect(link?.textContent).toContain(path)
     expect(host.textContent).toContain('后续说明')
@@ -83,7 +86,7 @@ describe('MarkdownView responsive wrapping', () => {
     })
 
     expect(mocks.revealFile).toHaveBeenCalledTimes(1)
-    expect(mocks.revealFile).toHaveBeenCalledWith(path)
+    expect(mocks.revealFile).toHaveBeenCalledWith(path, 'open')
   })
 
   it('does not turn an empty FILE marker into a path button', () => {
@@ -106,17 +109,18 @@ describe('MarkdownView responsive wrapping', () => {
 
     const link = host.querySelector<HTMLButtonElement>('button')
     expect(link).not.toBeNull()
-    // 解析后的绝对路径进 tooltip
-    expect(link?.title).toBe('D:/GA/temp/report.md')
+    expect(mocks.resolveFile).not.toHaveBeenCalled()
 
-    act(() => {
+    await act(async () => {
       link!.dispatchEvent(new MouseEvent('contextmenu', {
         bubbles: true, cancelable: true, clientX: 10, clientY: 10,
       }))
+      await Promise.resolve()
     })
+    expect(link?.title).toContain('D:/GA/temp/report.md')
     const labels = [...document.body.querySelectorAll<HTMLButtonElement>('button')]
       .map((button) => button.textContent)
-    expect(labels).toContain('打开文件')
+    expect(labels).toContain('定位文件')
     expect(labels).toContain('在资源管理器中显示')
     expect(labels).toContain('复制完整路径')
     expect(labels).toContain('复制所在文件夹')
@@ -129,13 +133,13 @@ describe('MarkdownView responsive wrapping', () => {
     expect(mocks.toastSuccess).toHaveBeenCalled()
   })
 
-  it.each(['pelican_bicycle_v2.svg', './pelican_bicycle_v2.svg', 'report.pdf?download=1', '报告.svg'])('renders bare file target %s as text without resolving or navigating', async (target) => {
+  it.each(['pelican_bicycle_v2.svg', './pelican_bicycle_v2.svg', 'report.pdf?download=1', '报告.svg'])('renders file target %s as an action without eager resolution or navigation', async (target) => {
     act(() => root.render(<MarkdownView mode="chat">{`[文件 **下载**](${target})`}</MarkdownView>))
     await act(async () => { await Promise.resolve() })
     expect(host.textContent).toContain('文件 下载')
     expect(host.querySelector('strong')?.textContent).toBe('下载')
     expect(host.querySelector('a')).toBeNull()
-    expect(host.querySelector('button')).toBeNull()
+    expect(host.querySelector('button')).not.toBeNull()
     expect(mocks.resolveFile).not.toHaveBeenCalled()
     expect(mocks.revealFile).not.toHaveBeenCalled()
   })
@@ -152,11 +156,11 @@ describe('MarkdownView responsive wrapping', () => {
     mocks.resolveFile.mockResolvedValue({ raw: 'pelican_bicycle_v2.svg', resolved: path, exists: true, is_dir: false, ambiguous: false })
     act(() => root.render(<MarkdownView>{'[FILE:pelican_bicycle_v2.svg]'}</MarkdownView>))
     await act(async () => { await Promise.resolve() })
-    expect(mocks.resolveFile).toHaveBeenCalledWith('pelican_bicycle_v2.svg')
+    expect(mocks.resolveFile).not.toHaveBeenCalled()
     expect(host.querySelector('a')).toBeNull()
     await act(async () => { host.querySelector<HTMLButtonElement>('button')!.click(); await Promise.resolve() })
-    expect(mocks.revealFile).toHaveBeenCalledWith('pelican_bicycle_v2.svg')
-    expect(host.querySelector('button')?.title).toBe(path)
+    expect(mocks.revealFile).toHaveBeenCalledWith(path, 'open')
+    expect(host.querySelector('button')?.title).toContain(path)
   })
 
   it('disables open actions when the cited path cannot be resolved', async () => {
@@ -166,15 +170,71 @@ describe('MarkdownView responsive wrapping', () => {
     act(() => root.render(<MarkdownView mode="plain">{'[FILE:temp/ghost.md]'}</MarkdownView>))
     await act(async () => { await Promise.resolve() })
 
-    act(() => {
+    await act(async () => {
       host.querySelector<HTMLButtonElement>('button')!.dispatchEvent(new MouseEvent('contextmenu', {
         bubbles: true, cancelable: true, clientX: 10, clientY: 10,
       }))
+      await Promise.resolve()
     })
     const items = [...document.body.querySelectorAll<HTMLButtonElement>('button')]
-    const openItem = items.find((button) => button.textContent === '打开文件')
+    const openItem = items.find((button) => button.textContent === '定位文件')
     const copyItem = items.find((button) => button.textContent === '复制完整路径')
     expect(openItem?.disabled).toBe(true)
     expect(copyItem?.disabled).toBe(true)
   })
+  it('keeps resources, routes and unsafe schemes out of file resolution', () => {
+    for (const target of ['/chat', '#here', '/api/files/id.pdf', '/api/files-by-path?path=x',
+      'https://example.com/a.md', 'javascript:alert(1)']) expect(isLocalCitation(target)).toBe(false)
+    for (const target of ['report.md', '../notes/a.md', '/tmp/a.md', 'file:///D:/a.md']) expect(isLocalCitation(target)).toBe(true)
+    act(() => root.render(<MarkdownView>{'[bad](javascript:alert) [attachment](/api/files/a.pdf) [anchor](#here)'}</MarkdownView>))
+    expect(host.querySelector('a[href^="javascript:"]')).toBeNull()
+    expect(host.querySelector('a[href="/api/files/a.pdf"]')?.getAttribute('target')).toBe('_blank')
+    expect(host.querySelector('a[href="#here"]')).not.toBeNull()
+    expect(mocks.resolveFile).not.toHaveBeenCalled()
+  })
+
+  it('changes app route using the router', async () => {
+    function RouteProbe() { return <output>{useLocation().pathname}</output> }
+    act(() => root.render(<MemoryRouter initialEntries={['/chat']}><CitationLink href="/settings">settings</CitationLink><RouteProbe /></MemoryRouter>))
+    await act(async () => { host.querySelector('a')!.click() })
+    expect(host.querySelector('output')?.textContent).toBe('/settings')
+    expect(mocks.resolveFile).not.toHaveBeenCalled()
+  })
+
+  it('merges concurrent lookups and hands off an action only once', async () => {
+    let done!: (value: unknown) => void
+    mocks.resolveFile.mockReturnValue(new Promise(resolve => { done = resolve }))
+    let opened!: () => void
+    mocks.revealFile.mockReturnValue(new Promise<void>(resolve => { opened = resolve }))
+    act(() => root.render(<><PathLink path="a.md" display="one" /><PathLink path="a.md" display="two" /></>))
+    await act(async () => {
+      host.querySelectorAll('button').forEach(button => button.click())
+      done({ resolved: 'D:/a.md', exists: true, is_dir: false })
+    })
+    expect(mocks.resolveFile).toHaveBeenCalledTimes(1)
+    expect(mocks.revealFile).toHaveBeenCalledTimes(1)
+    await act(async () => { opened() })
+  })
+
+  it('does not open a stale lookup after changing projects', async () => {
+    let done!: (value: unknown) => void
+    mocks.resolveFile.mockReturnValue(new Promise(resolve => { done = resolve }))
+    const view = (sessionId: string) => <FileLinkContext.Provider value={{ sessionId, projectPath: sessionId }}><PathLink path="a.md" display="a" /></FileLinkContext.Provider>
+    act(() => root.render(view('first')))
+    await act(async () => { host.querySelector('button')!.click() })
+    act(() => root.render(view('second')))
+    await act(async () => { done({ resolved: 'D:/first/a.md', exists: true }) })
+    expect(mocks.revealFile).not.toHaveBeenCalled()
+    expect(mocks.toastError).toHaveBeenCalled()
+  })
+
+  it('requires selection when lookup has multiple candidates', async () => {
+    mocks.resolveFile.mockResolvedValue({ resolved: null, candidates: ['D:/a.md', 'D:/docs/a.md'], ambiguous: true })
+    act(() => root.render(<PathLink path="a.md" display="a" />))
+    await act(async () => { host.querySelector('button')!.click() })
+    expect(mocks.revealFile).not.toHaveBeenCalled()
+    await act(async () => { [...document.body.querySelectorAll('button')].find(b => b.textContent === 'D:/docs/a.md')!.click() })
+    expect(mocks.revealFile).toHaveBeenCalledWith('D:/docs/a.md', 'open')
+  })
+
 })

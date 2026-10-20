@@ -13,9 +13,12 @@ import os
 import platform
 import subprocess
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+from threading import BoundedSemaphore
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile, Request
 from fastapi.responses import FileResponse
 
 from .. import _paths
@@ -24,6 +27,25 @@ from ..schemas import RevealFileReq, RevealFileResp, ResolveFileReq, ResolveFile
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+# Admission is bounded independently of the shared FastAPI worker pool.
+# Release only when the real job finishes, including after client cancellation.
+_FILE_POOLS = {kind: (ThreadPoolExecutor(max_workers=2, thread_name_prefix=f"files-{kind}"),
+                      BoundedSemaphore(4)) for kind in ("resolve", "reveal")}
+
+
+async def _file_job(kind, fn, *args):
+    pool, slots = _FILE_POOLS[kind]
+    if not slots.acquire(blocking=False):
+        raise HTTPException(429, "file service busy; please retry later")
+    try:
+        future = pool.submit(partial(fn, *args))
+    except BaseException:
+        slots.release()
+        raise
+    future.add_done_callback(lambda _: slots.release())
+    return await asyncio.wrap_future(future)
+
 
 
 # Open-with-default-app allowlist: documents / images / media / common text
@@ -80,123 +102,36 @@ def _reveal_ext_allowed(path: Path) -> bool:
 
 
 def _normalize_rel(raw: str) -> str:
-    """Normalize an agent-cited path for probing (separators, ./ noise)."""
-    value = (raw or "").strip().strip('"').replace("\\", "/")
-    while value.startswith("./"):
-        value = value[2:]
-    return value.strip()
+    from ..services.file_resolution import normalize
+    return normalize(raw)
 
 
-def _path_candidates(raw: str) -> list[Path]:
-    """Probe order for agent-cited paths (first existing wins):
-
-    1. absolute paths as-is
-    2. relative to GA root (`temp/x.md`, `memory/…`)
-    3. bare names inside GA's temp dir (`model_responses_x.txt`)
-    4. bare names inside the L4 session-archive dir
-    5. relative to the GA-Hub checkout (`scripts/build_all.py` citations)
-    """
-    value = _normalize_rel(raw)
-    if not value:
-        return []
-    path = Path(value).expanduser()
-    bases: list[Path] = []
-    if path.is_absolute():
-        bases.append(path)
-    else:
-        if _paths.GA_ROOT:
-            root = Path(_paths.GA_ROOT)
-            bases.append(root / path)
-            bases.append(_paths.ga_layout_path("temp", root=root) / path)
-            bases.append(_paths.ga_l4_sessions_dir(root=root) / path)
-        bases.append(_paths.ADMIN_ROOT / path)
-    seen: set[str] = set()
-    unique: list[Path] = []
-    for base in bases:
-        key = str(base).lower()
-        if key not in seen:
-            seen.add(key)
-            unique.append(base)
-    return unique
+def _resolve_path_info(raw: str, project_path: str | None = None,
+                       project_name: str | None = None) -> dict:
+    from ..services.file_resolution import resolve
+    return resolve(raw, project_path, project_name)
 
 
-_FUZZY_PRUNE_DIRS = {
-    ".git", "node_modules", "__pycache__", ".venv", "venv",
-    ".idea", ".vscode", "binaries", "target",
-}
-_FUZZY_MAX_DEPTH = 3
+def _fuzzy_find(raw: str, **_ignored) -> tuple[Path | None, bool]:
+    """Compatibility helper; unbound calls no longer scan all GA projects."""
+    info = _resolve_path_info(raw)
+    return (Path(info['resolved']) if info['resolved'] else None, info['ambiguous'])
 
 
-def _fuzzy_find(raw: str) -> tuple[Path | None, bool]:
-    """Depth-bounded unique-tail search under GA root for unresolved paths.
-
-    Returns ``(path, ambiguous)``. Ambiguous (≥2 hits) resolves to nothing —
-    guessing would open the wrong file. Bounded depth + pruned junk dirs keep
-    this in the tens-of-milliseconds range; it only runs on demand.
-    """
-    rel = _normalize_rel(raw).lstrip("/")
-    if not rel or _paths.GA_ROOT is None:
-        return None, False
-    parts = [p for p in rel.split("/") if p and p != "."]
-    if not parts:
-        return None, False
-    tail = "/".join(parts)
-    last = parts[-1]
-    hits: list[Path] = []
-    ga_root = Path(_paths.GA_ROOT)
-    base_depth = len(ga_root.parts)
-    for dirpath, dirnames, filenames in os.walk(ga_root):
-        depth = len(Path(dirpath).parts) - base_depth
-        if depth >= _FUZZY_MAX_DEPTH:
-            dirnames[:] = []
-        dirnames[:] = [d for d in dirnames if d not in _FUZZY_PRUNE_DIRS]
-        rel_dir = "/".join(Path(dirpath).parts[base_depth:])
-        for name in list(filenames) + list(dirnames):
-            rel_path = f"{rel_dir}/{name}" if rel_dir else name
-            if rel_path == tail or name == last:
-                hits.append(Path(dirpath) / name)
-                if len(hits) >= 2:
-                    return None, True
-    if hits:
-        return hits[0], False
-    return None, False
+def _project_context(request: Request, session_id: str | None) -> tuple:
+    if not session_id:
+        return None, None
+    from ..services.session_lifecycle import session_lifecycle_of
+    try:
+        session = session_lifecycle_of(request.app).store.get(session_id)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    return session.get('project_path'), session.get('project_name')
 
 
-def _resolve_path_info(raw_path: str) -> dict:
-    raw = raw_path or ""
-    for candidate in _path_candidates(raw):
-        try:
-            if candidate.exists():
-                resolved = candidate.resolve()
-                return {
-                    "raw": raw,
-                    "resolved": str(resolved),
-                    "exists": True,
-                    "is_dir": resolved.is_dir(),
-                    "ambiguous": False,
-                }
-        except OSError:
-            continue
-    hit, ambiguous = _fuzzy_find(raw)
-    if hit is not None:
-        return {
-            "raw": raw,
-            "resolved": str(hit.resolve()),
-            "exists": True,
-            "is_dir": hit.is_dir(),
-            "ambiguous": False,
-        }
-    return {
-        "raw": raw,
-        "resolved": None,
-        "exists": False,
-        "is_dir": False,
-        "ambiguous": ambiguous,
-    }
-
-
-def _resolve_reveal_path(raw_path: str) -> Path:
-    info = _resolve_path_info(raw_path)
+def _resolve_reveal_path(raw_path: str, project_path: str | None = None,
+                         project_name: str | None = None) -> Path:
+    info = _resolve_path_info(raw_path, project_path, project_name)
     if not info["resolved"]:
         if info["ambiguous"]:
             raise HTTPException(404, "ambiguous path matches multiple files")
@@ -214,11 +149,7 @@ def _open_in_default_app(path: Path) -> None:
     system = platform.system()
     if path.is_dir():
         if system == "Windows":
-            try:
-                os.startfile(str(path))  # type: ignore[attr-defined]
-            except OSError as exc:
-                log.warning("file_open_failed path=%s error=%s", path, exc)
-                raise HTTPException(500, "default application is unavailable") from exc
+            _show_in_file_manager(path)
             return
         elif system == "Darwin":
             args = ["open", str(path)]
@@ -350,21 +281,12 @@ async def get_file(fname: str):
 
 
 def _show_in_file_manager(path: Path) -> None:
-    """Reveal a file in its parent folder (Windows selects it), or open a dir.
-
-    Explorer is a GUI process: it must NOT be started with the house
-    CREATE_NO_WINDOW/SW_HIDE policy — the hidden show-state makes the window
-    never appear (the "click does nothing" bug). The select path is quoted
-    *inside* the argument, because Explorer mis-parses a whole-argument
-    re-quoting of ``/select,<path with spaces>``.
-    """
+    """Reveal files or folders, reusing the Hub-owned Explorer on Windows."""
     system = platform.system()
     try:
         if system == "Windows":
-            if path.is_file():
-                subprocess.Popen(f'explorer /select,"{path}"')
-            else:
-                subprocess.Popen(f'explorer "{path}"')
+            from ..services.file_manager import explorer_window
+            explorer_window.reveal(path)
             return
         parent = path if path.is_dir() else path.parent
         args = ["open", str(parent)] if system == "Darwin" else ["xdg-open", str(parent)]
@@ -375,25 +297,26 @@ def _show_in_file_manager(path: Path) -> None:
 
 
 @router.post("/api/files/resolve")
-def resolve_file_path(req: ResolveFileReq) -> ResolveFileResp:
+async def resolve_file_path(req: ResolveFileReq, request: Request) -> ResolveFileResp:
     """Resolve an agent-cited path (absolute / GA-root relative / bare temp
     name / fuzzy tail) without opening anything."""
-    return _resolve_path_info(req.path)
+    return await _file_job("resolve", _resolve_path_info, req.path, *_project_context(request, req.session_id))
 
 
 @router.post("/api/files/reveal")
-def reveal_file(req: RevealFileReq) -> RevealFileResp:
+async def reveal_file(req: RevealFileReq, request: Request) -> RevealFileResp:
+    context = _project_context(request, req.session_id)
+    return await _file_job("reveal", _reveal_file_sync, req, context)
+
+
+def _reveal_file_sync(req: RevealFileReq, context: tuple) -> RevealFileResp:
     """Open a local path with the host's default application.
 
-    Any existing absolute path is allowed if its type is on the
-    document/image/media/text allowlist (or is a directory). Relative paths
-    resolve through the citation cascade (GA root, temp, L4 archives, the
-    GA-Hub checkout, then a bounded fuzzy search). ``mode`` selects the
-    action: open the file, reveal it in the file manager, or open its parent
-    folder. Content download via ``files-by-path`` remains root-restricted
-    separately.
+    Safe files are located in the file manager; directories are opened.
+    Relative paths use project-scoped, budgeted citation resolution.
+    Content download via files-by-path remains separately root-restricted.
     """
-    path = _resolve_reveal_path(req.path)
+    path = _resolve_reveal_path(req.path, *context)
     if req.mode == "folder":
         _show_in_file_manager(path)
     elif req.mode == "parent":

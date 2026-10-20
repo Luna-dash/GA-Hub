@@ -395,10 +395,10 @@ export const api = {
   },
   fileUrlByPath: (absPath: string) =>
     resolveApiUrl(`/api/files-by-path?path=${encodeURIComponent(absPath)}`),
-  revealFile: (path: string, mode: 'open' | 'folder' | 'parent' = 'open') =>
-    http<RevealFileResponse>('POST', '/api/files/reveal', { path, mode }),
-  resolveFile: (path: string) =>
-    http<ResolveFileResponse>('POST', '/api/files/resolve', { path }),
+  revealFile: (path: string, mode: 'open' | 'folder' | 'parent' = 'open', sessionId?: string) =>
+    http<RevealFileResponse>('POST', '/api/files/reveal', { path, mode, session_id: sessionId }),
+  resolveFile: (path: string, sessionId?: string) =>
+    http<ResolveFileResponse>('POST', '/api/files/resolve', { path, session_id: sessionId }),
 
 
   // ── conductor ────────────────────────────────────────
