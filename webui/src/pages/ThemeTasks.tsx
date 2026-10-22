@@ -71,10 +71,15 @@ export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubS
 
 function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, autoOpen = false, onAutoOpened }: { session: HubSession; onSettings: () => void; refresh: () => void; expanded: boolean; onExpandedChange: (id: string | null) => void; autoOpen?: boolean; onAutoOpened?: () => void }) {
   const navigate = useNavigate()
-  // Idle cards make no requests: the page invalidates these keys on
-  // session:runtime events and after the event socket reconnects. Only a
-  // running card polls themeRun, because turn counts are not pushed.
-  const runtimeQuery = useQuery({ queryKey: ['theme-runtime', session.id], queryFn: () => api.sessionRuntime(session.id), staleTime: Infinity })
+  const client = useQueryClient()
+  // Idle cards do not poll. Runtime events/reconnect refresh the snapshots;
+  // active cards also reconcile periodically in case a terminal event is lost.
+  const runtimeQuery = useQuery({
+    queryKey: ['theme-runtime', session.id], queryFn: () => api.sessionRuntime(session.id),
+    staleTime: 30000,
+    refetchInterval: query => activeStatuses.includes(query.state.data?.status ?? '') ? 5000 : false,
+    refetchIntervalInBackground: false,
+  })
   const running = activeStatuses.includes(runtimeQuery.data?.status ?? '')
   const runQuery = useQuery({ queryKey: ['theme-run', session.id], queryFn: () => api.themeRun(session.id), staleTime: Infinity, refetchInterval: running ? 5000 : false, refetchIntervalInBackground: false })
   const llms = useQuery({ queryKey: ['theme-llms'], queryFn: api.llms })
@@ -108,9 +113,16 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
     if (!autoOpen) return
     onExpandedChange(session.id); setTab('report'); onAutoOpened?.()
   }, [autoOpen, onAutoOpened, onExpandedChange, session.id])
-  const run = runQuery.data?.run
   const runtime = runtimeQuery.data
   const active = activeStatuses.includes(runtime?.status ?? '')
+  const expectedRunId = active ? runtime?.run_id : runtime?.completed_run_id
+  const snapshot = runQuery.data?.run
+  // Never present the previous run's report as the result of a newer run.
+  const run = expectedRunId && snapshot?.run_id !== expectedRunId ? undefined : snapshot
+  const currentRunId = expectedRunId ?? run?.run_id
+  useEffect(() => {
+    if (runtime?.status) void client.invalidateQueries({ queryKey: ['theme-run', session.id] })
+  }, [client, session.id, runtime?.status, runtime?.run_id, runtime?.completed_run_id])
   const model = llms.data?.llms.find(m => m.key === session.llm_key)
   const uncertain = runQuery.isError || runtimeQuery.isError
   const frozen = Boolean(run?.finished_at || run?.interrupted)
@@ -230,7 +242,7 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
 
     {notice && <p role="status" className="mb-3 text-xs text-slate-500">{notice}</p>}
     {error && <p role="alert" className="mb-3 text-sm text-status-danger">{error}</p>}
-    <ThemeTaskHistory sessionId={session.id} runId={run?.run_id} active={active} selectedTab={tab} onTabChange={setTab}>
+    <ThemeTaskHistory sessionId={session.id} runId={currentRunId} active={active} selectedTab={tab} onTabChange={setTab}>
     {run && frozen ? <section>
       <div className="max-h-[min(68dvh,800px)] overflow-y-auto overscroll-contain pr-2 text-sm leading-relaxed">{report ? <MessageContent content={report} format="markdown" markdownMode="chat" /> : <p className="py-8 text-center text-slate-500">暂无最终结论</p>}</div>
     </section> : <p className="py-16 text-center text-sm text-slate-500">{active ? '任务执行中，完成后显示结论' : '运行任务后在这里查看结论'}</p>}

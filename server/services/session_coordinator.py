@@ -1033,8 +1033,6 @@ class SessionCoordinator:
                 active = self._active_by_session.get(session_id)
                 if active is None or active.run_id != run_id:
                     return
-                self._abort_started.pop(run_id, None)
-                self._active_by_session.pop(session_id, None)
                 outcome = getattr(handle, "run_outcome", None)
                 if active.status == STATUS_ABORTING:
                     outcome = "cancelled"
@@ -1051,15 +1049,19 @@ class SessionCoordinator:
                     session_id, completed_run_id=run_id,
                     outcome=outcome or "completed",
                 )
+                # Persist the final report before publishing idle or admitting a
+                # new run. Otherwise clients can cache an unfinished report after
+                # the terminal event, or a new begin can overtake this finish.
+                from . import theme_task_runs
+                theme_task_runs.finish(
+                    session_id, run_id, completed.outcome or "failed",
+                    getattr(handle, "run_final_text", ""),
+                )
+                self._abort_started.pop(run_id, None)
+                self._active_by_session.pop(session_id, None)
                 self._states[session_id] = completed
                 notification = replace(completed)
-            # Notify immediately: optional metrics I/O must not delay runtime state.
             self._emit_state_change(notification)
-            from . import theme_task_runs
-            theme_task_runs.finish(
-                session_id, run_id, notification.outcome or "failed",
-                getattr(handle, "run_final_text", ""),
-            )
         finally:
             with self._lock:
                 if self._watchers.get(run_id) is threading.current_thread():

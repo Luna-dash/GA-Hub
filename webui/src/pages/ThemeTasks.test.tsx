@@ -349,3 +349,36 @@ it('promotes the expanded card, collapses the previous one, and restores source 
   expect(host.querySelectorAll('section[aria-label^="主题任务详情"]')).toHaveLength(0)
   expect(api.startThemeRun).not.toHaveBeenCalled()
 })
+
+
+it('recovers a missed completion event by polling only while active', async () => {
+  await click('打开主题任务：签到')
+  const baseline = vi.mocked(api.themeRun).mock.calls.length
+  vi.mocked(api.sessionRuntime).mockResolvedValue({ session_id: 'one', status: 'idle', run_id: null, stream_id: null, completed_run_id: 'new', outcome: 'completed' })
+  vi.mocked(api.themeRun).mockResolvedValue({ run: { session_id: 'one', model_key: 'k', run_id: 'new', started_at: 20, finished_at: 25, outcome: 'completed', interrupted: false, turns: 2, model_name: '模型', report: '新的最终结论' } })
+  vi.useFakeTimers()
+  try {
+    await act(async () => { client.setQueryData(['theme-runtime', 'one'], { status: 'running', run_id: 'new' }) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(50) })
+    expect(host.querySelector('[aria-label="停止主题任务：签到"]')).not.toBeNull()
+    await act(async () => { await vi.advanceTimersByTimeAsync(5100) })
+    expect(host.querySelector('[aria-label="停止主题任务：签到"]')).toBeNull()
+    expect(host.querySelector('[aria-label="运行主题任务：签到"]')).not.toBeNull()
+    expect(host.textContent).toContain('新的最终结论')
+    expect(vi.mocked(api.themeRun).mock.calls.length).toBeGreaterThan(baseline)
+    const calls = vi.mocked(api.sessionRuntime).mock.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
+    expect(vi.mocked(api.sessionRuntime).mock.calls.length).toBe(calls)
+  } finally { vi.useRealTimers() }
+})
+
+it('does not show a previous conclusion when a new run has no metrics yet', async () => {
+  await click('打开主题任务：签到')
+  expect(host.textContent).toContain('签到成功')
+  await act(async () => {
+    client.setQueryData(['theme-runtime', 'one'], { status: 'running', run_id: 'new' })
+  })
+  await wait()
+  expect(host.textContent).not.toContain('签到成功')
+  expect(host.querySelector('[aria-label="停止主题任务：签到"]')).not.toBeNull()
+})

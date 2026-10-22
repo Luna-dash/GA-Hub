@@ -1011,3 +1011,34 @@ def test_only_theme_runs_enter_metrics(tmp_path, monkeypatch, is_theme):
     finally:
         runtime.handle.finished = True
         coordinator.shutdown()
+
+
+def test_theme_report_is_final_before_idle_event_and_new_admission(tmp_path, monkeypatch):
+    from server.services import theme_task_runs as metrics
+    from server.services.session_coordinator import SessionCoordinator
+
+    monkeypatch.setattr(metrics._paths, 'ADMIN_DATA', tmp_path)
+    runtime = FakeRuntime('s')
+    observed = []
+
+    def on_state(state):
+        if state.completed_run_id:
+            observed.append(metrics.get('s'))
+
+    coordinator = SessionCoordinator(
+        lambda _: runtime, poll_interval=0.001, is_theme_task=lambda _: True,
+        on_state_change=on_state,
+    )
+    state = coordinator.submit('request', session_id='s')
+    try:
+        runtime.handle.run_final_text = 'final conclusion'
+        runtime.handle.finished = True
+        _wait_until(lambda: not coordinator._watchers)
+        assert len(observed) == 1
+        assert observed[0]['run_id'] == state.run_id
+        assert observed[0]['finished_at'] is not None
+        assert observed[0]['report'] == 'final conclusion'
+        assert observed[0]['outcome'] == 'completed'
+    finally:
+        runtime.handle.finished = True
+        coordinator.shutdown()
