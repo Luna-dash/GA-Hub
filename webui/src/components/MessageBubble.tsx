@@ -212,7 +212,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
             {cleaned && (
               <div
                 className={clsx(
-                  "rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.16)]",
+                  "min-w-0 max-w-full rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.16)]",
                   tone.surfaceClass,
                   compact ? "px-3 py-2 leading-6" : "px-3.5 py-2.5 leading-7"
                 )}

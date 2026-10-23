@@ -30,8 +30,10 @@ export function MessageContent({
       </div>
     )
   }
+  // Unlike break-word, anywhere also reduces min-content width in flex layouts.
+  const literalClassName = clsx('min-w-0 max-w-full whitespace-pre-wrap [overflow-wrap:anywhere]', className)
   if (format === 'pre') {
-    return <pre className={clsx('whitespace-pre-wrap break-words', className)}>{content || ''}</pre>
+    return <pre className={literalClassName}>{content || ''}</pre>
   }
-  return <div className={clsx('whitespace-pre-wrap break-words', className)}>{content || ''}</div>
+  return <div className={literalClassName}>{content || ''}</div>
 }

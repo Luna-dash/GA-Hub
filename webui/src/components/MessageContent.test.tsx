@@ -34,6 +34,19 @@ describe('MessageContent format selection', () => {
     expect(body.querySelector('h1')).toBeNull()
   })
 
+  for (const format of ['text', 'pre'] as const) {
+    it(`allows unbroken ${format} content to shrink inside a flex bubble without changing the text`, () => {
+      const content = 'Ab0123456789'.repeat(200) + '\n  keep indentation'
+      render(<MessageContent content={content} format={format} />)
+      const body = host.firstElementChild as HTMLElement
+      expect(body.className).toContain('[overflow-wrap:anywhere]')
+      expect(body.className).toContain('min-w-0')
+      expect(body.className).toContain('max-w-full')
+      expect(body.className).toContain('whitespace-pre-wrap')
+      expect(body.textContent).toBe(content)
+    })
+  }
+
   it('renders markdown with an explicit mode', () => {
     render(<MessageContent content={'# 标题'} format="markdown" markdownMode="plain" cache={false} />)
     expect(host.querySelector('h1')?.textContent).toBe('标题')
