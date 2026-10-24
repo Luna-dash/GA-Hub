@@ -9,6 +9,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { LoaderCircle, RotateCw, X } from 'lucide-react'
 import { api } from '@/api/client'
+import { AttachmentImage, isImageAttachment } from './AttachmentImage'
 import type { PasteAttachment, UploadResult } from '@/api/types'
 import { canReferenceLocalFiles, selectAttachmentPaths, clipboardAttachmentPaths, referenceAttachments } from '@/utils/desktop'
 import { errorMessageFromError } from '@/utils/sessionUi'
@@ -17,6 +18,9 @@ import {
   handleSlashMenuKey,
   type SlashCommand,
 } from '@/components/slashCommands'
+
+const MAX_ATTACHMENTS = 256
+const ATTACHMENT_LIMIT_HINT = `一次最多添加${MAX_ATTACHMENTS}个附件，请移除多余附件后重试`
 
 interface Props {
   text: string
@@ -76,8 +80,9 @@ export function ImagePasteInput({
   const alive = useRef(true)
   const actionRef = useRef(0)
   const addPathsRef = useRef<(paths: string[]) => Promise<void>>(async () => {})
-  const attachmentsBlocked = pendingUploads.length > 0 || referenceBusy
-  const attachmentHint = pendingUploads.some((item) => item.error)
+  const attachmentsOverLimit = attachments.length + pendingUploads.length > MAX_ATTACHMENTS
+  const attachmentsBlocked = pendingUploads.length > 0 || referenceBusy || attachmentsOverLimit
+  const attachmentHint = attachmentsOverLimit ? ATTACHMENT_LIMIT_HINT : pendingUploads.some((item) => item.error)
     ? '请重试或移除上传失败的附件'
     : attachmentsBlocked ? '请等待附件上传完成' : undefined
   const [btwOpen, setBtwOpen] = useState(false)
@@ -219,8 +224,17 @@ export function ImagePasteInput({
     }
   }
 
+  // Include pending/failed uploads; refs close same-tick event races.
+  const capacityExceeded = (additional: number) =>
+    attachmentsRef.current.length + pendingUploadsRef.current.length + additional > MAX_ATTACHMENTS
+
   const upload = (files: File[]) => {
     if (disabled || !acceptFiles || !files.length) return
+    if (capacityExceeded(files.length)) {
+      setReferenceError(ATTACHMENT_LIMIT_HINT)
+      return
+    }
+    setReferenceError(undefined)
     const added = files.map((file) => ({
       id: ++nextUploadId.current,
       file,
@@ -249,6 +263,12 @@ export function ImagePasteInput({
     if (!alive.current || token !== actionRef.current) return
     const next = [...attachmentsRef.current]
     for (const item of items) if (!next.some((a) => a.path === item.path)) next.push(item)
+    // Recheck after async metadata lookup, deduplicating before counting.
+    // Reject the whole batch instead of silently dropping selected files.
+    if (next.length + pendingUploadsRef.current.length > MAX_ATTACHMENTS) {
+      setReferenceError(ATTACHMENT_LIMIT_HINT)
+      return
+    }
     attachmentsRef.current = next
     onAttachments(next)
   }
@@ -279,7 +299,7 @@ export function ImagePasteInput({
     else upload(files)
   })
   const submit = () => {
-    if (!disabled && !submitDisabled && pendingUploadsRef.current.length === 0 && !referenceBusyRef.current
+    if (!disabled && !submitDisabled && pendingUploadsRef.current.length === 0 && !referenceBusyRef.current && !capacityExceeded(0)
       && (text.trim() || attachmentsRef.current.length > 0)) onSubmit()
   }
 
@@ -310,16 +330,15 @@ export function ImagePasteInput({
       {/* Align with the input: 4px row inset + 40px picker + 8px gap. */}
       {(attachments.length > 0 || attachmentsBlocked) && (
         <div className={clsx('flex flex-wrap items-start gap-1.5 pr-1 pt-2', acceptFiles ? 'pl-[3.25rem]' : 'pl-1')}>
-          {attachments.map((a) => a.preview ? (
+          {attachments.map((a) => isImageAttachment(a) ? (
             <div
               key={a.file_id}
               className="group relative h-14 w-14 shrink-0"
               title={`${a.name} · ${a.source === 'local_ref' ? '本地引用' : '已保存'} · ${a.size} 字节\n${a.path}`}
               data-attachment-kind="image"
             >
-              <img
-                src={a.preview}
-                alt={a.name}
+              <AttachmentImage
+                attachment={a}
                 className="h-full w-full rounded-lg border border-line object-cover"
               />
               <button
@@ -374,7 +393,7 @@ export function ImagePasteInput({
           ))}
         </div>
       )}
-      {attachmentsBlocked && <span className="sr-only" role={pendingUploads.some((item) => item.error) ? 'alert' : 'status'}>{attachmentHint}</span>}
+      {attachmentsBlocked && <span className={attachmentsOverLimit ? 'block px-3 text-xs text-status-danger' : 'sr-only'} role={attachmentsOverLimit || pendingUploads.some((item) => item.error) ? 'alert' : 'status'}>{attachmentHint}</span>}
 
       {slashCommands.length > 0 && (
         <div
@@ -497,7 +516,11 @@ export function ImagePasteInput({
         {onSchedule && !stopActive && (
           <button
             type="button"
-            onClick={() => { if (pendingUploadsRef.current.length === 0) onSchedule() }}
+            onClick={() => {
+              if (!disabled && !submitDisabled && pendingUploadsRef.current.length === 0
+                  && !referenceBusyRef.current && !capacityExceeded(0)
+                  && (text.trim() || attachmentsRef.current.length > 0)) onSchedule()
+            }}
             disabled={disabled || submitDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)}
             className="h-10 px-3 rounded-xl border border-line text-slate-300 text-sm font-medium hover:bg-white/5 disabled:opacity-40 transition"
             title="设置定时发送"

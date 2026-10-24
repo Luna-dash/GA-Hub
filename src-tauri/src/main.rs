@@ -1502,6 +1502,7 @@ fn main() {
             message_dialog::message_dialog_ready,
             message_dialog::message_dialog_finish,
             file_attachments::reference_files,
+            file_attachments::attachment_image_preview,
             file_attachments::clipboard_file_paths,
             save_text_export,
             desktop_backend_ready,

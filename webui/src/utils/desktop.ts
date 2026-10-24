@@ -126,3 +126,11 @@ export async function referenceAttachments(paths: string[]): Promise<import('@/a
   return files.map((file) => ({ ...file, source: 'local_ref',
     mime: /\.(png|jpe?g|gif|webp)$/i.test(file.name) ? `image/${file.name.split('.').pop()?.toLowerCase().replace('jpg', 'jpeg')}` : file.mime }))
 }
+
+/** In-memory preview only: no copy/upload and no persisted blob URL. */
+export async function localAttachmentImageUrl(path: string): Promise<string> {
+  if (!canReferenceLocalFiles()) throw new Error('本地图片预览仅限本机桌面')
+  const { invoke } = await import('@tauri-apps/api/core')
+  const bytes = await invoke<ArrayBuffer>('attachment_image_preview', { path })
+  return URL.createObjectURL(new Blob([bytes]))
+}

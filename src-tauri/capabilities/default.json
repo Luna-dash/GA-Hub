@@ -5,6 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "allow-reference-files",
+    "allow-attachment-image-preview",
     "allow-clipboard-file-paths",
     "allow-save-text-export",
     "allow-desktop-backend-ready",

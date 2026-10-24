@@ -34,6 +34,7 @@ import { useConversationCollapse } from './ConversationCollapse'
 import { bubbleTone } from './bubbleTone'
 import type { PasteAttachment } from '@/api/types'
 import { api } from '@/api/client'
+import { AttachmentImage, isImageAttachment } from './AttachmentImage'
 
 const StableMessageContent = memo(MessageContent)
 
@@ -495,23 +496,14 @@ function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
         // Prefer the local upload-result url; fall back to files-by-path for
         // restored snapshots where only the abs path is around.
         const src = a.preview || (a.path ? api.fileUrlByPath(a.path) : '')
-        const isImg = a.mime?.startsWith('image/')
-        if (isImg && src) {
+        if (isImageAttachment(a)) {
           return (
-            <a
+            <AttachmentImage
               key={a.file_id}
-              href={src}
-              target="_blank"
-              rel="noreferrer"
-              title={a.name}
-              className="block"
-            >
-              <img
-                src={src}
-                alt={a.name}
-                className="max-h-44 max-w-[14rem] rounded-md border border-line object-cover shadow-sm"
-              />
-            </a>
+              attachment={a}
+              linked
+              className="max-h-44 max-w-[14rem] rounded-md border border-line object-cover shadow-sm"
+            />
           )
         }
         return (
