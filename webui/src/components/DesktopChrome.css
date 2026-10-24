@@ -14,7 +14,7 @@
   top: 0;
   right: 0;
   width: 100%;
-  height: 48px;
+  height: 56px;
   pointer-events: none;
   user-select: none;
   color: var(--c-text);
@@ -25,7 +25,7 @@
 .ga-desktop-controls button {
   display: grid;
   place-items: center;
-  width: 46px;
+  width: 36px;
   height: 40px;
   border: 0;
   border-radius: 0;
@@ -54,8 +54,8 @@
 .ga-desktop-frame .ga-page-shell { padding: 0; }
 .ga-desktop-frame .ga-page-surface { border: 0; border-radius: 0; box-shadow: none; }
 .ga-desktop-frame .ga-page-header {
-  min-height: 48px;
-  padding: 6px 154px 6px 16px;
+  min-height: 56px;
+  padding: 14px 124px 6px 16px;
   column-gap: 12px;
   user-select: none;
 }
@@ -64,4 +64,4 @@
 .ga-desktop-frame .ga-page-header input,
 .ga-desktop-frame .ga-page-header textarea { user-select: text; }
 .ga-desktop-frame .ga-sidebar-brand-row { user-select: none; }
-.ga-desktop-window-error { position: fixed; right: 144px; top: 10px; z-index: 1; }
+.ga-desktop-window-error { position: fixed; right: 114px; top: 10px; z-index: 1; }
