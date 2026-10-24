@@ -37,6 +37,7 @@ def test_capability_remains_minimal_and_local() -> None:
     # Main-window commands stay explicit; message-window completion stays separate.
     assert set(capability["permissions"]) == {
         "allow-reference-files",
+        "allow-attachment-image-preview",
         "allow-clipboard-file-paths",
         "allow-save-text-export",
         "allow-desktop-backend-ready",
@@ -82,6 +83,7 @@ def test_custom_commands_are_gated_by_explicit_app_permissions() -> None:
         "save_text_export", "desktop_backend_ready", "restart_backend",
         "show_message_dialog", "message_dialog_config", "message_dialog_ready",
         "message_dialog_finish", "reference_files", "clipboard_file_paths",
+        "attachment_image_preview",
     }
     assert set(re.findall(r'"([a-z_]+)"', commands.group(1))) == expected
     for command in expected:
