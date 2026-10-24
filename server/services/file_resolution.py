@@ -20,13 +20,18 @@ SECONDS = .15
 
 def normalize(raw: str) -> str:
     value = (raw or '').strip().strip('"').replace('\\', '/')
+    # Strip citation metadata before URI decoding: encoded colons are filename data.
+    value = re.sub(r'(?<=\S):\d+(?::\d+)?$', '', value)
     if value.lower().startswith('file:'):
-        url = urlsplit(value)
-        value = ('//' + url.netloc if url.netloc and url.netloc != 'localhost' else '') + url.path
-    value = unquote(value)
+        try:
+            url = urlsplit(value)
+        except ValueError:
+            return ''
+        value = ('//' + url.netloc if url.netloc and url.netloc.lower() != 'localhost' else '') + unquote(url.path)
+    # Raw filesystem paths are not URLs. Decoding can silently select a different
+    # file when both "a%20b.txt" and "a b.txt" exist.
     if re.match(r'^/[a-zA-Z]:/', value):
         value = value[1:]
-    value = re.sub(r'(?<=\S):\d+(?::\d+)?$', '', value)
     while value.startswith('./'):
         value = value[2:]
     return value.strip()
