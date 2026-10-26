@@ -7,6 +7,8 @@ export interface ReplySegment {
   streamId: string
   content: string
   turnSegments?: string[]
+  /** Archive tools may be much longer than their live rendering. */
+  archived?: boolean
   done: boolean
 }
 
@@ -20,14 +22,15 @@ export function updateReplySegments(
   const index = previous.findIndex((part) => part.streamId === streamId)
   const old = index < 0 ? undefined : previous[index]
   // Late started/next events must not reopen or replace a completed stream.
-  if (old?.done && phase !== 'done') return previous.slice()
+  if (old?.archived && phase === 'started') return previous.slice()
+  if (old?.done && !old.archived && phase !== 'done') return previous.slice()
   // Delayed cumulative frames cannot roll back content or trusted boundaries.
-  if (old && content !== undefined && old.content !== content
+  if (old && !old.archived && content !== undefined && old.content !== content
     && old.content.startsWith(content)) return previous.slice()
   const part: ReplySegment = {
     streamId,
     content: phase === 'started' ? (old?.content ?? '') : (content ?? old?.content ?? ''),
-    done: phase === 'done' || !!old?.done,
+    done: phase === 'done' || (!!old?.done && !old.archived),
     turnSegments: validTurnSegments(turnSegments, content ?? old?.content ?? '')
       ?? (content === undefined || content === old?.content ? old?.turnSegments : undefined),
   }

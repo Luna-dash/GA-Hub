@@ -296,7 +296,7 @@ export function historyToMessages(items: SessionMessageProjection[]): ChatMsg[] 
       logicalId: item.logical_id ?? undefined, runId: item.run_id ?? undefined,
       outcome: item.outcome, stopped: item.outcome === 'cancelled',
       segments: item.run_id && item.role === 'assistant'
-        ? [{ streamId: `history:${item.id}`, content: item.content, done: true, turnSegments: validTurnSegments(item.turn_segs, item.content) }] : undefined,
+        ? [{ streamId: item.stream_id || `history:${item.id}`, content: item.content, done: true, archived: true, turnSegments: validTurnSegments(item.turn_segs, item.content) }] : undefined,
       timestamp: parseArchiveTime(item.timestamp),
     }))
 
@@ -417,13 +417,17 @@ function mergeRunReply(old: ChatMsg, incoming: ChatMsg): ChatMsg {
     if (index < 0) segments.push(part)
     else {
       const previous = segments[index]
+      // Archive tools/fences differ from live text; stream identity is authoritative.
+      const fromArchive = previous.archived || previous.streamId.startsWith('history:')
+      const keepPrevious = fromArchive ? !part.content : previous.content.startsWith(part.content)
       segments[index] = { ...part,
-        content: previous.content.startsWith(part.content) ? previous.content : part.content,
+        content: keepPrevious ? previous.content : part.content,
         turnSegments: previous.content === part.content
           ? (part.turnSegments ?? previous.turnSegments)
-          : previous.content.startsWith(part.content) ? previous.turnSegments : part.turnSegments,
+          : keepPrevious ? previous.turnSegments : part.turnSegments,
+        archived: keepPrevious ? previous.archived : part.archived,
         // Archive completion is not physical-stream completion for an active run.
-        done: part.done || (!previous.streamId.startsWith('history:') && previous.done),
+        done: part.done || (!fromArchive && previous.done),
       }
     }
   }

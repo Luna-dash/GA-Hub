@@ -2,6 +2,43 @@ import { describe, expect, it } from 'vitest'
 import { applyEvent, historyToMessages, mergeSessionSnapshot, prependUniqueHistory, type ChatMsg } from './chatStore'
 
 describe('logical recovery reply', () => {
+  const archivedStream = () => historyToMessages([{
+    id: 'archive-a', ordinal: 0, role: 'assistant', run_id: 'run', logical_id: 'a', stream_id: 'a',
+    content: '\n\n**LLM Running (Turn 1) ...**\nARCHIVED FULL TOOL OUTPUT', timestamp: null,
+  }])
+
+  it('adopts the same physical stream even when archive formatting is longer and not a text prefix', () => {
+    const content = '\n**LLM Running (Turn 1) ...**\nLIVE\n**LLM Running (Turn 2) ...**\nNEW'
+    const frame = { type: 'snapshot' as const, session_id: 's', runtime: {
+      status: 'running' as const, run_id: 'run', stream_id: 'a', error: null,
+    }, streams: [{ stream_id: 'a', run_id: 'run', logical_id: 'a', source: 'webui',
+      query: '', content, done: false, started_at: 1, finished_at: 0 }] }
+    let msgs = mergeSessionSnapshot(archivedStream(), frame)
+    msgs = mergeSessionSnapshot(msgs, frame)
+    const answer = msgs.find(m => m.role === 'assistant')!
+    expect(answer.content).toBe(content)
+    expect(answer.segments).toHaveLength(1)
+    expect(answer.streaming).toBe(true)
+  })
+
+  it('adopts archive identity on direct cumulative events without a snapshot', () => {
+    let msgs = applyEvent(archivedStream(), { type: 'next', stream_id: 'a', run_id: 'run',
+      logical_id: 'a', content: 'LIVE' })
+    msgs = applyEvent(msgs, { type: 'next', stream_id: 'a', run_id: 'run', logical_id: 'a', content: 'LIVE NEXT' })
+    expect(msgs[0].content).toBe('LIVE NEXT')
+    expect(msgs[0].segments).toHaveLength(1)
+    // Replayed shorter transport frames must still not shrink live content.
+    msgs = applyEvent(msgs, { type: 'next', stream_id: 'a', run_id: 'run', logical_id: 'a', content: 'LIVE' })
+    expect(msgs[0].content).toBe('LIVE NEXT')
+  })
+
+  it('retains a different archived physical stream when a continuation restarts turn numbering', () => {
+    const msgs = applyEvent(archivedStream(), { type: 'next', stream_id: 'b', run_id: 'run',
+      logical_id: 'a', source: 'auto_continue', content: 'SECOND STREAM' })
+    expect(msgs[0].content).toBe(archivedStream()[0].content + '\n\nSECOND STREAM')
+    expect(msgs[0].segments).toHaveLength(2)
+  })
+
   it('anchors a live retry at its stream boundary and clears it on successful completion', () => {
     let msgs = applyEvent([], { type: 'started', stream_id: 'a', query: 'question' })
     msgs = applyEvent(msgs, { type: 'done', stream_id: 'a', content: 'first' })
