@@ -173,7 +173,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
   const tone = bubbleTone(role)
   const timeLabel = formatMessageTime(timestamp)
   const runningTranscript = useMemo(() => role === 'assistant' && !compact && streaming && !stopped
-    ? parseAssistantTranscript(content, true) : null, [role, compact, streaming, stopped, content])
+    ? parseAssistantTranscript(content, true, turnSegments) : null, [role, compact, streaming, stopped, content, turnSegments])
   const runningTask = Boolean(runningTranscript && (runningTranscript.turns.length > 0 || hasAssistantExecutionTrace(content)))
   const shouldProjectTranscript = Boolean(
     role === 'assistant'

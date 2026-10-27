@@ -28,6 +28,18 @@ describe('trusted archive turn segments', () => {
     expect(result.finalBody).toBe('answer')
     expect(result.stopped).toBe(true)
   })
+  it.each([false, true])('isolates trusted turns with unclosed reasoning (streaming=%s)', (streaming) => {
+    const turns = [
+      '**LLM Running (Turn 1) ...**\n<summary>Start</summary>\nfirst',
+      '**LLM Running (Turn 2) ...**\n<analysis>unfinished reasoning',
+      '**LLM Running (Turn 3) ...**\n<summary>Done</summary>\nfinal answer',
+    ]
+    const result = parseAssistantTranscript(turns.join(''), streaming, turns)
+    expect(result.turns).toHaveLength(3)
+    expect(result.turns[1].content).not.toContain('final answer')
+    expect(result.turns[1].rawContent).toContain('unfinished reasoning')
+    expect(result.finalBody).toBe('final answer')
+  })
 })
 
 describe('archive safety and mixed reply pieces', () => {

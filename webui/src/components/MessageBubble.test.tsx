@@ -56,6 +56,22 @@ describe('MessageBubble render isolation', () => {
     host.remove()
   })
 
+  it('advances and reopens native live turns after unclosed reasoning', () => {
+    const first = '**LLM Running (Turn 1) ...**\n<summary>检查</summary>\n旧轮正文\n'
+    const second = '**LLM Running (Turn 2) ...**\n<analysis>private reasoning'
+    const third = '\n**LLM Running (Turn 3) ...**\n<summary>继续</summary>\n新轮正文'
+    act(() => root.render(<MessageBubble role="assistant" content={first + second} turnSegments={[first, second]} streaming />))
+    act(() => host.querySelector<HTMLButtonElement>('[data-running-turn="2"] > button')!.click())
+    act(() => root.render(<MessageBubble role="assistant" content={first + second + third} turnSegments={[first, second, third]} streaming />))
+    expect(host.querySelector('[data-running-turn="3"] > div')?.textContent).toContain('新轮正文')
+    expect(host.querySelector('[data-running-turn="2"] > div')).toBeNull()
+    expect(host.querySelector('[data-running-preview]')?.textContent).not.toContain('private reasoning')
+    // The same metadata must survive the transition to historical rendering.
+    act(() => root.render(<MessageBubble role="assistant" content={first + second + third} turnSegments={[first, second, third]} streaming={false} />))
+    expect(host.textContent).toContain('新轮正文')
+    expect(host.textContent).not.toContain('private reasoning')
+  })
+
   it('caps the running viewport at 80% of the output area and tracks resizing', () => {
     host.setAttribute('data-live-chat-scroll', '')
     let outputHeight = 600

@@ -446,11 +446,12 @@ export function hasAssistantExecutionTrace(text: string): boolean {
 }
 
 export function parseAssistantTranscript(text: string, streaming = false, turnSegments?: unknown): AssistantTranscript {
-  let trusted = !streaming ? validTurnSegments(turnSegments, text) : undefined
+  let trusted = validTurnSegments(turnSegments, text)
   if (trusted) {
-    // A boundary inside an opaque token lacks standalone lexical context.
-    // Fall back as a whole rather than exposing reasoning or reinterpreting code.
-    const opaque = scanTranscript(text).filter(node => !['text', 'turn'].includes(node.kind))
+    // Preserve lexical protection for code/tools and complete cross-piece tags.
+    // An unclosed reasoning tag, however, must not swallow later native turns.
+    const opaque = scanTranscript(text).filter(node => !['text', 'turn'].includes(node.kind)
+      && !(node.kind === 'thinking' && !node.complete))
     let offset = 0
     if (trusted.slice(0, -1).some(part => {
       offset += part.length
