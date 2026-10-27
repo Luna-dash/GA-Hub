@@ -23,11 +23,19 @@ export function isLocalCitation(target: string): boolean {
 // other schemes still pass through its default sanitizer.
 export const citationUrlTransform = (url: string) => isLocalCitation(url) ? url : defaultUrlTransform(url)
 
+// Markdown hrefs are URLs, unlike raw [FILE:...] paths. Decode once here;
+// file: URLs keep their explicit decoding boundary in the backend resolver.
+function citationPathFromUrl(url: string): string {
+  if (/^file:/i.test(url)) return url
+  try { return decodeURIComponent(url) }
+  catch { return url }
+}
+
 export function CitationLink({ href, children }: { href?: string; children: ReactNode }) {
   const inRouter = useInRouterContext()
   const target = href?.trim() || ''
   if (!target) return <>{children}</>
-  if (isLocalCitation(target)) return <PathLink path={target} display={children} />
+  if (isLocalCitation(target)) return <PathLink path={citationPathFromUrl(target)} display={children} />
   if (APP_ROUTE.test(target) && inRouter) return <Link to={target}>{children}</Link>
   return <a href={target} target={target.startsWith('/api/files') ? '_blank' : undefined} rel="noopener noreferrer" onClick={(event) => {
     if (isHttpUrl(target) && !isAppInternalUrl(target)) {

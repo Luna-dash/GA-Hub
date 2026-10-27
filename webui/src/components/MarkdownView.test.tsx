@@ -96,6 +96,29 @@ describe('MarkdownView responsive wrapping', () => {
     expect(mocks.revealFile).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['/D:/study/GA/temp/project_artifacts/intercepter-b964d989/patent_templates/技术交底书_润色排版版.docx', '/D:/study/GA/temp/project_artifacts/intercepter-b964d989/patent_templates/技术交底书_润色排版版.docx'],
+    ['patent_templates/技术交底书.pdf', 'patent_templates/技术交底书.pdf'],
+    ['docs/a%20b%23%2B%25.md', 'docs/a b#+%.md'],
+    ['docs/literal%2520name.md', 'docs/literal%20name.md'],
+    ['file:///D:/docs/a%2520b.md', 'file:///D:/docs/a%2520b.md'],
+  ])('resolves the filesystem path from the Markdown URL %s', async (url, expected) => {
+    const resolved = 'D:/resolved/交底书.docx'
+    mocks.resolveFile.mockResolvedValue({ raw: expected, resolved, exists: true, is_dir: false, ambiguous: false })
+    act(() => root.render(<FileLinkContext.Provider value={{ sessionId: 'intercepter-session' }}><MarkdownView>{`[文档](${url})`}</MarkdownView></FileLinkContext.Provider>))
+    expect(mocks.resolveFile).not.toHaveBeenCalled()
+    await act(async () => { host.querySelector<HTMLButtonElement>('button')!.click() })
+    expect(mocks.resolveFile).toHaveBeenCalledWith(expected, 'intercepter-session')
+    expect(mocks.revealFile).toHaveBeenCalledWith(resolved, 'open')
+  })
+
+  it('preserves literal percent escapes in raw file citations', async () => {
+    const path = 'docs/literal%20name.md'
+    act(() => root.render(<MarkdownView>{`[FILE:${path}]`}</MarkdownView>))
+    await act(async () => { host.querySelector<HTMLButtonElement>('button')!.click() })
+    expect(mocks.resolveFile).toHaveBeenCalledWith(path, undefined)
+  })
+
   it('offers resolve-aware actions on the path-link context menu', async () => {
     mocks.resolveFile.mockResolvedValue({
       raw: 'temp/report.md',
