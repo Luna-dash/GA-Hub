@@ -249,12 +249,12 @@ def _normal_routers() -> tuple[APIRouter, ...]:
     from .routes import (
         agent, feishu, conversations, memory, autonomous, conductor, upload,
         wechat, logs, mykey, services, sessions, preferences, tasks,
-        tokens, goalhive,
+        tokens, goalhive, model_fingerprint,
     )
     return tuple(module.router for module in (
         agent, feishu, conversations, memory, autonomous, conductor, upload,
         wechat, logs, mykey, services, sessions, preferences, tasks,
-        tokens, goalhive,
+        tokens, goalhive, model_fingerprint,
     ))
 
 
