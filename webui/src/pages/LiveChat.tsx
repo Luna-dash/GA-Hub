@@ -1,3 +1,4 @@
+import { ModelFingerprint } from '../components/ModelFingerprint'
 import { FileLinkContext } from '@/components/FileCitation'
 // LiveChat — the UI for one durable GA-Hub session.
 //
@@ -789,7 +790,7 @@ export default function LiveChat() {
           </span>
         </div>
       }
-      actions={
+      actions={<>
         <MainModelSelect
           llms={llms}
           value={selectedLlmKey ?? ''}
@@ -799,7 +800,7 @@ export default function LiveChat() {
           title="选择当前会话使用的模型"
           aria-label="当前会话模型"
         />
-      }
+      </>}
     >
       <div className="flex h-full min-h-0 flex-col md:flex-row">
         <SessionRail
@@ -825,6 +826,7 @@ export default function LiveChat() {
             scheduleNow={scheduleNow}
             onCancelSchedule={cancelSchedule}
             onRewind={handleRewind}
+            railTop={session && <ModelFingerprint key={session.id} sessionId={session.id} disabled={llmSaving || sessionLlmNeedsRepair} />}
           />
           <LiveChatComposer
             draftKey={draftKey}

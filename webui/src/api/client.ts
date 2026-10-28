@@ -258,6 +258,8 @@ async function conductorWrite<T>(path: string, body: Record<string, unknown>, in
 }
 
 export const api = {
+  startModelFingerprint: (id: string) => http<import('../components/ModelFingerprint').FingerprintJob>('POST', `/api/sessions/${id}/model-fingerprint`, { confirm_paid_sampling: true }),
+  getModelFingerprint: (id: string, job: string) => http<import('../components/ModelFingerprint').FingerprintJob>('GET', `/api/sessions/${id}/model-fingerprint/${job}`),
   // ── setup (always available, even in setup mode) ────
   setupStatus: () => http<SetupStatus>('GET', '/api/setup/status'),
   setupValidate: (ga_root: string) =>
