@@ -21,6 +21,7 @@
 - 🧠 **记忆 & SOP**：可视化编辑 GA 的 `global_mem.txt` / `*_sop.md`
 - 🌳 **技能库浏览**：查看 `memory/skill_search/`
 - ⚡ **LLM 切换**：可视化切换链路
+- 🔎 **模型指纹**：对当前 Chat 绑定模型独立采样，本地保管凭据、Cloudflare 数字评分；[配置与限制](deploy/model-fingerprint/README.md)
 - 🌀 **自主进化增强**：自定义 idle/cron/interval 触发计划，浏览历史报告
 
 ## 一键安装与启动
