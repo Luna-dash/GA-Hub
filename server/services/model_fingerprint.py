@@ -37,9 +37,8 @@ def scoring_settings() -> tuple[str, str]:
 
 
 def model_snapshot(key: str) -> tuple[dict, dict]:
-    from llmcore import reload_mykeys
-    configs = reload_mykeys()[0]
-    config = configs.get(key)
+    from frontends.gahub.bridge.model import mykey_config_snapshot
+    config = mykey_config_snapshot().get(key)
     if not isinstance(config, dict):
         raise ValueError("model_unavailable")
     if "mixin" in key.lower() or not any(x in key for x in ("oai", "claude")):
@@ -54,10 +53,10 @@ def model_snapshot(key: str) -> tuple[dict, dict]:
 
 
 def sample(key: str, config: dict, prompt: str) -> str:
-    from llmcore import resolve_session
+    from frontends.gahub.bridge.model import resolve_isolated_session
     isolated = copy.deepcopy(config)
     isolated.update(max_retries=0, connect_timeout=10, read_timeout=120)
-    backend = resolve_session(key, isolated)
+    backend = resolve_isolated_session(key, isolated)
     if backend is None:
         raise ValueError("model_unavailable")
     backend.history = []

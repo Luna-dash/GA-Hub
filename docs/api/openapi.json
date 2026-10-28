@@ -4696,6 +4696,105 @@
           }
         }
       }
+    },
+    "/api/sessions/{session_id}/model-fingerprint": {
+      "post": {
+        "tags": [
+          "model-fingerprint"
+        ],
+        "summary": "Start",
+        "operationId": "start_api_sessions__session_id__model_fingerprint_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/model-fingerprint/{job_id}": {
+      "get": {
+        "tags": [
+          "model-fingerprint"
+        ],
+        "summary": "Status",
+        "operationId": "status_api_sessions__session_id__model_fingerprint__job_id__get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -10070,6 +10169,17 @@
           "query"
         ],
         "title": "SkillSearchResp"
+      },
+      "StartRequest": {
+        "properties": {
+          "confirm_paid_sampling": {
+            "type": "boolean",
+            "title": "Confirm Paid Sampling",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "StartRequest"
       },
       "TaskMutationResp": {
         "properties": {

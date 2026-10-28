@@ -22,7 +22,7 @@ def test_sample_isolated_and_numeric_only(monkeypatch):
     def resolve(key, config):
         seen['config'] = config
         return backend
-    monkeypatch.setitem(sys.modules, 'llmcore', SimpleNamespace(resolve_session=resolve))
+    monkeypatch.setitem(sys.modules, 'frontends.gahub.bridge.model', SimpleNamespace(resolve_isolated_session=resolve))
     assert m.sample('test_oai', original, 'public challenge') == '1 22 355 44'
     assert original == before
     assert backend.history == [] and backend.tools is None and backend.system == ''
@@ -34,7 +34,7 @@ def test_active_conversation_limit_is_safe_and_specific(monkeypatch):
     def raw(messages):
         yield ''
         return [{'type': 'text', 'text': '!!!Error: HTTP 422 active_main_conversation_limit_exceeded private-secret'}]
-    monkeypatch.setitem(sys.modules, 'llmcore', SimpleNamespace(resolve_session=lambda *args: SimpleNamespace(raw_ask=raw)))
+    monkeypatch.setitem(sys.modules, 'frontends.gahub.bridge.model', SimpleNamespace(resolve_isolated_session=lambda *args: SimpleNamespace(raw_ask=raw)))
     with pytest.raises(m.SamplingUnavailable, match='活跃会话') as error:
         m.sample('test_oai', {}, 'challenge')
     assert 'private-secret' not in str(error.value)
@@ -42,7 +42,7 @@ def test_active_conversation_limit_is_safe_and_specific(monkeypatch):
 
 def test_snapshot_removes_context(monkeypatch):
     config = {'api_key': 'secret', 'model': 'chosen', 'extra_sys_prompt': 'private', 'extra_sys_prompt_file': 'private-path'}
-    monkeypatch.setitem(sys.modules, 'llmcore', SimpleNamespace(reload_mykeys=lambda: ({'test_oai': config},)))
+    monkeypatch.setitem(sys.modules, 'frontends.gahub.bridge.model', SimpleNamespace(mykey_config_snapshot=lambda: {'test_oai': config}))
     isolated, target = m.model_snapshot('test_oai')
     assert isolated == {'api_key': 'secret', 'model': 'chosen'}
     assert 'secret' not in json.dumps(target)

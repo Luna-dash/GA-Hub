@@ -99,8 +99,10 @@ _REQUIRED_GA_SYMBOLS: dict[str, tuple[str, ...]] = {
         "project_archive_text",
     ),
     "frontends.gahub.bridge.model": (
+        "mykey_config_snapshot",
         "mykey_revision",
         "model_snapshot",
+        "resolve_isolated_session",
         "switch_model",
     ),
     "frontends.gahub.bridge.official_hub": (
