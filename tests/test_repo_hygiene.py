@@ -85,6 +85,16 @@ def _root_untracked() -> list[str]:
     return sorted(name for name in names if "/" not in name)
 
 
+def test_cloud_fingerprint_assets_are_not_client_dependencies() -> None:
+    """Scoring assets belong to GA-Hub-Fingerprint-Cloud, not this client."""
+    assert not (ROOT / "deploy" / "model-fingerprint").exists(), (
+        "Keep Worker, bank and detector in the independent cloud deployment repo; "
+        "see docs/model-fingerprint.md."
+    )
+    for folder in (ROOT / "server", ROOT / "webui" / "src"):
+        assert not list(folder.rglob("detector.bin")), "Do not bundle scoring parameters"
+
+
 def test_root_has_no_untracked_clutter() -> None:
     offenders = [n for n in _root_untracked() if n not in ALLOWED_UNTRACKED_AT_ROOT]
     assert not offenders, _UNTRACKED_HINT.format(offenders=offenders)
