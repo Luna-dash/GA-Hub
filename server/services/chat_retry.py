@@ -69,6 +69,8 @@ class RecoverableErrorMatch:
     label: str
     marker: str
     delay_scale: float = 1.0
+    # None preserves the configured budget for existing error families.
+    max_attempts: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -314,8 +316,27 @@ def save_chat_retry_config(payload: Mapping[str, Any] | None) -> ChatRetryConfig
     return normalized
 
 
+def _classify_unknown_error(content: str) -> RecoverableErrorMatch | None:
+    # Only an independent terminal error line qualifies. Do not treat quoted
+    # markers or an earlier error followed by recovered output as a new error.
+    # Read the whole last line so long untyped errors retain their prefix.
+    final_line = (content or "").rstrip().rpartition("\n")[2].lstrip(" \t")
+    if not re.fullmatch(r"!!![ \t]*Error:[^\r\n]*", final_line, re.IGNORECASE):
+        return None
+    if _HTTP_STATUS_TAIL_RE.match(final_line):
+        # Explicit HTTP statuses are handled exclusively by the existing
+        # policy; an unknown fallback must never bypass that allowlist.
+        return None
+    return RecoverableErrorMatch(
+        code="unknown_error",
+        label="UnknownError",
+        marker=final_line[:_FINAL_MARKER_WINDOW_CHARS],
+        max_attempts=1,
+    )
+
+
 def classify_recoverable_error(content: str) -> RecoverableErrorMatch | None:
-    """Return the recoverable stream error near the final output, if any."""
+    """Return a known recoverable error or a one-shot untyped terminal error."""
     final_text = (content or "").rstrip()[-_FINAL_MARKER_WINDOW_CHARS:]
     if not final_text:
         return None
@@ -326,7 +347,7 @@ def classify_recoverable_error(content: str) -> RecoverableErrorMatch | None:
     # same bounded window.
     marker_matches = list(_ERROR_MARKER_RE.finditer(final_text))
     if not marker_matches:
-        return None
+        return _classify_unknown_error(content)
     error_text = final_text[marker_matches[-1].start():]
 
     status_match = _HTTP_STATUS_TAIL_RE.match(error_text)
@@ -343,4 +364,4 @@ def classify_recoverable_error(content: str) -> RecoverableErrorMatch | None:
                 marker=match.group(0),
                 delay_scale=spec.delay_scale,
             )
-    return None
+    return _classify_unknown_error(content)

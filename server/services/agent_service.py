@@ -931,6 +931,11 @@ class AgentService:
         origin = h.error_retry_origin or snap.source
         is_scheduled = origin in SCHEDULED_RETRY_SOURCES
         eff_max = cfg.scheduled_max_attempts if is_scheduled else cfg.max_attempts
+        if match.max_attempts is not None:
+            # Unknown untyped errors get one retry, even for unattended runs.
+            # Use the existing chain counter so changing error text cannot
+            # reset this safety limit or extend an exhausted retry chain.
+            eff_max = min(eff_max, match.max_attempts)
         if not cfg.enabled or eff_max <= 0:
             return False
         if h.error_retry_count >= eff_max:

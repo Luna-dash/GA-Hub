@@ -256,6 +256,48 @@ class ClassifyRecoverableErrorTests(unittest.TestCase):
             "upstream_failure",
         )
 
+    def test_unknown_terminal_error_gets_single_attempt_limit(self):
+        cases = (
+            "!!!Error: read tcp 127.0.0.1:1234: read: connection reset by peer",
+            "partial answer\n!!!Error: Unknown error",
+            "!!!Error: Internal server error\r\n",
+            "!!!Error:",
+            "!!!Error: " + "untyped upstream detail " * 60,
+        )
+        for text in cases:
+            with self.subTest(text=text[:100]):
+                match = self.cr.classify_recoverable_error(text)
+                self.assertIsNotNone(match)
+                self.assertEqual(match.code, "unknown_error")
+                self.assertEqual(match.max_attempts, 1)
+
+    def test_unknown_fallback_does_not_override_explicit_http_status(self):
+        for status in (400, 401, 403, 404, 422, 501):
+            with self.subTest(status=status):
+                self.assertIsNone(self._code(f"!!!Error: HTTP {status}: unknown error"))
+                # The long-error fallback must not lose an explicit status.
+                self.assertIsNone(self._code(f"!!!Error: HTTP {status}: " + "x" * 700))
+
+    def test_unknown_fallback_ignores_quotes_and_recovered_output(self):
+        for text in (
+            "example: !!!Error: Unknown error",
+            "> !!!Error: Unknown error",
+            "`!!!Error: Unknown error`",
+            "!!!Error: Unknown error\nRecovered final text",
+            "!!!Error: SSLError\nRecovered final text",
+            "!!!Error: Unknown error\n```",
+            "normal successful answer",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(self._code(text))
+
+    def test_existing_error_families_keep_configured_budget(self):
+        for text in (_HTTP_503_TAIL, "!!!Error: ConnectionError: reset", "!!!Error: SSE stream dropped"):
+            with self.subTest(text=text):
+                match = self.cr.classify_recoverable_error(text)
+                self.assertIsNotNone(match)
+                self.assertIsNone(match.max_attempts)
+
     def test_stale_midtext_error_ignored_tail_anchor(self):
         # Patterns anchor at the very end (\Z): an error followed by more
         # normal output must not trigger a retry.
@@ -420,6 +462,72 @@ class MaybeRetryBackoffTests(unittest.TestCase):
         sched = next(c.args[1] for c in bus.publish.call_args_list if c.args[0] == "chat:retry_scheduled")
         self.assertGreater(sched["delay_seconds"], 0.0)
         self.assertEqual(sched["attempt"], 1)
+
+    def test_unknown_error_retries_once_for_interactive_and_scheduled(self):
+        from server.services.chat_retry import ChatRetryConfig
+        cfg = ChatRetryConfig(max_attempts=4, scheduled_max_attempts=20,
+                              backoff_base_seconds=0.0,
+                              scheduled_backoff_base_seconds=0.0)
+        content = "!!!Error: read tcp 127.0.0.1:1234: read: connection reset by peer"
+        for source in ("user", "scheduled"):
+            with self.subTest(source=source):
+                rv, bus, submit, svc, _h, _snap = self._run(
+                    cfg=cfg, snap=_make_snap(source=source), content=content,
+                )
+                self.assertTrue(rv)
+                submit.assert_called_once()
+                kwargs = submit.call_args.kwargs
+                self.assertEqual(kwargs["error_retry_count"], 1)
+                self.assertEqual(kwargs["retry_max"], 1)
+                self.assertEqual(kwargs["retry_reason"], "UnknownError")
+                self.assertEqual(kwargs["error_retry_origin"], source)
+                self.assertEqual(svc._pending_error_retry, {})
+                retry = next(c.args[1] for c in bus.publish.call_args_list
+                             if c.args[0] == "chat:retry")
+                self.assertEqual(retry["max_attempts"], 1)
+                self.assertEqual(retry["reason"]["code"], "unknown_error")
+
+                # Simulate the failed retry with the actual propagated metadata.
+                h = _make_handle(error_retry_count=kwargs["error_retry_count"],
+                                 error_retry_origin=kwargs["error_retry_origin"])
+                rv, bus, submit, svc, _h, _snap = self._run(
+                    cfg=cfg, handle=h, snap=_make_snap(source="chat_error_retry"),
+                    content=content,
+                )
+                self.assertTrue(rv)
+                submit.assert_not_called()
+                published = [c.args[0] for c in bus.publish.call_args_list]
+                self.assertEqual(published, ["chat:retry_exhausted"])
+                self.assertEqual(bus.publish.call_args.args[1]["max_attempts"], 1)
+                self.assertEqual(svc._pending_error_retry, {})
+
+    def test_unknown_error_respects_disable_zero_budget_and_abort(self):
+        from server.services.chat_retry import ChatRetryConfig
+        cases = (
+            (ChatRetryConfig(enabled=False), _make_snap()),
+            (ChatRetryConfig(max_attempts=0), _make_snap()),
+            (ChatRetryConfig(scheduled_max_attempts=0), _make_snap(source="scheduled")),
+            (ChatRetryConfig(), _make_snap(aborted=True)),
+        )
+        for cfg, snap in cases:
+            with self.subTest(cfg=cfg, snap=snap):
+                rv, _bus, submit, _svc, _h, _snap = self._run(
+                    cfg=cfg, snap=snap, content="!!!Error: Unknown error",
+                )
+                self.assertFalse(rv)
+                submit.assert_not_called()
+
+    def test_unknown_error_does_not_reset_an_existing_retry_chain(self):
+        for count in (1, 4):
+            with self.subTest(count=count):
+                rv, bus, submit, _svc, _h, _snap = self._run(
+                    handle=_make_handle(error_retry_count=count),
+                    snap=_make_snap(source="chat_error_retry"),
+                    content="!!!Error: Unknown error",
+                )
+                self.assertTrue(rv)
+                submit.assert_not_called()
+                self.assertEqual(bus.publish.call_args.args[0], "chat:retry_exhausted")
 
     def test_abort_during_backoff_cancels_resubmit(self):
         snap = _make_snap(aborted=True)
