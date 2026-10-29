@@ -13,7 +13,9 @@ describe('ModelFingerprint rail action', () => {
   const icon = () => host.querySelector('button')!
   const dialog = () => document.querySelector('[role="dialog"]')!
   async function click(button: Element) { await act(async () => { (button as HTMLButtonElement).click() }) }
-  function close() { return [...dialog().querySelectorAll('button')].find(b => b.textContent?.startsWith('关闭'))! }
+  function button(text: string) { return [...dialog().querySelectorAll('button')].find(b => b.textContent?.startsWith(text))! }
+  const confirm = () => button('确认并开始检测')
+  async function start() { await click(icon()); await click(confirm()) }
   beforeEach(() => {
     vi.useFakeTimers(); vi.clearAllMocks()
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
@@ -22,53 +24,83 @@ describe('ModelFingerprint rail action', () => {
     act(() => root.render(<ModelFingerprint sessionId="session-A" />))
   })
   afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers() })
-  it('uses a round fingerprint SVG and starts sampling with one click for the bound session', async () => {
+  it('opens a cost and privacy confirmation without starting any sampling', async () => {
     expect(icon().className).toContain('rounded-full')
-    expect(icon().querySelector('svg path')).toBeTruthy()
-    expect(icon().title).toContain('消耗 API 额度')
+    expect(icon().querySelectorAll('svg path').length).toBeGreaterThanOrEqual(7)
     await click(icon())
+    expect(api.startModelFingerprint).not.toHaveBeenCalled()
+    expect(dialog().textContent).toContain('开始检测前请确认')
+    expect(dialog().textContent).toContain('API 费用')
+    expect(dialog().textContent).toContain('数字样本')
+    expect(dialog().textContent).toContain('关闭窗口不会取消')
+    await click(button('取消'))
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(api.startModelFingerprint).not.toHaveBeenCalled()
+    await start()
     expect(api.startModelFingerprint).toHaveBeenCalledTimes(1)
     expect(api.startModelFingerprint).toHaveBeenCalledWith('session-A')
     expect(dialog().textContent).toContain('采样中 · 0/3')
-    expect(icon().getAttribute('aria-label')).toContain('查看检测进度')
   })
-  it('deduplicates rapid clicks while start is unresolved', async () => {
+  it('Escape dismisses confirmation without spending and restores trigger focus', async () => {
+    icon().focus(); await click(icon())
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(api.startModelFingerprint).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(icon())
+  })
+  it('deduplicates rapid confirmation clicks while start is unresolved', async () => {
     let resolve!: (job: FingerprintJob) => void
     vi.mocked(api.startModelFingerprint).mockReturnValue(new Promise(r => { resolve = r }))
-    await act(async () => { icon().click(); icon().click() })
+    await click(icon())
+    const trigger = confirm()
+    await act(async () => { trigger.click(); trigger.click() })
     expect(api.startModelFingerprint).toHaveBeenCalledTimes(1)
-    expect(close().textContent).toContain('后台继续')
-    await act(async () => resolve(sample))
+    await click(button('关闭')); await click(icon())
+    expect(api.startModelFingerprint).toHaveBeenCalledTimes(1)
+    await act(async () => { resolve(sample) })
   })
-  it('keeps polling when closed and reopens without a second paid job', async () => {
-    await click(icon()); await click(close())
+  it('reopens active progress without another paid request', async () => {
+    await start(); await click(button('关闭'))
     expect(document.querySelector('[role="dialog"]')).toBeNull()
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
-    expect(api.getModelFingerprint).toHaveBeenCalledWith('session-A', 'job-1')
     await click(icon())
     expect(api.startModelFingerprint).toHaveBeenCalledTimes(1)
-    expect(dialog().textContent).toContain('采样中')
+    expect(dialog().textContent).toContain('采样中 · 0/3')
+    expect(button('检测进行中').disabled).toBe(true)
   })
-  it('shows completed results without resampling when the icon is clicked again', async () => {
+  it('keeps results and requires confirmation again before resampling', async () => {
     vi.mocked(api.getModelFingerprint).mockResolvedValue({ ...sample, status: 'completed', completed_samples: 3,
       result: { bank_built_at: '2026-10-27', analysis: { prediction_name: 'reference-model',
         results: [{ model: 'ref', display_name: 'reference-model', probability: 0.9 }],
         diagnostics: [{ accepted: true, parsed_numbers: 304 }], evidence: { reason: '库内闭集概率' } } } })
-    await click(icon()); await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    await start(); await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
     expect(dialog().textContent).toContain('reference-model')
     expect(dialog().textContent).toContain('非身份认证')
-    await click(close()); await click(icon())
+    await click(button('关闭')); await click(icon())
     expect(api.startModelFingerprint).toHaveBeenCalledTimes(1)
-    expect(icon().getAttribute('aria-label')).toContain('查看检测结果')
-  })
-  it('reports a start failure and allows an explicit retry', async () => {
-    vi.mocked(api.startModelFingerprint).mockRejectedValueOnce(new Error('绑定不可用'))
-    await click(icon())
-    expect(dialog().querySelector('[role="alert"]')?.textContent).toBe('绑定不可用')
-    await click([...dialog().querySelectorAll('button')].find(b => b.textContent?.includes('采样'))!)
+    await click(button('重新采样'))
+    expect(api.startModelFingerprint).toHaveBeenCalledTimes(1)
+    expect(dialog().textContent).toContain('开始检测前请确认')
+    await click(button('取消'))
+    expect(dialog().textContent).toContain('reference-model')
+    await click(button('重新采样')); await click(confirm())
     expect(api.startModelFingerprint).toHaveBeenCalledTimes(2)
   })
-  it('does not start when the current binding is being repaired or saved', async () => {
+  it('reports a start failure and retries only on explicit confirmation', async () => {
+    vi.mocked(api.startModelFingerprint).mockRejectedValueOnce(new Error('绑定不可用'))
+    await start()
+    expect(dialog().querySelector('[role="alert"]')?.textContent).toBe('绑定不可用')
+    expect(api.startModelFingerprint).toHaveBeenCalledTimes(1)
+    await click(confirm())
+    expect(api.startModelFingerprint).toHaveBeenCalledTimes(2)
+  })
+  it('does not start when the binding becomes disabled during confirmation', async () => {
+    await click(icon())
+    act(() => root.render(<ModelFingerprint sessionId="session-A" disabled />))
+    expect(confirm().disabled).toBe(true)
+    await click(confirm())
+    expect(api.startModelFingerprint).not.toHaveBeenCalled()
+  })
+  it('does not open when the current binding is being repaired or saved', async () => {
     act(() => root.render(<ModelFingerprint sessionId="session-A" disabled />))
     await click(icon())
     expect(api.startModelFingerprint).not.toHaveBeenCalled()
