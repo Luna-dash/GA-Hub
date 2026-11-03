@@ -4795,6 +4795,88 @@
           }
         }
       }
+    },
+    "/nova": {
+      "get": {
+        "summary": "Page",
+        "operationId": "page_nova_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/nova/status": {
+      "get": {
+        "summary": "Status",
+        "operationId": "status_nova_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/nova/unpair": {
+      "post": {
+        "summary": "Unpair",
+        "operationId": "unpair_nova_unpair_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/nova/pair/start": {
+      "post": {
+        "summary": "Start Pair",
+        "operationId": "start_pair_nova_pair_start_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/nova/pair/finish": {
+      "post": {
+        "summary": "Finish Pair",
+        "operationId": "finish_pair_nova_pair_finish_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

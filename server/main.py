@@ -280,9 +280,11 @@ def create_app() -> FastAPI:
         owner_loop = asyncio.get_running_loop()
         try:
             await _startup()
+            await nova.start()
             yield
         finally:
             try:
+                await nova.stop()
                 await _shutdown()
             finally:
                 services.clear()
@@ -581,6 +583,10 @@ def create_app() -> FastAPI:
             for router in routers:
                 app.include_router(router)
 
+    from .nova_component import NovaComponent
+    nova = NovaComponent()
+    app.state.nova = nova
+    app.include_router(nova.router())
     _mount_static(app)
     return app
 

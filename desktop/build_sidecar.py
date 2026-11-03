@@ -30,6 +30,10 @@ def main() -> int:
                "--workpath", str(workpath), "--distpath", str(distpath),
                "--specpath", str(specpath), "--collect-all", "server",
                "--collect-all", "websockets",
+               "--collect-all", "aiohttp",
+               "--hidden-import", "win32cred",
+               "--add-data", f"{ROOT / 'assets' / 'nova'};assets/nova",
+               "--add-data", f"{ROOT / 'assets' / 'remote_access'};assets/remote_access",
                "--noconsole",
                "--add-data", f"{ROOT / 'webui' / 'dist'};webui/dist"]
     if suffix:
