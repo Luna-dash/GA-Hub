@@ -2,6 +2,7 @@
 import asyncio
 import contextlib
 import importlib.util
+import json
 import os
 import secrets
 import sys
@@ -77,3 +78,58 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                 if task:task.cancel();await asyncio.gather(task,return_exceptions=True)
                 await client.close()
                 await backend.close()
+
+
+@unittest.skipIf(cloud is None, 'Nova cloud checkout required')
+class SettingsAccountE2E(unittest.IsolatedAsyncioTestCase):
+    async def test_register_associate_revoke_and_retry(self):
+        import aiohttp
+        from types import SimpleNamespace
+        from unittest.mock import Mock, AsyncMock
+        from fastapi import HTTPException
+        from server.nova_component import NovaAccountRequest
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nova = cloud.Nova(root/'cloud.sqlite', 'http://localhost')
+            app = web.Application(); app.router.add_route('*', '/{tail:.*}', nova.handle)
+            server = TestServer(app, host='localhost'); await server.start_server()
+            public = str(server.make_url('')).rstrip('/')
+            nova.public = public
+            original_session = aiohttp.ClientSession
+            def session(**kwargs):
+                # Production uses HTTPS secure cookies; this isolated server uses HTTP.
+                return original_session(cookie_jar=aiohttp.CookieJar(unsafe=True, treat_as_secure_origin=[public]), **kwargs)
+            component = NovaComponent()
+            state = root/'state'; state.mkdir()
+            def save(server, device, name, token):
+                (state/'device.json').write_text(json.dumps({'server':server,'device':device,'name':name}))
+            delete = Mock()
+            component.connector = SimpleNamespace(STATE=state, identity=lambda:'c'*24,
+                aiohttp=aiohttp, save_pair=save, credential_target=lambda s:'test-target',
+                win32cred=SimpleNamespace(CredDelete=delete))
+            component.start = AsyncMock(); component.stop = AsyncMock()
+            account = dict(username='settingsuser', password='settings-password', confirm=True)
+            try:
+                with patch('server.nova_component.PUBLIC', public), patch.object(aiohttp, 'ClientSession', session):
+                    invite = nova.store.invite()
+                    result = await component.account_action(NovaAccountRequest(**account, invite=invite))
+                    self.assertTrue(result['paired']); self.assertEqual(result['device'], 'c'*24)
+                    self.assertEqual(nova.store.one('SELECT count(*) AS n FROM sessions')['n'], 0)
+                    with self.assertRaises(HTTPException) as conflict:
+                        await component.account_action(NovaAccountRequest(**account))
+                    self.assertEqual(conflict.exception.status_code,409)
+                    delete.side_effect = OSError('simulated credential failure')
+                    with self.assertRaises(HTTPException):
+                        await component.account_action(NovaAccountRequest(**account), unlink=True)
+                    self.assertTrue((state/'device.json').exists())
+                    self.assertEqual(nova.store.one('SELECT revoked FROM devices')['revoked'], 1)
+                    delete.side_effect = None
+                    result = await component.account_action(NovaAccountRequest(**account), unlink=True)
+                    self.assertFalse(result['paired']); self.assertEqual(result['device'], 'c'*24)
+                    self.assertEqual(nova.store.one('SELECT count(*) AS n FROM sessions')['n'], 0)
+                    result = await component.account_action(NovaAccountRequest(**account))
+                    self.assertTrue(result['paired'])
+                    self.assertEqual(nova.store.one('SELECT revoked FROM devices')['revoked'], 0)
+            finally:
+                await server.close()
+                nova.store.db.close()

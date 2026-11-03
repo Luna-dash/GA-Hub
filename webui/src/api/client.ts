@@ -545,3 +545,34 @@ export const api = {
 
   conductorStop: () => http<ConductorLifecycleResponse>('POST', '/api/conductor/stop'),
 }
+
+// Local-only Nova settings. Never persist account passwords or cloud cookies.
+export interface NovaStatus {
+  device?: string
+  paired?: boolean
+  running: boolean
+  error?: string | null
+  server?: string
+  local_token?: string
+}
+export interface NovaAccountInput {
+  username: string
+  password: string
+  name: string
+  invite?: string
+  confirm: boolean
+}
+export const novaApi = {
+  status: () => http<NovaStatus>('GET', '/nova/settings', undefined, { cache: 'no-store' }),
+  action: async (action: 'associate' | 'revoke' | 'reconnect', body?: NovaAccountInput) => {
+    const state = await novaApi.status()
+    if (!state.local_token) throw new Error('本机授权令牌不可用')
+    const options = {
+      timeoutMs: 120000,
+      headers: { 'Content-Type': 'application/json', 'X-Nova-Local': state.local_token },
+    }
+    if (action === 'associate') return http<NovaStatus>('POST', '/nova/associate', body ?? {}, options)
+    if (action === 'revoke') return http<NovaStatus>('POST', '/nova/revoke', body ?? {}, options)
+    return http<NovaStatus>('POST', '/nova/reconnect', {}, options)
+  },
+}

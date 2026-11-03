@@ -89,3 +89,38 @@ class IdentityTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.object(connector,'STATE',Path(tmp)):
             value=connector.identity();self.assertEqual(len(value),24)
             self.assertEqual(connector.identity(),value)
+
+
+class EmbeddedSettingsTest(unittest.TestCase):
+    def test_settings_protection_and_explicit_confirmation(self):
+        app=FastAPI(); component=NovaComponent(); app.include_router(component.router())
+        with tempfile.TemporaryDirectory() as tmp:
+            component.connector=SimpleNamespace(STATE=Path(tmp), identity=lambda:'d'*24)
+            client=TestClient(app,base_url='http://localhost',client=('127.0.0.1',5000))
+            response=client.get('/nova/settings')
+            self.assertEqual(response.status_code,200)
+            self.assertEqual(response.headers['cache-control'],'no-store')
+            nonce=response.json()['local_token']
+            body={'username':'example','password':'example-password','confirm':False}
+            for headers in ({}, {'Origin':'https://evil.example','X-Nova-Local':nonce}):
+                self.assertEqual(client.post('/nova/associate',json=body,headers=headers).status_code,403)
+            headers={'Origin':'tauri://localhost','X-Nova-Local':nonce}
+            self.assertEqual(client.post('/nova/associate',json=body,headers=headers).status_code,400)
+            remote=TestClient(app,base_url='http://localhost',client=('203.0.113.3',5000))
+            self.assertEqual(remote.get('/nova/settings').status_code,403)
+
+    def test_identity_survives_module_reload_and_relocation(self):
+        import importlib.util
+        source=Path(__file__).resolve().parents[1]/'assets'/'nova'/'connector.py'
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); state=root/'user-state'
+            ids=[]
+            for version in ('old-package','new-package'):
+                dest=root/version/'connector.py'; dest.parent.mkdir(); dest.write_bytes(source.read_bytes())
+                spec=importlib.util.spec_from_file_location('connector_'+version.replace('-','_'),dest)
+                module=importlib.util.module_from_spec(spec)
+                with patch.dict(sys.modules,{'gateway':SimpleNamespace(Gateway=object)}):
+                    spec.loader.exec_module(module)
+                module.STATE=state
+                ids.append(module.identity())
+            self.assertEqual(ids[0],ids[1]); self.assertEqual(len(ids[0]),24)

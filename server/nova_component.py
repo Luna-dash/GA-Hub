@@ -10,9 +10,20 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field, SecretStr
+from .origin_policy import TAURI_UI_ORIGINS
 
 PUBLIC = 'https://nova.lunadash.me'
+
+
+class NovaAccountRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=100)
+    password: SecretStr = Field(min_length=10, max_length=256)
+    name: str = Field(default='GA-Hub', min_length=1, max_length=80)
+    invite: SecretStr | None = None
+    confirm: bool = False
+
 
 
 class NovaComponent:
@@ -58,8 +69,83 @@ class NovaComponent:
             raise HTTPException(403, 'Local configuration only')
         if r.method != 'GET':
             origin = r.headers.get('origin', '')
-            if origin != str(r.base_url).rstrip('/') or not secrets.compare_digest(r.headers.get('x-nova-local', ''), self.nonce):
+            if origin not in {str(r.base_url).rstrip('/'), *TAURI_UI_ORIGINS} or not secrets.compare_digest(r.headers.get('x-nova-local', ''), self.nonce):
                 raise HTTPException(403, 'Open /nova on this computer to confirm')
+
+    def snapshot(self):
+        try:
+            c = self.load()
+            return {'device': c.identity(), 'paired': (c.STATE / 'device.json').exists(),
+                    'running': bool(self.task and not self.task.done()), 'error': self.error, 'server': PUBLIC}
+        except Exception as exc:
+            return {'error': type(exc).__name__, 'running': False}
+
+    async def account_action(self, body: NovaAccountRequest, unlink=False):
+        if not body.confirm:
+            raise HTTPException(400, '请先确认远程操作授权或撤销操作')
+        async with self.lock:
+            c = self.load()
+            config = c.STATE / 'device.json'
+            if config.exists() != unlink:
+                raise HTTPException(409, '请先撤销已有绑定' if not unlink else '本机尚未绑定')
+            async with c.aiohttp.ClientSession(timeout=c.aiohttp.ClientTimeout(total=30)) as http:
+                async def post(path, *, form=None, payload=None, json_result=False):
+                    async with http.post(PUBLIC + path, data=form, json=payload,
+                                         headers={'Origin': PUBLIC}, allow_redirects=False) as response:
+                        if response.status not in (200, 302, 303):
+                            raise HTTPException(502, 'Nova请求失败，请检查账号密码、邀请码、网络或稍后重试')
+                        if path in ('/login', '/register') and response.status == 200:
+                            raise HTTPException(401, '账号登录或注册未成功')
+                        return await response.json() if json_result else None
+                try:
+                    auth = {'name': body.username.strip(), 'password': body.password.get_secret_value()}
+                    if body.invite and not unlink:
+                        auth['invite'] = body.invite.get_secret_value()
+                    await post('/register' if 'invite' in auth else '/login', form=auth)
+                    if unlink:
+                        async with http.get(PUBLIC + '/v1/me') as response:
+                            response.raise_for_status()
+                            devices = await response.json()
+                        rows = devices.get('devices', [])
+                        data = json.loads(config.read_text(encoding='utf-8'))
+                        owned = next((d for d in rows if d.get('id') == c.identity()), None)
+                        # Persist confirmed cloud revocation before touching Credential Manager.
+                        # /v1/me hides revoked devices; this marker permits a same-owner retry.
+                        already_revoked = data.get('revoked_owner') == devices['name']
+                        if owned is None and not already_revoked:
+                            raise HTTPException(403, '此账号不拥有当前设备，未清除本机绑定')
+                        if owned is not None:
+                            await post('/v1/devices/' + c.identity() + '/revoke', form={})
+                            data['revoked_owner'] = devices['name']
+                            staged = config.with_suffix('.new')
+                            staged.write_text(json.dumps(data), encoding='utf-8')
+                            staged.replace(config)
+                        await self.stop()
+                        # If credential deletion fails, retain configuration for a safe retry.
+                        c.win32cred.CredDelete(c.credential_target(data['server']), 1)
+                        config.unlink()
+                    else:
+                        pending = await post('/v1/agent/pair/start', payload={'name': body.name}, json_result=True)
+                        await post('/v1/pair/approve', payload={'code': pending['code']})
+                        token = secrets.token_urlsafe(48)
+                        done = await post('/v1/agent/pair/finish', payload={
+                            'code': pending['code'], 'secret': pending['secret'],
+                            'token': token, 'device_id': c.identity()}, json_result=True)
+                        c.save_pair(PUBLIC, done['device'], body.name, token)
+                        self.error = None
+                        await self.stop()
+                        await self.start()
+                    self.pending = None
+                    if unlink:
+                        self.error = None
+                    return self.snapshot()
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    raise HTTPException(502, 'Nova操作未完成，请检查网络或本机凭据服务') from exc
+                finally:
+                    with contextlib.suppress(Exception):
+                        await post('/logout', form={})
 
     def router(self):
         router = APIRouter()
@@ -136,6 +222,30 @@ class NovaComponent:
                 await self.stop()
                 await self.start()
                 return {'paired': True, 'device': done['device']}
+
+        @router.get('/nova/settings')
+        async def settings(r: Request):
+            self.guard(r)
+            return JSONResponse({**self.snapshot(), 'local_token': self.nonce}, headers={'Cache-Control': 'no-store'})
+
+        @router.post('/nova/associate')
+        async def associate(r: Request, body: NovaAccountRequest):
+            self.guard(r)
+            return await self.account_action(body)
+
+        @router.post('/nova/revoke')
+        async def revoke(r: Request, body: NovaAccountRequest):
+            self.guard(r)
+            return await self.account_action(body, unlink=True)
+
+        @router.post('/nova/reconnect')
+        async def reconnect(r: Request):
+            self.guard(r)
+            async with self.lock:
+                await self.stop()
+                self.error = None
+                await self.start()
+                return self.snapshot()
 
         return router
 
