@@ -348,6 +348,30 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status,401)
         self.assertFalse(self.calls)
 
+    async def test_compact_workers_start_without_console_and_reuse(self):
+        # Exercise both lazy worker lanes, including recreation after exit.
+        import os
+        from unittest.mock import patch
+        real_spawn = asyncio.create_subprocess_exec
+        with patch.object(m.asyncio, 'create_subprocess_exec', wraps=real_spawn) as spawn:
+            for lane in ('history', 'progress'):
+                with self.subTest(lane=lane):
+                    data = {'items': [{'role': 'user', 'content': 'console regression'}]}
+                    result = await self.g.compact_messages(data, lane=lane)
+                    self.assertEqual(result['items'][0]['content'], 'console regression')
+                    flags = spawn.call_args.kwargs.get('creationflags', 0)
+                    self.assertEqual(bool(flags & 0x08000000), os.name == 'nt')
+                    count = spawn.call_count
+                    await self.g.compact_messages(data, lane=lane)
+                    self.assertEqual(spawn.call_count, count)
+                    owner = self.g if lane == 'history' else self.g._progress_projector
+                    owner._compact_worker.kill()
+                    await owner._compact_worker.wait()
+                    await self.g.compact_messages(data, lane=lane)
+                    self.assertEqual(spawn.call_count, count + 1)
+                    flags = spawn.call_args.kwargs.get('creationflags', 0)
+                    self.assertEqual(bool(flags & 0x08000000), os.name == 'nt')
+
     async def test_compact_history_preserves_pagination_and_text(self):
         r=await self.client.get('/api/sessions/test/messages?view=compact&limit=40&before=5',headers=self.headers)
         self.assertEqual(r.status,200)

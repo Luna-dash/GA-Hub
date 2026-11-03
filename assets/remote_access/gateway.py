@@ -1,5 +1,5 @@
 """Loopback-only, authenticated, allowlisted gateway to GA-Hub desktop."""
-import asyncio, hashlib, hmac, html, re, secrets, time, json, shutil
+import asyncio, hashlib, hmac, html, re, secrets, time, json, shutil, sys
 from pathlib import Path
 from collections import defaultdict, deque
 import tempfile
@@ -420,9 +420,13 @@ class Gateway:
                 if worker is None or worker.returncode is not None:
                     node=shutil.which('node')
                     if not node:raise RuntimeError('Node runtime unavailable')
+                    # This gateway also runs standalone, without server imports.
+                    # Redirected stdio alone does not suppress a Windows console.
+                    # CREATE_NO_WINDOW covers both lazy workers and their restarts.
+                    spawn_kwargs = {'creationflags': 0x08000000} if sys.platform == 'win32' else {}
                     worker=await asyncio.create_subprocess_exec(node,str(Path(__file__).with_name('compact-worker.cjs')),
                         stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.DEVNULL,limit=32*1024*1024)
+                        stderr=asyncio.subprocess.DEVNULL,limit=32*1024*1024,**spawn_kwargs)
                     self._compact_worker=worker
                 async def project():
                     worker.stdin.write(json.dumps(data,ensure_ascii=True).encode()+b'\n')
