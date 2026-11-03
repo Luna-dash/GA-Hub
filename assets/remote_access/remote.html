@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><meta name="color-scheme" content="light"><title>GA-Hub · 远程 Chat</title><link rel="stylesheet" href="/remote.css"></head>
+<body>
+<div class="app-shell">
+  <aside id="sidebar" aria-label="会话管理">
+    <div class="rail-top"><button id="themeToggle" class="brand-mark" type="button" aria-label="切换到暗色主题" title="切换到暗色主题" aria-pressed="false">GA</button><div class="rail-search"><label class="sr-only" for="search">搜索会话或项目</label><input id="search" type="search" placeholder="搜索会话或项目" autocomplete="off"></div><button id="newSession" class="rail-new" type="button" aria-label="新建会话" title="新建会话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><button id="refreshList" class="rail-refresh" type="button" aria-label="刷新列表" title="刷新列表">↻</button></div>
+    <div class="rail-controls"><div class="rail-filters" role="group" aria-label="会话筛选"><button data-filter="all" aria-pressed="true">全部</button><button data-filter="running" aria-pressed="false">运行中</button><button data-filter="starred" aria-pressed="false">收藏</button></div><span id="sessionCount" aria-label="会话数量"></span></div>
+    <nav id="sessions" aria-label="会话列表"></nav>
+    <div class="rail-footer"><span id="listState" role="status">连接本机 GA-Hub</span></div>
+  </aside>
+  <button id="sidebarBackdrop" aria-label="关闭会话列表" tabindex="-1" hidden></button>
+  <main id="chat">
+    <header class="chat-header"><button id="openSidebar" class="icon-button mobile-only" aria-label="打开会话列表" aria-expanded="false" aria-controls="sidebar">‹</button><div class="chat-heading"><h1 id="title">选择一个会话</h1></div><div class="chat-actions" role="group" aria-label="会话操作"><button id="jumpLatest" class="header-action" type="button" aria-label="回到最新" title="回到最新" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4v12m-5-5 5 5 5-5M5 20h14"/></svg></button><button id="headerRefresh" class="header-action" type="button" aria-label="刷新消息" title="刷新消息"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 10a8 8 0 1 0-2.3 7.7M20 5v5h-5"/></svg></button><button id="headerModel" aria-expanded="false" aria-controls="chatTools" class="header-action" type="button" aria-label="设置模型" title="设置模型"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg></button></div></header>
+    <div id="notice" role="alert"></div>
+    <button id="toolsBackdrop" aria-label="关闭模型设置" hidden tabindex="-1"></button>
+    <div id="chatTools" aria-label="模型设置"><div class="model-bar"><select id="modelSelect" disabled aria-label="选择模型" aria-describedby="modelState"><option value="">正在加载…</option></select></div></div>
+    <span id="modelState" class="sr-only" role="status"></span>
+    <section id="conversation" aria-label="聊天消息" tabindex="0"><div class="message-column"><button id="older" class="older-button" hidden>加载更早消息</button><div id="messages"></div><div id="empty">正在加载会话…</div></div></section>
+    <div id="attachments" class="attachments" aria-live="polite" hidden></div><input id="fileInput" type="file" multiple hidden><form id="composer"><button id="attach" class="icon-button" type="button" aria-label="添加附件" title="添加附件" disabled><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button><span id="sendState" class="sr-only" role="status">选择会话后可发送</span><textarea id="instruction" rows="1" maxlength="6000" placeholder="输入指令…" aria-label="输入指令"></textarea><div class="compose-actions"><button id="send" type="submit" aria-label="发送指令" title="发送指令" disabled><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button></div></form>
+  </main>
+</div>
+<dialog id="newSessionDialog" aria-labelledby="newSessionTitle"><form id="newSessionForm">
+  <h2 id="newSessionTitle">新建会话</h2>
+  <label class="sr-only" for="newSessionProject">所属项目</label>
+  <select id="newSessionProject"><option value="">自由会话</option></select>
+  <p id="newSessionState" role="status" aria-live="polite"></p>
+  <div class="new-session-actions"><button id="newSessionCancel" type="button">取消</button><button id="newSessionConfirm" type="submit">确定</button></div>
+</form></dialog><script src="/remote.js" defer></script>
+</body></html>
