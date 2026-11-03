@@ -393,6 +393,35 @@ def check_artifact(label: str, path: Path, before: tuple[int, int] | None) -> in
     return 0
 
 
+def check_sidecar_runtime(path: Path) -> int:
+    """运行期守卫：产物刷新 ≠ 能启动。
+
+    PyInstaller 解析 pyd 的依赖 DLL 时只打印 ``Library not found`` 警告，构建照样
+    成功、守卫照样通过，直到进程启动才抛 ImportError（实测 pyexpat）。这里直接让
+    交付副本做一次模块导入自检，把「已交付但起不来」挡在构建链里。
+    """
+    _log(f"  运行期自检：{path.name} --selftest")
+    try:
+        result = subprocess.run(
+            [str(path), "--selftest"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=180,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _log(f"✗ sidecar 运行期自检无法完成：{exc}")
+        return EXIT_ARTIFACT_GUARD
+    output = (result.stderr or result.stdout or b"").decode("utf-8", "replace").strip()
+    if result.returncode:
+        _log(f"✗ sidecar 运行期自检失败（exit {result.returncode}）——这个产物启动就会崩")
+        for line in output.splitlines()[-12:]:
+            _log(f"  {line}")
+        _log("  常见原因：conda Library\\bin 不在 PATH，PyInstaller 漏收 ffi/lzma/bz2/expat/sqlite3。")
+        return EXIT_ARTIFACT_GUARD
+    _log("  ✓ sidecar 可启动（运行期关键模块全部加载成功）")
+    return 0
+
+
 def report_consistency(
     paths: dict[str, Path], before: dict[str, tuple[int, int] | None]
 ) -> None:
@@ -535,6 +564,10 @@ def main(argv: list[str] | None = None) -> int:
         code = check_artifact(label, path, before[label])
         if code:
             return code
+
+    code = check_sidecar_runtime(paths["sidecar 交付副本"])
+    if code:
+        return code
 
     _log(f"✓ 构建链全部通过（总耗时 {time.monotonic() - started:.1f}s）")
     _log("  交付物：src-tauri/target/<triple>/release/ 下的 ga-hub-desktop 与 ga-hub-sidecar")

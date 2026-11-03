@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 import aiohttp
 from aiohttp import web, WSMsgType
 import win32cred
+import win32timezone  # pywin32: CredRead implicitly converts LastWritten
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parent / 'remote_access'))

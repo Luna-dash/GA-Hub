@@ -420,20 +420,37 @@ class MainFlowTests(unittest.TestCase):
         patches = self._patched()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
              mock.patch.object(build_all, "run_stage") as stage, \
-             mock.patch.object(build_all, "check_artifact", return_value=0) as guard:
+             mock.patch.object(build_all, "check_artifact", return_value=0) as guard, \
+             mock.patch.object(build_all, "check_sidecar_runtime", return_value=0) as runtime:
             stream = io.StringIO()
             with redirect_stdout(stream):
                 code = build_all.main([])
         self.assertEqual(code, 0)
         self.assertEqual(stage.call_count, 3)  # 前端 / sidecar / tauri
         self.assertEqual(guard.call_count, 3)
+        runtime.assert_called_once()
         self.assertIn("构建链全部通过", stream.getvalue())
+
+    def test_unrunnable_sidecar_fails_the_chain(self):
+        """产物刷新全过但跑不起来 → 仍是 5（PyInstaller 漏 DLL 只发 WARNING）。"""
+        patches = self._patched()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             mock.patch.object(build_all, "run_stage"), \
+             mock.patch.object(build_all, "check_artifact", return_value=0), \
+             mock.patch.object(build_all, "check_sidecar_runtime",
+                               return_value=build_all.EXIT_ARTIFACT_GUARD):
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                code = build_all.main([])
+        self.assertEqual(code, build_all.EXIT_ARTIFACT_GUARD)
+        self.assertNotIn("构建链全部通过", stream.getvalue())
 
     def test_full_chain_adds_the_two_test_stages(self):
         patches = self._patched()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
              mock.patch.object(build_all, "run_stage") as stage, \
              mock.patch.object(build_all, "check_artifact", return_value=0), \
+             mock.patch.object(build_all, "check_sidecar_runtime", return_value=0), \
              mock.patch.object(Path, "is_dir", return_value=True):
             with redirect_stdout(io.StringIO()):
                 code = build_all.main(["--full"])
@@ -454,6 +471,7 @@ class MainFlowTests(unittest.TestCase):
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
              mock.patch.object(build_all, "run_stage") as stage, \
              mock.patch.object(build_all, "check_artifact", return_value=0), \
+             mock.patch.object(build_all, "check_sidecar_runtime", return_value=0), \
              mock.patch.object(Path, "is_dir", return_value=True):
             with redirect_stdout(io.StringIO()):
                 code = build_all.main(["--full"])

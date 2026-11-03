@@ -67,6 +67,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--admin-data", type=Path)
     parser.add_argument("--ga-root", type=Path)
+    parser.add_argument(
+        "--selftest",
+        action="store_true",
+        help="import runtime-critical modules and exit (build-time smoke check)",
+    )
     return parser.parse_args(argv)
 
 
@@ -157,8 +162,43 @@ def _stdin_shutdown(
     _emit("shutdown_requested", reason="owner_eof")
 
 
+def selftest_modules() -> tuple[str, ...]:
+    """冻结包里最容易在启动期炸的运行时依赖。
+
+    PyInstaller 解析 pyd 的依赖 DLL 时只打印 WARNING（``Library not found``），
+    构建仍然成功，产物直到进程启动才暴露 ImportError。构建链用它做运行期自检。
+    """
+    from desktop.runtime_dependencies import WINDOWS_IMPORTS
+
+    return (
+        "sqlite3", "_sqlite3", "pyexpat", "xml.parsers.expat", "ctypes", "_ctypes",
+        "lzma", "bz2", "ssl", "hashlib", "json", "asyncio",
+        "uvicorn", "fastapi", "pydantic", "aiohttp", "websockets",
+        "server.desktop_sidecar",
+    ) + (WINDOWS_IMPORTS if sys.platform == "win32" else ())
+
+
+def run_selftest() -> int:
+    """导入运行期关键模块并退出；不绑定端口、不读写 owned stdin。"""
+    import importlib
+
+    failures: list[str] = []
+    for name in selftest_modules():
+        try:
+            importlib.import_module(name)
+        except Exception as exc:  # noqa: BLE001 - 自检要把任何失败都报出来
+            failures.append(f"{name}: {type(exc).__name__}: {exc}")
+    if failures:
+        _diagnostic("selftest failed: " + " | ".join(failures))
+        return 1
+    _emit("selftest", ok=True, modules=len(selftest_modules()))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    if args.selftest:
+        return run_selftest()
     if not 0 <= args.port <= 65535:
         _diagnostic("port must be between 0 and 65535")
         return 2

@@ -11,6 +11,7 @@ websockets==16.0
 pydantic==2.13.3
 psutil==7.2.2
 aiohttp==3.13.5
+# Provides win32cred AND win32timezone (CredRead time conversion).
 pywin32==311; sys_platform == 'win32'
 requests==2.34.0
 APScheduler==3.11.2

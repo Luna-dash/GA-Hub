@@ -87,6 +87,18 @@ build_all.bat
   - `3`（阶段失败）时守卫覆盖不到，脚本退出前会补一次**产物体检**：逐件报告
     本次已重写 / 仍是构建前的版本 / 不存在，出现「只刷新了一部分」会警告不要把
     这几件当交付物；退出码保持 `3`（与 `5` 是两条排查方向）。
+  - **运行期守卫（2026-11-03 新增）**：三件产物刷新通过后，脚本还会执行
+    `ga-hub-sidecar.exe --selftest`，由 sidecar 自己导入运行期关键模块
+    （`pyexpat`/`ctypes`/`sqlite3`/`lzma`/`bz2`/`ssl`/`uvicorn`/`fastapi`…）后退出。
+    失败 → `5`。**原因**：PyInstaller 解析 pyd 依赖 DLL 失败时只打印
+    `WARNING: Library not found`，构建仍然 exit 0、三件产物也都会「已刷新」，
+    但产物启动即 `ImportError`。所以「刷新成功」不代表「能跑」。
+    自检失败优先查 conda `Library\bin` 是否在 PATH（缺它时漏收
+    `ffi/liblzma/LIBBZ2/libexpat/sqlite3`）；正常 sidecar ≈51.9MB。
+  - **资源入包过滤**：`assets/nova`、`assets/remote_access` 先复制到暂存目录，
+    过滤 `__pycache__` / `*.pyc` / `*.pyo` 后再 `--add-data`。否则早已删除的模块
+    仍会以字节码形式随成品交付（2026-11-03 审计发现的最新一例：
+    撤回了 nova 云端 `server.py`，成品里仍带着它的 `.pyc`）。
 - **发布前验证**：`python scripts\build_all.py --full` 会先跑后端 pytest（限定 `tests/`，
   自动注入 `GA_ROOT`/`PYTHONPATH`）与前端 vitest，再进入构建阶段；缺 GA 仓库或
   `webui/node_modules` 会在预检阶段（exit 2）就说清楚。
