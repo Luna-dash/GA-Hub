@@ -54,6 +54,12 @@ def test_websocket_backend_is_explicitly_declared_for_frozen_runtime():
     assert "websockets" in _requirements_names()
 
 
+def test_rich_runtime_is_explicitly_declared_for_external_ga_imports():
+    """The frozen backend imports GA worldline, which needs rich.cells."""
+    assert "rich" in _pyproject_runtime_deps()
+    assert "rich" in _requirements_names()
+
+
 def test_requirements_carries_no_ghost_runtime_packages():
     """Catch deps that linger in requirements.txt after pyproject removal."""
     ghosts = _requirements_names() - _pyproject_runtime_deps() - {

@@ -14,6 +14,8 @@ aiohttp==3.13.5
 # Provides win32cred AND win32timezone (CredRead time conversion).
 pywin32==311; sys_platform == 'win32'
 requests==2.34.0
+# GA worldline is loaded from the configured checkout; freeze its rich.cells dependency.
+rich==15.0.0
 APScheduler==3.11.2
 pycryptodome==3.23.0
 python-multipart==0.0.27

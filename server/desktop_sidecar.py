@@ -168,14 +168,14 @@ def selftest_modules() -> tuple[str, ...]:
     PyInstaller 解析 pyd 的依赖 DLL 时只打印 WARNING（``Library not found``），
     构建仍然成功，产物直到进程启动才暴露 ImportError。构建链用它做运行期自检。
     """
-    from desktop.runtime_dependencies import WINDOWS_IMPORTS
+    from desktop.runtime_dependencies import COMMON_IMPORTS, WINDOWS_IMPORTS
 
     return (
         "sqlite3", "_sqlite3", "pyexpat", "xml.parsers.expat", "ctypes", "_ctypes",
         "lzma", "bz2", "ssl", "hashlib", "json", "asyncio",
         "uvicorn", "fastapi", "pydantic", "aiohttp", "websockets",
         "server.desktop_sidecar",
-    ) + (WINDOWS_IMPORTS if sys.platform == "win32" else ())
+    ) + COMMON_IMPORTS + (WINDOWS_IMPORTS if sys.platform == "win32" else ())
 
 
 def run_selftest() -> int:
