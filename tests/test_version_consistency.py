@@ -22,6 +22,12 @@ def _json(relative: str) -> dict:
 def test_release_versions_match_pyproject() -> None:
     version = _toml("pyproject.toml")["project"]["version"]
 
+    assert _json("package.json")["version"] == version
+    root_lock = _json("package-lock.json")
+    assert root_lock["version"] == version
+    assert root_lock["packages"][""]["version"] == version
+    assert _json("docs/api/openapi.json")["info"]["version"] == version
+
     assert _json("webui/package.json")["version"] == version
     webui_lock = _json("webui/package-lock.json")
     assert webui_lock["version"] == version

@@ -1103,7 +1103,7 @@ dependencies = [
 
 [[package]]
 name = "ga-hub-desktop"
-version = "0.3.4"
+version = "1.0.0"
 dependencies = [
  "indexmap 1.9.3",
  "libc",

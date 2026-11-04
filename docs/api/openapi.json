@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "GenericAgent Admin API",
-    "version": "0.3.4"
+    "version": "1.0.0"
   },
   "paths": {
     "/api/setup/status": {

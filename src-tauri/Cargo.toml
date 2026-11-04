@@ -1,6 +1,6 @@
 [package]
 name = "ga-hub-desktop"
-version = "0.3.4"
+version = "1.0.0"
 description = "Tauri 2 shell for GA-Hub"
 edition = "2021"
 rust-version = "1.85"
