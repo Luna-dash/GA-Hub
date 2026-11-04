@@ -73,10 +73,27 @@ def test_package_rejects_missing_or_empty_exe(checkout):
         load("package_release").package(checkout, checkout / "output", "v1.0.0")
 
 
-def test_package_rejects_dirty_release(checkout):
+@pytest.mark.parametrize("staged", [False, True])
+def test_package_rejects_dirty_release(checkout, staged):
     (checkout / "pyproject.toml").write_text('[project]\nversion = "1.0.0"\n# dirty\n')
+    if staged:
+        subprocess.run(["git", "add", "pyproject.toml"], cwd=checkout, check=True)
     with pytest.raises(ValueError, match="dirty"):
         load("package_release").package(checkout, checkout / "output", "v1.0.0")
+
+
+def test_package_accepts_normalized_line_endings(checkout):
+    subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=checkout, check=True)
+    # Reproduce Tauri rewriting a CRLF checkout using LF without changing content.
+    path = checkout / "pyproject.toml"
+    path.write_bytes(b'[project]\r\nversion = "1.0.0"\r\n')
+    subprocess.run(["git", "add", "pyproject.toml"], cwd=checkout, check=True)
+    subprocess.run(["git", "update-index", "--refresh"], cwd=checkout, check=True)
+    path.write_bytes(b'[project]\nversion = "1.0.0"\n')
+    artifacts(checkout)
+    load("package_release").package(checkout, checkout / "output", "v1.0.0")
+    info = json.loads((checkout / "output/build-info.json").read_text())
+    assert info["dirty"] is False and info["channel"] == "stable"
 
 
 def test_preview_is_distinguishable(checkout):

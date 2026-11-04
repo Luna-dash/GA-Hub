@@ -18,7 +18,13 @@ def package(root: Path, output: Path, tag: str | None = None) -> Path:
     if tag is not None and tag != f"v{version}":
         raise ValueError(f"Tag {tag} does not match v{version}")
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
-    dirty = bool(subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, text=True).strip())
+    # Tauri rewrites generated TOML as LF on Windows. With core.autocrlf,
+    # status can report these files modified even when their Git content is equal.
+    # Compare against HEAD so real staged and unstaged changes still block release.
+    diff = subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], cwd=root)
+    if diff.returncode not in (0, 1):
+        diff.check_returncode()
+    dirty = diff.returncode == 1
     if tag and dirty:
         raise ValueError("Refusing to release a dirty tracked tree")
     source = root / "src-tauri/target/x86_64-pc-windows-msvc/release"
