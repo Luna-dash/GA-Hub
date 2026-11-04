@@ -37,6 +37,8 @@ interface Props {
   placeholder?: string
   disabled?: boolean
   submitDisabled?: boolean
+  /** Defaults to submitDisabled unless the caller permits scheduling while busy. */
+  scheduleDisabled?: boolean
   acceptFiles?: boolean
   /** Auto-focus the textarea when mounted. Default true so chat-style
    *  surfaces (LiveChat reply box) start ready-to-type. */
@@ -54,7 +56,7 @@ interface PendingUpload {
 export function ImagePasteInput({
   text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, btwSessionId, onSlashCommand,
   placeholder = '输入消息，可粘贴/拖放图片或文件…',
-  disabled, submitDisabled, acceptFiles = true, autoFocus = true,
+  disabled, submitDisabled, scheduleDisabled = submitDisabled, acceptFiles = true, autoFocus = true,
 }: Props) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   // IME guard: a state mirror keeps render in sync, but the source of truth
@@ -513,17 +515,18 @@ export function ImagePasteInput({
           wrap="soft"
           className="flex-1 min-w-0 w-0 bg-transparent resize-none outline-none text-slate-200 placeholder:text-slate-500 px-3 py-2 max-h-60 leading-7 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
         />
-        {onSchedule && !stopActive && (
+        {onSchedule && (
           <button
             type="button"
             onClick={() => {
-              if (!disabled && !submitDisabled && pendingUploadsRef.current.length === 0
+              if (!disabled && !scheduleDisabled && pendingUploadsRef.current.length === 0
                   && !referenceBusyRef.current && !capacityExceeded(0)
                   && (text.trim() || attachmentsRef.current.length > 0)) onSchedule()
             }}
-            disabled={disabled || submitDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)}
-            className="h-10 px-3 rounded-xl border border-line text-slate-300 text-sm font-medium hover:bg-white/5 disabled:opacity-40 transition"
+            disabled={disabled || scheduleDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-bg-card text-sm font-medium text-ink-faint shadow-sm transition-colors hover:bg-bg-hover hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-35"
             title="设置定时发送"
+            aria-label="设置定时发送"
           >定时</button>
         )}
         <button

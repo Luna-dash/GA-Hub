@@ -27,6 +27,8 @@ interface LiveChatComposerProps {
   placeholder?: string
   disabled?: boolean
   submitDisabled?: boolean
+  /** Scheduling does not require the session to be idle. */
+  scheduleDisabled?: boolean
 }
 
 /** Read a stable event-time snapshot without subscribing the page container. */
@@ -54,6 +56,7 @@ export function LiveChatComposer({
   placeholder,
   disabled,
   submitDisabled,
+  scheduleDisabled,
 }: LiveChatComposerProps) {
   const text = useDraftStore((state) => state.texts[draftKey] ?? '')
   const attachments = useDraftStore((state) => state.attachments[draftKey] ?? EMPTY_ATTACHMENTS)
@@ -90,6 +93,7 @@ export function LiveChatComposer({
           placeholder={placeholder}
           disabled={disabled}
           submitDisabled={submitDisabled || submitting}
+          scheduleDisabled={(scheduleDisabled ?? submitDisabled) || submitting}
         />
         {pending.some((item) => item.status === 'sending') && (
           <span role="status" className="sr-only">发送中…</span>

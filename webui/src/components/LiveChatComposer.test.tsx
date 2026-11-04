@@ -131,6 +131,47 @@ describe('LiveChatComposer draft boundary', () => {
     expect(host.textContent).toContain('BTW 旁路提问')
   })
 
+  it.each([false, true])('keeps scheduling available when immediate sending is blocked (running=%s)', (running) => {
+    const onSchedule = vi.fn(), onSubmit = vi.fn(), onStop = vi.fn()
+    useDraftStore.getState().setText(DRAFT_KEY, 'send later')
+    act(() => root.render(
+      <LiveChatComposer draftKey={DRAFT_KEY} onSubmit={onSubmit} onSchedule={onSchedule}
+        onStop={onStop} stopActive={running} submitDisabled scheduleDisabled={false} />,
+    ))
+    const schedule = host.querySelector<HTMLButtonElement>('[aria-label="设置定时发送"]')
+    expect(schedule).not.toBeNull()
+    expect(schedule?.disabled).toBe(false)
+    expect(schedule?.classList.contains('rounded-full')).toBe(true)
+    expect(schedule?.classList.contains('h-11')).toBe(true)
+    expect(schedule?.classList.contains('w-11')).toBe(true)
+    act(() => schedule!.click())
+    expect(onSchedule).toHaveBeenCalledOnce()
+    expect(onSubmit).not.toHaveBeenCalled()
+    if (running) {
+      const stop = Array.from(host.querySelectorAll('button')).find((button) => button.textContent === '停止')!
+      act(() => stop.click())
+      expect(onStop).toHaveBeenCalledOnce()
+    }
+  })
+
+  it.each(['empty', 'disabled', 'scheduleDisabled', 'sending'])('blocks unsafe scheduling: %s', (reason) => {
+    const onSchedule = vi.fn()
+    if (reason !== 'empty') useDraftStore.getState().setText(DRAFT_KEY, 'later')
+    if (reason === 'sending') {
+      useDraftStore.getState().beginSubmission(DRAFT_KEY, 'later', [])
+      useDraftStore.getState().setText(DRAFT_KEY, 'next draft')
+    }
+    act(() => root.render(
+      <LiveChatComposer draftKey={DRAFT_KEY} onSubmit={vi.fn()} onSchedule={onSchedule}
+        stopActive submitDisabled scheduleDisabled={reason === 'scheduleDisabled'} disabled={reason === 'disabled'} />,
+    ))
+    const schedule = host.querySelector<HTMLButtonElement>('[aria-label="设置定时发送"]')
+    expect(schedule).not.toBeNull()
+    expect(schedule?.disabled).toBe(true)
+    act(() => schedule!.click())
+    expect(onSchedule).not.toHaveBeenCalled()
+  })
+
   it('keeps the stop action independent of an empty draft', () => {
     const onStop = vi.fn()
     act(() => root.render(

@@ -843,6 +843,7 @@ export default function LiveChat() {
             placeholder="输入消息,或输入 / 查看命令"
             disabled={creatingSession}
             submitDisabled={streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair}
+            scheduleDisabled={llmSaving || sessionLlmNeedsRepair}
           />
         </div>
       </div>
