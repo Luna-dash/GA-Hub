@@ -67,6 +67,8 @@ jobs:
 
       - name: Check release versions
         run: |
+          git status --short
+          git diff --stat
           python scripts/sync_version.py --check
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
@@ -78,6 +80,9 @@ jobs:
 
       - name: Package portable release
         run: |
+          git status --short
+          git diff --stat
+          git diff
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             python scripts/package_release.py --output release-assets --tag $env:GITHUB_REF_NAME
           } else {
