@@ -92,7 +92,7 @@ class WindowsDependencyTests(unittest.TestCase):
         from unittest.mock import patch
         from desktop.runtime_dependencies import WINDOWS_IMPORTS, hidden_import_args
         self.assertEqual(set(WINDOWS_IMPORTS), {'win32cred','win32timezone'})
-        self.assertEqual(hidden_import_args('linux'), [])
+        self.assertEqual(hidden_import_args('linux'), ['--hidden-import', 'rich', '--hidden-import', 'rich.cells'])
         for name in WINDOWS_IMPORTS:
             args = hidden_import_args('win32')
             self.assertEqual(args[args.index(name)-1], '--hidden-import')
@@ -102,3 +102,35 @@ class WindowsDependencyTests(unittest.TestCase):
         source=(ROOT/'assets/nova/connector.py').read_text(encoding='utf-8')
         for name in WINDOWS_IMPORTS:
             self.assertIn('import '+name,source)
+
+
+class CommonDependencyTests(unittest.TestCase):
+    def test_rich_cells_is_packaged_and_selftested_on_every_platform(self):
+        from unittest.mock import patch
+        from desktop.runtime_dependencies import hidden_import_args
+        import sys
+
+        sidecar = _load('sidecar_common_dependencies_test', 'server/desktop_sidecar.py')
+        for platform in ('win32', 'linux', 'darwin'):
+            args = hidden_import_args(platform)
+            with patch.object(sys, 'platform', platform):
+                modules = sidecar.selftest_modules()
+            for name in ('rich', 'rich.cells'):
+                self.assertIn(name, args)
+                self.assertEqual(args[args.index(name) - 1], '--hidden-import')
+                self.assertIn(name, modules)
+
+    def test_selftest_rejects_missing_rich_cells(self):
+        from unittest.mock import patch
+        import importlib
+
+        sidecar = _load('sidecar_missing_rich_cells_test', 'server/desktop_sidecar.py')
+        real_import = importlib.import_module
+
+        def import_without_cells(name):
+            if name == 'rich.cells':
+                raise ModuleNotFoundError("No module named 'rich.cells'")
+            return real_import(name)
+
+        with patch('importlib.import_module', side_effect=import_without_cells):
+            self.assertEqual(sidecar.run_selftest(), 1)

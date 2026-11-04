@@ -142,14 +142,16 @@ build_all.bat
 
 ### 冻结 sidecar 的 GA 运行依赖（rich / durable rewind）
 
-sidecar 冻结包只打包 GA-Hub 自身依赖（`requirements.txt`）；GA 运行时依赖
-（如 `frontends.worldline` 唯一的第三方依赖 `rich`）由设置中指定的 GA
-解释器提供。冻结 sidecar 默认使用该外部环境；主程序仍显式注入
-`GA_HUB_ENABLE_EXTERNAL_SITE_PATHS=1`（`src-tauri/src/main.rs`），让启动契约
-明确一致。仅在排查环境冲突时设置为 `0` 关闭；`server/_paths.py` 会把 GA
-解释器的 site-packages 追加进 `sys.path`；若探测子进程无法启动（冻结父进程
-场景下曾观察到子解释器启动卡死），则按解释器位置静态回退查找
-`Lib/site-packages` 或 `lib/python3.*/site-packages`。
+sidecar 冻结包显式打包 `rich` 和 `rich.cells`（GA `frontends.worldline` 的
+第三方依赖），并在正式构建的 `--selftest` 中检查两者，避免跨机器依赖外部
+site-packages 才能恢复会话。GA 源码仍从设置指定的仓库加载，不参与打包。
+
+其余外部 GA 运行时依赖仍由设置中指定的解释器提供。冻结 sidecar 默认使用该
+外部环境；主程序仍显式注入 `GA_HUB_ENABLE_EXTERNAL_SITE_PATHS=1`
+（`src-tauri/src/main.rs`），让启动契约明确一致。仅在排查环境冲突时设置为 `0`
+关闭；`server/_paths.py` 会把 GA 解释器的 site-packages 追加进 `sys.path`；若
+探测子进程无法启动，则按解释器位置静态回退查找 `Lib/site-packages` 或
+`lib/python3.*/site-packages`。
 
 排障「会话运行环境恢复失败」：
 
