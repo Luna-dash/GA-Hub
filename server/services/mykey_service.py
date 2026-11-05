@@ -589,7 +589,7 @@ def sync_upload() -> dict:
     return {"ok": True, "action": "upload", "path": str(p), **result}
 
 
-def sync_fetch() -> dict:
+def sync_fetch(*, expected_sha256: str | None = None) -> dict:
     """Download into staging; only the shared transaction can replace mykey.py."""
     p = _mykey_path()
     _paths.ADMIN_DATA.mkdir(parents=True, exist_ok=True)
@@ -603,6 +603,13 @@ def sync_fetch() -> dict:
         with target.open(encoding="utf-8", newline="") as source:
             raw = source.read()
         with LlmRegistry.synchronized():
+            if expected_sha256 is not None:
+                import hashlib
+                current = hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else "missing"
+                if current != expected_sha256:
+                    raise MykeyHttpError(409, {"error": "sync_local_changed"})
+                if hashlib.sha256(target.read_bytes()).hexdigest() == current:
+                    return {"ok": True, "action": "fetch", "path": str(p), **result, "changed": False}
             committed = _commit_text(p, raw, "sync_invalid")
     return {**committed, "action": "fetch", "path": str(p), **result}
 

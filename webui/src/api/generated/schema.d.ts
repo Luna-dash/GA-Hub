@@ -1651,7 +1651,7 @@ export interface paths {
         put?: never;
         /**
          * Sync Fetch Mykey
-         * @description Fetch, decrypt and replace GA_ROOT/mykey.py from the configured sync server.
+         * @description Compare metadata, then fetch only if the cloud configuration differs.
          */
         post: operations["sync_fetch_mykey_api_mykey_sync_fetch_post"];
         delete?: never;
@@ -1674,6 +1674,24 @@ export interface paths {
          * @description Open mykey.py in system default editor.
          */
         post: operations["open_mykey_file_api_mykey_open_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mykey/sync/auto": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Auto Sync Status */
+        get: operations["auto_sync_status_api_mykey_sync_auto_get"];
+        /** Auto Sync Settings */
+        put: operations["auto_sync_settings_api_mykey_sync_auto_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3557,6 +3575,38 @@ export interface components {
             /** Sha256 */
             sha256: string;
         };
+        /** MyKeyAutoSyncSettings */
+        MyKeyAutoSyncSettings: {
+            /** Enabled */
+            enabled: boolean;
+        };
+        /** MyKeyAutoSyncStatus */
+        MyKeyAutoSyncStatus: {
+            /** Enabled */
+            enabled: boolean;
+            /** Running */
+            running: boolean;
+            /** Schedule */
+            schedule: string;
+            /** Next Check */
+            next_check?: string | null;
+            /** Last Attempt Day */
+            last_attempt_day?: string | null;
+            /** Last Checked */
+            last_checked?: string | null;
+            /** Last Updated */
+            last_updated?: string | null;
+            /**
+             * Result
+             * @default never
+             */
+            result: string;
+            /**
+             * Message
+             * @default 尚未检查
+             */
+            message: string;
+        };
         /** MyKeyBackup */
         MyKeyBackup: {
             /** Name */
@@ -3662,6 +3712,8 @@ export interface components {
         MyKeySyncResultResp: {
             /** Ok */
             ok: boolean;
+            /** Changed */
+            changed?: boolean | null;
             /** Action */
             action: string;
             /** Path */
@@ -7283,6 +7335,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MyKeyOpenResp"];
+                };
+            };
+        };
+    };
+    auto_sync_status_api_mykey_sync_auto_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyKeyAutoSyncStatus"];
+                };
+            };
+        };
+    };
+    auto_sync_settings_api_mykey_sync_auto_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MyKeyAutoSyncSettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyKeyAutoSyncStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

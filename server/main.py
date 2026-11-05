@@ -423,6 +423,13 @@ def create_app() -> FastAPI:
                 channels.channel("scheduled_task"), scheduler_runtime=scheduler_host.runtime
             ),
         )
+        from .services.mykey_auto_sync import MykeyAutoSync
+
+        def create_mykey_sync():
+            services.mykey_sync = MykeyAutoSync(scheduler_runtime=scheduler_host.runtime)
+            return services.mykey_sync
+
+        scheduler_host.register("mykey_sync", create_mykey_sync)
         scheduler_host.start_all()
         log.info("scheduler host started %s", scheduler_host.status())
 

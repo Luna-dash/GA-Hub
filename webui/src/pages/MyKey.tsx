@@ -64,6 +64,22 @@ export default function MyKey() {
   }, [])
   const { data, isLoading, refetch } = useQuery({ queryKey: queryKeys.mykey.data, queryFn: api.mykey })
 
+  const autoSync = useQuery({
+    queryKey: ['mykey', 'auto-sync'], queryFn: api.myKeyAutoSync, refetchInterval: 30_000,
+  })
+  const [autoSyncBusy, setAutoSyncBusy] = useState(false)
+  const toggleAutoSync = async (enabled: boolean) => {
+    setAutoSyncBusy(true)
+    try {
+      const status = await api.setMyKeyAutoSync(enabled)
+      qc.setQueryData(['mykey', 'auto-sync'], status)
+    } catch {
+      toast.error('自动同步设置未保存，请稍后重试')
+    } finally {
+      setAutoSyncBusy(false)
+    }
+  }
+
   const onWriteResult = (r: MyKeyWriteResult) => {
     if (r.warnings && r.warnings.length) {
       dialog.alert('保存成功，但有警告', r.warnings.join('\n'))
@@ -122,9 +138,11 @@ export default function MyKey() {
       } else {
         toast.success(myKeySyncSuccess('fetch', r.stdout))
       }
-      qc.invalidateQueries({ queryKey: queryKeys.mykey.data })
-      qc.invalidateQueries({ queryKey: queryKeys.llms })
-      qc.invalidateQueries({ queryKey: queryKeys.servicePanel })
+      if (r.changed !== false) {
+        qc.invalidateQueries({ queryKey: queryKeys.mykey.data })
+        qc.invalidateQueries({ queryKey: queryKeys.llms })
+        qc.invalidateQueries({ queryKey: queryKeys.servicePanel })
+      }
     } catch (e: any) {
       const feedback = myKeySyncFailure('fetch', e)
       void dialog.alert(feedback.title, feedback.message, { detail: feedback.detail })
@@ -159,6 +177,24 @@ export default function MyKey() {
       }
     >
       <div className="p-6 max-w-5xl mx-auto h-full flex flex-col">
+        <section aria-label="云端自动同步" className="mb-4 rounded-xl border border-paper-line bg-paper-elevated p-4 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">云端自动同步</h2>
+              <p className="mt-1 text-xs text-slate-500">每天本机时间 12:00 检查，有差异才下载；应用需保持运行，午后启动会补查。</p>
+            </div>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" aria-label="启用每日自动同步" checked={autoSync.data?.enabled ?? false}
+                disabled={!autoSync.data || autoSyncBusy} onChange={(e) => void toggleAutoSync(e.target.checked)} />
+              每日同步
+            </label>
+          </div>
+          <p role="status" className="mt-2 text-xs text-slate-500">
+            {autoSync.isError ? '自动同步状态暂不可用' : autoSync.data
+              ? `${autoSync.data.running ? '正在检查云端…' : autoSync.data.message}${autoSync.data.last_checked ? ` · 最近检查 ${new Date(autoSync.data.last_checked).toLocaleString()}` : ''}`
+              : '读取同步状态…'}
+          </p>
+        </section>
         {isLoading && <div className="text-slate-500 text-sm">载入中…</div>}
         {data && !data.exists && (
           <div className="rounded-xl border border-status-warning-line bg-status-warning-soft p-4 text-sm text-status-warning">

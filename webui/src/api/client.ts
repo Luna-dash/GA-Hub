@@ -302,6 +302,8 @@ export const api = {
     http<MyKeyWriteResult>('POST', `/api/mykey/backups/${encodeURIComponent(name)}/restore`),
   testMyKeySession: (varName: string) =>
     http<MyKeySessionTestResult>('POST', `/api/mykey/sessions/${encodeURIComponent(varName)}/test`),
+  myKeyAutoSync: () => http<import('./types').MyKeyAutoSyncStatus>('GET', '/api/mykey/sync/auto'),
+  setMyKeyAutoSync: (enabled: boolean) => http<import('./types').MyKeyAutoSyncStatus>('PUT', '/api/mykey/sync/auto', { enabled }),
   openMyKeyFile: () => http<MyKeyOpenResponse>('POST', '/api/mykey/open'),
   uploadMyKeySync: () => http<MyKeySyncResult>(
     'POST', '/api/mykey/sync/upload', undefined, { timeoutMs: MYKEY_SYNC_HTTP_TIMEOUT_MS },

@@ -192,6 +192,7 @@ export type MyKeyMutation = {
 export type MyKeySessionTestResult = ApiSchemas['MyKeySessionTestResp']
 export type MyKeyBackup = ApiSchemas['MyKeyBackup']
 export type MyKeyBackupListResponse = ApiSchemas['MyKeyBackupListResp']
+export type MyKeyAutoSyncStatus = ApiSchemas['MyKeyAutoSyncStatus']
 export type MyKeySyncResult = ApiSchemas['MyKeySyncResultResp']
 export type MyKeyOpenResponse = ApiSchemas['MyKeyOpenResp']
 

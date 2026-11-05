@@ -8,9 +8,11 @@ from __future__ import annotations
 import asyncio
 import functools
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from ..schemas import (
+    MyKeyAutoSyncSettings,
+    MyKeyAutoSyncStatus,
     MyKeyBackupListResp,
     MyKeyDataResp,
     MyKeyOpenResp,
@@ -100,8 +102,9 @@ async def sync_upload_mykey() -> MyKeySyncResultResp:
 @router.post("/sync/fetch")
 @_translated
 async def sync_fetch_mykey() -> MyKeySyncResultResp:
-    """Fetch, decrypt and replace GA_ROOT/mykey.py from the configured sync server."""
-    return await asyncio.to_thread(mykey_service.sync_fetch)
+    """Compare metadata, then fetch only if the cloud configuration differs."""
+    from ..services.mykey_auto_sync import checked_fetch
+    return await asyncio.to_thread(checked_fetch)
 
 
 @router.post("/open")
@@ -109,3 +112,21 @@ async def sync_fetch_mykey() -> MyKeySyncResultResp:
 async def open_mykey_file() -> MyKeyOpenResp:
     """Open mykey.py in system default editor."""
     return await asyncio.to_thread(mykey_service.open_mykey_file)
+
+
+def _auto_sync(request: Request):
+    services = getattr(request.app.state, "services", None)
+    service = getattr(services, "mykey_sync", None)
+    if service is None:
+        raise HTTPException(503, "自动同步服务尚未启动")
+    return service
+
+
+@router.get("/sync/auto", response_model=MyKeyAutoSyncStatus)
+async def auto_sync_status(request: Request) -> MyKeyAutoSyncStatus:
+    return _auto_sync(request).status()
+
+
+@router.put("/sync/auto", response_model=MyKeyAutoSyncStatus)
+async def auto_sync_settings(request: Request, body: MyKeyAutoSyncSettings) -> MyKeyAutoSyncStatus:
+    return await asyncio.to_thread(_auto_sync(request).configure, body.enabled)

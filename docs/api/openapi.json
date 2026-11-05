@@ -3285,7 +3285,7 @@
           "mykey"
         ],
         "summary": "Sync Fetch Mykey",
-        "description": "Fetch, decrypt and replace GA_ROOT/mykey.py from the configured sync server.",
+        "description": "Compare metadata, then fetch only if the cloud configuration differs.",
         "operationId": "sync_fetch_mykey_api_mykey_sync_fetch_post",
         "responses": {
           "200": {
@@ -3316,6 +3316,66 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MyKeyOpenResp"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mykey/sync/auto": {
+      "get": {
+        "tags": [
+          "mykey"
+        ],
+        "summary": "Auto Sync Status",
+        "operationId": "auto_sync_status_api_mykey_sync_auto_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeyAutoSyncStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "mykey"
+        ],
+        "summary": "Auto Sync Settings",
+        "operationId": "auto_sync_settings_api_mykey_sync_auto_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MyKeyAutoSyncSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyKeyAutoSyncStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -8418,6 +8478,96 @@
         ],
         "title": "MemoryWriteResp"
       },
+      "MyKeyAutoSyncSettings": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "MyKeyAutoSyncSettings"
+      },
+      "MyKeyAutoSyncStatus": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "schedule": {
+            "type": "string",
+            "title": "Schedule"
+          },
+          "next_check": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Check"
+          },
+          "last_attempt_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Attempt Day"
+          },
+          "last_checked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked"
+          },
+          "last_updated": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Updated"
+          },
+          "result": {
+            "type": "string",
+            "title": "Result",
+            "default": "never"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "尚未检查"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled",
+          "running",
+          "schedule"
+        ],
+        "title": "MyKeyAutoSyncStatus"
+      },
       "MyKeyBackup": {
         "properties": {
           "name": {
@@ -8742,6 +8892,17 @@
           "ok": {
             "type": "boolean",
             "title": "Ok"
+          },
+          "changed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed"
           },
           "action": {
             "type": "string",

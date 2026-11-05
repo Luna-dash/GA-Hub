@@ -1054,8 +1054,25 @@ class MyKeyBackupListResp(BaseModel):
     backups: list[MyKeyBackup]
 
 
+class MyKeyAutoSyncSettings(BaseModel):
+    enabled: bool
+
+
+class MyKeyAutoSyncStatus(BaseModel):
+    enabled: bool
+    running: bool
+    schedule: str
+    next_check: str | None = None
+    last_attempt_day: str | None = None
+    last_checked: str | None = None
+    last_updated: str | None = None
+    result: str = "never"
+    message: str = "尚未检查"
+
+
 class MyKeySyncResultResp(BaseModel):
     ok: bool
+    changed: bool | None = None
     action: str
     path: str
     returncode: int

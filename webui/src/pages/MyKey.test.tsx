@@ -13,6 +13,8 @@ import { MYKEY_SHOW_UPLOAD_KEY, setMyKeyShowUpload } from '@/utils/mykeySyncUi'
 
 const apiMock = vi.hoisted(() => ({
   mykey: vi.fn(),
+  myKeyAutoSync: vi.fn(),
+  setMyKeyAutoSync: vi.fn(),
   openMyKeyFile: vi.fn(),
   mutateMyKey: vi.fn(),
   mykeyBackups: vi.fn(),
@@ -37,6 +39,8 @@ describe('MyKey upload button visibility', () => {
   let client: QueryClient
 
   beforeEach(() => {
+    apiMock.myKeyAutoSync.mockResolvedValue({ enabled: true, running: false, message: "云端与本地一致，无需下载" })
+    apiMock.setMyKeyAutoSync.mockResolvedValue({ enabled: false, running: false, message: "已关闭" })
     resetPageState()
     apiMock.mutateMyKey.mockReset().mockResolvedValue({ ok: true })
     localStorage.removeItem(MYKEY_SHOW_UPLOAD_KEY)
@@ -72,6 +76,20 @@ describe('MyKey upload button visibility', () => {
       )
     })
   }
+
+  it('shows sync status and saves disabling the daily schedule', async () => {
+    apiMock.setMyKeyAutoSync.mockClear()
+    render()
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
+    const toggle = host.querySelector<HTMLInputElement>('[aria-label="启用每日自动同步"]')!
+    expect(toggle.checked).toBe(true)
+    expect(host.textContent).toContain('每天本机时间 12:00')
+    expect(host.textContent).toContain('云端与本地一致，无需下载')
+    await act(async () => { toggle.click(); await new Promise((resolve) => setTimeout(resolve, 20)) })
+    expect(apiMock.setMyKeyAutoSync).toHaveBeenCalledWith(false)
+    expect(toggle.checked).toBe(false)
+    expect(host.textContent).toContain('已关闭')
+  })
 
   it('uses paper-themed cards and preserves paired expansion and masked keys', async () => {
     apiMock.mykey.mockResolvedValue({

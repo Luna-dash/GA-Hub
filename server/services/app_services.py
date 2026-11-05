@@ -27,6 +27,7 @@ class AppServices:
     conductor: ConductorService | None = None
     feishu: FeishuService | None = None
     scheduler_host: SchedulerHost | None = None
+    mykey_sync: Any | None = None
     wechat: "WeChatService | None" = None
 
     def clear(self) -> None:
