@@ -27,6 +27,42 @@ beforeEach(async () => {
 afterEach(() => { act(() => root.unmount()); host.remove() })
 
 describe('Nova embedded settings', () => {
+  it('keeps the introduction concise and moves secondary guidance into collapsed details', async () => {
+    await act(async () => root.render(<NovaSettingsPanel />))
+    expect(host.querySelector('header p')?.textContent).toBe('关联账号后，即可通过 Nova 远程访问这台电脑。')
+    const details = host.querySelector('details')!
+    expect(details.open).toBe(false)
+    expect(details.querySelector('summary')?.textContent).toBe('连接与安全说明')
+    expect(details.textContent).toContain('Windows 凭据管理器')
+    expect(details.textContent).toContain('不影响原有隧道')
+    expect(host.querySelector('code')?.className).toContain('break-all')
+    expect(host.querySelector('form .grid')?.className).toContain('sm:grid-cols-2')
+  })
+
+  it('keeps cloud availability distinct from the local connector state', async () => {
+    vi.mocked(novaApi.status).mockResolvedValue({ ...status, paired: true, running: true })
+    await act(async () => root.render(<NovaSettingsPanel />))
+    expect(host.textContent).toContain('连接器运行中')
+    expect(host.textContent).toContain('本机运行状态不代表云端在线。')
+    expect(host.querySelector('form')).toBeNull()
+  })
+
+  it('requires explicit confirmation and current credentials when revoking', async () => {
+    vi.mocked(novaApi.status).mockResolvedValue({ ...status, paired: true, running: true })
+    vi.mocked(novaApi.action).mockResolvedValue(status)
+    await act(async () => root.render(<NovaSettingsPanel />))
+    await act(async () => button('撤销账号关联').click())
+    expect(host.textContent).toContain('撤销后将无法通过该账号远程访问本机')
+    expect(button('确认撤销关联').disabled).toBe(true)
+    expect(host.querySelector('[autocomplete="current-password"]')).not.toBeNull()
+    await input('[autocomplete="username"]', 'test-user')
+    await input('[type="password"]', 'test-password-long')
+    await act(async () => host.querySelector<HTMLInputElement>('[type="checkbox"]')!.click())
+    await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    expect(novaApi.action).toHaveBeenCalledWith('revoke', expect.objectContaining({ username: 'test-user', password: 'test-password-long', confirm: true }))
+    expect(host.querySelector<HTMLInputElement>('[type="password"]')!.value).toBe('')
+  })
+
   it('requires authorization then associates in place and clears secrets', async () => {
     vi.mocked(novaApi.action).mockResolvedValue({ ...status, paired: true, running: true })
     await act(async () => root.render(<NovaSettingsPanel />))

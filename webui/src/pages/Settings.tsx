@@ -4,6 +4,7 @@
 // In normal mode, it's reachable at /settings via the sidebar.
 
 import { useEffect, useState } from 'react'
+import { Bell, Globe, KeyRound, MessagesSquare, Palette, Settings2 } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { NovaSettingsPanel } from '@/components/NovaSettingsPanel'
@@ -31,7 +32,19 @@ import { waitForDesktopRestart } from '@/utils/backendRestart'
 import { getMyKeyShowUpload, setMyKeyShowUpload } from '@/utils/mykeySyncUi'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { queryKeys } from '@/queries/queryKeys'
+const SETTINGS_TABS = [
+  { id: 'general', label: '常规', description: '配置 GenericAgent 目录与 Python 执行环境。', icon: Settings2 },
+  { id: 'appearance', label: '外观与导航', description: '调整界面字号，以及侧栏入口的顺序与显示。', icon: Palette },
+  { id: 'chat', label: '对话与重试', description: '管理实时聊天与无人值守任务的自动重试策略。', icon: MessagesSquare },
+  { id: 'remote', label: '远程连接', description: '关联 Nova 账号，管理当前设备的远程连接。', icon: Globe },
+  { id: 'sync', label: '密钥同步', description: '管理 mykey 同步相关的界面选项。', icon: KeyRound },
+  { id: 'notifications', label: '通知', description: '管理桌面通知的开关与测试提醒。', icon: Bell },
+] as const
+
+type SettingsTab = typeof SETTINGS_TABS[number]['id']
+
 export default function Settings({ initialMode = 'settings' }: { initialMode?: 'settings' | 'setup' }) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const qc = useQueryClient()
   const { data: setup } = useQuery({ queryKey: queryKeys.setup, queryFn: api.setupStatus })
   const [input, setInput] = useState('')
@@ -119,9 +132,46 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
 
   return (
     <PageShell
-      title={inSetup ? '初始设置' : '设置 · GenericAgent 路径'}
+      title={inSetup ? '初始设置' : '设置'}
     >
-      <div className="p-6 max-w-3xl mx-auto space-y-6">
+      <div className={inSetup ? 'p-4 sm:p-6 max-w-3xl mx-auto' : 'grid grid-cols-[5.5rem_minmax(0,1fr)] sm:grid-cols-[11rem_minmax(0,1fr)] items-start gap-3 sm:gap-6 p-3 sm:p-6 max-w-6xl mx-auto'}>
+        {!inSetup && (
+          <div role="tablist" aria-label="设置分类" aria-orientation="vertical" className="sticky top-3 sm:top-6 flex flex-col gap-1 rounded-xl border border-line bg-bg-card p-1.5">
+            {SETTINGS_TABS.map(({ id, label, icon: Icon }, index) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                id={`settings-tab-${id}`}
+                aria-controls={`settings-panel-${id}`}
+                aria-selected={activeTab === id}
+                tabIndex={activeTab === id ? 0 : -1}
+                onClick={() => setActiveTab(id)}
+                onKeyDown={(event) => {
+                  const next = event.key === 'ArrowDown' ? (index + 1) % SETTINGS_TABS.length
+                    : event.key === 'ArrowUp' ? (index + SETTINGS_TABS.length - 1) % SETTINGS_TABS.length
+                    : event.key === 'Home' ? 0 : event.key === 'End' ? SETTINGS_TABS.length - 1 : null
+                  if (next === null) return
+                  event.preventDefault()
+                  setActiveTab(SETTINGS_TABS[next].id)
+                  event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
+                }}
+                className={`flex flex-col sm:flex-row items-center gap-1.5 sm:gap-2.5 rounded-lg px-2 sm:px-3 py-3 text-xs sm:text-sm text-center sm:text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${activeTab === id ? 'bg-accent/10 text-accent font-medium' : 'text-slate-400 hover:bg-white/5 hover:text-ink'}`}
+              >
+                <Icon size={17} className="shrink-0" aria-hidden="true" />
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="min-w-0 space-y-5">
+          {!inSetup && (
+            <div>
+              <h2 className="text-base font-semibold text-ink">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.label}</h2>
+              <p className="mt-1 text-xs leading-relaxed text-slate-500">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.description}</p>
+            </div>
+          )}
+          <div id="settings-panel-general" role={inSetup ? undefined : 'tabpanel'} aria-labelledby={inSetup ? undefined : 'settings-tab-general'} tabIndex={inSetup ? undefined : 0} hidden={!inSetup && activeTab !== 'general'} className="space-y-5">
         {/* current */}
         <div className="rounded-xl border border-line bg-bg-card p-4">
           <div className="text-xs text-slate-500 mb-1">当前 GenericAgent 路径</div>
@@ -131,7 +181,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
               : <span className="text-status-danger">尚未配置</span>}
           </div>
           <div className="text-xs text-slate-500 mt-2">
-            Admin 数据目录：<span className="font-mono">{setup?.admin_data}</span>
+            Admin 数据目录：<span className="font-mono break-all">{setup?.admin_data}</span>
           </div>
           <div className="text-xs text-slate-500 mt-2">
             Python 执行环境：
@@ -151,13 +201,13 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
             必须包含 <code>agentmain.py</code> 与 <code>memory/</code>。
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <input
               value={input}
               onChange={(e) => { setInput(e.target.value); setValidResult(null) }}
               onBlur={(e) => validate(e.target.value)}
               placeholder="/path/to/GenericAgent"
-              className="flex-1 bg-bg-soft border border-line rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"
+              className="min-w-0 w-full sm:w-auto flex-auto bg-bg-soft border border-line rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"
             />
             {isTauriDesktop() && (
               <button
@@ -214,33 +264,6 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
           </div>
         </div>
 
-        {/* candidates */}
-        {(setup?.candidates?.length ?? 0) > 0 && (
-          <div className="rounded-xl border border-line bg-bg-card p-4">
-            <div className="text-sm font-semibold mb-3">本机检测到的候选位置</div>
-            <ul className="space-y-1.5">
-              {setup!.candidates.map((c) => (
-                <li key={c.path} className="flex items-center justify-between gap-2 text-sm">
-                  <code className={`font-mono break-all ${c.valid ? 'text-slate-200' : 'text-slate-500'}`}>
-                    {c.path}
-                  </code>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className={`text-xs ${c.valid ? 'text-status-success' : 'text-slate-500'}`}>
-                      {c.valid ? '有效' : '不可用'}
-                    </span>
-                    {c.valid && (
-                      <button
-                        onClick={() => { setInput(c.path); validate(c.path) }}
-                        className="text-xs px-2 py-1 rounded border border-line text-slate-300 hover:bg-white/5"
-                      >选用</button>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
         {inSetup && setup?.configured && (
           <div className="rounded-xl border border-status-warning-line bg-status-warning-soft p-4 text-sm text-status-warning">
             {isTauriDesktop()
@@ -249,16 +272,26 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
           </div>
         )}
 
-        {!inSetup && <NavManagementPanel />}
-
-        {!inSetup && <MyKeySyncPanel />}
-
-        {!inSetup && <ChatAppearancePanel />}
-
-        {!inSetup && <ChatRetryPanel />}
-
-        {!inSetup && <NovaSettingsPanel />}
-        {!inSetup && <NotifyPanel />}
+          </div>
+          {!inSetup && <>
+            <div id="settings-panel-appearance" role="tabpanel" aria-labelledby="settings-tab-appearance" tabIndex={0} hidden={activeTab !== 'appearance'} className="space-y-5">
+              <ChatAppearancePanel />
+              <NavManagementPanel />
+            </div>
+            <div id="settings-panel-chat" role="tabpanel" aria-labelledby="settings-tab-chat" tabIndex={0} hidden={activeTab !== 'chat'}>
+              <ChatRetryPanel />
+            </div>
+            <div id="settings-panel-remote" role="tabpanel" aria-labelledby="settings-tab-remote" tabIndex={0} hidden={activeTab !== 'remote'}>
+              <NovaSettingsPanel />
+            </div>
+            <div id="settings-panel-sync" role="tabpanel" aria-labelledby="settings-tab-sync" tabIndex={0} hidden={activeTab !== 'sync'}>
+              <MyKeySyncPanel />
+            </div>
+            <div id="settings-panel-notifications" role="tabpanel" aria-labelledby="settings-tab-notifications" tabIndex={0} hidden={activeTab !== 'notifications'}>
+              <NotifyPanel />
+            </div>
+          </>}
+        </div>
       </div>
     </PageShell>
   )
