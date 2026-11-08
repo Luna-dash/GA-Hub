@@ -83,6 +83,12 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             return web.json_response({'test':{'session_id':'test','status':self.runtime_status}})
         app.router.add_get('/api/session-runtimes',runtimes)
         app.router.add_put('/api/sessions/test/model',model)
+        async def manage(r):
+            self.calls.append(('manage',r.method,await r.json() if r.method=='PATCH' else None,r.headers.get('Origin')))
+            if self.runtime_status=='running' and r.method=='DELETE':return web.json_response({'detail':'busy'},status=409)
+            return web.Response(status=204) if r.method=='DELETE' else web.json_response({'id':'test'})
+        app.router.add_patch('/api/sessions/test',manage)
+        app.router.add_delete('/api/sessions/test',manage)
         self.up = TestServer(app)
         await self.up.start_server()
         self.g = m.Gateway.__new__(m.Gateway)
@@ -291,6 +297,30 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await r.json(),{'llms':[{'key':'test-model','name':'Test Model'}]})
         r=await self.client.get('/api/llms')
         self.assertEqual(r.status,401)
+
+    async def test_session_management(self):
+        path='/api/sessions/test'
+        r=await self.client.patch(path,json={'title':'  renamed  '},headers=self.headers)
+        self.assertEqual(r.status,200)
+        self.assertEqual(self.calls[-1],('manage','PATCH',{'title':'renamed'},str(self.up.make_url('')).rstrip('/')))
+        for body in [{}, {'title':''}, {'title':'x'*201}, {'title':4}, {'title':'ok','cwd':'bad'}, []]:
+            r=await self.client.patch(path,json=body,headers=self.headers)
+            self.assertEqual(r.status,400,body)
+        r=await self.client.patch(path+'?x=1',json={'title':'ok'},headers=self.headers)
+        self.assertEqual(r.status,400)
+        r=await self.client.delete(path,data='unexpected',headers=self.headers)
+        self.assertEqual(r.status,400)
+        r=await self.client.delete(path,headers={**self.headers,'Origin':'https://evil.test'})
+        self.assertEqual(r.status,403)
+        r=await self.client.delete(path)
+        self.assertEqual(r.status,401)
+        self.assertEqual(len(self.calls),1)
+        self.runtime_status='running'
+        r=await self.client.delete(path,headers=self.headers)
+        self.assertEqual(r.status,409)
+        self.runtime_status='idle'
+        r=await self.client.delete(path,headers=self.headers)
+        self.assertEqual(r.status,204)
 
     async def test_model_save_and_busy(self):
         path='/api/sessions/test/model'

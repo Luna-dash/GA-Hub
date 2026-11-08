@@ -74,6 +74,24 @@ class Gateway:
             return [{'key':row['key'],'name':row.get('name') or row['key']} for row in data['llms'] if row.get('key')]
         except (aiohttp.ClientError,asyncio.TimeoutError,ValueError,KeyError,RuntimeError):
             raise web.HTTPBadGateway(text='Model list unavailable')
+    async def manage_session(self,r):
+        if r.headers.get('Origin')!='https://'+PUBLIC:raise web.HTTPForbidden(text='Origin required')
+        if r.query_string:raise web.HTTPBadRequest(text='No query allowed')
+        kwargs={}
+        if r.method=='PATCH':
+            if r.content_type!='application/json':raise web.HTTPBadRequest(text='JSON required')
+            try:data=await r.json()
+            except (ValueError,UnicodeError):raise web.HTTPBadRequest(text='Invalid JSON')
+            if not isinstance(data,dict) or set(data)!={'title'}:raise web.HTTPBadRequest(text='Only title allowed')
+            title=data['title']
+            if not isinstance(title,str) or not title.strip() or len(title)>200:raise web.HTTPBadRequest(text='Title must be 1-200 characters')
+            kwargs['json']={'title':title.strip()}
+        elif await r.read():raise web.HTTPBadRequest(text='Empty body required')
+        base=await self.backend()
+        try:
+            async with self.http.request(r.method,base+r.path,headers={'Origin':base},allow_redirects=False,**kwargs) as up:
+                return web.Response(status=up.status,body=await up.read(),content_type='application/json')
+        except (aiohttp.ClientError,asyncio.TimeoutError):raise web.HTTPBadGateway(text='Session update uncertain; refresh the session list')
     async def change_model(self,r):
         if r.headers.get('Origin')!='https://'+PUBLIC:raise web.HTTPForbidden(text='Origin required')
         if r.query_string or r.content_type!='application/json':raise web.HTTPBadRequest(text='JSON without query required')
@@ -303,6 +321,7 @@ class Gateway:
             try:catalog=await self.project_catalog()
             except (aiohttp.ClientError,asyncio.TimeoutError,ValueError):raise web.HTTPBadGateway(text='项目列表读取失败，请重试')
             return web.json_response({'items':[{'id':key,'name':item['label']} for key,item in catalog.items()]})
+        if r.method in ('PATCH','DELETE') and re.fullmatch(r'/api/sessions/[A-Za-z0-9_-]+',r.path):return await self.manage_session(r)
         if r.method=='PUT' and re.fullmatch(r'/api/sessions/[A-Za-z0-9_-]+/model',r.path):return await self.change_model(r)
         if r.path=='/api/llms' and r.method=='GET':
             if not self.origin_ok(r):raise web.HTTPForbidden()
