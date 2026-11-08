@@ -166,7 +166,11 @@ def _prepare_projection_text(content: str) -> str:
             continue
         kept = [block for block in blocks if not (
             isinstance(block, dict) and block.get("type") == "text"
-            and _is_control_prompt(str(block.get("text") or ""))
+            and (_is_control_prompt(str(block.get("text") or ""))
+                 or (any(isinstance(b, dict) and b.get("type") == "tool_result" for b in blocks)
+                     and (str(block.get("text") or "").strip().startswith("<global_memory>")
+                          or (str(block.get("text") or "").strip().startswith("cwd =")
+                              and "[Memory]" in str(block.get("text") or "")))))
         )]
         # GA's formatter selects only the first eligible text block. Ask its
         # public projection which blocks are eligible, then coalesce only
@@ -201,11 +205,55 @@ def _prepare_projection_text(content: str) -> str:
     return content
 
 
-def _extract_ui_messages_from_text(content: str) -> list[dict[str, Any]]:
-    """Project an archive slice through GA's public archive bridge."""
-    return _normalize_projected_messages(
-        _archive_bridge().project_archive_text(_prepare_projection_text(content))
-    )
+def _extract_ui_messages_from_text(content: str, tool_tail: str = "") -> list[dict[str, Any]]:
+    """Keep native rendering, repairing mixed tool-result/human round boundaries."""
+    prepared = _prepare_projection_text(content)
+    messages = _archive_bridge().project_archive_text(prepared + tool_tail)
+    if tool_tail and messages and messages[-1].get("role") == "assistant":
+        # The synthetic pair only supplies the preceding call's tool results.
+        last = messages[-1]
+        segments = last.get("turn_segs", [])[:-1]
+        last["turn_segs"] = segments
+        last["content"] = "".join(segments)
+        if not last["content"].strip():
+            messages.pop()
+    if not _TOOL_RESULT_BYTES_RE.search(prepared.encode("utf-8")):
+        return _normalize_projected_messages(messages)
+
+    rounds = _completed_rounds(prepared)
+    prompts = []
+    for round_text, _, _ in rounds:
+        headers = list(_NATIVE_HEADER_RE.finditer(round_text))
+        prompts.append(round_text[headers[0].end():headers[1].start()].encode("utf-8"))
+    users = [_prompt_user_items(prompt, 0, len(prompt)) for prompt in prompts]
+    if not any(user and _TOOL_RESULT_BYTES_RE.search(prompt)
+               for user, prompt in zip(users, prompts)):
+        return _normalize_projected_messages(messages)
+
+    # GA already rendered each response with the *next* prompt's tool results.
+    # Reuse those segments verbatim; only human boundaries and turn numbers change.
+    segments = [segment for message in messages if message.get("role") == "assistant"
+                for segment in message.get("turn_segs", [])]
+    if len(segments) != len(rounds):
+        raise HistoryUnavailableError("Native archive turn segmentation mismatch")
+    regrouped: list[dict[str, Any]] = []
+    assistant = None
+    for (_, stamp, _), user, segment in zip(rounds, users, segments):
+        # Match GA's timestamp representation, which participates in message IDs.
+        ts = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").timestamp() if stamp else None
+        if user:
+            regrouped.extend({**item, "ts": ts} for item in user)
+            assistant = None
+        if assistant is None:
+            assistant = {"role": "assistant", "ts": ts, "content": "",
+                         "turn_segs": []}
+            regrouped.append(assistant)
+        turn = len(assistant["turn_segs"]) + 1
+        segment = re.sub(r"\A(\s*\*\*LLM Running \(Turn )\d+(\) \.\.\.\*\*)",
+                         lambda match: f"{match[1]}{turn}{match[2]}", segment, count=1)
+        assistant["turn_segs"].append(segment)
+        assistant["content"] += segment
+    return _normalize_projected_messages(regrouped)
 
 
 def _completed_rounds(
@@ -287,20 +335,38 @@ def _items_from_messages(
     ]
 
 
-def _items_from_text(content: str, ordinal_start: int = 0) -> list[dict[str, Any]]:
-    messages = _extract_ui_messages_from_text(content)
+def _items_from_text(content: str, ordinal_start: int = 0, tool_tail: str = "") -> list[dict[str, Any]]:
+    messages = _extract_ui_messages_from_text(content, tool_tail)
     timestamps = _message_timestamps(content)
     return _items_from_messages(messages, timestamps, ordinal_start)
 
 
 def _prompt_user_items(data: mmap.mmap, start: int, end: int) -> list[dict[str, Any]]:
     """Classify a prompt using GA's projection, never tool-result text."""
-    if _TOOL_RESULT_BYTES_RE.search(data, start, end):
-        return []
     prompt = data[start:end].decode("utf-8", errors="replace")
+    if _TOOL_RESULT_BYTES_RE.search(data, start, end):
+        try:
+            payload = json.loads(prompt)
+        except (ValueError, TypeError):
+            return []
+        if not isinstance(payload, dict) or not isinstance(payload.get("content"), list):
+            return []
+        # Tool output is never human input. Runtime context can coexist with the
+        # answer; drop only the known generated blocks, preserving quoted text.
+        blocks = []
+        for block in payload["content"]:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            text = str(block.get("text") or "").strip()
+            if ((text.startswith("<global_memory>") and "[Memory]" in text)
+                    or (text.startswith("cwd = ") and "\n[Memory]" in text)):
+                continue
+            blocks.append(block)
+        prompt = json.dumps({**payload, "content": blocks}, ensure_ascii=False)
     probe = f"=== Prompt ===\n{prompt}\n=== Response ===\n"
-    return [message for message in _extract_ui_messages_from_text(probe)
-            if message.get("role") == "user"]
+    return [message for message in _normalize_projected_messages(
+        _archive_bridge().project_archive_text(_prepare_projection_text(probe)))
+        if message.get("role") == "user"]
 
 
 def _prompt_is_user(data: mmap.mmap, start: int, end: int) -> bool:
@@ -427,10 +493,30 @@ def _read_indexed_window(
         with index.path.open("rb") as handle:
             handle.seek(groups[0].start)
             raw = handle.read(groups[-1].end - groups[0].start)
+            tool_tail = ""
+            # Results for the final call live in the next Prompt. Read only that
+            # prompt through mmap; never load the next group's response body.
+            with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data:
+                headers = _NATIVE_HEADER_BYTES_RE.finditer(data, groups[-1].end)
+                prompt_header = next(headers, None)
+                response_header = next(headers, None)
+                if (prompt_header and response_header
+                        and prompt_header.group(1) == b"Prompt"
+                        and response_header.group(1) == b"Response"):
+                    try:
+                        payload = json.loads(data[prompt_header.end():response_header.start()])
+                        blocks = payload.get("content", []) if isinstance(payload, dict) else []
+                        results = [b for b in blocks if isinstance(b, dict) and b.get("type") == "tool_result"]
+                        if results:
+                            tool_tail = ("\n=== Prompt ===\n" + json.dumps({"content": results})
+                                         + "\n=== Response ===\n[]\n")
+                    except (ValueError, TypeError):
+                        pass
+                del headers, prompt_header, response_header
     except OSError as exc:
         raise HistoryUnavailableError from exc
 
-    items = _items_from_text(raw.decode("utf-8", errors="replace"), groups[0].item_start)
+    items = _items_from_text(raw.decode("utf-8", errors="replace"), groups[0].item_start, tool_tail)
     expected_count = groups[-1].item_start + groups[-1].item_count - groups[0].item_start
     if len(items) != expected_count:
         return None
