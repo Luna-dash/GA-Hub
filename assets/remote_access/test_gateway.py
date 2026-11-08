@@ -131,6 +131,25 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         r=await self.client.post(self.path,json=payload,headers=other)
         self.assertEqual(r.status,401)
 
+    async def test_upload_type_size_and_expiry(self):
+        from unittest.mock import patch
+        for name in ['installer.exe', 'keys.pem', 'data.sqlite', 'unknown.xyz']:
+            form=FormData();form.add_field('file',b'x',filename=name)
+            r=await self.client.post('/api/upload',data=form,headers=self.headers)
+            self.assertEqual(r.status,415,name)
+        with patch.object(m, 'MAX_FILE', 8):
+            form=FormData();form.add_field('file',b'x'*9,filename='report.txt')
+            r=await self.client.post('/api/upload',data=form,headers=self.headers)
+            self.assertEqual(r.status,413)
+        form=FormData();form.add_field('file',b'hello',filename='report.txt')
+        r=await self.client.post('/api/upload',data=form,headers=self.headers)
+        data=await r.json(); uid=data['upload_id']
+        self.assertIn('expires_at',data)
+        created,owner,ref=self.g.uploads[uid]
+        self.g.uploads[uid]=(created-m.TTL-1,owner,ref)
+        r=await self.client.post('/api/sessions/test/runs',json={**self.payload,'upload_ids':[uid]},headers=self.headers)
+        self.assertEqual(r.status,400)
+
     async def test_attachment_validation(self):
         for extra in [{'upload_ids':['unknown']},{'attachments':[{'path':'C:/secret'}]},{'upload_ids':['a']*2},{'upload_ids':list(map(str,range(9)))}]:
             r=await self.client.post(self.path,json={**self.payload,**extra},headers=self.headers)

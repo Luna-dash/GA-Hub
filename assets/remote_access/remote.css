@@ -239,3 +239,5 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 #newSessionConfirm{background:var(--accent);color:var(--paper);border-color:var(--accent)}
 #newSessionDialog button{min-height:40px;min-width:64px}
 @media(max-width:760px){#sidebar .rail-top{gap:6px}}
+
+.artifact-card{flex-wrap:wrap}.artifact-preview{flex-basis:100%;min-width:0}.artifact-thumbnail{display:flex;align-items:center;justify-content:center;width:min(100%,320px);min-height:100px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--field);color:var(--muted);cursor:pointer;overflow:hidden}.artifact-thumbnail img{display:block;width:100%;height:160px;object-fit:contain}.image-dialog{width:min(92vw,1100px);max-height:92dvh;box-sizing:border-box;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--field);color:var(--ink)}.image-dialog::backdrop{background:#000a}.image-dialog>button,.image-dialog>a{display:inline-block;margin:0 16px 8px 0}.image-dialog img{display:block;max-width:100%;max-height:72dvh;object-fit:contain;margin:auto}.image-dialog p{overflow-wrap:anywhere}

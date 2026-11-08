@@ -1,3 +1,5 @@
+import { clearImagePreviews, setImageScope } from './remote-images.js';
+const transferExtensions = new Set(['.txt', '.md', '.csv', '.tsv', '.json', '.yaml', '.yml', '.xml', '.html', '.css', '.js', '.ts', '.tsx', '.jsx', '.py', '.ipynb', '.sql', '.toml', '.ini', '.cfg', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.tif', '.tiff', '.zip', '.7z', '.tar', '.gz']);
 import { LiveProgress } from './remote-live.js';
 import { initNewSession } from './remote-new-session.js';
 import { visibleMessages } from './remote-messages.js';
@@ -55,7 +57,7 @@ async function changeModel() {
   modelSaving = true; updateComposer(); $('modelState').textContent = '正在保存…';
   try {
     const response = await fetch('/api/sessions/' + encodeURIComponent(sid) + '/model', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({llm_key:key})});
-    if (response.status === 401) { location.href = '/_gateway/login'; return; }
+    if (response.status === 401) { clearImagePreviews(); location.href = '/_gateway/login'; return; }
     if (!response.ok) throw Error('切换失败 (' + response.status + ')：' + (await response.text()).slice(0,140));
     const updated = await response.json();
     sessions = sessions.map(s => s.id === sid ? updated : s);
@@ -97,10 +99,11 @@ async function uploadFiles(files) {
   try {
     for (const file of files) {
       if ((attachmentDrafts.get(sid) || []).length >= 8) throw Error('每条消息最多 8 个附件');
-      if (file.size > 20 * 1024 * 1024) throw Error('单个附件不能超过 20 MB');
+      if (!transferExtensions.has('.' + file.name.split('.').pop().toLowerCase())) throw Error('不支持此文件类型：' + file.name);
+      if (file.size > 20 * 1024 * 1024) throw Error('单个附件不能超过 20 MiB');
       const body = new FormData(); body.append('file', file);
       const response = await fetch('/api/upload', {method:'POST', body});
-      if (response.status === 401) { location.href = '/_gateway/login'; return; }
+      if (response.status === 401) { clearImagePreviews(); location.href = '/_gateway/login'; return; }
       if (!response.ok) throw Error('上传失败 (' + response.status + ')：' + (await response.text()).slice(0,140));
       const uploaded = await response.json();
       attachmentDrafts.set(sid, [...(attachmentDrafts.get(sid) || []), uploaded]);
@@ -113,7 +116,7 @@ async function stopRun() {
   const sid = selected; stopping = true; updateComposer(); notice(null);
   try {
     const response = await fetch('/api/sessions/' + encodeURIComponent(sid) + '/abort', {method:'POST'});
-    if (response.status === 401) { location.href = '/_gateway/login'; return; }
+    if (response.status === 401) { clearImagePreviews(); location.href = '/_gateway/login'; return; }
     if (!response.ok) throw Error('停止失败 (' + response.status + ')：' + (await response.text()).slice(0,140));
     const runtime = await response.json();
     if (selected === sid) { runtimeStatus = runtime.status || 'aborting'; await loadMessages(); }
@@ -123,7 +126,7 @@ async function stopRun() {
 
 async function api(path, signal) {
   const response = await fetch(path, {cache: 'no-store', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000)});
-  if (response.status === 401) { location.href = '/_gateway/login'; throw Error('请重新登录'); }
+  if (response.status === 401) { clearImagePreviews(); location.href = '/_gateway/login'; throw Error('请重新登录'); }
   if (!response.ok) throw Error('请求失败 (' + response.status + ')：' + (await response.text()).slice(0, 140));
   return response.json();
 }
@@ -278,7 +281,7 @@ async function sendInstruction(event) {
     const response = await fetch('/api/sessions/' + encodeURIComponent(sid) + '/runs', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(submission)
     });
-    if (response.status === 401) { location.href = '/_gateway/login'; return; }
+    if (response.status === 401) { clearImagePreviews(); location.href = '/_gateway/login'; return; }
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 300);
       if (response.status < 500) pending.delete(sid);
@@ -350,3 +353,6 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('online', () => { if (!document.hidden && selected) { live.open(selected); syncCurrent().catch(quietNotice); } });
 setInterval(() => { if (!document.hidden) loadSessions().catch(notice); }, 5000);
+
+$('fileInput').accept = [...transferExtensions].join(',');
+$('attach').title = '文档、图片、文本源码、压缩包；单文件 20 MiB，待发送附件 30 分钟有效';

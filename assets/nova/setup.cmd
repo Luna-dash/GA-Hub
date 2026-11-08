@@ -4,7 +4,7 @@ where python >nul 2>nul || (echo Install Python 3.11+ and enable Add to PATH fir
 where node >nul 2>nul || (echo Install Node.js LTS first. & pause & exit /b 1)
 python -m venv .venv
 if errorlevel 1 goto failed
-.venv\Scripts\python.exe -m pip install "aiohttp>=3.13,<4" "psutil>=6,<8" "pywin32>=308"
+.venv\Scripts\python.exe -m pip install "aiohttp>=3.13,<4" "psutil>=6,<8" "pywin32>=308" "Pillow>=11.3,<13"
 if errorlevel 1 goto failed
 echo Setup complete. Run pair.cmd next.
 pause

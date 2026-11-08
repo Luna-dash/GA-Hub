@@ -8,7 +8,7 @@ from remote_progress import ProgressHub
 import aiohttp
 from aiohttp import web
 import psutil, win32cred
-from artifacts import ArtifactStore
+from artifacts import ArtifactStore, allowed_file, MAX_FILE, TTL
 PUBLIC='gahub.lunadash.me'
 PORT,ADMIN_PORT=47831,47832
 CRED='GA-Hub/remote-access/password'
@@ -104,20 +104,21 @@ class Gateway:
         if r.headers.get('Origin')!='https://'+PUBLIC:raise web.HTTPForbidden(text='Origin required')
         if r.query_string or r.content_type!='multipart/form-data':raise web.HTTPBadRequest(text='Multipart file required')
         now=time.monotonic()
-        self.uploads={k:v for k,v in self.uploads.items() if now-v[0]<43200}
+        self.uploads={k:v for k,v in self.uploads.items() if now-v[0]<TTL}
         if len(self.uploads)>=256:raise web.HTTPTooManyRequests(text='Upload cache full')
         async with self.upload_slots:
             try:
                 reader=await r.multipart();part=await reader.next()
                 if part is None or part.name!='file' or not part.filename:raise web.HTTPBadRequest(text='One file required')
                 name=part.filename.replace('\\','/').rsplit('/',1)[-1][:255]
+                if not allowed_file(name): raise web.HTTPUnsupportedMediaType(text='File type not allowed')
                 size=0
                 with tempfile.SpooledTemporaryFile(max_size=1024*1024) as spool:
                     while True:
                         chunk=await part.read_chunk(65536)
                         if not chunk:break
                         size+=len(chunk)
-                        if size>20*1024*1024:raise web.HTTPRequestEntityTooLarge(max_size=20*1024*1024,actual_size=size)
+                        if size>MAX_FILE:raise web.HTTPRequestEntityTooLarge(max_size=MAX_FILE,actual_size=size)
                         spool.write(chunk)
                     if await reader.next() is not None:raise web.HTTPBadRequest(text='One file per upload required')
                     spool.seek(0);form=aiohttp.FormData()
@@ -129,7 +130,7 @@ class Gateway:
                 ref={'path':data['path'],'name':data['name'],'size':data['size'],'source':'managed_upload'}
                 uid=secrets.token_urlsafe(24)
                 self.uploads[uid]=(time.monotonic(),r.cookies.get(COOKIE),ref)
-                return web.json_response({'upload_id':uid,'name':ref['name'],'size':ref['size']})
+                return web.json_response({'upload_id':uid,'name':ref['name'],'size':ref['size'],'expires_at':int(time.time()+TTL)})
             except (ValueError,KeyError,AssertionError):raise web.HTTPBadRequest(text='Invalid upload')
             except (aiohttp.ClientError,asyncio.TimeoutError):raise web.HTTPBadGateway(text='Upload failed; retry before sending')
     async def project_catalog(self):
@@ -204,9 +205,9 @@ class Gateway:
         now=time.monotonic();attachments=[]
         for uid in ids:
             entry=self.uploads.get(uid)
-            if not entry or now-entry[0]>=43200 or entry[1]!=r.cookies.get(COOKIE):raise web.HTTPBadRequest(text='Attachment expired or not owned by this login; upload again')
+            if not entry or now-entry[0]>=TTL or entry[1]!=r.cookies.get(COOKIE):raise web.HTTPBadRequest(text='Attachment expired or not owned by this login; upload again')
             attachments.append(entry[2])
-        self.submissions={k:v for k,v in self.submissions.items() if not v[2].done() or now-v[0]<43200}
+        self.submissions={k:v for k,v in self.submissions.items() if not v[2].done() or now-v[0]<TTL}
         key=(r.cookies.get(COOKIE),r.path,rid);fingerprint=hashlib.sha256(json.dumps([text,ids]).encode()).hexdigest()
         entry=self.submissions.get(key)
         if not entry:
@@ -309,7 +310,7 @@ class Gateway:
             return web.json_response({'llms':await self.model_catalog()})
         if r.method not in ('GET','HEAD'):raise web.HTTPForbidden(text='API not available remotely.')
         if not self.origin_ok(r):raise web.HTTPForbidden()
-        artifact=re.fullmatch(r'/api/sessions/([A-Za-z0-9_-]+)/artifacts/([A-Za-z0-9_-]{43})',r.path)
+        artifact=re.fullmatch(r'/api/sessions/([A-Za-z0-9_-]+)/artifacts/([A-Za-z0-9_-]{43})(?:/(?:thumbnail|preview))?',r.path)
         if artifact:
             if r.query_string:raise web.HTTPBadRequest(text='Query not allowed')
             return await self.artifacts.download(r,artifact[1],artifact[2],r.cookies.get(COOKIE))
@@ -317,7 +318,7 @@ class Gateway:
         pages={'/':'remote.html','/chat':'remote.html','/sessions':'remote.html','/remote.js':'remote.js','/remote.css':'remote.css'}
         if r.path in pages:
             mime='text/javascript' if r.path.endswith('.js') else 'text/css' if r.path.endswith('.css') else 'text/html'
-            return web.Response(body=(Path(__file__).parent/pages[r.path]).read_bytes(),content_type=mime,headers={'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"})
+            return web.Response(body=(Path(__file__).parent/pages[r.path]).read_bytes(),content_type=mime,headers={'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"})
         live=re.fullmatch(r'/api/sessions/([A-Za-z0-9_-]+)/live',r.path)
         if live:
             if r.method!='GET' or r.query_string:raise web.HTTPBadRequest()

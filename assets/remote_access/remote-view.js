@@ -1,3 +1,4 @@
+import { imagePreview } from './remote-images.js';
 import { markdown, transcript, visibleProcess } from './remote-render.jsx';
 export const sessionTitle = session => typeof session?.title === 'string' && session.title.trim() ? session.title.trim() : '未命名会话';
 export const el = (tag, cls, text) => { const node = document.createElement(tag); if (cls) node.className = cls; if (text !== undefined) node.textContent = text; return node; };
@@ -141,7 +142,9 @@ export function messageCard(message, sid, streaming) {
       const download = el('a','artifact-download','下载');
       download.href = file.url; download.download = file.name;
       download.setAttribute('aria-label',`下载 ${file.name}`);
-      card.append(info,download); files.append(card);
+      card.append(info,download);
+      if (file.previewable === true) card.append(imagePreview(file));
+      files.append(card);
     }
     if (files.childElementCount) article.append(files);
   }

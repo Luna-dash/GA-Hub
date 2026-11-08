@@ -24,6 +24,7 @@ class ArtifactTests(unittest.IsolatedAsyncioTestCase):
             return await self.store.download(request, request.match_info['sid'], request.match_info['token'], request.headers.get('X-Test-Owner'))
         app = web.Application()
         app.router.add_route('*', '/api/sessions/{sid}/artifacts/{token}', handler)
+        app.router.add_route('*', '/api/sessions/{sid}/artifacts/{token}/{variant:thumbnail|preview}', handler)
         self.client = TestClient(TestServer(app))
         await self.client.start_server()
 
@@ -34,6 +35,40 @@ class ArtifactTests(unittest.IsolatedAsyncioTestCase):
     def publish(self, path=None, owner='owner-a', sid='test'):
         data = {'items':[{'role':'assistant', 'compact':True, 'progress':{'final_body':'交付 [FILE:' + str(path or self.file) + ']'}}]}
         return self.store.decorate(data, sid, owner)['items'][0].get('artifacts', [])
+
+    async def test_image_thumbnail_original_and_identity(self):
+        import io
+        from PIL import Image
+        path = self.root / 'picture.png'
+        Image.new('RGB', (1600, 800), 'red').save(path)
+        file = self.publish(path)[0]
+        self.assertTrue(file['previewable'])
+        for variant in ['thumbnail', 'preview']:
+            response = await self.client.get(file['url']+'/'+variant, headers={'X-Test-Owner':'owner-a'})
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers['Content-Type'], 'image/png')
+            self.assertEqual(response.headers['Cache-Control'], 'no-store')
+            body = await response.read()
+            with Image.open(io.BytesIO(body)) as image:
+                self.assertEqual(image.size, (512,256) if variant == 'thumbnail' else (1600,800))
+            if variant == 'preview': self.assertEqual(body, path.read_bytes())
+            for owner, url in [('owner-b',file['url']), ('owner-a',file['url'].replace('/test/', '/other/'))]:
+                denied = await self.client.get(url+'/'+variant, headers={'X-Test-Owner':owner})
+                self.assertEqual(denied.status,404)
+        self.store.entries[file['url'].split('/')[-1]]['created'] -= m.TTL + 1
+        for variant in ['thumbnail','preview']:
+            response = await self.client.get(file['url']+'/'+variant,headers={'X-Test-Owner':'owner-a'})
+            self.assertEqual(response.status,404)
+
+    async def test_invalid_images_rejected(self):
+        from PIL import Image
+        path = self.root / 'broken.png'; path.write_bytes(b'<svg>bad</svg>')
+        for variant in ['thumbnail','preview']:
+            response = await self.client.get(self.publish(path)[0]['url']+'/'+variant,headers={'X-Test-Owner':'owner-a'})
+            self.assertEqual(response.status,415)
+        Image.new('1', (4001,4000)).save(path)
+        response = await self.client.get(self.publish(path)[0]['url']+'/thumbnail',headers={'X-Test-Owner':'owner-a'})
+        self.assertEqual(response.status,415)
 
     async def test_download_bytes_headers_and_head(self):
         file = self.publish()[0]
@@ -132,10 +167,18 @@ class ArtifactTests(unittest.IsolatedAsyncioTestCase):
         os.link(self.file, link)
         self.assertIsNone(self.store.resolve(str(self.file)))
         link.unlink()
-        large = self.root / 'too-large.bin'
+        large = self.root / 'too-large.txt'
         with large.open('wb') as handle:
             handle.truncate(m.MAX_FILE + 1)
         self.assertIsNone(self.store.resolve(str(large)))
+
+    async def test_type_allowlist(self):
+        for name in ['report.pdf','data.csv','picture.PNG','source.py','archive.zip']:
+            path=self.root/name;path.write_bytes(b'public')
+            self.assertIsNotNone(self.store.resolve(str(path)),name)
+        for name in ['installer.exe','script.ps1','database.sqlite','unknown.xyz']:
+            path=self.root/name;path.write_bytes(b'public')
+            self.assertIsNone(self.store.resolve(str(path)),name)
 
     async def test_eight_artifacts_limit_and_duplicates(self):
         references = []
