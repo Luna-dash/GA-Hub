@@ -10,7 +10,7 @@ import artifacts as m
 
 class ArtifactTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        parent = m.HUB / 'temp' / 'artifact-tests'
+        parent = Path(tempfile.gettempdir()) / 'gahub-artifact-tests'
         parent.mkdir(parents=True, exist_ok=True)
         self.tmp = tempfile.TemporaryDirectory(dir=parent)
         self.base = Path(self.tmp.name)
@@ -49,6 +49,29 @@ class ArtifactTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(await response.read(), b'')
         self.assertEqual(int(response.headers['Content-Length']), len(self.body))
+
+    async def test_markdown_file_links_download_and_deduplicate(self):
+        from urllib.parse import quote
+        encoded = quote(self.file.as_posix(), safe='/:')
+        win_prefix = '/' if os.name == 'nt' else ''
+        prose = f'[report](<{win_prefix}{self.file.as_posix()}:12>) [encoded]({encoded}:3:2) [FILE:{self.file}]'
+        data = {'items':[{'role':'assistant','compact':True,'progress':{'final_body':prose}}]}
+        files = self.store.decorate(data, 'test', 'owner-a')['items'][0]['artifacts']
+        self.assertEqual(len(files), 1)
+        response = await self.client.get(files[0]['url'], headers={'X-Test-Owner':'owner-a'})
+        self.assertEqual(response.status, 200)
+        self.assertEqual(await response.read(), self.body)
+
+    async def test_link_paths_decode_once_and_do_not_expand_authority(self):
+        from urllib.parse import quote
+        literal = self.root / 'report%20literal.txt'
+        literal.write_text('literal', encoding='utf-8')
+        prose = f'[FILE:{literal}] [encoded]({quote(literal.as_posix(), safe="/:")})'
+        data = {'items':[{'role':'assistant','compact':True,'progress':{'final_body':prose}}]}
+        self.assertEqual(len(self.store.decorate(data, 'test', 'owner-a')['items'][0]['artifacts']), 1)
+        for link in ['https://example.test/report.txt', 'file:///etc/passwd', '//host/share/report.txt', '../outside.txt', str(self.base / 'outside.txt')]:
+            data = {'items':[{'role':'assistant','compact':True,'progress':{'final_body':f'[bad](<{link}>)'}}]}
+            self.assertNotIn('artifacts', self.store.decorate(data, 'test', 'owner-a')['items'][0])
 
     async def test_owner_session_and_unknown_token_rejected(self):
         file = self.publish()[0]

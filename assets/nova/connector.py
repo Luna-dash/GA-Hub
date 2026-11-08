@@ -22,6 +22,7 @@ import gateway
 
 STATE = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'GAHubNova'
 CRED_PREFIX = 'GAHub.Nova.'
+ARTIFACT_ROOTS = None  # Set by the desktop host; standalone keeps legacy roots.
 
 
 class LocalGateway(gateway.Gateway):
@@ -35,7 +36,7 @@ class LocalGateway(gateway.Gateway):
         self.http = None
         self.submissions = {}
         self.uploads = {}
-        self.artifacts = gateway.ArtifactStore()
+        self.artifacts = gateway.ArtifactStore(ARTIFACT_ROOTS)
         self.upload_slots = asyncio.Semaphore(2)
         self.progress_hub = gateway.ProgressHub(self)
         self.local_secret = secrets.token_urlsafe(32)

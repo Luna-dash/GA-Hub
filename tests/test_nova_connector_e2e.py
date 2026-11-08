@@ -41,9 +41,14 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
             return ws
         async def projection(self, frame, sid):
             return {'type':'progress','session_id':sid,'runtime':frame['runtime']}
+        async def messages(r):
+            return web.json_response({'items':[{'role':'assistant','content':f'[report](<{report.as_posix()}:7>)'}]})
         app = web.Application();app.router.add_get('/api/sessions',sessions);app.router.add_get('/ws/sessions/s1',live)
+        app.router.add_get('/api/sessions/s1/messages', messages)
         backend = TestServer(app);await backend.start_server()
         with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / '验收 report.txt'
+            report.write_bytes(b'relay artifact verified')
             nova = cloud.Nova(Path(tmp)/'e2e.db')
             client = TestClient(TestServer(nova.app()));await client.start_server()
             task = None
@@ -55,7 +60,7 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                 r=await client.post('/v1/pair/approve',json={'code':pair['code']},headers=auth);self.assertEqual(r.status,200)
                 token=secrets.token_urlsafe(32);device='e'*24
                 r=await client.post('/v1/agent/pair/finish',json={**pair,'token':token,'device_id':device});self.assertEqual(r.status,200)
-                with patch.object(connector.LocalGateway,'project_progress',projection):
+                with patch.object(connector.LocalGateway,'project_progress',projection), patch.object(connector, 'ARTIFACT_ROOTS', (Path(tmp),)):
                     task=asyncio.create_task(connector.connect_once(str(client.make_url('')).rstrip('/'),device,token,str(backend.make_url('')).rstrip('/')))
                     for _ in range(100):
                         if device in nova.devices and nova.devices[device].ready:break
@@ -64,6 +69,14 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(nova.devices[device].ready)
                     r=await client.get('/d/'+device+'/api/sessions',headers=auth)
                     self.assertEqual(r.status,200);self.assertEqual((await r.json())['items'][0]['title'],'E2E')
+                    r = await client.get('/d/'+device+'/api/sessions/s1/messages?view=compact', headers=auth)
+                    self.assertEqual(r.status, 200)
+                    files = (await r.json())['items'][0]['artifacts']
+                    self.assertEqual(files[0]['name'], report.name)
+                    r = await client.get('/d/'+device+files[0]['url'], headers=auth)
+                    self.assertEqual(r.status, 200)
+                    self.assertEqual(await r.read(), report.read_bytes())
+                    self.assertIn('attachment;', r.headers['Content-Disposition'])
                     ws=await client.ws_connect('/d/'+device+'/api/sessions/s1/live',headers=auth)
                     msg=await ws.receive_json(timeout=10);self.assertEqual(msg['runtime']['status'],'running')
                     await ws.send_json({'type':'ping'});self.assertEqual((await ws.receive_json(timeout=5))['type'],'pong')

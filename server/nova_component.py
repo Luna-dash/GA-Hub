@@ -40,6 +40,13 @@ class NovaComponent:
             root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1]))
             sys.path.insert(0, str(root / 'assets' / 'nova'))
             self.connector = importlib.import_module('connector')
+            # Bundled assets live in _MEIPASS, while deliverables live in GA's
+            # configured workspace. Never derive the latter from the bundle.
+            from ._paths import conductor_deliverables_dir
+            roots = [conductor_deliverables_dir()]
+            if not getattr(sys, 'frozen', False):
+                roots.append(Path(__file__).resolve().parents[1] / 'temp')
+            self.connector.ARTIFACT_ROOTS = tuple(roots)
         return self.connector
 
     async def start(self):

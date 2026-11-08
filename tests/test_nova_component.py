@@ -27,6 +27,19 @@ class NovaComponentTest(unittest.TestCase):
         self.client.close()
         self.tmp.cleanup()
 
+    def test_frozen_artifact_roots_use_configured_deliverables_not_bundle(self):
+        import server._paths as paths
+        connector = SimpleNamespace()
+        component = NovaComponent()
+        configured = Path(self.tmp.name) / 'actual-ga' / 'temp'
+        with patch('server.nova_component.importlib.import_module', return_value=connector), \
+             patch.object(paths, 'conductor_deliverables_dir', return_value=configured), \
+             patch.object(sys, 'frozen', True, create=True), \
+             patch.object(sys, '_MEIPASS', str(Path(self.tmp.name) / 'bundle'), create=True), \
+             patch.object(sys, 'path', list(sys.path)):
+            self.assertIs(component.load(), connector)
+        self.assertEqual(connector.ARTIFACT_ROOTS, (configured,))
+
     def test_local_page_status_and_csrf(self):
         r = self.client.get('/nova')
         self.assertEqual(r.status_code, 200)

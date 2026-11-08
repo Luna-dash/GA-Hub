@@ -6,13 +6,31 @@ import re
 import secrets
 import stat
 import time
-from urllib.parse import quote
+from urllib.parse import quote, unquote
+
+# Local Markdown destinations, including angle-wrapped paths with spaces.
+REFERENCE = re.compile(r'\[FILE:([^\]\r\n]{1,2048})\]|\[[^\]\n]*\]\(\s*(?:<([^>\n]{1,2048})>|((?:[^\s()\n]|\([^()\n]*\)){1,2048}))(?:\s+"[^"\n]*")?\s*\)', re.I)
+
+
+def file_references(text):
+    """Only explicit file markers or absolute local Markdown destinations."""
+    for match in REFERENCE.finditer(text):
+        marker, angle, bare = match.groups()
+        if marker is not None:
+            yield marker  # Literal filesystem path; do not URL-decode percent signs.
+            continue
+        path = unquote(angle or bare)
+        path = re.sub(r':\d+(?::\d+)?$', '', path)  # Editor line/column suffix.
+        if re.match(r'^/[A-Za-z]:[/\\]', path):
+            path = path[1:]  # Markdown renderer's /D:/ Windows form.
+        if Path(path).is_absolute():
+            yield path
+
 
 from aiohttp import web
 
 HUB = Path(__file__).resolve().parents[2]
 DEFAULT_ROOTS = (HUB / 'temp', HUB.parent / 'GA' / 'temp')
-REFERENCE = re.compile(r'\[FILE:([^\]\r\n]{1,2048})\]', re.I)
 SENSITIVE = re.compile(r'(?:^|[._\-\s])(?:secrets?|credentials?|passwords?|passwd|tokens?|cookies?|keychain|private|session[-_]state|storage[-_]state)(?:$|[._\-\s])', re.I)
 FORBIDDEN_EXT = {'.pem', '.key', '.pfx', '.p12', '.kdbx', '.db', '.sqlite', '.sqlite3', '.log', '.har'}
 TTL = 1800
@@ -21,8 +39,8 @@ MAX_FILE = 256 * 1024 * 1024
 
 
 class ArtifactStore:
-    def __init__(self, roots=DEFAULT_ROOTS):
-        self.roots = tuple(Path(root).resolve() for root in roots)
+    def __init__(self, roots=None):
+        self.roots = tuple(Path(root).resolve() for root in (DEFAULT_ROOTS if roots is None else roots))
         self.entries = {}
         self.index = {}
 
@@ -96,14 +114,17 @@ class ArtifactStore:
                 continue
             progress = message.get('progress') or {}
             prose = progress.get('final_body') or ''
-            found = []
-            for raw in dict.fromkeys(REFERENCE.findall(prose)):
+            found, seen = [], set()
+            for raw in dict.fromkeys(file_references(prose)):
                 if len(found) >= 8:
                     break
                 result = self.resolve(raw)
                 if not result:
                     continue
                 path, info = result
+                if path in seen:
+                    continue
+                seen.add(path)
                 key = (owner, sid, str(path), self.identity(info))
                 token = self.index.get(key)
                 if token not in self.entries:
