@@ -1,3 +1,4 @@
+import { useUnreadThemeCompletions } from '@/stores/themeCompletionStore'
 import brandIcon from '../assets/gahub-icon.png'
 import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
@@ -128,6 +129,7 @@ function NavIcon({ name }: { name: NavIconName }) {
   )
 }
 export function SidebarNav() {
+  const unreadTheme = useUnreadThemeCompletions()
   const [items, setItems] = useState<NavItem[]>(() => getVisibleNavItems())
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(storageKeys.sidebarCollapsed) === '1')
   const openCommandPalette = () => window.dispatchEvent(new Event('gahub:command-palette'))
@@ -202,7 +204,7 @@ export function SidebarNav() {
               clsx('ga-sidebar-item', collapsed && 'ga-sidebar-item-collapsed', isActive && 'active')
             }
           >
-            <span className="ga-nav-icon" aria-hidden="true"><NavIcon name={it.icon} /></span>
+            <span className="ga-nav-icon relative"><span aria-hidden="true"><NavIcon name={it.icon} /></span>{it.id === 'theme-tasks' && unreadTheme && <span role="status" aria-label="主题任务有未读完成结果" className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-bg-deep" />}</span>
             {!collapsed && (
               <>
                 <span className="ga-nav-label">{it.label}</span>

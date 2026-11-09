@@ -5,6 +5,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { SidebarNav } from './SidebarNav'
+import { recordThemeCompletion, readThemeCompletion } from '@/stores/themeCompletionStore'
+import type { ThemeRun } from '@/api/types'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -33,6 +35,21 @@ describe('SidebarNav', () => {
       )
     })
   }
+
+  it('shows the completion dot on the theme icon in both layouts and clears only after reading', async () => {
+    await renderNav()
+    const run: ThemeRun = { session_id: 's1', run_id: 'r1', started_at: 1, finished_at: 2, turns: 1, model_key: null, model_name: null, outcome: 'completed', report: 'done' }
+    const dot = () => host.querySelector('[aria-label="主题任务有未读完成结果"]')
+    expect(dot()).toBeNull()
+    act(() => recordThemeCompletion('s1', run))
+    expect(dot()?.closest('a')?.getAttribute('href')).toBe('/theme-tasks')
+    act(() => (host.querySelector('[aria-label="折叠/展开导航栏"]') as HTMLButtonElement).click())
+    expect(dot()).not.toBeNull()
+    act(() => readThemeCompletion('s1', run))
+    expect(dot()).toBeNull()
+    act(() => recordThemeCompletion('s1', run))
+    expect(dot()).toBeNull()
+  })
 
   it('collapses to icon rail with logo and expand toggle, then expands back', async () => {
     await renderNav()

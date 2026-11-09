@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { hasUnreadThemeCompletions } from '@/stores/themeCompletionStore'
 import ThemeTasks from './ThemeTasks'
 import { api } from '@/api/client'
 import { writeClipboard } from '@/utils/clipboard'
@@ -17,7 +18,7 @@ vi.mock('@/api/client', () => ({ api: {
   themeConfig: vi.fn(async () => ({})),
   updateSessionModel: vi.fn(async () => ({})),
   sessions: vi.fn(async () => ({ items: [{ id: 'one', title: '签到', llm_key: 'model', theme_task: { title: '签到', instruction: '检查签到' } }] })),
-  themeRun: vi.fn(async () => ({ run: { started_at: 10, finished_at: 20, turns: 2, outcome: 'completed', report: '**LLM Running (Turn 1) ...**\n<summary>检查</summary>\n过程转储\n**LLM Running (Turn 2) ...**\n<summary>完成</summary>\n最终：签到成功。' } })),
+  themeRun: vi.fn(async () => ({ run: { run_id: 'run-one', started_at: 10, finished_at: 20, turns: 2, outcome: 'completed', report: '**LLM Running (Turn 1) ...**\n<summary>检查</summary>\n过程转储\n**LLM Running (Turn 2) ...**\n<summary>完成</summary>\n最终：签到成功。' } })),
   sessionRuntime: vi.fn(async () => ({ status: 'idle' })),
   llms: vi.fn(async () => ({ llms: [{ key: 'model', name: '执行模型' }] })),
 } }))
@@ -381,4 +382,11 @@ it('does not show a previous conclusion when a new run has no metrics yet', asyn
   await wait()
   expect(host.textContent).not.toContain('签到成功')
   expect(host.querySelector('[aria-label="停止主题任务：签到"]')).not.toBeNull()
+})
+
+it('keeps a completed compact card unread until its conclusion is expanded', async () => {
+  expect(hasUnreadThemeCompletions()).toBe(true)
+  const expand = host.querySelector('[aria-label="打开主题任务：签到"]') as HTMLButtonElement
+  act(() => expand.click())
+  expect(hasUnreadThemeCompletions()).toBe(false)
 })

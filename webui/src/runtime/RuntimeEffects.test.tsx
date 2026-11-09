@@ -23,6 +23,7 @@ vi.mock('@/runtime/hubEventClient', () => ({
   },
 }))
 
+vi.mock('@/hooks/useThemeCompletionEffects', () => ({ useThemeCompletionEffects: vi.fn() }))
 vi.mock('@/hooks/useDesktopNotifyEffects', () => ({
   useDesktopNotifyEffects: vi.fn(),
 }))

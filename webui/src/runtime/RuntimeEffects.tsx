@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { useThemeCompletionEffects } from '@/hooks/useThemeCompletionEffects'
 import { useQueryClient } from '@tanstack/react-query'
 import { hubEventClient } from '@/runtime/hubEventClient'
 import { useDesktopNotifyEffects } from '@/hooks/useDesktopNotifyEffects'
@@ -76,6 +77,7 @@ export function RuntimeEffects() {
   const clearConductor = useConductorStore((state) => state.clear)
   useDocumentTitle()
   useDesktopNotifyEffects()
+  useThemeCompletionEffects()
 
   // Keep the Conductor projection alive while its page is not mounted. This
   // closes the HTTP bootstrap/subscription gap and lets remounts render from

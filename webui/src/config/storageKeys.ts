@@ -47,6 +47,7 @@ export const storageKeys = {
   /** chatPerformance: '1' = performance mode enabled. */
   chatPerformance: 'gahub.chatPerformance',
   /** ThemeTasks: per-session report expanded state ('open'/'closed'). */
+  themeCompletions: 'gahub.themeCompletions.v1',
   themeReportPrefix: 'gahub.theme-report:',
   themeInstructionsPrefix: 'gahub.theme-instructions:',
   /** LEGACY pre-`gahub.` prefixes — frozen so saved prefs keep working. */

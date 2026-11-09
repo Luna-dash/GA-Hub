@@ -1,3 +1,4 @@
+import { readThemeCompletion, recordThemeCompletion } from '@/stores/themeCompletionStore'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -126,6 +127,15 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
   const model = llms.data?.llms.find(m => m.key === session.llm_key)
   const uncertain = runQuery.isError || runtimeQuery.isError
   const frozen = Boolean(run?.finished_at || run?.interrupted)
+  useEffect(() => {
+    recordThemeCompletion(session.id, run)
+    const markVisible = () => {
+      if (expanded && tab === 'report' && !active && document.visibilityState !== 'hidden') readThemeCompletion(session.id, run)
+    }
+    markVisible()
+    document.addEventListener('visibilitychange', markVisible)
+    return () => document.removeEventListener('visibilitychange', markVisible)
+  }, [session.id, run, expanded, tab, active])
   const report = themeReportConclusion(run?.report || '')
   const title = session.title
   const status = uncertain ? '状态未知' : active ? '运行中' : pending ? '提交中' : run ? outcomes[run.outcome ?? ''] ?? '执行结束' : '待执行'
