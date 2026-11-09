@@ -48,6 +48,10 @@ def _add_data_args(staged: dict[str, Path]) -> list[str]:
     args: list[str] = []
     for name, path in staged.items():
         args.extend(["--add-data", f"{path};assets/{name}"])
+    worker = ROOT / "server" / "services" / "message-presentation-worker.cjs"
+    if not worker.is_file():
+        raise RuntimeError("Build message presentation with node assets/remote_access/build-remote.cjs")
+    args.extend(["--add-data", f"{worker};server/services"])
     return args
 
 

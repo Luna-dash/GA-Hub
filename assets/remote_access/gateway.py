@@ -251,45 +251,6 @@ class Gateway:
         channel=await self.progress_hub.get(base,sid)
         return copy.deepcopy(channel.latest)
 
-    async def project_progress(self, frame, sid):
-        state=frame.get('runtime') or frame
-        runtime={k:state[k] for k in ('session_id','status','run_id','stream_id','completed_run_id','outcome','error') if k in state}
-        active=frame.get('active_message')
-        streams=list(frame.get('streams') or [])
-        if active:
-            streams=[s for s in streams if s.get('stream_id')!=active.get('stream_id')]
-            streams.append({**active,'run_id':active.get('run_id') or runtime.get('run_id')})
-        streams.sort(key=lambda s:s.get('started_at') or s.get('ts') or 0)
-        items=[]
-        seen_users=set()
-        for stream in streams:
-            if not stream.get('run_id'):continue
-            if stream.get('session_id') not in (None,sid):continue
-            identity={k:stream.get(k) for k in ('run_id','logical_id','stream_id')}
-            run_id=stream['run_id']
-            if stream.get('query') and run_id not in seen_users:
-                items.append({**identity,'role':'user','content':stream['query'],'ordinal':10**12+len(items)})
-                seen_users.add(run_id)
-            items.append({**identity,'role':'assistant','content':stream.get('content',''),
-                'turn_segs':stream.get('turn_segs'),'streaming':not stream.get('done',False) or (runtime.get('status')=='running' and runtime.get('run_id')==run_id),
-                'ordinal':10**12+len(items)})
-        projected=await self.compact_messages({'items':items}, lane='progress')
-        # Retries/continuations are physical streams of one logical reply.
-        merged=[]
-        for item in projected['items']:
-            if item['role']!='assistant':
-                merged.append(item);continue
-            previous=next((i for i in merged if i['role']=='assistant' and i.get('run_id')==item.get('run_id')),None)
-            if previous is None:
-                merged.append(item);continue
-            offset=previous['progress']['turn_count']
-            previous['progress']['turns'].extend({**t,'turn':offset+n+1} for n,t in enumerate(item['progress']['turns']))
-            previous['progress']['turn_count']+=item['progress']['turn_count']
-            previous['progress']['final_body']=item['progress']['final_body']
-            previous['progress']['question']=item['progress']['question']
-            previous['content']+='\n'+item['content']
-            previous['streaming']=previous['streaming'] or item['streaming']
-        return {'runtime':runtime,'items':merged}
     async def handle(self,r):
         if r.host.split(':')[0] not in (PUBLIC,'127.0.0.1','localhost'):raise web.HTTPMisdirectedRequest()
         if r.path=='/_gateway/login':
@@ -385,13 +346,13 @@ class Gateway:
         if not (SAFE.fullmatch(r.path) or re.fullmatch(r'/ws/sessions/[A-Za-z0-9_-]+',r.path)):raise web.HTTPNotFound()
         base=await self.backend()
         if r.path.endswith('/messages') and r.query.get('view')=='compact':
-            query=[(k,v) for k,v in r.query.items() if k!='view']
             try:
-                async with self.http.get(base+r.path,params=query,headers={'Origin':base}) as up:
+                async with self.http.get(base+r.path,params=r.query,headers={'Origin':base}) as up:
                     if up.status!=200:
                         return web.Response(status=up.status,body=await up.read(),content_type=up.content_type)
-                    data=await up.json()
-                projected=await self.compact_messages(data)
+                    projected=await up.json()
+                if projected.get('presentation_version') != 1 or projected.get('session_id') != r.path.split('/')[3]:
+                    raise web.HTTPBadGateway(text='Hub message presentation unavailable; update GA-Hub.')
                 self.artifacts.decorate(projected,r.path.split('/')[3],r.cookies.get(COOKIE))
                 out=web.json_response(projected)
                 out.enable_compression()
@@ -426,47 +387,8 @@ class Gateway:
                 async for chunk in up.content.iter_any():await out.write(chunk)
                 await out.write_eof();return out
         except (aiohttp.ClientError,asyncio.TimeoutError):self.target=None;raise web.HTTPBadGateway(text='Backend disconnected. Retry shortly.')
-    async def compact_messages(self, data, lane='history'):
-        if lane == 'progress':
-            if not hasattr(self, '_progress_projector'):
-                self._progress_projector=object.__new__(Gateway)
-            return await self._progress_projector.compact_messages(data)
-        # One persistent worker reuses the canonical WebUI transcript scanner.
-        if not hasattr(self, '_compact_lock'):
-            self._compact_lock=asyncio.Lock();self._compact_worker=None
-        async with self._compact_lock:
-            worker=self._compact_worker
-            try:
-                if worker is None or worker.returncode is not None:
-                    node=shutil.which('node')
-                    if not node:raise RuntimeError('Node runtime unavailable')
-                    # This gateway also runs standalone, without server imports.
-                    # Redirected stdio alone does not suppress a Windows console.
-                    # CREATE_NO_WINDOW covers both lazy workers and their restarts.
-                    spawn_kwargs = {'creationflags': 0x08000000} if sys.platform == 'win32' else {}
-                    worker=await asyncio.create_subprocess_exec(node,str(Path(__file__).with_name('compact-worker.cjs')),
-                        stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.DEVNULL,limit=32*1024*1024,**spawn_kwargs)
-                    self._compact_worker=worker
-                async def project():
-                    worker.stdin.write(json.dumps(data,ensure_ascii=True).encode()+b'\n')
-                    await worker.stdin.drain()
-                    result=json.loads(await worker.stdout.readline())
-                    if not isinstance(result.get('items'),list):raise ValueError('Invalid projection')
-                    return result
-                return await asyncio.wait_for(project(),timeout=20)
-            except Exception:
-                if worker and worker.returncode is None:
-                    worker.kill();await worker.wait()
-                self._compact_worker=None
-                raise web.HTTPBadGateway(text='Lightweight history unavailable. Retry shortly.')
-
     async def close(self):
         await self.progress_hub.close()
-        for owner in (self, getattr(self, '_progress_projector', None)):
-            worker=getattr(owner, '_compact_worker', None)
-            if worker and worker.returncode is None:
-                worker.kill();await worker.wait()
         await self.http.close()
 
     async def admin(self,r):

@@ -7,6 +7,9 @@ import time
 import uuid
 from typing import Annotated
 
+from server.services.message_presentation import presentation_of
+
+from fastapi.responses import JSONResponse
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 
 # _paths must be imported before `frontends`: its module-level bootstrap
@@ -247,6 +250,8 @@ async def get_session(lifecycle: SessionDomain, session_id: str) -> HubSession:
 async def get_session_messages(
     lifecycle: SessionDomain,
     session_id: str,
+    request: Request,
+    view: str = Query(default="full", pattern="^(full|compact)$"),
     before: int | None = Query(default=None, ge=0),
     limit: int | None = Query(default=None, ge=1, le=200),
     max_chars: int | None = Query(default=None, ge=10_000, le=8_000_000),
@@ -272,7 +277,13 @@ async def get_session_messages(
             "history_unavailable",
             "历史消息暂时不可用，请稍后重试。",
         )
-    return SessionMessagesResp(session_id=session_id, **projection)
+    page = SessionMessagesResp(session_id=session_id, **projection)
+    if view == "compact":
+        data = page.model_dump(mode="json")
+        for item in data["items"]:
+            item["session_id"] = session_id
+        return JSONResponse(await presentation_of(request.app).page(data))
+    return page
 
 
 @router.patch("/api/sessions/{session_id}")
@@ -560,10 +571,12 @@ async def session_events(ws: WebSocket, session_id: str):
         len(subscription.replay), subscription.boundary_id,
     )
 
+    compact = ws.query_params.get("view") == "compact"
+
     async def send_snapshot() -> None:
         state, active_message = lifecycle.coordinator().session_snapshot(session_id)
         runtime_payload = _state_payload(state)
-        await ws.send_json({
+        snapshot = {
             "type": "snapshot",
             **runtime_payload,
             "runtime": runtime_payload,
@@ -571,7 +584,10 @@ async def session_events(ws: WebSocket, session_id: str):
             "active_message": ({k: v for k, v in active_message.items() if k != "streams"}
                                if active_message else None),
             "epoch": bus.epoch,
-        })
+        }
+        if compact:
+            snapshot = await presentation_of(ws.app).progress(snapshot, session_id)
+        await ws.send_json(snapshot)
 
     try:
         if subscription.resync_reason is not None:
@@ -590,7 +606,7 @@ async def session_events(ws: WebSocket, session_id: str):
 
         # Replay first; a fresh baseline is required even for a valid cursor:
         # a transport cursor says nothing about whether the UI retained its view.
-        if after_event_id is not None and subscription.resync_reason is None:
+        if not compact and after_event_id is not None and subscription.resync_reason is None:
             for event in subscription.replay:
                 frame = _session_event_frame(session_id, event)
                 if frame is not None:
@@ -615,7 +631,10 @@ async def session_events(ws: WebSocket, session_id: str):
             async for event in subscription.live():
                 frame = _session_event_frame(session_id, event)
                 if frame is not None:
-                    await ws.send_json(frame)
+                    if compact:
+                        await send_snapshot()
+                    else:
+                        await ws.send_json(frame)
             if subscription.live_resync_reason is not None:
                 log.warning(
                     "session_ws_resync session_id=%s ws_connection_id=%s "

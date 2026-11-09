@@ -684,3 +684,32 @@ def test_invalid_project_display_name_does_not_create_workspace(tmp_path, monkey
         pytest.fail("invalid name must be rejected before creating workspace")
     monkeypatch.setattr(sessions.workspace_bridge, "prepare_workspace", unexpected)
     assert client.post("/api/projects", json={"path": "D:/demo", "display_name": label}).status_code == 422
+
+
+def test_compact_messages_uses_hub_presentation(tmp_path, monkeypatch):
+    archive = tmp_path / "compact_archive.txt"
+    archive.write_text(
+        '=== Prompt === 2026-08-05 09:10:11\n'
+        '{"content":[{"type":"text","text":"compact question"}]}\n'
+        '=== Response === 2026-08-05 09:10:12\n'
+        "[{'type': 'text', 'text': '<summary>Plan</summary>Public answer'}]\n",
+        encoding="utf-8",
+    )
+    with _client(tmp_path, monkeypatch) as client:
+        sid = client.post("/api/sessions", json={"title": "Compact"}).json()["id"]
+        _store_of(client).bind_archive(sid, archive)
+        try:
+            full = client.get(f"/api/sessions/{sid}/messages").json()
+            response = client.get(f"/api/sessions/{sid}/messages?view=compact")
+            assert response.status_code == 200
+            compact = response.json()
+            assert compact["presentation_version"] == 1
+            for key in ("session_id", "revision", "total", "has_more", "next_before"):
+                assert compact[key] == full[key]
+            assert [i["id"] for i in compact["items"]] == [i["id"] for i in full["items"]]
+            assert compact["items"][0]["content"] == "compact question"
+            answer = compact["items"][1]
+            assert answer["progress"]["turns"][0]["summary"] == "Plan"
+            assert "Public answer" in answer["content"]
+        finally:
+            client.portal.call(client.app.state.message_presentation.close)

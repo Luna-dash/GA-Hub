@@ -319,3 +319,44 @@ def test_recovery_snapshot_sends_all_segments_with_latest_active_message(tmp_pat
             assert snapshot['streams'] == parts
             assert snapshot['active_message']['stream_id'] == 'b'
             assert 'streams' not in snapshot['active_message']
+
+
+def test_compact_websocket_uses_real_hub_presenter(tmp_path, monkeypatch):
+    app, sid = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        try:
+            with client.websocket_connect(f"/ws/sessions/{sid}?view=compact") as ws:
+                frame = ws.receive_json()
+                assert frame["type"] == "progress"
+                assert frame["session_id"] == sid
+                assert frame["presentation_version"] == 1
+                assert frame["runtime"]["run_id"] == "run-a"
+                assert "streams" not in frame
+                assert ws.receive_json()["type"] == "replay_done"
+                ws.send_json({"type": "ping"})
+                assert ws.receive_json()["type"] == "pong"
+        finally:
+            client.portal.call(app.state.message_presentation.close)
+
+
+def test_hub_presentation_rejects_cross_session_snapshot():
+    from server.services.message_presentation import MessagePresentation
+
+    async def check():
+        presenter = MessagePresentation()
+        try:
+            frame = {"type": "snapshot", "session_id": "A", "runtime": {
+                "session_id": "A", "status": "running", "run_id": "r", "stream_id": "s",
+            }, "streams": []}
+            for key in ("runtime", "active_message"):
+                bad = {**frame, key: {"session_id": "B"}}
+                with pytest.raises(RuntimeError, match="Invalid message presentation response"):
+                    await presenter.progress(bad, "A")
+            with pytest.raises(RuntimeError, match="Invalid message presentation response"):
+                await presenter.progress({**frame, "streams": [{"session_id": "B"}]}, "A")
+            with pytest.raises(ValueError, match="Snapshot session mismatch"):
+                await presenter.progress(frame, "B")
+        finally:
+            await presenter.close()
+
+    asyncio.run(check())

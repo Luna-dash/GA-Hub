@@ -13,8 +13,8 @@
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import clsx from 'clsx'
+import { messagePresentation } from '@/utils/messagePresentation'
 import {
-  parseAssistantTranscript,
   hasAssistantExecutionTrace,
   renderAskUserPayload,
   type AssistantTranscript,
@@ -173,7 +173,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
   const tone = bubbleTone(role)
   const timeLabel = formatMessageTime(timestamp)
   const runningTranscript = useMemo(() => role === 'assistant' && !compact && streaming && !stopped
-    ? parseAssistantTranscript(content, true, turnSegments) : null, [role, compact, streaming, stopped, content, turnSegments])
+    ? messagePresentation(content, true, turnSegments) : null, [role, compact, streaming, stopped, content, turnSegments])
   const runningTask = Boolean(runningTranscript && (runningTranscript.turns.length > 0 || hasAssistantExecutionTrace(content)))
   const shouldProjectTranscript = Boolean(
     role === 'assistant'
@@ -182,7 +182,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
     && !recoveryNotice,
   )
   const historyTranscript = useMemo(
-    () => shouldProjectTranscript ? parseAssistantTranscript(content, false, turnSegments) : null,
+    () => shouldProjectTranscript ? messagePresentation(content, false, turnSegments) : null,
     [content, turnSegments, shouldProjectTranscript],
   )
   const useHistoryProjection = Boolean(
@@ -283,7 +283,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
           </div>
           <div className="min-w-0 max-w-full" style={messageFontStyle}>
             {runningTask && runningTranscript ? (
-              <RunningTranscript transcript={runningTranscript} recoveryTitle={recoveryNotice && /max_tokens|上限|续接|截断/i.test(recoveryNotice) ? '输出达到上限 · 自动续接' : recoveryNotice && /重试|retry/i.test(recoveryNotice) ? '自动重试' : '自动重连'} recoveryStatus={recoveryStatus} recoveryBeforeTurn={recoveryActive ? parseAssistantTranscript(content.slice(0, boundary), true).turns.length : undefined} askUserDraftKey={askUserDraftKey} askUserInteractive={askUserInteractive} />
+              <RunningTranscript transcript={runningTranscript} recoveryTitle={recoveryNotice && /max_tokens|上限|续接|截断/i.test(recoveryNotice) ? '输出达到上限 · 自动续接' : recoveryNotice && /重试|retry/i.test(recoveryNotice) ? '自动重试' : '自动重连'} recoveryStatus={recoveryStatus} recoveryBeforeTurn={recoveryActive ? messagePresentation(content.slice(0, boundary), true).turns.length : undefined} askUserDraftKey={askUserDraftKey} askUserInteractive={askUserInteractive} />
             ) : useHistoryProjection && historyTranscript ? (
               <HistoryTranscriptReply
                 transcript={historyTranscript}

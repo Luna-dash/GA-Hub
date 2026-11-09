@@ -4,6 +4,9 @@ import importlib.util
 import json
 import unittest
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from server.services.message_presentation import MessagePresentation
 from aiohttp import web, ClientSession, FormData
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -14,6 +17,7 @@ spec.loader.exec_module(m)
 class GatewayTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.calls = []
+        self.presenter = MessagePresentation()
         async def backend(request):
             data = await request.json()
             self.calls.append((request.path, data, request.headers.get('Origin')))
@@ -58,19 +62,21 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             return web.json_response({'id':'test',**data})
         async def messages(request):
             self.message_query=dict(request.query)
-            return web.json_response({'items':[
+            data = {'items':[
                 {'role':'user','content':'保留问题','ordinal':0},
                 {'role':'assistant','content':'正文\n🛠️ Tool: `shell`\n````json\n{"secret":"tool-args"}\n````\n````text\ntool-output\n````\n最终答案',
                  'ordinal':1,'turn_segs':[{'start':0}]}],
-                'has_more':True,'next_before':0,'total':2})
-        self.snapshot = {'type':'snapshot','runtime':{'status':'running','run_id':'run-live'},'streams':[]}
+                'has_more':True,'next_before':0,'total':2,'session_id':'test'}
+            return web.json_response(await self.presenter.page(data) if request.query.get('view') == 'compact' else data)
+        self.snapshot = {'type':'snapshot','session_id':'test','runtime':{'status':'running','run_id':'run-live'},'streams':[]}
         self.sockets = set()
         self.ws_connections = 0
         async def snapshot(request):
             ws=web.WebSocketResponse();await ws.prepare(request)
             self.ws_connections += 1
             self.sockets.add(ws)
-            await ws.send_json(self.snapshot)
+            self.assertEqual(request.query.get('view'), 'compact')
+            await ws.send_json(await self.presenter.progress(self.snapshot, 'test'))
             try:
                 async for _ in ws:pass
             finally:self.sockets.discard(ws)
@@ -115,10 +121,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         await self.client.close()
         await self.g.close()
         await self.up.close()
-        worker=getattr(self.g,'_compact_worker',None)
-        if worker and worker.returncode is None:
-            worker.stdin.close()
-            await asyncio.wait_for(worker.wait(),5)
+        await self.presenter.close()
 
     async def test_upload_and_attachment_submit(self):
         form=FormData();form.add_field('file',b'x'*70000,filename='hello.txt')
@@ -403,29 +406,64 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         from unittest.mock import patch
         real_spawn = asyncio.create_subprocess_exec
         with patch.object(m.asyncio, 'create_subprocess_exec', wraps=real_spawn) as spawn:
-            for lane in ('history', 'progress'):
-                with self.subTest(lane=lane):
+            for lane in ('history',):
+                with self.subTest(kind=lane):
                     data = {'items': [{'role': 'user', 'content': 'console regression'}]}
-                    result = await self.g.compact_messages(data, lane=lane)
+                    result = await self.presenter.page(data, kind=lane)
                     self.assertEqual(result['items'][0]['content'], 'console regression')
                     flags = spawn.call_args.kwargs.get('creationflags', 0)
                     self.assertEqual(bool(flags & 0x08000000), os.name == 'nt')
                     count = spawn.call_count
-                    await self.g.compact_messages(data, lane=lane)
+                    await self.presenter.page(data, kind=lane)
                     self.assertEqual(spawn.call_count, count)
-                    owner = self.g if lane == 'history' else self.g._progress_projector
-                    owner._compact_worker.kill()
-                    await owner._compact_worker.wait()
-                    await self.g.compact_messages(data, lane=lane)
+                    owner = self.presenter
+                    owner._worker.kill()
+                    await owner._worker.wait()
+                    await self.presenter.page(data, kind=lane)
                     self.assertEqual(spawn.call_count, count + 1)
                     flags = spawn.call_args.kwargs.get('creationflags', 0)
                     self.assertEqual(bool(flags & 0x08000000), os.name == 'nt')
+
+    async def test_compact_cancel_does_not_shift_other_sessions(self):
+        from unittest.mock import patch
+        for lane in ('history',):
+            with self.subTest(kind=lane):
+                await self.presenter.page({'items': []}, kind=lane)
+                owner = self.presenter
+                worker = owner._worker
+                reading = asyncio.Event()
+
+                async def pause_before_read():
+                    # The request has reached the real Node worker, but its reply
+                    # must remain unread when the owning request is cancelled.
+                    reading.set()
+                    await asyncio.Event().wait()
+
+                with patch.object(worker.stdout, 'readline', pause_before_read):
+                    task = asyncio.create_task(self.presenter.page({'items': [
+                        {'role': 'assistant', 'run_id': 'cancelled-session',
+                         'content': '<summary>Cancelled session only</summary>'}
+                    ]}, kind=lane))
+                    try:
+                        await asyncio.wait_for(reading.wait(), 5)
+                    finally:
+                        task.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await task
+                for run_id in ('session-b', 'session-c', 'session-d'):
+                    result = await self.presenter.page({'items': [
+                        {'role': 'assistant', 'run_id': run_id, 'content': run_id}
+                    ]}, kind=lane)
+                    self.assertEqual([item['run_id'] for item in result['items']], [run_id])
+                    self.assertEqual(result['items'][0]['content'], run_id)
+                self.assertIsNot(owner._worker, worker)
+                self.assertIsNotNone(worker.returncode)
 
     async def test_compact_history_preserves_pagination_and_text(self):
         r=await self.client.get('/api/sessions/test/messages?view=compact&limit=40&before=5',headers=self.headers)
         self.assertEqual(r.status,200)
         data=await r.json()
-        self.assertEqual(self.message_query,{'limit':'40','before':'5'})
+        self.assertEqual(self.message_query,{'view':'compact','limit':'40','before':'5'})
         self.assertEqual(data['has_more'],True)
         self.assertEqual(data['next_before'],0)
         self.assertEqual(data['items'][0]['content'],'保留问题')
@@ -446,7 +484,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             '🛠️ shell({"x":1})\n````text\n工具结果\n````\n保留回复',
             '只有正文',
         ]
-        data=await self.g.compact_messages({'items':[{'role':'assistant','content':c,'ordinal':i} for i,c in enumerate(contents)]})
+        data=await self.presenter.page({'items':[{'role':'assistant','content':c,'ordinal':i} for i,c in enumerate(contents)]})
         text=[i['content'] for i in data['items']]
         self.assertIn('<thinking>保留代码</thinking>',text[0])
         self.assertNotIn('隐藏',text[0])
@@ -456,7 +494,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_compact_preserves_questions(self):
         raw='🛠️ Tool: `functions.ask_user`\n````json\n{"question":"请选择方案", "candidates":["方案一","方案二"]}\n````\n'
-        data=await self.g.compact_messages({'items':[{'role':'assistant','content':raw}]})
+        data=await self.presenter.page({'items':[{'role':'assistant','content':raw}]})
         text=data['items'][0]['content']
         self.assertIn('请选择方案',text)
         self.assertIn('方案一',text)
@@ -472,7 +510,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             channel = self.g.progress_hub.channels.get((str(self.up.make_url('')).rstrip('/'), 'test'))
             if channel:
                 revision = channel.revision
-                for ws in self.sockets:await ws.send_json(self.snapshot)
+                for ws in self.sockets:await ws.send_json(await self.presenter.progress(self.snapshot, 'test'))
                 async with asyncio.timeout(3):
                     while channel.revision == revision:await asyncio.sleep(.01)
             r=await self.client.get('/api/sessions/test/progress',headers=self.headers)
@@ -493,13 +531,11 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(done['streaming'])
         self.assertEqual(done['progress']['turn_count'],2)
 
-    async def test_progress_merges_continuations_and_filters_foreign(self):
+    async def test_progress_uses_hub_continuation_merge(self):
         self.snapshot['streams']=[
-            {'session_id':'test','run_id':'run-live','stream_id':'first','query':'问题','content':'<summary>首轮</summary>首段','turn_segs':['<summary>首轮</summary>首段'],'done':True,'started_at':1},
-            {'session_id':'foreign','run_id':'run-live','stream_id':'foreign','content':'不可见','done':False},
-            {'session_id':'foreign','run_id':'other-run','stream_id':'other','content':'旧任务不可见','done':True},
+            {'session_id':'test','run_id':'run-live','stream_id':'first','logical_id':'answer','query':'问题','content':'<summary>首轮</summary>首段','turn_segs':['<summary>首轮</summary>首段'],'done':True,'started_at':1},
         ]
-        self.snapshot['active_message']={'session_id':'test','run_id':'run-live','stream_id':'last','query':'重复问题','content':'<summary>续跑</summary>当前段','turn_segs':['<summary>续跑</summary>当前段'],'done':False,'ts':2}
+        self.snapshot['active_message']={'session_id':'test','run_id':'run-live','stream_id':'last','logical_id':'answer','source':'auto_continue','retry_of':'first','query':'重复问题','content':'<summary>续跑</summary>当前段','turn_segs':['<summary>续跑</summary>当前段'],'done':False,'ts':2}
         r=await self.client.get('/api/sessions/test/progress',headers=self.headers)
         data=await r.json()
         self.assertEqual(len(data['items']),2)
@@ -529,7 +565,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_count_ignores_embedded_turn_markers(self):
         parts=['<summary>原生首轮</summary>代码示例\n```text\nLLM Running (Turn 99) ...\n```\n', '<summary>原生次轮</summary>最终结果']
-        data=await self.g.compact_messages({'items':[{'role':'assistant','content':''.join(parts),'turn_segs':parts}]})
+        data=await self.presenter.page({'items':[{'role':'assistant','content':''.join(parts),'turn_segs':parts}]})
         p=data['items'][0]['progress']
         self.assertEqual(p['turn_count'],2)
         self.assertEqual([t['turn'] for t in p['turns']],[1,2])
@@ -547,7 +583,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             'content':'<thinking>PRIVATE</thinking>更新正文','done':True}]
         self.snapshot['runtime']={'status':'idle','completed_run_id':'run-live'}
         self.snapshot['streams'][0]['done']=True
-        for upstream in self.sockets:await upstream.send_json(self.snapshot)
+        for upstream in self.sockets:await upstream.send_json(await self.presenter.progress(self.snapshot, 'test'))
         update=await ws.receive_json(timeout=3)
         self.assertIn('更新正文',json.dumps(update,ensure_ascii=False))
         self.assertNotIn('PRIVATE',json.dumps(update))

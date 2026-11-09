@@ -35,14 +35,15 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
         async def sessions(r):
             return web.json_response({'items': [{'id':'s1','title':'E2E'}]})
         async def live(r):
+            self.assertEqual(r.query.get('view'), 'compact')
             ws = web.WebSocketResponse();await ws.prepare(r)
-            await ws.send_json({'type':'snapshot','streams':[],'runtime':{'status':'running'}})
+            await ws.send_json({'type':'progress','session_id':'s1','presentation_version':1,
+                                'items':[], 'runtime':{'status':'running'}})
             async for _ in ws: pass
             return ws
-        async def projection(self, frame, sid):
-            return {'type':'progress','session_id':sid,'runtime':frame['runtime']}
         async def messages(r):
-            return web.json_response({'items':[{'role':'assistant','content':f'[report](<{report.as_posix()}:7>)'}]})
+            self.assertEqual(r.query.get('view'), 'compact')
+            return web.json_response({'presentation_version':1,'session_id':'s1','items':[{'role':'assistant','compact':True,'progress':{'final_body':f'[report](<{report.as_posix()}:7>)'}}]})
         app = web.Application();app.router.add_get('/api/sessions',sessions);app.router.add_get('/ws/sessions/s1',live)
         app.router.add_get('/api/sessions/s1/messages', messages)
         backend = TestServer(app);await backend.start_server()
@@ -60,7 +61,7 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                 r=await client.post('/v1/pair/approve',json={'code':pair['code']},headers=auth);self.assertEqual(r.status,200)
                 token=secrets.token_urlsafe(32);device='e'*24
                 r=await client.post('/v1/agent/pair/finish',json={**pair,'token':token,'device_id':device});self.assertEqual(r.status,200)
-                with patch.object(connector.LocalGateway,'project_progress',projection), patch.object(connector, 'ARTIFACT_ROOTS', (Path(tmp),)):
+                with patch.object(connector, 'ARTIFACT_ROOTS', (Path(tmp),)):
                     task=asyncio.create_task(connector.connect_once(str(client.make_url('')).rstrip('/'),device,token,str(backend.make_url('')).rstrip('/')))
                     for _ in range(100):
                         if device in nova.devices and nova.devices[device].ready:break

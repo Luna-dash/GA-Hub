@@ -474,6 +474,9 @@ def create_app() -> FastAPI:
             log.exception("hub session projection start failed")
 
     async def _shutdown():
+        presentation = getattr(app.state, "message_presentation", None)
+        if presentation is not None:
+            await presentation.close()
         if not runtime_initialized:
             return
         # Stop the phone projection first: no new puts should enter admission.

@@ -2,6 +2,8 @@
 
 前提：本机已安装并打开 GA-Hub；Python 3.11+（加入 PATH）、Node.js LTS。
 
+消息统一处理版连接器要求 GA-Hub 支持 `view=compact` 历史与实时接口；请先更新并重启 GA-Hub，再启动新版连接器。旧 Hub 不兼容，连接器不会回退到独立消息解析。GA-Hub 后端运行环境也必须能从 PATH 找到 Node.js。
+
 1. 完整解压 ZIP，保留 `nova` 与 `remote_access` 的相邻目录关系。
 2. 双击 `nova/setup.cmd` 安装独立 Python 环境及依赖。
 3. 双击 `nova/pair.cmd`，在 https://nova.lunadash.me/devices 登录并填写配对码。
