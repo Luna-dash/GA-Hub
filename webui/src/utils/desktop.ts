@@ -131,6 +131,9 @@ export async function referenceAttachments(paths: string[]): Promise<import('@/a
 export async function localAttachmentImageUrl(path: string): Promise<string> {
   if (!canReferenceLocalFiles()) throw new Error('本地图片预览仅限本机桌面')
   const { invoke } = await import('@tauri-apps/api/core')
-  const bytes = await invoke<ArrayBuffer>('attachment_image_preview', { path })
-  return URL.createObjectURL(new Blob([bytes]))
+  // Windows IPC may fall back to a JSON byte array instead of an ArrayBuffer.
+  // Blob([number[]]) stringifies it ("137,80,..."), corrupting the image.
+  const bytes = await invoke<ArrayBuffer | number[]>('attachment_image_preview', { path })
+  const payload = Array.isArray(bytes) ? new Uint8Array(bytes) : bytes
+  return URL.createObjectURL(new Blob([payload]))
 }

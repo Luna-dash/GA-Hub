@@ -18,17 +18,25 @@ it('allows native paths only for an authenticated local desktop backend', () => 
   expect(canReferenceLocalFiles()).toBe(true)
 })
 
-it('turns native IPC bytes into an owned preview URL without uploading', async () => {
+it.each(['ArrayBuffer', 'JSON array'] as const)('preserves exact native IPC bytes from %s without uploading', async (transport) => {
   window.__TAURI_INTERNALS__ = {}
   window.__GA_HUB_RUNTIME__ = { desktop: true, instanceToken: 'instance', apiOrigin: 'http://127.0.0.1:43123' }
-  const bytes = new Uint8Array([137, 80, 78, 71]).buffer
-  invoke.mockResolvedValueOnce(bytes)
+  const signature = [137, 80, 78, 71, 13, 10, 26, 10]
+  invoke.mockResolvedValueOnce(transport === 'ArrayBuffer' ? new Uint8Array(signature).buffer : signature)
   const create = vi.fn((_blob: Blob) => 'blob:preview')
   const NativeURL = URL
   vi.stubGlobal('URL', class extends NativeURL { static createObjectURL = create })
   await expect(localAttachmentImageUrl('C:/图片/a.png')).resolves.toBe('blob:preview')
   expect(invoke).toHaveBeenCalledWith('attachment_image_preview', { path: 'C:/图片/a.png' })
-  expect(create.mock.calls[0][0]).toBeInstanceOf(Blob)
+  const blob = create.mock.calls[0][0]
+  expect(blob).toBeInstanceOf(Blob)
+  const contents = await new Promise<ArrayBuffer>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as ArrayBuffer)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsArrayBuffer(blob)
+  })
+  expect(Array.from(new Uint8Array(contents))).toEqual(signature)
 })
 
 it('never invokes native file reads for remote backends', async () => {
