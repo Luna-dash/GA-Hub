@@ -91,7 +91,7 @@ class WindowsDependencyTests(unittest.TestCase):
         import sys
         from unittest.mock import patch
         from desktop.runtime_dependencies import WINDOWS_IMPORTS, hidden_import_args
-        self.assertEqual(set(WINDOWS_IMPORTS), {'win32cred','win32timezone'})
+        self.assertEqual(set(WINDOWS_IMPORTS), {'win32cred', 'win32timezone', 'win32file'})
         self.assertEqual(hidden_import_args('linux'), ['--hidden-import', 'rich', '--hidden-import', 'rich.cells'])
         for name in WINDOWS_IMPORTS:
             args = hidden_import_args('win32')
@@ -99,9 +99,30 @@ class WindowsDependencyTests(unittest.TestCase):
         sidecar=_load('sidecar_dependencies_test','server/desktop_sidecar.py')
         with patch.object(sys,'platform','win32'):
             self.assertTrue(set(WINDOWS_IMPORTS).issubset(sidecar.selftest_modules()))
-        source=(ROOT/'assets/nova/connector.py').read_text(encoding='utf-8')
+        sources = '\n'.join((ROOT / relative).read_text(encoding='utf-8') for relative in (
+            'assets/nova/connector.py', 'assets/remote_access/artifacts.py',
+        ))
         for name in WINDOWS_IMPORTS:
-            self.assertIn('import '+name,source)
+            self.assertIn('import ' + name, sources)
+
+    def test_selftest_rejects_missing_windows_download_dependency(self):
+        import importlib
+        import sys
+        from unittest.mock import patch
+
+        sidecar = _load('sidecar_missing_win32file_test', 'server/desktop_sidecar.py')
+        real_import = importlib.import_module
+
+        def import_without_win32file(name):
+            if name == 'win32file':
+                raise ModuleNotFoundError("No module named 'win32file'")
+            return real_import(name)
+
+        with patch.object(sys, 'platform', 'win32'), patch(
+            'importlib.import_module', side_effect=import_without_win32file,
+        ), patch.object(sidecar, '_diagnostic') as diagnostic:
+            self.assertEqual(sidecar.run_selftest(), 1)
+            self.assertIn('win32file: ModuleNotFoundError', diagnostic.call_args.args[0])
 
 
 class CommonDependencyTests(unittest.TestCase):

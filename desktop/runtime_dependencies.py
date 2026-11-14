@@ -2,12 +2,13 @@
 
 GA worldline is imported from an external checkout, so its rich.cells dependency
 is invisible to static analysis and must be frozen explicitly on every platform.
-pywin32 provides both Windows modules. win32cred loads win32timezone implicitly when
+pywin32 provides the Windows modules. win32cred loads win32timezone implicitly when
 converting CREDENTIAL.LastWritten; merely importing win32cred is insufficient.
+Artifact downloads dynamically load win32file to validate the opened file handle.
 Keep connector.py's static imports too, for third-party Python packagers.
 """
 COMMON_IMPORTS = ("rich", "rich.cells")
-WINDOWS_IMPORTS = ("win32cred", "win32timezone")
+WINDOWS_IMPORTS = ("win32cred", "win32timezone", "win32file")
 
 
 def hidden_import_args(platform: str) -> list[str]:
