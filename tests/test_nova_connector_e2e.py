@@ -26,7 +26,12 @@ cloud = None
 if (cloud_root / 'server.py').is_file():
     spec = importlib.util.spec_from_file_location('nova_cloud_e2e', cloud_root / 'server.py')
     cloud = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(cloud)
+    # Cloud-local modules (for example snapshots.py) are not installed packages.
+    sys.path.insert(0, str(cloud_root))
+    try:
+        spec.loader.exec_module(cloud)
+    finally:
+        sys.path.remove(str(cloud_root))
 
 
 @unittest.skipIf(cloud is None, 'Nova cloud checkout required; set NOVA_CLOUD_ROOT')
@@ -147,3 +152,4 @@ class SettingsAccountE2E(unittest.IsolatedAsyncioTestCase):
             finally:
                 await server.close()
                 nova.store.db.close()
+                nova.snapshots.db.close()
