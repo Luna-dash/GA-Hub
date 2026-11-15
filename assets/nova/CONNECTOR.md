@@ -20,7 +20,7 @@
 
 Hub 内置组件由服务生命周期托管；在 **设置 → Nova 远程连接** 中登录关联（也可凭邀请码注册并关联）后，随 Hub 启停。未配对时不主动建立远程连接。以上 `.cmd` 步骤用于独立源码连接器，不是内置组件的必需步骤。
 
-云端服务与门户在独立的 `GA-Hub-Nova-Cloud` 仓库维护，本目录不保留云端副本。
+云端服务与门户在独立的 `GA-Hub-Nova-Cloud` 仓库维护，本目录不保留云端副本。云端构建依赖和发布契约见该仓 `docs/MAINTENANCE.md` / `build-deps.lock.json`；修改 Nova 网页时进入云端仓，不改本机网页。连接器和本机 API 修改留在本仓；ZIP 由 `assets/nova/build_connector.py <输出路径>` 生成并在发布清单注明本仓提交。不要直接修改云端 ZIP 内代码，也不要为单纯网页更新重建或重启桌面。
 
 `tests/test_nova_connector_e2e.py` 默认使用相邻的 `GA-Hub-Nova-Cloud` 检出目录；可通过 `NOVA_CLOUD_ROOT` 指定其他位置。未提供云端源码时，该集成测试明确跳过，本机组件测试仍可运行。
 
