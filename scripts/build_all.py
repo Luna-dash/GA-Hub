@@ -555,6 +555,11 @@ def main(argv: list[str] | None = None) -> int:
             [sidecar_python, "desktop/build_sidecar.py", "--target", args.target],
         )
         run_stage("Tauri 桌面壳", tauri_stage_command(tauri, args.target))
+        if "windows" in args.target:
+            helper_output = ROOT / "temp" / "release-updater-helper"
+            run_stage("独立更新助手", [sidecar_python, "scripts/build_update_helper.py", "--output", str(helper_output)])
+            shutil.copy2(helper_output / "dist/ga-hub-update.exe",
+                         ROOT / "src-tauri/target" / args.target / "release/ga-hub-update.exe")
     except StageFailed:
         report_consistency(paths, before)
         return EXIT_STAGE_FAILED

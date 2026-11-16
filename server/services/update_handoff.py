@@ -30,6 +30,30 @@ def pinned(value: dict) -> ProcessIdentity:
     return ProcessIdentity(value["pid"], value["created"], Path(value["executable"]))
 
 
+def ensure_installed(store: UpdateStore, admin_data: Path, desktop: Path) -> None:
+    """Bootstrap the independent worker from this installation, never a URL."""
+    import sys
+    from .self_update import digest
+    if os.name != "nt" or not getattr(sys, "frozen", False):
+        return  # Developer/source installs retain the explicit installation flow.
+    source = desktop.resolve().with_name("ga-hub-update.exe")
+    installed = store.root / "bin/ga-hub-update.exe"
+    # Never replace an executing worker or its task during an active handoff.
+    if (store.root / "handoff.json").exists() and read_json(store.root / "handoff.json").get("state") in {"requested", "ready", "countdown", "switching"}:
+        return
+    if not source.is_file():
+        raise ValueError("Bundled update helper is missing; extract the complete release ZIP")
+    if installed.is_file() and digest(source) == digest(installed):
+        return
+    result = subprocess.run([str(source), "--admin-data", str(admin_data), "install"],
+                            capture_output=True, encoding="utf-8", errors="replace", timeout=100,
+                            creationflags=subprocess.CREATE_NO_WINDOW)
+    if result.returncode:
+        raise ValueError("Update worker installation failed: " + (result.stderr or result.stdout)[-1500:])
+    if not installed.is_file() or digest(source) != digest(installed):
+        raise ValueError("Installed update helper hash mismatch")
+
+
 def request(store: UpdateStore, admin: Path, plan_id: str, old_pid: int) -> dict:
     """Prepare an immutable handoff request, then wake the installed fixed task."""
     with store.lock:

@@ -98,6 +98,7 @@ jobs:
           path: |
             src-tauri/target/x86_64-pc-windows-msvc/release/ga-hub-desktop.exe
             src-tauri/target/x86_64-pc-windows-msvc/release/ga-hub-sidecar.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/ga-hub-update.exe
           if-no-files-found: error
 
       - name: Upload release package artifact

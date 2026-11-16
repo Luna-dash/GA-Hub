@@ -40,7 +40,7 @@ def checkout(tmp_path):
 def artifacts(root):
     directory = root / "src-tauri/target/x86_64-pc-windows-msvc/release"
     directory.mkdir(parents=True)
-    for name in ("ga-hub-desktop.exe", "ga-hub-sidecar.exe"):
+    for name in ("ga-hub-desktop.exe", "ga-hub-sidecar.exe", "ga-hub-update.exe"):
         (directory / name).write_bytes(name.encode())
 
 
@@ -49,7 +49,7 @@ def test_package_contains_both_exes_and_traceable_metadata(checkout):
     archive = load("package_release").package(checkout, checkout / "output", "v1.0.0")
     assert archive.name == "GA-Hub-1.0.0-windows-x64.zip"
     with zipfile.ZipFile(archive) as z:
-        assert set(z.namelist()) == {"ga-hub-desktop.exe", "ga-hub-sidecar.exe", "README.txt", "build-info.json", "update-manifest.json"}
+        assert set(z.namelist()) == {"ga-hub-desktop.exe", "ga-hub-sidecar.exe", "ga-hub-update.exe", "README.txt", "build-info.json", "update-manifest.json"}
         assert json.loads(z.read("update-manifest.json")) == {"schema": 1, "data_epoch": 1, "platform": "windows-x64"}
         info = json.loads(z.read("build-info.json"))
         assert info["version"] == "1.0.0" and info["channel"] == "stable" and not info["dirty"]

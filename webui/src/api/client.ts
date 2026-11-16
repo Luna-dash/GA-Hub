@@ -592,7 +592,16 @@ export interface UpdateStatus {
   data_epoch: number
   handoff?: { id: string; state: string; not_before?: number; error?: string } | null
 }
+export interface UpdateRelease {
+  current_version: string
+  version: string
+  available: boolean
+  tag: string
+  notes: string
+}
 export const updateApi = {
+  release: () => http<UpdateRelease>('GET', '/api/updates/release', undefined, { timeoutMs: 90000 }),
+  download: () => http<UpdatePlan>('POST', '/api/updates/release/prepare', {}, { timeoutMs: 1800000 }),
   status: () => http<UpdateStatus>('GET', '/api/updates'),
   prepare: (archive: string, sha256: string, trusted: boolean) =>
     http<UpdatePlan>('POST', '/api/updates/prepare', {

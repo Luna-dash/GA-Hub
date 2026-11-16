@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "GenericAgent Admin API",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "paths": {
     "/api/setup/status": {
@@ -161,6 +161,52 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/updates/release": {
+      "get": {
+        "tags": [
+          "updates"
+        ],
+        "summary": "Check Release",
+        "operationId": "check_release_api_updates_release_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Check Release Api Updates Release Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/updates/release/prepare": {
+      "post": {
+        "tags": [
+          "updates"
+        ],
+        "summary": "Prepare Release",
+        "operationId": "prepare_release_api_updates_release_prepare_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Prepare Release Api Updates Release Prepare Post"
                 }
               }
             }

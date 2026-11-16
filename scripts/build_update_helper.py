@@ -29,7 +29,7 @@ def main() -> None:
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile",
         "--console", "--name", "ga-hub-update", "--paths", str(ROOT),
         "--distpath", str(output / "dist"), "--workpath", str(output / "build"),
-        "--specpath", str(output), *binaries, str(ROOT / "scripts/update_helper_entry.py"),
+        "--specpath", str(output), "--add-data", f"{ROOT / 'scripts/install_update_task.ps1'};scripts", *binaries, str(ROOT / "scripts/update_helper_entry.py"),
     ], cwd=ROOT, check=True)
     print(output / "dist/ga-hub-update.exe")
 

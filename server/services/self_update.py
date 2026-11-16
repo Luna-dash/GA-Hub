@@ -19,7 +19,8 @@ from typing import Any
 from .update_lock import FileMutex
 
 EXECUTABLES = ("ga-hub-desktop.exe", "ga-hub-sidecar.exe")
-ALLOWED_MEMBERS = {*EXECUTABLES, "build-info.json", "README.txt", "update-manifest.json"}
+HELPER = "ga-hub-update.exe"
+ALLOWED_MEMBERS = {HELPER, *EXECUTABLES, "build-info.json", "README.txt", "update-manifest.json"}
 MAX_ARCHIVE_BYTES = 2 * 1024**3
 DATA_EPOCH = 1  # Changes require an explicit migration/backup strategy, not a blind rollback.
 STATES = {"prepared", "armed", "switching", "verifying", "succeeded", "rolled_back", "failed", "cancelled"}
@@ -86,7 +87,7 @@ class UpdateStore:
         if plan.get("data_epoch") != DATA_EPOCH:
             raise ValueError("Update requires an unsupported data migration")
         hashes = plan.get("sha256", {})
-        for name in EXECUTABLES:
+        for name in (*EXECUTABLES, *((HELPER,) if HELPER in hashes else ())):
             path = directory / name
             if path.is_symlink() or not path.is_file() or digest(path) != hashes.get(name):
                 raise ValueError(f"Candidate integrity check failed: {name}")
@@ -135,7 +136,7 @@ class UpdateStore:
                     if not isinstance(info.get("version"), str) or not info["version"]:
                         raise ValueError("Missing build version")
                     hashes = info.get("sha256", {})
-                    if not isinstance(hashes, dict) or set(hashes) != set(EXECUTABLES) or any(
+                    if not isinstance(hashes, dict) or set(hashes) != (set(EXECUTABLES) | ({HELPER} if HELPER in names else set())) or any(
                         not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value)
                         for value in hashes.values()
                     ):

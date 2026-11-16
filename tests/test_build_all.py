@@ -378,6 +378,11 @@ class LockTests(unittest.TestCase):
 
 
 class MainFlowTests(unittest.TestCase):
+    def setUp(self):
+        copier = mock.patch.object(build_all.shutil, "copy2")
+        self.copy_helper = copier.start()
+        self.addCleanup(copier.stop)
+
     def _patched(self):
         return (
             mock.patch.object(build_all, "acquire_build_lock", return_value=(mock.Mock(), "lock")),
@@ -426,7 +431,8 @@ class MainFlowTests(unittest.TestCase):
             with redirect_stdout(stream):
                 code = build_all.main([])
         self.assertEqual(code, 0)
-        self.assertEqual(stage.call_count, 3)  # 前端 / sidecar / tauri
+        self.assertEqual(stage.call_count, 4)  # 前端 / sidecar / tauri / helper
+        self.copy_helper.assert_called_once()
         self.assertEqual(guard.call_count, 3)
         runtime.assert_called_once()
         self.assertIn("构建链全部通过", stream.getvalue())
@@ -455,7 +461,7 @@ class MainFlowTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 code = build_all.main(["--full"])
         self.assertEqual(code, 0)
-        self.assertEqual(stage.call_count, 5)  # 前端 / pytest / vitest / sidecar / tauri
+        self.assertEqual(stage.call_count, 6)  # 前端 / pytest / vitest / sidecar / tauri / helper
 
     def test_full_chain_builds_frontend_before_backend_tests(self):
         """顺序不变式：--full 必须「先构建前端，再跑后端测试」。
@@ -479,7 +485,7 @@ class MainFlowTests(unittest.TestCase):
         titles = [call.args[0] for call in stage.call_args_list]
         self.assertEqual(
             titles,
-            ["前端生产构建", "后端测试", "前端测试", "Python sidecar", "Tauri 桌面壳"],
+            ["前端生产构建", "后端测试", "前端测试", "Python sidecar", "Tauri 桌面壳", "独立更新助手"],
         )
         self.assertLess(titles.index("前端生产构建"), titles.index("后端测试"))
 

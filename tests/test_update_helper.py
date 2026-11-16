@@ -143,3 +143,47 @@ def test_native_wait_and_candidate_stop_real_processes(tmp_path):
         if proc.poll() is None:
             proc.terminate()
             proc.wait(timeout=5)
+
+
+def test_launch_command_waits_for_launcher_before_start(tmp_path, monkeypatch):
+    seen = []
+    expected = Path(cli.sys.executable).resolve().with_name(EXECUTABLES[0])
+    def wait(timeout):
+        seen.append(("wait", timeout))
+    monkeypatch.setattr(cli.psutil, "Process", lambda pid: SimpleNamespace(exe=lambda: str(expected), wait=wait))
+    monkeypatch.setattr(cli, "outside_job", lambda: True)
+    monkeypatch.setattr(cli, "launch_current", lambda *a: seen.append(("launch",)) or 321)
+    assert cli.main(["--admin-data", str(tmp_path), "launch", "--launcher-pid", "123"]) == 0
+    assert seen == [("wait", 15), ("launch",)]
+
+
+def test_launch_command_does_not_start_if_launcher_is_alive(tmp_path, monkeypatch):
+    expected = Path(cli.sys.executable).resolve().with_name(EXECUTABLES[0])
+    def wait(timeout):
+        raise cli.psutil.TimeoutExpired(timeout)
+    monkeypatch.setattr(cli.psutil, "Process", lambda pid: SimpleNamespace(exe=lambda: str(expected), wait=wait))
+    monkeypatch.setattr(cli, "outside_job", lambda: True)
+    monkeypatch.setattr(cli, "launch_current", lambda *a: pytest.fail("must not start"))
+    assert cli.main(["--admin-data", str(tmp_path), "launch", "--launcher-pid", "123"]) == 1
+
+
+def test_ensure_installed_without_handoff_file(tmp_path, monkeypatch):
+    from server.services import update_handoff as handoff
+    import sys
+    store = UpdateStore(tmp_path / "updates")
+    desktop = tmp_path / EXECUTABLES[0]
+    source = desktop.with_name("ga-hub-update.exe")
+    source.write_bytes(b"MZ-helper-test")
+    installed = store.root / "bin/ga-hub-update.exe"
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    seen = []
+    def run(argv, **kwargs):
+        seen.append(argv)
+        installed.parent.mkdir(parents=True, exist_ok=True)
+        installed.write_bytes(source.read_bytes())
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(handoff.subprocess, "run", run)
+    handoff.ensure_installed(store, tmp_path, desktop)
+    assert len(seen) == 1 and seen[0][-1] == "install"
+    handoff.ensure_installed(store, tmp_path, desktop)
+    assert len(seen) == 1

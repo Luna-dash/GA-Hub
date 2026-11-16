@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import psutil
@@ -95,17 +96,27 @@ def main(argv: list[str] | None = None) -> int:
     request.add_argument("--old-pid", type=int, required=True)
     approve = commands.add_parser("approve", help="Explicitly approve the fixed 60-second countdown")
     approve.add_argument("--id", required=True)
+    commands.add_parser("install", help="Install the bundled fixed per-user scheduler worker")
     commands.add_parser("status")
-    commands.add_parser("launch")
+    launch_current_parser = commands.add_parser("launch")
     recover = commands.add_parser("recover")
     recover.add_argument("--plan", required=True)
     recover.add_argument("--confirm-all-exited", action="store_true")
+    launch_current_parser.add_argument("--launcher-pid", type=int)
     args = parser.parse_args(argv)
     admin = args.admin_data.resolve()
     if not admin.is_dir():
         parser.error("Admin-data directory must already exist")
     store = UpdateStore(admin / "updates")
     try:
+        if args.command == "install":
+            if not getattr(sys, "frozen", False) or os.name != "nt":
+                raise ValueError("Install requires the packaged Windows helper")
+            script = Path(sys._MEIPASS) / "scripts/install_update_task.ps1"
+            subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                            "-File", str(script), "-Helper", sys.executable, "-AdminData", str(admin)],
+                           check=True, timeout=90, creationflags=0x08000000)
+            return 0
         if args.command in {"request", "approve", "worker"}:
             from .services import update_handoff
             if args.command == "request":
@@ -156,12 +167,21 @@ def main(argv: list[str] | None = None) -> int:
                 result = store.transition(args.plan, {plan["state"]}, "cancelled",
                                           recovery="All known desktops exited; no auto-resume or data rollback")
             else:
+                if args.launcher_pid:
+                    try:
+                        launcher = psutil.Process(args.launcher_pid)
+                        expected = Path(sys.executable).resolve().with_name(EXECUTABLES[0])
+                        if Path(launcher.exe()).resolve() != expected:
+                            raise ValueError("Unexpected shortcut launcher")
+                        launcher.wait(timeout=15)
+                    except psutil.NoSuchProcess:
+                        pass
                 if not outside_job():
                     raise ValueError("Launch helper must run outside a Windows Job")
                 result = {"pid": launch_current(store, admin)}
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0 if result.get("state") not in {"failed", "rolled_back"} else 2
-    except (OSError, ValueError, KeyError, psutil.Error) as exc:
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError, psutil.Error) as exc:
         print(f"Update refused: {exc}", flush=True)
         return 1
 

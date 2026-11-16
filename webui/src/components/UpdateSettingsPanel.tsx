@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { updateApi, type UpdateStatus } from '@/api/client'
+import { updateApi, type UpdateRelease, type UpdateStatus } from '@/api/client'
 
 export function UpdateSettingsPanel() {
   const [status, setStatus] = useState<UpdateStatus | null>(null)
+  const [release, setRelease] = useState<UpdateRelease | null>(null)
   const [archive, setArchive] = useState('')
   const [sha256, setSha256] = useState('')
   const [trusted, setTrusted] = useState(false)
@@ -16,6 +17,16 @@ export function UpdateSettingsPanel() {
     const timer = window.setInterval(refresh, 2000)
     return () => { alive = false; window.clearInterval(timer) }
   }, [])
+  async function online(download = false) {
+    setBusy(true); setError('')
+    try {
+      if (download) {
+        await updateApi.download()
+        setStatus(await updateApi.status())
+      } else setRelease(await updateApi.release())
+    } catch (e) { setError(e instanceof Error ? e.message : '在线更新失败，请检查网络后重试') }
+    finally { setBusy(false) }
+  }
   async function act(cancel = false) {
     setBusy(true); setError('')
     try {
@@ -42,6 +53,17 @@ export function UpdateSettingsPanel() {
     <h2 className="font-medium">桌面程序更新</h2>
     <p className="text-sm text-amber-300">先在线准备候选包，再唤醒独立执行器；就绪后需再次确认，固定60秒倒计时结束后正常关闭并切换。不会等待所有会话空闲。</p>
     <p className="text-sm text-slate-400">仅接受可信来源的 Windows 便携发布包。校验和用于完整性验证，不能代替来源认证。准备不会退出或覆盖当前程序。</p>
+    <div className="space-y-2 rounded-lg border border-line p-3">
+      <p className="text-sm">更新源：Luna-dash/GA-Hub · GitHub 正式稳定版（不含预发布）</p>
+      <button className="rounded-lg bg-sky-600 px-3 py-2 text-sm disabled:opacity-40" disabled={busy || !status} onClick={() => void online()}>检查正式版本</button>
+      {release && <div className="text-sm" role="status">
+        当前 {release.current_version} · 最新 {release.version} · {release.available ? '有可用更新' : '已是最新版本'}
+        {release.notes && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-sans">{release.notes}</pre>}
+        {release.available && <button className="mt-2 rounded-lg border border-line px-3 py-2 disabled:opacity-40" disabled={busy || status?.plan.state === 'prepared'} onClick={() => void online(true)}>下载、校验并准备更新</button>}
+      </div>}
+      {busy && <p className="text-sm" role="status">正在处理，请勿重复操作。下载及预检可能需要数分钟。</p>}
+    </div>
+    <details><summary className="cursor-pointer text-sm text-slate-400">高级：导入本机可信发布包</summary>
     <label className="block text-sm">本机 ZIP 完整路径
       <input className={inputClass} value={archive} onChange={e => setArchive(e.target.value)} placeholder="D:\\Downloads\\GA-Hub-version-windows-x64.zip" disabled={busy} />
     </label>
@@ -53,6 +75,7 @@ export function UpdateSettingsPanel() {
       我已核实安装包和校验和的发布来源可信
     </label>
     <button className="rounded-lg bg-sky-600 px-3 py-2 text-sm disabled:opacity-40" disabled={busy || !status || !trusted || !archive.trim() || !/^[a-fA-F0-9]{64}$/.test(sha256.trim())} onClick={() => void act()}>校验并准备</button>
+    </details>
     {status && <div className="text-sm text-slate-300" role="status">状态：{status.plan.state}{status.plan.version && ` · ${status.plan.version}`}
       {status.plan.commit && <span className="block break-all text-xs text-slate-500">源码提交：{status.plan.commit}</span>}
     </div>}

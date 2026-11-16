@@ -1480,7 +1480,39 @@ fn reveal_main_window<R: Runtime>(window: &WebviewWindow<R>) {
     let _ = window.set_focus();
 }
 
+// Old shortcuts follow only a completed, hash-verified update. Candidate health
+// and rollback launches carry a nonce and must never be redirected.
+#[cfg(windows)]
+fn follow_current_update() -> Result<bool, String> {
+    use std::os::windows::process::CommandExt;
+    if std::env::var_os("GA_HUB_UPDATE_NONCE").is_some() { return Ok(false); }
+    let admin = std::env::var_os("GA_ADMIN_DATA").map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(|p| std::path::PathBuf::from(p).join(".genericagent-admin")))
+        .ok_or("Cannot locate admin data")?;
+    let pointer = admin.join("updates/current.json");
+    if !pointer.exists() { return Ok(false); }
+    let value: serde_json::Value = serde_json::from_slice(&std::fs::read(pointer).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    let target = value["executable"].as_str().ok_or("Invalid current update pointer")?;
+    let current = std::env::current_exe().map_err(|e| e.to_string())?;
+    if std::fs::canonicalize(target).map_err(|e| e.to_string())? == std::fs::canonicalize(&current).map_err(|e| e.to_string())? {
+        return Ok(false);
+    }
+    // Use the helper bundled beside this trusted launcher, not a pointer URL.
+    let _child = std::process::Command::new(current.with_file_name("ga-hub-update.exe"))
+        .arg("--admin-data").arg(admin).arg("launch")
+        .arg("--launcher-pid").arg(std::process::id().to_string())
+        .creation_flags(0x08000000).spawn().map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 fn main() {
+    #[cfg(windows)]
+    match follow_current_update() {
+        Ok(true) => return,
+        Ok(false) => (),
+        Err(error) => { eprintln!("{error}"); std::process::exit(1); }
+    }
     let exit = ExitCoordinator::new();
     let exit_setup = exit.clone();
     let exit_single_instance = exit.clone();

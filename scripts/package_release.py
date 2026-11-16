@@ -28,7 +28,7 @@ def package(root: Path, output: Path, tag: str | None = None) -> Path:
     if tag and dirty:
         raise ValueError("Refusing to release a dirty tracked tree")
     source = root / "src-tauri/target/x86_64-pc-windows-msvc/release"
-    files = [source / "ga-hub-desktop.exe", source / "ga-hub-sidecar.exe"]
+    files = [source / "ga-hub-desktop.exe", source / "ga-hub-sidecar.exe", source / "ga-hub-update.exe"]
     for path in files:
         if not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f"Missing/empty build artifact: {path}")
@@ -45,7 +45,9 @@ def package(root: Path, output: Path, tag: str | None = None) -> Path:
     readme = (
         f"GA-Hub {version}\nCommit: {commit}\n\n"
         "Extract ALL files together; launch ga-hub-desktop.exe.\n"
-        "ga-hub-sidecar.exe must remain beside the desktop EXE.\n"
+        "Keep ga-hub-sidecar.exe and ga-hub-update.exe beside the desktop EXE.\n"
+        "Settings > Updates checks official GitHub stable releases. Download, preflight, then confirm switch.\n"
+        "The updater registers a per-user scheduled task on first use; no administrator rights required.\n"
         "The GA core checkout/interpreter still requires setup; the Hub backend is bundled.\n"
         "Do not overwrite a running instance. Back up your data before upgrading.\n"
     )

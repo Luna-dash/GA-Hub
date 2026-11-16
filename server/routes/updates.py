@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from .. import _paths
 from ..services.self_update import UpdateStore
-from ..services import update_handoff, update_preflight
+from ..services import update_handoff, update_preflight, update_release
 
 router = APIRouter(prefix="/api/updates", tags=["updates"])
 
@@ -44,6 +44,22 @@ def prepare_update(body: PrepareUpdate) -> dict:
         raise HTTPException(400, str(exc)) from exc
 
 
+@router.get("/release")
+def check_release() -> dict:
+    try:
+        return update_release.check(store().root)
+    except (ValueError, OSError, update_release.requests.RequestException) as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@router.post("/release/prepare")
+def prepare_release() -> dict:
+    try:
+        return update_release.prepare(store())
+    except (ValueError, OSError, KeyError, zipfile.BadZipFile, update_release.requests.RequestException) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.post("/preflight")
 def preflight_update(body: UpdateIdentity) -> dict:
     import subprocess
@@ -64,6 +80,7 @@ def cancel_update(body: UpdateIdentity) -> dict:
 
 @router.post("/request")
 def request_update(body: UpdateIdentity) -> dict:
+    import subprocess
     import psutil
     try:
         # Never accept an arbitrary PID from an HTTP caller. Resolve our owner.
@@ -71,8 +88,9 @@ def request_update(body: UpdateIdentity) -> dict:
                   if p.name().casefold() == "ga-hub-desktop.exe"]
         if len(owners) != 1:
             raise ValueError("Update request requires one owning desktop process")
+        update_handoff.ensure_installed(store(), _paths.ADMIN_DATA, Path(owners[0].exe()))
         return update_handoff.request(store(), _paths.ADMIN_DATA, body.id, owners[0].pid)
-    except (ValueError, OSError, psutil.Error) as exc:
+    except (ValueError, OSError, subprocess.SubprocessError, psutil.Error) as exc:
         raise HTTPException(409, str(exc)) from exc
 
 
