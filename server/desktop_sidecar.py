@@ -188,6 +188,22 @@ def run_selftest() -> int:
             importlib.import_module(name)
         except Exception as exc:  # noqa: BLE001 - 自检要把任何失败都报出来
             failures.append(f"{name}: {type(exc).__name__}: {exc}")
+    if getattr(sys, 'frozen', False):
+        try:
+            from server.services.message_presentation import MessagePresentation
+
+            async def check_presentation():
+                presenter = MessagePresentation()
+                try:
+                    page = await presenter.page({'items': []})
+                    if page.get('items') != []:
+                        raise RuntimeError('Unexpected compact message result')
+                finally:
+                    await presenter.close()
+
+            asyncio.run(check_presentation())
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"message_presentation: {type(exc).__name__}: {exc}")
     if failures:
         _diagnostic("selftest failed: " + " | ".join(failures))
         return 1

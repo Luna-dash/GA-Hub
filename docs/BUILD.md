@@ -24,7 +24,13 @@ build_all.bat
 
 ### 2. 另一台电脑本地构建（有基础工具链）
 
-前置：Node.js 18+、Rust（rustup，Windows 需 MSVC Build Tools）、Python 3.11+。
+前置：Node.js 20+、Rust（rustup，Windows 需 MSVC Build Tools）、Python 3.11+。
+
+sidecar 会将构建机 PATH 中的 Node 运行时连同 LICENSE、版本/架构及 SHA-256
+清单一起打包；Node 平台/架构必须匹配目标，不支持跨平台暂存。默认从 Node 官方
+仓库对应版本标签下载完整 LICENSE；离线或网络受限时，设置 `GA_HUB_NODE_LICENSE`
+指向该版本的官方 LICENSE 文件（可先通过代理下载）。下载或校验失败会中止构建。
+冻结运行只使用包内 Node，不回退到用户机器的 PATH；开发模式仍使用 PATH。
 
 Windows MSVC 目标在统一 Python 入口的预检阶段自动加载 VS2017+ 的
 `vcvarsall.bat`；BAT 和直接运行 Python 均适用，无需手工打开开发者终端。
@@ -95,10 +101,13 @@ build_all.bat
     但产物启动即 `ImportError`。所以「刷新成功」不代表「能跑」。
     自检失败优先查 conda `Library\bin` 是否在 PATH（缺它时漏收
     `ffi/liblzma/LIBBZ2/libexpat/sqlite3`）；正常 sidecar ≈51.9MB。
-  - **资源入包过滤**：`assets/nova`、`assets/remote_access` 先复制到暂存目录，
-    过滤 `__pycache__` / `*.pyc` / `*.pyo` 后再 `--add-data`。否则早已删除的模块
-    仍会以字节码形式随成品交付（2026-11-03 审计发现的最新一例：
-    撤回了 nova 云端 `server.py`，成品里仍带着它的 `.pyc`）。
+  - **资源入包白名单**：桌面仅暂存 `assets/nova/connector.py` 及
+    `assets/remote_access/{gateway,artifacts,remote_progress}.py`，缺少任一文件即中止。
+    独立连接器的启动/安装脚本、测试、文档、构建脚本和缓存留在源码或独立交付中。
+    `server` 仅收集模块，并显式加入 `message-presentation-worker.cjs` 等运行数据，
+    不再将整棵 Python 源码作为数据重复打包。
+  - **消息展示运行期守卫**：冻结 `--selftest` 会使用包内 Node 实际执行一次
+    compact 消息转换并回收 worker；Node 或 worker 缺失、转换失败均使自检失败。
 - **发布前验证**：`python scripts\build_all.py --full` 会先跑后端 pytest（限定 `tests/`，
   自动注入 `GA_ROOT`/`PYTHONPATH`）与前端 vitest，再进入构建阶段；缺 GA 仓库或
   `webui/node_modules` 会在预检阶段（exit 2）就说清楚。

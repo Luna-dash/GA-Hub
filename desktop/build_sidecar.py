@@ -13,12 +13,14 @@ BIN = ROOT / "src-tauri" / "binaries"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from desktop.runtime_dependencies import hidden_import_args
-ASSET_DIRS = ("nova", "remote_access")
-# PyInstaller 的 --add-data 会整棵目录收进包，连解释器缓存一起带走。
-# __pycache__ 里的 .pyc 可能是早已删除的模块（例如撤回的 nova 云端 server.py），
-# 于是「源码撤了、成品里还留着字节码」。资源目录一律先过滤再入包。
-EXCLUDED_ASSET_DIRS = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"})
-EXCLUDED_ASSET_SUFFIXES = frozenset({".pyc", ".pyo"})
+from desktop.node_runtime import stage_node
+
+# Desktop Nova only needs the shared gateway core. Standalone deployment/UI,
+# tests, build scripts, docs and caches remain in the source/connector package.
+RUNTIME_ASSETS = {
+    "nova": ("connector.py",),
+    "remote_access": ("gateway.py", "artifacts.py", "remote_progress.py"),
+}
 
 # PyInstaller does not automatically retain Conda's runtime DLLs: C extensions in
 # DLLs/*.pyd link against libraries that live in Library/bin, outside the
@@ -60,25 +62,18 @@ def runtime_binary_args(prefix: Path) -> list[str]:
     return conda_runtime_binary_args(prefix / "Library" / "bin")
 
 
-def asset_ignore(directory: str, names: list[str]) -> set[str]:
-    """copytree 的 ignore 回调：拦解释器/工具缓存，其余原样保留。"""
-    return {
-        name for name in names
-        if name in EXCLUDED_ASSET_DIRS or Path(name).suffix.lower() in EXCLUDED_ASSET_SUFFIXES
-    }
-
-
 def stage_assets(staging_root: Path) -> dict[str, Path]:
-    """把资源目录复制一份（已过滤缓存）并返回 {资源名: 暂存路径}。"""
+    """Copy only declared runtime resources; missing input aborts the build."""
     staged: dict[str, Path] = {}
-    for name in ASSET_DIRS:
+    for name, files in RUNTIME_ASSETS.items():
         source = ROOT / "assets" / name
-        if not source.is_dir():
-            continue
         destination = staging_root / name
-        # 暂存目录跨构建复用，先清空：否则仓库里删掉的文件会以旧副本继续入包。
         shutil.rmtree(destination, ignore_errors=True)
-        shutil.copytree(source, destination, ignore=asset_ignore)
+        destination.mkdir(parents=True)
+        for filename in files:
+            if not (source / filename).is_file():
+                raise RuntimeError(f"Required desktop asset missing: {source / filename}")
+            shutil.copy2(source / filename, destination / filename)
         staged[name] = destination
     return staged
 
@@ -110,11 +105,14 @@ def main() -> int:
     command = [args.pyinstaller, "-m", "PyInstaller", "--clean", "--noconfirm", "--onefile",
                "--name", "ga-hub-sidecar", "--paths", str(ROOT),
                "--workpath", str(workpath), "--distpath", str(distpath),
-               "--specpath", str(specpath), "--collect-all", "server",
+               "--specpath", str(specpath), "--collect-submodules", "server",
                "--collect-all", "websockets",
                "--collect-all", "aiohttp",
                *hidden_import_args(sys.platform),
                *(_add_data_args(stage_assets(workspace / "assets-stage"))),
+               "--add-binary", f"{stage_node(workspace / 'node-stage', args.target) / ('node.exe' if suffix else 'node')};runtime/node",
+               "--add-data", f"{workspace / 'node-stage' / 'LICENSE'};runtime/node",
+               "--add-data", f"{workspace / 'node-stage' / 'runtime.json'};runtime/node",
                "--noconsole",
                "--add-data", f"{ROOT / 'webui' / 'dist'};webui/dist"]
     if suffix:

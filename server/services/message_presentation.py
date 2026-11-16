@@ -13,6 +13,20 @@ import sys
 from pathlib import Path
 
 
+def node_executable() -> str:
+    """Frozen apps must never depend on (or silently use) a machine's PATH."""
+    if getattr(sys, 'frozen', False):
+        root = Path(sys._MEIPASS)
+        executable = root / 'runtime' / 'node' / ('node.exe' if sys.platform == 'win32' else 'node')
+        if not executable.is_file():
+            raise RuntimeError('Packaged Node runtime is missing; reinstall the complete GA-Hub release')
+        return str(executable)
+    executable = shutil.which('node')
+    if not executable:
+        raise RuntimeError('Message presentation requires Node in development mode')
+    return executable
+
+
 class MessagePresentation:
     def __init__(self):
         self._lock = asyncio.Lock()
@@ -30,11 +44,8 @@ class MessagePresentation:
             try:
                 worker = self._worker
                 if worker is None or worker.returncode is not None:
-                    node = shutil.which('node')
-                    if not node:
-                        raise RuntimeError('Message presentation requires Node')
                     worker = self._worker = await asyncio.create_subprocess_exec(
-                        node, str(Path(__file__).with_name('message-presentation-worker.cjs')),
+                        node_executable(), str(Path(__file__).with_name('message-presentation-worker.cjs')),
                         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.DEVNULL, limit=32 * 1024 * 1024,
                         **({'creationflags': 0x08000000} if sys.platform == 'win32' else {}),

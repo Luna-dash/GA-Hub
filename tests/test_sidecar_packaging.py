@@ -27,15 +27,21 @@ build_all = _load("build_all_under_test_packaging", "scripts/build_all.py")
 
 
 class AssetFilterTests(unittest.TestCase):
-    def test_ignore_drops_interpreter_caches(self) -> None:
-        ignored = build_sidecar.asset_ignore(
-            "assets/nova", ["__pycache__", "connector.py", "pair.cmd", "stale.pyc", "x.pyo"]
-        )
-        self.assertEqual(ignored, {"__pycache__", "stale.pyc", "x.pyo"})
+    def test_stage_assets_contains_only_runtime_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            staged = build_sidecar.stage_assets(Path(tmp))
+            self.assertEqual(set(staged), set(build_sidecar.RUNTIME_ASSETS))
+            for name, destination in staged.items():
+                self.assertEqual(
+                    {str(p.relative_to(destination)) for p in destination.rglob('*') if p.is_file()},
+                    set(build_sidecar.RUNTIME_ASSETS[name]),
+                )
 
-    def test_ignore_keeps_real_assets(self) -> None:
-        names = ["CONNECTOR.md", "connector.py", "pair.cmd", "run.cmd", "setup.cmd"]
-        self.assertEqual(build_sidecar.asset_ignore("assets/nova", names), set())
+    def test_stage_assets_missing_required_file_aborts(self) -> None:
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp, patch.object(build_sidecar, 'ROOT', Path(tmp)):
+            with self.assertRaisesRegex(RuntimeError, 'Required desktop asset missing'):
+                build_sidecar.stage_assets(Path(tmp) / 'stage')
 
     def test_stage_assets_copies_without_pycache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
