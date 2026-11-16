@@ -15,9 +15,9 @@
 The `desktop-build` workflow uses the sole `scripts/build_all.py` entrypoint (frontend → sidecar → Tauri --no-bundle → artifact guards → frozen runtime selftest).
 
 - Main/manual builds publish Actions artifacts only, with preview filenames containing the commit hash.
-- A `v*` tag must equal `v` + product version. A successful tag build packages both EXEs and publishes a stable GitHub Release, with the checked-in release notes.
+- A `v*` tag must equal `v` + product version. A successful tag build packages all three EXEs and publishes a stable GitHub Release, with the checked-in release notes.
 - `scripts/package_release.py` records full commit, UTC packaging time, platform, channel, tracked-tree dirty state and binary SHA-256 in `build-info.json`; it rejects dirty stable builds, missing/empty EXEs and mismatched tags.
-- `SHA256SUMS.txt` includes the ZIP and both EXEs. Both EXEs retain their existing filenames and must stay together.
-- Build provenance is in the downloadable metadata; no in-app About UI or automatic updater is implemented by this change.
+- `SHA256SUMS.txt` includes the ZIP and all three EXEs. All EXEs retain their existing filenames and must stay together.
+- Build provenance is in the downloadable metadata; the Settings > Updates workflow consumes official stable releases with mandatory preflight and explicit confirmation.
 
 Local deliverable builds still use `build_all.bat` / `python scripts/build_all.py`; never overwrite an in-use production EXE. Release workflow output is built in a clean cloud checkout, not by stopping a local running instance.

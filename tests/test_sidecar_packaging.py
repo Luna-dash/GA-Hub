@@ -97,6 +97,27 @@ class CondaRuntimeDllTests(unittest.TestCase):
             for index in range(0, len(args), 2)
         }
 
+    def test_standard_python_does_not_require_conda_dlls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(build_sidecar.runtime_binary_args(Path(tmp)), [])
+
+    def test_conda_environment_still_rejects_missing_dlls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            (prefix / "conda-meta").mkdir()
+            with self.assertRaisesRegex(RuntimeError, "Conda runtime DLLs missing"):
+                build_sidecar.runtime_binary_args(prefix)
+
+    def test_conda_environment_collects_required_dlls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            (prefix / "conda-meta").mkdir()
+            library = prefix / "Library" / "bin"
+            library.mkdir(parents=True)
+            for name in self.NAMES:
+                (library / name).write_bytes(b"")
+            self.assertEqual(self._bundled(build_sidecar.runtime_binary_args(prefix)), set(self.NAMES))
+
     def test_every_critical_conda_dll_is_added_to_the_bundle(self):
         bundled = self._bundled(self._args(self.NAMES))
         for name in build_sidecar.CRITICAL_CONDA_DLLS:

@@ -53,6 +53,13 @@ def conda_runtime_binary_args(conda_bin: Path) -> list[str]:
     return args
 
 
+def runtime_binary_args(prefix: Path) -> list[str]:
+    """Only Conda interpreters need explicit Library/bin runtime collection."""
+    if not (prefix / "conda-meta").is_dir():
+        return []
+    return conda_runtime_binary_args(prefix / "Library" / "bin")
+
+
 def asset_ignore(directory: str, names: list[str]) -> set[str]:
     """copytree 的 ignore 回调：拦解释器/工具缓存，其余原样保留。"""
     return {
@@ -111,7 +118,7 @@ def main() -> int:
                "--noconsole",
                "--add-data", f"{ROOT / 'webui' / 'dist'};webui/dist"]
     if suffix:
-        command.extend(conda_runtime_binary_args(Path(sys.prefix) / "Library" / "bin"))
+        command.extend(runtime_binary_args(Path(sys.prefix)))
     command.append(str(ROOT / "server" / "desktop_sidecar.py"))
     built = distpath / f"ga-hub-sidecar{suffix}"
     # Never let a previous successful build masquerade as this run's output.
