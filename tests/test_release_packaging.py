@@ -49,7 +49,8 @@ def test_package_contains_both_exes_and_traceable_metadata(checkout):
     archive = load("package_release").package(checkout, checkout / "output", "v1.0.0")
     assert archive.name == "GA-Hub-1.0.0-windows-x64.zip"
     with zipfile.ZipFile(archive) as z:
-        assert set(z.namelist()) == {"ga-hub-desktop.exe", "ga-hub-sidecar.exe", "README.txt", "build-info.json"}
+        assert set(z.namelist()) == {"ga-hub-desktop.exe", "ga-hub-sidecar.exe", "README.txt", "build-info.json", "update-manifest.json"}
+        assert json.loads(z.read("update-manifest.json")) == {"schema": 1, "data_epoch": 1, "platform": "windows-x64"}
         info = json.loads(z.read("build-info.json"))
         assert info["version"] == "1.0.0" and info["channel"] == "stable" and not info["dirty"]
         for name, digest in info["sha256"].items():

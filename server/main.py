@@ -281,8 +281,10 @@ def create_app() -> FastAPI:
         try:
             await _startup()
             await nova.start()
+            _app.state.update_ready = runtime_initialized and not setup_mode
             yield
         finally:
+            _app.state.update_ready = False
             try:
                 await nova.stop()
                 await _shutdown()
@@ -526,6 +528,8 @@ def create_app() -> FastAPI:
 
     # ── always-available endpoints ──
     app.include_router(_setup_router())
+    from .routes.updates import router as updates_router
+    app.include_router(updates_router)
     app.include_router(event_routes.router)
 
     @app.get("/api/status", response_model=AppStatusResp, response_model_exclude_unset=True)
@@ -541,6 +545,21 @@ def create_app() -> FastAPI:
 
         out.update(services.status_snapshot())
         return out
+
+    @app.get("/api/updates/ready", include_in_schema=False)
+    def update_ready(request: Request):
+        import secrets
+        import sys
+        nonce = os.environ.get("GA_HUB_UPDATE_NONCE", "")
+        provided = request.headers.get("x-update-nonce", "")
+        if not nonce or not secrets.compare_digest(nonce, provided):
+            return PlainTextResponse("Not found", status_code=404)
+        return {
+            "ready": bool(getattr(app.state, "update_ready", False)),
+            "nonce": nonce, "pid": os.getpid(),
+            "executable": str(Path(sys.executable).resolve()),
+            "admin_data": str(_paths.ADMIN_DATA.resolve()),
+        }
 
     @app.get("/api/health")
     def health_summary():

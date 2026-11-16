@@ -20,6 +20,38 @@ ASSET_DIRS = ("nova", "remote_access")
 EXCLUDED_ASSET_DIRS = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"})
 EXCLUDED_ASSET_SUFFIXES = frozenset({".pyc", ".pyo"})
 
+# PyInstaller does not automatically retain Conda's runtime DLLs: C extensions in
+# DLLs/*.pyd link against libraries that live in Library/bin, outside the
+# interpreter's DLL search path.  A missing one is invisible during Analysis and
+# only surfaces at process start -- on 2026-11-16 pyexpat.pyd lost libexpat.dll,
+# and the pkg_resources runtime hook crashed the sidecar before any business code.
+# Every critical dependency must therefore be explicit, and a glob that matches
+# nothing must fail the build instead of silently shipping a broken onefile.
+CONDA_RUNTIME_DLL_PATTERNS = (
+    "libssl-*.dll", "libcrypto-*.dll",
+    "libexpat*.dll", "expat.dll",
+    "ffi.dll", "libbz2.dll", "liblzma.dll", "sqlite3.dll", "zlib.dll",
+)
+CRITICAL_CONDA_DLLS = ("libexpat.dll", "ffi.dll", "libbz2.dll", "liblzma.dll", "sqlite3.dll")
+
+
+def conda_runtime_binary_args(conda_bin: Path) -> list[str]:
+    """Build --add-binary args for Conda DLLs, rejecting a silent miss."""
+    matches = {
+        dependency.name.lower(): dependency
+        for pattern in CONDA_RUNTIME_DLL_PATTERNS
+        for dependency in conda_bin.glob(pattern)
+    }
+    missing = [name for name in CRITICAL_CONDA_DLLS if name not in matches]
+    if missing:
+        raise RuntimeError(
+            f"Conda runtime DLLs missing from {conda_bin}: {', '.join(missing)}"
+        )
+    args: list[str] = []
+    for dependency in sorted(matches.values(), key=lambda path: path.name.lower()):
+        args.extend(["--add-binary", f"{dependency};."])
+    return args
+
 
 def asset_ignore(directory: str, names: list[str]) -> set[str]:
     """copytree 的 ignore 回调：拦解释器/工具缓存，其余原样保留。"""
@@ -79,13 +111,7 @@ def main() -> int:
                "--noconsole",
                "--add-data", f"{ROOT / 'webui' / 'dist'};webui/dist"]
     if suffix:
-        # PyInstaller does not automatically retain Conda's OpenSSL runtime,
-        # even though _ssl.pyd links to it.  A frozen uvicorn import otherwise
-        # fails before the lifecycle protocol can emit its first event.
-        conda_bin = Path(sys.prefix) / "Library" / "bin"
-        for pattern in ("libssl-*.dll", "libcrypto-*.dll"):
-            for dependency in sorted(conda_bin.glob(pattern)):
-                command.extend(["--add-binary", f"{dependency};."])
+        command.extend(conda_runtime_binary_args(Path(sys.prefix) / "Library" / "bin"))
     command.append(str(ROOT / "server" / "desktop_sidecar.py"))
     built = distpath / f"ga-hub-sidecar{suffix}"
     # Never let a previous successful build masquerade as this run's output.

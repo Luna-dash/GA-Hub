@@ -183,6 +183,8 @@ def candidate_paths() -> list[Path]:
 
 def discover_ga_root() -> Path | None:
     # 1. env override
+    if os.environ.get("GA_HUB_UPDATE_PREFLIGHT") == "1":
+        return None  # Explicit disposable setup mode; never autodiscover production.
     env = os.environ.get("GA_ROOT", "").strip()
     if env:
         if is_valid_ga_root(env):

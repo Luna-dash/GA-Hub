@@ -38,6 +38,11 @@ ENV_BUILD_VCVARS_SCRIPT = "GA_HUB_VCVARS_SCRIPT"
 # (src-tauri/src/main.rs).
 ENV_SIDECAR = "GA_HUB_SIDECAR"
 ENV_BRIDGE_PORT = "GA_HUB_BRIDGE_PORT"
+# Trusted local updater: isolated smoke-test mode and instance-bound health receipt.
+ENV_UPDATE_PREFLIGHT = "GA_HUB_UPDATE_PREFLIGHT"
+ENV_UPDATE_NONCE = "GA_HUB_UPDATE_NONCE"
+ENV_UPDATE_RECEIPT = "GA_HUB_UPDATE_RECEIPT"
+ENV_MYKEY_BASE_URL = "GA_MYKEY_BASE_URL"
 
 # ── session run capacity (server/routes/sessions.py + session_coordinator) ──
 # GAHUB_* env override for how many sessions may run concurrently; the gate

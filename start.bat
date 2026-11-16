@@ -7,7 +7,13 @@
 setlocal
 cd /d "%~dp0"
 
-:: Canonical artifact — build_all.bat is the only supported way to produce it.
+:: Once managed updates exist, never fall back silently to a stale build.
+if exist "%USERPROFILE%\.genericagent-admin\updates\current.json" (
+  "%USERPROFILE%\.genericagent-admin\updates\bin\ga-hub-update.exe" --admin-data "%USERPROFILE%\.genericagent-admin" launch
+  exit /b
+)
+
+:: First installation only.
 set "TAURI_APP=src-tauri\target\x86_64-pc-windows-msvc\release\ga-hub-desktop.exe"
 if exist "%TAURI_APP%" (
   start "" "%TAURI_APP%"

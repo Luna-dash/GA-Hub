@@ -208,6 +208,8 @@ def test_archive_page_projection_runs_in_worker_thread() -> None:
                 sessions.get_session_messages(
                     _domain(),
                     "session-id",
+                    request=SimpleNamespace(),
+                    view="full",
                     before=None,
                     limit=32,
                     max_chars=400_000,

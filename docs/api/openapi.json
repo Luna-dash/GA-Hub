@@ -102,6 +102,244 @@
         }
       }
     },
+    "/api/updates": {
+      "get": {
+        "tags": [
+          "updates"
+        ],
+        "summary": "Update Status",
+        "operationId": "update_status_api_updates_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Update Status Api Updates Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/updates/prepare": {
+      "post": {
+        "tags": [
+          "updates"
+        ],
+        "summary": "Prepare Update",
+        "operationId": "prepare_update_api_updates_prepare_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepareUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Prepare Update Api Updates Prepare Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/updates/preflight": {
+      "post": {
+        "tags": [
+          "updates"
+        ],
+        "summary": "Preflight Update",
+        "operationId": "preflight_update_api_updates_preflight_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateIdentity"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Preflight Update Api Updates Preflight Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/updates/cancel": {
+      "post": {
+        "tags": [
+          "updates"
+        ],
+        "summary": "Cancel Update",
+        "operationId": "cancel_update_api_updates_cancel_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateIdentity"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Cancel Update Api Updates Cancel Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/updates/request": {
+      "post": {
+        "tags": [
+          "updates"
+        ],
+        "summary": "Request Update",
+        "operationId": "request_update_api_updates_request_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateIdentity"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Request Update Api Updates Request Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/updates/approve": {
+      "post": {
+        "tags": [
+          "updates"
+        ],
+        "summary": "Approve Update",
+        "operationId": "approve_update_api_updates_approve_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateIdentity"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Approve Update Api Updates Approve Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/events/recent": {
       "get": {
         "summary": "Recent Events",
@@ -3777,6 +4015,17 @@
             "schema": {
               "type": "string",
               "title": "Session Id"
+            }
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(full|compact)$",
+              "default": "full",
+              "title": "View"
             }
           },
           {
@@ -9123,6 +9372,32 @@
         ],
         "title": "NovaAccountRequest"
       },
+      "PrepareUpdate": {
+        "properties": {
+          "archive": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Archive"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$",
+            "title": "Sha256"
+          },
+          "trusted_source_confirmed": {
+            "type": "boolean",
+            "title": "Trusted Source Confirmed",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "archive",
+          "sha256"
+        ],
+        "title": "PrepareUpdate"
+      },
       "ProjectCreate": {
         "properties": {
           "path": {
@@ -10874,6 +11149,20 @@
           "instruction"
         ],
         "title": "ThemeTaskConfig"
+      },
+      "UpdateIdentity": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "UpdateIdentity"
       },
       "UploadResp": {
         "properties": {

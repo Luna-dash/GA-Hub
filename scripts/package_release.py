@@ -53,6 +53,9 @@ def package(root: Path, output: Path, tag: str | None = None) -> Path:
         for path in files:
             z.write(path, path.name)
         z.write(output / "build-info.json", "build-info.json")
+        z.writestr("update-manifest.json", json.dumps({
+            "schema": 1, "data_epoch": 1, "platform": "windows-x64",
+        }, indent=2))
         z.writestr("README.txt", readme)
     checksums = {**metadata["sha256"], archive.name: hashlib.sha256(archive.read_bytes()).hexdigest()}
     (output / "SHA256SUMS.txt").write_text("".join(f"{digest}  {name}\n" for name, digest in checksums.items()), encoding="utf-8")

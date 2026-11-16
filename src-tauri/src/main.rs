@@ -22,6 +22,7 @@ use uuid::Uuid;
 mod mei_cleanup;
 mod file_attachments;
 mod message_dialog;
+mod update_receipt;
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -1041,6 +1042,9 @@ fn run_sidecar_supervisor<F>(
         Ok(ReadinessWait::Ready) => {
             record_startup_diagnostic(&format!("sidecar ready on port {port}"));
             if sidecar.set_ready(&exit) {
+                if let Err(error) = update_receipt::publish(port) {
+                    record_startup_diagnostic(&format!("Update receipt failed: {error}"));
+                }
                 // Readiness is a milestone, not the end of supervision: the shell
                 // must still notice a sidecar that dies afterwards.
                 watch_ready_sidecar(&sidecar, &exit);

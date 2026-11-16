@@ -1,0 +1,84 @@
+"""Local update preparation API; applying is a desktop-shell operation."""
+import zipfile
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from .. import _paths
+from ..services.self_update import UpdateStore
+from ..services import update_handoff, update_preflight
+
+router = APIRouter(prefix="/api/updates", tags=["updates"])
+
+
+class PrepareUpdate(BaseModel):
+    archive: str = Field(min_length=1, max_length=4096)
+    sha256: str = Field(pattern=r"^[a-fA-F0-9]{64}$")
+    trusted_source_confirmed: bool = False
+
+
+class UpdateIdentity(BaseModel):
+    id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+def store() -> UpdateStore:
+    return UpdateStore(_paths.ADMIN_DATA / "updates")
+
+
+@router.get("")
+def update_status() -> dict:
+    import sys
+    updates = store()
+    handoff = updates.root / "handoff.json"
+    return {"plan": updates.read(), "supported": sys.platform == "win32",
+            "sources": ["trusted_local_archive"], "data_epoch": 1,
+            "handoff": update_handoff.read_json(handoff) if handoff.exists() else None}
+
+
+@router.post("/prepare")
+def prepare_update(body: PrepareUpdate) -> dict:
+    try:
+        return store().prepare(Path(body.archive), body.sha256, trusted=body.trusted_source_confirmed)
+    except (ValueError, OSError, zipfile.BadZipFile, RuntimeError, NotImplementedError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/preflight")
+def preflight_update(body: UpdateIdentity) -> dict:
+    import subprocess
+    import psutil
+    try:
+        return update_preflight.preflight(store(), body.id)
+    except (ValueError, OSError, subprocess.SubprocessError, psutil.Error) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/cancel")
+def cancel_update(body: UpdateIdentity) -> dict:
+    try:
+        return store().cancel(body.id)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/request")
+def request_update(body: UpdateIdentity) -> dict:
+    import psutil
+    try:
+        # Never accept an arbitrary PID from an HTTP caller. Resolve our owner.
+        owners = [p for p in psutil.Process().parents()
+                  if p.name().casefold() == "ga-hub-desktop.exe"]
+        if len(owners) != 1:
+            raise ValueError("Update request requires one owning desktop process")
+        return update_handoff.request(store(), _paths.ADMIN_DATA, body.id, owners[0].pid)
+    except (ValueError, OSError, psutil.Error) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/approve")
+def approve_update(body: UpdateIdentity) -> dict:
+    try:
+        return update_handoff.approve(store(), body.id)
+    except (ValueError, OSError, KeyError) as exc:
+        raise HTTPException(409, str(exc)) from exc

@@ -23,6 +23,7 @@ MARKERS = {
     "GAHUB_FEISHU_CHAT",    # DEPRECATED legacy chat marker (feishu_service, dual-marker window)
     "GA_FRONTEND_EVENT",    # product-neutral fsapp stdout event marker (feishu_service)
     "GA_HUB_PERF",          # __GA_HUB_PERF__ webui window global (chatPerformance.ts)
+    "GA_HUB_UPDATE", "GA_HUB_CORE",  # namespace prefixes stripped for child isolation
     "GA_HUB_MSVC_ENV",      # cmd stdout boundary in scripts/build_all.py
 }
 
@@ -37,6 +38,10 @@ def _registered_names() -> set[str]:
         constants.ENV_BUILD_VCVARS_SCRIPT,
         constants.ENV_SIDECAR,
         constants.ENV_BRIDGE_PORT,
+        constants.ENV_UPDATE_PREFLIGHT,
+        constants.ENV_UPDATE_NONCE,
+        constants.ENV_UPDATE_RECEIPT,
+        constants.ENV_MYKEY_BASE_URL,
         constants.ENV_SESSION_RUN_CAPACITY,
         constants.ENV_GAHUB_TEMP_DIR,
         constants.ENV_GAHUB_JOURNAL_PATH,

@@ -8,6 +8,7 @@ import { Bell, Globe, KeyRound, MessagesSquare, Palette, Settings2 } from 'lucid
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { NovaSettingsPanel } from '@/components/NovaSettingsPanel'
+import { UpdateSettingsPanel } from '@/components/UpdateSettingsPanel'
 import type { ChatRetryConfig } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { notify, useNotifyStore } from '@/utils/notify'
@@ -283,6 +284,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
             </div>
             <div id="settings-panel-remote" role="tabpanel" aria-labelledby="settings-tab-remote" tabIndex={0} hidden={activeTab !== 'remote'}>
               <NovaSettingsPanel />
+              <UpdateSettingsPanel />
             </div>
             <div id="settings-panel-sync" role="tabpanel" aria-labelledby="settings-tab-sync" tabIndex={0} hidden={activeTab !== 'sync'}>
               <MyKeySyncPanel />

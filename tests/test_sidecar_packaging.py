@@ -70,6 +70,48 @@ class RuntimeGuardTests(unittest.TestCase):
         self.assertIn("check_sidecar_runtime", guard_block)
 
 
+class CondaRuntimeDllTests(unittest.TestCase):
+    """A frozen onefile must carry the Conda DLLs its C extensions link against.
+
+    2026-11-16: pyexpat.pyd was bundled without libexpat.dll, so the
+    pkg_resources runtime hook crashed the sidecar before any business code.
+    A glob matching nothing must fail the build instead of shipping that.
+    """
+
+    NAMES = (
+        "libssl-3-x64.dll", "libcrypto-3-x64.dll", "libexpat.dll", "expat.dll",
+        "ffi.dll", "libbz2.dll", "liblzma.dll", "sqlite3.dll", "zlib.dll",
+    )
+
+    def _args(self, names):
+        with tempfile.TemporaryDirectory() as tmp:
+            conda_bin = Path(tmp)
+            for name in names:
+                (conda_bin / name).write_bytes(b"")
+            return build_sidecar.conda_runtime_binary_args(conda_bin)
+
+    @staticmethod
+    def _bundled(args):
+        return {
+            Path(args[index + 1].split(";", 1)[0]).name.lower()
+            for index in range(0, len(args), 2)
+        }
+
+    def test_every_critical_conda_dll_is_added_to_the_bundle(self):
+        bundled = self._bundled(self._args(self.NAMES))
+        for name in build_sidecar.CRITICAL_CONDA_DLLS:
+            self.assertIn(name, bundled)
+        self.assertIn("libssl-3-x64.dll", bundled)
+        self.assertIn("libcrypto-3-x64.dll", bundled)
+
+    def test_missing_expat_dll_fails_the_build_loudly(self):
+        without_expat = tuple(
+            name for name in self.NAMES if name not in ("libexpat.dll", "expat.dll")
+        )
+        with self.assertRaisesRegex(RuntimeError, "libexpat.dll"):
+            self._args(without_expat)
+
+
 class SelftestEntryTests(unittest.TestCase):
     def test_sidecar_exposes_selftest_flag(self) -> None:
         sidecar = _load("desktop_sidecar_under_test", "server/desktop_sidecar.py")

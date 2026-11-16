@@ -578,3 +578,28 @@ export const novaApi = {
     return http<NovaStatus>('POST', '/nova/reconnect', {}, options)
   },
 }
+
+export interface UpdatePlan {
+  state: string
+  id?: string
+  version?: string
+  commit?: string
+}
+export interface UpdateStatus {
+  plan: UpdatePlan
+  supported: boolean
+  sources: string[]
+  data_epoch: number
+  handoff?: { id: string; state: string; not_before?: number; error?: string } | null
+}
+export const updateApi = {
+  status: () => http<UpdateStatus>('GET', '/api/updates'),
+  prepare: (archive: string, sha256: string, trusted: boolean) =>
+    http<UpdatePlan>('POST', '/api/updates/prepare', {
+      archive, sha256, trusted_source_confirmed: trusted,
+    }, { timeoutMs: 180000 }),
+  preflight: (id: string) => http('POST', '/api/updates/preflight', { id }, { timeoutMs: 240000 }),
+  cancel: (id: string) => http<UpdatePlan>('POST', '/api/updates/cancel', { id }),
+  request: (id: string) => http('POST', '/api/updates/request', { id }),
+  approve: (id: string) => http('POST', '/api/updates/approve', { id }),
+}
