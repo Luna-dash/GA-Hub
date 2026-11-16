@@ -174,3 +174,7 @@ no_std 形态、`IndexMap<K,V>` 变成三泛型。完整链路与 2026-09-27 复
 处置：`src-tauri/Cargo.toml` 里两处 `indexmap = { version = "1", features = ["std"] }`
 （`[dependencies]` 与 `[build-dependencies]`，仅用于 feature 统一、代码不直接调用）
 **不要删**——删了就回到探测路径。等升到不依赖 schemars 0.8 的 tauri 版本后才可移除。
+
+便携 `--no-bundle` 链在 Tauri 成功后显式复制本次 sidecar 中间产物到交付目录；
+不依赖 Tauri 的隐式 externalBin 副本。复制失败按阶段失败处理，仍执行产物体检；
+原有刷新守卫和运行期 `--selftest` 保持不变。

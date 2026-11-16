@@ -421,6 +421,33 @@ class MainFlowTests(unittest.TestCase):
         stage.assert_not_called()
         self.assertIn("被占用", stream.getvalue())
 
+    def test_portable_sidecar_is_copied_after_tauri_and_before_guards(self):
+        patches = self._patched()
+        events = []
+        self.copy_helper.side_effect = lambda src, dst: events.append(("copy", src, dst))
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             mock.patch.object(build_all, "run_stage", side_effect=lambda title, *a: events.append(("stage", title))), \
+             mock.patch.object(build_all, "check_artifact", side_effect=lambda *a: events.append(("guard",)) or 0), \
+             mock.patch.object(build_all, "check_sidecar_runtime", return_value=0):
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(build_all.main([]), 0)
+        paths = build_all.artifact_paths(build_all.DEFAULT_TARGET)
+        copied = ("copy", paths["sidecar 中间产物"], paths["sidecar 交付副本"])
+        self.assertLess(events.index(("stage", "Tauri 桌面壳")), events.index(copied))
+        self.assertLess(events.index(copied), events.index(("guard",)))
+
+    def test_sidecar_copy_failure_reports_consistency_and_fails_stage(self):
+        patches = self._patched()
+        self.copy_helper.side_effect = PermissionError("locked")
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             mock.patch.object(build_all, "run_stage"), \
+             mock.patch.object(build_all, "report_consistency") as report, \
+             mock.patch.object(build_all, "check_artifact") as guard:
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(build_all.main([]), build_all.EXIT_STAGE_FAILED)
+        report.assert_called_once()
+        guard.assert_not_called()
+
     def test_successful_chain_runs_guards_and_returns_0(self):
         patches = self._patched()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
@@ -432,7 +459,13 @@ class MainFlowTests(unittest.TestCase):
                 code = build_all.main([])
         self.assertEqual(code, 0)
         self.assertEqual(stage.call_count, 4)  # 前端 / sidecar / tauri / helper
-        self.copy_helper.assert_called_once()
+        paths = build_all.artifact_paths(build_all.DEFAULT_TARGET)
+        self.copy_helper.assert_has_calls([
+            mock.call(paths["sidecar 中间产物"], paths["sidecar 交付副本"]),
+            mock.call(build_all.ROOT / "temp" / "release-updater-helper" / "dist" / "ga-hub-update.exe",
+                      paths["主程序产物"].parent / "ga-hub-update.exe"),
+        ])
+        self.assertEqual(self.copy_helper.call_count, 2)
         self.assertEqual(guard.call_count, 3)
         runtime.assert_called_once()
         self.assertIn("构建链全部通过", stream.getvalue())

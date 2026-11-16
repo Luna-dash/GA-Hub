@@ -36,7 +36,7 @@ EXIT_ARTIFACT_GUARD = 5
 # 三件交付产物；顺序即守卫与产物体检的报告顺序。值是守卫失败时的排查提示。
 ARTIFACT_HINTS = {
     "sidecar 中间产物": "PyInstaller 没有产出新文件（build_sidecar.py 先 unlink 再打包）。",
-    "sidecar 交付副本": "Tauri externalBin 拷贝被跳过——产物目录与应用不配套。",
+    "sidecar 交付副本": "便携 sidecar 复制失败——产物目录与应用不配套。",
     "主程序产物": "Tauri/cargo 可能跳过了链接，或产物写到了别的 target 目录。",
 }
 
@@ -555,6 +555,13 @@ def main(argv: list[str] | None = None) -> int:
             [sidecar_python, "desktop/build_sidecar.py", "--target", args.target],
         )
         run_stage("Tauri 桌面壳", tauri_stage_command(tauri, args.target))
+        # Portable --no-bundle builds must not depend on implicit externalBin copies.
+        # Always pair this build's frozen backend with this build's desktop executable.
+        try:
+            shutil.copy2(paths["sidecar 中间产物"], paths["sidecar 交付副本"])
+        except OSError as exc:
+            _log(f"✗ sidecar 交付副本复制失败：{exc}")
+            raise StageFailed("sidecar 交付副本") from exc
         if "windows" in args.target:
             helper_output = ROOT / "temp" / "release-updater-helper"
             run_stage("独立更新助手", [sidecar_python, "scripts/build_update_helper.py", "--output", str(helper_output)])
