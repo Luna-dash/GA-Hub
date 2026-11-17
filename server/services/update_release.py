@@ -9,6 +9,8 @@ import json
 import re
 import sys
 import uuid
+import urllib.request as proxy_settings
+from sys import platform
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -47,12 +49,22 @@ def fetch(url: str, destination: Path, limit: int) -> None:
     """Bounded streaming with TLS and restricted HTTPS redirect hosts."""
     allowed = {"github.com", "api.github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"}
     session = requests.Session()
+    # requests/urllib choose environment OR registry, not a per-scheme merge.
+    # A lone HTTP_PROXY can therefore hide Windows' HTTPS system proxy.
+    # Use the enabled Windows proxy for this download, including every redirect;
+    # without a static system proxy, retain requests' normal environment behavior.
+    system_proxies = proxy_settings.getproxies_registry() if platform == "win32" else {}
+    if system_proxies:
+        session.trust_env = False
     try:
         for _ in range(6):
             parsed = urlsplit(url)
             if parsed.scheme != "https" or parsed.hostname not in allowed or parsed.username or parsed.password or parsed.port not in (None, 443):
                 raise ValueError("Untrusted release download location")
-            with session.get(url, headers=SESSION_HEADERS, timeout=(15, 60), stream=True, allow_redirects=False) as response:
+            proxy_options = {}
+            if system_proxies:
+                proxy_options["proxies"] = {} if proxy_settings.proxy_bypass_registry(parsed.hostname) else system_proxies
+            with session.get(url, headers=SESSION_HEADERS, timeout=(15, 60), stream=True, allow_redirects=False, **proxy_options) as response:
                 if response.is_redirect:
                     from urllib.parse import urljoin
                     url = urljoin(url, response.headers["Location"])

@@ -71,6 +71,72 @@ def test_untrusted_url_rejected_before_request(tmp_path, url):
         feed.fetch(url, tmp_path / "out", 10)
 
 
+@pytest.mark.parametrize("system_proxies,bypass,expected", [
+    ({"http": "http://system:10808", "https": "http://system:10808"}, False, {"http": "http://system:10808", "https": "http://system:10808"}),
+    ({"https": "http://system:10808"}, True, {}),
+    ({}, False, None),
+])
+def test_windows_download_uses_system_proxy_over_partial_environment(monkeypatch, tmp_path, system_proxies, bypass, expected):
+    monkeypatch.setattr(feed, "platform", "win32", raising=False)
+    monkeypatch.setenv("HTTP_PROXY", "http://environment:9999")
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.setattr(feed.proxy_settings, "getproxies_registry", lambda: system_proxies, raising=False)
+    monkeypatch.setattr(feed.proxy_settings, "proxy_bypass_registry", lambda host: bypass, raising=False)
+    calls = []
+
+    class Response:
+        status_code = 200
+        is_redirect = False
+        headers = {}
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def raise_for_status(self): pass
+        def iter_content(self, size): return iter([b"downloaded"])
+
+    class Session:
+        trust_env = True
+        def get(self, url, **kwargs):
+            calls.append((self.trust_env, kwargs.get("proxies")))
+            return Response()
+        def close(self): pass
+
+    monkeypatch.setattr(feed.requests, "Session", Session)
+    feed.fetch("https://github.com/test", tmp_path / "asset", 100)
+    assert (tmp_path / "asset").read_bytes() == b"downloaded"
+    assert calls == [(not bool(system_proxies), expected)]
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_real_session_proxy_choice_and_redirect_bypass(monkeypatch, tmp_path, platform):
+    from requests import Response
+
+    monkeypatch.setattr(feed, "platform", platform)
+    monkeypatch.setenv("HTTP_PROXY", "http://environment:9999")
+    monkeypatch.setenv("HTTPS_PROXY", "http://environment:9999")
+    monkeypatch.setattr(feed.proxy_settings, "getproxies_registry", lambda: {"https": "http://system:10808"}, raising=False)
+    monkeypatch.setattr(feed.proxy_settings, "proxy_bypass_registry", lambda host: host == "release-assets.githubusercontent.com", raising=False)
+    calls = []
+
+    def send(self, request, **kwargs):
+        calls.append(kwargs["proxies"])
+        response = Response()
+        response.url = request.url
+        response.request = request
+        response.status_code = 302 if len(calls) == 1 else 200
+        response.headers = feed.requests.structures.CaseInsensitiveDict({"Location": "https://release-assets.githubusercontent.com/test"} if len(calls) == 1 else {})
+        response._content = b"downloaded"
+        response._content_consumed = True
+        return response
+
+    monkeypatch.setattr(feed.requests.Session, "send", send)
+    feed.fetch("https://github.com/test", tmp_path / "asset", 100)
+    assert (tmp_path / "asset").read_bytes() == b"downloaded"
+    if platform == "win32":
+        assert calls == [{"https": "http://system:10808"}, {}]
+    else:
+        assert all(proxy["https"] == "http://environment:9999" for proxy in calls)
+
+
 @pytest.mark.parametrize("version", ["v1.2.3-rc1", "../1.2.3", "1.2", "latest"])
 def test_strict_stable_versions(version):
     with pytest.raises(ValueError):

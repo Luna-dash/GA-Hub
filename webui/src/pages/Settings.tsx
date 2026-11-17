@@ -4,7 +4,7 @@
 // In normal mode, it's reachable at /settings via the sidebar.
 
 import { useEffect, useState } from 'react'
-import { Bell, Globe, KeyRound, MessagesSquare, Palette, Settings2 } from 'lucide-react'
+import { Bell, Download, Globe, KeyRound, MessagesSquare, Palette, Settings2 } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { NovaSettingsPanel } from '@/components/NovaSettingsPanel'
@@ -38,6 +38,7 @@ const SETTINGS_TABS = [
   { id: 'appearance', label: '外观与导航', description: '调整界面字号，以及侧栏入口的顺序与显示。', icon: Palette },
   { id: 'chat', label: '对话与重试', description: '管理实时聊天与无人值守任务的自动重试策略。', icon: MessagesSquare },
   { id: 'remote', label: '远程连接', description: '关联 Nova 账号，管理当前设备的远程连接。', icon: Globe },
+  { id: 'updates', label: '更新', description: '检查正式版本、下载更新并安全重启应用。', icon: Download },
   { id: 'sync', label: '密钥同步', description: '管理 mykey 同步相关的界面选项。', icon: KeyRound },
   { id: 'notifications', label: '通知', description: '管理桌面通知的开关与测试提醒。', icon: Bell },
 ] as const
@@ -284,6 +285,8 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
             </div>
             <div id="settings-panel-remote" role="tabpanel" aria-labelledby="settings-tab-remote" tabIndex={0} hidden={activeTab !== 'remote'}>
               <NovaSettingsPanel />
+            </div>
+            <div id="settings-panel-updates" role="tabpanel" aria-labelledby="settings-tab-updates" tabIndex={0} hidden={activeTab !== 'updates'}>
               <UpdateSettingsPanel />
             </div>
             <div id="settings-panel-sync" role="tabpanel" aria-labelledby="settings-tab-sync" tabIndex={0} hidden={activeTab !== 'sync'}>

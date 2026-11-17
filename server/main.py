@@ -294,7 +294,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="GenericAgent Admin API" + (" (setup mode)" if setup_mode else ""),
-        version="1.1.4",
+        version="1.1.5",
         lifespan=_lifespan,
     )
     app.state.services = services
