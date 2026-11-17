@@ -89,7 +89,7 @@ def test_cloud_fingerprint_assets_are_not_client_dependencies() -> None:
     """Scoring assets belong to GA-Hub-Fingerprint-Cloud, not this client."""
     assert not (ROOT / "deploy" / "model-fingerprint").exists(), (
         "Keep Worker, bank and detector in the independent cloud deployment repo; "
-        "see docs/model-fingerprint.md."
+        "model fingerprinting has been removed from GA-Hub."
     )
     for folder in (ROOT / "server", ROOT / "webui" / "src"):
         assert not list(folder.rglob("detector.bin")), "Do not bundle scoring parameters"

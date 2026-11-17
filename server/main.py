@@ -249,12 +249,12 @@ def _normal_routers() -> tuple[APIRouter, ...]:
     from .routes import (
         agent, feishu, conversations, memory, autonomous, conductor, upload,
         wechat, logs, mykey, services, sessions, preferences, tasks,
-        tokens, goalhive, model_fingerprint,
+        tokens, goalhive,
     )
     return tuple(module.router for module in (
         agent, feishu, conversations, memory, autonomous, conductor, upload,
         wechat, logs, mykey, services, sessions, preferences, tasks,
-        tokens, goalhive, model_fingerprint,
+        tokens, goalhive,
     ))
 
 
@@ -294,7 +294,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="GenericAgent Admin API" + (" (setup mode)" if setup_mode else ""),
-        version="1.1.3",
+        version="1.1.4",
         lifespan=_lifespan,
     )
     app.state.services = services

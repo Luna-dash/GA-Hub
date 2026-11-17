@@ -39,12 +39,8 @@ describe('LiveChat column layout', () => {
     expect(classes(column)).toEqual(expect.arrayContaining(['flex', 'flex-col', 'flex-1', 'min-h-0', 'min-w-0']))
   })
 
-  it('mounts the fingerprint action in the transcript rail, not the page header', () => {
-    const action = element('ModelFingerprint')
-    let prop: ts.Node = action
-    while (prop.parent && !ts.isJsxAttribute(prop)) prop = prop.parent
-    expect(ts.isJsxAttribute(prop) && prop.name.getText(source)).toBe('railTop')
-    expect(prop.parent.parent).toBe(element('LiveChatTranscript'))
+  it('does not expose the removed model fingerprint action', () => {
+    expect(liveChatSource).not.toMatch(/ModelFingerprint|railTop/)
   })
 
   it('places the rail beside the entire chat column, with a stacked mobile layout', () => {

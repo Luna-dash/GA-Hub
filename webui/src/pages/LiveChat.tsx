@@ -1,4 +1,3 @@
-import { ModelFingerprint } from '../components/ModelFingerprint'
 import { FileLinkContext } from '@/components/FileCitation'
 // LiveChat — the UI for one durable GA-Hub session.
 //
@@ -826,7 +825,6 @@ export default function LiveChat() {
             scheduleNow={scheduleNow}
             onCancelSchedule={cancelSchedule}
             onRewind={handleRewind}
-            railTop={session && <ModelFingerprint key={session.id} sessionId={session.id} disabled={llmSaving || sessionLlmNeedsRepair} />}
           />
           <LiveChatComposer
             draftKey={draftKey}

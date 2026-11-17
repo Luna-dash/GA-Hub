@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import struct
 from pathlib import Path
 
 
@@ -16,6 +17,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
+
+
+def test_desktop_ico_starts_with_high_resolution_frame() -> None:
+    # Locked tauri-codegen 2.6.x decodes entries()[0], not the largest frame.
+    # A standard ascending-size ICO silently becomes a 16px runtime icon.
+    data = (ROOT / "src-tauri/icons/icon.ico").read_bytes()
+    reserved, kind, count = struct.unpack_from("<HHH", data)
+    assert (reserved, kind) == (0, 1)
+    entries = [struct.unpack_from("<BBBBHHII", data, 6 + i * 16) for i in range(count)]
+    sizes = [(entry[0] or 256, entry[1] or 256) for entry in entries]
+    assert sizes[0] == (256, 256)
+    assert set(sizes) == {(n, n) for n in (16, 24, 32, 48, 64, 128, 256)}
+    for entry in entries:
+        length, offset = entry[-2:]
+        assert offset >= 6 + count * 16
+        assert length > 0 and offset + length <= len(data)
 
 
 def test_native_plugins_are_declared_and_initialized() -> None:

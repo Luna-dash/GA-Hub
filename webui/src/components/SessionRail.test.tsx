@@ -46,6 +46,24 @@ describe('SessionRail', () => {
     expect(onSelect).toHaveBeenCalledWith(sessions[0].id)
   })
 
+  it('hides generated project suffixes and shows session counts in the header', () => {
+    const projectSession = { ...sessions[0], project_name: 'GA-Hub-d795c16e' }
+    act(() => root.render(
+      <SessionRail sessions={[projectSession]} runtimes={{}} currentId={projectSession.id} onSelect={vi.fn()} />,
+    ))
+    const header = host.querySelector('[data-project-header]')!
+    expect(header.textContent).toContain('GA-Hub')
+    expect(header.textContent).not.toContain('d795c16e')
+    expect(header.querySelector('[data-project-session-count]')?.textContent).toBe('1')
+    expect(header.querySelector('[data-project-session-count]')?.getAttribute('aria-label')).toBe('1 个会话')
+    // A saved user label is displayed verbatim even when it ends in hex digits.
+    act(() => root.render(
+      <SessionRail sessions={[projectSession]} runtimes={{}} currentId={projectSession.id} onSelect={vi.fn()}
+        projects={[{ name: 'GA-Hub-d795c16e', path: 'D:/projects/alpha', display_name: '版本-deadbeef', dangling: false }]} />,
+    ))
+    expect(host.querySelector('[data-project-header]')?.textContent).toContain('版本-deadbeef')
+  })
+
   it('skips rendering when the parent updates with unchanged props', () => {
     let reads = 0
     const trackedSession = new Proxy(sessions[0], {
@@ -469,11 +487,11 @@ describe('SessionRail', () => {
     ))
 
     expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
-    expect(linkOf('project:alpha')?.textContent).toBe('展开全部（还有2个）')
+    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('展开全部 5 个会话')
 
     act(() => linkOf('project:alpha')?.click())
     expect(shownInDrawer('alpha')).toEqual(['0', '1', '2', '3', '4'])
-    expect(linkOf('project:alpha')?.textContent).toBe('收起（仅显示最近3个）')
+    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('收起（仅显示最近3个）')
     expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupShowAll') || '{}')).toEqual({ 'project:alpha': true })
 
     act(() => linkOf('project:alpha')?.click())
@@ -520,7 +538,7 @@ describe('SessionRail', () => {
     expect(shownInDrawer('alpha')).toHaveLength(5)
     mount(many.map((item) => (item.id === many[4].id ? { ...item, updated_at: '2026-08-07T00:00:00Z' } : item)))
     expect(shownInDrawer('alpha')).toEqual(['4', '0', '1'])
-    expect(linkOf('project:alpha')?.textContent).toBe('展开全部（还有2个）')
+    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('展开全部 5 个会话')
     expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupShowAll') || '{}')).toEqual({})
   })
 
@@ -531,7 +549,7 @@ describe('SessionRail', () => {
       <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[0].id} onSelect={vi.fn()} />,
     ))
     expect(shownInDrawer('alpha')).toHaveLength(5)
-    expect(linkOf('project:alpha')?.textContent).toBe('收起（仅显示最近3个）')
+    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('收起（仅显示最近3个）')
   })
 
   it('reads a legacy collapsed=false flag as the default preview state', () => {
@@ -541,7 +559,7 @@ describe('SessionRail', () => {
       <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[0].id} onSelect={vi.fn()} />,
     ))
     expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
-    expect(linkOf('project:alpha')?.textContent).toBe('展开全部（还有1个）')
+    expect(linkOf('project:alpha')?.getAttribute('aria-label')).toBe('展开全部 4 个会话')
   })
 
   it('reopens a legacy fully-collapsed drawer to the default preview', () => {
@@ -554,6 +572,27 @@ describe('SessionRail', () => {
     act(() => (sectionOf('alpha')?.querySelector('button[aria-expanded]') as HTMLButtonElement).click())
     expect(shownInDrawer('alpha')).toEqual(['0', '1', '2'])
     expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupCollapse') || '{}')).toEqual({})
+  })
+
+  it('opens all sessions directly from the collapsed header with an icon button', () => {
+    localStorage.setItem('gahub.sessionRailGroupCollapse', JSON.stringify({ 'project:alpha': true }))
+    const many = drawerSessions(5, sessions[0])
+    act(() => root.render(
+      <SessionRail sessions={[...many, sessions[1]]} runtimes={{}} currentId={many[0].id} onSelect={vi.fn()} />,
+    ))
+    const button = linkOf('project:alpha')!
+    expect(shownInDrawer('alpha')).toEqual([])
+    expect(button.closest('[data-project-header]')).not.toBeNull()
+    expect(button.querySelector('svg')).not.toBeNull()
+    expect(button.textContent).toBe('')
+    expect(button.getAttribute('aria-pressed')).toBe('false')
+    expect(sectionOf('alpha')?.querySelector('[data-project-session-count]')?.textContent).toBe('5')
+    act(() => button.click())
+    expect(shownInDrawer('alpha')).toHaveLength(5)
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+    expect(JSON.parse(localStorage.getItem('gahub.sessionRailGroupCollapse') || '{}')).toEqual({})
+    act(() => button.click())
+    expect(shownInDrawer('alpha')).toHaveLength(3)
   })
 
   it('keeps the pure free area uncapped and without the footer link', () => {

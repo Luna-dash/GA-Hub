@@ -34,11 +34,11 @@ const activityDot = {
 }
 
 const activityCard = {
-  active: 'border-status-success-line bg-status-success-soft text-status-success shadow-[inset_3px_0_0_rgba(45,106,63,0.65)] hover:bg-status-success-soft',
-  completed: 'border-status-info-line bg-status-info-soft text-status-info shadow-[inset_3px_0_0_rgba(40,90,120,0.65)] hover:bg-status-info-soft',
-  idle: 'border-line/60 text-ink-muted hover:border-line hover:bg-bg-card',
-  error: 'border-status-danger-line bg-status-danger-soft text-status-danger shadow-[inset_3px_0_0_rgba(158,51,40,0.65)] hover:bg-status-danger-soft',
-  unknown: 'border-status-warning-line bg-status-warning-soft text-status-warning hover:bg-status-warning-soft',
+  active: 'bg-status-success-soft text-status-success',
+  completed: 'bg-status-info-soft text-status-info',
+  idle: 'text-ink-muted hover:bg-bg-card',
+  error: 'bg-status-danger-soft text-status-danger',
+  unknown: 'bg-status-warning-soft text-status-warning',
 }
 
 const activityLabel = {
@@ -62,7 +62,7 @@ const TERMINAL_KEY = storageKeys.sessionRailTerminalState
 const SEEN_COMPLETED_KEY = storageKeys.sessionRailSeenCompletedRuns
 const GROUP_COLLAPSE_KEY = storageKeys.sessionRailGroupCollapse
 const GROUP_SHOW_ALL_KEY = storageKeys.sessionRailGroupShowAll
-/** 组内默认态预览条数（v3 三态中的 D；与组底链接文案同源）。 */
+/** 组内默认态预览条数（v3 三态中的 D；标题行展开按钮也使用此阈值）。 */
 const GROUP_PREVIEW_LIMIT = 3
 const PINNED_GROUPS_KEY = storageKeys.sessionRailGroupPinned
 type TerminalState = 'completed' | 'error'
@@ -181,7 +181,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
       { key: 'free', name: '自由会话', projectPath: null, sessions: free },
       ...Array.from(projects.entries()).map(([name, sessions]) => ({
         key: `project:${name}`,
-        name: projectItems?.find(project => project.name === name)?.display_name || name,
+        name: projectItems?.find(project => project.name === name)?.display_name || name.replace(/-[a-f0-9]{8}$/i, '') || name,
         projectPath: sessions[0]?.project_path || null,
         sessions,
       })),
@@ -212,8 +212,8 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
 
   // v3 三态：C（全折叠，collapsed[key]=true）/ D（默认预览 ≤3）/ E（展开全部，
   // showAll[key]=true）。两个存储对象互斥写入，皆非 true 即 D。
-  // 组头 chevron 只走 C ↔ D（从 C 展开恒回默认，绝不直接落回 E）；E 只由组底
-  // 链接进入/退出；E 态下组内活动抬升（含提交/btw/回退的乐观 updated_at）时
+  // 组头 chevron 只走 C ↔ D（从 C 展开恒回默认，绝不直接落回 E）；E 由标题行图标
+  // 进入/退出（折叠时也可直接展开全部）；E 态下组内活动抬升（含提交/btw/回退的乐观 updated_at）时
   // 自动落回 D（见下方 effect）。
   const toggleGroup = useCallback((key: string) => {
     setCollapsedGroups((current) => {
@@ -233,10 +233,17 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
   }, [])
 
   const toggleGroupShowAll = useCallback((key: string) => {
+    setCollapsedGroups((current) => {
+      if (current[key] !== true) return current
+      const next = { ...current }
+      delete next[key]
+      try { localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify(next)) } catch { /* 私有模式等 */ }
+      return next
+    })
     setShowAllGroups((current) => {
       const next = { ...current }
       if (current[key] === true) delete next[key] // E → D
-      else next[key] = true // D → E（D 态下 collapsed[key] 不同时为 true，互斥自然成立）
+      else next[key] = true // C/D → E；collapsed 标志同时清除
       try { localStorage.setItem(GROUP_SHOW_ALL_KEY, JSON.stringify(next)) } catch { /* 私有模式等 */ }
       return next
     })
@@ -478,7 +485,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
             const sessions = group.sessions
             if (sessions.length === 0) return null
             // v3 三态可见集：C（上面的 groupClosed）→ 0 条；D → 最近 3 条（当前
-            // 会话不在其中时顶入第 3 位，保证可见）；E → 全量，仅经组底链接进入。
+            // 会话不在其中时顶入第 3 位，保证可见）；E → 全量，经标题行图标进入。
             // 纯自由区（rail 里没有任何项目分组可被遮挡）不参与收折：恒全量、无链接。
             const groupExpandable = hasProjectGroups && sessions.length > GROUP_PREVIEW_LIMIT
             const groupShowAll = groupExpandable && !groupClosed && showAllGroups[group.key] === true
@@ -486,7 +493,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
               ? sessions
               : sessionPreview(sessions, currentId, GROUP_PREVIEW_LIMIT)
             const cards = (
-              <div className={clsx('flex gap-2 md:flex-col md:gap-1.5', hasProjectGroups && !groupClosed && 'md:pl-1')}>
+              <div className={clsx('flex gap-1 md:flex-col md:gap-0.5', hasProjectGroups && !groupClosed && 'md:pl-1')}>
                 {visibleSessions.map((session) => {
                   const runtime = runtimes[session.id]
                   const activity = displayState(session)
@@ -498,10 +505,10 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                     data-activity={activity}
                     data-session-id={session.id}
                     className={clsx(
-                      'group relative w-52 shrink-0 rounded-xl border transition-colors md:w-full',
+                      'group relative w-52 shrink-0 rounded-md transition-colors md:w-full',
                       activityCard[activity],
-                      // 内描边：ring + offset 会画在盒外（曾挤占 rail 横向空间），ring-inset 收进盒内。
-current && 'ring-2 ring-inset ring-accent/50',
+                      // 当前行以底色强调，无框会话行不再加描边。
+                      current && 'bg-accent/10 font-medium',
                     )}
                   >
                     <div className="relative">
@@ -526,7 +533,7 @@ current && 'ring-2 ring-inset ring-accent/50',
                           onDoubleClick={() => beginRename(session)}
                           aria-current={current ? 'page' : undefined}
                           title={`${sessionTitle(session)} · ${sessionStatusLabel(runtime)}${session.project_name ? ` · ${session.project_name}` : ''}`}
-                          className="block w-full px-2.5 py-1.5 text-left"
+                          className="block w-full px-2 py-1 text-left"
                         >
                           <span className="flex items-center gap-2 pr-8">
                             <span aria-hidden="true" title={sessionStatusLabel(runtime)} className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
@@ -598,8 +605,8 @@ current && 'ring-2 ring-inset ring-accent/50',
             const isPinned = pinnedGroups.includes(group.key)
             return (
               <section key={group.key} className={clsx('md:mb-1', isPinned && hasPinnedGroups && 'md:mb-1.5')}>
-                {/* 标题是纯文字区隔（无描边/无底框）：会话卡是带边框的盒体，标题再描边会与之同形难区分。 */}
-                <div className="group/project-header relative flex w-full items-center px-0.5">
+                {/* 项目标题承载边框，会话以无框紧凑行呈现。 */}
+                <div data-project-header className="group/project-header relative flex w-full items-center rounded-md border border-line bg-bg-card px-0.5">
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.key)}
@@ -620,7 +627,23 @@ current && 'ring-2 ring-inset ring-accent/50',
                       <path d="m6 9 6 6 6-6" />
                     </svg>
                     <span className="min-w-0 flex-1 truncate">{group.name}</span>
+                    <span data-project-session-count aria-label={`${sessions.length} 个会话`} className="shrink-0 text-[10px] font-normal tabular-nums text-ink-faint">{sessions.length}</span>
                   </button>
+                  {groupExpandable && (
+                    <button
+                      type="button"
+                      onClick={() => toggleGroupShowAll(group.key)}
+                      data-testid={`group-show-all-${group.key}`}
+                      aria-label={groupShowAll ? '收起（仅显示最近3个）' : `展开全部 ${sessions.length} 个会话`}
+                      aria-pressed={groupShowAll}
+                      title={groupShowAll ? '仅显示最近3个会话' : '展开全部会话'}
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-faint transition hover:bg-accent/10 hover:text-accent focus-visible:outline-accent"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d={groupShowAll ? 'm7 9 5-5 5 5M7 20l5-5 5 5' : 'm7 4 5 5 5-5M7 15l5 5 5-5'} />
+                      </svg>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => togglePin(group.key)}
@@ -644,16 +667,6 @@ current && 'ring-2 ring-inset ring-accent/50',
                 {!groupClosed && (
                   <div className="md:pt-1">
                     {cards}
-                    {groupExpandable && (
-                      <button
-                        type="button"
-                        onClick={() => toggleGroupShowAll(group.key)}
-                        data-testid={`group-show-all-${group.key}`}
-                        className="mt-1 w-full rounded px-1 py-0.5 text-center text-[11px] text-ink-faint/80 transition hover:text-ink-muted"
-                      >
-                        {groupShowAll ? '收起（仅显示最近3个）' : `展开全部（还有${sessions.length - GROUP_PREVIEW_LIMIT}个）`}
-                      </button>
-                    )}
                   </div>
                 )}
               </section>

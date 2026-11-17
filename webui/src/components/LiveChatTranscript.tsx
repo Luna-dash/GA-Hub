@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { ReactNode } from 'react'
 import type { ScheduledChat } from '@/api/types'
 import { decideViewportAction } from '@/utils/conversationViewport'
 import { useChatStore, type ChatMsg } from '@/stores/chatStore'
@@ -47,7 +46,6 @@ interface LiveChatTranscriptProps {
   scheduleNow: number
   onCancelSchedule: (task: ScheduledChat) => void
   onRewind: (streamId: string) => void
-  railTop?: ReactNode
 }
 
 /**
@@ -62,7 +60,6 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     scheduleNow,
     onCancelSchedule,
     onRewind,
-    railTop,
   }, forwardedRef) {
     const msgs = useChatStore((state) => state.msgs)
     const streaming = useChatStore((state) => state.streaming)
@@ -601,14 +598,13 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         </div>
 
         <ConversationCollapseControl />
-        {(railTop || scheduledChats.length > 0 || turnCount > 0) && (
+        {(scheduledChats.length > 0 || turnCount > 0) && (
           <aside
             ref={utilityRailRef}
             className="absolute inset-y-3 right-2 z-10 flex w-14 flex-col gap-2"
             aria-label="对话功能区"
             onPointerDown={(event) => focusChatScrollFromUtilityRail(event, scrollRef.current)}
           >
-            {railTop && <div className="flex shrink-0 justify-center">{railTop}</div>}
             {scheduledChats.length > 0 && (
               <div data-chat-wheel-independent className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5" aria-label="待发送定时消息">
                 {scheduledChats.map((task) => (

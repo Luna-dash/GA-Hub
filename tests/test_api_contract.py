@@ -29,6 +29,28 @@ class GeneratedApiContractTests(unittest.TestCase):
 
         self.assertEqual(app.openapi(), checked_in)
 
+    def test_model_fingerprint_endpoints_are_removed(self) -> None:
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        self.assertFalse(any("model-fingerprint" in path for path in app.openapi()["paths"]))
+        self.assertFalse(any("model-fingerprint" in route.path for route in app.routes))
+        # Keep FastAPI's request context, without production middleware/lifespan.
+        routing_app = FastAPI()
+        routing_app.router.routes = list(app.router.routes)
+        client = TestClient(routing_app)
+        try:
+            response = client.post(
+                "/api/sessions/removed-feature/model-fingerprint",
+                json={"confirm_paid_sampling": True},
+            )
+            # The GET-only SPA catch-all rejects unknown POST paths with 405.
+            self.assertEqual(response.status_code, 405)
+            response = client.get("/api/sessions/removed-feature/model-fingerprint/old-job")
+            self.assertEqual(response.status_code, 404)
+        finally:
+            client.close()
+
     def test_generated_typescript_contract_is_fresh(self) -> None:
         """schema.d.ts must match docs/api/openapi.json (webui checker)."""
         webui = ROOT / "webui"
