@@ -167,7 +167,7 @@ describe('SessionRail', () => {
     expect(onDelete).toHaveBeenCalledWith(sessions[1].id)
   })
 
-  it('hides the delete affordance until the row is hovered, focused, or selected', () => {
+  it('keeps delete hidden on selected rows until hover or keyboard focus, and accessible on touch', () => {
     act(() => root.render(
       <SessionRail sessions={sessions} runtimes={runtimes} currentId={sessions[0].id} onSelect={vi.fn()} onDelete={vi.fn()} />,
     ))
@@ -176,14 +176,15 @@ describe('SessionRail', () => {
       host.querySelector(`[aria-label="${label}"]`) as HTMLButtonElement
     ).parentElement!.className.split(/\s+/)
 
-    // 选中行常显：触屏没有 hover，否则删除键永远够不到
-    expect(classesOf('删除 研究任务')).toContain('opacity-100')
-    expect(classesOf('删除 研究任务')).not.toContain('opacity-0')
-
-    const other = classesOf('删除 未命名会话 · bbbbbbbb')
-    expect(other).toContain('opacity-0')
-    expect(other).toContain('group-hover:opacity-100')
-    expect(other).toContain('focus-within:opacity-100')
+    for (const label of ['删除 研究任务', '删除 未命名会话 · bbbbbbbb']) {
+      const classes = classesOf(label)
+      expect(classes).toContain('opacity-0')
+      expect(classes).not.toContain('opacity-100')
+      expect(classes).toContain('group-hover:opacity-100')
+      expect(classes).toContain('has-[:focus-visible]:opacity-100')
+      expect(classes).not.toContain('focus-within:opacity-100')
+      expect(classes).toContain('[@media(hover:none)]:opacity-100')
+    }
   })
 
   it('cancels the delete confirmation from anywhere outside it, or with Escape', () => {

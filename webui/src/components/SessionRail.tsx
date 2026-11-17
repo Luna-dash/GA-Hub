@@ -542,16 +542,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                       )}
                       {!editing && (
                         <div
-                          className={clsx(
-                            // A permanent × on every row read as "everything here is
-                            // deletable". Reveal on hover or keyboard focus, and keep
-                            // it up on the selected row so a pointer-less/touch
-                            // surface can still reach it.
-                            'absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-0.5 transition-opacity duration-150',
-                            current
-                              ? 'opacity-100'
-                              : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100',
-                          )}
+                          className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100"
                         >
                           {onDelete && (
                             <button
