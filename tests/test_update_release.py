@@ -26,7 +26,11 @@ def fake_feed(monkeypatch, tmp_path, *, version="1.2.0", prerelease=False):
     contents = {feed.API: json.dumps(metadata).encode(), feed.asset_url("v" + version, name): data,
                 feed.asset_url("v" + version, "SHA256SUMS.txt"): (hashlib.sha256(data).hexdigest() + "  " + name + "\n").encode()}
     monkeypatch.setattr(feed, "installed_version", lambda: "1.1.0")
-    monkeypatch.setattr(feed, "fetch", lambda url, path, limit: path.write_bytes(contents[url]))
+    def fetch(url, path, limit, progress=None):
+        path.write_bytes(contents[url])
+        if progress is not None:
+            progress(len(contents[url]))
+    monkeypatch.setattr(feed, "fetch", fetch)
     return contents, metadata
 
 
@@ -35,7 +39,12 @@ def test_check_and_prepare_three_exe_package(tmp_path, monkeypatch):
     store = UpdateStore(tmp_path / "updates")
     result = feed.check(store.root)
     assert result["available"] and result["notes"] == "Notes"
-    plan = feed.prepare(store)
+    events = []
+    plan = feed.prepare(store, progress=lambda phase, **values: events.append((phase, values)))
+    assert [phase for phase, _ in events] == ["checksums", "downloading", "downloading", "verifying", "preparing"]
+    assert events[2][1]["received_bytes"] == result["size"]
+    assert events[0][1]["total_bytes"] == result["size"]
+    assert json.loads((store.root / "release.json").read_text(encoding="utf8")) == result
     assert plan["state"] == "prepared"
     assert (store.verify(plan) / "ga-hub-update.exe").is_file()
     assert not list(store.root.glob("*.zip")) and not list(store.root.glob("feed-*.json"))
@@ -101,7 +110,9 @@ def test_windows_download_uses_system_proxy_over_partial_environment(monkeypatch
         def close(self): pass
 
     monkeypatch.setattr(feed.requests, "Session", Session)
-    feed.fetch("https://github.com/test", tmp_path / "asset", 100)
+    received = []
+    feed.fetch("https://github.com/test", tmp_path / "asset", 100, progress=received.append)
+    assert received == [len(b"downloaded")]
     assert (tmp_path / "asset").read_bytes() == b"downloaded"
     assert calls == [(not bool(system_proxies), expected)]
 

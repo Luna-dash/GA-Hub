@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from .. import _paths
 from ..services.self_update import UpdateStore
-from ..services import update_handoff, update_preflight, update_release
+from ..services import update_handoff, update_preflight, update_release, update_download
 
 router = APIRouter(prefix="/api/updates", tags=["updates"])
 
@@ -33,6 +33,8 @@ def update_status() -> dict:
     handoff = updates.root / "handoff.json"
     return {"plan": updates.read(), "supported": sys.platform == "win32",
             "sources": ["trusted_local_archive"], "data_epoch": 1,
+            "download": update_download.status(updates),
+            "release": update_download.read_json(updates.root / "release.json") or None,
             "handoff": update_handoff.read_json(handoff) if handoff.exists() else None}
 
 
@@ -50,6 +52,14 @@ def check_release() -> dict:
         return update_release.check(store().root)
     except (ValueError, OSError, update_release.requests.RequestException) as exc:
         raise HTTPException(502, str(exc)) from exc
+
+
+@router.post("/release/download", status_code=202)
+def download_release() -> dict:
+    try:
+        return update_download.start(store())
+    except (OSError, ValueError) as exc:
+        raise HTTPException(409, update_download.failure(exc)) from exc
 
 
 @router.post("/release/prepare")

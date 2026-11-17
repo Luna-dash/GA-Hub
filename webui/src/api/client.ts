@@ -583,7 +583,19 @@ export interface UpdatePlan {
   version?: string
   commit?: string
 }
+export interface UpdateDownload {
+  phase: string
+  received_bytes?: number
+  total_bytes?: number | null
+  started_at?: number
+  updated_at?: number
+  release?: UpdateRelease
+  plan_id?: string
+  error?: { message: string; detail: string } | null
+}
 export interface UpdateStatus {
+  download?: UpdateDownload | null
+  release?: UpdateRelease | null
   plan: UpdatePlan
   supported: boolean
   sources: string[]
@@ -599,7 +611,7 @@ export interface UpdateRelease {
 }
 export const updateApi = {
   release: () => http<UpdateRelease>('GET', '/api/updates/release', undefined, { timeoutMs: 90000 }),
-  download: () => http<UpdatePlan>('POST', '/api/updates/release/prepare', {}, { timeoutMs: 1800000 }),
+  download: () => http<UpdateDownload>('POST', '/api/updates/release/download', {}, { timeoutMs: 15000 }),
   status: () => http<UpdateStatus>('GET', '/api/updates'),
   prepare: (archive: string, sha256: string, trusted: boolean) =>
     http<UpdatePlan>('POST', '/api/updates/prepare', {

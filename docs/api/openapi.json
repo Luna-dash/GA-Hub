@@ -191,6 +191,29 @@
         }
       }
     },
+    "/api/updates/release/download": {
+      "post": {
+        "tags": [
+          "updates"
+        ],
+        "summary": "Download Release",
+        "operationId": "download_release_api_updates_release_download_post",
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Download Release Api Updates Release Download Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/updates/release/prepare": {
       "post": {
         "tags": [

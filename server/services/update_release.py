@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 
 import requests
 
-from .self_update import MAX_ARCHIVE_BYTES, UpdateStore, digest
+from .self_update import MAX_ARCHIVE_BYTES, UpdateStore, digest, atomic_json
 from .update_lock import FileMutex
 
 REPOSITORY = "Luna-dash/GA-Hub"
@@ -45,7 +45,7 @@ def asset_url(tag: str, name: str) -> str:
     return f"https://github.com/{REPOSITORY}/releases/download/{tag}/{name}"
 
 
-def fetch(url: str, destination: Path, limit: int) -> None:
+def fetch(url: str, destination: Path, limit: int, progress=None) -> None:
     """Bounded streaming with TLS and restricted HTTPS redirect hosts."""
     allowed = {"github.com", "api.github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"}
     session = requests.Session()
@@ -79,6 +79,8 @@ def fetch(url: str, destination: Path, limit: int) -> None:
                         if total > limit:
                             raise ValueError("Release asset exceeds size limit")
                         stream.write(block)
+                        if progress is not None:
+                            progress(total)
                 return
         raise ValueError("Too many release redirects")
     finally:
@@ -104,18 +106,22 @@ def check(root: Path) -> dict:
     if not 0 < assets[name].get("size", 0) <= MAX_ARCHIVE_BYTES:
         raise ValueError("Invalid release package size")
     current = installed_version()
-    return {"repository": REPOSITORY, "current_version": current, "version": tag.removeprefix("v"),
+    result = {"repository": REPOSITORY, "current_version": current, "version": tag.removeprefix("v"),
             "tag": tag, "available": version_tuple(tag) > version_tuple(current),
             "name": name, "size": assets[name]["size"], "notes": str(info.get("body") or "")[:20000],
             "url": f"https://github.com/{REPOSITORY}/releases/tag/{tag}"}
+    atomic_json(root / "release.json", result)
+    return result
 
 
-def prepare(store: UpdateStore) -> dict:
+def prepare(store: UpdateStore, progress=None) -> dict:
     # Serializes downloads, not only final extraction; requests cannot mix assets.
     with FileMutex(store.root / "download.lock"):
         release = check(store.root)
         if not release["available"]:
             raise ValueError("No newer stable release is available")
+        if progress is not None:
+            progress("checksums", release=release, total_bytes=release["size"])
         token = uuid.uuid4().hex
         checksums = store.root / f"{token}.checksums"
         archive = store.root / f"{token}.zip"
@@ -125,7 +131,13 @@ def prepare(store: UpdateStore) -> dict:
                        if (m := re.fullmatch(r"([a-fA-F0-9]{64})  " + re.escape(release["name"]), line))]
             if len(matches) != 1:
                 raise ValueError("Missing or duplicate archive checksum")
-            fetch(asset_url(release["tag"], release["name"]), archive, MAX_ARCHIVE_BYTES)
+            if progress is None:
+                fetch(asset_url(release["tag"], release["name"]), archive, MAX_ARCHIVE_BYTES)
+            else:
+                progress("downloading", received_bytes=0)
+                fetch(asset_url(release["tag"], release["name"]), archive, MAX_ARCHIVE_BYTES,
+                      progress=lambda received: progress("downloading", received_bytes=received))
+                progress("verifying", received_bytes=archive.stat().st_size)
             if archive.stat().st_size != release["size"] or digest(archive) != matches[0]:
                 raise ValueError("Release archive checksum/size mismatch")
             # Check the version inside before committing a prepared plan.
@@ -134,6 +146,8 @@ def prepare(store: UpdateStore) -> dict:
                 info = json.loads(package.read("build-info.json"))
             if info.get("tag") != release["tag"] or info.get("version") != release["version"] or info.get("channel") != "stable" or info.get("dirty") is not False:
                 raise ValueError("Release metadata does not match the selected stable version")
+            if progress is not None:
+                progress("preparing")
             return store.prepare(archive, matches[0], trusted=True)
         finally:
             archive.unlink(missing_ok=True)

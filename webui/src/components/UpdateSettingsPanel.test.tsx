@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { UpdateSettingsPanel } from './UpdateSettingsPanel'
 import { updateApi } from '@/api/client'
 
-vi.mock('@/api/client', () => ({ updateApi: { status: vi.fn(), prepare: vi.fn(), cancel: vi.fn(), preflight: vi.fn(), request: vi.fn(), approve: vi.fn() } }))
+vi.mock('@/api/client', () => ({ updateApi: { status: vi.fn(), release: vi.fn(), download: vi.fn(), prepare: vi.fn(), cancel: vi.fn(), preflight: vi.fn(), request: vi.fn(), approve: vi.fn() } }))
 let host: HTMLDivElement
 let root: Root
 const idle = { plan: { state: 'idle' }, supported: true, sources: ['trusted_local_archive'], data_epoch: 1 }
 beforeEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
   ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
   host = document.createElement('div'); document.body.appendChild(host)
   root = createRoot(host)
@@ -71,7 +71,7 @@ describe('UpdateSettingsPanel', () => {
     await act(async () => root.render(<UpdateSettingsPanel />))
     expect(host.querySelector('[class*="text-amber-"]')).toBeNull()
     expect(host.querySelector('[class*="text-slate-"]')).toBeNull()
-    for (const text of ['先在线准备候选包', '候选包已准备', '交接：ready']) {
+    for (const text of ['先在线准备候选包', '候选包已准备', '交接：已就绪，等待确认']) {
       const element = Array.from(host.querySelectorAll('p, div')).find(node => node.textContent?.startsWith(text))
       expect(element?.classList.contains('text-ink')).toBe(true)
     }
@@ -86,7 +86,7 @@ describe('UpdateSettingsPanel', () => {
     vi.mocked(updateApi.status).mockResolvedValue({ ...idle, plan: { state: 'cancelled' } })
     await act(async () => button('取消候选更新').click())
     expect(updateApi.cancel).toHaveBeenCalledWith('abc')
-    expect(host.querySelector('[role="status"]')?.textContent).toContain('cancelled')
+    expect(host.querySelector('[role="status"]')?.textContent).toContain('已取消')
   })
   it('requires a separate approval after the executor becomes ready', async () => {
     vi.mocked(updateApi.status).mockResolvedValueOnce({ ...idle, plan: { id: 'p', state: 'prepared' } })
@@ -109,6 +109,58 @@ describe('UpdateSettingsPanel', () => {
     expect(updateApi.request).not.toHaveBeenCalled()
     expect(updateApi.approve).not.toHaveBeenCalled()
     expect(host.querySelector('[role="alert"]')?.textContent).toContain('Candidate selftest failed')
+  })
+
+  it('restores real byte progress after leaving and returning to the panel', async () => {
+    vi.useFakeTimers()
+    const release = { repository: 'Luna-dash/GA-Hub', current_version: '1.1.0', version: '1.2.0', tag: 'v1.2.0', available: true, name: 'test.zip', size: 10485760, notes: '', url: '' }
+    const snapshot = { supported: true, data_epoch: 1, sources: [], plan: { state: 'idle' }, release,
+      download: { phase: 'downloading', received_bytes: 5242880, total_bytes: 10485760 } }
+    vi.mocked(updateApi.status).mockResolvedValue(snapshot)
+    try {
+      await act(async () => root.render(<UpdateSettingsPanel />))
+      expect(host.querySelector('progress')?.value).toBe(50)
+      expect(host.textContent).toContain('5.0 MB / 10.0 MB · 50%')
+      expect(button('正在后台下载并准备…').disabled).toBe(true)
+      await act(async () => root.unmount())
+      root = createRoot(host)
+      vi.mocked(updateApi.status).mockResolvedValue({ ...snapshot, download: { ...snapshot.download, received_bytes: 8388608 } })
+      await act(async () => root.render(<UpdateSettingsPanel />))
+      expect(host.querySelector('progress')?.value).toBe(80)
+      expect(host.textContent).toContain('最新 1.2.0')
+      vi.mocked(updateApi.status).mockResolvedValue({ ...snapshot, plan: { state: 'prepared', id: 'abc', version: '1.2.0' }, download: { ...snapshot.download, phase: 'succeeded' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(host.textContent).toContain('下载完成，候选包已准备')
+      expect(button('此版本已准备完成').disabled).toBe(true)
+    } finally { vi.useRealTimers() }
+  })
+  it('shows friendly lock errors with raw JSON hidden in technical details', async () => {
+    vi.mocked(updateApi.status).mockResolvedValue({ ...idle, plan: { state: 'prepared', id: 'abc' } })
+    vi.mocked(updateApi.cancel).mockRejectedValue(new Error('{"detail":"Updater lock busy: C:/updates/download.lock"}'))
+    await act(async () => root.render(<UpdateSettingsPanel />))
+    await act(async () => button('取消候选更新').click())
+    const alert = host.querySelector('[role="alert"]')!
+    expect(alert.querySelector('p')?.textContent).toContain('另一个更新操作正在进行')
+    expect(alert.querySelector('details')?.open).toBe(false)
+    expect(alert.querySelector('pre')?.textContent).toContain('Updater lock busy')
+  })
+  it('keeps the last known progress on connection loss and recovers automatically', async () => {
+    vi.useFakeTimers()
+    vi.mocked(updateApi.status).mockResolvedValue({ supported: true, data_epoch: 1, sources: [], plan: { state: 'idle' },
+      download: { phase: 'downloading', received_bytes: 50, total_bytes: 100 } })
+    try {
+      await act(async () => root.render(<UpdateSettingsPanel />))
+      vi.mocked(updateApi.status).mockRejectedValue(new Error('Network error'))
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(host.textContent).toContain('正在自动重连')
+      expect(host.querySelector('progress')?.value).toBe(50)
+      vi.mocked(updateApi.status).mockResolvedValue({ supported: true, data_epoch: 1, sources: [], plan: { state: 'idle' }, download: {
+        phase: 'interrupted', received_bytes: 50, total_bytes: 100, error: { message: '上次下载已中断，可重新下载', detail: 'Worker stopped' } } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(host.textContent).not.toContain('正在自动重连')
+      expect(host.querySelector('[role="alert"] p')?.textContent).toContain('上次下载已中断')
+      expect(button('重新下载并校验').disabled).toBe(false)
+    } finally { vi.useRealTimers() }
   })
   it('keeps preparation disabled when the running backend lacks the API', async () => {
     vi.mocked(updateApi.status).mockRejectedValue(new Error('404'))
