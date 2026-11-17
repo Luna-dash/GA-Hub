@@ -27,7 +27,7 @@ async function enter(input: HTMLInputElement, value: string) {
   })
 }
 describe('UpdateSettingsPanel', () => {
-  it('requires a trusted source, full checksum and path; never exposes restart', async () => {
+  it('requires a trusted source and path and validates a supplied checksum; never exposes restart', async () => {
     await act(async () => root.render(<UpdateSettingsPanel />))
     expect(button('校验并准备').disabled).toBe(true)
     const inputs = host.querySelectorAll('input')
@@ -43,6 +43,41 @@ describe('UpdateSettingsPanel', () => {
     expect(button('取消候选更新')).toBeTruthy()
     expect(host.textContent).toContain('固定60秒倒计时')
     expect(button('唤醒独立执行器')).toBeTruthy()
+  })
+  it.each(['', '   '])('allows a blank checksum (%j) but still requires trust and path', async checksum => {
+    await act(async () => root.render(<UpdateSettingsPanel />))
+    const inputs = host.querySelectorAll('input')
+    await enter(inputs[0], ' D:\\release.zip ')
+    await enter(inputs[1], checksum)
+    expect(button('校验并准备').disabled).toBe(true)
+    await act(async () => inputs[2].click())
+    expect(button('校验并准备').disabled).toBe(false)
+    expect(host.textContent).toContain('SHA-256（选填）')
+    await act(async () => button('校验并准备').click())
+    expect(updateApi.prepare).toHaveBeenCalledWith('D:\\release.zip', '', true)
+  })
+  it('rejects an incomplete checksum when supplied', async () => {
+    await act(async () => root.render(<UpdateSettingsPanel />))
+    const inputs = host.querySelectorAll('input')
+    await enter(inputs[0], 'D:\\release.zip')
+    await act(async () => inputs[2].click())
+    await enter(inputs[1], 'bad')
+    expect(button('校验并准备').disabled).toBe(true)
+    await enter(inputs[1], 'a'.repeat(64))
+    expect(button('校验并准备').disabled).toBe(false)
+  })
+  it('uses readable theme colors for guidance, handoff status and errors', async () => {
+    vi.mocked(updateApi.status).mockResolvedValue({ ...idle, plan: { state: 'prepared', id: 'abc' }, handoff: { id: 'abc', state: 'ready' } })
+    await act(async () => root.render(<UpdateSettingsPanel />))
+    expect(host.querySelector('[class*="text-amber-"]')).toBeNull()
+    expect(host.querySelector('[class*="text-slate-"]')).toBeNull()
+    for (const text of ['先在线准备候选包', '候选包已准备', '交接：ready']) {
+      const element = Array.from(host.querySelectorAll('p, div')).find(node => node.textContent?.startsWith(text))
+      expect(element?.classList.contains('text-ink')).toBe(true)
+    }
+    vi.mocked(updateApi.cancel).mockRejectedValue(new Error('Network error'))
+    await act(async () => button('取消候选更新').click())
+    expect(host.querySelector('[role="alert"]')?.classList.contains('text-status-danger')).toBe(true)
   })
   it('cancels only the displayed plan', async () => {
     vi.mocked(updateApi.status).mockResolvedValue({ ...idle, plan: { state: 'prepared', id: 'abc' } })

@@ -61,6 +61,30 @@ def test_requires_trusted_source_and_checksum(tmp_path):
         store.prepare(archive, "0" * 64, trusted=True)
 
 
+@pytest.mark.parametrize("checksum", ["", None])
+def test_prepare_without_external_checksum(tmp_path, checksum):
+    archive = release(tmp_path)
+    store = UpdateStore(tmp_path / "updates")
+    with pytest.raises(ValueError, match="confirmation"):
+        store.prepare(archive, trusted=False)
+    plan = store.prepare(archive, trusted=True) if checksum is None else store.prepare(archive, checksum, trusted=True)
+    assert plan["archive_sha256"] == digest(archive)
+    assert store.verify(plan).is_dir()
+
+
+def test_invalid_optional_checksum_rejected(tmp_path):
+    with pytest.raises(ValueError, match="64 hexadecimal"):
+        UpdateStore(tmp_path / "updates").prepare(release(tmp_path), "bad", trusted=True)
+
+
+def test_without_external_checksum_still_rejects_tampered_executable(tmp_path):
+    store = UpdateStore(tmp_path / "updates")
+    archive = release(tmp_path, hashes={name: "0" * 64 for name in EXECUTABLES})
+    with pytest.raises(ValueError, match="integrity"):
+        store.prepare(archive, trusted=True)
+    assert store.read()["state"] == "idle"
+
+
 def test_incompatible_data_epoch(tmp_path):
     with pytest.raises(ValueError, match="compatibility"):
         prepare(UpdateStore(tmp_path / "updates"), release(tmp_path, epoch=2))
@@ -115,6 +139,24 @@ def test_api(tmp_path, monkeypatch):
     assert result.status_code == 200, result.text
     assert client.post("/api/updates/cancel", json={"id": result.json()["id"]}).status_code == 200
     assert client.post("/api/updates/prepare", json={**body, "sha256": "bad"}).status_code == 422
+
+
+@pytest.mark.parametrize("checksum", [None, ""])
+def test_api_optional_checksum(tmp_path, monkeypatch, checksum):
+    from server.routes import updates
+    monkeypatch.setattr(updates._paths, "ADMIN_DATA", tmp_path / "admin")
+    app = FastAPI()
+    app.include_router(updates.router)
+    client = TestClient(app)
+    archive = release(tmp_path)
+    body = {"archive": str(archive)}
+    if checksum is not None:
+        body["sha256"] = checksum
+    assert client.post("/api/updates/prepare", json=body).status_code == 400
+    body["trusted_source_confirmed"] = True
+    result = client.post("/api/updates/prepare", json=body)
+    assert result.status_code == 200, result.text
+    assert result.json()["archive_sha256"] == digest(archive)
 
 
 @pytest.mark.parametrize("state", ["prepared", "armed", "switching", "verifying", "failed"])

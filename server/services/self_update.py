@@ -93,22 +93,22 @@ class UpdateStore:
                 raise ValueError(f"Candidate integrity check failed: {name}")
         return directory
 
-    def prepare(self, archive: Path, expected_sha256: str, *, trusted: bool) -> dict[str, Any]:
-        """Caller must separately authenticate the source of the supplied checksum."""
+    def prepare(self, archive: Path, expected_sha256: str = "", *, trusted: bool) -> dict[str, Any]:
+        """Require a trusted archive; optionally compare a separately sourced checksum."""
         with self.lock:
             if self.read()["state"] in {"prepared", "armed", "switching", "verifying", "failed"}:
                 raise ValueError("An update is already prepared, being applied, or requires manual recovery")
             if not trusted:
                 raise ValueError("Explicit confirmation of the release source is required")
-            if not re.fullmatch(r"[a-fA-F0-9]{64}", expected_sha256):
-                raise ValueError("A SHA-256 from a trusted source is required")
+            if expected_sha256 and not re.fullmatch(r"[a-fA-F0-9]{64}", expected_sha256):
+                raise ValueError("SHA-256 must be 64 hexadecimal characters when supplied")
             archive = archive.resolve(strict=True)
             if not archive.is_file() or archive.stat().st_size > MAX_ARCHIVE_BYTES:
                 raise ValueError("Archive is missing or exceeds the size limit")
             # Hash and parse the same open file, not a path that can be swapped.
             with archive.open("rb") as stream:
                 h = hashlib.file_digest(stream, "sha256").hexdigest()
-                if h != expected_sha256.lower():
+                if expected_sha256 and h != expected_sha256.lower():
                     raise ValueError("Archive SHA-256 does not match")
                 stream.seek(0)
                 with zipfile.ZipFile(stream) as package:

@@ -3910,7 +3910,10 @@ export interface components {
         PrepareUpdate: {
             /** Archive */
             archive: string;
-            /** Sha256 */
+            /**
+             * Sha256
+             * @default
+             */
             sha256: string;
             /**
              * Trusted Source Confirmed

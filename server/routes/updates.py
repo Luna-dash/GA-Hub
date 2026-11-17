@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/updates", tags=["updates"])
 
 class PrepareUpdate(BaseModel):
     archive: str = Field(min_length=1, max_length=4096)
-    sha256: str = Field(pattern=r"^[a-fA-F0-9]{64}$")
+    sha256: str = Field(default="", pattern=r"^(?:[a-fA-F0-9]{64})?$")
     trusted_source_confirmed: bool = False
 
 

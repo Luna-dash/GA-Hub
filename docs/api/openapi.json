@@ -9329,8 +9329,9 @@
           },
           "sha256": {
             "type": "string",
-            "pattern": "^[a-fA-F0-9]{64}$",
-            "title": "Sha256"
+            "pattern": "^(?:[a-fA-F0-9]{64})?$",
+            "title": "Sha256",
+            "default": ""
           },
           "trusted_source_confirmed": {
             "type": "boolean",
@@ -9340,8 +9341,7 @@
         },
         "type": "object",
         "required": [
-          "archive",
-          "sha256"
+          "archive"
         ],
         "title": "PrepareUpdate"
       },
