@@ -200,7 +200,6 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
     })
     return groups
   }, [orderedSessions, pinnedGroups, projectItems])
-  const hasPinnedGroups = sessionGroups.some((group) => pinnedGroups.includes(group.key))
   const hasProjectGroups = sessionGroups.some((group) => group.key !== 'free')
 
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(
@@ -533,7 +532,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                           onDoubleClick={() => beginRename(session)}
                           aria-current={current ? 'page' : undefined}
                           title={`${sessionTitle(session)} · ${sessionStatusLabel(runtime)}${session.project_name ? ` · ${session.project_name}` : ''}`}
-                          className="block w-full px-2 py-1 text-left"
+                          className="block min-h-7 w-full px-2 py-1 text-left"
                         >
                           <span className="flex items-center gap-2 pr-8">
                             <span aria-hidden="true" title={sessionStatusLabel(runtime)} className={clsx('h-2 w-2 shrink-0 rounded-full', activityDot[activity])} />
@@ -604,15 +603,15 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
             if (!hasProjectGroups) return <Fragment key={group.key}>{cards}</Fragment>
             const isPinned = pinnedGroups.includes(group.key)
             return (
-              <section key={group.key} className={clsx('md:mb-1', isPinned && hasPinnedGroups && 'md:mb-1.5')}>
-                {/* 项目标题承载边框，会话以无框紧凑行呈现。 */}
-                <div data-project-header className="group/project-header relative flex w-full items-center rounded-md border border-line bg-bg-card px-0.5">
+              <section key={group.key}>
+                {/* 右侧固定三列：置顶 / 展开全部 / 计数；计数中心与会话删除键对齐。 */}
+                <div data-project-header className="group/project-header relative flex w-full items-center rounded-md border border-line bg-bg-card pl-0.5 pr-[7px]">
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.key)}
                     aria-expanded={!groupClosed}
                     title={group.projectPath || group.name}
-                    className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-1 text-left text-xs font-bold tracking-wide text-ink-muted/90 transition hover:text-ink"
+                    className="flex min-h-[30px] min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-1 text-left text-xs font-bold tracking-wide text-ink-muted/90 transition hover:text-ink"
                   >
                     <svg
                       viewBox="0 0 24 24"
@@ -627,7 +626,23 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                       <path d="m6 9 6 6 6-6" />
                     </svg>
                     <span className="min-w-0 flex-1 truncate">{group.name}</span>
-                    <span data-project-session-count aria-label={`${sessions.length} 个会话`} className="shrink-0 text-[10px] font-normal tabular-nums text-ink-faint">{sessions.length}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => togglePin(group.key)}
+                    aria-pressed={isPinned}
+                    aria-label={isPinned ? `取消置顶 ${group.name}` : `置顶 ${group.name}`}
+                    data-testid={`pin-project-${group.key}`}
+                    title={isPinned ? '取消置顶' : '置顶此项目空间'}
+                    className={clsx(
+                      'flex h-6 w-6 flex-none items-center justify-center rounded opacity-0 transition hover:bg-accent/10 focus-visible:opacity-100 focus-visible:outline-accent group-hover/project-header:opacity-100 group-focus-within/project-header:opacity-100 [@media(hover:none)]:opacity-100',
+                      isPinned ? 'text-accent' : 'text-ink-faint/70 hover:text-ink-muted',
+                    )}
+                  >
+                    <svg viewBox="0 0 24 24" className="h-3 w-3" fill={isPinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z" />
+                      <path d="M12 15v6" />
+                    </svg>
                   </button>
                   {groupExpandable && (
                     <button
@@ -637,32 +652,15 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                       aria-label={groupShowAll ? '收起（仅显示最近3个）' : `展开全部 ${sessions.length} 个会话`}
                       aria-pressed={groupShowAll}
                       title={groupShowAll ? '仅显示最近3个会话' : '展开全部会话'}
-                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-faint transition hover:bg-accent/10 hover:text-accent focus-visible:outline-accent"
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-faint opacity-0 transition hover:bg-accent/10 hover:text-accent focus-visible:opacity-100 focus-visible:outline-accent group-hover/project-header:opacity-100 group-focus-within/project-header:opacity-100 [@media(hover:none)]:opacity-100"
                     >
                       <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <path d={groupShowAll ? 'm7 9 5-5 5 5M7 20l5-5 5 5' : 'm7 4 5 5 5-5M7 15l5 5 5-5'} />
                       </svg>
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => togglePin(group.key)}
-                    aria-pressed={isPinned}
-                    aria-label={isPinned ? `取消置顶 ${group.name}` : `置顶 ${group.name}`}
-                    data-testid={`pin-project-${group.key}`}
-                    title={isPinned ? '取消置顶' : '置顶此项目空间'}
-                    className={clsx(
-                      'flex w-6 flex-none items-center justify-center rounded transition',
-                      isPinned
-                        ? 'text-accent'
-                        : 'text-ink-faint/70 opacity-0 hover:text-ink-muted focus-visible:opacity-100 group-hover/project-header:opacity-100',
-                    )}
-                  >
-                    <svg viewBox="0 0 24 24" className="h-3 w-3" fill={isPinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z" />
-                      <path d="M12 15v6" />
-                    </svg>
-                  </button>
+                  {!groupExpandable && <span aria-hidden="true" className="h-6 w-6 flex-none" />}
+                  <span data-project-session-count aria-label={`${sessions.length} 个会话`} className="flex h-6 w-6 flex-none items-center justify-center text-[10px] font-normal tabular-nums text-ink-faint">{sessions.length}</span>
                 </div>
                 {!groupClosed && (
                   <div className="md:pt-1">

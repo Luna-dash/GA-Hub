@@ -64,6 +64,35 @@ describe('SessionRail', () => {
     expect(host.querySelector('[data-project-header]')?.textContent).toContain('版本-deadbeef')
   })
 
+  it('keeps pin / expand / count in fixed trailing slots, including when pinned', () => {
+    const grouped = Array.from({ length: 5 }, (_, i) => ({ ...sessions[0], id: `layout-${i}` }))
+    act(() => root.render(
+      <SessionRail sessions={grouped} runtimes={{}} currentId={grouped[0].id} onSelect={vi.fn()} />,
+    ))
+    const header = host.querySelector('[data-project-header]')!
+    const pin = header.querySelector('[data-testid^="pin-project-"]') as HTMLButtonElement
+    const expand = header.querySelector('[data-testid^="group-show-all-"]')!
+    const count = header.querySelector('[data-project-session-count]')!
+    expect(pin.nextElementSibling).toBe(expand)
+    expect(expand.nextElementSibling).toBe(count)
+    expect(header.lastElementChild).toBe(count)
+    expect(count.closest('button')).toBeNull()
+    for (const button of [pin, expand]) {
+      expect(button.classList.contains('opacity-0')).toBe(true)
+      expect(button.classList.contains('group-hover/project-header:opacity-100')).toBe(true)
+      expect(button.classList.contains('group-focus-within/project-header:opacity-100')).toBe(true)
+    }
+    act(() => pin.click())
+    expect(pin.getAttribute('aria-pressed')).toBe('true')
+    expect(pin.classList.contains('opacity-0')).toBe(true)
+    act(() => root.render(
+      <SessionRail sessions={[grouped[0]]} runtimes={{}} currentId={grouped[0].id} onSelect={vi.fn()} />,
+    ))
+    expect(header.querySelector('[data-testid^="group-show-all-"]')).toBeNull()
+    expect(header.lastElementChild?.hasAttribute('data-project-session-count')).toBe(true)
+    expect(pin.nextElementSibling?.getAttribute('aria-hidden')).toBe('true')
+  })
+
   it('skips rendering when the parent updates with unchanged props', () => {
     let reads = 0
     const trackedSession = new Proxy(sessions[0], {
