@@ -228,7 +228,7 @@ export function WorkerDossier({
             </ul>
           ) : isLoading ? null : (
             <p className="mt-1 text-xs text-ink-muted" aria-label="进度里程碑">
-              该子代理未设置里程碑；执行推进见右侧「对话」标签。
+              该子代理未设置里程碑；执行推进见左侧「对话」区。
             </p>
           )}
         </section>
@@ -266,7 +266,7 @@ export function WorkerDossier({
               {sub.status === 'running'
                 ? '还没有可展示的中间结果。'
                 : archived
-                  ? '存档未保留执行正文（引擎日志只记录长度，事后无法找回）；结论性内容见右侧「对话」标签，交付物路径可直接打开核对。'
+                  ? '存档未保留执行正文（引擎日志只记录长度，事后无法找回）；结论性内容见左侧「对话」区，交付物路径可直接打开核对。'
                   : '没有处理结果。请对照上面的交付物路径直接打开文件核对。'}
             </p>
           )}

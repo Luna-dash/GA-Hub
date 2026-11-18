@@ -214,8 +214,8 @@ export default function Conductor() {
   // lives on the workflow card ("恢复此任务") so the user picks which task
   // continues, and the engine-level 停止 moved into the settings dialog.
 
-  const submitChat = async (targetRequestId: string | null) => {
-    if (!userMsg.trim() || effectiveLlmIndex === null || isSending) return
+  const submitChat = async (targetRequestId: string | null): Promise<boolean> => {
+    if (!userMsg.trim() || effectiveLlmIndex === null || isSending) return false
     const msg = userMsg.trim()
     setUserMsg('')
     setIsSending(true)
@@ -237,6 +237,7 @@ export default function Conductor() {
       // A user message implicitly starts the supervisor when needed. Refresh
       // the badge immediately instead of waiting for the 12s status poll.
       void qc.invalidateQueries({ queryKey: queryKeys.conductor.status })
+      return true
     } catch (err) {
       console.error('sendChat failed', err)
       // Preserve anything the user typed while the request was in flight.
@@ -247,6 +248,7 @@ export default function Conductor() {
           : '任务发送失败，内容已恢复，请检查 Conductor 状态后重试。',
         7000,
       )
+      return false
     } finally {
       setIsSending(false)
     }
@@ -290,7 +292,12 @@ export default function Conductor() {
     setIsAbandoning(true)
     try {
       if (!(await abandonCurrentTask())) return
-      await submitChat(null)
+      if (await submitChat(null)) {
+        setPinnedRequestId(null)
+        setSelectedSid(null)
+        setReworkSid(null)
+        setReworkReason('')
+      }
     } finally {
       setIsAbandoning(false)
       void qc.invalidateQueries({ queryKey: queryKeys.conductor.workflows })

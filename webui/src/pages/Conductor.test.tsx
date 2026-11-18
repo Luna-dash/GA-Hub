@@ -1912,4 +1912,36 @@ describe('Conductor chat scroll restoration', () => {
     await flushQueries()
     expect(host.querySelector('.conductor-history-meta')?.textContent).toMatch(/^\d/)
   })
+
+  it('releases a pinned historical task only after a new task submission succeeds', async () => {
+    mocks.conductorWorkflows.mockResolvedValue({
+      items: [
+        { request_id: 'old-req', status: 'completed', stage: 'completed', subagents: {}, created_at: 1, completed_at: 2, title: '历史旧任务' },
+        { request_id: 'open-req', status: 'supervising', stage: 'supervising', subagents: {}, created_at: 3, completed_at: null, title: '最新进行中任务' },
+      ],
+    })
+    mocks.dialogConfirm.mockResolvedValue(true)
+    renderPage()
+    await waitFor(() => expect(host.textContent).toContain('最新进行中任务'))
+
+    // Pin the historical task
+    await openHistory()
+    const oldRow = Array.from(host.querySelectorAll<HTMLButtonElement>('.conductor-history-row')).find((el) => el.textContent?.includes('历史旧任务'))!
+    act(() => oldRow.click())
+    await waitFor(() => expect(host.querySelector('.conductor-current-title')?.textContent).toBe('历史旧任务'))
+
+    // Failed new-task submit must keep the historical pin intact
+    mocks.conductorSendChat.mockRejectedValueOnce(new Error('network error'))
+    typeMessage('新任务尝试')
+    act(() => button('新开任务').click())
+    await waitFor(() => expect(mocks.conductorSendChat).toHaveBeenCalledTimes(1))
+    await flushQueries()
+    expect(host.querySelector('.conductor-current-title')?.textContent).toBe('历史旧任务')
+
+    // Successful new-task submit unpins and follows the active workflow
+    mocks.conductorSendChat.mockResolvedValueOnce({ id: 'u-new', role: 'user', msg: '新任务尝试', ts: 4 })
+    act(() => button('新开任务').click())
+    await waitFor(() => expect(mocks.conductorSendChat).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(host.querySelector('.conductor-current-title')?.textContent).toBe('最新进行中任务'))
+  })
 })
