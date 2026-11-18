@@ -11,7 +11,7 @@ def test_only_registered_routes_receive_spa(tmp_path, monkeypatch):
     app = FastAPI()
     main._mount_static(app)
     with TestClient(app) as client:
-        for path in ["/", "/chat", "/settings?tab=x", "/conversations/session"]:
+        for path in ["/", "/chat", "/anti", "/settings?tab=x", "/conversations/session"]:
             response = client.get(path)
             assert response.status_code == 200
             assert response.text == "<html>shell</html>"

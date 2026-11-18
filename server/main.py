@@ -235,7 +235,7 @@ def _mount_static(app: FastAPI) -> None:
         # and model-generated local paths must never replay the loader.
         spa_routes = {"chat", "dashboard", "theme-tasks", "feishu", "conversations",
                       "memory", "goal-hive", "conductor", "mykey", "tasks",
-                      "autonomous", "tokens", "settings"}
+                      "autonomous", "tokens", "settings", "anti"}
         if path.split("/", 1)[0] not in spa_routes or Path(path).suffix:
             return JSONResponse({"detail": "not found"}, status_code=404)
         idx = dist_root / "index.html"
@@ -249,12 +249,12 @@ def _normal_routers() -> tuple[APIRouter, ...]:
     from .routes import (
         agent, feishu, conversations, memory, autonomous, conductor, upload,
         wechat, logs, mykey, services, sessions, preferences, tasks,
-        tokens, goalhive,
+        tokens, goalhive, anti,
     )
     return tuple(module.router for module in (
         agent, feishu, conversations, memory, autonomous, conductor, upload,
         wechat, logs, mykey, services, sessions, preferences, tasks,
-        tokens, goalhive,
+        tokens, goalhive, anti,
     ))
 
 

@@ -10,6 +10,7 @@ import {
   type NavIconName,
   type NavItem,
 } from '@/config/navigation'
+import { AntiMark } from './AntiMark'
 import { storageKeys } from '@/config/storageKeys'
 function NavIcon({ name }: { name: NavIconName }) {
   const common = {
@@ -23,6 +24,7 @@ function NavIcon({ name }: { name: NavIconName }) {
 
   return (
     <svg className="ga-nav-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {name === 'anti' && <AntiMark />}
       {name === 'dashboard' && (
         <>
           {/* 仪表盘：弧面 + 指针（横向撑满） */}

@@ -36,6 +36,12 @@ describe('SidebarNav', () => {
     })
   }
 
+  it('keeps Anti as a navigation link without a daemon control', async () => {
+    await renderNav()
+    expect(host.querySelector('nav a[href="/anti"]')).not.toBeNull()
+    expect(host.querySelector('button[aria-label="启动 Anti"]')).toBeNull()
+  })
+
   it('shows the completion dot on the theme icon in both layouts and clears only after reading', async () => {
     await renderNav()
     const run: ThemeRun = { session_id: 's1', run_id: 'r1', started_at: 1, finished_at: 2, turns: 1, model_key: null, model_name: null, outcome: 'completed', report: 'done' }

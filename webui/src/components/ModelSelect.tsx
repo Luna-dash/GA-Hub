@@ -25,14 +25,13 @@ export function modelPresentation(name: string) {
   return { channel, label: channel ? name.slice(slash + 1) || name : name }
 }
 
-function ModelLabel({ name, follow = false }: { name: string; follow?: boolean }) {
-  const { channel, label } = modelPresentation(name)
-  return <>
+function ModelMark({ name, follow = false }: { name: string; follow?: boolean }) {
+  const { channel } = modelPresentation(name)
+  return (
     <span className={clsx('model-select-mark', channel && `model-select-mark--${channel}`)}>
       {follow ? <CornerDownRight size={16} aria-hidden="true" /> : <SessionChannelIcon type={channel ?? ''} />}
     </span>
-    <span className="model-select-label">{label}</span>
-  </>
+  )
 }
 
 function ModelSelect({ llms, value, onChange, follow, ...props }: CommonModelSelectProps & {
@@ -42,7 +41,8 @@ function ModelSelect({ llms, value, onChange, follow, ...props }: CommonModelSel
   return <ThemedSelect {...props} options={options} value={value} onChange={onChange}
     disabled={props.disabled || llms.length === 0}
     displayName={(option) => modelPresentation(option.name).label}
-    renderLabel={(option) => <ModelLabel name={option?.name ?? (llms.length ? '选择模型' : '暂无模型')} follow={follow && option?.key === ''} />} />
+    placeholder={llms.length ? '选择模型' : '暂无模型'}
+    renderMark={(option) => <ModelMark name={option?.name ?? ''} follow={follow && option?.key === ''} />} />
 }
 
 export function MainModelSelect({ value, onChange, ...props }: MainModelSelectProps) {

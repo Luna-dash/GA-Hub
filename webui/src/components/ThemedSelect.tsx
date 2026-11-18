@@ -11,15 +11,16 @@ interface ThemedSelectProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>
   value: string
   onChange: (key: string) => void
   displayName: (option: SelectOption) => string
-  renderLabel: (option: SelectOption | undefined) => ReactNode
+  renderMark: (option: SelectOption | undefined) => ReactNode
+  placeholder?: string
 }
 
 /** Shared geometry, theme and accessible interaction for header selectors. */
-export function ThemedSelect({ options, value, onChange, displayName, renderLabel, className, disabled, title, ...props }: ThemedSelectProps) {
+export function ThemedSelect({ options, value, onChange, displayName, renderMark, placeholder = '', className, disabled, title, ...props }: ThemedSelectProps) {
   const selected = options.find((option) => option.key === value)
   // Native selects reserve room for the longest option, not just the current value.
   const sizingLabel = options.map((option) => displayName(option))
-    .reduce((longest, label) => label.length > longest.length ? label : longest, '')
+    .reduce((longest, label) => label.length > longest.length ? label : longest, selected ? '' : placeholder)
   const disabledNow = disabled || options.length === 0
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
@@ -133,7 +134,8 @@ export function ThemedSelect({ options, value, onChange, displayName, renderLabe
         }
       }}
     >
-      {renderLabel(selected)}
+      {renderMark(selected)}
+      <span className="model-select-label">{selected ? displayName(selected) : placeholder}</span>
       <ChevronDown size={14} aria-hidden="true" className={clsx('model-select-chevron', open && 'rotate-180')} />
     </button>
     {open && createPortal(
@@ -143,7 +145,8 @@ export function ThemedSelect({ options, value, onChange, displayName, renderLabe
           <div key={option.key} id={`${id}-${index}`} role="option" aria-selected={option.key === value} aria-disabled={option.disabled || undefined} data-index={index}
             title={option.name} className={clsx('model-select-option', index === active && 'is-active', option.key === value && 'is-selected', option.disabled && 'is-disabled')}
             onMouseEnter={() => { if (!option.disabled) setActive(index) }} onClick={() => choose(index)}>
-            {renderLabel(option)}
+            {renderMark(option)}
+            <span className="model-select-label">{displayName(option)}</span>
             {option.key === value && <Check size={14} aria-hidden="true" className="model-select-check" />}
           </div>
         ))}

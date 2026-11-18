@@ -5075,6 +5075,369 @@
         }
       }
     },
+    "/api/anti/status": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Daemon Status",
+        "operationId": "daemon_status_api_anti_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiDaemonStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/start": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Start Daemon",
+        "operationId": "start_daemon_api_anti_start_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiDaemonStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/models": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Models",
+        "operationId": "models_api_anti_models_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Sessions",
+        "operationId": "sessions_api_anti_sessions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Create Session",
+        "operationId": "create_session_api_anti_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntiSessionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/runs": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Runs",
+        "operationId": "runs_api_anti_sessions__sid__runs_get",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Submit Run",
+        "operationId": "submit_run_api_anti_sessions__sid__runs_post",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntiRunCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/runs/{rid}": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Run",
+        "operationId": "run_api_anti_sessions__sid__runs__rid__get",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          },
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Rid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/runs/{rid}/events": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Events",
+        "operationId": "events_api_anti_sessions__sid__runs__rid__events_get",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          },
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Rid"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "After"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/runs/{rid}/cancel": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Cancel",
+        "operationId": "cancel_api_anti_sessions__sid__runs__rid__cancel_post",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          },
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Rid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/nova": {
       "get": {
         "summary": "Page",
@@ -5274,6 +5637,121 @@
         },
         "type": "object",
         "title": "AgentTitleReq"
+      },
+      "AntiDaemonStatus": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "stopped",
+              "starting",
+              "ready",
+              "unavailable"
+            ],
+            "title": "State"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "agy_available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agy Available"
+          },
+          "active_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "title": "AntiDaemonStatus"
+      },
+      "AntiRunCreate": {
+        "properties": {
+          "operation": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+            "title": "Operation"
+          },
+          "prompt": {
+            "type": "string",
+            "maxLength": 24000,
+            "minLength": 1,
+            "title": "Prompt"
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$",
+            "title": "Model",
+            "default": "gemini-4-hydrogen-high"
+          },
+          "effort": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "title": "Effort",
+            "default": "high"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation",
+          "prompt"
+        ],
+        "title": "AntiRunCreate"
+      },
+      "AntiSessionCreate": {
+        "properties": {
+          "project": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Project"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title",
+            "default": "Anti"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project"
+        ],
+        "title": "AntiSessionCreate"
       },
       "AppStatusResp": {
         "properties": {
