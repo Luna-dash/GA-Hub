@@ -7,7 +7,7 @@ import { scanTranscript } from '@/utils/transcriptProtocol'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { ThemeConversationHistory } from './ThemeConversationHistory'
 
-const action = 'rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-bg-soft disabled:opacity-40'
+const action = 'rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-bg-soft disabled:opacity-40'
 
 /** Read-only session projection. Never activates or mutates the global chat store. */
 export type ThemeTaskTab = 'report' | 'current' | 'history'
@@ -146,8 +146,8 @@ function SessionTimeline({ sessionId, runId, current, enabled, active, onShowRep
     } else { el.scrollTop = position.current; setUnseen(true) }
     position.current = el.scrollTop
   }, [visible, enabled, runId])
-  return <section className="overflow-hidden rounded-2xl border border-border">
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-bg-soft/30 px-4 py-3 text-xs text-slate-500">
+  return <section className="overflow-hidden rounded-2xl border border-line">
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-bg-soft/30 px-4 py-3 text-xs text-slate-500">
       <span>{current ? (active ? '本次执行 · 实时过程' : '最近一次执行') : '原会话历史 · 只读'}</span>
       <span>{connection === 'open' ? (active ? '实时连接' : '已同步') : '连接中'}<button className={`${action} ml-2`} disabled={loading} onClick={() => void load()}>刷新</button></span>
     </div>
@@ -163,10 +163,10 @@ function SessionTimeline({ sessionId, runId, current, enabled, active, onShowRep
         ? <ProcessSummary key={`${message.runId ?? ''}:${message.streamId ?? message.timestamp ?? index}:${message.role}`} message={message} />
         : null)}
     </div>
-    {current && visible.length > 0 && !active && !visible.some(message => message.streaming) && <div className="border-t border-border px-4 py-3 text-sm">
+    {current && visible.length > 0 && !active && !visible.some(message => message.streaming) && <div className="border-t border-line px-4 py-3 text-sm">
       <span className="mr-3 text-slate-500">结果</span><button className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={onShowReport}>查看结论 →</button>
     </div>}
-    {unseen && <div className="border-t border-border p-2 text-center"><button className={action} onClick={() => {
+    {unseen && <div className="border-t border-line p-2 text-center"><button className={action} onClick={() => {
       follow.current = true; setUnseen(false)
       if (viewport.current) { viewport.current.scrollTop = viewport.current.scrollHeight; position.current = viewport.current.scrollTop }
     }}>有新内容 · 回到底部 ↓</button></div>}

@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { hasUnreadThemeCompletions } from '@/stores/themeCompletionStore'
+import { queryKeys } from '@/queries/queryKeys'
 import ThemeTasks, { ThemeTaskSettings } from './ThemeTasks'
 import { api } from '@/api/client'
 import { writeClipboard } from '@/utils/clipboard'
@@ -405,4 +406,32 @@ it('keeps a completed compact card unread until its conclusion is expanded', asy
   const expand = host.querySelector('[aria-label="打开主题任务：签到"]') as HTMLButtonElement
   act(() => expand.click())
   expect(hasUnreadThemeCompletions()).toBe(false)
+})
+
+it('shows an empty-state message in the session picker when no non-theme sessions match', async () => {
+  await click('＋ 从会话转入')
+  const dlg = host.querySelector('[role="dialog"]')!
+  expect(dlg.getAttribute('aria-labelledby')).toBe('theme-pick-title')
+  expect(dlg.textContent).toContain('暂无可转入的普通会话')
+})
+
+it('refreshes models when shared queryKeys.llms invalidates and prevents concurrent moveBack requests', async () => {
+  vi.mocked(api.llms).mockResolvedValueOnce({ llms: [{ key: 'model', name: '更新后的模型' }] } as never)
+  await act(async () => { await client.invalidateQueries({ queryKey: queryKeys.llms }) })
+  await wait()
+  expect(host.textContent).toContain('更新后的模型')
+
+  await click('打开主题任务：签到')
+  let finishMove!: () => void
+  vi.mocked(api.themeConfig).mockImplementationOnce(() => new Promise((resolve) => {
+    finishMove = () => resolve({} as Awaited<ReturnType<typeof api.themeConfig>>)
+  }))
+  const moveBtn = host.querySelector<HTMLButtonElement>('[aria-label="移回聊天：签到"]')!
+  act(() => {
+    moveBtn.click()
+    moveBtn.click()
+  })
+  expect(api.themeConfig).toHaveBeenCalledTimes(1)
+  await act(async () => { finishMove() })
+  await wait()
 })

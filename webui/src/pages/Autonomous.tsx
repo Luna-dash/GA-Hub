@@ -1,7 +1,8 @@
 // Autonomous evolution: schedule CRUD + run history + report viewer.
 
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { CronExpressionParser } from 'cron-parser'
 import { api } from '@/api/client'
 import type { Schedule, ScheduleType } from '@/api/types'
 import { MessageContent } from '@/components/MessageContent'
@@ -41,7 +42,13 @@ export default function Autonomous() {
 
   const [editor, setEditor] = useState<Partial<Schedule> | null>(null)
   const [activeReport, setActiveReport] = useState<string | null>(null)
-  const { data: report } = useQuery({
+  const {
+    data: report,
+    isLoading: reportLoading,
+    isError: reportError,
+    error: reportErr,
+    refetch: refetchReport,
+  } = useQuery({
     queryKey: queryKeys.autonomous.report(activeReport),
     queryFn: () => api.report(activeReport!),
     enabled: !!activeReport,
@@ -134,7 +141,17 @@ export default function Autonomous() {
       </div>
 
       {editor && <ScheduleDialog initial={editor} onClose={() => setEditor(null)} />}
-      {activeReport && report && <ReportDrawer name={activeReport} content={report.content} onClose={() => setActiveReport(null)} />}
+      {activeReport && (
+        <ReportDrawer
+          name={activeReport}
+          content={report?.content}
+          isLoading={reportLoading}
+          isError={reportError}
+          errorMessage={reportError ? errorMessageFromError(reportErr) : undefined}
+          onRetry={() => { void refetchReport() }}
+          onClose={() => setActiveReport(null)}
+        />
+      )}
     </PageShell>
   )
 }
@@ -166,7 +183,7 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
     <div className={`rounded-xl border p-4 ${s.enabled ? 'border-accent/60 bg-accent-soft/20' : 'border-line bg-bg-card'}`}>
       <div className="flex items-baseline justify-between mb-2">
         <div className="text-sm font-semibold text-slate-200">{s.name || s.id}</div>
-        <span className={`text-[10px] px-1.5 py-0.5 rounded ${s.enabled ? 'bg-status-success-soft text-status-success' : 'bg-slate-700 text-slate-400'}`}>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded ${s.enabled ? 'bg-status-success-soft text-status-success' : 'border border-line bg-bg-soft text-ink-muted'}`}>
           {s.enabled ? '启用' : '禁用'}
         </span>
       </div>
@@ -199,17 +216,43 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
     interval_minutes: 60,
     ...initial,
   })
+  const [saving, setSaving] = useState(false)
   const save = async () => {
+    if (saving) return
+    const type = (s.type ?? 'idle') as ScheduleType
+    if (type === 'idle') {
+      const mins = Number(s.idle_minutes)
+      if (!Number.isFinite(mins) || mins < 1) {
+        await dialog.alert('空闲时间无效', '空闲分钟数必须为不小于 1 的数字。')
+        return
+      }
+    } else if (type === 'interval') {
+      const mins = Number(s.interval_minutes)
+      if (!Number.isFinite(mins) || mins < 1) {
+        await dialog.alert('周期无效', '间隔分钟数必须为不小于 1 的数字。')
+        return
+      }
+    } else if (type === 'cron') {
+      try {
+        CronExpressionParser.parse((s.cron || '').trim())
+      } catch {
+        await dialog.alert('cron 表达式无效', '请检查 cron 表达式格式，例如 0 9 * * *。')
+        return
+      }
+    }
+    setSaving(true)
     try {
-      await api.upsertSchedule({ ...s, type: (s.type ?? 'idle') as ScheduleType })
-      qc.invalidateQueries({ queryKey: queryKeys.schedules })
+      await api.upsertSchedule({ ...s, type })
+      void qc.invalidateQueries({ queryKey: queryKeys.schedules })
       onClose()
     } catch (e: any) {
       await dialog.alert('保存失败', errorMessageFromError(e))
+    } finally {
+      setSaving(false)
     }
   }
   return (
-    <ModalOverlay onClose={onClose} labelledBy="autonomous-schedule-title" panelClassName="p-6 w-[34rem] max-w-[90vw]">
+    <ModalOverlay onClose={() => { if (!saving) onClose() }} closeOnBackdrop={!saving} labelledBy="autonomous-schedule-title" panelClassName="p-6 w-[34rem] max-w-[90vw]">
         <h3 id="autonomous-schedule-title" className="text-base font-semibold mb-4">{initial.id ? '编辑计划' : '新建自主进化计划'}</h3>
         <Field label="名称">
           <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="人类可读的备注" />
@@ -255,21 +298,46 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
           </label>
         </Field>
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1.5 rounded-lg border border-line text-slate-300">取消</button>
-          <button onClick={save} className="px-3 py-1.5 rounded-lg bg-accent text-white">保存</button>
+          <button onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-slate-300 disabled:opacity-50">取消</button>
+          <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-50">{saving ? '保存中…' : '保存'}</button>
         </div>
     </ModalOverlay>
   )
 }
 
-function ReportDrawer({ name, content, onClose }: { name: string; content: string; onClose: () => void }) {
+function ReportDrawer({
+  name,
+  content,
+  isLoading,
+  isError,
+  errorMessage,
+  onRetry,
+  onClose,
+}: {
+  name: string
+  content?: string
+  isLoading: boolean
+  isError: boolean
+  errorMessage?: string
+  onRetry: () => void
+  onClose: () => void
+}) {
   return (
-    <ModalOverlay onClose={onClose} align="right" panelClassName="w-[42rem] h-full border-l p-6 overflow-y-auto">
+    <ModalOverlay onClose={onClose} align="right" panelClassName="w-[42rem] max-w-[94vw] h-full border-l p-6 overflow-y-auto">
         <div className="flex items-baseline justify-between mb-3">
           <h3 className="text-sm font-mono text-slate-300">{name}</h3>
-          <button onClick={onClose} className="text-slate-400 text-xl leading-none">×</button>
+          <button onClick={onClose} aria-label="关闭报告" className="text-slate-400 text-xl leading-none">×</button>
         </div>
-        <MessageContent content={content} format="markdown" />
+        {isLoading ? (
+          <div role="status" className="py-12 text-center text-sm text-ink-muted">正在读取报告…</div>
+        ) : isError ? (
+          <div role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft p-4 text-sm text-status-danger space-y-3">
+            <p>报告加载失败：{errorMessage || '未知错误'}</p>
+            <button type="button" onClick={onRetry} className="ga-btn">重试</button>
+          </div>
+        ) : (
+          <MessageContent content={content ?? ''} format="markdown" />
+        )}
     </ModalOverlay>
   )
 }

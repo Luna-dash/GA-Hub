@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TaskRun } from '@/api/types'
 import { queryKeys } from '@/queries/queryKeys'
+import { dialog } from '@/stores/dialogStore'
 import Tasks from './Tasks'
 
 vi.mock('@/hooks/useHubEvent', () => ({ useHubEvent: vi.fn() }))
@@ -12,6 +13,9 @@ vi.mock('@/api/client', () => ({ api: {
   taskSchedules: vi.fn(),
   taskRuns: vi.fn(),
   taskEmailConfig: vi.fn(),
+  triggerTaskSchedule: vi.fn(),
+  upsertTaskSchedule: vi.fn(),
+  deleteTaskSchedule: vi.fn(),
 } }))
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -97,4 +101,44 @@ it('keeps the current page on refresh and clamps it when the last page disappear
   expect(rows()).toEqual(['Run 11', 'Run 12'])
   await refresh(23)
   expect(pageText()).toBe('第 2 / 3 页 · 23 条')
+})
+
+it('renders Chinese status labels and surfaces errors when schedule actions fail', async () => {
+  const { api } = await import('@/api/client')
+  client.setQueryData(queryKeys.tasks.schedules, {
+    schedules: [{
+      id: 't-1', name: '早报', type: 'interval', interval_minutes: 60, cron: '',
+      prompt: 'test', enabled: false, notify_email: false, fire_count: 0, last_fired_at: 0,
+    }],
+  })
+  client.setQueryData(queryKeys.tasks.runs, {
+    runs: [
+      { id: 'r1', task_id: 't-1', task_name: '早报', fired_at: 1700000000, finished_at: 0, stream_id: '', status: 'done', prompt_preview: '', result_preview: '', email_sent: false, email_error: '', note: '' },
+      { id: 'r2', task_id: 't-1', task_name: '早报', fired_at: 1700000000, finished_at: 0, stream_id: '', status: 'running', prompt_preview: '', result_preview: '', email_sent: false, email_error: '', note: '' },
+      { id: 'r3', task_id: 't-1', task_name: '早报', fired_at: 1700000000, finished_at: 0, stream_id: '', status: 'error', prompt_preview: '', result_preview: '', email_sent: false, email_error: '', note: '' },
+    ],
+  })
+  act(() => root.render(<QueryClientProvider client={client}><Tasks /></QueryClientProvider>))
+
+  const badges = Array.from(host.querySelectorAll('tbody tr')).map((tr) => tr.children[2]?.textContent?.trim())
+  expect(badges).toEqual(['完成', '运行中', '失败'])
+
+  const disabledPill = Array.from(host.querySelectorAll('span')).find((el) => el.textContent === '禁用')!
+  expect(disabledPill.className).not.toContain('bg-slate-700')
+  expect(disabledPill.className).toContain('text-ink-muted')
+
+  const alertSpy = vi.spyOn(dialog, 'alert').mockResolvedValue(undefined)
+  vi.spyOn(dialog, 'confirm').mockResolvedValue(true)
+  vi.mocked(api.upsertTaskSchedule).mockRejectedValueOnce(new Error('save denied'))
+
+  const enableBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === '启用')!
+  await act(async () => { enableBtn.click(); await Promise.resolve() })
+  expect(alertSpy).toHaveBeenCalledWith('切换失败', 'save denied')
+
+  vi.mocked(api.triggerTaskSchedule).mockRejectedValueOnce(new Error('trigger denied'))
+  const fireBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === '立即触发')!
+  await act(async () => { fireBtn.click(); await new Promise((r) => setTimeout(r, 10)) })
+  expect(alertSpy).toHaveBeenCalledWith('触发失败', 'trigger denied')
+
+  alertSpy.mockRestore()
 })

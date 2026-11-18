@@ -7,6 +7,7 @@ import { ModalOverlay } from '@/components/ModalOverlay'
 import { formatRelativeTime } from '@/utils/timeFormat'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { dialog } from '@/stores/dialogStore'
+import { toast } from '@/stores/toastStore'
 import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 import { CronExpressionParser } from 'cron-parser'
@@ -53,8 +54,13 @@ export default function Tasks() {
       { confirmText: '触发' },
     )
     if (!ok) return
-    await api.triggerTaskSchedule(id)
-    qc.invalidateQueries({ queryKey: queryKeys.tasks.runs })
+    try {
+      await api.triggerTaskSchedule(id)
+      toast.success('已触发定时任务')
+      void qc.invalidateQueries({ queryKey: queryKeys.tasks.runs })
+    } catch (e: unknown) {
+      await dialog.alert('触发失败', errorMessageFromError(e))
+    }
   }
 
   return (
@@ -139,24 +145,42 @@ export default function Tasks() {
 
 function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; onFire: () => void }) {
   const qc = useQueryClient()
+  const [busy, setBusy] = useState(false)
   const toggle = async () => {
-    await api.upsertTaskSchedule({ ...s, type: s.type as TaskScheduleType, enabled: !s.enabled })
-    qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
+    if (busy) return
+    setBusy(true)
+    try {
+      await api.upsertTaskSchedule({ ...s, type: s.type as TaskScheduleType, enabled: !s.enabled })
+      void qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
+    } catch (e: unknown) {
+      await dialog.alert('切换失败', errorMessageFromError(e))
+    } finally {
+      setBusy(false)
+    }
   }
   const remove = async () => {
+    if (busy) return
     const ok = await dialog.confirm('删除该定时任务？', s.name || s.id, {
       confirmText: '删除',
       tone: 'danger',
     })
     if (!ok) return
-    await api.deleteTaskSchedule(s.id)
-    qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
+    setBusy(true)
+    try {
+      await api.deleteTaskSchedule(s.id)
+      toast.success('已删除定时任务')
+      void qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
+    } catch (e: unknown) {
+      await dialog.alert('删除失败', errorMessageFromError(e))
+    } finally {
+      setBusy(false)
+    }
   }
   return (
     <div className={`rounded-xl border p-4 ${s.enabled ? 'border-accent/60 bg-accent-soft/20' : 'border-line bg-bg-card'}`}>
       <div className="flex items-baseline justify-between mb-2 gap-2">
         <div className="text-sm font-semibold text-slate-200 truncate" title={s.name || s.id}>{s.name || s.id}</div>
-        <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded ${s.enabled ? 'bg-status-success-soft text-status-success' : 'bg-slate-700 text-slate-400'}`}>
+        <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded ${s.enabled ? 'bg-status-success-soft text-status-success' : 'border border-line bg-bg-soft text-ink-muted'}`}>
           {s.enabled ? '启用' : '禁用'}
         </span>
       </div>
@@ -168,10 +192,10 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
       <div className="text-xs text-slate-500">邮件 {s.notify_email ? '开启' : '关闭'} · 已触发 {s.fire_count} 次</div>
       <div className="text-xs text-slate-500 mt-1">上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
       <div className="flex gap-2 mt-3 flex-wrap">
-        <button onClick={onFire} className="text-xs px-2.5 py-1 rounded bg-accent text-white">立即触发</button>
-        <button onClick={toggle} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5">{s.enabled ? '禁用' : '启用'}</button>
-        <button onClick={onEdit} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5">编辑</button>
-        <button onClick={remove} className="text-xs px-2.5 py-1 rounded border border-status-danger-line text-status-danger hover:bg-status-danger-soft">删除</button>
+        <button onClick={onFire} disabled={busy} className="text-xs px-2.5 py-1 rounded bg-accent text-white disabled:opacity-40">立即触发</button>
+        <button onClick={toggle} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-40">{s.enabled ? '禁用' : '启用'}</button>
+        <button onClick={onEdit} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-40">编辑</button>
+        <button onClick={remove} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-status-danger-line text-status-danger hover:bg-status-danger-soft disabled:opacity-40">删除</button>
       </div>
     </div>
   )
@@ -200,7 +224,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
       return
     }
     if (!(s.prompt || '').trim()) {
-      await dialog.alert('请填写 Prompt', '任务 Prompt 不能为空，否则 Agent 无事可做。')
+      await dialog.alert('请填写 Prompt', '任务 Prompt 不能为空。')
       return
     }
     if (type === 'cron') {
@@ -233,7 +257,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
     }
   }
   return (
-    <ModalOverlay onClose={onClose} labelledBy="task-dialog-title" panelClassName="p-6 w-[38rem] max-w-[92vw] max-h-[92vh] overflow-y-auto">
+    <ModalOverlay onClose={() => { if (!saving) onClose() }} closeOnBackdrop={!saving} labelledBy="task-dialog-title" panelClassName="p-6 w-[38rem] max-w-[92vw] max-h-[92vh] overflow-y-auto">
         <h3 id="task-dialog-title" className="text-base font-semibold mb-4">{initial.id ? '编辑定时任务' : '新建定时任务'}</h3>
         <Field label="名称">
           <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="每日早报" />
@@ -288,7 +312,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
           </label>
         </Field>
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1.5 rounded-lg border border-line text-slate-300">取消</button>
+          <button onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-slate-300 disabled:opacity-50">取消</button>
           <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-50">{saving ? '保存中…' : '保存'}</button>
         </div>
     </ModalOverlay>
@@ -415,13 +439,20 @@ function EmailSettings() {
   )
 }
 
+const TASK_RUN_STATUS_LABELS: Record<string, string> = {
+  done: '完成',
+  running: '运行中',
+  error: '失败',
+  failed: '失败',
+}
+
 function StatusBadge({ status }: { status: string }) {
   const cls = status === 'done'
     ? 'bg-status-success-soft text-status-success'
     : status === 'running'
       ? 'bg-status-warning-soft text-status-warning'
       : 'bg-status-danger-soft text-status-danger'
-  return <span className={`text-[10px] px-1.5 py-0.5 rounded ${cls}`}>{status}</span>
+  return <span className={`text-[10px] px-1.5 py-0.5 rounded ${cls}`}>{TASK_RUN_STATUS_LABELS[status] ?? status}</span>
 }
 
 const inp = 'w-full bg-bg-card border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent text-slate-200'

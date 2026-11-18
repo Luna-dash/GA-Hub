@@ -140,8 +140,8 @@ export function ThemeConversationHistory({ sessionId, enabled }: { sessionId: st
     } finally { navigating.current = false }
   }
 
-  return <section className="overflow-hidden rounded-2xl border border-border" aria-label="对话分节">
-    <nav aria-label="会话历史分节导航" className="flex items-center justify-between border-b border-border px-2 py-2">
+  return <section className="overflow-hidden rounded-2xl border border-line" aria-label="对话分节">
+    <nav aria-label="会话历史分节导航" className="flex items-center justify-between border-b border-line px-2 py-2">
       <button type="button" className={navigation} disabled={loading || (index <= 0 && !hasMore)} onClick={() => void previous()}>← 上节</button>
       <span className="text-xs text-slate-500">{section ? `${hasMore ? '… / ' : ''}${index + 1} / ${sections.length}` : '暂无对话'}</span>
       <button type="button" className={navigation} disabled={loading || index < 0 || index >= sections.length - 1} onClick={() => setSelected(index + 1 === sections.length - 1 ? null : sections[index + 1].id)}>下节 →</button>
@@ -151,7 +151,7 @@ export function ThemeConversationHistory({ sessionId, enabled }: { sessionId: st
       {loading && <p role="status" className="mb-3 text-xs text-slate-500">正在读取…</p>}
       {section ? <article className="min-w-0 space-y-6">
         <div><h3 className="mb-2 text-xs font-medium text-slate-500">问题</h3><div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{section.question || '未记录问题'}</div></div>
-        <div className="min-w-0 border-t border-border/60 pt-5"><h3 className="mb-3 text-xs font-medium text-slate-500">结论</h3><SectionConclusion answers={section.answers} /></div>
+        <div className="min-w-0 border-t border-line/60 pt-5"><h3 className="mb-3 text-xs font-medium text-slate-500">结论</h3><SectionConclusion answers={section.answers} /></div>
       </article> : !loading && <p className="py-16 text-center text-sm text-slate-500">暂无会话历史</p>}
     </div>
   </section>
