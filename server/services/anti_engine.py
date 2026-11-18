@@ -1,7 +1,6 @@
 """Project-scoped AntiCLI integration; model discovery is read-only."""
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -319,31 +318,18 @@ class AntiSessions:
         status = remote.get("status")
         if status not in ACTIVE | TERMINAL:
             raise AntiError(502, "Unrecognized AntiCLI status")
-        answer = artifact = digest = error = error_detail = None
+        answer = error = error_detail = None
         if status == "success":
             answer = self.adapter.request("GET", f"/v1/runs/{rid}/answer")["answer"]
-            session = self.session(sid)
-            _, dest = self.bound_project(session)
-            dest.mkdir(parents=True, exist_ok=True)
-            target = dest / f"{rid}.md"
-            temp = dest / f".{uuid4().hex}.tmp"
-            data = answer.encode("utf-8")
-            try:
-                with temp.open("xb") as f:
-                    f.write(data)
-                temp.replace(target)
-            finally:
-                temp.unlink(missing_ok=True)
-            artifact, digest = str(target), hashlib.sha256(data).hexdigest()
         if status in TERMINAL - {"success"}:
             error = remote.get("error_code") or status
             error_detail = _run_error_detail(error, remote.get("error_message"))
         with self.connect() as db, db:
             marks = ",".join("?" for _ in ACTIVE)
             updated = db.execute(
-                f"UPDATE runs SET status=?,answer=?,artifact=?,sha256=?,error=?,error_detail=? "
+                f"UPDATE runs SET status=?,answer=?,error=?,error_detail=? "
                 f"WHERE id=? AND status IN ({marks})",
-                (status, answer, artifact, digest, error, error_detail, rid, *ACTIVE),
+                (status, answer, error, error_detail, rid, *ACTIVE),
             )
             if updated.rowcount and status == "success" and remote.get("conversation_id"):
                 db.execute("UPDATE sessions SET conversation=? WHERE id=?", (remote["conversation_id"], sid))

@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from contextlib import closing
+from contextlib import closing, suppress
 from pathlib import Path
 from stat import S_ISREG
+from uuid import uuid4
 
 from .. import _paths
 
@@ -37,6 +38,26 @@ class FileTransfer:
         with closing(self.connect()) as db, db:
             db.execute("INSERT OR IGNORE INTO manual_files(path_key,path,name,engine,session_id,project) VALUES (?,?,?,?,?,?)",
                        (os.path.normcase(str(candidate)), str(candidate), candidate.name, engine, sid, project))
+
+    def save_reply(self, text: str, engine: str, sid: str, project: str | None) -> None:
+        if not text.strip():
+            raise ValueError("An empty reply cannot be saved")
+        data = text.encode("utf-8")
+        directory = self.db.parent / "transfer_documents"
+        directory.mkdir(parents=True, exist_ok=True)
+        if directory.resolve().parent != self.db.parent.resolve():
+            raise OSError("Reply document directory must not redirect")
+        label = "Chat" if engine == "chat" else "Anti"
+        target = directory / f"{label}-reply-{uuid4().hex}.md"
+        out = target.open("xb")
+        try:
+            with out:
+                out.write(data)
+            self.add(str(target.absolute()), engine, sid, project)
+        except Exception:
+            with suppress(OSError):
+                target.unlink()
+            raise
 
     def list(self) -> list[dict]:
         with closing(self.connect()) as db:

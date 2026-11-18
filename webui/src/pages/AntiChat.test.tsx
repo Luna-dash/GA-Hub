@@ -90,10 +90,11 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
       { id: 'alternate-medium', display_name: 'Alternate (Medium)' },
       { id: 'alternate-low', display_name: 'Alternate (Low)' },
     ] })
+    if (path === '/api/file-transfer/reply') return { ok: true, status: 204 }
     if (path === `${base}/one/runs`) {
       if (!body) return reply([...runs])
       const run = outcome === 'success'
-        ? { ...body, id: 'run', status: 'success', answer: 'Done' }
+        ? { ...body, id: 'run', status: 'success', answer: 'Done', artifact: 'D:/legacy/old-archive.md' }
         : { ...body, id: 'run', status: 'cli_error', error: 'AUTH_ERROR',
             error_detail: '请先使用官方 Antigravity CLI 登录，再重试。' }
       runs.push(run)
@@ -153,6 +154,19 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     expect(posted).toEqual([{ project: 'demo' }, {
       prompt: 'Read the project', model: 'alternate-medium', effort: 'medium', operation: expect.any(String),
     }])
+    const toDocument = Array.from(host.querySelectorAll('button')).find(button => button.textContent === '转成文档')
+    const saved = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/api/file-transfer/reply'))
+    expect(saved()).toEqual([])
+    expect(host.textContent).not.toContain('共享产物')
+    expect(host.textContent).not.toContain('old-archive.md')
+    if (outcome === 'success') {
+      expect(host.querySelector('button[title="复制结论"]')).not.toBeNull()
+      await act(async () => toDocument!.click())
+      expect(saved()).toHaveLength(1)
+      expect(JSON.parse(saved()[0][1]!.body as string)).toEqual({
+        text: 'Done', engine: 'anti', session_id: 'one', project: 'demo',
+      })
+    } else expect(toDocument).toBeUndefined()
     const row = () => host.querySelector('[title="Read the project"]')
     await wait(() => expect(row()).not.toBeNull())
     expect(host.textContent).toContain('Demo project')

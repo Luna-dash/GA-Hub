@@ -1,4 +1,5 @@
 """The shared file index. Clearing it does not modify delivered files."""
+from sqlite3 import Error as DatabaseError
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Response
@@ -20,11 +21,29 @@ class TransferredFile(BaseModel):
     size: int
 
 
-class AddTransferredFile(BaseModel):
-    path: str = Field(min_length=1, max_length=4096)
+class TransferSource(BaseModel):
     engine: Literal["chat", "anti"]
     session_id: str = Field(min_length=1, max_length=256)
     project: str | None = Field(default=None, max_length=1024)
+
+
+class AddTransferredFile(TransferSource):
+    path: str = Field(min_length=1, max_length=4096)
+
+
+class SaveReplyDocument(TransferSource):
+    text: str = Field(min_length=1, max_length=1_000_000)
+
+
+@router.post("/reply", status_code=204, response_class=Response)
+def save_reply(body: SaveReplyDocument) -> Response:
+    try:
+        FileTransfer().save_reply(body.text, body.engine, body.session_id, body.project)
+    except ValueError as exc:
+        raise HTTPException(422, "回复内容为空或格式无效") from exc
+    except (OSError, DatabaseError, RuntimeError) as exc:
+        raise HTTPException(500, "无法保存回复文档") from exc
+    return Response(status_code=204)
 
 
 @router.post("", status_code=204, response_class=Response)

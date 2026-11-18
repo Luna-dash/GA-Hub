@@ -23,6 +23,15 @@ export async function addTransferFile(body: {
   })
   if (!response.ok) throw new Error(response.status === 422 ? '文件不存在或不是本地文件' : `放入传递箱失败（${response.status}）`)
 }
+export async function saveTransferReply(body: {
+  text: string; engine: 'chat' | 'anti'; session_id: string; project?: string
+}) {
+  const response = await fetch(resolveApiUrl('/api/file-transfer/reply'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })
+  if (!response.ok) throw new Error(response.status === 422 ? '回复内容为空或过长，无法转为文档' : `保存回复文档失败（${response.status}）`)
+}
+
 async function request(method: 'GET' | 'DELETE', signal?: AbortSignal) {
   const response = await fetch(resolveApiUrl('/api/file-transfer'), { method, signal })
   if (!response.ok) throw new Error(`文件传递箱请求失败（${response.status}）`)

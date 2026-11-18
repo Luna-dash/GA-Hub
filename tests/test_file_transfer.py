@@ -33,3 +33,32 @@ def test_manual_index_ignores_legacy_records_and_can_be_cleared(tmp_path, monkey
         assert client.delete(endpoint).status_code == 204
         assert client.get(endpoint).json() == []
         assert renamed.is_file() and legacy.is_file()
+
+
+
+def test_reply_document_requires_explicit_save_and_remains_after_clear(tmp_path, monkeypatch):
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path)
+    app = FastAPI()
+    app.include_router(routes.router)
+    endpoint = "/api/file-transfer"
+    directory = tmp_path / "transfer_documents"
+    text = "# \u7ed3\u8bba\n\n[output](D:/study/result.md)\n"
+    with TestClient(app) as client:
+        assert client.get(endpoint).json() == []
+        body = {"session_id": "reply-session", "project": "demo"}
+        assert client.post(endpoint + "/reply", json=body | {"engine": "chat", "text": " \n"}).status_code == 422
+        assert not directory.exists()
+        for source in ("chat", "anti"):
+            request = body | {"engine": source, "text": text}
+            assert client.post(endpoint + "/reply", json=request).status_code == 204
+        rows = client.get(endpoint).json()
+        assert [row["engine"] for row in rows] == ["anti", "chat"]
+        assert len(list(directory.iterdir())) == 2
+        for row in rows:
+            assert row["available"] and row["session_id"] == "reply-session" and row["project"] == "demo"
+            document = directory / row["name"]
+            assert document.suffix == ".md" and str(document.resolve()) == row["path"]
+            assert document.read_bytes() == text.encode("utf8")
+        assert client.delete(endpoint).status_code == 204
+        assert client.get(endpoint).json() == []
+        assert len(list(directory.iterdir())) == 2

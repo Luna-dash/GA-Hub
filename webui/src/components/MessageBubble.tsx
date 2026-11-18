@@ -22,7 +22,7 @@ import {
 } from '@/utils/assistantTranscript'
 import { foldTurns } from '@/utils/foldTurns'
 import { runningTurnTitle } from '@/utils/runningTranscript'
-import { useCopy } from '@/utils/clipboard'
+import { ReplyActions } from './ReplyActions'
 import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
 import { FILE_HINT } from '@/utils/sessionPrompt'
 import { MessageContent } from './MessageContent'
@@ -280,7 +280,8 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
             {streamId && onRewind && !streaming && (
               <RewindChip onClick={() => onRewind(streamId)} />
             )}
-            <CopyChip text={copySource} />
+            <ReplyActions text={copySource} engine="chat"
+              canSave={role === 'assistant' && !streaming && !stopped && !historyTranscript?.stopped && !historyTranscript?.finalAskUser} />
           </div>
           <div className="min-w-0 max-w-full" style={messageFontStyle}>
             {runningTask && runningTranscript ? (
@@ -527,22 +528,6 @@ function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
         )
       })}
     </div>
-  )
-}
-
-function CopyChip({ text }: { text: string }) {
-  const { copied, copy } = useCopy()
-  if (!text?.trim()) return null
-  return (
-    <button
-      onClick={() => copy(text)}
-      title="复制结论"
-      className="px-2.5 py-1 text-[11px] leading-none rounded-md
-                 bg-bg-soft border border-line text-ink-muted
-                 hover:text-ink hover:bg-bg-card transition-colors"
-    >
-      {copied ? '✓ 已复制' : '⧉ 复制'}
-    </button>
   )
 }
 

@@ -2448,6 +2448,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/file-transfer/reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Reply */
+        post: operations["save_reply_api_file_transfer_reply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/file-transfer": {
         parameters: {
             query?: never;
@@ -2626,8 +2643,6 @@ export interface components {
     schemas: {
         /** AddTransferredFile */
         AddTransferredFile: {
-            /** Path */
-            path: string;
             /**
              * Engine
              * @enum {string}
@@ -2637,6 +2652,8 @@ export interface components {
             session_id: string;
             /** Project */
             project?: string | null;
+            /** Path */
+            path: string;
         };
         /** AgentTitleReq */
         AgentTitleReq: {
@@ -4360,6 +4377,20 @@ export interface components {
         SOPListResp: {
             /** Sops */
             sops: components["schemas"]["SOPItem"][];
+        };
+        /** SaveReplyDocument */
+        SaveReplyDocument: {
+            /**
+             * Engine
+             * @enum {string}
+             */
+            engine: "chat" | "anti";
+            /** Session Id */
+            session_id: string;
+            /** Project */
+            project?: string | null;
+            /** Text */
+            text: string;
         };
         /** ScheduleUpsert */
         ScheduleUpsert: {
@@ -9453,6 +9484,37 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_reply_api_file_transfer_reply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveReplyDocument"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -1,5 +1,4 @@
 """Behavioral tests for the project-scoped Anti HTTP adapter."""
-import hashlib
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -76,9 +75,9 @@ def test_project_scoped_anti_round_trip(tmp_path, monkeypatch):
         assert client.get(f"{sessions}/other/runs/{run['id']}").status_code == 404
         daemon.status[run['id']] = 'success'
         completed = client.get(path).json()
-        data = (artifacts / f"{run['id']}.md").read_bytes()
-        assert data.decode() == completed['answer'] == '完整结果'
-        assert completed['sha256'] == hashlib.sha256(data).hexdigest()
+        assert completed['answer'] == '完整结果'
+        assert completed['artifact'] is None and completed['sha256'] is None
+        assert not artifacts.exists()
         second = client.post(runs, json=body | {'operation': 'message2', 'model': 'alternate', 'effort': 'low'}).json()
         assert daemon.calls[-1] == (workspace, 'c1')
         assert daemon.settings[-1] == ('alternate', 'low')
@@ -160,7 +159,9 @@ def test_anti_session_management(tmp_path, monkeypatch):
         daemon.status[run['id']] = 'success'
         assert client.get(f"{path}/runs/{run['id']}").json()['status'] == 'success'
         artifact = artifacts / 'alpha' / f"{run['id']}.md"
-        assert artifact.read_text(encoding='utf8') == '完整结果'
+        assert not artifact.exists()
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text('legacy reply', encoding='utf8')
         another = client.post(path + '/runs', json={'operation': 'two', 'prompt': 'More'}).json()
         assert {item['id']: item['title'] for item in client.get(base).json()}[sid] == 'Renamed'
         daemon.status[another['id']] = 'cancelled'
@@ -169,7 +170,7 @@ def test_anti_session_management(tmp_path, monkeypatch):
         assert client.get(path + '/runs').status_code == 404
         assert client.delete(path).status_code == 404
         assert client.get(base).json() == [second | {'active_run_id': None}]
-        assert artifact.is_file()
+        assert artifact.read_text(encoding='utf8') == 'legacy reply'
     with sqlite3.connect(db) as conn:
         assert conn.execute('SELECT count(*) FROM runs WHERE session_id=?', (sid,)).fetchone()[0] == 0
 

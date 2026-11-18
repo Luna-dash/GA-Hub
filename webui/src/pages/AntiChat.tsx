@@ -6,7 +6,8 @@ import { ArrowUp, Brain, FolderOpen, Square } from 'lucide-react'
 import { AntiDaemonControl } from '@/components/AntiDaemonControl'
 import { AntiIcon } from '@/components/AntiMark'
 import { MessageContent } from '@/components/MessageContent'
-import { FileLinkContext, FileTransferConclusion, PathLink } from '@/components/FileCitation'
+import { FileLinkContext, FileTransferConclusion } from '@/components/FileCitation'
+import { ReplyActions } from '@/components/ReplyActions'
 import { MainModelSelect } from '@/components/ModelSelect'
 import { PageShell } from '@/components/PageShell'
 import { ProjectSelect } from '@/components/ProjectSelect'
@@ -19,7 +20,7 @@ import { api } from '@/api/client'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 
 type Session = { id: string; project: string; title: string; workspace: string; updated_at?: string | null; active_run_id?: string | null }
-type Run = { id: string; status: string; operation: string; prompt: string; answer: string | null; artifact: string | null; error: string | null; error_detail?: string | null }
+type Run = { id: string; status: string; operation: string; prompt: string; answer: string | null; error: string | null; error_detail?: string | null }
 type Delta = { seq: number; text: string }
 const active = (run: Run) => ['submitting', 'queued', 'running', 'unknown'].includes(run.status)
 const base = '/api/anti/sessions'
@@ -143,7 +144,7 @@ export default function AntiChat() {
           <div className="m-auto flex max-w-sm flex-col items-center gap-3 px-5 text-center text-sm text-ink-muted">
             <AntiIcon className="h-11 w-11 text-accent" />
             <p>{sessions.isPending ? '正在加载 Anti 会话…' : '点击「新建会话」，选择该会话的项目。'}</p>
-            <p>以 Plan 模式运行，成功结果保存到项目共享产物目录。</p>
+            <p>以 Plan 模式运行。</p>
           </div>}
       </div>
     </div>
@@ -262,7 +263,11 @@ function Conversation({ session, transferAnchor }: { session: Session; transferA
               <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, engine: 'anti' }}>
                 <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
                   <MessageContent format="markdown" content={run.answer ?? (run.id === current?.id ? (live.data?.map(row => row.text).join('') ?? '') : '')} />
-                  {run.artifact && <p className="border-t border-line/60 pt-2 text-xs text-ink-muted [overflow-wrap:anywhere]">共享产物：<PathLink path={run.artifact} display={run.artifact} /></p>}
+                  {run.status === 'success' && run.answer?.trim() && (
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <ReplyActions text={run.answer} engine="anti" project={project} canSave />
+                    </div>
+                  )}
                 </FileTransferConclusion.Provider>
               </FileLinkContext.Provider>
             </div>

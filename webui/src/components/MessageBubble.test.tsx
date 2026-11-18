@@ -12,6 +12,7 @@ vi.mock('./MarkdownView', () => ({
   MarkdownView: markdownRender,
 }))
 
+import { FileLinkContext } from './FileCitation'
 import { MessageBubble } from './MessageBubble'
 import { useDraftStore } from '@/stores/draftStore'
 
@@ -54,6 +55,34 @@ describe('MessageBubble render isolation', () => {
   afterEach(() => {
     act(() => root.unmount())
     host.remove()
+  })
+
+  it('saves only the completed Chat conclusion, and only after clicking', async () => {
+    const text = '# 结论\n\n[报告](D:/project/result.md)'
+    const fetchReply = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, status: 204 }))
+    vi.stubGlobal('fetch', fetchReply)
+    const render = (streaming = false, stopped = false) => act(() => root.render(
+      <FileLinkContext.Provider value={{ sessionId: 'chat-one' }}>
+        <MessageBubble role="assistant" content={text} streaming={streaming} stopped={stopped} />
+      </FileLinkContext.Provider>,
+    ))
+    const documentButton = () => Array.from(host.querySelectorAll('button')).find(button => button.textContent === '转成文档')
+    try {
+      render(true)
+      expect(documentButton()).toBeUndefined()
+      render(false, true)
+      expect(documentButton()).toBeUndefined()
+      render()
+      expect(fetchReply).not.toHaveBeenCalled()
+      const button = documentButton()!
+      expect(button.previousElementSibling?.getAttribute('title')).toBe('复制结论')
+      await act(async () => { button.click(); button.click() })
+      expect(fetchReply).toHaveBeenCalledTimes(1)
+      const [url, request] = fetchReply.mock.calls[0]
+      expect(url).toMatch(/\/api\/file-transfer\/reply$/)
+      expect(request?.method).toBe('POST')
+      expect(JSON.parse(request?.body as string)).toEqual({ text, engine: 'chat', session_id: 'chat-one' })
+    } finally { vi.unstubAllGlobals() }
   })
 
   it('advances and reopens native live turns after unclosed reasoning', () => {

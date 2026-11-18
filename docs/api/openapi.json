@@ -5521,6 +5521,40 @@
         }
       }
     },
+    "/api/file-transfer/reply": {
+      "post": {
+        "tags": [
+          "file-transfer"
+        ],
+        "summary": "Save Reply",
+        "operationId": "save_reply_api_file_transfer_reply_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveReplyDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/file-transfer": {
       "get": {
         "tags": [
@@ -5781,12 +5815,6 @@
     "schemas": {
       "AddTransferredFile": {
         "properties": {
-          "path": {
-            "type": "string",
-            "maxLength": 4096,
-            "minLength": 1,
-            "title": "Path"
-          },
           "engine": {
             "type": "string",
             "enum": [
@@ -5812,13 +5840,19 @@
               }
             ],
             "title": "Project"
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Path"
           }
         },
         "type": "object",
         "required": [
-          "path",
           "engine",
-          "session_id"
+          "session_id",
+          "path"
         ],
         "title": "AddTransferredFile"
       },
@@ -10573,6 +10607,49 @@
           "sops"
         ],
         "title": "SOPListResp"
+      },
+      "SaveReplyDocument": {
+        "properties": {
+          "engine": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "anti"
+            ],
+            "title": "Engine"
+          },
+          "session_id": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Session Id"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 1000000,
+            "minLength": 1,
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "engine",
+          "session_id",
+          "text"
+        ],
+        "title": "SaveReplyDocument"
       },
       "ScheduleUpsert": {
         "properties": {
