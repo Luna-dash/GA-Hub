@@ -128,7 +128,7 @@ export default function AntiChat() {
   }
   const closeCreate = () => { if (!create.isPending) setCreating(false) }
   const workspace = selected?.workspace
-  return <PageShell title="Anti 聊天" wrapHeader
+  return <PageShell title="Anti会话" wrapHeader
     titleExtra={<span className="ga-badge"><AntiIcon className="mr-1 inline h-4 w-4" />Plan</span>}
     actions={<><AntiDaemonControl /><div ref={setHeaderActions} className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
       {!selected && <FileTransferBox canInsert={false} onInsert={() => {}} />}
