@@ -81,7 +81,7 @@ export function ImagePasteInput({
   const referenceBusyRef = useRef(false)
   const alive = useRef(true)
   const actionRef = useRef(0)
-  const addPathsRef = useRef<(paths: string[]) => Promise<void>>(async () => {})
+  const addPathsRef = useRef<(paths: string[]) => Promise<void>>(async () => { })
   const attachmentsOverLimit = attachments.length + pendingUploads.length > MAX_ATTACHMENTS
   const attachmentsBlocked = pendingUploads.length > 0 || referenceBusy || attachmentsOverLimit
   const attachmentHint = attachmentsOverLimit ? ATTACHMENT_LIMIT_HINT : pendingUploads.some((item) => item.error)
@@ -144,7 +144,7 @@ export function ImagePasteInput({
     if (justReEnabled) {
       // Place caret at the end so re-focus doesn't lose typing position.
       const len = el.value.length
-      try { el.setSelectionRange(len, len) } catch {}
+      try { el.setSelectionRange(len, len) } catch { }
     }
     return () => cancelAnimationFrame(r)
   }, [disabled, autoFocus])
@@ -169,14 +169,14 @@ export function ImagePasteInput({
   useEffect(() => {
     alive.current = true
     return () => {
-    alive.current = false
-    actionRef.current++
-    for (const item of pendingUploadsRef.current) {
-      item.controller?.abort()
-      if (item.preview) URL.revokeObjectURL(item.preview)
-    }
-    // Invalidate late completions even if the transport ignores abort.
-    pendingUploadsRef.current = []
+      alive.current = false
+      actionRef.current++
+      for (const item of pendingUploadsRef.current) {
+        item.controller?.abort()
+        if (item.preview) URL.revokeObjectURL(item.preview)
+      }
+      // Invalidate late completions even if the transport ignores abort.
+      pendingUploadsRef.current = []
     }
   }, [])
 
@@ -327,7 +327,7 @@ export function ImagePasteInput({
         if (!canReferenceLocalFiles() && files.length) upload(files)
       }}
     >
-      {referenceBusy && <div role="status" className="px-3 pt-2 text-xs text-text-muted">正在读取文件引用…</div>}
+      {referenceBusy && <div role="status" className="px-3 pt-2 text-xs text-ink-muted">正在读取文件引用…</div>}
       {referenceError && <div role="alert" className="px-3 pt-2 text-xs text-status-danger">{referenceError}<button type="button" onClick={() => setReferenceError(undefined)} className="ml-2">关闭</button></div>}
       {/* Align with the input: 4px row inset + 40px picker + 8px gap. */}
       {(attachments.length > 0 || attachmentsBlocked) && (
@@ -357,7 +357,7 @@ export function ImagePasteInput({
               title={`${a.name} · ${a.source === 'local_ref' ? '本地引用' : '已保存'} · ${a.size} 字节\n${a.path}`}
               data-attachment-kind="file"
             >
-              <span className="min-w-0 break-all text-xs leading-4 text-slate-200">{a.name}{a.source === 'local_ref' && <small className="ml-1 text-text-muted">本地引用</small>}</span>
+              <span className="min-w-0 break-all text-xs leading-4 text-slate-200">{a.name}{a.source === 'local_ref' && <small className="ml-1 text-ink-muted">本地引用</small>}</span>
               <button
                 type="button"
                 onClick={() => removeAttachment(a.file_id)}
@@ -520,11 +520,11 @@ export function ImagePasteInput({
             type="button"
             onClick={() => {
               if (!disabled && !scheduleDisabled && pendingUploadsRef.current.length === 0
-                  && !referenceBusyRef.current && !capacityExceeded(0)
-                  && (text.trim() || attachmentsRef.current.length > 0)) onSchedule()
+                && !referenceBusyRef.current && !capacityExceeded(0)
+                && (text.trim() || attachmentsRef.current.length > 0)) onSchedule()
             }}
             disabled={disabled || scheduleDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-bg-card text-sm font-medium text-ink-faint shadow-sm transition-colors hover:bg-bg-hover hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-35"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-bg-card text-sm font-medium text-ink-faint shadow-sm transition-colors hover:bg-bg-soft hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-35"
             title="设置定时发送"
             aria-label="设置定时发送"
           >定时</button>
@@ -541,7 +541,10 @@ export function ImagePasteInput({
       </div>
 
       {btwOpen && btwSessionId && (
-        <BtwDialog key={btwSessionId} sessionId={btwSessionId} onClose={() => setBtwOpen(false)} />
+        <BtwDialog key={btwSessionId} sessionId={btwSessionId} onClose={() => {
+          setBtwOpen(false)
+          requestAnimationFrame(() => taRef.current?.focus())
+        }} />
       )}
 
 
@@ -624,7 +627,16 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
   return (
     <div
       ref={dialogRef}
+      role="dialog"
+      aria-label="BTW 旁路提问"
       onMouseDown={handleMouseDown}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          e.stopPropagation()
+          onClose()
+        }
+      }}
       style={{
         transform: `translate(${position.x}px, ${position.y}px)`,
         cursor: dragging ? 'grabbing' : 'grab'
@@ -638,7 +650,7 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
         <button
           type="button"
           onClick={onClose}
-          className="h-7 w-7 rounded-lg text-slate-300 hover:bg-white/10 hover:text-white"
+          className="h-7 w-7 rounded-lg text-ink-muted hover:bg-bg-soft hover:text-ink"
           aria-label="关闭 BTW"
         >×</button>
       </div>
@@ -670,13 +682,12 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
           placeholder="输入旁路问题…"
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Escape') onClose()
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()
               ask()
             }
           }}
-          className="flex-1 resize-none overflow-y-auto rounded-xl border border-line bg-bg px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-600 focus:border-status-warning-strong disabled:opacity-60"
+          className="flex-1 resize-none overflow-y-auto rounded-xl border border-line bg-bg px-3 py-2 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-status-warning-strong disabled:opacity-60"
         />
         <button
           type="button"

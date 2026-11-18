@@ -179,4 +179,40 @@ describe('ImagePasteInput attachment presentation', () => {
     expect(fileAttachment?.className).toContain('w-fit')
     expect(fileAttachment?.className).toContain('max-w-full')
   })
+
+  it('exposes non-modal dialog semantics on BtwDialog and closes on Escape from any child control', () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    act(() => {
+      root?.render(
+        <ImagePasteInput
+          text="/"
+          onText={vi.fn()}
+          attachments={[]}
+          onAttachments={vi.fn()}
+          onSubmit={vi.fn()}
+          onSlashCommand={vi.fn()}
+          btwSessionId="session-btw"
+        />,
+      )
+    })
+
+    const btwOption = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="option"]'))
+      .find((option) => option.textContent?.includes('/btw'))!
+    act(() => btwOption.click())
+
+    const btwDialog = container.querySelector<HTMLElement>('[role="dialog"][aria-label="BTW 旁路提问"]')!
+    expect(btwDialog).not.toBeNull()
+    expect(btwDialog.getAttribute('aria-modal')).toBeNull()
+
+    const closeBtn = btwDialog.querySelector<HTMLButtonElement>('[aria-label="关闭 BTW"]')!
+    expect(closeBtn.className).not.toContain('hover:text-white')
+    closeBtn.focus()
+    act(() => {
+      closeBtn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(container.querySelector('[role="dialog"][aria-label="BTW 旁路提问"]')).toBeNull()
+  })
 })

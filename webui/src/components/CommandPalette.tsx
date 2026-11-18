@@ -17,6 +17,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { Z_LAYERS } from '@/config/zLayers'
+import { isTopOverlay, registerOverlay, restoreOverlayFocus } from '@/utils/overlayStack'
 import { api } from '@/api/client'
 import { noticeKeys, useChatStore } from '@/stores/chatStore'
 import { dialog } from '@/stores/dialogStore'
@@ -56,6 +57,10 @@ export function CommandPalette() {
   const [cursor, setCursor] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
+  const restoreFocusRef = useRef(true)
+  const overlayIdRef = useRef<number | null>(null)
   const nav = useNavigate()
   const qc = useQueryClient()
   const creatingSessionRef = useRef(false)
@@ -83,13 +88,29 @@ export function CommandPalette() {
     }
   }, [])
 
-  // When opened, clear filter + autofocus
+  // When opened, register in shared overlay stack, clear filter + autofocus, and restore focus when dismissed.
   useEffect(() => {
-    if (open) {
-      setQ('')
-      setCursor(0)
-      const id = window.setTimeout(() => inputRef.current?.focus(), 30)
-      return () => window.clearTimeout(id)
+    if (!open) return
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    openerRef.current = opener
+    restoreFocusRef.current = true
+    const reg = registerOverlay({
+      zIndex: Z_LAYERS.palette,
+      getPanel: () => panelRef.current,
+      onEscape: () => setOpen(false),
+      lockScroll: true,
+    })
+    overlayIdRef.current = reg.id
+    setQ('')
+    setCursor(0)
+    const id = window.setTimeout(() => {
+      if (isTopOverlay(overlayIdRef.current)) inputRef.current?.focus()
+    }, 30)
+    return () => {
+      window.clearTimeout(id)
+      reg.unregister()
+      overlayIdRef.current = null
+      if (restoreFocusRef.current) restoreOverlayFocus(openerRef.current)
     }
   }, [open])
 
@@ -125,15 +146,16 @@ export function CommandPalette() {
     const pages = [
       { p: '/dashboard', label: '状态面板 / Dashboard', icon: '▦' },
       { p: '/chat', label: '实时聊天 / Live Chat', icon: '💬' },
-      { p: '/conversations', label: '对话管理 / Conversations', icon: '🗂️' },
-      { p: '/memory', label: '记忆 & SOP / Memory', icon: '🧠' },
-      { p: '/conductor', label: '指挥模式 / 多 Agent 编排', icon: '🎼' },
-      { p: '/goal-hive', label: 'Goal模式', icon: '🐝' },
-      { p: '/mykey', label: 'MyKey / 密钥同步', icon: '🔐' },
-      { p: '/tasks', label: '任务队列 / Tasks', icon: '☑' },
+      { p: '/theme-tasks', label: '主题任务 / Theme Tasks', icon: '🗂' },
+      { p: '/conversations', label: '历史对话 / Conversations', icon: '🗂️' },
+      { p: '/memory', label: '记忆体系 / Memory & SOP', icon: '🧠' },
+      { p: '/conductor', label: '指挥模式 / Conductor', icon: '🎼' },
+      { p: '/goal-hive', label: 'Goal模式 / Goal Hive', icon: '🐝' },
+      { p: '/mykey', label: 'LLM管理 / MyKey', icon: '🔐' },
+      { p: '/tasks', label: '定时任务 / Tasks', icon: '☑' },
       { p: '/autonomous', label: '自主进化 / Autonomous', icon: '🌀' },
       { p: '/tokens', label: '用量统计 / Token Usage', icon: '◫' },
-      { p: '/settings', label: '设置 / Settings', icon: '⚙️' },
+      { p: '/settings', label: '系统设置 / Settings', icon: '⚙️' },
     ]
     for (const x of pages) {
       acts.push({
@@ -215,7 +237,7 @@ export function CommandPalette() {
         id: `sop:${s.name}`, group: 'SOP / 记忆', icon: '📋',
         label: s.name,
         hint: `${(s.size / 1024).toFixed(1)} KB`,
-        run: () => nav('/memory'),
+        run: () => nav(`/memory?tab=sop&sop=${encodeURIComponent(s.name)}`),
       })
     }
 
@@ -225,7 +247,7 @@ export function CommandPalette() {
         id: `conv:${c.id}`, group: '历史对话', icon: '💬',
         label: c.title || c.id,
         hint: conversationCountsText(c),
-        run: () => nav('/conversations'),
+        run: () => nav(`/conversations/${encodeURIComponent(c.id)}`),
       })
     }
 
@@ -254,11 +276,13 @@ export function CommandPalette() {
 
   const close = () => setOpen(false)
   const exec = async (a: Action) => {
+    restoreFocusRef.current = false
     close()
     try { await a.run() } catch (e: any) { dialog.alert('操作失败', errorMessageFromError(e)) }
   }
 
   const onKey = (e: React.KeyboardEvent) => {
+    if (!isTopOverlay(overlayIdRef.current)) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       setCursor((c) => (filtered.length ? (c + 1) % filtered.length : 0))
@@ -269,9 +293,6 @@ export function CommandPalette() {
       e.preventDefault()
       const a = filtered[cursor]
       if (a) exec(a)
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      close()
     }
   }
 
@@ -287,9 +308,13 @@ export function CommandPalette() {
     <div
       style={{ zIndex: Z_LAYERS.palette }}
       className="fixed inset-0 bg-black/55 backdrop-blur-sm flex items-start justify-center pt-[9vh] px-4"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget && isTopOverlay(overlayIdRef.current)) close() }}
     >
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="命令面板"
         className="w-full max-w-xl bg-bg-soft border border-line rounded-xl shadow-2xl overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >

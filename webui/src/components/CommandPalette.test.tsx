@@ -156,4 +156,56 @@ describe('command palette new conversation', () => {
     expect(localStorage.getItem(storageKeys.currentSessionId)).toBe('other')
     expect(client.getQueryData<SessionListData>(queryKeys.sessions)?.items[0].id).toBe('new')
   })
+
+  it('navigates to the exact conversation or SOP, includes theme-tasks, and enforces dialog focus behavior', async () => {
+    api.conversations.mockResolvedValue({
+      items: [{ id: 'conv 1', title: '对话甲', message_count: 2, dialogue_count: 1, turn_count: 2 }],
+    })
+    api.sops.mockResolvedValue({
+      sops: [{ name: 'deploy_sop.md', size: 2048 }],
+    })
+
+    const opener = host.querySelector<HTMLButtonElement>('[data-nav="leave"]')!
+    opener.focus()
+    expect(document.activeElement).toBe(opener)
+
+    await act(async () => { window.dispatchEvent(new Event('gahub:command-palette')) })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)) })
+
+    const dlg = host.querySelector<HTMLElement>('[role="dialog"]')!
+    expect(dlg).not.toBeNull()
+    expect(dlg.getAttribute('aria-modal')).toBe('true')
+    expect(dlg.textContent).toContain('主题任务')
+
+    const input = dlg.querySelector<HTMLInputElement>('input')!
+    expect(document.activeElement).toBe(input)
+
+    // Shift+Tab from the first focusable wraps to the last inside the dialog
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }))
+    })
+    const buttons = dlg.querySelectorAll<HTMLButtonElement>('button:not([disabled])')
+    expect(document.activeElement).toBe(buttons[buttons.length - 1])
+
+    // Escape closes and restores focus to opener
+    await act(async () => {
+      dlg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(opener)
+
+    // Reopen and jump to specific conversation
+    await act(async () => { window.dispatchEvent(new Event('gahub:command-palette')) })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)) })
+    const convBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.includes('对话甲'))!
+    await act(async () => convBtn.click())
+    expect(host.querySelector('output')?.textContent).toBe('/conversations/conv%201')
+
+    // Reopen and jump to specific SOP
+    await act(async () => { window.dispatchEvent(new Event('gahub:command-palette')) })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)) })
+    const sopBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.includes('deploy_sop.md'))!
+    await act(async () => sopBtn.click())
+    expect(host.querySelector('output')?.textContent).toBe('/memory?tab=sop&sop=deploy_sop.md')
+  })
 })

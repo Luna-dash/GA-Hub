@@ -7,6 +7,7 @@
 import { useEffect, useRef, type CSSProperties, type ReactNode, type Ref } from 'react'
 import clsx from 'clsx'
 import { Z_LAYERS } from '@/config/zLayers'
+import { isTopOverlay, registerOverlay, restoreOverlayFocus } from '@/utils/overlayStack'
 
 interface ModalOverlayProps {
   onClose: () => void
@@ -24,22 +25,24 @@ interface ModalOverlayProps {
   /** Close when the backdrop itself is clicked (default true). Disable for
    * forms where a mis-click outside the panel would silently discard input. */
   closeOnBackdrop?: boolean
+  /** Stack layer z-index (defaults to Z_LAYERS.modal). */
+  zIndex?: number
 }
-
-const FOCUSABLE = [
-  'button:not([disabled])',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  'a[href]',
-  '[tabindex]:not([tabindex="-1"])',
-].join(', ')
 
 export function ModalOverlay({
   onClose, children, panelClassName, panelRef, labelledBy,
-  align = 'center', panelStyle, closeOnBackdrop = true,
+  align = 'center', panelStyle, closeOnBackdrop = true, zIndex = Z_LAYERS.modal,
 }: ModalOverlayProps) {
   const panelNode = useRef<HTMLDivElement | null>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
+  const openerCapturedRef = useRef(false)
+  if (!openerCapturedRef.current && typeof document !== 'undefined') {
+    openerCapturedRef.current = true
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  }
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  const overlayIdRef = useRef<number | null>(null)
   const setPanel = (node: HTMLDivElement | null) => {
     panelNode.current = node
     if (typeof panelRef === 'function') panelRef(node)
@@ -47,42 +50,22 @@ export function ModalOverlay({
   }
 
   useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null
+    const opener = openerRef.current
+    const reg = registerOverlay({
+      zIndex,
+      getPanel: () => panelNode.current,
+      onEscape: () => onCloseRef.current(),
+      lockScroll: true,
+    })
+    overlayIdRef.current = reg.id
     const panel = panelNode.current
     if (panel && !panel.contains(document.activeElement)) panel.focus()
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
     return () => {
-      document.body.style.overflow = previousOverflow
-      opener?.focus?.()
+      reg.unregister()
+      overlayIdRef.current = null
+      restoreOverlayFocus(opener)
     }
-  }, [])
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-        return
-      }
-      if (event.key !== 'Tab') return
-      const panel = panelNode.current
-      if (!panel) return
-      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE))
-      if (focusable.length === 0) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
+  }, [zIndex])
 
   return (
     <div
@@ -90,9 +73,9 @@ export function ModalOverlay({
         'bg-black/55 backdrop-blur-sm flex',
         align === 'center' ? 'items-center justify-center px-4' : 'items-stretch justify-end',
       )}
-      style={{ position: 'fixed', inset: 0, zIndex: Z_LAYERS.modal }}
+      style={{ position: 'fixed', inset: 0, zIndex }}
       onMouseDown={(e) => {
-        if (closeOnBackdrop && e.target === e.currentTarget) onClose()
+        if (closeOnBackdrop && e.target === e.currentTarget && isTopOverlay(overlayIdRef.current)) onClose()
       }}
     >
       <div
