@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { NAV_ITEMS, normalizeNavPreferences } from './navigation'
 
 describe('theme tasks navigation', () => {
-  it('uses its own icon directly after chat', () => {
+  it('keeps Anti chat and theme tasks next to chat with distinct icons', () => {
     const chat = NAV_ITEMS.findIndex(item => item.id === 'chat')
-    expect(NAV_ITEMS[chat + 1]).toMatchObject({ id: 'theme-tasks', icon: 'themeTasks' })
+    expect(NAV_ITEMS.slice(chat + 1, chat + 3)).toMatchObject([
+      { id: 'anti', icon: 'anti' },
+      { id: 'theme-tasks', icon: 'themeTasks' },
+    ])
   })
   it('places the new page below chat in old saved layouts without resetting other pages', () => {
     const saved = [{ id: 'memory', visible: true }, { id: 'chat', visible: true }, { id: 'dashboard', visible: false }]
