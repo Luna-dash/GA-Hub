@@ -63,6 +63,9 @@ def _registered_names() -> set[str]:
         constants.ENV_GAHUB_GAHUB_PYTHON,
         constants.ENV_GAHUB_GAHUB_PORT,
         constants.ENV_GAHUB_GAHUB_TOKEN,
+        constants.ENV_ANTICLI_PORT,
+        constants.ENV_GAHUB_ANTI_ORIGIN,
+        constants.ENV_GAHUB_ANTI_BIND_KEY,
     }
 
 

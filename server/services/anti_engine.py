@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import subprocess
@@ -14,9 +15,12 @@ from uuid import uuid4
 import requests
 
 from .. import _paths
+from ..constants import ENV_ANTICLI_PORT
 from ..process_utils import hidden_process_kwargs
 from . import anti_component
 from .anti_references import ReferenceError, prepare_references, staged_path
+
+log = logging.getLogger(__name__)
 
 ACTIVE = frozenset({"submitting", "queued", "running", "unknown"})
 TERMINAL = frozenset({"success", "rejected", "timeout", "rate_limited", "cli_error", "cancelled"})
@@ -32,12 +36,12 @@ class AntiError(Exception):
 
 def daemon_port() -> int:
     try:
-        port = int(os.environ.get("GA_HUB_ANTICLI_PORT", "8787"))
+        port = int(os.environ.get(ENV_ANTICLI_PORT, "8787"))
         if not 1 <= port <= 65535:
             raise ValueError("port outside TCP range")
         return port
     except ValueError as exc:
-        raise AntiError(503, "GA_HUB_ANTICLI_PORT must be between 1 and 65535") from exc
+        raise AntiError(503, f"{ENV_ANTICLI_PORT} must be between 1 and 65535") from exc
 
 
 class AntiAdapter:

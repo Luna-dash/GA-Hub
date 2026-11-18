@@ -33,6 +33,8 @@ import requests
 from .. import _paths
 from ..constants import (
     CONDUCTOR_ENGINE_PORT,
+    ENV_GAHUB_ANTI_BIND_KEY,
+    ENV_GAHUB_ANTI_ORIGIN,
     ENV_GAHUB_DELIVERABLE_ROOTS,
     ENV_GAHUB_JOURNAL_PATH,
     ENV_GAHUB_MULTI_REQUEST_TURNS,
@@ -120,13 +122,13 @@ def _engine_spawn_env() -> dict:
                    env.get(ENV_GAHUB_DELIVERABLE_ROOTS, "").strip()
                    else "explicit_absolute")
     env[ENV_GAHUB_MULTI_REQUEST_TURNS] = "off"
-    env.pop("GAHUB_ANTI_ORIGIN", None)
-    env.pop("GAHUB_ANTI_BIND_KEY", None)
+    env.pop(ENV_GAHUB_ANTI_ORIGIN, None)
+    env.pop(ENV_GAHUB_ANTI_BIND_KEY, None)
     if RUNTIME_PORT_ENV in os.environ:
         origin = runtime_http_origin("127.0.0.1", int(os.environ[RUNTIME_PORT_ENV]))
         if urlsplit(origin).hostname in {"127.0.0.1", "::1", "localhost"}:
-            env["GAHUB_ANTI_ORIGIN"] = origin
-            env["GAHUB_ANTI_BIND_KEY"] = _ANTI_BIND_KEY
+            env[ENV_GAHUB_ANTI_ORIGIN] = origin
+            env[ENV_GAHUB_ANTI_BIND_KEY] = _ANTI_BIND_KEY
     return env
 
 

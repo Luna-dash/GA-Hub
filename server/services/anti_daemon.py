@@ -7,9 +7,8 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from typing import Literal
-
-from pydantic import BaseModel
 
 from ..process_utils import hidden_process_kwargs
 from . import anti_component, child_job
@@ -18,8 +17,12 @@ from .anti_engine import AntiAdapter, AntiError, daemon_port
 log = logging.getLogger(__name__)
 
 
-class AntiDaemonStatus(BaseModel):
-    state: Literal["stopped", "starting", "ready", "unavailable"]
+AntiDaemonState = Literal["stopped", "starting", "ready", "unavailable"]
+
+
+@dataclass(frozen=True)
+class AntiDaemonStatus:
+    state: AntiDaemonState
     detail: str | None = None
     agy_available: bool | None = None
     active_count: int | None = None

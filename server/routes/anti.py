@@ -1,17 +1,25 @@
 """Direct Anti conversations, independent of the GA session engine."""
+from dataclasses import asdict
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field, StringConstraints
 
 from ..origin_policy import is_allowed_ui_origin
-from ..services.anti_daemon import AntiDaemonStatus, daemon
+from ..services.anti_daemon import AntiDaemonState, daemon
 from ..services.anti_engine import DEFAULT_EFFORT, DEFAULT_MODEL, AntiError, AntiSessions
 
 router = APIRouter(prefix="/api/anti", tags=["anti"])
 
 
 AntiSessionTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
+
+
+class AntiDaemonStatus(BaseModel):
+    state: AntiDaemonState
+    detail: str | None = None
+    agy_available: bool | None = None
+    active_count: int | None = None
 
 
 class AntiSessionCreate(BaseModel):
@@ -46,7 +54,7 @@ def _call(method, *args):
 @router.get("/status", response_model=AntiDaemonStatus)
 def daemon_status():
     try:
-        return daemon.status()
+        return asdict(daemon.status())
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 
@@ -59,7 +67,7 @@ def start_daemon(request: Request):
     if request.headers.get("x-ga-hub-action") != "start-anti":
         raise HTTPException(403, "Missing Anti start action")
     try:
-        return daemon.start()
+        return asdict(daemon.start())
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 
