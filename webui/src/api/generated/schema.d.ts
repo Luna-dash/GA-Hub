@@ -2686,6 +2686,19 @@ export interface components {
             /** Path */
             path: string;
         };
+        /** AntiMessageDelta */
+        AntiMessageDelta: {
+            /** Seq */
+            seq: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "message.delta";
+            /** Text */
+            text: string;
+            step?: components["schemas"]["AntiStep"] | null;
+        };
         /** AntiRunCreate */
         AntiRunCreate: {
             /** Operation */
@@ -2717,6 +2730,32 @@ export interface components {
         AntiSessionRename: {
             /** Title */
             title: string;
+        };
+        /** AntiStep */
+        AntiStep: {
+            /** Index */
+            index: number;
+            /** Kind */
+            kind: string;
+            /** State */
+            state?: string | null;
+            /** Tool */
+            tool?: string | null;
+            /** Duration Seconds */
+            duration_seconds?: number | null;
+            /** Text Delta */
+            text_delta?: string | null;
+        };
+        /** AntiStepUpdate */
+        AntiStepUpdate: {
+            /** Seq */
+            seq: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "step.update";
+            step: components["schemas"]["AntiStep"];
         };
         /**
          * AppStatusResp
@@ -9450,7 +9489,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": (components["schemas"]["AntiMessageDelta"] | components["schemas"]["AntiStepUpdate"])[];
                 };
             };
             /** @description Validation Error */

@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
+import re
 import sqlite3
 import subprocess
 from contextlib import closing
@@ -108,6 +110,30 @@ def _prompt_title(prompt: str) -> str:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _public_step(row: dict, raw: dict) -> dict | None:
+    index = row.get("step_index", raw.get("step_index"))
+    kind = row.get("step_type", raw.get("step_type"))
+    if type(index) is not int or index < 0 or not isinstance(kind, str) or kind == "user_input":
+        return None
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", kind):
+        return None
+    step = {"index": index, "kind": kind}
+    state = row.get("state", raw.get("state"))
+    if isinstance(state, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,31}", state):
+        step["state"] = state
+    tool = row.get("tool_name")
+    if isinstance(tool, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", tool):
+        step["tool"] = tool
+    duration = row.get("duration_seconds", raw.get("duration_seconds"))
+    if type(duration) in (int, float) and 0 <= duration <= 1e9 and math.isfinite(duration):
+        step["duration_seconds"] = duration
+    # Only the CLI's explicit planner output belongs in the task timeline.
+    delta = raw.get("text_delta")
+    if kind == "planner_response" and isinstance(delta, str) and delta:
+        step["text_delta"] = delta
+    return step
 
 
 class AntiSessions:
@@ -347,11 +373,23 @@ class AntiSessions:
         for row in rows:
             if row["seq"] <= after or row.get("event_type") != "step_update":
                 continue
-            # Never return raw CLI output, tool arguments, or auth/debug context.
-            step = json.loads(row.get("raw_json") or "{}").get("step_update") or {}
-            delta = step.get("text_delta")
-            if isinstance(delta, str) and delta:
-                events.append({"seq": row["seq"], "type": "message.delta", "text": delta})
+            try:
+                raw = json.loads(row.get("raw_json") or "{}")
+            except (TypeError, ValueError):
+                raw = {}
+            raw_step = raw.get("step_update") if isinstance(raw, dict) else None
+            raw_step = raw_step if isinstance(raw_step, dict) else {}
+            step = _public_step(row, raw_step)
+            delta = raw_step.get("text_delta")
+            # A CLI event can update the step and carry text at the same sequence.
+            kind = row.get("step_type") or raw_step.get("step_type")
+            if kind in (None, "agent_response") and isinstance(delta, str) and delta:
+                event = {"seq": row["seq"], "type": "message.delta", "text": delta}
+                if step is not None:
+                    event["step"] = step
+                events.append(event)
+            elif step is not None:
+                events.append({"seq": row["seq"], "type": "step.update", "step": step})
         return events
 
     def cancel(self, sid: str, rid: str) -> dict:

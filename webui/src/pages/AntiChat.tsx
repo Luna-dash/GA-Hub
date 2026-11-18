@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { FileTransferBox, type TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
 import { Brain, FolderOpen, RotateCw } from 'lucide-react'
 import { ChatComposerFrame, chatTranscriptClass } from '@/components/ChatLayout'
 import { ImagePasteInput } from '@/components/ImagePasteInput'
@@ -23,7 +24,6 @@ import { resolveApiUrl } from '@/runtime/runtimeConfig'
 
 type Session = { id: string; project: string; title: string; workspace: string; updated_at?: string | null; active_run_id?: string | null }
 type Run = { id: string; status: string; operation: string; prompt: string; answer: string | null; error: string | null; error_detail?: string | null }
-type Delta = { seq: number; text: string }
 const active = (run: Run) => ['submitting', 'queued', 'running', 'unknown'].includes(run.status)
 const base = '/api/anti/sessions'
 const sessionsKey = ['anti-sessions'] as const
@@ -199,14 +199,12 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
   const live = useQuery({
     queryKey: ['anti-live', sid, current?.id], enabled: Boolean(current), refetchInterval: 900,
     queryFn: async ({ signal }) => {
-      const livePath = `${path}/${current!.id}`
-      const run = await request<Run>(livePath, signal)
+      const run = await request<Run>(`${path}/${current!.id}`, signal)
       if (!active(run)) {
         cache.setQueryData<Run[]>(key, old => old?.map(row => row.id === run.id ? run : row))
         void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
-        return []
       }
-      return request<Delta[]>(`${livePath}/events`, signal)
+      return run
     },
   })
   useEffect(() => {
@@ -237,9 +235,10 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
       void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
     },
   })
-  useEffect(() => {
+  const scrollToLatest = useCallback(() => {
     if (transcript.current && followTranscript.current) transcript.current.scrollTop = transcript.current.scrollHeight
-  }, [history.data, live.data])
+  }, [])
+  useEffect(scrollToLatest, [history.data, scrollToLatest])
   const submit = () => {
     if (current || send.isPending || !history.isSuccess || !prompt.trim()) return
     const body = pending ?? { prompt: prompt.trim(), model, effort,
@@ -283,7 +282,10 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
               </p>}
               <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, engine: 'anti' }}>
                 <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
-                  <MessageContent format="markdown" content={run.answer ?? (run.id === current?.id ? (live.data?.map(row => row.text).join('') ?? '') : '')} />
+                  <AntiTaskProgress active={active(run)} loadEvents={signal => request<AntiEvent[]>(`${path}/${run.id}/events`, signal)}
+                    runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}>
+                    {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
+                  </AntiTaskProgress>
                   {run.status === 'success' && run.answer?.trim() && (
                     <div className="flex flex-wrap justify-end gap-2">
                       <ReplyActions text={run.answer} engine="anti" project={project} canSave />

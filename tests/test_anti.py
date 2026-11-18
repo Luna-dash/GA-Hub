@@ -72,6 +72,35 @@ def test_project_scoped_anti_round_trip(tmp_path, monkeypatch):
         assert daemon.settings == [(engine.DEFAULT_MODEL, 'high')]
         assert client.get(path + '/events').json() == [{'seq': 2, 'type': 'message.delta', 'text': '好'}]
         assert client.get(path + '/events?after=2').json() == []
+        original_request = daemon.request
+        trace_rows = [
+            {'seq': 3, 'event_type': 'step_update', 'step_index': 0, 'step_type': 'user_input',
+             'raw_json': '{"step_update":{"text_delta":"hidden prompt"}}'},
+            {'seq': 4, 'event_type': 'step_update', 'step_index': 1, 'step_type': 'tool_call',
+             'state': 'ACTIVE', 'tool_name': 'view_file', 'summary': 'hidden diagnostics',
+             'raw_json': '{"step_update":{"text_delta":"hidden output","tool_arguments":"hidden path"}}'},
+            {'seq': 5, 'event_type': 'step_update', 'step_index': 1, 'step_type': 'tool_call',
+             'state': 'DONE', 'duration_seconds': 0.25},
+            {'seq': 6, 'event_type': 'step_update',
+             'raw_json': '{"step_update":{"step_index":2,"step_type":"planner_response","state":"DONE","text_delta":"先查看目录"}}'},
+            {'seq': 7, 'event_type': 'step_update', 'step_index': 3, 'step_type': 'agent_response',
+             'state': 'ACTIVE', 'raw_json': '{"step_update":{"text_delta":"正文"}}'},
+            {'seq': 8, 'event_type': 'step_update', 'raw_json': 'invalid json'},
+        ]
+
+        def request_with_trace(method, remote_path, *args, **kwargs):
+            response = original_request(method, remote_path, *args, **kwargs)
+            return response + trace_rows if remote_path.endswith('/events?include_raw=true') else response
+
+        monkeypatch.setattr(daemon, 'request', request_with_trace)
+        trace = [
+            {'seq': 4, 'type': 'step.update', 'step': {'index': 1, 'kind': 'tool_call', 'state': 'ACTIVE', 'tool': 'view_file'}},
+            {'seq': 5, 'type': 'step.update', 'step': {'index': 1, 'kind': 'tool_call', 'state': 'DONE', 'duration_seconds': 0.25}},
+            {'seq': 6, 'type': 'step.update', 'step': {'index': 2, 'kind': 'planner_response', 'state': 'DONE', 'text_delta': '先查看目录'}},
+            {'seq': 7, 'type': 'message.delta', 'text': '正文', 'step': {'index': 3, 'kind': 'agent_response', 'state': 'ACTIVE'}},
+        ]
+        assert client.get(path + '/events?after=2').json() == trace
+        assert client.get(path + '/events?after=4').json() == trace[1:]
         assert client.get(f"{sessions}/other/runs/{run['id']}").status_code == 404
         daemon.status[run['id']] = 'success'
         completed = client.get(path).json()

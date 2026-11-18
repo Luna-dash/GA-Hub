@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { expect, it, vi } from 'vitest'
 import AntiChat from './AntiChat'
+import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
 
 vi.mock('@/api/client', () => ({ api: { projects: async () => ({ items: [
   { name: 'demo', display_name: 'Demo project', path: 'D:/demo' },
@@ -201,6 +202,59 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     await act(async () => root.unmount())
     cache.clear()
     host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('reloads the final trace even when the first live request is still pending', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const cache = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } })
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const events: AntiEvent[] = [
+    { seq: 1, type: 'step.update', step: { index: 1, kind: 'tool_call', tool: 'view_file', state: 'ACTIVE' } },
+    { seq: 2, type: 'step.update', step: { index: 1, kind: 'tool_call', state: 'DONE', duration_seconds: 1 } },
+    { seq: 3, type: 'step.update', step: { index: 2, kind: 'planner_response', text_delta: '先读取文件' } },
+    { seq: 4, type: 'message.delta', text: '正文' },
+  ]
+  const loadEvents = vi.fn<(signal: AbortSignal) => Promise<AntiEvent[]>>()
+    .mockImplementationOnce(signal => new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    }))
+    .mockResolvedValue(events)
+  const onEventsChanged = vi.fn()
+  const render = (active: boolean, runKey: string) => act(async () => root.render(
+    <QueryClientProvider client={cache}>
+      <AntiTaskProgress key={runKey} runKey={runKey} active={active} loadEvents={loadEvents} onEventsChanged={onEventsChanged}>
+        {partial => <div data-testid="answer">{partial}</div>}
+      </AntiTaskProgress>
+    </QueryClientProvider>,
+  ))
+  try {
+    await render(true, 'live')
+    expect(loadEvents).toHaveBeenCalledTimes(1)
+    const liveSignal = loadEvents.mock.calls[0][0]
+    await render(false, 'live')
+    expect(loadEvents).toHaveBeenCalledTimes(2)
+    expect(liveSignal.aborted).toBe(true)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    const steps = host.querySelectorAll('ol li')
+    expect(steps).toHaveLength(2)
+    expect(steps[0].textContent).toContain('读取文件')
+    expect(steps[0].textContent).toContain('已完成')
+    expect(steps[1].textContent).toContain('先读取文件')
+    expect(host.querySelector('[data-testid="answer"]')?.textContent).toBe('正文')
+    await render(false, 'historical')
+    expect(loadEvents).toHaveBeenCalledTimes(2)
+    const details = host.querySelector('details')!
+    await act(async () => {
+      details.open = true
+      details.dispatchEvent(new Event('toggle'))
+    })
+    expect(loadEvents).toHaveBeenCalledTimes(3)
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
     vi.unstubAllGlobals()
   }
 })

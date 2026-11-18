@@ -45,6 +45,31 @@ class AntiRunCreate(BaseModel):
     references: list[AntiFileReference] = Field(default_factory=list, max_length=8)
 
 
+class AntiStep(BaseModel):
+    index: int
+    kind: str
+    state: str | None = None
+    tool: str | None = None
+    duration_seconds: float | None = None
+    text_delta: str | None = None
+
+
+class AntiMessageDelta(BaseModel):
+    seq: int
+    type: Literal["message.delta"]
+    text: str
+    step: AntiStep | None = None
+
+
+class AntiStepUpdate(BaseModel):
+    seq: int
+    type: Literal["step.update"]
+    step: AntiStep
+
+
+AntiEvent = Annotated[AntiMessageDelta | AntiStepUpdate, Field(discriminator="type")]
+
+
 def _call(method, *args):
     try:
         return getattr(AntiSessions(), method)(*args)
@@ -116,8 +141,8 @@ def run(sid: str, rid: str):
     return _call("refresh", sid, rid)
 
 
-@router.get("/sessions/{sid}/runs/{rid}/events")
-def events(sid: str, rid: str, after: int = Query(default=0, ge=0)):
+@router.get("/sessions/{sid}/runs/{rid}/events", response_model_exclude_none=True)
+def events(sid: str, rid: str, after: int = Query(default=0, ge=0)) -> list[AntiEvent]:
     return _call("events", sid, rid, after)
 
 

@@ -5455,7 +5455,27 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/AntiMessageDelta"
+                      },
+                      {
+                        "$ref": "#/components/schemas/AntiStepUpdate"
+                      }
+                    ],
+                    "discriminator": {
+                      "propertyName": "type",
+                      "mapping": {
+                        "message.delta": "#/components/schemas/AntiMessageDelta",
+                        "step.update": "#/components/schemas/AntiStepUpdate"
+                      }
+                    }
+                  },
+                  "title": "Response Events Api Anti Sessions  Sid  Runs  Rid  Events Get"
+                }
               }
             }
           },
@@ -5958,6 +5978,40 @@
         ],
         "title": "AntiFileReference"
       },
+      "AntiMessageDelta": {
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "title": "Seq"
+          },
+          "type": {
+            "type": "string",
+            "const": "message.delta",
+            "title": "Type"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AntiStep"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "seq",
+          "type",
+          "text"
+        ],
+        "title": "AntiMessageDelta"
+      },
       "AntiRunCreate": {
         "properties": {
           "operation": {
@@ -6049,6 +6103,91 @@
           "title"
         ],
         "title": "AntiSessionRename"
+      },
+      "AntiStep": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "text_delta": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text Delta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "kind"
+        ],
+        "title": "AntiStep"
+      },
+      "AntiStepUpdate": {
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "title": "Seq"
+          },
+          "type": {
+            "type": "string",
+            "const": "step.update",
+            "title": "Type"
+          },
+          "step": {
+            "$ref": "#/components/schemas/AntiStep"
+          }
+        },
+        "type": "object",
+        "required": [
+          "seq",
+          "type",
+          "step"
+        ],
+        "title": "AntiStepUpdate"
       },
       "AppStatusResp": {
         "properties": {
