@@ -1128,12 +1128,14 @@ class ServicePanelResp(BaseModel):
 class RevealFileReq(BaseModel):
     path: str
     session_id: str | None = None
+    engine: Literal["chat", "anti"] = "chat"
     mode: Literal["open", "folder", "parent"] = "open"
 
 
 class ResolveFileReq(BaseModel):
     path: str
     session_id: str | None = None
+    engine: Literal["chat", "anti"] = "chat"
 
 
 class ResolveFileResp(BaseModel):

@@ -13,7 +13,16 @@ export interface TransferredFile {
   available: boolean
 }
 
-const queryKey = ['file-transfer'] as const
+export const fileTransferQueryKey = ['file-transfer'] as const
+
+export async function addTransferFile(body: {
+  path: string; engine: 'chat' | 'anti'; session_id: string; project?: string
+}) {
+  const response = await fetch(resolveApiUrl('/api/file-transfer'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })
+  if (!response.ok) throw new Error(response.status === 422 ? '文件不存在或不是本地文件' : `放入传递箱失败（${response.status}）`)
+}
 async function request(method: 'GET' | 'DELETE', signal?: AbortSignal) {
   const response = await fetch(resolveApiUrl('/api/file-transfer'), { method, signal })
   if (!response.ok) throw new Error(`文件传递箱请求失败（${response.status}）`)
@@ -29,6 +38,7 @@ export function FileTransferBox({ canInsert, onInsert }: {
   const trigger = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLElement>(null)
   const cache = useQueryClient()
+  const queryKey = fileTransferQueryKey
   const files = useQuery({ queryKey, enabled: open, staleTime: 0, refetchInterval: open ? 2500 : false,
     queryFn: async ({ signal }): Promise<TransferredFile[]> => (await request('GET', signal)).json() })
   const clear = useMutation({ mutationFn: () => request('DELETE'), onSuccess: async () => {
@@ -55,7 +65,7 @@ export function FileTransferBox({ canInsert, onInsert }: {
           <button type="button" title="关闭" aria-label="关闭文件传递箱" className="ga-btn-icon" onClick={close}><X size={16} aria-hidden="true" /></button>
         </div>
       </header>
-      <p className="mb-2 text-xs text-ink-muted">Chat 和 Anti 的会话共用。点击文件加入当前草稿，不会发送。</p>
+      <p className="mb-2 text-xs text-ink-muted">在会话结论里右键文件链接手动放入。点击箱内文件加入当前草稿。</p>
       {confirmClear && <div className="mb-2 flex items-center gap-2 rounded-lg border border-line p-2 text-xs">
         <span className="flex-1">清空所有会话的共享索引？不会删除原文件。</span>
         <button type="button" className="text-ink-muted" onClick={() => setConfirmClear(false)} disabled={clear.isPending}>取消</button>
@@ -65,7 +75,7 @@ export function FileTransferBox({ canInsert, onInsert }: {
       {clear.isError && <p role="alert" className="mb-2 text-xs text-ink-muted">清空失败，请重试。</p>}
       {files.isPending ? <p className="py-2 text-ink-muted">正在加载…</p>
         : files.isError && !files.data ? <button type="button" className="py-2 text-accent" onClick={() => void files.refetch()}>加载失败，点击重试</button>
-        : !files.data?.length ? <p className="py-2 text-ink-muted">暂无交付文件</p>
+        : !files.data?.length ? <p className="py-2 text-ink-muted">暂无手动放入的文件</p>
         : <ul className="max-h-[min(24rem,55vh)] space-y-1 overflow-y-auto">
           {files.data.map(file => <li key={file.id}>
             <button type="button" title={file.path} disabled={!canInsert || !file.available || clear.isPending}

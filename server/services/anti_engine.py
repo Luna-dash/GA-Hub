@@ -18,7 +18,7 @@ from .. import _paths
 from ..constants import ENV_ANTICLI_PORT
 from ..process_utils import hidden_process_kwargs
 from . import anti_component
-from .anti_references import ReferenceError, prepare_references, staged_path
+from .anti_references import ReferenceError, prepare_references
 
 log = logging.getLogger(__name__)
 
@@ -329,17 +329,6 @@ class AntiSessions:
             )
             if updated.rowcount and status == "success" and remote.get("conversation_id"):
                 db.execute("UPDATE sessions SET conversation=? WHERE id=?", (remote["conversation_id"], sid))
-        if updated.rowcount and status == "success":
-            try:
-                from .file_transfer import FileTransfer, anti_input_paths, log
-                selected = [path for _, path in json.loads(run["references_json"] or "[]")]
-                copies = tuple(str(staged_path(artifacts / "references" / rid, i, path))
-                               for i, path in enumerate(selected, 1))
-                FileTransfer().record("anti", sid, artifact=artifact, answer=answer,
-                                      project_path=str(workspace), project_name=session["project"],
-                                      exclude=(*anti_input_paths(run["prompt"]), *selected, *copies))
-            except Exception:
-                log.exception("file transfer indexing failed for Anti run %s", rid)
         return self.run(sid, rid)
 
     def events(self, sid: str, rid: str, after: int) -> list[dict]:

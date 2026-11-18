@@ -6,6 +6,7 @@ import { ArrowUp, Brain, FolderOpen, Square } from 'lucide-react'
 import { AntiDaemonControl } from '@/components/AntiDaemonControl'
 import { AntiIcon } from '@/components/AntiMark'
 import { MessageContent } from '@/components/MessageContent'
+import { FileLinkContext, FileTransferConclusion, PathLink } from '@/components/FileCitation'
 import { MainModelSelect } from '@/components/ModelSelect'
 import { PageShell } from '@/components/PageShell'
 import { ProjectSelect } from '@/components/ProjectSelect'
@@ -138,7 +139,7 @@ export default function AntiChat() {
         deleteDetail="将删除 Hub 中的 Anti 会话及其消息记录，不会删除项目文件或已保存的产物。" />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Errors items={[sessions.error, rename.error, remove.error]} />
-        {selected ? <Conversation key={selected.id} sid={selected.id} transferAnchor={transferAnchor} /> :
+        {selected ? <Conversation key={selected.id} session={selected} transferAnchor={transferAnchor} /> :
           <div className="m-auto flex max-w-sm flex-col items-center gap-3 px-5 text-center text-sm text-ink-muted">
             <AntiIcon className="h-11 w-11 text-accent" />
             <p>{sessions.isPending ? '正在加载 Anti 会话…' : '点击「新建会话」，选择该会话的项目。'}</p>
@@ -167,7 +168,8 @@ export default function AntiChat() {
   </PageShell>
 }
 
-function Conversation({ sid, transferAnchor }: { sid: string; transferAnchor: HTMLDivElement | null }) {
+function Conversation({ session, transferAnchor }: { session: Session; transferAnchor: HTMLDivElement | null }) {
+  const { id: sid, project, workspace } = session
   const cache = useQueryClient()
   const [prompt, setPrompt] = useState('')
   const [references, setReferences] = useState<TransferredFile[]>([])
@@ -254,8 +256,12 @@ function Conversation({ sid, transferAnchor }: { sid: string; transferAnchor: HT
             <AntiIcon className="mt-1 h-6 w-6 shrink-0 text-accent" />
             <div className="min-w-0 space-y-2 rounded-2xl rounded-tl-md border border-line/60 bg-bg-card px-3 py-2.5 text-sm text-ink">
               {run.status !== 'success' && <p role="status" className="text-xs text-ink-muted">{run.status}{run.error ? ` · ${run.error}` : ''}</p>}
-              <MessageContent format="markdown" content={run.answer ?? (run.id === current?.id ? (live.data?.map(row => row.text).join('') ?? '') : '')} />
-              {run.artifact && <p className="border-t border-line/60 pt-2 text-xs text-ink-muted [overflow-wrap:anywhere]">共享产物：<code>{run.artifact}</code></p>}
+              <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, engine: 'anti' }}>
+                <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
+                  <MessageContent format="markdown" content={run.answer ?? (run.id === current?.id ? (live.data?.map(row => row.text).join('') ?? '') : '')} />
+                  {run.artifact && <p className="border-t border-line/60 pt-2 text-xs text-ink-muted [overflow-wrap:anywhere]">共享产物：<PathLink path={run.artifact} display={run.artifact} /></p>}
+                </FileTransferConclusion.Provider>
+              </FileLinkContext.Provider>
             </div>
           </div>
         </article>)}

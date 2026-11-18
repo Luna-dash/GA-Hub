@@ -30,7 +30,7 @@ def prepare_references(references: list[tuple[int, str]], workspace: Path,
     try:
         with closing(FileTransfer().connect()) as db:
             marks = ",".join("?" for _ in references)
-            rows = dict(db.execute(f"SELECT id,path FROM files WHERE id IN ({marks})",
+            rows = dict(db.execute(f"SELECT id,path FROM manual_files WHERE id IN ({marks})",
                                    [file_id for file_id, _ in references]))
         for index, (file_id, raw) in enumerate(references, 1):
             if rows.get(file_id) != raw:

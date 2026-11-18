@@ -118,9 +118,13 @@ def _fuzzy_find(raw: str, **_ignored) -> tuple[Path | None, bool]:
     return (Path(info['resolved']) if info['resolved'] else None, info['ambiguous'])
 
 
-def _project_context(request: Request, session_id: str | None) -> tuple:
+def _project_context(request: Request, session_id: str | None, engine: str = "chat") -> tuple:
     if not session_id:
         return None, None
+    if engine == "anti":
+        from .anti import _call
+        session = _call("session", session_id)
+        return session["workspace"], session["project"]
     from ..services.session_lifecycle import session_lifecycle_of
     try:
         session = session_lifecycle_of(request.app).store.get(session_id)
@@ -316,12 +320,12 @@ def _show_in_file_manager(path: Path) -> None:
 async def resolve_file_path(req: ResolveFileReq, request: Request) -> ResolveFileResp:
     """Resolve an agent-cited path (absolute / GA-root relative / bare temp
     name / fuzzy tail) without opening anything."""
-    return await _file_job("resolve", _resolve_path_info, req.path, *_project_context(request, req.session_id))
+    return await _file_job("resolve", _resolve_path_info, req.path, *_project_context(request, req.session_id, req.engine))
 
 
 @router.post("/api/files/reveal")
 async def reveal_file(req: RevealFileReq, request: Request) -> RevealFileResp:
-    context = _project_context(request, req.session_id)
+    context = _project_context(request, req.session_id, req.engine)
     return await _file_job("reveal", _reveal_file_sync, req, context)
 
 

@@ -2458,7 +2458,8 @@ export interface paths {
         /** List Files */
         get: operations["list_files_api_file_transfer_get"];
         put?: never;
-        post?: never;
+        /** Add File */
+        post: operations["add_file_api_file_transfer_post"];
         /** Clear Files */
         delete: operations["clear_files_api_file_transfer_delete"];
         options?: never;
@@ -2623,6 +2624,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AddTransferredFile */
+        AddTransferredFile: {
+            /** Path */
+            path: string;
+            /**
+             * Engine
+             * @enum {string}
+             */
+            engine: "chat" | "anti";
+            /** Session Id */
+            session_id: string;
+            /** Project */
+            project?: string | null;
+        };
         /** AgentTitleReq */
         AgentTitleReq: {
             /**
@@ -4221,6 +4236,12 @@ export interface components {
             path: string;
             /** Session Id */
             session_id?: string | null;
+            /**
+             * Engine
+             * @default chat
+             * @enum {string}
+             */
+            engine: "chat" | "anti";
         };
         /** ResolveFileResp */
         ResolveFileResp: {
@@ -4253,6 +4274,12 @@ export interface components {
             path: string;
             /** Session Id */
             session_id?: string | null;
+            /**
+             * Engine
+             * @default chat
+             * @enum {string}
+             */
+            engine: "chat" | "anti";
             /**
              * Mode
              * @default open
@@ -9452,6 +9479,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TransferredFile"][];
+                };
+            };
+        };
+    };
+    add_file_api_file_transfer_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddTransferredFile"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -26,6 +26,7 @@ import { useCopy } from '@/utils/clipboard'
 import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
 import { FILE_HINT } from '@/utils/sessionPrompt'
 import { MessageContent } from './MessageContent'
+import { FileTransferConclusion } from './FileCitation'
 import { TranscriptRecordContent } from './TranscriptRecordContent'
 import { AskUserCard } from './AskUserCard'
 import { RunningTranscript } from './RunningTranscript'
@@ -307,7 +308,9 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
               ) : (
                 <div key={i} className={clsx(streaming && i === segs.length - 1 && 'cursor-blink')}>
                   {/* Final segment: auto-detect tool-only tails vs real prose. */}
-                  <MessageContent content={seg.content} format="markdown" cache={!streaming} />
+                  <FileTransferConclusion.Provider value={!streaming && !stopped && i === segs.length - 1 ? { engine: 'chat' } : null}>
+                    <MessageContent content={seg.content} format="markdown" cache={!streaming} />
+                  </FileTransferConclusion.Provider>
                 </div>
               )}
               </div>)}
@@ -380,7 +383,9 @@ function HistoryTranscriptReply({
     <>
       {visibleProcessTurns.length > 0 && <LazyProcessFold key={collapseVersion} turns={visibleProcessTurns} onDetailsChange={setDetailsExpanded} />}
       {visibleFinal ? (
-        <StableMessageContent content={visibleFinal} format="markdown" cache />
+        <FileTransferConclusion.Provider value={stoppedState ? null : { engine: 'chat' }}>
+          <StableMessageContent content={visibleFinal} format="markdown" cache />
+        </FileTransferConclusion.Provider>
       ) : stoppedState || transcript.finalAskUser ? null : (
         <p className="text-sm leading-6 text-ink-muted">该条历史回复未包含可提取的最终回答。</p>
       )}

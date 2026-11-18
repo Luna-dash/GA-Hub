@@ -4,12 +4,13 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MarkdownView } from './MarkdownView'
-import { FileLinkContext, CitationLink, PathLink, isLocalCitation } from './FileCitation'
+import { FileLinkContext, FileTransferConclusion, CitationLink, PathLink, isLocalCitation } from './FileCitation'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const mocks = vi.hoisted(() => ({
+  addTransferFile: vi.fn(),
   revealFile: vi.fn(),
   resolveFile: vi.fn(),
   clipboardWrite: vi.fn(),
@@ -21,6 +22,10 @@ vi.mock('@/api/client', () => ({
   api: { revealFile: mocks.revealFile, resolveFile: mocks.resolveFile },
 }))
 
+vi.mock('./FileTransferBox', () => ({
+  addTransferFile: mocks.addTransferFile, fileTransferQueryKey: ['file-transfer'],
+}))
+
 vi.mock('@/stores/toastStore', () => ({
   toast: { success: mocks.toastSuccess, error: mocks.toastError },
 }))
@@ -30,6 +35,8 @@ describe('MarkdownView responsive wrapping', () => {
   let root: Root
 
   beforeEach(() => {
+    mocks.addTransferFile.mockReset()
+    mocks.addTransferFile.mockResolvedValue(undefined)
     mocks.revealFile.mockReset()
     mocks.revealFile.mockResolvedValue({ ok: true, path: '' })
     mocks.resolveFile.mockReset()
@@ -222,6 +229,31 @@ describe('MarkdownView responsive wrapping', () => {
     await act(async () => { host.querySelector('a')!.click() })
     expect(host.querySelector('output')?.textContent).toBe('/settings')
     expect(mocks.resolveFile).not.toHaveBeenCalled()
+  })
+
+  it('adds a resolved conclusion link only after choosing the context menu action', async () => {
+    mocks.resolveFile.mockResolvedValue({ resolved: 'D:/docs/a.md', exists: true, is_dir: false })
+    act(() => root.render(<FileLinkContext.Provider value={{ sessionId: 'anti-session', engine: 'anti' }}>
+      <FileTransferConclusion.Provider value={{ engine: 'anti', project: 'docs' }}>
+        <PathLink path="a.md" display="a" />
+      </FileTransferConclusion.Provider>
+    </FileLinkContext.Provider>))
+    await act(async () => { host.querySelector('button')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })
+    expect(mocks.resolveFile).toHaveBeenCalledWith('a.md', 'anti-session', 'anti')
+    expect(mocks.addTransferFile).not.toHaveBeenCalled()
+    const save = [...document.body.querySelectorAll('button')].find(b => b.textContent === '放入传递箱')!
+    expect(save.disabled).toBe(false)
+    await act(async () => { save.click() })
+    expect(mocks.addTransferFile).toHaveBeenCalledTimes(1)
+    expect(mocks.addTransferFile).toHaveBeenCalledWith({ path: 'D:/docs/a.md', engine: 'anti', session_id: 'anti-session', project: 'docs' })
+  })
+
+  it('does not offer the transfer action outside conclusions', async () => {
+    mocks.resolveFile.mockResolvedValue({ resolved: 'D:/docs/a.md', exists: true, is_dir: false })
+    act(() => root.render(<FileLinkContext.Provider value={{ sessionId: 'chat-session' }}><PathLink path="a.md" display="a" /></FileLinkContext.Provider>))
+    await act(async () => { host.querySelector('button')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })
+    expect(document.body.textContent).not.toContain('放入传递箱')
+    expect(mocks.addTransferFile).not.toHaveBeenCalled()
   })
 
   it('merges concurrent lookups and hands off an action only once', async () => {

@@ -5545,6 +5545,38 @@
           }
         }
       },
+      "post": {
+        "tags": [
+          "file-transfer"
+        ],
+        "summary": "Add File",
+        "operationId": "add_file_api_file_transfer_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddTransferredFile"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "file-transfer"
@@ -5747,6 +5779,49 @@
   },
   "components": {
     "schemas": {
+      "AddTransferredFile": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Path"
+          },
+          "engine": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "anti"
+            ],
+            "title": "Engine"
+          },
+          "session_id": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Session Id"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "engine",
+          "session_id"
+        ],
+        "title": "AddTransferredFile"
+      },
       "AgentTitleReq": {
         "properties": {
           "title": {
@@ -10183,6 +10258,15 @@
               }
             ],
             "title": "Session Id"
+          },
+          "engine": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "anti"
+            ],
+            "title": "Engine",
+            "default": "chat"
           }
         },
         "type": "object",
@@ -10264,6 +10348,15 @@
               }
             ],
             "title": "Session Id"
+          },
+          "engine": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "anti"
+            ],
+            "title": "Engine",
+            "default": "chat"
           },
           "mode": {
             "type": "string",

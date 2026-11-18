@@ -84,9 +84,7 @@ def test_project_scoped_anti_round_trip(tmp_path, monkeypatch):
         assert daemon.settings[-1] == ('alternate', 'low')
         assert client.post(f"{runs}/{second['id']}/cancel").json()['status'] == 'cancelled'
         assert [r['status'] for r in client.get(runs).json()] == ['success', 'cancelled']
-        assert [(r['engine'], r['path']) for r in transfer.FileTransfer().list()] == [
-            ('anti', str((artifacts / f"{run['id']}.md").resolve())),
-        ]
+        assert transfer.FileTransfer().list() == []
 
 
 def test_model_catalog_is_available_without_daemon(tmp_path, monkeypatch):
@@ -186,10 +184,8 @@ def test_selected_references(tmp_path, monkeypatch):
     monkeypatch.setattr(transfer._paths, 'ADMIN_DATA', tmp_path / 'data')
     monkeypatch.setattr(engine, 'project', lambda name: (workspace.resolve(), artifacts.resolve()))
     indexed = transfer.FileTransfer()
-    with indexed.connect() as db:
-        db.executemany('INSERT INTO files VALUES (?,?,?,?,?,?,?)',
-                       [(i, str(file), str(file), file.name, 'ga', 's', None)
-                        for i, file in enumerate([local, external], 1)])
+    for file in (local, external):
+        indexed.add(str(file), "chat", "s", None)
     posted = []
     adapter = engine.AntiAdapter()
     monkeypatch.setattr(adapter, 'request', lambda method, path, **kw: posted.append((method,path,kw['json'])))

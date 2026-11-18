@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { QueryClientContext } from '@tanstack/react-query'
+import { addTransferFile, fileTransferQueryKey } from './FileTransferBox'
 import { Link, useInRouterContext } from 'react-router-dom'
 import { defaultUrlTransform } from 'react-markdown'
 import { api } from '@/api/client'
@@ -9,7 +11,8 @@ import { errorMessageFromError } from '@/utils/sessionUi'
 import { isAppInternalUrl, isHttpUrl, openExternalIfNeeded } from '@/utils/openExternal'
 import { Z_LAYERS } from '@/config/zLayers'
 
-export const FileLinkContext = createContext<{ sessionId?: string; projectPath?: string }>({})
+export const FileLinkContext = createContext<{ sessionId?: string; projectPath?: string; engine?: 'chat' | 'anti' }>({})
+export const FileTransferConclusion = createContext<{ engine: 'chat' | 'anti'; sessionId?: string; project?: string } | null>(null)
 const APP_ROUTE = /^\/(?:chat|dashboard|theme-tasks|feishu|conversations|memory|goal-hive|conductor|mykey|tasks|autonomous|tokens|settings)(?:[/?#]|$)/
 
 export function isLocalCitation(target: string): boolean {
@@ -49,30 +52,33 @@ type PathInfo = Awaited<ReturnType<typeof api.resolveFile>>
 const pendingPaths = new Map<string, Promise<PathInfo>>()
 const pendingActions = new Map<string, Promise<unknown>>()
 
-function lookup(path: string, sessionId?: string, projectPath?: string): Promise<PathInfo> {
-  const key = JSON.stringify([sessionId, projectPath, path])
+function lookup(path: string, sessionId?: string, projectPath?: string, engine?: 'chat' | 'anti'): Promise<PathInfo> {
+  const key = JSON.stringify([sessionId, projectPath, engine, path])
   const pending = pendingPaths.get(key)
   if (pending) return pending
-  const task = api.resolveFile(path, sessionId).finally(() => pendingPaths.delete(key))
+  const task = (engine === 'anti' ? api.resolveFile(path, sessionId, engine) : api.resolveFile(path, sessionId)).finally(() => pendingPaths.delete(key))
   pendingPaths.set(key, task)
   return task
 }
 
 export function PathLink({ path, display }: { path: string; display: ReactNode }) {
-  const { sessionId, projectPath } = useContext(FileLinkContext)
+  const { sessionId, projectPath, engine } = useContext(FileLinkContext)
+  const conclusion = useContext(FileTransferConclusion)
+  const cache = useContext(QueryClientContext)
+  const transferSessionId = conclusion?.sessionId ?? sessionId
   const [info, setInfo] = useState<PathInfo | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [busy, setBusy] = useState(false)
   const gate = useRef(false)
   const binding = useRef('')
-  binding.current = JSON.stringify([sessionId, projectPath, path])
-  useEffect(() => { setInfo(null); setMenu(null) }, [path, sessionId, projectPath])
+  binding.current = JSON.stringify([sessionId, projectPath, engine, path])
+  useEffect(() => { setInfo(null); setMenu(null) }, [path, sessionId, projectPath, engine])
   const resolved = info?.resolved || null
   const parent = resolved ? (info?.is_dir ? resolved : resolved.replace(/[/\\][^/\\]+[/\\]?$/, '')) : null
 
   const resolve = async () => {
     const key = binding.current
-    const result = await lookup(path, sessionId, projectPath)
+    const result = await lookup(path, sessionId, projectPath, engine)
     if (key !== binding.current) throw new Error('项目已切换，请重新点击')
     setInfo(result)
     return result
@@ -93,6 +99,17 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
       await task
       setMenu(null)
     } catch (error) { toast.error(errorMessageFromError(error, '文件操作失败')) }
+    finally { gate.current = false; setBusy(false) }
+  }
+  const addToTransferBox = async () => {
+    if (!conclusion || !transferSessionId || !resolved || info?.is_dir || gate.current) return
+    gate.current = true; setBusy(true)
+    try {
+      await addTransferFile({ path: resolved, engine: conclusion.engine, session_id: transferSessionId, project: conclusion.project })
+      void cache?.invalidateQueries({ queryKey: fileTransferQueryKey })
+      toast.success('已放入传递箱')
+      setMenu(null)
+    } catch (error) { toast.error(errorMessageFromError(error, '放入传递箱失败')) }
     finally { gate.current = false; setBusy(false) }
   }
   const copy = async (value: string, label: string) => {
@@ -124,6 +141,7 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
         {!resolved && info?.candidates?.map(candidate => item(candidate, () => { void reveal('open', candidate) }, busy))}
         {item(info?.is_dir ? '打开文件夹' : '定位文件', () => { void reveal('open', resolved!) }, busy || !resolved)}
         {item('在资源管理器中显示', () => { void reveal('folder', resolved!) }, busy || !resolved)}
+        {conclusion && transferSessionId && !info?.is_dir && item('放入传递箱', () => { void addToTransferBox() }, busy || !resolved)}
         {item('复制完整路径', () => { void copy(resolved!, '完整路径') }, !resolved)}
         {item('复制所在文件夹', () => { void copy(parent!, '文件夹路径') }, !parent)}
       </div>

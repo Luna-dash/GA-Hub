@@ -47,10 +47,10 @@ it('inserts an available file into the active draft and shares confirmed clearin
     await click('[aria-label="清空索引"]')
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false)
     await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === '确认清空')!.click())
-    await settle(() => expect(host.textContent).toContain('暂无交付文件'))
+    await settle(() => expect(host.textContent).toContain('暂无手动放入的文件'))
     await render('chat', chatDraft)
     await click('[aria-label="文件传递箱"]')
-    await settle(() => expect(host.textContent).toContain('暂无交付文件'))
+    await settle(() => expect(host.textContent).toContain('暂无手动放入的文件'))
   } finally {
     await act(async () => root.unmount())
     client.clear()
