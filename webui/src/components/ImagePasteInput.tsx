@@ -281,14 +281,20 @@ export function ImagePasteInput({
     let stop: (() => void) | undefined
     void import('@tauri-apps/api/webviewWindow').then(async ({ getCurrentWebviewWindow }) => {
       const unlisten = await getCurrentWebviewWindow().onDragDropEvent((event) => {
-        if (event.payload.type === 'drop' && taRef.current && document.hasFocus()) {
-          const { x, y } = event.payload.position
-          const bounds = taRef.current.closest('[data-file-composer]')?.getBoundingClientRect()
-          const scale = window.devicePixelRatio || 1
-          if (bounds && x / scale >= bounds.left && x / scale <= bounds.right && y / scale >= bounds.top && y / scale <= bounds.bottom) {
-            void addPathsRef.current(event.payload.paths)
-          }
+        if (disposed) return
+        const { payload } = event
+        if (payload.type === 'leave') {
+          setDragOver(false)
+          return
         }
+        const { x, y } = payload.position
+        const bounds = taRef.current?.closest('[data-file-composer]')?.getBoundingClientRect()
+        const scale = window.devicePixelRatio || 1
+        // Explorer can drop into this webview without giving the document focus.
+        const inside = !!bounds && x / scale >= bounds.left && x / scale <= bounds.right
+          && y / scale >= bounds.top && y / scale <= bounds.bottom
+        setDragOver(payload.type !== 'drop' && inside)
+        if (payload.type === 'drop' && inside) void addPathsRef.current(payload.paths)
       })
       if (disposed) unlisten(); else stop = unlisten
     }).catch((e) => { if (!disposed) setReferenceError(errorMessageFromError(e, '文件拖放不可用')) })

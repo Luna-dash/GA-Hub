@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { PhysicalPosition } from '@tauri-apps/api/dpi'
+import type { DragDropEvent } from '@tauri-apps/api/webview'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as desktop from '@/utils/desktop'
 import { api } from '@/api/client'
 import type { PasteAttachment } from '@/api/types'
 import { ImagePasteInput } from './ImagePasteInput'
 
-const native = vi.hoisted(() => ({ listener: undefined as undefined | ((event: { payload: { type: string; paths: string[]; position: { x: number; y: number } } }) => void) }))
+const native = vi.hoisted(() => ({ listener: undefined as undefined | ((event: { payload: DragDropEvent }) => void) }))
 vi.mock('@tauri-apps/api/webviewWindow', () => ({ getCurrentWebviewWindow: () => ({
   onDragDropEvent: async (listener: typeof native.listener) => { native.listener = listener; return () => { native.listener = undefined } },
 }) }))
@@ -53,7 +55,7 @@ describe('attachment capacity invariants across entry points', () => {
     await act(async () => {
       if (entry === 'picker') host.querySelector('label')!.click()
       else if (entry === 'paste') browserAdd('paste', files(1))
-      else native.listener!({ payload: { type: 'drop', paths: ['C:/data/999.txt'], position: { x: 0, y: 0 } } })
+      else native.listener!({ payload: { type: 'drop', paths: ['C:/data/999.txt'], position: new PhysicalPosition(0, 0) } })
     })
   }
   beforeEach(() => {
@@ -66,6 +68,50 @@ describe('attachment capacity invariants across entry points', () => {
     vi.spyOn(api, 'upload').mockImplementation(async (file) => ({ ...attachment(999), name: file.name }))
   })
   afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks() })
+
+  async function nativeDrag(payload: DragDropEvent) {
+    await act(async () => native.listener!({ payload }))
+  }
+  const path = 'C:/data/999.txt'
+  const inside = new PhysicalPosition(450, 810)
+  const outside = new PhysicalPosition(450, 749)
+  async function renderNativeDropTarget() {
+    vi.spyOn(window, 'devicePixelRatio', 'get').mockReturnValue(1.5)
+    await render(0, true)
+    const composer = host.querySelector('[data-file-composer]')!
+    vi.spyOn(composer, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 200, y: 500, width: 600, height: 80 }),
+    )
+    return composer
+  }
+
+  it('accepts a native file drop inside the composer even when the document is not focused', async () => {
+    vi.mocked(document.hasFocus).mockReturnValue(false)
+    const composer = await renderNativeDropTarget()
+    await nativeDrag({ type: 'enter', paths: [path], position: inside })
+    expect(composer.classList.contains('ring-2')).toBe(true)
+    await nativeDrag({ type: 'drop', paths: [path], position: inside })
+    expect(composer.classList.contains('ring-2')).toBe(false)
+    expect(desktop.referenceAttachments).toHaveBeenCalledOnce()
+    expect(desktop.referenceAttachments).toHaveBeenCalledWith([path])
+    expect(api.upload).not.toHaveBeenCalled()
+    expect(latest).toEqual([attachment(999)])
+  })
+
+  it('clears the native drop highlight on leaving the composer and ignores drops outside it', async () => {
+    const composer = await renderNativeDropTarget()
+    await nativeDrag({ type: 'over', position: inside })
+    expect(composer.classList.contains('ring-2')).toBe(true)
+    await nativeDrag({ type: 'over', position: outside })
+    expect(composer.classList.contains('ring-2')).toBe(false)
+    await nativeDrag({ type: 'over', position: inside })
+    expect(composer.classList.contains('ring-2')).toBe(true)
+    await nativeDrag({ type: 'leave' })
+    expect(composer.classList.contains('ring-2')).toBe(false)
+    await nativeDrag({ type: 'drop', paths: [path], position: outside })
+    expect(desktop.referenceAttachments).not.toHaveBeenCalled()
+    expect(latest).toEqual([])
+  })
 
   for (const entry of ['picker', 'paste', 'drop']) {
     it(`rejects a native ${entry} batch exceeding the remaining capacity`, async () => {
