@@ -19,7 +19,7 @@ import { api } from '@/api/client'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 
 type Session = { id: string; project: string; title: string; workspace: string; updated_at?: string | null; active_run_id?: string | null }
-type Run = { id: string; status: string; operation: string; prompt: string; answer: string | null; artifact: string | null; error: string | null }
+type Run = { id: string; status: string; operation: string; prompt: string; answer: string | null; artifact: string | null; error: string | null; error_detail?: string | null }
 type Delta = { seq: number; text: string }
 const active = (run: Run) => ['submitting', 'queued', 'running', 'unknown'].includes(run.status)
 const base = '/api/anti/sessions'
@@ -255,7 +255,10 @@ function Conversation({ session, transferAnchor }: { session: Session; transferA
           <div className="flex min-w-0 items-start gap-2">
             <AntiIcon className="mt-1 h-6 w-6 shrink-0 text-accent" />
             <div className="min-w-0 space-y-2 rounded-2xl rounded-tl-md border border-line/60 bg-bg-card px-3 py-2.5 text-sm text-ink">
-              {run.status !== 'success' && <p role="status" className="text-xs text-ink-muted">{run.status}{run.error ? ` · ${run.error}` : ''}</p>}
+              {run.status !== 'success' && <p role="status" className="text-xs text-ink-muted">
+                {run.status}{run.error ? ` · ${run.error}` : ''}
+                {run.error_detail && <span className="mt-1 block text-sm text-ink">{run.error_detail}</span>}
+              </p>}
               <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, engine: 'anti' }}>
                 <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
                   <MessageContent format="markdown" content={run.answer ?? (run.id === current?.id ? (live.data?.map(row => row.text).join('') ?? '') : '')} />

@@ -62,7 +62,7 @@ def test_manual_start_and_reuse(monkeypatch):
     assert starts == [['fake-anticli.exe', 'serve', '--host', '127.0.0.1', '--port', '18877']]
     health = {'status': 'ok', 'version': 'test', 'agy_binary': 'agy', 'active_count': 2}
     assert client.get('/api/anti/status').json() == {
-        'state': 'ready', 'detail': None, 'agy_available': True, 'active_count': 2,
+        'state': 'ready', 'detail': None, 'agy_available': True, 'active_count': 2, 'auth_state': None,
     }
     health, process.code = None, 3
     assert '3' in client.get('/api/anti/status').json()['detail']
@@ -101,3 +101,31 @@ def test_missing_cli_and_occupied_port(monkeypatch):
     response = client.post('/api/anti/start', headers=headers)
     assert response.json()['state'] == 'unavailable'
     assert '18877' in response.json()['detail']
+
+
+def test_auth_status_requested_only_by_ui_and_unavailable_on_legacy_daemon(monkeypatch):
+    client = make_client(monkeypatch)
+    calls = []
+    auth_state = "checking"
+
+    def probe(self, method, path, **kwargs):
+        calls.append((method, path))
+        if path == "/health":
+            return {"status": "ok", "version": "test", "agy_binary": "agy", "active_count": 0}
+        assert kwargs["headers"] == {"X-AntiCLI-Action": "verify-auth"}
+        if auth_state is None:
+            raise svc.AntiError(404, "Not Found")
+        return {"state": auth_state}
+
+    monkeypatch.setattr(svc.AntiAdapter, "request", probe)
+    headers = {"X-GA-Hub-Action": "verify-anti-auth"}
+    for h in ({}, {**headers, "Origin": "https://outside.example"}):
+        assert client.get("/api/anti/status", headers=h).json()["auth_state"] is None
+    assert calls == [("GET", "/health")] * 2
+    for reported, expected in (("checking", "checking"), ("authenticated", "authenticated"),
+                               ("login_required", "login_required"), ("surprise", "unverified"),
+                               (None, "unverified")):
+        auth_state = reported
+        data = client.get("/api/anti/status", headers=headers).json()
+        assert data["state"] == "ready"
+        assert data["auth_state"] == expected

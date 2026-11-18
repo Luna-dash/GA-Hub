@@ -172,6 +172,9 @@ def test_legacy_anti_sessions_get_first_prompt_title(tmp_path):
         assert {row['id']: row['title'] for row in sessions.list()} == {
             'one': 'Read the workspace', 'two': '', 'three': 'Custom',
         }
+        historical, = sessions.history('one')
+        assert (historical['status'], historical['model'], historical['effort']) == ('completed', 'm', 'high')
+        assert historical['error_detail'] is None
 
 
 
@@ -216,3 +219,38 @@ def test_selected_references(tmp_path, monkeypatch):
         assert client.post(url, json=body).json()['id'] == run['id']
         assert client.post(url, json=body | {'references': []}).status_code == 409
         assert len(posted) == 1
+
+
+
+def test_anti_adapter_only_passes_effort_for_plain_model(tmp_path, monkeypatch):
+    sent = []
+    adapter = engine.AntiAdapter()
+    monkeypatch.setattr(adapter, 'request', lambda method, path, **kw: sent.append(kw['json']))
+    for model in ('gemini-4-hydrogen-high', 'alternate-XHIGH', 'alternate'):
+        adapter.submit({'id': 'run', 'prompt': 'test', 'model': model, 'effort': 'high'}, tmp_path, None)
+    assert [payload['model'] for payload in sent] == ['gemini-4-hydrogen-high', 'alternate-XHIGH', 'alternate']
+    assert all('effort' not in payload for payload in sent[:2])
+    assert sent[2]['effort'] == 'high'
+
+
+def test_anti_safe_error_details_persist_in_history(tmp_path, monkeypatch):
+    daemon = FakeDaemon()
+    monkeypatch.setattr(engine, 'project', lambda name: (tmp_path, tmp_path / 'artifacts'))
+    sessions = engine.AntiSessions(tmp_path / 'anti.sqlite', daemon)
+    sid = sessions.create('demo')['id']
+    raw_marker = 'do-not-expose-raw-cli-context'
+    cases = [
+        ('AUTH_ERROR', raw_marker, '请先使用官方 Antigravity CLI 登录，再重试。'),
+        ('CLI_ERROR', 'invalid model selection: --effort is not supported for model ' + raw_marker,
+         '此模型不支持单独传入思考档位，请尝试选择其他模型或档位。'),
+        ('CLI_ERROR', raw_marker, None),
+    ]
+    for i, (code, upstream, expected) in enumerate(cases):
+        rid = sessions.submit(sid, f'op{i}', 'hello')['id']
+        remote = {'status': 'cli_error', 'error_code': code, 'error_message': upstream}
+        monkeypatch.setattr(daemon, 'request', lambda *args: remote)
+        run = sessions.refresh(sid, rid)
+        assert run['error'] == code
+        assert run['error_detail'] == expected
+        assert raw_marker not in str(run)
+        assert engine.AntiSessions(sessions.db, daemon).history(sid)[-1] == run

@@ -18,7 +18,8 @@ it('starts Anti on demand from the page header without leaving the chat', async 
   const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
     const reply = (data: unknown) => ({ ok: true, json: async () => JSON.parse(JSON.stringify(data)) })
     if (path === '/api/anti/status') {
-      return reply(started ? { state: 'ready', agy_available: true } : { state: 'stopped' })
+      expect(new Headers(init?.headers).get('X-GA-Hub-Action')).toBe('verify-anti-auth')
+      return reply(started ? { state: 'ready', agy_available: true, auth_state: 'authenticated' } : { state: 'stopped' })
     }
     if (path === '/api/anti/start') {
       expect(init?.method).toBe('POST')
@@ -52,7 +53,8 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     await wait(() => expect(button('Anti 启动中')?.disabled).toBe(true))
     expect(fetchMock.mock.calls.filter(([path]) => path === '/api/anti/start')).toHaveLength(1)
     await act(async () => cache.refetchQueries({ queryKey: ['anti-daemon-status'] }))
-    await wait(() => expect(button('Anti 已就绪')?.disabled).toBe(true))
+    await wait(() => expect(button('Anti 网关运行中')?.disabled).toBe(true))
+    expect(host.querySelector('[role=status]')?.textContent).toBe('agy 已验证登录')
     expect(host.querySelector('output')?.dataset.page).toBe('/anti')
   } finally {
     await act(async () => root.unmount())
@@ -62,7 +64,7 @@ it('starts Anti on demand from the page header without leaving the chat', async 
   }
 })
 
-it('creates a project session, sends using model and effort, then renames and deletes it', async () => {
+it.each(['success', 'auth error'] as const)('creates a project session, sends with model and effort (%s), then renames and deletes it', async outcome => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const base = '/api/anti/sessions'
   const session = { id: 'one', title: '', project: 'demo', workspace: 'D:/demo' }
@@ -90,7 +92,10 @@ it('creates a project session, sends using model and effort, then renames and de
     ] })
     if (path === `${base}/one/runs`) {
       if (!body) return reply([...runs])
-      const run = { ...body, id: 'run', status: 'success', answer: 'Done' }
+      const run = outcome === 'success'
+        ? { ...body, id: 'run', status: 'success', answer: 'Done' }
+        : { ...body, id: 'run', status: 'cli_error', error: 'AUTH_ERROR',
+            error_detail: '请先使用官方 Antigravity CLI 登录，再重试。' }
       runs.push(run)
       session.title = body.prompt
       return reply(run)
@@ -138,7 +143,13 @@ it('creates a project session, sends using model and effort, then renames and de
     })
     await wait(() => expect(control('发送').disabled).toBe(false))
     await act(async () => control('发送').click())
-    await wait(() => expect(host.textContent).toContain('Done'))
+    await wait(() => {
+      if (outcome === 'success') expect(host.textContent).toContain('Done')
+      else {
+        expect(host.textContent).toContain('AUTH_ERROR')
+        expect(host.textContent).toContain('请先使用官方 Antigravity CLI 登录，再重试。')
+      }
+    })
     expect(posted).toEqual([{ project: 'demo' }, {
       prompt: 'Read the project', model: 'alternate-medium', effort: 'medium', operation: expect.any(String),
     }])

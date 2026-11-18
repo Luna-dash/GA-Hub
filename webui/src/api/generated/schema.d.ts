@@ -2659,6 +2659,8 @@ export interface components {
             agy_available?: boolean | null;
             /** Active Count */
             active_count?: number | null;
+            /** Auth State */
+            auth_state?: ("checking" | "authenticated" | "login_required" | "unverified") | null;
         };
         /** AntiFileReference */
         AntiFileReference: {

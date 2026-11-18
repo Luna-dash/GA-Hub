@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field, StringConstraints
 
 from ..origin_policy import is_allowed_ui_origin
-from ..services.anti_daemon import AntiDaemonState, daemon
+from ..services.anti_daemon import AntiAuthState, AntiDaemonState, daemon
 from ..services.anti_engine import DEFAULT_EFFORT, DEFAULT_MODEL, AntiError, AntiSessions
 
 router = APIRouter(prefix="/api/anti", tags=["anti"])
@@ -20,6 +20,7 @@ class AntiDaemonStatus(BaseModel):
     detail: str | None = None
     agy_available: bool | None = None
     active_count: int | None = None
+    auth_state: AntiAuthState | None = None
 
 
 class AntiSessionCreate(BaseModel):
@@ -52,9 +53,11 @@ def _call(method, *args):
 
 
 @router.get("/status", response_model=AntiDaemonStatus)
-def daemon_status():
+def daemon_status(request: Request):
+    verify = (request.headers.get("x-ga-hub-action") == "verify-anti-auth"
+              and is_allowed_ui_origin(request.headers.get("origin")))
     try:
-        return asdict(daemon.status())
+        return asdict(daemon.status(verify_auth=verify))
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 

@@ -26,6 +26,7 @@ ACTIVE = frozenset({"submitting", "queued", "running", "unknown"})
 TERMINAL = frozenset({"success", "rejected", "timeout", "rate_limited", "cli_error", "cancelled"})
 DEFAULT_MODEL = "gemini-4-hydrogen-high"
 DEFAULT_EFFORT = "high"
+EFFORT_VARIANTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
 class AntiError(Exception):
@@ -59,14 +60,28 @@ class AntiAdapter:
             raise AntiError(503, "AntiCLI is unavailable or returned an invalid response") from exc
 
     def submit(self, run: dict, workspace: Path, conversation: str | None) -> None:
+        model = run["model"]
+        payload = {
+            "workspace": str(workspace), "caller_id": "ga-hub",
+            "prompt": run.get("cli_prompt", run["prompt"]), "mode": "plan",
+            "add_dirs": run.get("add_dirs", []), "model": model,
+            "disable_slash_commands": True, "conversation_id": conversation,
+        }
+        # Match AntiChat's catalog grouping: a variant ID already selects the effort.
+        family, _, suffix = model.rpartition("-")
+        if not family or suffix.lower() not in EFFORT_VARIANTS:
+            payload["effort"] = run["effort"]
         self.request("POST", "/v1/runs?async_mode=true",
-                     headers={"X-Anticli-Run-Id": run["id"]}, json={
-                         "workspace": str(workspace), "caller_id": "ga-hub",
-                         "prompt": run.get("cli_prompt", run["prompt"]), "mode": "plan",
-                         "add_dirs": run.get("add_dirs", []),
-                         "model": run["model"], "effort": run["effort"],
-                         "disable_slash_commands": True, "conversation_id": conversation,
-                     })
+                     headers={"X-Anticli-Run-Id": run["id"]}, json=payload)
+
+
+def _run_error_detail(code: str, message: object) -> str | None:
+    # Upstream error_message can contain raw CLI output; only expose known, fixed hints.
+    if code == "AUTH_ERROR":
+        return "请先使用官方 Antigravity CLI 登录，再重试。"
+    if code == "CLI_ERROR" and isinstance(message, str) and "--effort is not supported for model" in message:
+        return "此模型不支持单独传入思考档位，请尝试选择其他模型或档位。"
+    return None
 
 
 def project(name: str) -> tuple[Path, Path]:
@@ -113,17 +128,18 @@ class AntiSessions:
             CREATE TABLE IF NOT EXISTS runs (
                 id TEXT PRIMARY KEY, session_id TEXT NOT NULL, operation TEXT NOT NULL,
                 prompt TEXT NOT NULL, status TEXT NOT NULL, answer TEXT,
-                artifact TEXT, sha256 TEXT, error TEXT, model TEXT, effort TEXT, references_json TEXT,
+                artifact TEXT, sha256 TEXT, error TEXT, model TEXT, effort TEXT, references_json TEXT, error_detail TEXT,
                 UNIQUE(session_id, operation)
             );
         """)
         # Existing direct-chat databases predate per-run settings. Do not rewrite history.
         columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
-        if not {"model", "effort", "references_json"}.issubset(columns):
+        run_columns = ("model", "effort", "references_json", "error_detail")
+        if not set(run_columns).issubset(columns):
             with conn:
                 conn.execute("BEGIN IMMEDIATE")
                 columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
-                for column in ("model", "effort", "references_json"):
+                for column in run_columns:
                     if column not in columns:
                         conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
         session_columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
@@ -303,11 +319,11 @@ class AntiSessions:
         status = remote.get("status")
         if status not in ACTIVE | TERMINAL:
             raise AntiError(502, "Unrecognized AntiCLI status")
-        answer = artifact = digest = error = None
+        answer = artifact = digest = error = error_detail = None
         if status == "success":
             answer = self.adapter.request("GET", f"/v1/runs/{rid}/answer")["answer"]
             session = self.session(sid)
-            workspace, dest = self.bound_project(session)
+            _, dest = self.bound_project(session)
             dest.mkdir(parents=True, exist_ok=True)
             target = dest / f"{rid}.md"
             temp = dest / f".{uuid4().hex}.tmp"
@@ -321,11 +337,13 @@ class AntiSessions:
             artifact, digest = str(target), hashlib.sha256(data).hexdigest()
         if status in TERMINAL - {"success"}:
             error = remote.get("error_code") or status
+            error_detail = _run_error_detail(error, remote.get("error_message"))
         with self.connect() as db, db:
             marks = ",".join("?" for _ in ACTIVE)
             updated = db.execute(
-                f"UPDATE runs SET status=?,answer=?,artifact=?,sha256=?,error=? WHERE id=? AND status IN ({marks})",
-                (status, answer, artifact, digest, error, rid, *ACTIVE),
+                f"UPDATE runs SET status=?,answer=?,artifact=?,sha256=?,error=?,error_detail=? "
+                f"WHERE id=? AND status IN ({marks})",
+                (status, answer, artifact, digest, error, error_detail, rid, *ACTIVE),
             )
             if updated.rowcount and status == "success" and remote.get("conversation_id"):
                 db.execute("UPDATE sessions SET conversation=? WHERE id=?", (remote["conversation_id"], sid))

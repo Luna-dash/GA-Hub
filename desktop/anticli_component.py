@@ -9,7 +9,7 @@ import sys
 from .runtime_dependencies import runtime_binary_args
 
 SOURCE_VERSION = "0.1.0"
-SOURCE_SHA256 = "cfbf8282d758c8fbf7d75daaec447399f3c3a7a2452cf91771ffcefb537a3e81"
+SOURCE_SHA256 = "58a2f3794a130b1e5013473c6f68e5129e855ec574d0defbc1fc5ae65e829b35"
 
 
 def stage_source(source: Path, destination: Path) -> Path:

@@ -5877,6 +5877,23 @@
               }
             ],
             "title": "Active Count"
+          },
+          "auth_state": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "checking",
+                  "authenticated",
+                  "login_required",
+                  "unverified"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth State"
           }
         },
         "type": "object",
