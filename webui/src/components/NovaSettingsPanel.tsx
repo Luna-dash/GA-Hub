@@ -40,7 +40,7 @@ export function NovaSettingsPanel() {
     }
   }
   const showAccount = status && (!status.paired || revoking)
-  const inputClass = 'mt-1.5 w-full min-w-0 rounded-lg border border-line bg-black/20 px-3 py-2 text-sm outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 disabled:opacity-50'
+  const inputClass = 'mt-1.5 w-full min-w-0 rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent disabled:opacity-50'
   const secondaryButtonClass = 'rounded-lg border border-line px-3 py-2 text-sm text-slate-300 hover:bg-white/5 disabled:opacity-40'
   return <section className="rounded-xl border border-line bg-bg-card p-4 space-y-4" aria-label="Nova 远程连接">
     <header>
@@ -48,7 +48,7 @@ export function NovaSettingsPanel() {
       <p className="mt-1 text-xs leading-relaxed text-slate-400">关联账号后，即可通过 Nova 远程访问这台电脑。</p>
     </header>
     {!status ? <p className="text-sm text-slate-400" role="status">正在读取本机状态…</p> : <>
-      <div className="rounded-lg border border-line bg-black/10 p-3 space-y-3">
+      <div className="rounded-lg border border-line bg-bg-soft/60 p-3 space-y-3">
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className={`rounded-md px-2 py-1 ${status.paired ? 'bg-status-success-soft text-status-success' : 'bg-white/5 text-slate-400'}`}>{status.paired ? '已关联账号' : '未关联账号'}</span>
           <span className="text-slate-400">{status.running ? '连接器运行中' : '连接器未运行'}</span>
@@ -78,7 +78,7 @@ export function NovaSettingsPanel() {
         </div>
         <label className="flex items-start gap-2 text-xs leading-relaxed text-slate-300"><input className="mt-0.5 shrink-0" type="checkbox" checked={confirmed} disabled={busy} onChange={e => setConfirmed(e.target.checked)} />{revoking ? '确认撤销授权并清除本机绑定，保留设备码' : '允许此账号通过 Nova 远程操作这台电脑'}</label>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-          <button type="submit" disabled={busy || !confirmed || !status.device} className={`shrink-0 rounded-lg px-4 py-2 text-sm text-white disabled:opacity-40 ${revoking ? 'bg-red-600 hover:bg-red-500' : 'bg-sky-600 hover:bg-sky-500'}`}>{busy ? '处理中…' : revoking ? '确认撤销关联' : register ? '注册并关联本机' : '登录并关联本机'}</button>
+          <button type="submit" disabled={busy || !confirmed || !status.device} className={`shrink-0 rounded-lg px-4 py-2 text-sm text-white disabled:opacity-40 ${revoking ? 'bg-status-danger hover:bg-status-danger-strong' : 'bg-accent hover:brightness-110'}`}>{busy ? '处理中…' : revoking ? '确认撤销关联' : register ? '注册并关联本机' : '登录并关联本机'}</button>
           <p className="text-xs text-slate-500">密码仅用于本次验证，不会保存。</p>
         </div>
       </form>}

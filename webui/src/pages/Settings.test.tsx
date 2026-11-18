@@ -103,4 +103,37 @@ describe('Settings functional tabs', () => {
     expect(novaApi.status).not.toHaveBeenCalled()
     expect(api.chatRetryConfig).not.toHaveBeenCalled()
   })
+
+  it('allows clearing existing python_path and ga_root without snapping back to saved setup', async () => {
+    vi.mocked(api.setupStatus).mockResolvedValue({
+      configured: true,
+      ga_root: 'D:/GA',
+      python_path: 'C:/Python311/python.exe',
+      admin_data: 'D:/data',
+    } as any)
+    await mount()
+    const inputs = panel().querySelectorAll<HTMLInputElement>('input')
+    expect(inputs[0].value).toBe('D:/GA')
+    expect(inputs[1].value).toBe('C:/Python311/python.exe')
+
+    await change(inputs[1], '')
+    expect(inputs[1].value).toBe('')
+    await change(inputs[0], '')
+    expect(inputs[0].value).toBe('')
+  })
+
+  it('disables all numeric retry inputs when automatic retry is turned off', async () => {
+    await mount()
+    await click('chat')
+    const toggle = panel().querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    const numbers = Array.from(panel().querySelectorAll<HTMLInputElement>('input[type="number"]'))
+    expect(numbers).toHaveLength(7)
+    expect(numbers.every((input) => !input.disabled)).toBe(true)
+
+    await act(async () => toggle.click())
+    expect(numbers.every((input) => input.disabled)).toBe(true)
+
+    await act(async () => toggle.click())
+    expect(numbers.every((input) => !input.disabled)).toBe(true)
+  })
 })

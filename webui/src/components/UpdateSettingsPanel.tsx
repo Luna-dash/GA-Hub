@@ -83,14 +83,14 @@ export function UpdateSettingsPanel() {
   const received = task?.received_bytes ?? 0
   const total = task?.total_bytes ?? 0
   const percent = total > 0 ? Math.min(100, Math.floor(received / total * 100)) : undefined
-  const inputClass = 'w-full rounded-lg border border-line bg-black/20 px-3 py-2 text-sm'
+  const inputClass = 'w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink'
   return <section className="rounded-xl border border-line bg-bg-card p-4 space-y-3" aria-label="桌面程序更新">
     <h2 className="font-medium">桌面程序更新</h2>
     <p className="text-sm text-ink">先在线准备候选包，再唤醒独立执行器；就绪后需再次确认，固定60秒倒计时结束后正常关闭并切换。不会等待所有会话空闲。</p>
     <p className="text-sm text-ink-muted">仅接受可信来源的 Windows 便携发布包。校验和用于完整性验证，不能代替来源认证。准备不会退出或覆盖当前程序。</p>
     <div className="space-y-2 rounded-lg border border-line p-3">
       <p className="text-sm">更新源：Luna-dash/GA-Hub · GitHub 正式稳定版（不含预发布）</p>
-      <button className="rounded-lg bg-sky-600 px-3 py-2 text-sm disabled:opacity-40" disabled={locked || !status} onClick={() => void online()}>检查正式版本</button>
+      <button className="rounded-lg bg-accent px-3 py-2 text-sm text-white hover:brightness-110 disabled:opacity-40" disabled={locked || !status} onClick={() => void online()}>检查正式版本</button>
       {release && <div className="text-sm" role="status">
         当前 {release.current_version} · 最新 {release.version} · {release.available ? '有可用更新' : '已是最新版本'}
         {release.notes && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-sans">{release.notes}</pre>}
@@ -120,7 +120,7 @@ export function UpdateSettingsPanel() {
       <input type="checkbox" checked={trusted} onChange={e => setTrusted(e.target.checked)} disabled={locked} />
       我已核实安装包来源可信（如填写校验和，也已核实其来源）
     </label>
-    <button className="rounded-lg bg-sky-600 px-3 py-2 text-sm disabled:opacity-40" disabled={locked || !status || !trusted || !archive.trim() || (!!sha256.trim() && !/^[a-fA-F0-9]{64}$/.test(sha256.trim()))} onClick={() => void act()}>校验并准备</button>
+    <button className="rounded-lg bg-accent px-3 py-2 text-sm text-white hover:brightness-110 disabled:opacity-40" disabled={locked || !status || !trusted || !archive.trim() || (!!sha256.trim() && !/^[a-fA-F0-9]{64}$/.test(sha256.trim()))} onClick={() => void act()}>校验并准备</button>
     </details>
     {status && <div className="text-sm text-ink" role="status">状态：{stateLabels[status.plan.state] ?? '正在处理'}{status.plan.version && ` · ${status.plan.version}`}
       {status.plan.commit && <span className="block break-all text-xs text-ink-muted">源码提交：{status.plan.commit}</span>}

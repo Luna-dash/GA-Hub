@@ -3,7 +3,7 @@
 // In setup mode (backend has no GA_ROOT), the SPA forces this page.
 // In normal mode, it's reachable at /settings via the sidebar.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Bell, Download, Globe, KeyRound, MessagesSquare, Palette, Settings2 } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
@@ -58,12 +58,23 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [saveErr, setSaveErr] = useState<string | null>(null)
   const [restarting, setRestarting] = useState(false)
+  const gaRootDirtyRef = useRef(false)
+  const pythonDirtyRef = useRef(false)
+  const lastSyncedSetupRef = useRef<{ gaRoot: string; pythonPath: string } | null>(null)
 
   useEffect(() => {
     if (!setup) return
-    if (!input) setInput(setup.ga_root || '')
-    if (!pythonInput) setPythonInput(setup.python_path || '')
-  }, [setup, input, pythonInput])
+    const nextGaRoot = setup.ga_root || ''
+    const nextPythonPath = setup.python_path || ''
+    const last = lastSyncedSetupRef.current
+    if (!last || (!gaRootDirtyRef.current && last.gaRoot !== nextGaRoot)) {
+      setInput(nextGaRoot)
+    }
+    if (!last || (!pythonDirtyRef.current && last.pythonPath !== nextPythonPath)) {
+      setPythonInput(nextPythonPath)
+    }
+    lastSyncedSetupRef.current = { gaRoot: nextGaRoot, pythonPath: nextPythonPath }
+  }, [setup])
 
   const validate = async (path: string) => {
     if (!path.trim()) { setValidResult(null); return }
@@ -88,6 +99,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
         toast.error(`目录选择失败：${result.error || '未知错误'}`)
         return
       }
+      gaRootDirtyRef.current = true
       setInput(result.path)
       setValidResult(null)
       await validate(result.path)
@@ -102,6 +114,9 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
     setSaveMsg(null); setSaveErr(null); setSaving(true)
     try {
       const r = await api.setupSave(input.trim(), pythonInput.trim())
+      gaRootDirtyRef.current = false
+      pythonDirtyRef.current = false
+      lastSyncedSetupRef.current = { gaRoot: r.ga_root || input.trim(), pythonPath: pythonInput.trim() }
       setSaveMsg(isTauriDesktop()
         ? `✓ 已保存：${r.ga_root}\n点击「重启后端」立即生效。`
         : `✓ 已保存：${r.ga_root}\n请重启后端以加载新配置（浏览器模式：Ctrl+C 后重新执行 python -m server.run）。`)
@@ -206,7 +221,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
           <div className="flex flex-wrap gap-2">
             <input
               value={input}
-              onChange={(e) => { setInput(e.target.value); setValidResult(null) }}
+              onChange={(e) => { gaRootDirtyRef.current = true; setInput(e.target.value); setValidResult(null) }}
               onBlur={(e) => validate(e.target.value)}
               placeholder="/path/to/GenericAgent"
               className="min-w-0 w-full sm:w-auto flex-auto bg-bg-soft border border-line rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"
@@ -239,7 +254,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
             <div className="text-xs text-slate-500 mb-1">Python 解释器（可选）</div>
             <input
               value={pythonInput}
-              onChange={(e) => setPythonInput(e.target.value)}
+              onChange={(e) => { pythonDirtyRef.current = true; setPythonInput(e.target.value) }}
               placeholder="/path/to/python；留空则自动使用 GA 虚拟环境或本机 Python"
               className="w-full bg-bg-soft border border-line rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"
             />
@@ -466,12 +481,18 @@ function ChatRetryPanel() {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: queryKeys.agent.chatRetryConfig, queryFn: api.chatRetryConfig })
   const [cfg, setCfg] = useState<ChatRetryConfig>({ enabled: true, max_attempts: 2, scheduled_max_attempts: 6, backoff_base_seconds: 2, backoff_factor: 2, backoff_max_seconds: 60, scheduled_backoff_base_seconds: 5, scheduled_backoff_max_seconds: 600 })
+  const retryDirtyRef = useRef(false)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
 
   useEffect(() => {
-    if (data) setCfg(data)
+    if (data && !retryDirtyRef.current) setCfg(data)
   }, [data])
+
+  const updateCfg = (patch: Partial<ChatRetryConfig>) => {
+    retryDirtyRef.current = true
+    setCfg((current) => ({ ...current, ...patch }))
+  }
 
   const save = async () => {
     setSaving(true)
@@ -488,6 +509,7 @@ function ChatRetryPanel() {
         scheduled_backoff_max_seconds: Math.max(0, Math.min(600, Number(cfg.scheduled_backoff_max_seconds ?? 600) || 600)),
       })
       setCfg(saved)
+      retryDirtyRef.current = false
       await qc.invalidateQueries({ queryKey: queryKeys.agent.chatRetryConfig })
       setMsg('已保存')
     } catch (e: any) {
@@ -510,7 +532,7 @@ function ChatRetryPanel() {
           <input
             type="checkbox"
             checked={!!cfg.enabled}
-            onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })}
+            onChange={(e) => updateCfg({ enabled: e.target.checked })}
             disabled={isLoading || saving}
           />
           <span>{cfg.enabled ? '已开启' : '已关闭'}</span>
@@ -523,7 +545,7 @@ function ChatRetryPanel() {
             min={0}
             max={5}
             value={cfg.max_attempts}
-            onChange={(e) => setCfg({ ...cfg, max_attempts: Number(e.target.value) })}
+            onChange={(e) => updateCfg({ max_attempts: Number(e.target.value) })}
             disabled={isLoading || saving || !cfg.enabled}
             className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50"
           />
@@ -536,7 +558,7 @@ function ChatRetryPanel() {
             min={0}
             max={10}
             value={cfg.scheduled_max_attempts ?? 6}
-            onChange={(e) => setCfg({ ...cfg, scheduled_max_attempts: Number(e.target.value) })}
+            onChange={(e) => updateCfg({ scheduled_max_attempts: Number(e.target.value) })}
             disabled={isLoading || saving || !cfg.enabled}
             className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50"
           />
@@ -544,27 +566,27 @@ function ChatRetryPanel() {
 
         <label className="inline-flex items-center gap-2 text-sm text-slate-300">
           重试基础间隔（秒）
-          <input type="number" min={0} max={600} step="1" value={cfg.backoff_base_seconds ?? 2} onChange={(e) => setCfg({ ...cfg, backoff_base_seconds: Number(e.target.value) })} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
+          <input type="number" min={0} max={600} step="1" value={cfg.backoff_base_seconds ?? 2} onChange={(e) => updateCfg({ backoff_base_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
 
         <label className="inline-flex items-center gap-2 text-sm text-slate-300">
           退避倍率
-          <input type="number" min={1} max={10} step="0.5" value={cfg.backoff_factor ?? 2} onChange={(e) => setCfg({ ...cfg, backoff_factor: Number(e.target.value) })} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
+          <input type="number" min={1} max={10} step="0.5" value={cfg.backoff_factor ?? 2} onChange={(e) => updateCfg({ backoff_factor: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
 
         <label className="inline-flex items-center gap-2 text-sm text-slate-300">
           单次最长等待（秒）
-          <input type="number" min={0} max={600} step="1" value={cfg.backoff_max_seconds ?? 60} onChange={(e) => setCfg({ ...cfg, backoff_max_seconds: Number(e.target.value) })} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
+          <input type="number" min={0} max={600} step="1" value={cfg.backoff_max_seconds ?? 60} onChange={(e) => updateCfg({ backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
 
         <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="定时任务/自主会话等无人值守来源使用独立的退避曲线（起步更稳）">
           定时基础间隔（秒）
-          <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_base_seconds ?? 5} onChange={(e) => setCfg({ ...cfg, scheduled_backoff_base_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
+          <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_base_seconds ?? 5} onChange={(e) => updateCfg({ scheduled_backoff_base_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
 
         <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="定时任务单次等待上限，默认 10 分钟">
           定时单次最长等待（秒）
-          <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_max_seconds ?? 600} onChange={(e) => setCfg({ ...cfg, scheduled_backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
+          <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_max_seconds ?? 600} onChange={(e) => updateCfg({ scheduled_backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
 
         <button
