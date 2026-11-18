@@ -275,7 +275,7 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
           </div>
           <div className="flex min-w-0 items-start gap-2">
             <AntiIcon className="mt-1 h-6 w-6 shrink-0 text-accent" />
-            <div className="min-w-0 space-y-2 rounded-2xl rounded-tl-md border border-line/60 bg-bg-card px-3 py-2.5 text-sm text-ink">
+            <div className="group/anti-reply min-w-0 space-y-2 rounded-2xl rounded-tl-md border border-line/60 bg-bg-card px-3 py-2.5 text-sm text-ink">
               {run.status !== 'success' && <p role="status" className="text-xs text-ink-muted">
                 {run.status}{run.error ? ` · ${run.error}` : ''}
                 {run.error_detail && <span className="mt-1 block text-sm text-ink">{run.error_detail}</span>}
@@ -287,7 +287,7 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
                     {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
                   </AntiTaskProgress>
                   {run.status === 'success' && run.answer?.trim() && (
-                    <div className="flex flex-wrap justify-end gap-2">
+                    <div className="pointer-events-none flex flex-wrap justify-end gap-2 opacity-0 transition-opacity group-hover/anti-reply:pointer-events-auto group-hover/anti-reply:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
                       <ReplyActions text={run.answer} engine="anti" project={project} canSave />
                     </div>
                   )}
