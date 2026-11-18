@@ -94,4 +94,24 @@ describe('Dashboard status-only services', () => {
     expect(host.textContent).toContain('PID')
     expect(host.querySelector('a[href="/dashboard"]')).toBeNull()
   })
+
+  it('offers retry actions when service panel or token stats fail to load', async () => {
+    apiMock.servicePanel.mockRejectedValueOnce(new Error('panel down')).mockResolvedValue({ services: [], timestamp: 2 })
+    apiMock.tokenStats.mockRejectedValueOnce(new Error('tokens down')).mockResolvedValue({ available: false })
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter><Dashboard /></MemoryRouter>
+        </QueryClientProvider>,
+      )
+    })
+    for (let attempt = 0; attempt < 20 && !host.textContent?.includes('服务状态读取失败'); attempt += 1) {
+      await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)) })
+    }
+    const retryButtons = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).filter((b) => b.textContent === '重试')
+    expect(retryButtons).toHaveLength(2)
+
+    await act(async () => { retryButtons[0].click(); await new Promise((resolve) => window.setTimeout(resolve, 15)) })
+    expect(apiMock.servicePanel).toHaveBeenCalledTimes(2)
+  })
 })

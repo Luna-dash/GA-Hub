@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDraftStore } from '@/stores/draftStore'
 import { useGoalHiveStore } from '@/stores/goalhiveStore'
+import { dialog } from '@/stores/dialogStore'
 import GoalHive from './GoalHive'
 import { resetPageState } from '@/utils/pageState'
 
@@ -214,5 +215,19 @@ describe('Goal Hive compact subagent settings', () => {
     expect(host.querySelector('[role="dialog"]')).toBeNull()
     expect(mocks.selectSubagentLlm).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(trigger)
+  })
+
+  it('asks for confirmation before resetting non-empty history', async () => {
+    useGoalHiveStore.setState({ messages: [{ id: 'm1', role: 'user', content: 'hi', ts: 1, streaming: false }], conn: 'open', mode: 'goal' })
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    renderPage()
+
+    await act(async () => { button('清空历史').click(); await Promise.resolve() })
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(mocks.socketSend).not.toHaveBeenCalled()
+
+    await act(async () => { button('清空历史').click(); await Promise.resolve() })
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(mocks.socketSend).toHaveBeenCalledWith({ type: 'reset' })
   })
 })

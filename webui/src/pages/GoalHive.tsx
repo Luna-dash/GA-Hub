@@ -10,6 +10,7 @@ import { ModalOverlay } from '@/components/ModalOverlay'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { useDraftStore } from '@/stores/draftStore'
 import { useGoalHiveStore } from '@/stores/goalhiveStore'
+import { dialog } from '@/stores/dialogStore'
 import { GoalHiveSocket } from '@/runtime/goalHiveSocket'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
@@ -158,10 +159,17 @@ export default function GoalHive() {
     }
   }
 
-  const reset = () => {
-    if (wsRef.current) {
-      wsRef.current.send({ type: 'reset' })
+  const reset = async () => {
+    if (!wsRef.current) return
+    if (msgs.length > 0 || streaming) {
+      const ok = await dialog.confirm(
+        '清空 Goal Hive 历史？',
+        '将清除当前页面输出及独立通道的 Agent 对话上下文，且无法恢复。',
+        { confirmText: '清空历史', tone: 'danger' },
+      )
+      if (!ok) return
     }
+    wsRef.current?.send({ type: 'reset' })
   }
 
   return (
@@ -283,7 +291,7 @@ export default function GoalHive() {
               <div className="text-sm font-medium text-ink">独立输出</div>
               <div className="text-xs text-ink-faint">独立 GoalHive 通道</div>
             </div>
-            <button type="button" onClick={reset} className="text-xs px-3 py-1.5 rounded-lg border border-line text-ink-muted hover:text-ink">
+            <button type="button" onClick={() => { void reset() }} className="text-xs px-3 py-1.5 rounded-lg border border-line text-ink-muted hover:text-ink">
               清空历史
             </button>
           </div>

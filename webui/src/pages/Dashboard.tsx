@@ -59,7 +59,7 @@ export default function Dashboard() {
       ) : undefined}
     >
       <div className="p-5 space-y-6">
-        {panel.isError ? <ErrorBox text="服务状态读取失败，暂时无法判断系统是否可用。" /> : (
+        {panel.isError ? <ErrorBox text="服务状态读取失败，暂时无法判断系统是否可用。" onRetry={() => { void panel.refetch() }} /> : (
           <section className={`rounded-xl border px-5 py-4 ${verdictTone[verdict.tone]}`}>
             <div className="flex items-start gap-3">
               <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${verdict.tone === 'attention' ? 'bg-status-warning animate-pulse' : verdict.tone === 'busy' ? 'bg-status-info animate-pulse' : verdict.tone === 'good' ? 'bg-status-success' : 'bg-slate-400'}`} />
@@ -106,7 +106,7 @@ export default function Dashboard() {
             </div>
           </section>
         )}
-        {tokens.isError && <ErrorBox text="Token 统计读取失败，不影响服务状态判断。" />}
+        {tokens.isError && <ErrorBox text="Token 统计读取失败，不影响服务状态判断。" onRetry={() => { void tokens.refetch() }} />}
       </div>
     </PageShell>
   )
@@ -143,4 +143,11 @@ function TokenFact({ label, value, suffix = '' }: { label: string; value: number
   return <div className="min-w-20"><div className="text-[11px] text-slate-500">{label}</div><div title={`${exact(value)}${suffix}`} className="font-mono text-sm text-slate-200 mt-0.5">{fmt(value)}{suffix}</div></div>
 }
 
-function ErrorBox({ text }: { text: string }) { return <div className="rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-xs text-status-danger">{text}</div> }
+function ErrorBox({ text, onRetry }: { text: string; onRetry?: () => void }) {
+  return (
+    <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-xs text-status-danger">
+      <span>{text}</span>
+      {onRetry && <button type="button" onClick={onRetry} className="ga-btn shrink-0 py-1 text-xs">重试</button>}
+    </div>
+  )
+}

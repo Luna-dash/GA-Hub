@@ -87,11 +87,11 @@ export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSav
         <div className="flex items-center gap-2 shrink-0">
           {remoteChanged && (
             <>
-              <span role="alert" className="text-xs text-amber-400">磁盘版本已变化，草稿未覆盖</span>
+              <span role="alert" className="text-xs text-status-warning">磁盘版本已变化，草稿未覆盖</span>
               <button
                 disabled={reloading}
                 onClick={reload}
-                className="px-2.5 py-1.5 rounded-lg border border-amber-500/50 text-amber-300 text-xs disabled:opacity-40"
+                className="px-2.5 py-1.5 rounded-lg border border-status-warning-line bg-status-warning-soft text-status-warning text-xs hover:brightness-95 disabled:opacity-40"
               >{reloading ? '重载中…' : '放弃草稿并重载'}</button>
             </>
           )}

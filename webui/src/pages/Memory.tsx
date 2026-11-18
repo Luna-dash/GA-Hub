@@ -79,6 +79,8 @@ export default function Memory() {
     })
   }, [location.key, searchParams, tab, changeSelection, setSopQuery, setSearchParams])
 
+  const tabTitle = (t: Tab) => t === 'sop' ? 'SOP 文档' : t === 'skill' ? 'Skill 脚本' : t === 'insight' ? 'L1：洞察记忆 (global_mem_insight.txt)' : 'L2：全局记忆 (global_mem.txt)'
+
   return (
     <PageShell
       title="记忆体系"
@@ -87,6 +89,7 @@ export default function Memory() {
           {(['sop', 'skill', 'insight', 'global'] as Tab[]).map((t) => (
             <button
               key={t}
+              title={tabTitle(t)}
               onClick={() => changeSelection(t)}
               className={`w-16 px-3 py-1.5 rounded-lg ${tab === t ? 'bg-accent text-white' : 'border border-line text-slate-300 hover:bg-white/5'}`}
             >
