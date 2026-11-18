@@ -16,6 +16,9 @@ tree-wide reap — is handled here and in ``child_job``.
 from __future__ import annotations
 
 import json
+import hmac
+from secrets import token_hex
+from urllib.parse import urlsplit
 import logging
 import os
 import subprocess
@@ -37,6 +40,7 @@ from ..constants import (
     ENV_GAHUB_TEMP_DIR,
 )
 from ..process_utils import hidden_process_kwargs
+from ..runtime_endpoint import RUNTIME_PORT_ENV, runtime_http_origin
 from . import child_job
 from .conductor_protocol import ProtocolValidationError, validate_protocol
 
@@ -91,6 +95,9 @@ def _clean_child_env() -> dict:
     return env
 
 
+_ANTI_BIND_KEY = token_hex(32)
+
+
 def _engine_spawn_env() -> dict:
     """Child env for the engine process, plus hub-side journal enablement.
 
@@ -113,6 +120,13 @@ def _engine_spawn_env() -> dict:
                    env.get(ENV_GAHUB_DELIVERABLE_ROOTS, "").strip()
                    else "explicit_absolute")
     env[ENV_GAHUB_MULTI_REQUEST_TURNS] = "off"
+    env.pop("GAHUB_ANTI_ORIGIN", None)
+    env.pop("GAHUB_ANTI_BIND_KEY", None)
+    if RUNTIME_PORT_ENV in os.environ:
+        origin = runtime_http_origin("127.0.0.1", int(os.environ[RUNTIME_PORT_ENV]))
+        if urlsplit(origin).hostname in {"127.0.0.1", "::1", "localhost"}:
+            env["GAHUB_ANTI_ORIGIN"] = origin
+            env["GAHUB_ANTI_BIND_KEY"] = _ANTI_BIND_KEY
     return env
 
 
@@ -607,7 +621,8 @@ class GaConductorClient:
     def post_chat(self, msg: str, role: str, request_id: Optional[str] = None,
                   final: bool = False, reopen: bool = False,
                   operation_id: Optional[str] = None,
-                  expected_boot_id: Optional[str] = None) -> dict:
+                  expected_boot_id: Optional[str] = None,
+                  anti_project: Optional[str] = None) -> dict:
         body: dict = {
             "msg": msg, "role": role, "request_id": request_id, "final": final,
         }
@@ -621,6 +636,10 @@ class GaConductorClient:
             body["operation_id"] = operation_id
         if expected_boot_id is not None:
             body["expected_boot_id"] = expected_boot_id
+        if anti_project is not None:
+            data = json.dumps([request_id, anti_project, operation_id], separators=(",", ":"))
+            body.update(anti_project=anti_project, anti_proof=hmac.digest(
+                _ANTI_BIND_KEY.encode(), data.encode(), "sha256").hex())
         return self._request("POST", "/chat", json_body=body)
 
     def get_chat(self, last: int = 20) -> list[dict]:

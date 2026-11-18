@@ -413,6 +413,7 @@ export const api = {
     // appends to that workflow instead of admitting a new task. Undefined or
     // unknown ids keep the legacy fresh-admission behavior.
     requestId?: string,
+    antiProject?: string,
   ) =>
     // Cold-starting gahub_app can legitimately take longer than the generic
     // 30s request budget. The server cannot cancel admission after a client
@@ -421,6 +422,7 @@ export const api = {
       msg,
       role,
       ...(requestId ? { request_id: requestId } : {}),
+      ...(antiProject ? { anti_project: antiProject } : {}),
       llm_index: models.llmIndex,
       subagent_llm_index: models.subagentLlmIndex,
       subagent_model_policy: models.subagentModelPolicy,

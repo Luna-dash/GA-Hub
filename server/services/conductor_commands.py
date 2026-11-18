@@ -266,6 +266,7 @@ class ConductorCommands:
             return self.kernel.client.post_chat(intent["msg"], intent.get("role", "user"),
                 intent.get("request_id"), final=bool(intent.get("final")),
                 reopen=bool(intent.get("reopen")),
+                **({"anti_project": intent["anti_project"]} if intent.get("anti_project") else {}),
                 operation_id=operation_id, expected_boot_id=payload["boot_id"])
         if kind == "dispatch":
             return self.kernel.client.start_subagent(**intent, operation_id=operation_id,

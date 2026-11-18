@@ -13,6 +13,7 @@ import { queryKeys } from '@/queries/queryKeys'
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const mocks = vi.hoisted(() => ({
+  projects: vi.fn(),
   conductorStatus: vi.fn(),
   conductorSubagents: vi.fn(),
   conductorWorkflows: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock('@/stores/dialogStore', () => ({
 
 vi.mock('@/api/client', () => ({
   api: {
+    projects: mocks.projects,
     conductorStatus: mocks.conductorStatus,
     conductorSubagents: mocks.conductorSubagents,
     conductorWorkflows: mocks.conductorWorkflows,
@@ -143,6 +145,7 @@ describe('Conductor chat scroll restoration', () => {
       // ready here too — otherwise every unrelated test would sit in 启动中.
       recovery: { ready: true, error: null },
     })
+    mocks.projects.mockResolvedValue({ items: [] })
     mocks.conductorSubagents.mockResolvedValue({ items: [] })
     mocks.conductorWorkflows.mockResolvedValue({ items: [] })
     mocks.conductorChat.mockResolvedValue({
@@ -814,6 +817,27 @@ describe('Conductor chat scroll restoration', () => {
     expect(mocks.conductorSendChat).toHaveBeenCalledWith(
       '从零开始的任务', 'user', expect.anything(), undefined,
     )
+  })
+
+  it('binds a new task to the selected registered Anti project', async () => {
+    mocks.projects.mockResolvedValue({ items: [
+      { name: 'demo', display_name: 'Demo' },
+      { name: 'missing', dangling: true },
+    ] })
+    mocks.conductorSendChat.mockResolvedValue({ id: 'u1', role: 'user', msg: 'Plan', ts: 1 })
+    renderPage()
+    await waitFor(() => expect(host.querySelector('form select option[value="demo"]')).toBeTruthy())
+    const select = host.querySelector('form select') as HTMLSelectElement
+    expect(select.querySelector('option[value="missing"]')).toBeNull()
+    act(() => {
+      select.value = 'demo'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    typeMessage('Plan')
+    act(() => button('发送').click())
+    await waitFor(() => expect(mocks.conductorSendChat).toHaveBeenCalledWith(
+      'Plan', 'user', expect.anything(), undefined, 'demo',
+    ))
   })
 
   it('abandons the current task after a counted confirmation and aborts its running workers', async () => {

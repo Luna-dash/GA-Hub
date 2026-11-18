@@ -121,6 +121,8 @@ export default function Conductor() {
   const [processCollapsed, setProcessCollapsed] = usePageState('conductor.processCollapsed', false)
   // Bumped to move focus into the composer (retry prefill).
   const [composerFocusTick, setComposerFocusTick] = useState(0)
+  const [antiProject, setAntiProject] = useState('')
+  const { data: antiProjects } = useQuery({ queryKey: ['anti-projects'], queryFn: api.projects })
   const actionInFlightRef = useRef(false)
   const ensureFiredRef = useRef(false)
   const ensureInFlightRef = useRef(false)
@@ -223,7 +225,9 @@ export default function Conductor() {
     // Send and use returned item (with real id) for instant display.
     // The EventBus and snapshot bootstrap merge by id, so this stays unique.
     try {
-      const item = await api.conductorSendChat(msg, 'user', conductorModelSettings, targetRequestId ?? undefined)
+      const item = targetRequestId === null && antiProject
+        ? await api.conductorSendChat(msg, 'user', conductorModelSettings, undefined, antiProject)
+        : await api.conductorSendChat(msg, 'user', conductorModelSettings, targetRequestId ?? undefined)
       shouldFollowChatRef.current = true
       addChatMessage({
         id: item.id,
@@ -791,6 +795,17 @@ export default function Conductor() {
               llmReady={effectiveLlmIndex !== null}
               sending={isSending || isAbandoning}
               focusSignal={composerFocusTick}
+              newTaskOptions={antiProjects?.items.some(item => !item.dangling) ? (
+                <label>
+                  新任务的 Anti 项目（可选）{' '}
+                  <select value={antiProject} onChange={event => setAntiProject(event.target.value)}>
+                    <option value="">不启用 Anti 委派</option>
+                    {antiProjects.items.filter(item => !item.dangling).map(item => (
+                      <option key={item.name} value={item.name}>{item.display_name ?? item.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : undefined}
             />
           </main>
           <aside className="conductor-context" aria-label="任务详情">

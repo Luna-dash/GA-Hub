@@ -711,6 +711,7 @@ class EmailTestResp(BaseModel):
 
 # ── conductor ──────────────────────────────────────────────────────────────────
 class ConductorChatIn(BaseModel):
+    anti_project: str | None = Field(default=None, min_length=1, max_length=160)
     msg: str
     role: Literal["conductor", "system", "user"] = "conductor"
     # Supervisor messages keep the originating workflow explicit across HTTP

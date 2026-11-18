@@ -6606,6 +6606,19 @@
         ],
         "title": "ConductorChatMessage"
       },
+          "anti_project": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anti Project"
+          },
       "ConductorDeliverable": {
         "properties": {
           "path": {

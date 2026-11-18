@@ -154,6 +154,7 @@ async def post_chat(body: ConductorChatIn) -> ConductorChatMessage:
         body.msg,
         role=body.role,
         **workflow,
+        **({"anti_project": body.anti_project} if body.anti_project is not None else {}),
         llm_index=body.llm_index,
         subagent_llm_index=body.subagent_llm_index,
         subagent_model_policy=body.subagent_model_policy,

@@ -1392,8 +1392,17 @@ class ConductorService:
         subagent_llm_index: Optional[int] = None,
         subagent_model_policy: Optional[SubagentModelPolicy] = None,
         operation_id: Optional[str] = None,
+        anti_project: Optional[str] = None,
     ) -> dict:
         self.assert_open()
+        if anti_project is not None:
+            if role != "user" or request_id is not None:
+                raise ValueError("Anti project can only be selected for a new user task")
+            from .anti_engine import AntiError, project
+            try:
+                project(anti_project)
+            except AntiError as exc:
+                raise ValueError(str(exc)) from exc
         if kind is not None and role != "conductor":
             raise ValueError("kind is only valid for conductor messages")
         if kind == "final" and not request_id:
@@ -1410,6 +1419,7 @@ class ConductorService:
         return self.commands.submit(operation_id, {
             "kind": "chat", "msg": msg, "role": role, "request_id": request_id,
             "final": kind == "final", "llm_index": llm_index,
+            **({"anti_project": anti_project} if anti_project is not None else {}),
             "subagent_llm_index": subagent_llm_index, "subagent_model_policy": subagent_model_policy})
 
     def get_readmes(self) -> dict:
