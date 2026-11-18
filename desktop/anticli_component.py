@@ -11,6 +11,17 @@ from .runtime_dependencies import runtime_binary_args
 SOURCE_VERSION = "0.1.0"
 SOURCE_SHA256 = "58a2f3794a130b1e5013473c6f68e5129e855ec574d0defbc1fc5ae65e829b35"
 
+# AntiCLI's model lookup runs in both the daemon and the standalone command.
+# Hiding the outer CLI process does not hide this Windows console subprocess.
+_MODEL_PROBE = b'''        proc = await asyncio.create_subprocess_exec(
+            str(agy_bin),
+            "models",
+            env=agy_proxy_env(),
+'''
+_QUIET_MODEL_PROBE = _MODEL_PROBE + (
+    b'            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,\n'
+)
+
 
 def stage_source(source: Path, destination: Path) -> Path:
     root = source / "src"
@@ -22,6 +33,10 @@ def stage_source(source: Path, destination: Path) -> Path:
     if digest != SOURCE_SHA256:
         raise RuntimeError(f"AntiCLI {SOURCE_VERSION} source checksum mismatch: {digest}")
     for name, content in snapshot:
+        if name.as_posix() == "anticli/core/runner.py":
+            if content.count(_MODEL_PROBE) != 1:
+                raise RuntimeError("Cannot apply the AntiCLI model probe window fix")
+            content = content.replace(_MODEL_PROBE, _QUIET_MODEL_PROBE, 1)
         path = destination / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)

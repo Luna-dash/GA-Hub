@@ -37,14 +37,17 @@ export function normalizeNavPreferences(value: unknown): NavPreference[] {
       result.push({ id, visible: visible !== false })
     }
   }
-  const hadTheme = result.some(item => item.id === 'theme-tasks')
-  for (const { id } of NAV_ITEMS) if (!result.some((item) => item.id === id)) result.push({ id, visible: true })
-  // Migrate only layouts missing the page; preserve explicit order/visibility.
-  if (!hadTheme) {
-    const themeIndex = result.findIndex(item => item.id === 'theme-tasks')
-    const [theme] = result.splice(themeIndex, 1)
-    result.splice(result.findIndex(item => item.id === 'chat') + 1, 0, theme)
+  const savedIds = new Set(result.map(item => item.id))
+  for (const { id } of NAV_ITEMS) if (!savedIds.has(id)) result.push({ id, visible: true })
+  // Move only newly added pages; keep the saved order and visibility intact.
+  const placeMissingAfter = (id: string, anchor: string) => {
+    if (savedIds.has(id)) return
+    const [item] = result.splice(result.findIndex(item => item.id === id), 1)
+    result.splice(result.findIndex(item => item.id === anchor) + 1, 0, item)
   }
+  placeMissingAfter('anti', 'chat')
+  const chatIndex = result.findIndex(item => item.id === 'chat')
+  placeMissingAfter('theme-tasks', result[chatIndex + 1]?.id === 'anti' ? 'anti' : 'chat')
   return result
 }
 
