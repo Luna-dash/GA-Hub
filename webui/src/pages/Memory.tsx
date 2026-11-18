@@ -1,5 +1,6 @@
 // Memory: tabs for global_mem.txt, insight, SOPs (markdown).
-import { useState } from 'react'
+import { useEffect, useRef } from 'react'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { VersionedMemoryEditor } from '@/components/VersionedMemoryEditor'
@@ -17,7 +18,22 @@ export function filterSops<T extends { name: string }>(sops: T[], query: string)
 }
 
 export default function Memory() {
+  const [searchParams] = useSearchParams()
+  const location = useLocation()
   const [tab, setTab] = usePageState<Tab>('memory.tab', 'sop')
+  const requestedTab = searchParams.get('tab') as Tab | null
+  const appliedLocation = useRef<string | null>(null)
+
+  useEffect(() => {
+    // A deep link selects the initial tab for this navigation, not a tab lock.
+    // usePageState's setter changes identity on render; do not replay the link.
+    if (appliedLocation.current === location.key) return
+    appliedLocation.current = location.key
+    if (requestedTab && ['sop', 'skill', 'insight', 'global'].includes(requestedTab)) {
+      setTab(requestedTab)
+    }
+  }, [location.key, requestedTab, setTab])
+
   return (
     <PageShell
       title="记忆体系"
@@ -101,10 +117,23 @@ function Insight() {
 
 function SopList() {
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { data } = useQuery({ queryKey: queryKeys.memory.sops, queryFn: api.sops })
   const sops = data?.sops ?? []
   const [active, setActive] = usePageState<string | null>('memory.sopActive', null)
   const [q, setQ] = usePageState('memory.sopQuery', '')
+  const requestedSop = searchParams.get('sop')
+
+  useEffect(() => {
+    if (!requestedSop) return
+    setActive(requestedSop)
+    setQ('')
+    const next = new URLSearchParams(searchParams)
+    next.delete('sop')
+    next.delete('tab')
+    setSearchParams(next, { replace: true })
+  }, [requestedSop, searchParams, setActive, setQ, setSearchParams])
+
   const visible = filterSops(sops, q)
   const { data: cur } = useQuery({ queryKey: queryKeys.memory.sop(active), queryFn: () => api.sop(active!), enabled: !!active })
 
