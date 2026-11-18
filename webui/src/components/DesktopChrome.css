@@ -20,7 +20,6 @@
   color: var(--c-text);
 }
 .ga-desktop-drag { pointer-events: auto; flex: 1; min-width: 0; display: flex; align-items: center; }
-.ga-desktop-window-error { padding-left: 12px; font-size: 12px; color: var(--c-text-muted); }
 .ga-desktop-controls { pointer-events: auto; display: flex; flex-shrink: 0; align-items: flex-start; }
 .ga-desktop-controls button {
   display: grid;
@@ -64,4 +63,16 @@
 .ga-desktop-frame .ga-page-header input,
 .ga-desktop-frame .ga-page-header textarea { user-select: text; }
 .ga-desktop-frame .ga-sidebar-brand-row { user-select: none; }
-.ga-desktop-window-error { position: fixed; right: 114px; top: 10px; z-index: 1; }
+.ga-desktop-window-error {
+  position: fixed;
+  right: 114px;
+  top: 10px;
+  z-index: 2;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid #E8CFC7;
+  background: var(--c-bg-card);
+  font-size: 12px;
+  color: #9E3328;
+  box-shadow: 0 2px 6px rgba(45, 34, 22, 0.14);
+}

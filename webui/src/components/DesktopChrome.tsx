@@ -50,7 +50,7 @@ export function DesktopChrome({ children }: { children: ReactNode }) {
   return (
     <div className="ga-desktop-frame" onMouseDown={event => {
       const target = event.target as HTMLElement
-      if (event.button !== 0 || target.closest('button, a, input, textarea, select, [role="button"], [role="combobox"], [role="menu"], [role="dialog"], [contenteditable="true"], [data-no-window-drag]')) return
+      if (event.button !== 0 || target.closest('button, a, input, textarea, select, label, [role="button"], [role="combobox"], [role="menu"], [role="dialog"], [contenteditable="true"], [data-no-window-drag]')) return
       if (!target.closest('.ga-page-header, .ga-sidebar-brand-row, .ga-desktop-drag')) return
       event.preventDefault()
       if (event.detail === 2) toggleMaximize()
