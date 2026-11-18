@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.routes import anti
+from server.routes import anti, upload
 from server.services import anti_engine as engine
 from server.services import file_transfer as transfer
 
@@ -85,6 +85,26 @@ def test_project_scoped_anti_round_trip(tmp_path, monkeypatch):
         assert client.post(f"{runs}/{second['id']}/cancel").json()['status'] == 'cancelled'
         assert [r['status'] for r in client.get(runs).json()] == ['success', 'cancelled']
         assert transfer.FileTransfer().list() == []
+
+
+def test_anti_file_resolution_uses_session_workspace(tmp_path, monkeypatch):
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    citation = workspace / 'anti-citation.md'
+    citation.touch()
+    monkeypatch.setattr(engine._paths, 'ADMIN_DATA', tmp_path / 'data')
+    monkeypatch.setattr(engine, 'project', lambda name: (workspace, tmp_path / 'artifacts'))
+    session = engine.AntiSessions().create('project')
+    app = FastAPI()
+    app.include_router(upload.router)
+    with TestClient(app) as client:
+        body = {'engine': 'anti', 'session_id': session['id'], 'path': citation.name}
+        resolved = client.post('/api/files/resolve', json=body)
+        assert resolved.status_code == 200
+        assert resolved.json()['resolved'] == str(citation.resolve())
+        missing = client.post('/api/files/resolve', json=body | {'session_id': 'missing'})
+        assert missing.status_code == 404
+        assert missing.json()['detail'] == 'Anti session not found'
 
 
 def test_model_catalog_is_available_without_daemon(tmp_path, monkeypatch):

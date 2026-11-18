@@ -313,7 +313,7 @@ def test_native_turns_reach_events_and_reconnect_snapshots() -> None:
 
 
 
-def test_chat_file_transfer_records_only_delivered_final_turn(tmp_path, monkeypatch):
+def test_chat_file_citations_do_not_auto_add_to_transfer_box(tmp_path, monkeypatch):
     from server.services import file_transfer as transfer
 
     monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path / "data")
@@ -330,10 +330,10 @@ def test_chat_file_transfer_records_only_delivered_final_turn(tmp_path, monkeypa
             events.put({"done": first + final, "turn": 2, "outputs": [first, final]})
             return events
 
-    with mock.patch.object(svc_mod.bus, "publish"):
+    with mock.patch.object(svc_mod.bus, "publish") as publish:
         service = svc_mod.AgentService(agent=NativeAgent(), session_id="session-transfer", manage_global_preference=False)
         handle = service.submit(f"hello\n[用户发送文件: {attachment}]", source="webui", session_id="session-transfer")
         assert handle._fanout_done.wait(2)
-    assert [(row["engine"], row["session_id"], row["path"]) for row in transfer.FileTransfer().list()] == [
-        ("chat", "session-transfer", str(delivered.resolve())),
-    ]
+    final_frames = [args[1] for args, _ in publish.call_args_list if args[0] == "chat:done"]
+    assert [frame["turn_segs"] for frame in final_frames] == [[first, final]]
+    assert transfer.FileTransfer().list() == []

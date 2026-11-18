@@ -122,8 +122,11 @@ def _project_context(request: Request, session_id: str | None, engine: str = "ch
     if not session_id:
         return None, None
     if engine == "anti":
-        from .anti import _call
-        session = _call("session", session_id)
+        from ..services.anti_engine import AntiError, AntiSessions
+        try:
+            session = AntiSessions().session(session_id)
+        except AntiError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
         return session["workspace"], session["project"]
     from ..services.session_lifecycle import session_lifecycle_of
     try:
