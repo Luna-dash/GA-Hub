@@ -149,6 +149,16 @@ build_all.bat
   首次运行时指一下本机的 GA 仓库路径。
 
 
+### 可选的 AntiCLI 桌面组件
+
+默认构建不包含 AntiCLI。要随桌面版打包，传入通过版本和源码摘要校验的 AntiCLI 0.1.0 checkout：
+
+```powershell
+python scripts/build_all.py --full --anticli-source D:\study\anticli
+```
+
+构建环境需安装该 checkout 的运行依赖。打包的是 AntiCLI 网关，不包含官方 `agy`，也不会代为登录。运行时先复用已运行的本地网关；否则从 Anti 页面手动启动，优先使用随包组件，未随包时查找 `PATH` 上的 `anticli`。随包组件的数据独立保存在 GA-Hub 管理数据目录。AntiChat 始终以 `plan` 模式提交；选择项目外的引用文件时，仅把所选文件的副本所在目录授予该次运行，不开放源文件的父目录。
+
 ### 冻结 sidecar 的 GA 运行依赖（rich / durable rewind）
 
 sidecar 冻结包显式打包 `rich` 和 `rich.cells`（GA `frontends.worldline` 的

@@ -8,6 +8,7 @@ import AntiChat from './AntiChat'
 
 vi.mock('@/api/client', () => ({ api: { projects: async () => ({ items: [
   { name: 'demo', display_name: 'Demo project', path: 'D:/demo' },
+  { name: 'other', display_name: 'Other project', path: 'D:/other' },
 ] }) } }))
 vi.mock('@/runtime/runtimeConfig', () => ({ resolveApiUrl: (path: string) => path }))
 
@@ -15,7 +16,7 @@ it('starts Anti on demand from the page header without leaving the chat', async 
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   let started = false
   const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
-    const reply = (data: unknown) => ({ ok: true, json: async () => data })
+    const reply = (data: unknown) => ({ ok: true, json: async () => JSON.parse(JSON.stringify(data)) })
     if (path === '/api/anti/status') {
       return reply(started ? { state: 'ready', agy_available: true } : { state: 'stopped' })
     }
@@ -61,22 +62,26 @@ it('starts Anti on demand from the page header without leaving the chat', async 
   }
 })
 
-it('binds a project and submits the selected Anti model and effort', async () => {
+it('creates a project session, sends using model and effort, then renames and deletes it', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const base = '/api/anti/sessions'
-  const session = { id: 'one', title: 'Anti', project: 'demo', workspace: 'D:/demo' }
+  const session = { id: 'one', title: '', project: 'demo', workspace: 'D:/demo' }
   const runs: Record<string, unknown>[] = []
   const posted: Record<string, unknown>[] = []
   let created = false
+  const other = { id: 'two', title: 'Other session', project: 'other', workspace: 'D:/other' }
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     const body = init?.body && JSON.parse(String(init.body))
     if (body) posted.push(body)
-    const reply = (data: unknown) => ({ ok: true, json: async () => data })
+    const reply = (data: unknown) => ({ ok: true, json: async () => JSON.parse(JSON.stringify(data)) })
     if (path === base) {
-      if (!body) return reply(created ? [session] : [])
+      if (!body) return reply(created ? [session, other] : [other])
       created = true
       return reply(session)
     }
+    if (path === `${base}/two/runs`) return reply([])
+    if (path === `${base}/one` && init?.method === 'PATCH') { session.title = body.title; return reply(session) }
+    if (path === `${base}/one` && init?.method === 'DELETE') { created = false; return { ok: true, status: 204 } }
     if (path === '/api/anti/models') return reply({ items: [
       { id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' },
       { id: 'gemini-4-hydrogen-low', display_name: 'Gemini 4 Hydrogen (Low)' },
@@ -87,6 +92,7 @@ it('binds a project and submits the selected Anti model and effort', async () =>
       if (!body) return reply([...runs])
       const run = { ...body, id: 'run', status: 'success', answer: 'Done' }
       runs.push(run)
+      session.title = body.prompt
       return reply(run)
     }
     throw new Error(`Unexpected request: ${path}`)
@@ -99,7 +105,7 @@ it('binds a project and submits the selected Anti model and effort', async () =>
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
     check()
   })
-  const control = (label: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
+  const control = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
   async function choose(label: string, name: string) {
     await act(async () => control(label).click())
     const item = document.querySelector<HTMLElement>(`[role="option"][title="${name}"]`)
@@ -108,10 +114,13 @@ it('binds a project and submits the selected Anti model and effort', async () =>
   }
   try {
     await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
-    await wait(() => expect(control('项目目录').disabled).toBe(false))
-    expect(control('项目目录').querySelector(':scope > .model-select-label')?.textContent).toBe('选择项目目录')
+    await wait(() => expect(host.textContent).toContain('Other project'))
+    expect(control('项目目录')).toBeNull()
+    await act(async () => control('新建会话').click())
+    const dialog = document.querySelector('[role="dialog"]')!
+    const create = dialog.querySelector<HTMLButtonElement>('button[type="submit"]')!
+    expect(control('项目目录').textContent).toContain('Other project')
     await choose('项目目录', 'Demo project')
-    const create = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.includes('新建 Anti 会话'))!
     await act(async () => create.click())
     await wait(() => {
       expect(host.querySelector('header')?.textContent).toContain(session.workspace)
@@ -133,6 +142,28 @@ it('binds a project and submits the selected Anti model and effort', async () =>
     expect(posted).toEqual([{ project: 'demo' }, {
       prompt: 'Read the project', model: 'alternate-medium', effort: 'medium', operation: expect.any(String),
     }])
+    const row = () => host.querySelector('[title="Read the project"]')
+    await wait(() => expect(row()).not.toBeNull())
+    expect(host.textContent).toContain('Demo project')
+    expect(host.textContent).toContain('Other project')
+    await act(async () => row()!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    const title = host.querySelector<HTMLInputElement>('input[aria-label="重命名 Read the project"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(title, 'Renamed')
+      title.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => title.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+    await wait(() => expect(host.textContent).toContain('Renamed'))
+    const del = Array.from(host.querySelectorAll<HTMLButtonElement>('button[aria-label]')).find(button => button.getAttribute('aria-label')?.includes('删除 Renamed'))!
+    await act(async () => del.click())
+    expect(host.textContent).toContain('删除会话？')
+    const confirm = host.querySelector<HTMLButtonElement>('[role="alertdialog"] button')!
+    expect(confirm.textContent).toBe('确认')
+    await act(async () => confirm.click())
+    await wait(() => {
+      expect(host.querySelector('header')?.textContent).toContain(other.workspace)
+      expect(host.textContent).not.toContain('Renamed')
+    })
   } finally {
     await act(async () => root.unmount())
     cache.clear()

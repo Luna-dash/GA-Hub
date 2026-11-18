@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from server.routes import anti
 from server.services import anti_engine as engine
+from server.services import file_transfer as transfer
 
 
 class FakeDaemon:
@@ -45,6 +46,7 @@ def test_project_scoped_anti_round_trip(tmp_path, monkeypatch):
     artifacts = tmp_path / 'project_artifacts' / 'project' / 'anti'
     daemon = FakeDaemon()
     db = tmp_path / 'anti.sqlite'
+    monkeypatch.setattr(transfer._paths, 'ADMIN_DATA', tmp_path / 'data')
     monkeypatch.setattr(engine, 'project', lambda name: (workspace, artifacts))
     monkeypatch.setattr(anti, 'AntiSessions', lambda: engine.AntiSessions(db, daemon))
     app = FastAPI()
@@ -82,6 +84,9 @@ def test_project_scoped_anti_round_trip(tmp_path, monkeypatch):
         assert daemon.settings[-1] == ('alternate', 'low')
         assert client.post(f"{runs}/{second['id']}/cancel").json()['status'] == 'cancelled'
         assert [r['status'] for r in client.get(runs).json()] == ['success', 'cancelled']
+        assert [(r['engine'], r['path']) for r in transfer.FileTransfer().list()] == [
+            ('anti', str((artifacts / f"{run['id']}.md").resolve())),
+        ]
 
 
 def test_model_catalog_is_available_without_daemon(tmp_path, monkeypatch):
@@ -105,3 +110,113 @@ def test_model_catalog_is_available_without_daemon(tmp_path, monkeypatch):
         response = client.get('/api/anti/models')
         assert response.status_code == 200
         assert response.json() == {'items': [{'id': 'model-medium', 'display_name': 'Model (Medium)'}]}
+
+
+def test_anti_session_management(tmp_path, monkeypatch):
+    import sqlite3
+
+    db = tmp_path / 'anti.sqlite'
+    workspace = tmp_path / 'workspace'
+    artifacts = tmp_path / 'artifacts'
+    daemon = FakeDaemon()
+    monkeypatch.setattr(engine, 'project', lambda name: (workspace / name, artifacts / name))
+    monkeypatch.setattr(anti, 'AntiSessions', lambda: engine.AntiSessions(db, daemon))
+    app = FastAPI()
+    app.include_router(anti.router)
+    with TestClient(app) as client:
+        base = '/api/anti/sessions'
+        first = client.post(base, json={'project': 'alpha'}).json()
+        second = client.post(base, json={'project': 'beta'}).json()
+        assert first['title'] == ''
+        assert first['updated_at']
+        sid = first['id']
+        path = f'{base}/{sid}'
+        run = client.post(path + '/runs', json={'operation': 'one', 'prompt': ' A   first prompt '}).json()
+        assert {item['project']: item['title'] for item in client.get(base).json()} == {
+            'alpha': 'A first prompt', 'beta': '',
+        }
+        assert client.patch(path, json={'title': '  Renamed  '}).json()['title'] == 'Renamed'
+        assert client.patch(path, json={'title': '  '}).status_code == 422
+        assert next(row for row in client.get(base).json() if row['id'] == sid)['active_run_id'] == run['id']
+        assert client.delete(path).status_code == 409
+        daemon.status[run['id']] = 'success'
+        assert client.get(f"{path}/runs/{run['id']}").json()['status'] == 'success'
+        artifact = artifacts / 'alpha' / f"{run['id']}.md"
+        assert artifact.read_text(encoding='utf8') == '完整结果'
+        another = client.post(path + '/runs', json={'operation': 'two', 'prompt': 'More'}).json()
+        assert {item['id']: item['title'] for item in client.get(base).json()}[sid] == 'Renamed'
+        daemon.status[another['id']] = 'cancelled'
+        client.get(f"{path}/runs/{another['id']}").raise_for_status()
+        assert client.delete(path).status_code == 204
+        assert client.get(path + '/runs').status_code == 404
+        assert client.delete(path).status_code == 404
+        assert client.get(base).json() == [second | {'active_run_id': None}]
+        assert artifact.is_file()
+    with sqlite3.connect(db) as conn:
+        assert conn.execute('SELECT count(*) FROM runs WHERE session_id=?', (sid,)).fetchone()[0] == 0
+
+
+def test_legacy_anti_sessions_get_first_prompt_title(tmp_path):
+    import sqlite3
+
+    db = tmp_path / 'legacy.sqlite'
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
+            CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT, workspace TEXT, title TEXT, conversation_id TEXT);
+            CREATE TABLE runs (id TEXT PRIMARY KEY, session_id TEXT, prompt TEXT, model TEXT, effort TEXT, status TEXT);
+            INSERT INTO sessions VALUES ('one', 'p', '/p', 'Anti', NULL),
+                                        ('two', 'p', '/p', 'Anti', NULL),
+                                        ('three', 'p', '/p', 'Custom', NULL);
+            INSERT INTO runs VALUES ('r', 'one', 'Read the   workspace', 'm', 'high', 'completed');
+        """)
+    sessions = engine.AntiSessions(db)
+    for _ in range(2):
+        assert {row['id']: row['title'] for row in sessions.list()} == {
+            'one': 'Read the workspace', 'two': '', 'three': 'Custom',
+        }
+
+
+
+def test_selected_references(tmp_path, monkeypatch):
+    workspace = tmp_path / 'project'; workspace.mkdir()
+    artifacts = tmp_path / 'artifacts'
+    local = workspace / '项目笔记.txt'; local.write_text('inside', encoding='utf-8')
+    external = tmp_path / '外部笔记.txt'; external.write_text('outside', encoding='utf-8')
+    (tmp_path / 'not-selected.txt').write_text('not selected', encoding='utf-8')
+    monkeypatch.setattr(transfer._paths, 'ADMIN_DATA', tmp_path / 'data')
+    monkeypatch.setattr(engine, 'project', lambda name: (workspace.resolve(), artifacts.resolve()))
+    indexed = transfer.FileTransfer()
+    with indexed.connect() as db:
+        db.executemany('INSERT INTO files VALUES (?,?,?,?,?,?,?)',
+                       [(i, str(file), str(file), file.name, 'ga', 's', None)
+                        for i, file in enumerate([local, external], 1)])
+    posted = []
+    adapter = engine.AntiAdapter()
+    monkeypatch.setattr(adapter, 'request', lambda method, path, **kw: posted.append((method,path,kw['json'])))
+    monkeypatch.setattr(anti, 'AntiSessions', lambda: engine.AntiSessions(tmp_path / 'anti.sqlite', adapter))
+    app = FastAPI(); app.include_router(anti.router)
+    with TestClient(app) as client:
+        base = '/api/anti/sessions'
+        sid = client.post(base, json={'project': 'project'}).json()['id']
+        url = f'{base}/{sid}/runs'
+        body = {'operation': 'attachment-test', 'prompt': 'read files',
+                'references': [{'id': 1, 'path': str(local)}, {'id': 2, 'path': str(external)}]}
+        bad = body | {'references': [{'id': 2, 'path': str(local)}]}
+        assert client.post(url, json=bad).status_code == 422
+        assert not posted and not artifacts.exists()
+        response = client.post(url, json=body)
+        assert response.status_code == 200, response.text
+        run = response.json()
+        assert run['prompt'] == 'read files'
+        staging = artifacts / 'references' / run['id']
+        copy, = staging.iterdir()
+        assert copy.read_text(encoding='utf-8') == 'outside'
+        method, path, payload = posted[0]
+        assert method == 'POST' and path == '/v1/runs?async_mode=true'
+        assert payload['mode'] == 'plan' and payload['add_dirs'] == [str(staging)]
+        assert local.as_posix() in payload['prompt'] and copy.as_posix() in payload['prompt']
+        assert external.as_posix() not in payload['prompt']
+        external.unlink()
+        assert client.post(url, json=body).json()['id'] == run['id']
+        assert client.post(url, json=body | {'references': []}).status_code == 409
+        assert len(posted) == 1

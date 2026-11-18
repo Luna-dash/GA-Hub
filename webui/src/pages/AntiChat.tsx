@@ -1,21 +1,28 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { FileTransferBox, type TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUp, Brain, FolderOpen, Plus, Square } from 'lucide-react'
+import { ArrowUp, Brain, FolderOpen, Square } from 'lucide-react'
 import { AntiDaemonControl } from '@/components/AntiDaemonControl'
 import { AntiIcon } from '@/components/AntiMark'
 import { MessageContent } from '@/components/MessageContent'
 import { MainModelSelect } from '@/components/ModelSelect'
 import { PageShell } from '@/components/PageShell'
 import { ProjectSelect } from '@/components/ProjectSelect'
+import { SessionRail } from '@/components/SessionRail'
+import { ModalOverlay } from '@/components/ModalOverlay'
+import type { HubSession, SessionRuntime } from '@/api/types'
+import { usePageState } from '@/utils/pageState'
 import { ThemedSelect } from '@/components/ThemedSelect'
 import { api } from '@/api/client'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 
-type Session = { id: string; project: string; title: string; workspace?: string }
+type Session = { id: string; project: string; title: string; workspace: string; updated_at?: string | null; active_run_id?: string | null }
 type Run = { id: string; status: string; operation: string; prompt: string; answer: string | null; artifact: string | null; error: string | null }
 type Delta = { seq: number; text: string }
 const active = (run: Run) => ['submitting', 'queued', 'running', 'unknown'].includes(run.status)
 const base = '/api/anti/sessions'
+const sessionsKey = ['anti-sessions'] as const
 const DEFAULT_FAMILY = 'gemini-4-hydrogen'
 const DEFAULT_MODEL = { id: `${DEFAULT_FAMILY}-high`, display_name: 'Gemini 4 Hydrogen (High)' }
 const DEFAULT_EFFORT = 'high'
@@ -39,86 +46,131 @@ function modelFamilies(items: Models['items']) {
   }
   return [...families.values()]
 }
-type Submission = { prompt: string; operation: string; model: string; effort: string }
+type Submission = { prompt: string; operation: string; model: string; effort: string; references?: Pick<TransferredFile, 'id' | 'path'>[] }
 
 function Errors({ items }: { items: (Error | null)[] }) {
   return <>{items.filter(Boolean).map((error, index) =>
     <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-sm text-status-danger [overflow-wrap:anywhere]" key={index}>{error?.message}</p>)}</>
 }
 
-async function request<T>(path: string, signal?: AbortSignal, body?: object): Promise<T> {
+class AntiRequestError extends Error {
+  constructor(readonly status: number, message: string) { super(message) }
+}
+
+async function request<T>(path: string, signal?: AbortSignal, body?: object, method = body ? 'POST' : 'GET'): Promise<T> {
   const res = await fetch(resolveApiUrl(path), {
-    signal, method: body ? 'POST' : 'GET',
+    signal, method,
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
     const error = await res.json().catch(() => null)
-    throw new Error(typeof error?.detail === 'string' ? error.detail : `Anti 请求失败 (${res.status})`)
+    throw new AntiRequestError(res.status, typeof error?.detail === 'string' ? error.detail : `Anti 请求失败 (${res.status})`)
   }
+  if (res.status === 204) return undefined as T
   return res.json()
 }
 
 export default function AntiChat() {
   const cache = useQueryClient()
-  const [project, setProject] = useState('')
-  const [sid, setSid] = useState('')
+  const [project, setProject] = useState<string | null>(null)
+  const [sid, setSid] = usePageState('antiChat.currentSession', '')
+  const [creating, setCreating] = useState(false)
+  const [transferAnchor, setTransferAnchor] = useState<HTMLDivElement | null>(null)
   const projects = useQuery({ queryKey: ['anti-projects'], queryFn: api.projects })
-  const sessions = useQuery({ queryKey: ['anti-sessions'], queryFn: ({ signal }) => request<Session[]>(base, signal) })
+  const sessions = useQuery({ queryKey: sessionsKey, queryFn: ({ signal }) => request<Session[]>(base, signal), refetchInterval: 5000 })
+  const updateList = async (update: (rows: Session[]) => Session[]) => {
+    await cache.cancelQueries({ queryKey: sessionsKey, exact: true })
+    cache.setQueryData<Session[]>(sessionsKey, old => update(old ?? []))
+    void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+  }
   const create = useMutation({
-    mutationFn: () => request<Session>(base, undefined, { project }),
-    onSuccess: session => {
-      cache.setQueryData<Session[]>(['anti-sessions'], old => [session, ...(old ?? [])])
+    mutationFn: (projectName: string) => request<Session>(base, undefined, { project: projectName }),
+    onSuccess: async session => {
+      await updateList(rows => [session, ...rows.filter(row => row.id !== session.id)])
       setSid(session.id)
-      void cache.invalidateQueries({ queryKey: ['anti-sessions'] })
+      setCreating(false)
+    },
+  })
+  const rename = useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) =>
+      request<Session>(`${base}/${id}`, undefined, { title }, 'PATCH'),
+    onSuccess: session => updateList(rows => rows.map(row => row.id === session.id ? { ...row, ...session } : row)),
+  })
+  const remove = useMutation({
+    mutationFn: (id: string) => request<void>(`${base}/${id}`, undefined, undefined, 'DELETE'),
+    onSuccess: async (_, id) => {
+      await updateList(rows => rows.filter(row => row.id !== id))
+      setSid(current => current === id ? '' : current)
+      cache.removeQueries({ queryKey: ['anti-runs', id] })
     },
   })
   const selected = sessions.data?.find(row => row.id === sid) ?? sessions.data?.[0]
   const available = projects.data?.items.filter(item => !item.dangling) ?? []
-  const names = new Map(projects.data?.items.map(item => [item.name, item.display_name ?? item.name]) ?? [])
+  const selectedProject = available.find(item => item.name === project)
+  const railSessions: HubSession[] = (sessions.data ?? []).map(row => ({
+    id: row.id, title: row.title, project_name: row.project, project_path: row.workspace,
+    created_at: '', updated_at: row.updated_at ?? '', llm_index: null, archive_path: null,
+  }))
+  const railRuntimes: Record<string, SessionRuntime> = Object.fromEntries((sessions.data ?? []).map(row => [row.id, {
+    session_id: row.id, status: row.active_run_id ? 'running' : 'idle', run_id: row.active_run_id ?? null, stream_id: null,
+  }]))
+  const openCreate = () => {
+    create.reset()
+    setProject(available.some(item => item.name === selected?.project) ? selected?.project ?? null : null)
+    setCreating(true)
+  }
+  const closeCreate = () => { if (!create.isPending) setCreating(false) }
   const workspace = selected?.workspace
   return <PageShell title="Anti 聊天" layout="workspace"
     titleExtra={<span className="ga-badge"><AntiIcon className="mr-1 inline h-4 w-4" />Plan</span>}
-    actions={<AntiDaemonControl />}
+    actions={<><AntiDaemonControl /><div ref={setTransferAnchor}>
+      {!selected && <FileTransferBox canInsert={false} onInsert={() => {}} />}
+    </div></>}
     middleArea={workspace && <div title={workspace} className="flex min-w-0 items-center gap-2 text-xs text-ink-muted">
       <FolderOpen size={15} className="shrink-0" aria-hidden="true" /><span className="truncate">{workspace}</span>
     </div>}>
     <div className="flex h-full min-h-0 min-w-0 flex-col md:flex-row">
-      <aside aria-label="Anti 会话" className="flex max-h-44 w-full shrink-0 flex-col gap-2 border-b border-line/60 bg-bg-card/60 p-2 md:max-h-none md:w-[200px] md:border-b-0 md:border-r">
-        <ProjectSelect standalone aria-label="项目目录" placeholder="选择项目目录" value={project} onChange={setProject}
-          options={available.map(item => ({ key: item.name, name: item.display_name ?? item.name }))} />
-        {project && <p className="truncate px-1 text-xs text-ink-muted" title={available.find(item => item.name === project)?.path}>
-          {available.find(item => item.name === project)?.path}
-        </p>}
-        <button type="button" className="flex min-h-8 items-center justify-center gap-2 rounded-lg border border-line bg-bg-card px-2 text-sm text-ink hover:border-accent disabled:opacity-40"
-          disabled={!project || create.isPending || !available.some(item => item.name === project)} onClick={() => create.mutate()}>
-          <Plus size={15} aria-hidden="true" /> 新建 Anti 会话
-        </button>
-        <div className="flex min-h-0 flex-1 gap-1 overflow-auto md:flex-col">
-          {sessions.data?.map(row => <button type="button" key={row.id} aria-pressed={selected?.id === row.id}
-            onClick={() => { setSid(row.id); setProject(row.project) }}
-            title={`${names.get(row.project) ?? row.project} · ${row.title}`}
-            className={`min-w-28 shrink-0 truncate rounded-md px-2 py-1.5 text-left text-sm hover:bg-bg-soft md:min-w-0 ${selected?.id === row.id ? 'bg-bg-soft font-semibold text-accent' : 'text-ink'}`}>
-            {row.title} <span className="block truncate text-xs font-normal text-ink-muted">{names.get(row.project) ?? row.project}</span>
-          </button>)}
-        </div>
-      </aside>
+      <SessionRail storageScope="anti" projects={projects.data?.items} sessions={railSessions}
+        runtimes={railRuntimes} currentId={selected?.id ?? null} onSelect={setSid} onCreate={openCreate}
+        onRename={(id, title) => rename.mutateAsync({ id, title }).then(() => undefined)}
+        onDelete={id => remove.mutateAsync(id)}
+        deleteDetail="将删除 Hub 中的 Anti 会话及其消息记录，不会删除项目文件或已保存的产物。" />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {(projects.error || sessions.error || create.error) && <div className="space-y-1 px-3 pt-2"><Errors items={[projects.error, sessions.error, create.error]} /></div>}
-        {selected ? <Conversation key={selected.id} sid={selected.id} /> :
+        <Errors items={[sessions.error, rename.error, remove.error]} />
+        {selected ? <Conversation key={selected.id} sid={selected.id} transferAnchor={transferAnchor} /> :
           <div className="m-auto flex max-w-sm flex-col items-center gap-3 px-5 text-center text-sm text-ink-muted">
             <AntiIcon className="h-11 w-11 text-accent" />
-            <p>{sessions.isPending ? '正在加载 Anti 会话…' : '选择一个项目目录，再新建 Anti 会话。'}</p>
+            <p>{sessions.isPending ? '正在加载 Anti 会话…' : '点击「新建会话」，选择该会话的项目。'}</p>
             <p>以 Plan 模式运行，成功结果保存到项目共享产物目录。</p>
           </div>}
       </div>
     </div>
+    {creating && <ModalOverlay onClose={closeCreate} labelledBy="anti-create-session-title" panelClassName="w-[28rem] max-w-[92vw] p-5">
+      <form className="space-y-4" onSubmit={event => {
+        event.preventDefault()
+        if (selectedProject && !create.isPending) create.mutate(selectedProject.name)
+      }}>
+        <h2 id="anti-create-session-title" className="text-base font-semibold text-ink">新建会话</h2>
+        <p className="text-sm text-ink-muted">为这次 Anti 会话选择项目。创建后，会话会归入该项目。</p>
+        <ProjectSelect standalone aria-label="项目目录" placeholder="选择项目目录" value={project ?? ''} onChange={setProject}
+          options={available.map(item => ({ key: item.name, name: item.display_name ?? item.name }))} />
+        {selectedProject && <p className="break-all text-xs text-ink-muted">{selectedProject.path}</p>}
+        {!projects.isPending && !projects.error && !available.length && <p className="text-sm text-ink-muted">暂无可用项目，请先在项目页添加一个项目。</p>}
+        <Errors items={[projects.error, create.error]} />
+        <div className="flex justify-end gap-2">
+          <button type="button" className="ga-btn ga-btn--quiet" onClick={closeCreate} disabled={create.isPending}>取消</button>
+          <button type="submit" className="ga-btn ga-btn--primary" disabled={!selectedProject || create.isPending}>{create.isPending ? '创建中…' : '创建会话'}</button>
+        </div>
+      </form>
+    </ModalOverlay>}
   </PageShell>
 }
 
-function Conversation({ sid }: { sid: string }) {
+function Conversation({ sid, transferAnchor }: { sid: string; transferAnchor: HTMLDivElement | null }) {
   const cache = useQueryClient()
   const [prompt, setPrompt] = useState('')
+  const [references, setReferences] = useState<TransferredFile[]>([])
   const [pending, setPending] = useState<Submission>()
   const [familyKey, setFamilyKey] = useState(DEFAULT_FAMILY)
   const [preferredEffort, setEffort] = useState(DEFAULT_EFFORT)
@@ -144,6 +196,7 @@ function Conversation({ sid }: { sid: string }) {
       const run = await request<Run>(livePath, signal)
       if (!active(run)) {
         cache.setQueryData<Run[]>(key, old => old?.map(row => row.id === run.id ? run : row))
+        void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
         return []
       }
       return request<Delta[]>(`${livePath}/events`, signal)
@@ -153,24 +206,37 @@ function Conversation({ sid }: { sid: string }) {
     if (pending && history.data?.some(run => run.operation === pending.operation)) {
       setPending(undefined)
       setPrompt('')
+      setReferences([])
     }
   }, [history.data, pending])
   const send = useMutation({
     mutationFn: (body: Submission) => request<Run>(path, undefined, body),
     onSuccess: run => {
       cache.setQueryData<Run[]>(key, old => [...(old ?? []).filter(row => row.id !== run.id), run])
-      setPrompt(''); setPending(undefined)
+      setPrompt(''); setPending(undefined); setReferences([])
     },
-    onSettled: () => { void cache.invalidateQueries({ queryKey: key }) },
+    onError: error => {
+      if (error instanceof AntiRequestError && error.status === 422) setPending(undefined)
+    },
+    onSettled: () => {
+      void cache.invalidateQueries({ queryKey: key })
+      void cache.invalidateQueries({ queryKey: sessionsKey })
+    },
   })
   const cancel = useMutation({
     mutationFn: (rid: string) => request<Run>(`${path}/${rid}/cancel`, undefined, {}),
-    onSuccess: run => cache.setQueryData<Run[]>(key, old => old?.map(row => row.id === run.id ? run : row)),
+    onSuccess: run => {
+      cache.setQueryData<Run[]>(key, old => old?.map(row => row.id === run.id ? run : row))
+      void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
+    },
   })
   useEffect(() => {
     if (transcript.current && followTranscript.current) transcript.current.scrollTop = transcript.current.scrollHeight
   }, [history.data, live.data])
   return <>
+    {transferAnchor && createPortal(<FileTransferBox canInsert={!current && !pending && !send.isPending && references.length < 8}
+      onInsert={file => setReferences(old => old.some(item => item.path === file.path) ? old : [...old, file])} />,
+      transferAnchor)}
     <div ref={transcript} onScroll={event => {
       const el = event.currentTarget
       followTranscript.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
@@ -200,11 +266,20 @@ function Conversation({ sid }: { sid: string }) {
       <form className="w-full rounded-xl border border-line/60 bg-bg-card shadow-sm" onSubmit={event => {
         event.preventDefault()
         if (current || send.isPending || !history.isSuccess || !prompt.trim()) return
-        const body = pending ?? { prompt: prompt.trim(), model, effort, operation: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}` }
+        const body = pending ?? { prompt: prompt.trim(), model, effort,
+          ...(references.length ? { references: references.map(({ id, path }) => ({ id, path })) } : {}),
+          operation: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}` }
         followTranscript.current = true
         setPending(body)
         send.mutate(body)
       }}>
+        {references.length > 0 && <ul aria-label="引用文件" className="flex flex-wrap gap-1 px-3 pt-2 text-xs">
+          {references.map(file => <li key={file.path} className="flex min-w-0 items-center gap-1 rounded-md bg-bg-soft px-2 py-1" title={file.path}>
+            <span className="truncate">{file.name}</span>
+            <button type="button" aria-label={`移除引用 ${file.name}`} disabled={Boolean(pending) || Boolean(current)}
+              className="text-ink-muted hover:text-accent disabled:opacity-40" onClick={() => setReferences(old => old.filter(item => item.path !== file.path))}>×</button>
+          </li>)}
+        </ul>}
         <textarea aria-label="发给 Anti" placeholder="发给 Anti…" rows={3} value={prompt}
           className="block w-full resize-y rounded-t-xl bg-transparent px-3 pt-3 text-sm text-ink outline-none placeholder:text-ink-muted"
           readOnly={Boolean(pending)} onChange={event => setPrompt(event.target.value)} maxLength={24000} />

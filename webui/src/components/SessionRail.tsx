@@ -7,6 +7,8 @@ import { RAIL_TITLE_SCALE_EVENT, railTitlePercent, getRailTitleScale } from '@/u
 import { storageKeys } from '@/config/storageKeys'
 
 interface SessionRailProps {
+  storageScope?: 'anti'
+  deleteDetail?: string
   projects?: ProjectItem[]
   sessions: HubSession[]
   runtimes: Record<string, SessionRuntime>
@@ -82,28 +84,35 @@ function sessionTitle(session: HubSession) {
   return session.title.trim() || `未命名会话 · ${session.id.slice(0, 8)}`
 }
 
-function SessionRailComponent({ projects: projectItems, sessions, runtimes, currentId, onSelect, onCreate, onImportFromHistory, onRename, onDelete, creating }: SessionRailProps) {
-  const [collapsed, setCollapsed] = usePageState('liveChat.sessionRailCollapsed', true)
+function SessionRailComponent({ projects: projectItems, sessions, runtimes, currentId, onSelect, onCreate, onImportFromHistory, onRename, onDelete, creating, storageScope, deleteDetail }: SessionRailProps) {
+  const [collapsed, setCollapsed] = usePageState(storageScope === 'anti' ? 'antiChat.sessionRailCollapsed' : 'liveChat.sessionRailCollapsed', storageScope !== 'anti')
+  const terminal_key = storageScope ? `${TERMINAL_KEY}.${storageScope}` : TERMINAL_KEY
+  const seen_completed_key = storageScope ? `${SEEN_COMPLETED_KEY}.${storageScope}` : SEEN_COMPLETED_KEY
+  const group_collapse_key = storageScope ? `${GROUP_COLLAPSE_KEY}.${storageScope}` : GROUP_COLLAPSE_KEY
+  const group_show_all_key = storageScope ? `${GROUP_SHOW_ALL_KEY}.${storageScope}` : GROUP_SHOW_ALL_KEY
+  const pinned_groups_key = storageScope ? `${PINNED_GROUPS_KEY}.${storageScope}` : PINNED_GROUPS_KEY
   const [editingId, setEditingId] = useState<string | null>(null)
   const [titleDraft, setTitleDraft] = useState('')
   const [savingId, setSavingId] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const deleteConfirmRef = useRef<HTMLDivElement>(null)
-  const [terminalState, setTerminalState] = useState<TerminalMap>(() => readJson<TerminalMap>(TERMINAL_KEY, {}))
+  const [terminalState, setTerminalState] = useState<TerminalMap>(() => readJson<TerminalMap>(terminal_key, {}))
   const [seenCompletedRuns, setSeenCompletedRuns] = useState<Record<string, string>>(
-    () => readJson<Record<string, string>>(SEEN_COMPLETED_KEY, {}),
+    () => readJson<Record<string, string>>(seen_completed_key, {}),
   )
   const previousActivity = useRef<Record<string, ReturnType<typeof sessionActivity>>>({})
   // 置顶的分组键按置顶先后排列，持久化到本设备；未置顶组仍按最近活动排序。
   const [pinnedGroups, setPinnedGroups] = useState<string[]>(() => {
-    const stored = readJson<string[]>(PINNED_GROUPS_KEY, [])
+    const stored = readJson<string[]>(pinned_groups_key, [])
     return Array.isArray(stored) ? stored.filter((key) => typeof key === 'string') : []
   })
 
   useEffect(() => {
-    try { localStorage.removeItem(LEGACY_RECENT_KEY) } catch { /* legacy cleanup */ }
-  }, [])
+    if (!storageScope) {
+      try { localStorage.removeItem(LEGACY_RECENT_KEY) } catch { /* legacy cleanup */ }
+    }
+  }, [storageScope])
 
   useEffect(() => {
     const nextTerminal = { ...terminalState }
@@ -139,7 +148,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
     previousActivity.current = nextPrevious
     if (terminalChanged) {
       setTerminalState(nextTerminal)
-      localStorage.setItem(TERMINAL_KEY, JSON.stringify(nextTerminal))
+      localStorage.setItem(terminal_key, JSON.stringify(nextTerminal))
     }
   }, [runtimes, sessions, seenCompletedRuns, terminalState])
 
@@ -203,10 +212,10 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
   const hasProjectGroups = sessionGroups.some((group) => group.key !== 'free')
 
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(
-    () => readJson<Record<string, boolean>>(GROUP_COLLAPSE_KEY, {}),
+    () => readJson<Record<string, boolean>>(group_collapse_key, {}),
   )
   const [showAllGroups, setShowAllGroups] = useState<Record<string, boolean>>(
-    () => readJson<Record<string, boolean>>(GROUP_SHOW_ALL_KEY, {}),
+    () => readJson<Record<string, boolean>>(group_show_all_key, {}),
   )
 
   // v3 三态：C（全折叠，collapsed[key]=true）/ D（默认预览 ≤3）/ E（展开全部，
@@ -219,14 +228,14 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
       const next = { ...current }
       if (current[key] === true) delete next[key] // C → D
       else next[key] = true // D/E → C；E 的悬挂标志由随后的 showAll 清理
-      try { localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify(next)) } catch { /* 私有模式等 */ }
+      try { localStorage.setItem(group_collapse_key, JSON.stringify(next)) } catch { /* 私有模式等 */ }
       return next
     })
     setShowAllGroups((current) => {
       if (current[key] !== true) return current
       const next = { ...current }
       delete next[key]
-      try { localStorage.setItem(GROUP_SHOW_ALL_KEY, JSON.stringify(next)) } catch { /* 私有模式等 */ }
+      try { localStorage.setItem(group_show_all_key, JSON.stringify(next)) } catch { /* 私有模式等 */ }
       return next
     })
   }, [])
@@ -236,14 +245,14 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
       if (current[key] !== true) return current
       const next = { ...current }
       delete next[key]
-      try { localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify(next)) } catch { /* 私有模式等 */ }
+      try { localStorage.setItem(group_collapse_key, JSON.stringify(next)) } catch { /* 私有模式等 */ }
       return next
     })
     setShowAllGroups((current) => {
       const next = { ...current }
       if (current[key] === true) delete next[key] // E → D
       else next[key] = true // C/D → E；collapsed 标志同时清除
-      try { localStorage.setItem(GROUP_SHOW_ALL_KEY, JSON.stringify(next)) } catch { /* 私有模式等 */ }
+      try { localStorage.setItem(group_show_all_key, JSON.stringify(next)) } catch { /* 私有模式等 */ }
       return next
     })
   }, [])
@@ -269,7 +278,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
       if (!activated.some((key) => current[key] === true)) return current
       const updated = { ...current }
       for (const key of activated) delete updated[key]
-      try { localStorage.setItem(GROUP_SHOW_ALL_KEY, JSON.stringify(updated)) } catch { /* 私有模式等 */ }
+      try { localStorage.setItem(group_show_all_key, JSON.stringify(updated)) } catch { /* 私有模式等 */ }
       return updated
     })
   }, [sessionGroups])
@@ -287,19 +296,19 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
   const acknowledgeSession = useCallback((sessionId: string) => {
     const completedRunId = runtimes[sessionId]?.completed_run_id
     if (completedRunId) {
-      const storedSeen = readJson<Record<string, string>>(SEEN_COMPLETED_KEY, {})
+      const storedSeen = readJson<Record<string, string>>(seen_completed_key, {})
       if (storedSeen[sessionId] !== completedRunId) {
         const nextSeen = { ...storedSeen, [sessionId]: completedRunId }
-        localStorage.setItem(SEEN_COMPLETED_KEY, JSON.stringify(nextSeen))
+        localStorage.setItem(seen_completed_key, JSON.stringify(nextSeen))
         setSeenCompletedRuns(nextSeen)
       }
     }
 
-    const storedTerminal = readJson<TerminalMap>(TERMINAL_KEY, {})
+    const storedTerminal = readJson<TerminalMap>(terminal_key, {})
     if (storedTerminal[sessionId]) {
       const nextStored = { ...storedTerminal }
       delete nextStored[sessionId]
-      localStorage.setItem(TERMINAL_KEY, JSON.stringify(nextStored))
+      localStorage.setItem(terminal_key, JSON.stringify(nextStored))
     }
     setTerminalState((current) => {
       if (!current[sessionId]) return current
@@ -338,7 +347,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
       const next = current.includes(key)
         ? current.filter((pinned) => pinned !== key)
         : [key, ...current]
-      try { localStorage.setItem(PINNED_GROUPS_KEY, JSON.stringify(next)) } catch { /* 私有模式等 */ }
+      try { localStorage.setItem(pinned_groups_key, JSON.stringify(next)) } catch { /* 私有模式等 */ }
       return next
     })
   }, [])
@@ -550,7 +559,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                               onClick={() => setConfirmDeleteId(session.id)}
                               disabled={activity === 'active' || deletingId === session.id}
                               aria-label={`删除 ${sessionTitle(session)}`}
-                              title={activity === 'active' ? '请先停止任务再删除' : '删除会话索引（不影响归档文件）'}
+                              title={activity === 'active' ? '请先停止任务再删除' : (deleteDetail ?? '删除会话索引（不影响归档文件）')}
                               className="flex h-6 w-6 items-center justify-center rounded text-xs leading-none text-status-danger transition-colors hover:bg-status-danger-soft disabled:cursor-not-allowed disabled:opacity-25"
                             >
                               ×
@@ -569,7 +578,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                         aria-label={`确认删除 ${sessionTitle(session)}`}
                         className="mx-2 mb-2 flex items-center justify-between gap-2 rounded-lg border border-status-danger-line bg-status-danger-soft px-2 py-1.5 text-[11px] text-status-danger"
                       >
-                        <span className="whitespace-nowrap">删除索引？</span>
+                        <span className="whitespace-nowrap" title={deleteDetail}>{deleteDetail ? '删除会话？' : '删除索引？'}</span>
                         <button
                           type="button"
                           disabled={deletingId === session.id}

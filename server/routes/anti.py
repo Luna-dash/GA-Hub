@@ -2,7 +2,7 @@
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 
 from ..origin_policy import is_allowed_ui_origin
 from ..services.anti_daemon import AntiDaemonStatus, daemon
@@ -11,9 +11,21 @@ from ..services.anti_engine import DEFAULT_EFFORT, DEFAULT_MODEL, AntiError, Ant
 router = APIRouter(prefix="/api/anti", tags=["anti"])
 
 
+AntiSessionTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
+
+
 class AntiSessionCreate(BaseModel):
     project: Annotated[str, StringConstraints(min_length=1, max_length=160)]
-    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)] = "Anti"
+    title: AntiSessionTitle | None = None
+
+
+class AntiSessionRename(BaseModel):
+    title: AntiSessionTitle
+
+
+class AntiFileReference(BaseModel):
+    id: Annotated[int, Field(gt=0, le=9007199254740991)]
+    path: Annotated[str, StringConstraints(min_length=1, max_length=4096)]
 
 
 class AntiRunCreate(BaseModel):
@@ -21,6 +33,7 @@ class AntiRunCreate(BaseModel):
     prompt: Annotated[str, StringConstraints(min_length=1, max_length=24000)]
     model: Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$")] = DEFAULT_MODEL
     effort: Literal["low", "medium", "high", "xhigh", "max"] = DEFAULT_EFFORT
+    references: list[AntiFileReference] = Field(default_factory=list, max_length=8)
 
 
 def _call(method, *args):
@@ -66,6 +79,16 @@ def create_session(body: AntiSessionCreate):
     return _call("create", body.project, body.title)
 
 
+@router.patch("/sessions/{sid}")
+def rename_session(sid: str, body: AntiSessionRename):
+    return _call("rename", sid, body.title)
+
+
+@router.delete("/sessions/{sid}", status_code=204)
+def delete_session(sid: str):
+    _call("delete", sid)
+
+
 @router.get("/sessions/{sid}/runs")
 def runs(sid: str):
     return _call("history", sid)
@@ -73,7 +96,8 @@ def runs(sid: str):
 
 @router.post("/sessions/{sid}/runs")
 def submit_run(sid: str, body: AntiRunCreate):
-    return _call("submit", sid, body.operation, body.prompt, body.model, body.effort)
+    return _call("submit", sid, body.operation, body.prompt, body.model, body.effort,
+                 [(ref.id, ref.path) for ref in body.references])
 
 
 @router.get("/sessions/{sid}/runs/{rid}")

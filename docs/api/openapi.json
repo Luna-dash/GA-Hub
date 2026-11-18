@@ -5192,6 +5192,89 @@
         }
       }
     },
+    "/api/anti/sessions/{sid}": {
+      "patch": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Rename Session",
+        "operationId": "rename_session_api_anti_sessions__sid__patch",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntiSessionRename"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Delete Session",
+        "operationId": "delete_session_api_anti_sessions__sid__delete",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/anti/sessions/{sid}/runs": {
       "get": {
         "tags": [
@@ -5438,6 +5521,43 @@
         }
       }
     },
+    "/api/file-transfer": {
+      "get": {
+        "tags": [
+          "file-transfer"
+        ],
+        "summary": "List Files",
+        "operationId": "list_files_api_file_transfer_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TransferredFile"
+                  },
+                  "type": "array",
+                  "title": "Response List Files Api File Transfer Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "file-transfer"
+        ],
+        "summary": "Clear Files",
+        "operationId": "clear_files_api_file_transfer_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
     "/nova": {
       "get": {
         "summary": "Page",
@@ -5521,43 +5641,6 @@
       }
     },
     "/nova/settings": {
-    "/api/file-transfer": {
-      "get": {
-        "tags": [
-          "file-transfer"
-        ],
-        "summary": "List Files",
-        "operationId": "list_files_api_file_transfer_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/TransferredFile"
-                  },
-                  "type": "array",
-                  "title": "Response List Files Api File Transfer Get"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "file-transfer"
-        ],
-        "summary": "Clear Files",
-        "operationId": "clear_files_api_file_transfer_delete",
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          }
-        }
-      }
-    },
       "get": {
         "summary": "Settings",
         "operationId": "settings_nova_settings_get",
@@ -5727,6 +5810,28 @@
         ],
         "title": "AntiDaemonStatus"
       },
+      "AntiFileReference": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "maximum": 9007199254740991.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Id"
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "path"
+        ],
+        "title": "AntiFileReference"
+      },
       "AntiRunCreate": {
         "properties": {
           "operation": {
@@ -5759,6 +5864,14 @@
             ],
             "title": "Effort",
             "default": "high"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/AntiFileReference"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "References"
           }
         },
         "type": "object",
@@ -5777,11 +5890,17 @@
             "title": "Project"
           },
           "title": {
-            "type": "string",
-            "maxLength": 160,
-            "minLength": 1,
-            "title": "Title",
-            "default": "Anti"
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
           }
         },
         "type": "object",
@@ -5789,6 +5908,21 @@
           "project"
         ],
         "title": "AntiSessionCreate"
+      },
+      "AntiSessionRename": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "AntiSessionRename"
       },
       "AppStatusResp": {
         "properties": {
@@ -6472,6 +6606,19 @@
       },
       "ConductorChatIn": {
         "properties": {
+          "anti_project": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anti Project"
+          },
           "msg": {
             "type": "string",
             "title": "Msg"
@@ -6643,19 +6790,6 @@
         ],
         "title": "ConductorChatMessage"
       },
-          "anti_project": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 160,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Anti Project"
-          },
       "ConductorDeliverable": {
         "properties": {
           "path": {
@@ -11647,6 +11781,65 @@
         ],
         "title": "ThemeTaskConfig"
       },
+      "TransferredFile": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "engine": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "anti"
+            ],
+            "title": "Engine"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "path",
+          "name",
+          "engine",
+          "session_id",
+          "project",
+          "available",
+          "size"
+        ],
+        "title": "TransferredFile"
+      },
       "UpdateIdentity": {
         "properties": {
           "id": {
@@ -11818,65 +12011,6 @@
         "type": "object",
         "required": [
           "uid",
-      "TransferredFile": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "path": {
-            "type": "string",
-            "title": "Path"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "engine": {
-            "type": "string",
-            "enum": [
-              "chat",
-              "anti"
-            ],
-            "title": "Engine"
-          },
-          "session_id": {
-            "type": "string",
-            "title": "Session Id"
-          },
-          "project": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Project"
-          },
-          "available": {
-            "type": "boolean",
-            "title": "Available"
-          },
-          "size": {
-            "type": "integer",
-            "title": "Size"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "path",
-          "name",
-          "engine",
-          "session_id",
-          "project",
-          "available",
-          "size"
-        ],
-        "title": "TransferredFile"
-      },
           "last_text",
           "last_ts",
           "msg_count",

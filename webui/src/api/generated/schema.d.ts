@@ -2361,6 +2361,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/anti/sessions/{sid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Session */
+        delete: operations["delete_session_api_anti_sessions__sid__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Session */
+        patch: operations["rename_session_api_anti_sessions__sid__patch"];
+        trace?: never;
+    };
     "/api/anti/sessions/{sid}/runs": {
         parameters: {
             query?: never;
@@ -2430,24 +2448,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/nova": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Page */
-        get: operations["page_nova_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/nova/status": {
     "/api/file-transfer": {
         parameters: {
             query?: never;
@@ -2466,6 +2466,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/nova": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page */
+        get: operations["page_nova_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/nova/status": {
         parameters: {
             query?: never;
             header?: never;
@@ -2627,6 +2645,13 @@ export interface components {
             /** Active Count */
             active_count?: number | null;
         };
+        /** AntiFileReference */
+        AntiFileReference: {
+            /** Id */
+            id: number;
+            /** Path */
+            path: string;
+        };
         /** AntiRunCreate */
         AntiRunCreate: {
             /** Operation */
@@ -2644,15 +2669,19 @@ export interface components {
              * @enum {string}
              */
             effort: "low" | "medium" | "high" | "xhigh" | "max";
+            /** References */
+            references?: components["schemas"]["AntiFileReference"][];
         };
         /** AntiSessionCreate */
         AntiSessionCreate: {
             /** Project */
             project: string;
-            /**
-             * Title
-             * @default Anti
-             */
+            /** Title */
+            title?: string | null;
+        };
+        /** AntiSessionRename */
+        AntiSessionRename: {
+            /** Title */
             title: string;
         };
         /**
@@ -2933,6 +2962,8 @@ export interface components {
         };
         /** ConductorChatIn */
         ConductorChatIn: {
+            /** Anti Project */
+            anti_project?: string | null;
             /** Msg */
             msg: string;
             /**
@@ -2980,8 +3011,6 @@ export interface components {
             final?: boolean | null;
         } & {
             [key: string]: unknown;
-            /** Anti Project */
-            anti_project?: string | null;
         };
         /**
          * ConductorDeliverable
@@ -4745,6 +4774,28 @@ export interface components {
              */
             description: string;
         };
+        /** TransferredFile */
+        TransferredFile: {
+            /** Id */
+            id: number;
+            /** Path */
+            path: string;
+            /** Name */
+            name: string;
+            /**
+             * Engine
+             * @enum {string}
+             */
+            engine: "chat" | "anti";
+            /** Session Id */
+            session_id: string;
+            /** Project */
+            project: string | null;
+            /** Available */
+            available: boolean;
+            /** Size */
+            size: number;
+        };
         /** UpdateIdentity */
         UpdateIdentity: {
             /** Id */
@@ -4792,28 +4843,6 @@ export interface components {
         WxAllowlistWriteResp: {
             /** Ok */
             ok: boolean;
-        /** TransferredFile */
-        TransferredFile: {
-            /** Id */
-            id: number;
-            /** Path */
-            path: string;
-            /** Name */
-            name: string;
-            /**
-             * Engine
-             * @enum {string}
-             */
-            engine: "chat" | "anti";
-            /** Session Id */
-            session_id: string;
-            /** Project */
-            project: string | null;
-            /** Available */
-            available: boolean;
-            /** Size */
-            size: number;
-        };
             /** Allowlist */
             allowlist: string[];
         };
@@ -9179,6 +9208,70 @@ export interface operations {
             };
         };
     };
+    delete_session_api_anti_sessions__sid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_session_api_anti_sessions__sid__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AntiSessionRename"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     runs_api_anti_sessions__sid__runs_get: {
         parameters: {
             query?: never;
@@ -9343,6 +9436,44 @@ export interface operations {
             };
         };
     };
+    list_files_api_file_transfer_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransferredFile"][];
+                };
+            };
+        };
+    };
+    clear_files_api_file_transfer_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     page_nova_get: {
         parameters: {
             query?: never;
@@ -9436,44 +9567,6 @@ export interface operations {
             200: {
                 headers: {
                     [name: string]: unknown;
-    list_files_api_file_transfer_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TransferredFile"][];
-                };
-            };
-        };
-    };
-    clear_files_api_file_transfer_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
                 };
                 content: {
                     "application/json": unknown;
