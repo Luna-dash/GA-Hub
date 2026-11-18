@@ -867,6 +867,12 @@ class AgentService:
                         or any(marker in content for marker in _AUTO_CONTINUE_MARKERS)
                         else "completed"
                     )
+                    if h.outcome == "completed" and h.session_id and snap.turn_segs:
+                        try:
+                            from .file_transfer import record_chat
+                            record_chat(h.session_id, snap.turn_segs[-1], snap.query)
+                        except Exception:
+                            log.exception("file transfer indexing failed for %s", h.stream_id)
                     try:
                         handled_recoverable_error = self._maybe_retry_recoverable_error(h, snap, content)
                         if not handled_recoverable_error:

@@ -5521,6 +5521,43 @@
       }
     },
     "/nova/settings": {
+    "/api/file-transfer": {
+      "get": {
+        "tags": [
+          "file-transfer"
+        ],
+        "summary": "List Files",
+        "operationId": "list_files_api_file_transfer_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TransferredFile"
+                  },
+                  "type": "array",
+                  "title": "Response List Files Api File Transfer Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "file-transfer"
+        ],
+        "summary": "Clear Files",
+        "operationId": "clear_files_api_file_transfer_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        }
+      }
+    },
       "get": {
         "summary": "Settings",
         "operationId": "settings_nova_settings_get",
@@ -11781,6 +11818,65 @@
         "type": "object",
         "required": [
           "uid",
+      "TransferredFile": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "engine": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "anti"
+            ],
+            "title": "Engine"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "path",
+          "name",
+          "engine",
+          "session_id",
+          "project",
+          "available",
+          "size"
+        ],
+        "title": "TransferredFile"
+      },
           "last_text",
           "last_ts",
           "msg_count",

@@ -310,3 +310,30 @@ def test_native_turns_reach_events_and_reconnect_snapshots() -> None:
     assert service.active_message_snapshot(handle.stream_id, session_id="session-A", run_id="run-native")["turn_segs"] == ["first", "second"]
     snapshot = service.run_message_snapshot(session_id="session-A", run_id="run-native")
     assert snapshot["streams"][0]["turn_segs"] == ["first", "second"]
+
+
+
+def test_chat_file_transfer_records_only_delivered_final_turn(tmp_path, monkeypatch):
+    from server.services import file_transfer as transfer
+
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path / "data")
+    scratch, delivered, attachment = (tmp_path / name for name in ("scratch.md", "交付 文件.md", "input.md"))
+    for path in (scratch, delivered, attachment):
+        path.touch()
+    first = f"[FILE:{scratch}]"
+    final = f"[FILE:{delivered}]\n[FILE:{attachment}]"
+
+    class NativeAgent(FakeAgent):
+        def put_task(self, query, *, source, images):
+            events = queue.Queue()
+            events.put({"next": first, "turn": 1, "outputs": [first]})
+            events.put({"done": first + final, "turn": 2, "outputs": [first, final]})
+            return events
+
+    with mock.patch.object(svc_mod.bus, "publish"):
+        service = svc_mod.AgentService(agent=NativeAgent(), session_id="session-transfer", manage_global_preference=False)
+        handle = service.submit(f"hello\n[用户发送文件: {attachment}]", source="webui", session_id="session-transfer")
+        assert handle._fanout_done.wait(2)
+    assert [(row["engine"], row["session_id"], row["path"]) for row in transfer.FileTransfer().list()] == [
+        ("chat", "session-transfer", str(delivered.resolve())),
+    ]

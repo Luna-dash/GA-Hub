@@ -2448,6 +2448,24 @@ export interface paths {
         trace?: never;
     };
     "/nova/status": {
+    "/api/file-transfer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Files */
+        get: operations["list_files_api_file_transfer_get"];
+        put?: never;
+        post?: never;
+        /** Clear Files */
+        delete: operations["clear_files_api_file_transfer_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
         parameters: {
             query?: never;
             header?: never;
@@ -4774,6 +4792,28 @@ export interface components {
         WxAllowlistWriteResp: {
             /** Ok */
             ok: boolean;
+        /** TransferredFile */
+        TransferredFile: {
+            /** Id */
+            id: number;
+            /** Path */
+            path: string;
+            /** Name */
+            name: string;
+            /**
+             * Engine
+             * @enum {string}
+             */
+            engine: "chat" | "anti";
+            /** Session Id */
+            session_id: string;
+            /** Project */
+            project: string | null;
+            /** Available */
+            available: boolean;
+            /** Size */
+            size: number;
+        };
             /** Allowlist */
             allowlist: string[];
         };
@@ -9396,6 +9436,44 @@ export interface operations {
             200: {
                 headers: {
                     [name: string]: unknown;
+    list_files_api_file_transfer_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransferredFile"][];
+                };
+            };
+        };
+    };
+    clear_files_api_file_transfer_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
                 };
                 content: {
                     "application/json": unknown;

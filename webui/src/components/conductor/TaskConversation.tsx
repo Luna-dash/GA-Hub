@@ -3,7 +3,7 @@
 // follow the live edge only while the reader is at the bottom); the refs are
 // owned by the page because the data hook also consults the scroll position
 // right before a background refetch.
-import { useLayoutEffect, useEffect, useRef } from 'react'
+import { useLayoutEffect, useEffect, useRef, type ReactNode } from 'react'
 import { ArrowUp, MessageSquare, Plus } from 'lucide-react'
 import { MessageContent } from '@/components/MessageContent'
 import { collapseBlankLines, isNearScrollBottom } from './presentation'
@@ -14,7 +14,7 @@ type ChatMessage = { id: string; role: string; msg: string }
  *  purpose: it must outlive the page component without hitting storage). */
 const scrollMemory: { chatTop: number | null } = { chatTop: null }
 
-export function TaskConversation({ messages, isLoading, isError, onRetry, followRef, scrollRef, endRef, userMsg, onUserMsgChange, onSubmit, appendMode, llmReady, sending, focusSignal }: {
+export function TaskConversation({ messages, isLoading, isError, onRetry, followRef, scrollRef, endRef, userMsg, onUserMsgChange, onSubmit, appendMode, llmReady, sending, focusSignal, newTaskOptions }: {
   messages: ChatMessage[]
   isLoading: boolean
   isError: boolean
@@ -32,6 +32,7 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
   sending: boolean
   /** Increment to move focus into the composer (retry prefill). */
   focusSignal: number
+  newTaskOptions?: ReactNode
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const restoredRef = useRef(false)
@@ -160,6 +161,7 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
           </div>
         )}
         <div className="flex items-end gap-2">
+          {newTaskOptions}
           <textarea
             aria-label="任务内容"
             ref={inputRef}
