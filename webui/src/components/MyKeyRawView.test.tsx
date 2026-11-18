@@ -56,4 +56,20 @@ describe('RawView line-number scrolling', () => {
     expect(gutter.children).toHaveLength(1)
     expect(gutter.style.transform).toBe('translateY(0px)')
   })
+
+  it('preserves dirty raw draft on external refresh and allows explicitly adopting latest', () => {
+    const editor = host.querySelector('textarea')!
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(editor, 'unsaved = 1')
+      editor.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    act(() => root.render(<RawView data={{ ...data, raw: 'external = 2' }} onWrite={onWrite} />))
+    expect(editor.value).toBe('unsaved = 1')
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('外部 mykey.py 已更新')
+
+    const adoptBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === '采用最新原文')!
+    act(() => adoptBtn.click())
+    expect(editor.value).toBe('external = 2')
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+  })
 })

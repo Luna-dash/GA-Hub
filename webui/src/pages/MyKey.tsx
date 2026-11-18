@@ -15,7 +15,7 @@
 // apikey is always masked in the structured view; the raw tab is the
 // authoritative plaintext source if the user wants to read or copy it.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import '@/styles/mykey.css'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
@@ -62,7 +62,30 @@ export default function MyKey() {
     window.addEventListener(MYKEY_SHOW_UPLOAD_EVENT, sync)
     return () => window.removeEventListener(MYKEY_SHOW_UPLOAD_EVENT, sync)
   }, [])
-  const { data, isLoading, refetch } = useQuery({ queryKey: queryKeys.mykey.data, queryFn: api.mykey })
+  const { data, isLoading, isError, error, refetch } = useQuery({ queryKey: queryKeys.mykey.data, queryFn: api.mykey })
+  const rawDirtyRef = useRef(false)
+  const proxyDirtyRef = useRef(false)
+  const setRawDirty = useCallback((dirty: boolean) => { rawDirtyRef.current = dirty }, [])
+  const setProxyDirty = useCallback((dirty: boolean) => { proxyDirtyRef.current = dirty }, [])
+
+  const switchTab = async (next: Tab) => {
+    if (next === tab) return
+    const dirtyMessage = tab === 'raw' && rawDirtyRef.current
+      ? '原始视图有未保存的编辑，切换标签将丢失这些修改。'
+      : tab === 'structured' && proxyDirtyRef.current
+        ? '全局配置有未保存的修改，切换标签将丢失这些修改。'
+        : null
+    if (dirtyMessage) {
+      const ok = await dialog.confirm('放弃未保存的修改？', dirtyMessage, {
+        confirmText: '放弃修改',
+        tone: 'danger',
+      })
+      if (!ok) return
+      rawDirtyRef.current = false
+      proxyDirtyRef.current = false
+    }
+    setTab(next)
+  }
 
   const autoSync = useQuery({
     queryKey: ['mykey', 'auto-sync'], queryFn: api.myKeyAutoSync, refetchInterval: 30_000,
@@ -160,7 +183,7 @@ export default function MyKey() {
             {(['structured', 'raw'] as Tab[]).map((t) => (
               <button
                 key={t}
-                onClick={() => setTab(t)}
+                onClick={() => { void switchTab(t) }}
                 className={`px-3 py-1.5 ${tab === t ? 'bg-accent text-white' : 'text-slate-300 hover:bg-white/5'}`}
               >
                 {t === 'structured' ? '结构化' : '原始'}
@@ -196,24 +219,34 @@ export default function MyKey() {
           </p>
         </section>
         {isLoading && <div className="text-slate-500 text-sm">载入中…</div>}
+        {isError && (
+          <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-status-danger-line bg-status-danger-soft px-4 py-3 text-sm text-status-danger">
+            <span>读取 mykey.py 失败：{errorMessageFromError(error)}</span>
+            <button type="button" onClick={() => void refetch()} className="ga-btn shrink-0">重试</button>
+          </div>
+        )}
         {data && !data.exists && (
           <div className="rounded-xl border border-status-warning-line bg-status-warning-soft p-4 text-sm text-status-warning">
             <div className="font-semibold mb-1">mykey.py 不存在</div>
             <div className="text-status-warning-strong">
               路径 <span className="font-mono">{data.path}</span> 上还没有这个文件。
-              切到「原始」tab 创建一份，或下方点 <strong>+ 新增</strong> 直接添加第一条链路。
+              切到「原始」tab 创建一份，或点下方右侧的 <strong>+ OpenAI (native)</strong> / <strong>+ Claude (native)</strong> 添加第一条链路。
             </div>
           </div>
         )}
-        {data && tab === 'structured' && <StructuredView data={data} onWrite={onWriteResult} />}
-        {data && tab === 'raw' && <RawView data={data} onWrite={onWriteResult} />}
+        {data && tab === 'structured' && <StructuredView data={data} onWrite={onWriteResult} onProxyDirtyChange={setProxyDirty} />}
+        {data && tab === 'raw' && <RawView data={data} onWrite={onWriteResult} onDirtyChange={setRawDirty} />}
       </div>
     </PageShell>
   )
 }
 
 // ── structured view ─────────────────────────────────────────────────
-function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKeyWriteResult) => void }) {
+function StructuredView({ data, onWrite, onProxyDirtyChange }: {
+  data: MyKeyData
+  onWrite: (r: MyKeyWriteResult) => void
+  onProxyDirtyChange?: (dirty: boolean) => void
+}) {
   const [editor, setEditor] = useState<MyKeySession | null>(null)
   const [editorMode, setEditorMode] = useState<'create' | 'edit' | 'duplicate' | null>(null)
   const [sourceVar, setSourceVar] = useState<string | null>(null)
@@ -306,13 +339,13 @@ function StructuredView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
           })}
           {sessions.length === 0 && mixins.length === 0 && (
             <div className="md:col-span-2 text-slate-500 text-sm py-8 text-center border border-dashed border-line rounded-xl">
-              尚未配置任何链路。点上方 <strong>+ Claude</strong> 或 <strong>+ OpenAI</strong> 添加第一条。
+              尚未配置任何链路。点上方 <strong>+ Claude (native)</strong> 或 <strong>+ OpenAI (native)</strong> 添加第一条。
             </div>
           )}
         </div>
       </section>
 
-      <GlobalsSection globals_={globals_} onWrite={onWrite} rawText={data.raw} />
+      <GlobalsSection globals_={globals_} onWrite={onWrite} rawText={data.raw} onDirtyChange={onProxyDirtyChange} />
 
       {editor && editorMode && (
         <SessionDialog
@@ -512,13 +545,13 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
   }
 
   return (
-    <ModalOverlay onClose={onClose} panelClassName="p-6 w-[40rem] max-w-[92vw] max-h-[88vh] overflow-y-auto">
+    <ModalOverlay onClose={() => { if (!saving) onClose() }} closeOnBackdrop={false} panelClassName="p-6 w-[40rem] max-w-[92vw] max-h-[88vh] overflow-y-auto">
         <div className="flex items-baseline justify-between mb-4">
           <h3 className="text-base font-semibold">
             {mode === 'create' ? '新增链路' : mode === 'duplicate' ? '复制链路' : '编辑链路'}
             <span className="ml-2 text-xs text-slate-500">{sessionMeta(s.type).label}</span>
           </h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-200 text-xl leading-none">×</button>
+          <button type="button" disabled={saving} onClick={onClose} className="text-slate-400 hover:text-slate-200 text-xl leading-none disabled:opacity-40" aria-label="关闭弹窗">×</button>
         </div>
 
         <Field label="变量名（mykey.py 里的 Python 变量）" hint="必须包含 api/config/cookie 之一及所选渠道关键字（oai、claude、mixin；原生渠道另需 native）。">
@@ -572,8 +605,17 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
             </Field>
             {s.fields.thinking_type === 'enabled' && (
               <Field label="thinking_budget_tokens">
-                <input type="number" min={1024} value={s.fields.thinking_budget_tokens ?? 32768}
-                  onChange={(e) => setField('thinking_budget_tokens', +e.target.value)} className={inp} />
+                <input
+                  type="number"
+                  min={1024}
+                  value={s.fields.thinking_budget_tokens ?? 32768}
+                  onChange={(e) => {
+                    if (e.target.value === '') { setField('thinking_budget_tokens', undefined); return }
+                    const parsed = parseInt(e.target.value, 10)
+                    if (Number.isFinite(parsed)) setField('thinking_budget_tokens', parsed)
+                  }}
+                  className={inp}
+                />
               </Field>
             )}
             <Field label="fake_cc_system_prompt">
@@ -631,7 +673,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
         {err && <div className="mt-3 text-xs text-status-danger bg-status-danger-soft border border-status-danger-line rounded p-2 break-words">{err}</div>}
 
         <div className="mt-5 flex justify-end gap-2">
-          <button onClick={onClose} className="px-3 py-1.5 rounded-lg border border-line text-slate-300">取消</button>
+          <button type="button" onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-slate-300 disabled:opacity-40">取消</button>
           <button onClick={save} disabled={saving} className="px-4 py-1.5 rounded-lg bg-accent text-white disabled:opacity-40">
             {saving ? '保存中…' : '保存并热更新'}
           </button>
@@ -664,7 +706,7 @@ function MixinFields({ s, setS, allSessions }: { s: MyKeySession; setS: (v: MyKe
             <div key={i} className="flex items-center gap-1">
               <input value={n} onChange={(e) => {
                 const next = [...llmNos]; next[i] = e.target.value; setNos(next)
-              }} list="mixin-name-candidates" className={inp + ' font-mono flex-1 rounded-md bg-slate-200/80 border-slate-400/70 text-slate-800'} />
+              }} list="mixin-name-candidates" className={inp + ' font-mono flex-1'} />
               <button onClick={() => move(i, -1)} disabled={i === 0}
                 className="px-2 py-1.5 text-xs rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-30">↑</button>
               <button onClick={() => move(i, 1)} disabled={i === llmNos.length - 1}
@@ -706,10 +748,11 @@ function MixinFields({ s, setS, allSessions }: { s: MyKeySession; setS: (v: MyKe
 }
 
 // ── globals (proxy / tg / etc.) ────────────────────────────────────
-function GlobalsSection({ globals_, onWrite, rawText }: {
+function GlobalsSection({ globals_, onWrite, rawText, onDirtyChange }: {
   globals_: Record<string, any>
   onWrite: (r: MyKeyWriteResult) => void
   rawText: string
+  onDirtyChange?: (dirty: boolean) => void
 }) {
   // Just render as a read-only summary; encourage the raw tab for editing.
   // proxy is the most-common one — we surface it as an inline editor.
@@ -719,6 +762,10 @@ function GlobalsSection({ globals_, onWrite, rawText }: {
   const [baseline, setBaseline] = useState(incoming)
   const dirty = proxy !== baseline
   const conflict = dirty && incoming !== baseline
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+    return () => onDirtyChange?.(false)
+  }, [dirty, onDirtyChange])
   useEffect(() => {
     if (incoming === proxy) {
       setBaseline(incoming)
@@ -760,7 +807,7 @@ function GlobalsSection({ globals_, onWrite, rawText }: {
             {saving ? '保存中…' : '保存 proxy'}
           </button>
         </div>
-        {conflict && <p role="alert" className="text-sm text-amber-400">
+        {conflict && <p role="alert" className="text-sm text-status-warning">
           proxy 已被外部更新；草稿已保留。
           <button className="ml-2 underline" onClick={() => { setProxy(incoming); setBaseline(incoming) }}>使用最新值</button>
         </p>}
@@ -812,7 +859,11 @@ function NumField({ label, v, onChange, step }: { label: string; v: any; onChang
         type="number"
         step={step ?? 1}
         value={v ?? ''}
-        onChange={(e) => onChange(e.target.value === '' ? undefined : (step ? parseFloat(e.target.value) : parseInt(e.target.value)))}
+        onChange={(e) => {
+          if (e.target.value === '') { onChange(undefined); return }
+          const parsed = step ? parseFloat(e.target.value) : parseInt(e.target.value, 10)
+          if (Number.isFinite(parsed)) onChange(parsed)
+        }}
         className={inp}
         placeholder="（默认）"
       />

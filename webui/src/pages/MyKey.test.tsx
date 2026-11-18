@@ -307,4 +307,47 @@ describe('MyKey upload button visibility', () => {
     expect(cards[2]).toContain('third')
   })
 
+  it('shows an error alert with retry when loading mykey fails', async () => {
+    apiMock.mykey.mockRejectedValueOnce(new Error('network fail'))
+    render()
+    await settle()
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('读取 mykey.py 失败')
+    apiMock.mykey.mockResolvedValueOnce(fixture('recovered'))
+    click('重试')
+    await settle()
+    expect(host.querySelector<HTMLInputElement>('input[placeholder*="127.0.0.1"]')?.value).toBe('recovered')
+  })
+
+  it('prompts before switching tabs with unsaved raw edits and ignores modal backdrop clicks', async () => {
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    await mountFixture()
+
+    // SessionDialog ignores backdrop clicks
+    act(() => host.querySelector<HTMLButtonElement>('.mykey-card__toggle')!.click())
+    click('编辑')
+    const dialogBackdrop = host.querySelector('[role="dialog"]')!.parentElement!
+    act(() => dialogBackdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })))
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+    click('取消')
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+
+    // Switch to raw, dirty it, then cancel/confirm switching back
+    click('原始')
+    await settle()
+    const rawEditor = host.querySelector<HTMLTextAreaElement>('textarea')!
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(rawEditor, 'dirty = 1')
+      rawEditor.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    click('结构化')
+    await settle()
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(host.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('dirty = 1')
+
+    click('结构化')
+    await settle()
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(host.querySelector('textarea')).toBeNull()
+  })
+
 })

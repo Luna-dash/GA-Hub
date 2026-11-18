@@ -11,13 +11,20 @@ import { errorMessageFromError } from '@/utils/sessionUi'
 import { formatDateTime } from '@/utils/formatTime'
 
 // ── raw view ────────────────────────────────────────────────────────
-export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKeyWriteResult) => void }) {
+export function RawView({ data, onWrite, onDirtyChange }: {
+  data: MyKeyData
+  onWrite: (r: MyKeyWriteResult) => void
+  onDirtyChange?: (dirty: boolean) => void
+}) {
+  const [baseline, setBaseline] = useState(data.raw)
   const [text, setText] = useState(data.raw)
+  const [remoteChanged, setRemoteChanged] = useState(false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [showBackups, setShowBackups] = useState(false)
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const lineNumbersRef = useRef<HTMLPreElement>(null)
+  const observedRaw = useRef(data.raw)
   const syncLineNumbers = useCallback(() => {
     if (editorRef.current && lineNumbersRef.current) {
       // Transform instead of scrolling the gutter: a horizontal scrollbar can
@@ -26,17 +33,41 @@ export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
     }
   }, [])
 
-  useEffect(() => setText(data.raw), [data.raw])
+  const dirty = text !== baseline
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+    return () => onDirtyChange?.(false)
+  }, [dirty, onDirtyChange])
+
+  useEffect(() => {
+    if (data.raw === observedRaw.current) return
+    observedRaw.current = data.raw
+    if (text !== baseline) {
+      if (data.raw === text) {
+        setBaseline(data.raw)
+        setRemoteChanged(false)
+      } else {
+        setRemoteChanged(true)
+      }
+      return
+    }
+    setText(data.raw)
+    setBaseline(data.raw)
+    setRemoteChanged(false)
+  }, [data.raw, text, baseline])
+
   useLayoutEffect(syncLineNumbers, [text, syncLineNumbers])
 
-  const dirty = text !== data.raw
   const lines = useMemo(() => text.split('\n'), [text])
   const pad = String(lines.length).length
 
   const save = async () => {
+    if (saving) return
     setErr(null); setSaving(true)
     try {
       const r = await api.putMyKeyRaw(text)
+      setBaseline(text)
+      setRemoteChanged(false)
       onWrite(r)
     } catch (e: unknown) {
       setErr(myKeyParseErrorFromError(e))
@@ -47,7 +78,7 @@ export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
         <div className="flex items-center gap-2 text-slate-400">
           <span className="font-mono break-all">{data.path}</span>
           {dirty && <span className="text-status-warning">(未保存)</span>}
@@ -55,7 +86,7 @@ export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
         <div className="flex items-center gap-2">
           <button onClick={() => setShowBackups(true)}
             className="px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5">备份历史</button>
-          <button onClick={() => setText(data.raw)} disabled={!dirty}
+          <button onClick={() => { setText(data.raw); setBaseline(data.raw); setRemoteChanged(false) }} disabled={!dirty && !remoteChanged}
             className="px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5 disabled:opacity-40">还原</button>
           <button onClick={save} disabled={!dirty || saving}
             className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-40">
@@ -63,6 +94,19 @@ export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
           </button>
         </div>
       </div>
+
+      {remoteChanged && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded border border-status-warning-line bg-status-warning-soft px-3 py-2 text-xs text-status-warning">
+          <span>外部 mykey.py 已更新，未保存草稿已保留。</span>
+          <button
+            type="button"
+            onClick={() => { setText(data.raw); setBaseline(data.raw); setRemoteChanged(false) }}
+            className="rounded border border-status-warning-line px-2 py-1 text-status-warning hover:bg-bg-card"
+          >
+            采用最新原文
+          </button>
+        </div>
+      )}
 
       {err && (
         <div className="text-xs text-status-danger bg-status-danger-soft border border-status-danger-line rounded p-2 break-words">
