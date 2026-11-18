@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { MyKeyBackup, MyKeyData, MyKeyWriteResult } from '@/api/types'
@@ -16,8 +16,18 @@ export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [showBackups, setShowBackups] = useState(false)
+  const editorRef = useRef<HTMLTextAreaElement>(null)
+  const lineNumbersRef = useRef<HTMLPreElement>(null)
+  const syncLineNumbers = useCallback(() => {
+    if (editorRef.current && lineNumbersRef.current) {
+      // Transform instead of scrolling the gutter: a horizontal scrollbar can
+      // give the textarea a different maximum scrollTop from the gutter.
+      lineNumbersRef.current.style.transform = `translateY(${-editorRef.current.scrollTop}px)`
+    }
+  }, [])
 
   useEffect(() => setText(data.raw), [data.raw])
+  useLayoutEffect(syncLineNumbers, [text, syncLineNumbers])
 
   const dirty = text !== data.raw
   const lines = useMemo(() => text.split('\n'), [text])
@@ -60,15 +70,20 @@ export function RawView({ data, onWrite }: { data: MyKeyData; onWrite: (r: MyKey
         </div>
       )}
 
-      <div className="rounded-lg border border-line bg-bg-card overflow-hidden flex">
-        <pre className="select-none text-right pr-2 pl-3 py-3 text-xs font-mono leading-6 text-slate-600 bg-bg-soft border-r border-line">
-          {lines.map((_, i) => <div key={i} style={{ minWidth: `${pad}ch` }}>{i + 1}</div>)}
-        </pre>
+      <div className="rounded-lg border border-line bg-bg-card overflow-hidden flex max-h-[70vh]">
+        <div aria-hidden="true" className="select-none shrink-0 overflow-hidden bg-bg-soft border-r border-line">
+          <pre ref={lineNumbersRef} className="text-right pr-2 pl-3 py-3 text-xs font-mono leading-6 text-slate-600">
+            {lines.map((_, i) => <div key={i} style={{ minWidth: `${pad}ch` }}>{i + 1}</div>)}
+          </pre>
+        </div>
         <textarea
+          ref={editorRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onScroll={syncLineNumbers}
           spellCheck={false}
-          className="flex-1 p-3 bg-bg-card outline-none font-mono text-xs leading-6 resize-none"
+          wrap="off"
+          className="flex-1 min-w-0 p-3 bg-bg-card outline-none font-mono text-xs leading-6 resize-none overflow-x-auto whitespace-pre"
           rows={Math.max(20, lines.length)}
           style={{ minHeight: '60vh' }}
         />
