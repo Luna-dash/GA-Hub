@@ -1,0 +1,157 @@
+// @vitest-environment jsdom
+
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import Memory from './Memory'
+import { api } from '@/api/client'
+import { dialog } from '@/stores/dialogStore'
+import { resetPageState } from '@/utils/pageState'
+
+vi.mock('@/api/client', () => ({
+  api: {
+    sops: vi.fn(),
+    sop: vi.fn(),
+    setSop: vi.fn(),
+    skills: vi.fn(),
+    skill: vi.fn(),
+    insight: vi.fn(),
+    setInsight: vi.fn(),
+    globalMem: vi.fn(),
+    setGlobalMem: vi.fn(),
+  },
+}))
+vi.mock('@/components/MarkdownEditor', () => ({
+  MarkdownEditor: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+    <textarea aria-label="编辑器" value={value} onChange={(e) => onChange(e.target.value)} />
+  ),
+}))
+
+function SopDeepLink() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  return <>
+    <button onClick={() => navigate('/memory?tab=sop&sop=beta.md&keep=1')}>Open beta deep link</button>
+    <output data-location>{location.search}</output>
+  </>
+}
+
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+describe('Memory unsaved draft guard', () => {
+  let host: HTMLDivElement
+  let root: Root
+  let client: QueryClient
+
+  beforeEach(() => {
+    vi.resetAllMocks()
+    resetPageState()
+    vi.mocked(api.sops).mockResolvedValue({
+      sops: [
+        { name: 'alpha.md', size: 100 },
+        { name: 'beta.md', size: 120 },
+      ],
+    } as never)
+    vi.mocked(api.sop).mockImplementation(async (name: string) => ({
+      content: `${name} content`,
+      mtime_ns: '1',
+      sha256: `sha-${name}`,
+    }) as never)
+    vi.mocked(api.skills).mockResolvedValue({ skills: [] } as never)
+    vi.mocked(api.insight).mockResolvedValue({ content: 'insight', mtime_ns: '1', sha256: 's1' } as never)
+    vi.mocked(api.globalMem).mockResolvedValue({ content: 'global', mtime_ns: '1', sha256: 's2' } as never)
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+  })
+
+  afterEach(async () => {
+    await act(async () => root.unmount())
+    host.remove()
+    client.clear()
+    resetPageState()
+    vi.restoreAllMocks()
+  })
+
+  const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)) })
+
+  function setEditorText(value: string) {
+    const ta = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="编辑器"]')!
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(ta, value)
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+
+  function clickText(text: string) {
+    const btn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.includes(text))!
+    expect(btn, `Missing button ${text}`).toBeTruthy()
+    act(() => { btn.click() })
+  }
+
+  it('guards switching SOP documents and Memory tabs while editor is dirty', async () => {
+    const confirmSpy = vi.spyOn(dialog, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    await act(async () => root.render(
+      <MemoryRouter initialEntries={['/memory?tab=sop&sop=alpha.md']}>
+        <QueryClientProvider client={client}>
+          <Memory />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    ))
+    await settle()
+
+    setEditorText('unsaved alpha draft')
+    clickText('beta.md')
+    await settle()
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="编辑器"]')?.value).toBe('unsaved alpha draft')
+
+    clickText('L1')
+    await settle()
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)) })
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(host.textContent).toContain('memory/global_mem_insight.txt')
+  })
+
+  it.each([
+    ['SOP', '/memory?tab=sop&sop=alpha.md', 'memory/alpha.md', 'alpha.md'],
+    ['L1', '/memory?tab=insight', 'memory/global_mem_insight.txt', undefined],
+  ])('guards a SOP deep link from a dirty %s editor', async (_tab, path, currentLabel, currentSop) => {
+    let finishConfirm!: (ok: boolean) => void
+    const confirmSpy = vi.spyOn(dialog, 'confirm')
+      .mockImplementationOnce(() => new Promise((resolve) => { finishConfirm = resolve }))
+      .mockResolvedValueOnce(true)
+    await act(async () => root.render(
+      <MemoryRouter initialEntries={[path]}>
+        <QueryClientProvider client={client}>
+          <SopDeepLink />
+          <Memory />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    ))
+    const editor = () => host.querySelector<HTMLTextAreaElement>('textarea[aria-label="编辑器"]')
+    await vi.waitFor(() => expect(editor()).not.toBeNull())
+
+    setEditorText('unsaved draft')
+    clickText('Open beta deep link')
+    await settle()
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(editor()?.value).toBe('unsaved draft')
+    expect(vi.mocked(api.sop).mock.calls.map(([name]) => name)).toEqual(currentSop ? [currentSop] : [])
+
+    await act(async () => finishConfirm(false))
+    expect(host.querySelector('[data-location]')?.textContent).toBe('?keep=1')
+    expect(host.textContent).toContain(currentLabel)
+    expect(editor()?.value).toBe('unsaved draft')
+
+    clickText('Open beta deep link')
+    await settle()
+    await vi.waitFor(() => expect(editor()?.value).toBe('beta.md content'))
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    expect(host.textContent).toContain('memory/beta.md')
+    expect(host.querySelector('[data-location]')?.textContent).toBe('?keep=1')
+  })
+})

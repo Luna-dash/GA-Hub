@@ -15,9 +15,10 @@ interface Props {
   onReload: () => Promise<MemorySnapshot>
   onSaved?: () => void
   onError?: (error: unknown) => void
+  onDirtyChange?: (dirty: boolean) => void
 }
 
-export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSaved, onError }: Props) {
+export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSaved, onError, onDirtyChange }: Props) {
   const [baseline, setBaseline] = useState(snapshot)
   const [value, setValue] = useState(snapshot.content)
   const [remoteChanged, setRemoteChanged] = useState(false)
@@ -26,6 +27,11 @@ export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSav
   const dirty = value !== baseline.content
   const snapshotVersion = `${snapshot.mtime_ns ?? ''}:${snapshot.sha256 ?? ''}`
   const observedVersion = useRef(snapshotVersion)
+
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+    return () => onDirtyChange?.(false)
+  }, [dirty, onDirtyChange])
 
   useEffect(() => {
     if (snapshotVersion === observedVersion.current) return

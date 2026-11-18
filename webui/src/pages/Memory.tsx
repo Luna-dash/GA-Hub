@@ -1,9 +1,10 @@
 // Memory: tabs for global_mem.txt, insight, SOPs (markdown).
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { VersionedMemoryEditor } from '@/components/VersionedMemoryEditor'
+import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { PageShell } from '@/components/PageShell'
 import { queryKeys } from '@/queries/queryKeys'
@@ -18,21 +19,65 @@ export function filterSops<T extends { name: string }>(sops: T[], query: string)
 }
 
 export default function Memory() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
   const [tab, setTab] = usePageState<Tab>('memory.tab', 'sop')
-  const requestedTab = searchParams.get('tab') as Tab | null
-  const appliedLocation = useRef<string | null>(null)
+  const [activeSop, setActiveSop] = usePageState<string | null>('memory.sopActive', null)
+  const [sopQuery, setSopQuery] = usePageState('memory.sopQuery', '')
+  const appliedLocation = useRef<{ key: string } | null>(null)
+  const dirtyRef = useRef(false)
+  const handleDirtyChange = useCallback((dirty: boolean) => {
+    dirtyRef.current = dirty
+  }, [])
 
-  useEffect(() => {
-    // A deep link selects the initial tab for this navigation, not a tab lock.
-    // usePageState's setter changes identity on render; do not replay the link.
-    if (appliedLocation.current === location.key) return
-    appliedLocation.current = location.key
-    if (requestedTab && ['sop', 'skill', 'insight', 'global'].includes(requestedTab)) {
-      setTab(requestedTab)
+  const changeSelection = useCallback((nextTab: Tab, nextSop: string | null = null, onSettled?: (accepted: boolean) => void) => {
+    const switchingTab = nextTab !== tab
+    const switchingSop = nextSop !== null && nextSop !== activeSop
+    const navigation = appliedLocation.current
+    const finish = (accepted: boolean) => {
+      // An old dialog must not apply its result to a newer navigation.
+      if (appliedLocation.current !== navigation) return
+      if (accepted) {
+        if (switchingTab || switchingSop) dirtyRef.current = false
+        if (switchingTab) setTab(nextTab)
+        if (switchingSop) setActiveSop(nextSop)
+      }
+      onSettled?.(accepted)
     }
-  }, [location.key, requestedTab, setTab])
+    if ((switchingTab || switchingSop) && dirtyRef.current) {
+      void dialog.confirm(
+        '放弃未保存的修改？',
+        switchingTab
+          ? '当前记忆文档有未保存的编辑，切换标签将丢失这些修改。'
+          : '当前 SOP 文档有未保存的编辑，切换文档将丢失这些修改。',
+        { confirmText: '放弃修改', tone: 'danger' },
+      ).then(finish)
+    } else {
+      finish(true)
+    }
+  }, [tab, activeSop, setTab, setActiveSop])
+
+  useEffect(() => () => { appliedLocation.current = null }, [location.key])
+  useEffect(() => {
+    // Apply each navigation once, even when usePageState setters are recreated.
+    if (appliedLocation.current?.key === location.key) return
+    appliedLocation.current = { key: location.key }
+    const requestedTab = searchParams.get('tab') as Tab | null
+    const validTab = requestedTab && ['sop', 'skill', 'insight', 'global'].includes(requestedTab) ? requestedTab : null
+    const nextTab = validTab ?? tab
+    const nextSop = nextTab === 'sop' ? searchParams.get('sop') || null : null
+    if (!validTab && !nextSop) return
+
+    changeSelection(nextTab, nextSop, (accepted) => {
+      // Clear consumed (or rejected) SOP links without removing unrelated params.
+      if (!nextSop && accepted) return
+      if (accepted && nextSop) setSopQuery('')
+      const next = new URLSearchParams(searchParams)
+      if (nextSop) next.delete('sop')
+      next.delete('tab')
+      setSearchParams(next, { replace: true })
+    })
+  }, [location.key, searchParams, tab, changeSelection, setSopQuery, setSearchParams])
 
   return (
     <PageShell
@@ -42,7 +87,7 @@ export default function Memory() {
           {(['sop', 'skill', 'insight', 'global'] as Tab[]).map((t) => (
             <button
               key={t}
-              onClick={() => setTab(t)}
+              onClick={() => changeSelection(t)}
               className={`w-16 px-3 py-1.5 rounded-lg ${tab === t ? 'bg-accent text-white' : 'border border-line text-slate-300 hover:bg-white/5'}`}
             >
               {t === 'sop' ? 'SOP' : t === 'skill' ? 'SKILL' : t === 'insight' ? 'L1' : 'L2'}
@@ -52,10 +97,10 @@ export default function Memory() {
       }
     >
       <div className="h-full overflow-hidden">
-        {tab === 'sop' && <SopList />}
+        {tab === 'sop' && <SopList active={activeSop} q={sopQuery} setQ={setSopQuery} selectSop={(name) => changeSelection('sop', name)} onDirtyChange={handleDirtyChange} />}
         {tab === 'skill' && <SkillList />}
-        {tab === 'insight' && <Insight />}
-        {tab === 'global' && <GlobalMem />}
+        {tab === 'insight' && <Insight onDirtyChange={handleDirtyChange} />}
+        {tab === 'global' && <GlobalMem onDirtyChange={handleDirtyChange} />}
       </div>
     </PageShell>
   )
@@ -69,7 +114,7 @@ function memoryWriteError(error: unknown): void {
   toast.error('保存失败：' + errorMessageFromError(error))
 }
 
-function GlobalMem() {
+function GlobalMem({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.global, queryFn: api.globalMem })
   if (isLoading || !data) return <div className="text-slate-500 text-sm">载入中…</div>
@@ -78,6 +123,7 @@ function GlobalMem() {
       label="memory/global_mem.txt"
       snapshot={data}
       onSave={api.setGlobalMem}
+      onDirtyChange={onDirtyChange}
       onReload={async () => {
         const latest = await api.globalMem()
         qc.setQueryData(queryKeys.memory.global, latest)
@@ -92,7 +138,7 @@ function GlobalMem() {
   )
 }
 
-function Insight() {
+function Insight({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.insight, queryFn: api.insight })
   if (isLoading || !data) return <div className="text-slate-500 text-sm">载入中…</div>
@@ -101,6 +147,7 @@ function Insight() {
       label="memory/global_mem_insight.txt"
       snapshot={data}
       onSave={api.setInsight}
+      onDirtyChange={onDirtyChange}
       onReload={async () => {
         const latest = await api.insight()
         qc.setQueryData(queryKeys.memory.insight, latest)
@@ -115,25 +162,16 @@ function Insight() {
   )
 }
 
-function SopList() {
+function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
+  active: string | null
+  q: string
+  setQ: (value: string) => void
+  selectSop: (name: string) => void
+  onDirtyChange: (dirty: boolean) => void
+}) {
   const qc = useQueryClient()
-  const [searchParams, setSearchParams] = useSearchParams()
   const { data } = useQuery({ queryKey: queryKeys.memory.sops, queryFn: api.sops })
   const sops = data?.sops ?? []
-  const [active, setActive] = usePageState<string | null>('memory.sopActive', null)
-  const [q, setQ] = usePageState('memory.sopQuery', '')
-  const requestedSop = searchParams.get('sop')
-
-  useEffect(() => {
-    if (!requestedSop) return
-    setActive(requestedSop)
-    setQ('')
-    const next = new URLSearchParams(searchParams)
-    next.delete('sop')
-    next.delete('tab')
-    setSearchParams(next, { replace: true })
-  }, [requestedSop, searchParams, setActive, setQ, setSearchParams])
-
   const visible = filterSops(sops, q)
   const { data: cur } = useQuery({ queryKey: queryKeys.memory.sop(active), queryFn: () => api.sop(active!), enabled: !!active })
 
@@ -152,7 +190,7 @@ function SopList() {
           {visible.map((s) => (
             <li key={s.name}>
               <button
-                onClick={() => setActive(s.name)}
+                onClick={() => selectSop(s.name)}
                 className={`w-full text-left px-3 py-2 text-sm border-b border-line/50 ${active === s.name ? 'bg-accent-soft text-accent' : 'text-slate-300 hover:bg-white/5'}`}
               >
                 <div className="truncate">{s.name}</div>
@@ -174,6 +212,7 @@ function SopList() {
             label={`memory/${active}`}
             snapshot={cur}
             onSave={(body) => api.setSop(active, body)}
+            onDirtyChange={onDirtyChange}
             onReload={async () => {
               const latest = await api.sop(active)
               qc.setQueryData(queryKeys.memory.sop(active), latest)
