@@ -130,7 +130,7 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     await choose('项目目录', 'Demo project')
     await act(async () => create.click())
     await wait(() => {
-      expect(host.querySelector('header')?.textContent).toContain(session.workspace)
+      expect(host.querySelector('.ga-page-header')?.textContent).not.toContain(session.workspace)
       expect(control('模型').querySelector(':scope > .model-select-label')?.textContent).toBe('Gemini 4 Hydrogen')
       expect(control('思考等级').querySelector(':scope > .model-select-label')?.textContent).toBe('思考：高')
     })
@@ -138,7 +138,11 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     const header = host.querySelector('.ga-page-header')!
     expect(header.contains(control('模型'))).toBe(true)
     expect(header.contains(control('思考等级'))).toBe(true)
+    expect(header.contains(control('文件传递箱'))).toBe(false)
     const transcript = host.querySelector('[data-anti-chat-scroll]')!
+    expect(transcript.parentElement?.contains(control('文件传递箱'))).toBe(true)
+    expect(transcript.contains(control('文件传递箱'))).toBe(false)
+    expect(control('发送').previousElementSibling?.textContent).toBe('Plan')
     expect(transcript.classList.contains('pr-[76px]')).toBe(true)
     expect(transcript.classList.contains('overflow-y-auto')).toBe(true)
     expect(transcript.contains(host.querySelector('[data-file-composer]'))).toBe(false)
@@ -195,7 +199,7 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     expect(confirm.textContent).toBe('确认')
     await act(async () => confirm.click())
     await wait(() => {
-      expect(host.querySelector('header')?.textContent).toContain(other.workspace)
+      expect(host.querySelector('[aria-current="page"]')?.textContent).toContain(other.title)
       expect(host.textContent).not.toContain('Renamed')
     })
   } finally {

@@ -33,7 +33,7 @@ import {
   rewindTurnCountFromAssistant,
   type SlashCommand,
 } from '@/components/slashCommands'
-import { FileTransferBox } from '@/components/FileTransferBox'
+import type { TransferredFile } from '@/components/FileTransferBox'
 import { PageShell } from '@/components/PageShell'
 import { dialog } from '@/stores/dialogStore'
 import { noticeKeys, useChatStore } from '@/stores/chatStore'
@@ -729,6 +729,19 @@ export default function LiveChat() {
     void handleRewind(streamId)
   }
 
+  const insertTransferredFile = (file: TransferredFile) => {
+    const drafts = useDraftStore.getState()
+    const existing = drafts.attachments[draftKey] ?? []
+    if (existing.some(item => item.path === file.path)) return
+    const extension = file.name.split('.').pop()?.toLowerCase()
+    const mime = extension && ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(extension)
+      ? `image/${extension === 'jpg' ? 'jpeg' : extension}` : 'application/octet-stream'
+    drafts.setAttachments(draftKey, [...existing, {
+      file_id: `transfer:${file.id}`, url: '',
+      path: file.path, name: file.name, size: file.size, mime, source: 'local_ref',
+    }])
+  }
+
   return (
     <FileLinkContext.Provider value={{ sessionId: session?.id, projectPath: activeProjectPath }}>
     <PageShell
@@ -795,18 +808,6 @@ export default function LiveChat() {
           title={sessionRunning ? '任务运行中，结束后可切换模型' : !session || !selectedLlmKey ? '当前没有可用模型，请先在「LLM管理」中配置模型' : '选择当前会话使用的模型'}
           aria-label="当前会话模型"
         />
-        <FileTransferBox canInsert={Boolean(session)} onInsert={(file) => {
-          const drafts = useDraftStore.getState()
-          const existing = drafts.attachments[draftKey] ?? []
-          if (existing.some(item => item.path === file.path)) return
-          const extension = file.name.split('.').pop()?.toLowerCase()
-          const mime = extension && ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(extension)
-            ? `image/${extension === 'jpg' ? 'jpeg' : extension}` : 'application/octet-stream'
-          drafts.setAttachments(draftKey, [...existing, {
-            file_id: `transfer:${file.id}`, url: '',
-            path: file.path, name: file.name, size: file.size, mime, source: 'local_ref',
-          }])
-        }} />
       </>}
     >
       <div className="flex h-full min-h-0 flex-col md:flex-row">
@@ -829,6 +830,7 @@ export default function LiveChat() {
             ref={transcriptRef}
             sessionId={session?.id ?? null}
             sessionError={sessionError}
+            fileTransfer={{ canInsert: Boolean(session), onInsert: insertTransferredFile }}
             scheduledChats={scheduledChats}
             scheduleNow={scheduleNow}
             onCancelSchedule={cancelSchedule}

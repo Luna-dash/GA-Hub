@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FileInput, Trash2, X } from 'lucide-react'
+import { FileStack, Trash2, X } from 'lucide-react'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 
 export interface TransferredFile {
@@ -38,10 +38,12 @@ async function request(method: 'GET' | 'DELETE', signal?: AbortSignal) {
   return response
 }
 
-export function FileTransferBox({ canInsert, onInsert }: {
+export interface FileTransferBoxProps {
   canInsert: boolean
   onInsert: (file: TransferredFile) => void
-}) {
+}
+
+export function FileTransferBox({ canInsert, onInsert }: FileTransferBoxProps) {
   const [open, setOpen] = useState(false)
   const [confirmClear, setConfirmClear] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
@@ -59,13 +61,15 @@ export function FileTransferBox({ canInsert, onInsert }: {
   const close = () => { setOpen(false); setConfirmClear(false); trigger.current?.focus() }
   useEffect(() => { if (open) panel.current?.focus() }, [open])
 
-  return <div className="relative shrink-0">
+  return <div className="relative flex justify-end">
     <button ref={trigger} type="button" title="文件传递箱" aria-label="文件传递箱" aria-expanded={open}
-      className={`ga-btn-icon ${open ? 'text-accent' : 'text-ink-muted'}`}
-      onClick={() => open ? close() : setOpen(true)}><FileInput size={18} aria-hidden="true" /></button>
+      className="pointer-events-auto relative grid size-9 place-items-center rounded-full border border-line/75 bg-gradient-to-br from-bg-card to-accent-soft/70 text-ink-muted shadow-sm transition-colors before:pointer-events-none before:absolute before:inset-[3px] before:rounded-full before:border before:border-bg-card/80 hover:border-accent/65 hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent aria-expanded:border-accent aria-expanded:from-accent-soft aria-expanded:to-accent-soft aria-expanded:text-ink"
+      onClick={() => open ? close() : setOpen(true)}>
+      <FileStack size={17} strokeWidth={1.65} aria-hidden="true" />
+    </button>
     {open && <section ref={panel} tabIndex={-1} role="dialog" aria-label="共享文件传递箱"
       onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); close() } }}
-      className="absolute right-0 top-full z-40 mt-2 w-[min(22rem,calc(100vw-2rem))] rounded-xl border border-line bg-bg-card p-3 text-sm text-ink shadow-lg">
+      className="pointer-events-auto absolute right-0 top-full z-40 mt-2 w-full max-w-[22rem] rounded-xl border border-line bg-bg-card p-3 text-sm text-ink shadow-lg">
       <header className="mb-2 flex items-center justify-between gap-2">
         <h2 className="font-semibold">文件传递箱</h2>
         <div className="flex items-center gap-1">

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { FileTransferBox, type TransferredFile } from '@/components/FileTransferBox'
+import type { TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
-import { Brain, FolderOpen, RotateCw } from 'lucide-react'
-import { ChatComposerFrame, chatTranscriptClass } from '@/components/ChatLayout'
+import { Brain, ClipboardList, RotateCw } from 'lucide-react'
+import { ChatComposerFrame, ChatUtilityDock, chatTranscriptClass } from '@/components/ChatLayout'
 import { ImagePasteInput } from '@/components/ImagePasteInput'
 import { AntiDaemonControl } from '@/components/AntiDaemonControl'
 import { AntiIcon } from '@/components/AntiMark'
@@ -127,15 +127,9 @@ export default function AntiChat() {
     setCreating(true)
   }
   const closeCreate = () => { if (!create.isPending) setCreating(false) }
-  const workspace = selected?.workspace
   return <PageShell title="Anti会话" wrapHeader
-    titleExtra={<span className="ga-badge"><AntiIcon className="mr-1 inline h-4 w-4" />Plan</span>}
-    actions={<><AntiDaemonControl /><div ref={setHeaderActions} className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
-      {!selected && <FileTransferBox canInsert={false} onInsert={() => {}} />}
-    </div></>}
-    middleArea={workspace && <div title={workspace} className="flex min-w-0 items-center gap-2 text-xs text-ink-muted">
-      <FolderOpen size={15} className="shrink-0" aria-hidden="true" /><span className="truncate">{workspace}</span>
-    </div>}>
+    titleExtra={<AntiDaemonControl />}
+    actions={<div ref={setHeaderActions} className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2" />}>
     <div className="flex h-full min-h-0 min-w-0 flex-col md:flex-row">
       <SessionRail storageScope="anti" projects={projects.data?.items} sessions={railSessions}
         runtimes={railRuntimes} currentId={selected?.id ?? null} onSelect={setSid} onCreate={openCreate}
@@ -145,10 +139,12 @@ export default function AntiChat() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Errors items={[sessions.error, rename.error, remove.error]} />
         {selected ? <Conversation key={selected.id} session={selected} headerActions={headerActions} /> :
-          <div className="m-auto flex max-w-sm flex-col items-center gap-3 px-5 text-center text-sm text-ink-muted">
-            <AntiIcon className="h-11 w-11 text-accent" />
-            <p>{sessions.isPending ? '正在加载 Anti 会话…' : '点击「新建会话」，选择该会话的项目。'}</p>
-            <p>以 Plan 模式运行。</p>
+          <div className="relative flex flex-1">
+            <ChatUtilityDock fileTransfer={{ canInsert: false, onInsert: () => {} }} />
+            <div className="m-auto flex max-w-sm flex-col items-center gap-3 px-5 text-center text-sm text-ink-muted">
+              <AntiIcon className="h-11 w-11 text-accent" />
+              <p>{sessions.isPending ? '正在加载 Anti 会话…' : '点击「新建会话」，选择该会话的项目。'}</p>
+            </div>
           </div>}
       </div>
     </div>
@@ -257,46 +253,50 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
         renderMark={() => <span className="model-select-mark"><Brain size={16} aria-hidden="true" /></span>}
         disabled={Boolean(current || pending)} />
       {models.error && <button type="button" className="ga-btn-icon" title="重试加载模型" aria-label="重试加载模型" onClick={() => void models.refetch()}><RotateCw size={16} aria-hidden="true" /></button>}
-      <FileTransferBox canInsert={!current && !pending && !send.isPending && references.length < 8}
-        onInsert={file => setReferences(old => old.some(item => item.path === file.path) ? old : [...old, file])} />
     </>, headerActions)}
-    <div ref={transcript} onScroll={event => {
-      const el = event.currentTarget
-      followTranscript.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-    }} className={chatTranscriptClass} data-anti-chat-scroll>
-      {!history.data?.length && !history.error && <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-ink-muted">
-        <AntiIcon className="h-11 w-11 text-accent" />
-        {history.isPending ? '正在加载会话…' : '想让 Anti 为这个项目做什么？'}
-      </div>}
-      <div className="space-y-5">
-        {history.data?.map(run => <article className="space-y-3" key={run.id}>
-          <div className="ml-auto w-fit max-w-[88%] rounded-2xl rounded-tr-md border border-line/60 bg-bg-card px-4 py-2.5 text-sm text-ink">
-            <MessageContent format="text" content={run.prompt} />
-          </div>
-          <div className="flex min-w-0 items-start gap-2">
-            <AntiIcon className="mt-1 h-6 w-6 shrink-0 text-accent" />
-            <div className="group/anti-reply min-w-0 space-y-2 rounded-2xl rounded-tl-md border border-line/60 bg-bg-card px-3 py-2.5 text-sm text-ink">
-              {run.status !== 'success' && <p role="status" className="text-xs text-ink-muted">
-                {run.status}{run.error ? ` · ${run.error}` : ''}
-                {run.error_detail && <span className="mt-1 block text-sm text-ink">{run.error_detail}</span>}
-              </p>}
-              <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, engine: 'anti' }}>
-                <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
-                  <AntiTaskProgress active={active(run)} loadEvents={signal => request<AntiEvent[]>(`${path}/${run.id}/events`, signal)}
-                    runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}>
-                    {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
-                  </AntiTaskProgress>
-                  {run.status === 'success' && run.answer?.trim() && (
-                    <div className="pointer-events-none flex flex-wrap justify-end gap-2 opacity-0 transition-opacity group-hover/anti-reply:pointer-events-auto group-hover/anti-reply:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-                      <ReplyActions text={run.answer} engine="anti" project={project} canSave />
-                    </div>
-                  )}
-                </FileTransferConclusion.Provider>
-              </FileLinkContext.Provider>
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <ChatUtilityDock fileTransfer={{
+        canInsert: !current && !pending && !send.isPending && references.length < 8,
+        onInsert: file => setReferences(old => old.some(item => item.path === file.path) ? old : [...old, file]),
+      }} />
+      <div ref={transcript} onScroll={event => {
+        const el = event.currentTarget
+        followTranscript.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+      }} className={chatTranscriptClass} data-anti-chat-scroll>
+        {!history.data?.length && !history.error && <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-ink-muted">
+          <AntiIcon className="h-11 w-11 text-accent" />
+          {history.isPending ? '正在加载会话…' : '想让 Anti 为这个项目做什么？'}
+        </div>}
+        <div className="space-y-5">
+          {history.data?.map(run => <article className="space-y-3" key={run.id}>
+            <div className="ml-auto w-fit max-w-[88%] rounded-2xl rounded-tr-md border border-line/60 bg-bg-card px-4 py-2.5 text-sm text-ink">
+              <MessageContent format="text" content={run.prompt} />
             </div>
-          </div>
-        </article>)}
-        <Errors items={[history.error, live.error, send.error, cancel.error]} />
+            <div className="flex min-w-0 items-start gap-2">
+              <AntiIcon className="mt-1 h-6 w-6 shrink-0 text-accent" />
+              <div className="group/anti-reply min-w-0 space-y-2 rounded-2xl rounded-tl-md border border-line/60 bg-bg-card px-3 py-2.5 text-sm text-ink">
+                {run.status !== 'success' && <p role="status" className="text-xs text-ink-muted">
+                  {run.status}{run.error ? ` · ${run.error}` : ''}
+                  {run.error_detail && <span className="mt-1 block text-sm text-ink">{run.error_detail}</span>}
+                </p>}
+                <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, engine: 'anti' }}>
+                  <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
+                    <AntiTaskProgress active={active(run)} loadEvents={signal => request<AntiEvent[]>(`${path}/${run.id}/events`, signal)}
+                      runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}>
+                      {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
+                    </AntiTaskProgress>
+                    {run.status === 'success' && run.answer?.trim() && (
+                      <div className="pointer-events-none flex flex-wrap justify-end gap-2 opacity-0 transition-opacity group-hover/anti-reply:pointer-events-auto group-hover/anti-reply:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+                        <ReplyActions text={run.answer} engine="anti" project={project} canSave />
+                      </div>
+                    )}
+                  </FileTransferConclusion.Provider>
+                </FileLinkContext.Provider>
+              </div>
+            </div>
+          </article>)}
+          <Errors items={[history.error, live.error, send.error, cancel.error]} />
+        </div>
       </div>
     </div>
     <ChatComposerFrame>
@@ -319,6 +319,9 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
         maxLength={24000}
         onSubmit={submit}
         submitDisabled={Boolean(current) || send.isPending || !history.isSuccess}
+        submitAccessory={<span title="Plan · 只读规划" className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-bg-soft px-2 text-xs font-medium text-ink-muted">
+          <ClipboardList size={14} aria-hidden="true" />Plan
+        </span>}
         submitLabel={pending && send.isError ? '查询或重试同一请求' : '发送'}
         stopActive={Boolean(current)}
         stopDisabled={cancel.isPending}

@@ -1,4 +1,5 @@
-import { chatTranscriptClass } from './ChatLayout'
+import { ChatUtilityDock, chatTranscriptClass } from './ChatLayout'
+import type { FileTransferBoxProps } from './FileTransferBox'
 import {
   forwardRef,
   useCallback,
@@ -43,6 +44,7 @@ export interface LiveChatTranscriptHandle {
 interface LiveChatTranscriptProps {
   sessionId: string | null
   sessionError: string
+  fileTransfer?: FileTransferBoxProps
   scheduledChats: readonly ScheduledChat[]
   scheduleNow: number
   onCancelSchedule: (task: ScheduledChat) => void
@@ -57,6 +59,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
   function LiveChatTranscript({
     sessionId,
     sessionError,
+    fileTransfer,
     scheduledChats,
     scheduleNow,
     onCancelSchedule,
@@ -599,80 +602,82 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         </div>
 
         <ConversationCollapseControl />
-        {(scheduledChats.length > 0 || turnCount > 0) && (
-          <aside
-            ref={utilityRailRef}
-            className="absolute inset-y-3 right-2 z-10 flex w-14 flex-col gap-2"
-            aria-label="对话功能区"
-            onPointerDown={(event) => focusChatScrollFromUtilityRail(event, scrollRef.current)}
-          >
-            {scheduledChats.length > 0 && (
-              <div data-chat-wheel-independent className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5" aria-label="待发送定时消息">
-                {scheduledChats.map((task) => (
-                  <button
-                    key={task.id}
-                    type="button"
-                    onClick={() => onCancelSchedule(task)}
-                    onMouseEnter={(event) => {
-                      const rect = event.currentTarget.getBoundingClientRect()
-                      setHoveredSchedule({ task, top: rect.top, right: window.innerWidth - rect.left + 10 })
-                    }}
-                    onMouseLeave={() => setHoveredSchedule(null)}
-                    onFocus={(event) => {
-                      const rect = event.currentTarget.getBoundingClientRect()
-                      setHoveredSchedule({ task, top: rect.top, right: window.innerWidth - rect.left + 10 })
-                    }}
-                    onBlur={() => setHoveredSchedule(null)}
-                    className="group relative flex aspect-square w-full shrink-0 items-center justify-center overflow-hidden rounded-lg p-[2px] text-center text-xs font-semibold leading-tight text-accent shadow-sm transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-                    title="点击取消定时发送"
-                    aria-label={`${formatCompactScheduleCountdown(task.scheduled_for, scheduleNow)}后发送；悬停查看消息；点击取消`}
-                  >
-                    <span
-                      data-schedule-flow-border
-                      aria-hidden="true"
-                      className="absolute -inset-5 animate-spin bg-[conic-gradient(from_0deg,transparent_0deg,transparent_205deg,#60a5fa_245deg,#a78bfa_285deg,#f472b6_325deg,transparent_360deg)] motion-reduce:animate-none"
-                      style={{ animationDuration: '3s' }}
-                    />
-                    <span className="relative flex h-full w-full items-center justify-center rounded-[6px] bg-bg-card/95 px-1 backdrop-blur transition-colors group-hover:bg-bg-soft">
-                      {formatCompactScheduleCountdown(task.scheduled_for, scheduleNow)}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
+        <ChatUtilityDock fileTransfer={fileTransfer}>
+          {(scheduledChats.length > 0 || turnCount > 0) && (
+            <aside
+              ref={utilityRailRef}
+              className="pointer-events-auto flex min-h-0 w-14 flex-1 flex-col gap-2"
+              aria-label="对话功能区"
+              onPointerDown={(event) => focusChatScrollFromUtilityRail(event, scrollRef.current)}
+            >
+              {scheduledChats.length > 0 && (
+                <div data-chat-wheel-independent className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5" aria-label="待发送定时消息">
+                  {scheduledChats.map((task) => (
+                    <button
+                      key={task.id}
+                      type="button"
+                      onClick={() => onCancelSchedule(task)}
+                      onMouseEnter={(event) => {
+                        const rect = event.currentTarget.getBoundingClientRect()
+                        setHoveredSchedule({ task, top: rect.top, right: window.innerWidth - rect.left + 10 })
+                      }}
+                      onMouseLeave={() => setHoveredSchedule(null)}
+                      onFocus={(event) => {
+                        const rect = event.currentTarget.getBoundingClientRect()
+                        setHoveredSchedule({ task, top: rect.top, right: window.innerWidth - rect.left + 10 })
+                      }}
+                      onBlur={() => setHoveredSchedule(null)}
+                      className="group relative flex aspect-square w-full shrink-0 items-center justify-center overflow-hidden rounded-lg p-[2px] text-center text-xs font-semibold leading-tight text-accent shadow-sm transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                      title="点击取消定时发送"
+                      aria-label={`${formatCompactScheduleCountdown(task.scheduled_for, scheduleNow)}后发送；悬停查看消息；点击取消`}
+                    >
+                      <span
+                        data-schedule-flow-border
+                        aria-hidden="true"
+                        className="absolute -inset-5 animate-spin bg-[conic-gradient(from_0deg,transparent_0deg,transparent_205deg,#60a5fa_245deg,#a78bfa_285deg,#f472b6_325deg,transparent_360deg)] motion-reduce:animate-none"
+                        style={{ animationDuration: '3s' }}
+                      />
+                      <span className="relative flex h-full w-full items-center justify-center rounded-[6px] bg-bg-card/95 px-1 backdrop-blur transition-colors group-hover:bg-bg-soft">
+                        {formatCompactScheduleCountdown(task.scheduled_for, scheduleNow)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
-            {/* 底部导航组：仅在离开底部时渲染，保证 上节/下节 在可见期间
-                屏幕位置恒定（底部按钮置于其上方，不随 stuckBottom 翻转挤动），
-                到达最底后整组隐藏，避免角落误触。 */}
-            {turnCount > 0 && !stuckBottom && (
-              <div className="mt-auto flex shrink-0 flex-col gap-1.5 text-xs text-ink">
-                <button
-                  onClick={jumpToBottom}
-                  className="min-h-9 rounded-lg border border-line bg-bg-soft/95 px-1 py-1 leading-tight shadow-md backdrop-blur hover:bg-bg-card"
-                  title={unread > 0 ? `${unread} 条新消息，跳到最新` : '跳到最新消息'}
-                >
-                  ↓ {unread > 0 ? unread : '底部'}
-                </button>
-                <button
-                  onClick={() => jumpToTurn(-1)}
-                  disabled={activeTurn <= 0}
-                  className="h-9 rounded-lg border border-line bg-bg-soft/95 px-1 shadow-md backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
-                  title="定位到上一轮问答"
-                >
-                  ↑ 上节
-                </button>
-                <button
-                  onClick={() => jumpToTurn(1)}
-                  disabled={activeTurn < 0 || activeTurn >= turnCount - 1}
-                  className="h-9 rounded-lg border border-line bg-bg-soft/95 px-1 shadow-md backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
-                  title="定位到下一轮问答"
-                >
-                  ↓ 下节
-                </button>
-              </div>
-            )}
-          </aside>
-        )}
+              {/* 底部导航组：仅在离开底部时渲染，保证 上节/下节 在可见期间
+                  屏幕位置恒定（底部按钮置于其上方，不随 stuckBottom 翻转挤动），
+                  到达最底后整组隐藏，避免角落误触。 */}
+              {turnCount > 0 && !stuckBottom && (
+                <div className="mt-auto flex shrink-0 flex-col gap-1.5 text-xs text-ink">
+                  <button
+                    onClick={jumpToBottom}
+                    className="min-h-9 rounded-lg border border-line bg-bg-soft/95 px-1 py-1 leading-tight shadow-md backdrop-blur hover:bg-bg-card"
+                    title={unread > 0 ? `${unread} 条新消息，跳到最新` : '跳到最新消息'}
+                  >
+                    ↓ {unread > 0 ? unread : '底部'}
+                  </button>
+                  <button
+                    onClick={() => jumpToTurn(-1)}
+                    disabled={activeTurn <= 0}
+                    className="h-9 rounded-lg border border-line bg-bg-soft/95 px-1 shadow-md backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
+                    title="定位到上一轮问答"
+                  >
+                    ↑ 上节
+                  </button>
+                  <button
+                    onClick={() => jumpToTurn(1)}
+                    disabled={activeTurn < 0 || activeTurn >= turnCount - 1}
+                    className="h-9 rounded-lg border border-line bg-bg-soft/95 px-1 shadow-md backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
+                    title="定位到下一轮问答"
+                  >
+                    ↓ 下节
+                  </button>
+                </div>
+              )}
+            </aside>
+          )}
+        </ChatUtilityDock>
 
         {hoveredSchedule && scheduledChats.some((task) => task.id === hoveredSchedule.task.id) && (
           <div

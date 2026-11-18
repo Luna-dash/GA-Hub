@@ -5,7 +5,7 @@
 // text input separately. Pressing Enter (without Shift, while not composing)
 // triggers onSubmit.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { LoaderCircle, RotateCw, X } from 'lucide-react'
 import { api } from '@/api/client'
@@ -33,6 +33,7 @@ interface Props {
   stopActive?: boolean
   stopDisabled?: boolean
   submitLabel?: string
+  submitAccessory?: ReactNode
   /** Session runtime used by /btw. Omit on non-session chat surfaces. */
   btwSessionId?: string
   onSlashCommand?: (command: Exclude<SlashCommand['name'], '/btw'>) => void
@@ -59,7 +60,7 @@ interface PendingUpload {
 }
 
 export function ImagePasteInput({
-  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, stopDisabled, submitLabel, btwSessionId, onSlashCommand,
+  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, stopDisabled, submitLabel, submitAccessory, btwSessionId, onSlashCommand,
   placeholder = '输入消息，可粘贴/拖放图片或文件…',
   inputLabel, readOnly, maxLength, disabled, submitDisabled, scheduleDisabled = submitDisabled, acceptFiles = true, autoFocus = true,
 }: Props) {
@@ -543,6 +544,7 @@ export function ImagePasteInput({
             aria-label="设置定时发送"
           >定时</button>
         )}
+        {submitAccessory}
         <button
           type="button"
           onClick={stopActive ? onStop : submit}

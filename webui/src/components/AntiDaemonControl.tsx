@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CircleAlert, CircleCheck, LoaderCircle, Power } from 'lucide-react'
+import { CircleAlert, LoaderCircle, Power, Radio, ShieldCheck, ShieldMinus, ShieldX } from 'lucide-react'
 import clsx from 'clsx'
 import type { components } from '@/api/generated/schema'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
@@ -42,32 +42,41 @@ export function AntiDaemonControl() {
     : state === 'unavailable' ? 'Anti 网关不可用' : '正在检查 Anti'
   const auth = running && status.data?.agy_available ? status.data.auth_state ?? 'unverified' : null
   const authLabel = auth === 'authenticated' ? 'agy 已验证登录' : auth === 'login_required' ? 'agy 需要登录'
-    : auth === 'checking' ? '正在验证 agy 登录' : auth === 'unverified' ? '无法验证 agy 登录' : null
+    : auth === 'checking' ? '正在验证 agy 登录' : auth === 'unverified' ? '无法验证 agy 登录' : 'agy 登录状态未知'
   const detail = (canStart ? start.error?.message : undefined) ?? status.error?.message ?? status.data?.detail
-  const Icon = busy || !state ? LoaderCircle : running ? CircleCheck : canStart ? Power : CircleAlert
-  const title = [label, authLabel, detail].filter(Boolean).join(' · ')
+  const loading = busy || !state
+  const GatewayIcon = loading ? LoaderCircle : running ? Radio : canStart ? Power : CircleAlert
+  const AuthIcon = auth === 'checking' ? LoaderCircle : auth === 'authenticated' ? ShieldCheck
+    : auth === 'login_required' ? ShieldX : ShieldMinus
+  const gatewayTitle = [label, detail].filter(Boolean).join(' · ')
 
   return (
-    <div className="flex min-w-0 items-center gap-2">
-      <button
-        type="button"
-        className={clsx('flex h-[35px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-line px-2.5 text-xs font-medium',
-          canStart ? 'bg-bg-card text-ink hover:bg-bg-soft' : 'text-ink-muted')}
-        title={title}
-        aria-label={label}
-        disabled={!canStart}
-        onClick={() => start.mutate()}
-      >
-        <Icon size={14} aria-hidden="true" className={clsx((busy || !state) && 'animate-spin')} />
-        {label}
-      </button>
-      <div role="status" title={title} className="sr-only">
-        {authLabel ?? label}{detail && `：${detail}`}
-      </div>
-      {authLabel && <span title={`${title}（登录验证不代表模型推理可用）`}
-        className={clsx('hidden shrink-0 whitespace-nowrap text-xs xl:inline', auth === 'authenticated' ? 'text-status-success' : 'text-ink-muted')}>
-        {authLabel}
-      </span>}
+    <div className="flex shrink-0 items-center gap-1" aria-label="Anti 状态" role="group">
+      <span className="inline-flex" title={gatewayTitle}>
+        <button
+          type="button"
+          className={clsx('inline-flex size-8 items-center justify-center rounded-lg border',
+            running ? 'border-status-success-line bg-status-success-soft text-status-success'
+              : 'border-line bg-bg-card text-ink-muted',
+            canStart && 'hover:border-accent/40 hover:bg-bg-soft hover:text-accent focus-visible:outline focus-visible:outline-accent')}
+          aria-label={label}
+          disabled={!canStart}
+          onClick={() => start.mutate()}
+        >
+          <GatewayIcon size={16} aria-hidden="true" className={clsx(loading && 'motion-safe:animate-spin')} />
+        </button>
+      </span>
+      <span title={auth === 'authenticated' ? `${authLabel}（登录验证不代表模型推理可用）` : authLabel}
+        role="img" aria-label={authLabel}
+        className={clsx('inline-flex size-8 items-center justify-center rounded-lg border',
+          auth === 'authenticated' ? 'border-status-success-line bg-status-success-soft text-status-success'
+            : auth === 'login_required' ? 'border-status-warning-line bg-status-warning-soft text-status-warning'
+              : 'border-line bg-bg-card text-ink-muted')}>
+        <AuthIcon size={16} aria-hidden="true" className={clsx(auth === 'checking' && 'motion-safe:animate-spin')} />
+      </span>
+      <span role="status" className="sr-only">
+        {running ? authLabel : label}{detail && `：${detail}`}
+      </span>
     </div>
   )
 }
