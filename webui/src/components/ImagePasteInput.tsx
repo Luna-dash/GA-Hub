@@ -31,10 +31,15 @@ interface Props {
   onSchedule?: () => void
   onStop?: () => void
   stopActive?: boolean
+  stopDisabled?: boolean
+  submitLabel?: string
   /** Session runtime used by /btw. Omit on non-session chat surfaces. */
   btwSessionId?: string
   onSlashCommand?: (command: Exclude<SlashCommand['name'], '/btw'>) => void
   placeholder?: string
+  inputLabel?: string
+  readOnly?: boolean
+  maxLength?: number
   disabled?: boolean
   submitDisabled?: boolean
   /** Defaults to submitDisabled unless the caller permits scheduling while busy. */
@@ -54,9 +59,9 @@ interface PendingUpload {
 }
 
 export function ImagePasteInput({
-  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, btwSessionId, onSlashCommand,
+  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, stopDisabled, submitLabel, btwSessionId, onSlashCommand,
   placeholder = '输入消息，可粘贴/拖放图片或文件…',
-  disabled, submitDisabled, scheduleDisabled = submitDisabled, acceptFiles = true, autoFocus = true,
+  inputLabel, readOnly, maxLength, disabled, submitDisabled, scheduleDisabled = submitDisabled, acceptFiles = true, autoFocus = true,
 }: Props) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   // IME guard: a state mirror keeps render in sync, but the source of truth
@@ -460,6 +465,9 @@ export function ImagePasteInput({
           ref={taRef}
           value={text}
           disabled={disabled}
+          readOnly={readOnly}
+          maxLength={maxLength}
+          aria-label={inputLabel}
           rows={1}
           placeholder={placeholder}
           onChange={(e) => onText(e.target.value)}
@@ -538,11 +546,12 @@ export function ImagePasteInput({
         <button
           type="button"
           onClick={stopActive ? onStop : submit}
-          disabled={disabled || (!stopActive && (submitDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)))}
+          disabled={disabled || (stopActive ? stopDisabled : submitDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0))}
           className={stopActive
             ? 'h-10 px-4 rounded-xl bg-status-danger text-white text-sm font-medium hover:bg-status-danger-strong disabled:opacity-40 disabled:shadow-none transition flex items-center justify-center'
             : 'h-10 px-4 rounded-xl bg-accent text-white text-sm font-medium hover:brightness-110 disabled:opacity-40 disabled:shadow-none transition flex items-center justify-center'}
-          title={stopActive ? '停止当前会话任务' : attachmentHint ?? '发送消息'}
+          aria-label={stopActive ? '停止' : submitLabel}
+          title={stopActive ? '停止当前会话任务' : attachmentHint ?? submitLabel ?? '发送消息'}
         >{stopActive ? '停止' : '发送'}</button>
       </div>
 

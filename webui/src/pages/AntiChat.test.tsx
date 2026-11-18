@@ -134,6 +134,14 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
       expect(control('思考等级').querySelector(':scope > .model-select-label')?.textContent).toBe('思考：高')
     })
     await wait(() => expect(cache.getQueryState(['anti-models'])?.status).toBe('success'))
+    const header = host.querySelector('.ga-page-header')!
+    expect(header.contains(control('模型'))).toBe(true)
+    expect(header.contains(control('思考等级'))).toBe(true)
+    const transcript = host.querySelector('[data-anti-chat-scroll]')!
+    expect(transcript.classList.contains('pr-[76px]')).toBe(true)
+    expect(transcript.classList.contains('overflow-y-auto')).toBe(true)
+    expect(transcript.contains(host.querySelector('[data-file-composer]'))).toBe(false)
+    expect(host.querySelector('[data-file-composer] textarea')?.getAttribute('aria-label')).toBe('发给 Anti')
     await choose('模型', 'Alternate')
     expect(control('思考等级').textContent).toContain('思考：低')
     await choose('思考等级', '中')

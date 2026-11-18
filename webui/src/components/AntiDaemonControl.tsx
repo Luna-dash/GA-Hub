@@ -45,13 +45,13 @@ export function AntiDaemonControl() {
     : auth === 'checking' ? '正在验证 agy 登录' : auth === 'unverified' ? '无法验证 agy 登录' : null
   const detail = (canStart ? start.error?.message : undefined) ?? status.error?.message ?? status.data?.detail
   const Icon = busy || !state ? LoaderCircle : running ? CircleCheck : canStart ? Power : CircleAlert
-  const title = detail ? `${label}：${detail}` : label
+  const title = [label, authLabel, detail].filter(Boolean).join(' · ')
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className="flex min-w-0 items-center gap-2">
       <button
         type="button"
-        className={clsx('flex min-h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-line px-2.5 text-xs font-medium',
+        className={clsx('flex h-[35px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-line px-2.5 text-xs font-medium',
           canStart ? 'bg-bg-card text-ink hover:bg-bg-soft' : 'text-ink-muted')}
         title={title}
         aria-label={label}
@@ -61,12 +61,13 @@ export function AntiDaemonControl() {
         <Icon size={14} aria-hidden="true" className={clsx((busy || !state) && 'animate-spin')} />
         {label}
       </button>
-      <div role="status" className={clsx(detail || authLabel ? 'max-w-[min(16rem,50vw)] text-right text-xs text-ink-muted [overflow-wrap:anywhere]' : 'sr-only')}>
-        {authLabel && <div className={clsx(auth === 'authenticated' && 'text-status-success')} title="登录验证不代表模型推理可用">
-          {authLabel}
-        </div>}
-        {detail ?? (!authLabel && label)}
+      <div role="status" title={title} className="sr-only">
+        {authLabel ?? label}{detail && `：${detail}`}
       </div>
+      {authLabel && <span title={`${title}（登录验证不代表模型推理可用）`}
+        className={clsx('hidden shrink-0 whitespace-nowrap text-xs xl:inline', auth === 'authenticated' ? 'text-status-success' : 'text-ink-muted')}>
+        {authLabel}
+      </span>}
     </div>
   )
 }

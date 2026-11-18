@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { FileTransferBox, type TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUp, Brain, FolderOpen, Square } from 'lucide-react'
+import { Brain, FolderOpen, RotateCw } from 'lucide-react'
+import { ChatComposerFrame, chatTranscriptClass } from '@/components/ChatLayout'
+import { ImagePasteInput } from '@/components/ImagePasteInput'
 import { AntiDaemonControl } from '@/components/AntiDaemonControl'
 import { AntiIcon } from '@/components/AntiMark'
 import { MessageContent } from '@/components/MessageContent'
@@ -73,12 +75,14 @@ async function request<T>(path: string, signal?: AbortSignal, body?: object, met
   return res.json()
 }
 
+const EMPTY_ATTACHMENTS: [] = []
+
 export default function AntiChat() {
   const cache = useQueryClient()
   const [project, setProject] = useState<string | null>(null)
   const [sid, setSid] = usePageState('antiChat.currentSession', '')
   const [creating, setCreating] = useState(false)
-  const [transferAnchor, setTransferAnchor] = useState<HTMLDivElement | null>(null)
+  const [headerActions, setHeaderActions] = useState<HTMLDivElement | null>(null)
   const projects = useQuery({ queryKey: ['anti-projects'], queryFn: api.projects })
   const sessions = useQuery({ queryKey: sessionsKey, queryFn: ({ signal }) => request<Session[]>(base, signal), refetchInterval: 5000 })
   const updateList = async (update: (rows: Session[]) => Session[]) => {
@@ -124,9 +128,9 @@ export default function AntiChat() {
   }
   const closeCreate = () => { if (!create.isPending) setCreating(false) }
   const workspace = selected?.workspace
-  return <PageShell title="Anti 聊天" layout="workspace"
+  return <PageShell title="Anti 聊天" wrapHeader
     titleExtra={<span className="ga-badge"><AntiIcon className="mr-1 inline h-4 w-4" />Plan</span>}
-    actions={<><AntiDaemonControl /><div ref={setTransferAnchor}>
+    actions={<><AntiDaemonControl /><div ref={setHeaderActions} className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
       {!selected && <FileTransferBox canInsert={false} onInsert={() => {}} />}
     </div></>}
     middleArea={workspace && <div title={workspace} className="flex min-w-0 items-center gap-2 text-xs text-ink-muted">
@@ -140,7 +144,7 @@ export default function AntiChat() {
         deleteDetail="将删除 Hub 中的 Anti 会话及其消息记录，不会删除项目文件或已保存的产物。" />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Errors items={[sessions.error, rename.error, remove.error]} />
-        {selected ? <Conversation key={selected.id} session={selected} transferAnchor={transferAnchor} /> :
+        {selected ? <Conversation key={selected.id} session={selected} headerActions={headerActions} /> :
           <div className="m-auto flex max-w-sm flex-col items-center gap-3 px-5 text-center text-sm text-ink-muted">
             <AntiIcon className="h-11 w-11 text-accent" />
             <p>{sessions.isPending ? '正在加载 Anti 会话…' : '点击「新建会话」，选择该会话的项目。'}</p>
@@ -169,7 +173,7 @@ export default function AntiChat() {
   </PageShell>
 }
 
-function Conversation({ session, transferAnchor }: { session: Session; transferAnchor: HTMLDivElement | null }) {
+function Conversation({ session, headerActions }: { session: Session; headerActions: HTMLDivElement | null }) {
   const { id: sid, project, workspace } = session
   const cache = useQueryClient()
   const [prompt, setPrompt] = useState('')
@@ -236,14 +240,31 @@ function Conversation({ session, transferAnchor }: { session: Session; transferA
   useEffect(() => {
     if (transcript.current && followTranscript.current) transcript.current.scrollTop = transcript.current.scrollHeight
   }, [history.data, live.data])
+  const submit = () => {
+    if (current || send.isPending || !history.isSuccess || !prompt.trim()) return
+    const body = pending ?? { prompt: prompt.trim(), model, effort,
+      ...(references.length ? { references: references.map(({ id, path }) => ({ id, path })) } : {}),
+      operation: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}` }
+    followTranscript.current = true
+    setPending(body)
+    send.mutate(body)
+  }
   return <>
-    {transferAnchor && createPortal(<FileTransferBox canInsert={!current && !pending && !send.isPending && references.length < 8}
-      onInsert={file => setReferences(old => old.some(item => item.path === file.path) ? old : [...old, file])} />,
-      transferAnchor)}
+    {headerActions && createPortal(<>
+      <MainModelSelect aria-label="模型" className="min-w-0 max-w-[min(400px,24vw)]" title={models.error ? '暂时无法读取模型列表，可继续使用默认模型' : '模型'}
+        llms={families} value={family?.key} onChange={setFamilyKey} disabled={Boolean(current || pending) || models.isPending} />
+      <ThemedSelect aria-label="思考等级" options={effortOptions} value={effort} onChange={setEffort}
+        displayName={option => `思考：${option.name}`} placeholder="思考：高"
+        renderMark={() => <span className="model-select-mark"><Brain size={16} aria-hidden="true" /></span>}
+        disabled={Boolean(current || pending)} />
+      {models.error && <button type="button" className="ga-btn-icon" title="重试加载模型" aria-label="重试加载模型" onClick={() => void models.refetch()}><RotateCw size={16} aria-hidden="true" /></button>}
+      <FileTransferBox canInsert={!current && !pending && !send.isPending && references.length < 8}
+        onInsert={file => setReferences(old => old.some(item => item.path === file.path) ? old : [...old, file])} />
+    </>, headerActions)}
     <div ref={transcript} onScroll={event => {
       const el = event.currentTarget
       followTranscript.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-    }} className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-6">
+    }} className={chatTranscriptClass} data-anti-chat-scroll>
       {!history.data?.length && !history.error && <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-ink-muted">
         <AntiIcon className="h-11 w-11 text-accent" />
         {history.isPending ? '正在加载会话…' : '想让 Anti 为这个项目做什么？'}
@@ -276,45 +297,31 @@ function Conversation({ session, transferAnchor }: { session: Session; transferA
         <Errors items={[history.error, live.error, send.error, cancel.error]} />
       </div>
     </div>
-    <div className="shrink-0 border-t border-line/40 px-3 py-2.5">
-      <form className="w-full rounded-xl border border-line/60 bg-bg-card shadow-sm" onSubmit={event => {
-        event.preventDefault()
-        if (current || send.isPending || !history.isSuccess || !prompt.trim()) return
-        const body = pending ?? { prompt: prompt.trim(), model, effort,
-          ...(references.length ? { references: references.map(({ id, path }) => ({ id, path })) } : {}),
-          operation: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}` }
-        followTranscript.current = true
-        setPending(body)
-        send.mutate(body)
-      }}>
-        {references.length > 0 && <ul aria-label="引用文件" className="flex flex-wrap gap-1 px-3 pt-2 text-xs">
-          {references.map(file => <li key={file.path} className="flex min-w-0 items-center gap-1 rounded-md bg-bg-soft px-2 py-1" title={file.path}>
-            <span className="truncate">{file.name}</span>
-            <button type="button" aria-label={`移除引用 ${file.name}`} disabled={Boolean(pending) || Boolean(current)}
-              className="text-ink-muted hover:text-accent disabled:opacity-40" onClick={() => setReferences(old => old.filter(item => item.path !== file.path))}>×</button>
-          </li>)}
-        </ul>}
-        <textarea aria-label="发给 Anti" placeholder="发给 Anti…" rows={3} value={prompt}
-          className="block w-full resize-y rounded-t-xl bg-transparent px-3 pt-3 text-sm text-ink outline-none placeholder:text-ink-muted"
-          readOnly={Boolean(pending)} onChange={event => setPrompt(event.target.value)} maxLength={24000} />
-        <div className="flex flex-wrap items-center gap-2 px-2 pb-2">
-          <MainModelSelect aria-label="模型" className="max-w-full" title={models.error ? '暂时无法读取模型列表，可继续使用默认模型' : '模型'}
-            llms={families} value={family?.key} onChange={setFamilyKey} disabled={Boolean(pending) || models.isPending} />
-          <ThemedSelect aria-label="思考等级" options={effortOptions} value={effort} onChange={setEffort}
-            displayName={option => `思考：${option.name}`} placeholder="思考：高"
-            renderMark={() => <span className="model-select-mark"><Brain size={16} aria-hidden="true" /></span>}
-            disabled={Boolean(pending)} />
-          {models.error && <button type="button" className="text-xs text-ink-muted hover:text-accent" onClick={() => void models.refetch()}>重试加载模型</button>}
-          <div className="ml-auto flex items-center gap-2">
-            {current ? <button type="button" aria-label="停止" title="停止" className="rounded-lg border border-line p-2 text-ink hover:text-accent disabled:opacity-40"
-              disabled={cancel.isPending} onClick={() => cancel.mutate(current.id)}><Square size={16} aria-hidden="true" /></button> :
-              <button type="submit" aria-label={pending && send.isError ? '查询或重试同一请求' : '发送'} title={pending && send.isError ? '查询或重试同一请求' : '发送'}
-                className="rounded-lg bg-accent p-2 text-white disabled:opacity-40" disabled={send.isPending || !history.isSuccess || !prompt.trim()}>
-                <ArrowUp size={16} aria-hidden="true" />
-              </button>}
-          </div>
-        </div>
-      </form>
-    </div>
+    <ChatComposerFrame>
+      {references.length > 0 && <ul aria-label="引用文件" className="flex flex-wrap gap-1 px-3 pt-2 text-xs">
+        {references.map(file => <li key={file.path} className="flex min-w-0 items-center gap-1 rounded-md bg-bg-soft px-2 py-1" title={file.path}>
+          <span className="truncate">{file.name}</span>
+          <button type="button" aria-label={`移除引用 ${file.name}`} disabled={Boolean(pending) || Boolean(current)}
+            className="text-ink-muted hover:text-accent disabled:opacity-40" onClick={() => setReferences(old => old.filter(item => item.path !== file.path))}>×</button>
+        </li>)}
+      </ul>}
+      <ImagePasteInput
+        text={prompt}
+        onText={setPrompt}
+        attachments={EMPTY_ATTACHMENTS}
+        onAttachments={() => {}}
+        acceptFiles={false}
+        inputLabel="发给 Anti"
+        placeholder="发给 Anti…"
+        readOnly={Boolean(pending)}
+        maxLength={24000}
+        onSubmit={submit}
+        submitDisabled={Boolean(current) || send.isPending || !history.isSuccess}
+        submitLabel={pending && send.isError ? '查询或重试同一请求' : '发送'}
+        stopActive={Boolean(current)}
+        stopDisabled={cancel.isPending}
+        onStop={() => { if (current) cancel.mutate(current.id) }}
+      />
+    </ChatComposerFrame>
   </>
 }

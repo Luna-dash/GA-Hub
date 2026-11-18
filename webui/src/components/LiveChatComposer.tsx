@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import { ImagePasteInput } from './ImagePasteInput'
+import { ChatComposerFrame } from './ChatLayout'
 import type { PasteAttachment } from '@/api/types'
 import type { SlashCommand } from './slashCommands'
 import { useDraftStore } from '@/stores/draftStore'
@@ -74,48 +75,46 @@ export function LiveChatComposer({
   )
 
   return (
-    <div className="shrink-0 border-t border-line/40 bg-transparent px-3 py-2.5">
-      <div className="w-full rounded-xl border border-line/60 bg-bg-card shadow-sm">
-        <ImagePasteInput
-          key={draftKey}
-          btwSessionId={sessionId}
-          text={text}
-          onText={setText}
-          attachments={attachments}
-          onAttachments={setAttachments}
-          onSubmit={() => onSubmit(readLiveChatDraftSnapshot(draftKey))}
-          onSchedule={onSchedule}
-          onStop={onStop}
-          stopActive={stopActive}
-          onSlashCommand={onSlashCommand
-            ? (command) => onSlashCommand(command, readLiveChatDraftSnapshot(draftKey))
-            : undefined}
-          placeholder={placeholder}
-          disabled={disabled}
-          submitDisabled={submitDisabled || submitting}
-          scheduleDisabled={(scheduleDisabled ?? submitDisabled) || submitting}
-        />
-        {pending.some((item) => item.status === 'sending') && (
-          <span role="status" className="sr-only">发送中…</span>
-        )}
-        {recovery.map((item) => (
-          <div key={item.id} role="status" className="flex items-center gap-2 px-3 pb-2 text-xs text-ink-muted">
-            <span>{item.status === 'uncertain'
-              ? '发送状态未确认，请先核对对话，避免重复发送。'
-              : '未发送内容已保留；当前草稿不会被覆盖。'}</span>
-            <button
-              type="button"
-              className="shrink-0 text-accent disabled:opacity-40"
-              disabled={disabled || text !== '' || attachments.length > 0}
-              onClick={() => {
-                if (useDraftStore.getState().restoreSubmission(item.id) && item.stageId) {
-                  useChatStore.getState().rollbackWebui(item.stageId)
-                }
-              }}
-            >恢复未发送内容</button>
-          </div>
-        ))}
-      </div>
-    </div>
+    <ChatComposerFrame>
+      <ImagePasteInput
+        key={draftKey}
+        btwSessionId={sessionId}
+        text={text}
+        onText={setText}
+        attachments={attachments}
+        onAttachments={setAttachments}
+        onSubmit={() => onSubmit(readLiveChatDraftSnapshot(draftKey))}
+        onSchedule={onSchedule}
+        onStop={onStop}
+        stopActive={stopActive}
+        onSlashCommand={onSlashCommand
+          ? (command) => onSlashCommand(command, readLiveChatDraftSnapshot(draftKey))
+          : undefined}
+        placeholder={placeholder}
+        disabled={disabled}
+        submitDisabled={submitDisabled || submitting}
+        scheduleDisabled={(scheduleDisabled ?? submitDisabled) || submitting}
+      />
+      {pending.some((item) => item.status === 'sending') && (
+        <span role="status" className="sr-only">发送中…</span>
+      )}
+      {recovery.map((item) => (
+        <div key={item.id} role="status" className="flex items-center gap-2 px-3 pb-2 text-xs text-ink-muted">
+          <span>{item.status === 'uncertain'
+            ? '发送状态未确认，请先核对对话，避免重复发送。'
+            : '未发送内容已保留；当前草稿不会被覆盖。'}</span>
+          <button
+            type="button"
+            className="shrink-0 text-accent disabled:opacity-40"
+            disabled={disabled || text !== '' || attachments.length > 0}
+            onClick={() => {
+              if (useDraftStore.getState().restoreSubmission(item.id) && item.stageId) {
+                useChatStore.getState().rollbackWebui(item.stageId)
+              }
+            }}
+          >恢复未发送内容</button>
+        </div>
+      ))}
+    </ChatComposerFrame>
   )
 }
