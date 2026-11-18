@@ -45,7 +45,7 @@ def test_manual_start_and_reuse(monkeypatch):
 
     monkeypatch.setattr(svc.AntiAdapter, 'request', probe)
     monkeypatch.setattr(svc.socket, 'create_connection', closed)
-    monkeypatch.setattr(svc.shutil, 'which', lambda name: 'fake-anticli.exe')
+    monkeypatch.setattr(svc.anti_component, 'executable', lambda: 'fake-anticli.exe')
     monkeypatch.setattr(svc.child_job, 'spawn', spawn)
     monkeypatch.setattr(svc.child_job, 'forget', freed.append)
     headers = {'X-GA-Hub-Action': 'start-anti'}
@@ -85,7 +85,7 @@ def test_windows_port_probe_allows_time_for_connection_refusal(monkeypatch):
 def test_missing_cli_and_occupied_port(monkeypatch):
     client = make_client(monkeypatch)
     monkeypatch.setattr(svc.AntiAdapter, 'request', lambda *args, **kwargs: {'status': 'ok'})
-    monkeypatch.setattr(svc.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(svc.anti_component, 'executable', lambda: None)
     headers = {'X-GA-Hub-Action': 'start-anti'}
 
     def closed(*args, **kwargs):

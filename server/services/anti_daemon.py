@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import shutil
 import socket
 import subprocess
 import sys
@@ -13,7 +12,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from ..process_utils import hidden_process_kwargs
-from . import child_job
+from . import anti_component, child_job
 from .anti_engine import AntiAdapter, AntiError, daemon_port
 
 log = logging.getLogger(__name__)
@@ -74,15 +73,15 @@ class AntiDaemon:
             status = self._status(port)
             if status.state != "stopped":
                 return status
-            executable = shutil.which("anticli")
+            executable = anti_component.executable()
             if not executable:
-                raise AntiError(503, "找不到 anticli，请先安装并将它添加到 GA Hub 的 PATH")
+                raise AntiError(503, "此版本未附带 AntiCLI，请安装 anticli 并加入 PATH")
             try:
                 self._process = child_job.spawn(
                     [executable, "serve", "--host", "127.0.0.1", "--port", str(port)],
                     kind="anticli", marker=executable,
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    **hidden_process_kwargs(),
+                    **hidden_process_kwargs(), **anti_component.child_options(executable),
                 )
             except OSError as exc:
                 log.warning("Failed to start AntiCLI", exc_info=True)

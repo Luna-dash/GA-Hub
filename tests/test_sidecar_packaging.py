@@ -24,6 +24,7 @@ def _load(name: str, relative: str):
 
 build_sidecar = _load("build_sidecar_under_test", "desktop/build_sidecar.py")
 build_all = _load("build_all_under_test_packaging", "scripts/build_all.py")
+runtime_dependencies = _load("desktop_runtime_under_test", "desktop/runtime_dependencies.py")
 
 
 class AssetFilterTests(unittest.TestCase):
@@ -126,7 +127,7 @@ class CondaRuntimeDllTests(unittest.TestCase):
 
     def test_every_critical_conda_dll_is_added_to_the_bundle(self):
         bundled = self._bundled(self._args(self.NAMES))
-        for name in build_sidecar.CRITICAL_CONDA_DLLS:
+        for name in runtime_dependencies.CRITICAL_CONDA_DLLS:
             self.assertIn(name, bundled)
         self.assertIn("libssl-3-x64.dll", bundled)
         self.assertIn("libcrypto-3-x64.dll", bundled)

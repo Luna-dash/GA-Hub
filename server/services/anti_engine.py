@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import sqlite3
 import subprocess
 from contextlib import closing
@@ -16,6 +15,7 @@ import requests
 
 from .. import _paths
 from ..process_utils import hidden_process_kwargs
+from . import anti_component
 
 ACTIVE = frozenset({"submitting", "queued", "running", "unknown"})
 TERMINAL = frozenset({"success", "rejected", "timeout", "rate_limited", "cli_error", "cancelled"})
@@ -118,9 +118,9 @@ class AntiSessions:
             upstream = self.adapter.request("GET", "/v1/models", read_timeout=23)
         except AntiError:
             # Browsing the official catalog must not start the AntiCLI daemon.
-            executable = shutil.which("anticli")
+            executable = anti_component.executable()
             if not executable:
-                raise AntiError(503, "找不到 anticli，请检查 GA Hub 的 PATH") from None
+                raise AntiError(503, "此版本未附带 AntiCLI，请安装 anticli 并加入 PATH") from None
             try:
                 result = subprocess.run(
                     [executable, "models", "--json"], stdin=subprocess.DEVNULL,
@@ -149,6 +149,7 @@ class AntiSessions:
 
     @staticmethod
     def public_session(row: dict) -> dict:
+                    **anti_component.child_options(executable),
         return {key: row[key] for key in ("id", "project", "title", "workspace")} | {"engine": "anti"}
 
     def create(self, name: str, title: str) -> dict:

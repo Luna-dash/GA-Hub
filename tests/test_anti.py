@@ -90,7 +90,7 @@ def test_model_catalog_is_available_without_daemon(tmp_path, monkeypatch):
             assert (method, path) == ('GET', '/v1/models')
             raise engine.AntiError(503, 'unavailable')
 
-    monkeypatch.setattr(engine.shutil, 'which', lambda name: 'anticli' if name == 'anticli' else None)
+    monkeypatch.setattr(engine.anti_component, 'executable', lambda: 'anticli')
 
     def list_models(argv, **kwargs):
         assert argv == ['anticli', 'models', '--json']

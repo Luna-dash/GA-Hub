@@ -511,6 +511,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="先跑后端 pytest（tests/）与前端 vitest，再进入构建阶段",
     )
+    parser.add_argument("--anticli-source", type=Path, help="打包锁定版本的 AntiCLI 源码目录")
     args = parser.parse_args(argv)
     started = time.monotonic()
 
@@ -552,7 +553,8 @@ def main(argv: list[str] | None = None) -> int:
             run_stage("前端测试", [npm, "--prefix", "webui", "test", "--", "--run"])
         run_stage(
             "Python sidecar",
-            [sidecar_python, "desktop/build_sidecar.py", "--target", args.target],
+            [sidecar_python, "desktop/build_sidecar.py", "--target", args.target,
+             *(["--anticli-source", str(args.anticli_source.resolve())] if args.anticli_source else [])],
         )
         run_stage("Tauri 桌面壳", tauri_stage_command(tauri, args.target))
         # Portable --no-bundle builds must not depend on implicit externalBin copies.
