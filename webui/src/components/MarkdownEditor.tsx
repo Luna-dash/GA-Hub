@@ -24,10 +24,14 @@ export function MarkdownEditor({ value, onChange, height, readOnly }: Props) {
         </div>
         <div className="flex gap-1">
           <button
+            type="button"
+            aria-pressed={!preview}
             onClick={() => setPreview(false)}
             className={'px-2 py-1 rounded ' + (!preview ? 'bg-accent-soft text-accent' : 'text-slate-400 hover:text-slate-200')}
           >源码</button>
           <button
+            type="button"
+            aria-pressed={preview}
             onClick={() => setPreview(true)}
             className={'px-2 py-1 rounded ' + (preview ? 'bg-accent-soft text-accent' : 'text-slate-400 hover:text-slate-200')}
           >预览</button>

@@ -158,9 +158,10 @@ export default function LiveChat() {
         const requestedId = new URLSearchParams(location.search).get('session')
         const storedId = localStorage.getItem(storageKeys.currentSessionId)
         const listed = await queryClient.fetchQuery({ queryKey: queryKeys.sessions, queryFn: api.sessions })
+        const regularItems = listed.items.filter((item) => !item.theme_task)
         let current = requestedId ? listed.items.find((item) => item.id === requestedId) : undefined
-        if (!current) current = storedId ? listed.items.find((item) => item.id === storedId) : undefined
-        if (!current) current = listed.items[0]
+        if (!current) current = storedId ? regularItems.find((item) => item.id === storedId) : undefined
+        if (!current) current = regularItems[0]
         if (cancelled || sessionSwitchSeqRef.current !== initSeq) return
         if (!current) {
           sessionIdRef.current = null
@@ -298,20 +299,13 @@ export default function LiveChat() {
   const submit = (draft: LiveChatDraftSnapshot) => {
     const t = draft.text.trim()
     if (!t && draft.attachments.length === 0) return
-    if (t === '/new') {
-      const commandKey = draft.draftKey
-      const commandText = draft.text
-      const commandAtts = draft.attachments
-      void newConv()
-        .then((created) => {
-          if (created) useDraftStore.getState().clearDraftIfMatch(commandKey, commandText, commandAtts)
-        })
-        .catch((e: any) => pushSystem(`_新建会话失败：${errorMessageFromError(e)}。命令已保留，可直接重试。_`, noticeKeys.sessionCreateFail))
+    if (t === '/new' || t === '/rewind') {
+      handleSlashCommand(t, draft)
       return
     }
     if (streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair || creatingSessionRef.current) return
     if (session && !selectedLlmKey) {
-      pushSystem('_当前没有可用模型，请先在设置中配置模型。草稿已保留。_', noticeKeys.sendBlocked)
+      pushSystem('_当前没有可用模型，请先在「LLM管理」中配置模型。草稿已保留。_', noticeKeys.sendBlocked)
       return
     }
 
@@ -444,7 +438,7 @@ export default function LiveChat() {
       return
     }
     if (session && !selectedLlmKey) {
-      setScheduleError('当前没有可用模型，请先在设置中配置模型。')
+      setScheduleError('当前没有可用模型，请先在「LLM管理」中配置模型。')
       return
     }
 
@@ -644,6 +638,7 @@ export default function LiveChat() {
       dropSessionView(id)
       useDraftStore.getState().clearDraft(`liveChat:${id}`)
       const remaining = sessions.filter((item) => item.id !== id)
+      const remainingRegular = remaining.filter((item) => !item.theme_task)
       queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], {
         total: remaining.length,
         items: remaining,
@@ -651,9 +646,9 @@ export default function LiveChat() {
       if (sessionIdRef.current !== id) return
 
       ++sessionSwitchSeqRef.current
-      if (remaining.length > 0) {
-        localStorage.setItem(storageKeys.currentSessionId, remaining[0].id)
-        nav(sessionChatHref(remaining[0].id))
+      if (remainingRegular.length > 0) {
+        localStorage.setItem(storageKeys.currentSessionId, remainingRegular[0].id)
+        nav(sessionChatHref(remainingRegular[0].id))
         return
       }
 
@@ -796,7 +791,7 @@ export default function LiveChat() {
           onChange={(llmKey) => { void changeModel(llmKey) }}
           disabled={!session || !selectedLlmKey || llmLoading || llmSaving || sessionRunning}
           className="max-w-[400px]"
-          title="选择当前会话使用的模型"
+          title={sessionRunning ? '任务运行中，结束后可切换模型' : !session || !selectedLlmKey ? '当前没有可用模型，请先在「LLM管理」中配置模型' : '选择当前会话使用的模型'}
           aria-label="当前会话模型"
         />
       </>}
@@ -834,11 +829,15 @@ export default function LiveChat() {
             onStop={() => {
               const sid = session?.id
               if (!sid || sessionIdRef.current !== sid || (!sessionRunning && !retryPending)) return
-              void api.abortSession(sid).then(() => refreshRuntime(sid))
+              void api.abortSession(sid)
+                .then(() => refreshRuntime(sid))
+                .catch((e: unknown) => {
+                  pushSystem(`_停止任务失败：${errorMessageFromError(e)}_`)
+                })
             }}
             stopActive={sessionRunning || retryPending}
             onSlashCommand={handleSlashCommand}
-            placeholder="输入消息,或输入 / 查看命令"
+            placeholder="输入消息，或输入 / 查看命令"
             disabled={creatingSession}
             submitDisabled={streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair}
             scheduleDisabled={llmSaving || sessionLlmNeedsRepair}
@@ -847,7 +846,7 @@ export default function LiveChat() {
       </div>
 
       {scheduleOpen && (
-        <ModalOverlay onClose={() => setScheduleOpen(false)} labelledBy="schedule-title" closeOnBackdrop={false} panelClassName="p-5 w-full max-w-md rounded-2xl">
+        <ModalOverlay onClose={() => { if (!scheduleSaving) setScheduleOpen(false) }} labelledBy="schedule-title" closeOnBackdrop={false} panelClassName="p-5 w-full max-w-md rounded-2xl">
             <h2 id="schedule-title" className="text-lg font-semibold text-ink">定时发送</h2>
             <p className="mt-1 text-sm text-ink-faint">选择未来 48 小时内的发送时间，支持跨到第二天。</p>
             <label className="mt-4 block text-sm font-medium text-ink">

@@ -157,4 +157,21 @@ describe('LiveChatTranscript reading intent', () => {
     flushFrames(); flushFrames()
     expect(layout.scrollToIndex).toHaveBeenLastCalledWith(7, { behavior: 'auto', align: 'end' })
   })
+
+  it('does not show the empty-state welcome alongside a session initialization error', () => {
+    act(() => {
+      useChatStore.setState({
+        sessionId: null,
+        msgs: [],
+        streaming: false,
+        projectionReady: false,
+        historyStatus: 'idle',
+      })
+      root.render(<LiveChatTranscript sessionId={null}
+        sessionError="network error" scheduledChats={[]} scheduleNow={0}
+        onCancelSchedule={() => {}} onRewind={() => {}} />)
+    })
+    expect(host.textContent).toContain('会话初始化失败：network error')
+    expect(host.textContent).not.toContain('开始一段对话')
+  })
 })

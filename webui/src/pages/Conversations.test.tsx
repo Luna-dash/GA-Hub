@@ -424,4 +424,37 @@ describe('conversation route selection', () => {
       .toHaveBeenCalledWith('无法打开会话', expect.stringContaining('已不存在')))
     expect(host.querySelector('[data-route-path]')?.textContent).toBe('/conversations/alpha%20beta')
   })
+
+  it('shows loading and error retry states while fetching conversation detail', async () => {
+    let rejectDetail!: (err: Error) => void
+    apiMock.conversation.mockImplementationOnce(() => new Promise((_, reject) => { rejectDetail = reject }))
+
+    await renderAt('/conversations/pending-thread')
+    await waitFor(() => expect(host.textContent).toContain('正在读取会话详情…'))
+
+    await act(async () => rejectDetail(new Error('backend down')))
+    await waitFor(() => {
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain('读取会话详情失败：backend down')
+    })
+
+    const retryBtn = buttonByText('重试')!
+    expect(retryBtn).toBeDefined()
+    await act(async () => { retryBtn.click() })
+    await waitFor(() => expect(host.textContent).toContain('Detail pending-thread'))
+  })
+
+  it('clears stale lastActive on 404 detail failure and offers returning to the list', async () => {
+    apiMock.conversation.mockRejectedValueOnce(Object.assign(new Error('not found'), { status: 404 }))
+    await renderAt('/conversations/missing-thread')
+    await waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain('读取会话详情失败'))
+    expect(localStorage.getItem('gahub.pageState.conversations.lastActive') ?? 'null').toBe('null')
+
+    const backBtn = buttonByText('返回列表')!
+    expect(backBtn).toBeDefined()
+    await act(async () => { backBtn.click() })
+    await waitFor(() => {
+      expect(host.querySelector('[data-route-path]')?.textContent).toBe('/conversations')
+      expect(host.textContent).toContain('选择左侧会话查看详情')
+    })
+  })
 })

@@ -21,22 +21,27 @@ type CreatedSession = Awaited<ReturnType<typeof api.createSession>>
 vi.mock('@/api/client', () => ({ api: {
   sessions: vi.fn(), llms: vi.fn(), projects: vi.fn(), sessionRuntimes: vi.fn(), sessionRuntime: vi.fn(),
   scheduledChats: vi.fn(), createSession: vi.fn(), sessionRun: vi.fn(), createProject: vi.fn(), bindProject: vi.fn(),
+  deleteSession: vi.fn(), rewindSession: vi.fn(),
 } }))
 vi.mock('@/hooks/useHubEvent', () => ({ useHubEvent: vi.fn() }))
 vi.mock('@/components/PageShell', () => ({ PageShell: ({ children, middleArea }: { children: ReactNode; middleArea: ReactNode }) => <div>{middleArea}{children}</div> }))
 vi.mock('@/components/ProjectSelect', () => ({ ProjectSelect: ({ onChange, options }: { onChange: (value: string) => void; options: { key: string; name: string }[] }) => <><button data-new-project onClick={() => onChange('__new__')}>New project</button><span data-project-options>{options.map(option => option.name).join('|')}</span></> }))
 vi.mock('@/stores/dialogStore', () => ({ dialog: { confirm: vi.fn(), prompt: vi.fn(), alert: vi.fn() } }))
 vi.mock('@/utils/desktop', () => ({ isTauriDesktop: () => true, selectDirectory: vi.fn() }))
-vi.mock('@/components/SessionRail', () => ({ SessionRail: ({ onCreate }: { onCreate: () => void }) => <button data-create onClick={onCreate}>Create</button> }))
+vi.mock('@/components/SessionRail', () => ({ SessionRail: ({ onCreate, onDelete }: { onCreate: () => void; onDelete?: (id: string) => void }) => <>
+  <button data-create onClick={onCreate}>Create</button>
+  {onDelete && <button data-delete-old onClick={() => void onDelete('old')}>Delete old</button>}
+</> }))
 vi.mock('@/components/ModelSelect', () => ({ MainModelSelect: () => null }))
 vi.mock('@/components/LiveChatTranscript', () => ({ LiveChatTranscript: forwardRef(() => null) }))
 vi.mock('@/components/LiveChatComposer', () => ({
   LiveChatComposer: ({ draftKey, onSubmit, onSlashCommand }: {
     draftKey: string
     onSubmit: (draft: { draftKey: string; text: string; attachments: [] }) => void
-    onSlashCommand: (command: '/new', draft: { draftKey: string; text: string; attachments: [] }) => void
+    onSlashCommand: (command: '/new' | '/rewind', draft: { draftKey: string; text: string; attachments: [] }) => void
   }) => <>
     <button data-submit onClick={() => onSubmit({ draftKey, text: 'hello', attachments: [] })}>Send</button>
+    <button data-submit-rewind onClick={() => onSubmit({ draftKey, text: '/rewind', attachments: [] })}>SubmitRewind</button>
     <button data-slash onClick={() => onSlashCommand('/new', { draftKey, text: '/new', attachments: [] })}>New</button>
   </>,
   readLiveChatDraftSnapshot: vi.fn(),
@@ -262,6 +267,62 @@ describe('LiveChat creation ownership', () => {
     vi.mocked(api.projects).mockResolvedValue({ total: 1, items: [{ name: 'demo-abcd', path: 'D:/work/demo', dangling: false, display_name: '我的项目' }] })
     await mount()
     expect(host.querySelector('[data-project-options]')?.textContent).toContain('我的项目')
+  })
+
+  it('routes pure /rewind submitted after menu dismissal through slash rewind instead of sessionRun', async () => {
+    vi.mocked(dialog.confirm).mockResolvedValue(true)
+    vi.mocked(api.rewindSession).mockResolvedValue({ ok: true, kept: 1 } as never)
+    useChatStore.setState({
+      msgs: [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'reply', streamId: 'stream-1', streaming: false },
+      ] as never,
+    })
+    await mount()
+    await click('[data-submit-rewind]')
+    expect(api.sessionRun).not.toHaveBeenCalled()
+    expect(dialog.confirm).toHaveBeenCalledWith('回退此轮对话？', expect.any(String), expect.any(Object))
+    expect(api.rewindSession).toHaveBeenCalledWith('old', { n: 1, sid: 'stream-1' })
+  })
+
+  it('skips theme_task sessions on fallback and deletion while honoring explicit deep links', async () => {
+    const themeRow: CreatedSession = { ...row('theme-1'), theme_task: { instruction: 'do work', description: '' } }
+    const regularRow = row('old')
+    vi.mocked(api.sessions).mockResolvedValue({ total: 2, items: [themeRow, regularRow] })
+    vi.mocked(api.deleteSession).mockResolvedValue({ ok: true } as never)
+
+    // Stored id pointing to a theme task falls back to the regular session
+    localStorage.setItem(storageKeys.currentSessionId, 'theme-1')
+    await act(async () => root.render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/chat']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <Navigation />
+          <Routes><Route path="/chat" element={<LiveChat />} /></Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ))
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
+    expect(useChatStore.getState().sessionId).toBe('old')
+
+    // Deleting the only regular session clears active session rather than falling into theme-1
+    await click('[data-delete-old]')
+    expect(api.deleteSession).toHaveBeenCalledWith('old')
+    expect(host.querySelector('output')?.textContent).toBe('/chat')
+    expect(localStorage.getItem(storageKeys.currentSessionId)).toBeNull()
+
+    // Explicit deep link still opens the requested theme session directly
+    await act(async () => root.unmount())
+    root = createRoot(host)
+    await act(async () => root.render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/chat?session=theme-1']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <Navigation />
+          <Routes><Route path="/chat" element={<LiveChat />} /></Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ))
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
+    expect(useChatStore.getState().sessionId).toBe('theme-1')
   })
 
 })

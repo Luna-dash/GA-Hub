@@ -799,4 +799,13 @@ describe('MessageBubble render isolation', () => {
     expect(host.querySelectorAll('details[open]')).toHaveLength(0)
     delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView
   })
+
+  it('reveals copy and rewind actions on keyboard focus as well as hover', () => {
+    act(() => root.render(
+      <MessageBubble role="assistant" content="回答内容" streamId="s1" onRewind={vi.fn()} streaming={false} />,
+    ))
+    const toolbar = host.querySelector<HTMLElement>('button[title="复制结论"]')?.parentElement
+    expect(toolbar?.className).toContain('group-hover/msg:opacity-100')
+    expect(toolbar?.className).toContain('group-focus-within/msg:opacity-100')
+  })
 })

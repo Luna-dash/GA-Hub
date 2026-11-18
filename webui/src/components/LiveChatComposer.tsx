@@ -99,7 +99,7 @@ export function LiveChatComposer({
           <span role="status" className="sr-only">发送中…</span>
         )}
         {recovery.map((item) => (
-          <div key={item.id} role="status" className="flex items-center gap-2 px-3 pb-2 text-xs text-text-muted">
+          <div key={item.id} role="status" className="flex items-center gap-2 px-3 pb-2 text-xs text-ink-muted">
             <span>{item.status === 'uncertain'
               ? '发送状态未确认，请先核对对话，避免重复发送。'
               : '未发送内容已保留；当前草稿不会被覆盖。'}</span>

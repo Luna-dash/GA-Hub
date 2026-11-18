@@ -581,7 +581,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
               <div>正在恢复历史对话…</div>
             </div>
           )}
-          {historyStatus !== 'loading_history' && msgs.length === 0 && (
+          {!sessionError && historyStatus !== 'loading_history' && msgs.length === 0 && (
             <div className="flex h-full items-center justify-center text-sm text-ink-faint">
               开始一段对话，或粘贴一张图问个问题。
             </div>
@@ -680,15 +680,15 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
             className="pointer-events-none fixed w-72 -translate-y-1 rounded-xl border border-line bg-bg-card/98 p-3 text-left shadow-xl backdrop-blur"
             style={{ top: Math.max(12, hoveredSchedule.top), right: hoveredSchedule.right, zIndex: Z_LAYERS.tooltip }}
           >
-            <div className="mb-2 flex items-center justify-between gap-3 text-xs text-text-muted">
+            <div className="mb-2 flex items-center justify-between gap-3 text-xs text-ink-muted">
               <span>定时发送内容</span>
               <time>{formatDateTime(hoveredSchedule.task.scheduled_for)}</time>
             </div>
-            <p className="max-h-48 overflow-hidden whitespace-pre-wrap break-words text-sm leading-5 text-text">
+            <p className="max-h-48 overflow-hidden whitespace-pre-wrap break-words text-sm leading-5 text-ink">
               {hoveredSchedule.task.text || '（仅附件）'}
             </p>
             {hoveredSchedule.task.images.length > 0 && (
-              <div className="mt-2 text-xs text-text-muted">附件 {hoveredSchedule.task.images.length} 个</div>
+              <div className="mt-2 text-xs text-ink-muted">附件 {hoveredSchedule.task.images.length} 个</div>
             )}
           </div>
         )}

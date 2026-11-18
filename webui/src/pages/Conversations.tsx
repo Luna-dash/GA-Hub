@@ -105,7 +105,13 @@ export default function Conversations() {
     queryFn: () => api.conversations(debouncedQ || undefined, page * limit, limit),
   })
 
-  const { data: detail } = useQuery({
+  const {
+    data: detail,
+    isLoading: detailLoading,
+    isError: detailError,
+    error: detailErr,
+    refetch: refetchDetail,
+  } = useQuery({
     queryKey: conversationKeys.detail(active || ''),
     queryFn: () => api.conversation(active!),
     enabled: !!active,
@@ -132,9 +138,16 @@ export default function Conversations() {
 
   useEffect(() => {
     if (!active) return
+    if (detailError && (detailErr as { status?: number })?.status === 404) {
+      if (lastActiveRef.current === active) {
+        lastActiveRef.current = null
+        writePageState('conversations.lastActive', null)
+      }
+      return
+    }
     lastActiveRef.current = active
     writePageState('conversations.lastActive', active)
-  }, [active])
+  }, [active, detailError, detailErr])
 
   useEffect(() => {
     // One-shot on entering the page without a selection: fall back to the
@@ -379,6 +392,28 @@ export default function Conversations() {
 
         <div ref={detailScrollRef} className="min-w-0 flex-1 overflow-y-auto [overflow-anchor:none]">
           {!active && <div className="h-full flex items-center justify-center text-slate-500 text-sm">选择左侧会话查看详情</div>}
+          {active && detailLoading && !detail && (
+            <div role="status" className="h-full flex items-center justify-center text-ink-muted text-sm">正在读取会话详情…</div>
+          )}
+          {active && detailError && !detail && (
+            <div role="alert" className="h-full flex flex-col items-center justify-center gap-3 px-6 text-center">
+              <div className="text-sm text-status-danger">读取会话详情失败：{errorMessageFromError(detailErr)}</div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => { void refetchDetail() }} className="ga-btn">重试</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    lastActiveRef.current = null
+                    writePageState('conversations.lastActive', null)
+                    nav('/conversations', { replace: true })
+                  }}
+                  className="ga-btn"
+                >
+                  返回列表
+                </button>
+              </div>
+            </div>
+          )}
           {active && detail && (
             <div className="p-6 max-w-5xl mx-auto">
               <div className="mb-5">
@@ -534,7 +569,7 @@ function RoundView({
 
                     {isProcessOpen && hasTurnSummaries && (
                       <div className="mb-4 space-y-1.5">
-                        <div className="text-[11px] uppercase tracking-wider text-slate-500">turn summaries</div>
+                        <div className="text-[11px] tracking-wider text-slate-500">过程摘要</div>
                         {r.turnSummaries.map((ts, idx) => (
                           <div key={`${roundKey}-ts-${idx}`} className="rounded-lg border border-line/70 bg-bg-soft/50 px-3 py-2 text-sm leading-5 text-slate-200">
                             <span className="mr-2 text-[11px] uppercase tracking-wider text-slate-500">Turn {ts.turn}</span>
@@ -546,7 +581,7 @@ function RoundView({
 
                     {detailText && (
                       <div className={isProcessOpen && hasTurnSummaries ? 'border-t border-line/70 pt-3' : ''}>
-                        <div className="mb-2 text-[11px] uppercase tracking-wider text-slate-500">assistant conclusion</div>
+                        <div className="mb-2 text-[11px] tracking-wider text-slate-500">最终回答</div>
                         <MessageContent content={detailText} format="markdown" />
                       </div>
                     )}

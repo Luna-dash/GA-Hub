@@ -24,7 +24,7 @@ export function ConversationIndexRail({ children }: ConversationIndexRailProps) 
       data-collapsed={collapsed ? 'true' : 'false'}
       className={clsx(
         'relative z-10 h-full shrink-0 transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-        collapsed ? 'w-14' : 'w-96',
+        collapsed ? 'w-14' : 'w-96 max-w-[calc(100vw-3rem)]',
       )}
     >
       <aside
@@ -32,7 +32,7 @@ export function ConversationIndexRail({ children }: ConversationIndexRailProps) 
         className={clsx(
           'absolute inset-y-0 left-0 overflow-y-auto border-r border-line bg-bg-soft',
           'transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-          collapsed ? 'w-14' : 'w-96',
+          collapsed ? 'w-14' : 'w-96 max-w-[calc(100vw-3rem)]',
         )}
       >
         {typeof children === 'function' ? children(collapsed) : children}
