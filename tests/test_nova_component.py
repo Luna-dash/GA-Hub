@@ -77,18 +77,61 @@ class NovaLifecycleTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(c.error,'ImportError')
         await c.stop()
 
-    async def test_configured_connector_starts_and_stops(self):
+    async def test_panel_tracks_connection_without_starting_connector(self):
+        from server.services.service_registry import ServiceRegistry
+
         with tempfile.TemporaryDirectory() as tmp:
-            path=Path(tmp);(path/'device.json').write_text('{}')
-            running=asyncio.Event();stopped=asyncio.Event()
-            async def run(backend):
+            path = Path(tmp)
+            online = asyncio.Event()
+            disconnect = asyncio.Event()
+            offline = asyncio.Event()
+            fail = asyncio.Event()
+
+            async def run(backend, *, on_connection):
                 self.assertTrue(backend.startswith('http://127.0.0.1:'))
-                running.set()
-                try: await asyncio.Event().wait()
-                finally: stopped.set()
-            c=NovaComponent();c.connector=SimpleNamespace(STATE=path,run=run)
-            await c.start();await asyncio.wait_for(running.wait(),2)
-            await c.stop();self.assertTrue(stopped.is_set());self.assertIsNone(c.task)
+                on_connection(True)
+                online.set()
+                await disconnect.wait()
+                on_connection(False)
+                offline.set()
+                await fail.wait()
+                raise RuntimeError('sensitive connection details')
+
+            c = NovaComponent()
+            registry = ServiceRegistry(nova=c)
+
+            def panel_entry():
+                return next(item for item in registry.panel()['services'] if item['id'] == 'nova')
+
+            with patch.object(c, 'load', side_effect=AssertionError('unexpected load')) as load:
+                self.assertEqual(panel_entry()['health'], 'unknown')
+                load.assert_not_called()
+            c.connector = SimpleNamespace(STATE=path, run=run)
+            self.assertEqual(panel_entry()['summary'], '未绑定 Nova 账号')
+            self.assertEqual(panel_entry()['health'], 'healthy')
+            self.assertIsNone(c.task)
+            (path / 'device.json').write_text('{}', encoding='utf-8')
+            self.assertEqual(panel_entry()['summary'], '已绑定，连通器未运行')
+            await c.start()
+            try:
+                self.assertEqual(panel_entry()['summary'], '正在连接或重试')
+                await asyncio.wait_for(online.wait(), 2)
+                self.assertEqual(panel_entry()['summary'], '已连接 Nova 云端')
+                self.assertEqual(panel_entry()['health'], 'healthy')
+                disconnect.set()
+                await asyncio.wait_for(offline.wait(), 2)
+                self.assertFalse(c.runtime_status()['connected'])
+                self.assertEqual(panel_entry()['summary'], '正在连接或重试')
+                fail.set()
+                await asyncio.gather(c.task, return_exceptions=True)
+                entry = panel_entry()
+                self.assertEqual(entry['health'], 'attention')
+                self.assertIn('连通器异常', entry['summary'])
+                self.assertNotIn('sensitive connection details', str(entry))
+            finally:
+                await c.stop()
+            self.assertIsNone(c.task)
+            self.assertFalse(c.runtime_status()['connected'])
 
 
 class IdentityTest(unittest.TestCase):

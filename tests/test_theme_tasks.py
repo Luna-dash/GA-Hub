@@ -31,6 +31,31 @@ def test_convert_persist_restore(tmp_path):
         assert c.post(f'/api/sessions/{sid}/theme-run', json={'text': 'test'}).status_code == 409
 
 
+def test_theme_settings_survive_repeated_moves_and_store_reload(tmp_path, monkeypatch):
+    monkeypatch.setattr(metrics, 'discard', lambda _: None)
+    app = FastAPI()
+    app.include_router(sessions.router)
+    app.state.session_lifecycle = SessionLifecycle(store=SessionMetadataStore(tmp_path))
+    with TestClient(app) as c:
+        sid = c.post('/api/sessions', json={'title': 'daily check'}).json()['id']
+        path = f'/api/sessions/{sid}'
+        for config in (
+            {'instruction': 'Check status', 'description': 'Daily check'},
+            {'instruction': 'Check metrics', 'description': ''},
+        ):
+            assert c.patch(path, json={'theme_task': config}).json()['theme_task'] == config
+            for _ in range(2):
+                moved = c.patch(path, json={'theme_task': None}).json()
+                assert moved['theme_task'] is None
+                assert moved['previous_theme_task'] == config
+            app.state.session_lifecycle = SessionLifecycle(store=SessionMetadataStore(tmp_path))
+            session = next(row for row in c.get('/api/sessions').json()['items'] if row['id'] == sid)
+            assert session['theme_task'] is None
+            assert session['previous_theme_task'] == config
+            restored = c.patch(path, json={'theme_task': session['previous_theme_task']}).json()
+            assert restored['theme_task'] == config
+
+
 def test_metrics_deduplicate_and_freeze(tmp_path, monkeypatch):
     monkeypatch.setattr(metrics._paths, 'ADMIN_DATA', tmp_path)
     metrics.begin('s', 'r', 'assignment')

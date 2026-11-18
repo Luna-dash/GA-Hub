@@ -66,13 +66,18 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                 r=await client.post('/v1/pair/approve',json={'code':pair['code']},headers=auth);self.assertEqual(r.status,200)
                 token=secrets.token_urlsafe(32);device='e'*24
                 r=await client.post('/v1/agent/pair/finish',json={**pair,'token':token,'device_id':device});self.assertEqual(r.status,200)
+                connection_states = []
                 with patch.object(connector, 'ARTIFACT_ROOTS', (Path(tmp),)):
-                    task=asyncio.create_task(connector.connect_once(str(client.make_url('')).rstrip('/'),device,token,str(backend.make_url('')).rstrip('/')))
+                    task = asyncio.create_task(connector.connect_once(
+                        str(client.make_url('')).rstrip('/'), device, token,
+                        str(backend.make_url('')).rstrip('/'), on_connection=connection_states.append,
+                    ))
                     for _ in range(100):
                         if device in nova.devices and nova.devices[device].ready:break
                         if task.done():await task
                         await asyncio.sleep(.05)
                     self.assertTrue(nova.devices[device].ready)
+                    self.assertEqual(connection_states, [True])
                     r=await client.get('/d/'+device+'/api/sessions',headers=auth)
                     self.assertEqual(r.status,200);self.assertEqual((await r.json())['items'][0]['title'],'E2E')
                     r = await client.get('/d/'+device+'/api/sessions/s1/messages?view=compact', headers=auth)
@@ -88,6 +93,7 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                     await ws.send_json({'type':'ping'});self.assertEqual((await ws.receive_json(timeout=5))['type'],'pong')
                     await ws.close()
                     task.cancel();await asyncio.gather(task,return_exceptions=True)
+                    self.assertEqual(connection_states, [True, False])
                     for _ in range(30):
                         if device not in nova.devices:break
                         await asyncio.sleep(.05)

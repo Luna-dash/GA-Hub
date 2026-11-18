@@ -11,6 +11,10 @@ import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 import { CronExpressionParser } from 'cron-parser'
 import { CronCardLine, CronPreview } from '@/components/CronPreview'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+
+const RUNS_PER_PAGE = 10
+const pageButtonClass = 'inline-grid size-8 place-items-center rounded-md border border-line bg-bg-card text-ink hover:border-accent hover:text-accent focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 disabled:hover:border-line disabled:hover:text-ink'
 
 export default function Tasks() {
   const qc = useQueryClient()
@@ -32,9 +36,15 @@ export default function Tasks() {
     }
   })
   const [editor, setEditor] = useState<Partial<TaskSchedule> | null>(null)
+  const [runPage, setRunPage] = useState(0)
 
   const schedules = schData?.schedules ?? []
   const runs = runData?.runs ?? []
+  const pageCount = Math.max(1, Math.ceil(runs.length / RUNS_PER_PAGE))
+  const page = Math.min(runPage, pageCount - 1)
+  if (page !== runPage) setRunPage(page)
+  const start = page * RUNS_PER_PAGE
+  const pageRuns = runs.slice(start, start + RUNS_PER_PAGE)
 
   const triggerNow = async (id: string) => {
     const ok = await dialog.confirm(
@@ -69,7 +79,24 @@ export default function Tasks() {
         <EmailSettings />
 
         <section>
-          <h2 className="text-sm font-semibold text-slate-300 mb-3">运行历史</h2>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-slate-300">运行历史</h2>
+            {pageCount > 1 && (
+              <nav aria-label="运行历史分页" className="flex items-center gap-2 text-xs text-ink-faint">
+                <button type="button" aria-label="上一页" title="上一页" className={pageButtonClass}
+                  disabled={page === 0} onClick={() => setRunPage(page - 1)}>
+                  <ChevronLeft size={16} aria-hidden="true" />
+                </button>
+                <span role="status" className="min-w-28 text-center tabular-nums whitespace-nowrap">
+                  第 {page + 1} / {pageCount} 页 · {runs.length} 条
+                </span>
+                <button type="button" aria-label="下一页" title="下一页" className={pageButtonClass}
+                  disabled={page === pageCount - 1} onClick={() => setRunPage(page + 1)}>
+                  <ChevronRight size={16} aria-hidden="true" />
+                </button>
+              </nav>
+            )}
+          </div>
           <div className="rounded-xl border border-line bg-bg-card overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-bg-soft text-xs text-slate-400">
@@ -82,7 +109,7 @@ export default function Tasks() {
                 </tr>
               </thead>
               <tbody>
-                {runs.map((r: TaskRun) => (
+                {pageRuns.map((r: TaskRun) => (
                   <tr key={r.id} className="border-t border-line/60 align-top">
                     <td className="p-2.5 text-slate-400 whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
                     <td className="p-2.5 text-slate-200">{r.task_name || r.task_id}</td>

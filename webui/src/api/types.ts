@@ -63,6 +63,7 @@ export interface ThemeRun { session_id: string; run_id: string; started_at: numb
 
 export interface HubSession {
   theme_task?: ThemeTaskConfig | null
+  previous_theme_task?: ThemeTaskConfig | null
   id: string
   title: string
   llm_key?: string | null

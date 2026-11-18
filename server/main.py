@@ -267,13 +267,15 @@ def create_app() -> FastAPI:
     # so /api/status, /api/health and /api/services/panel all read the exact
     # objects this app created (no cross-app singleton leakage, no lazy
     # construction from a status read).
+    from .nova_component import NovaComponent
     from .services.service_registry import ServiceRegistry
     from .services.session_lifecycle import SessionLifecycle
 
     lifecycle = SessionLifecycle(
         ensure_runtime_available=lambda: require_core_contract(app.state.core_contract),
     )
-    app_registry = ServiceRegistry(services, sessions=lifecycle)
+    nova = NovaComponent()
+    app_registry = ServiceRegistry(services, sessions=lifecycle, nova=nova)
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
@@ -612,8 +614,6 @@ def create_app() -> FastAPI:
             for router in routers:
                 app.include_router(router)
 
-    from .nova_component import NovaComponent
-    nova = NovaComponent()
     app.state.nova = nova
     app.include_router(nova.router())
     _mount_static(app)

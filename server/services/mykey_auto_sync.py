@@ -19,11 +19,13 @@ log = logging.getLogger(__name__)
 # Run in the same real GA Python as the existing sync helper (also in frozen builds).
 # Only metadata is read; neither a full-container status nor a dry-run fetch is used.
 PROBE_CODE = r'''
-import json, runpy, struct, sys, urllib.request
-m = runpy.run_path(sys.argv[1], run_name="gahub_mykey_probe")
-secret = m["get_passphrase"]()
-key = m["derive_storage_key"](secret)
-url = m["get_base_url"](sys.argv[2] if len(sys.argv) > 2 else None) + "/" + key
+import contextlib, json, runpy, struct, sys, urllib.request
+# GA's helper and credential imports can print to stdout; reserve it for JSON.
+with contextlib.redirect_stdout(sys.stderr):
+    m = runpy.run_path(sys.argv[1], run_name="gahub_mykey_probe")
+    secret = m["get_passphrase"]()
+    key = m["derive_storage_key"](secret)
+    url = m["get_base_url"](sys.argv[2] if len(sys.argv) > 2 else None) + "/" + key
 
 def read_range(start, size):
     req = urllib.request.Request(url, headers={
@@ -75,17 +77,31 @@ def remote_fingerprint() -> str:
     script = _paths.ga_mykey_sync_script()
     if not script.is_file():
         raise RuntimeError("同步脚本不可用")
-    env = dict(os.environ)
-    env["GA_MYKEY_BASE_URL"] = mykey_service._sync_base_url()
-    result = subprocess.run(
-        [mykey_service._mykey_sync_python(), "-X", "utf8", "-c", PROBE_CODE, str(script), mykey_service._sync_base_url()],
-        cwd=str(_paths.GA_ROOT), env=env, capture_output=True,
-        encoding="utf-8", errors="replace", timeout=50, **hidden_process_kwargs(),
-    )
-    # Never expose helper stderr: HTTP exceptions can contain derived storage paths.
+    base_url = mykey_service._sync_base_url()
+    env = dict(os.environ, GA_MYKEY_BASE_URL=base_url)
+    command = [mykey_service._mykey_sync_python(), "-X", "utf8", "-c", PROBE_CODE, str(script), base_url]
+    # Do not log the command, exception, or captured output: they can include
+    # sync URLs, derived storage paths, or credential-module output.
+    try:
+        result = subprocess.run(
+            command, cwd=str(_paths.GA_ROOT), env=env, capture_output=True,
+            encoding="utf-8", errors="replace", timeout=50, **hidden_process_kwargs(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        log.warning("mykey version check timed out after %s seconds", exc.timeout)
+        raise RuntimeError("云端版本检查超时") from None
     if result.returncode:
+        log.warning("mykey version check helper exited unsuccessfully (code=%d)", result.returncode)
         raise RuntimeError("云端版本检查失败，请检查网络、同步密钥及同步服务")
-    return json.loads(result.stdout)["sha256"]
+    try:
+        payload = json.loads(result.stdout)
+        sha = payload.get("sha256") if isinstance(payload, dict) else None
+        if not isinstance(sha, str) or len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
+            raise ValueError("invalid source hash")
+    except ValueError:
+        log.warning("mykey version check returned invalid JSON output or fingerprint")
+        raise RuntimeError("云端版本检查返回无效结果") from None
+    return sha
 
 
 def checked_fetch() -> dict:

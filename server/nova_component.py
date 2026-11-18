@@ -34,6 +34,7 @@ class NovaComponent:
         self.lock = asyncio.Lock()
         self.nonce = secrets.token_urlsafe(32)
         self.error = None
+        self.connected = False
 
     def load(self):
         if self.connector is None:
@@ -51,25 +52,51 @@ class NovaComponent:
 
     async def start(self):
         # An unavailable optional connector must never prevent Hub startup.
+        if self.task and not self.task.done():
+            return
+        self.connected = False
+        self.error = None
         try:
             c = self.load()
             if (c.STATE / 'device.json').exists():
                 from .runtime_endpoint import runtime_http_origin
                 from .constants import DEFAULT_WEBUI_PORT
-                self.task = asyncio.create_task(c.run(backend=runtime_http_origin('127.0.0.1', DEFAULT_WEBUI_PORT)), name='nova-connector')
+                self.task = asyncio.create_task(
+                    c.run(backend=runtime_http_origin('127.0.0.1', DEFAULT_WEBUI_PORT),
+                          on_connection=self._set_connected),
+                    name='nova-connector',
+                )
                 self.task.add_done_callback(self._done)
         except Exception as exc:
             self.error = type(exc).__name__
 
+    def _set_connected(self, connected):
+        self.connected = connected
+
     def _done(self, task):
-        if not task.cancelled() and task.exception():
-            self.error = type(task.exception()).__name__
+        if task is self.task:
+            self.connected = False
+        if not task.cancelled() and (exc := task.exception()) and task is self.task:
+            self.error = type(exc).__name__
 
     async def stop(self):
         if self.task:
             self.task.cancel()
             await asyncio.gather(self.task, return_exceptions=True)
             self.task = None
+        self.connected = False
+
+    def runtime_status(self):
+        # A panel read must not load the connector, access credentials, or start it.
+        c = self.connector
+        task = self.task
+        running = task is not None and not task.done()
+        return {
+            'paired': (c.STATE / 'device.json').exists() if c is not None else None,
+            'running': running,
+            'connected': running and self.connected,
+            'error': self.error,
+        }
 
     def guard(self, r: Request):
         if not r.client or r.client.host not in ('127.0.0.1', '::1', 'testclient'):

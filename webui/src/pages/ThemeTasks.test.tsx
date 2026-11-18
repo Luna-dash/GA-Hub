@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { hasUnreadThemeCompletions } from '@/stores/themeCompletionStore'
-import ThemeTasks from './ThemeTasks'
+import ThemeTasks, { ThemeTaskSettings } from './ThemeTasks'
 import { api } from '@/api/client'
 import { writeClipboard } from '@/utils/clipboard'
 import { writeRecentInstructions, readRecentInstructions } from '@/utils/themeTaskActions'
@@ -41,6 +41,22 @@ beforeEach(async () => {
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 25)) })
 })
 afterEach(() => { act(() => root.unmount()); client.clear(); host.remove() })
+
+it('prefills saved prompt and description when moving a session back into theme tasks', async () => {
+  const session = {
+    id: 'one', title: '签到', llm_key: 'model', llm_index: null, archive_path: null,
+    project_name: null, project_path: null, created_at: '', updated_at: '', theme_task: null,
+    previous_theme_task: { instruction: '检查签到并只报告结果', description: '每日检查' },
+  }
+  await act(async () => {
+    root.render(<QueryClientProvider client={client}><ThemeTaskSettings session={session} onClose={() => {}} onSaved={() => {}} /></QueryClientProvider>)
+  })
+  await wait()
+  expect(host.querySelector('[role="dialog"] h2')?.textContent).toBe('转入主题任务')
+  expect((host.querySelector('[aria-label="默认执行指令"]') as HTMLTextAreaElement).value).toBe('检查签到并只报告结果')
+  expect((host.querySelector('[aria-label="任务描述"]') as HTMLTextAreaElement).value).toBe('每日检查')
+})
+
 it('expands only with the explicit control and keeps details within the page', () => {
   const card = host.querySelector('[aria-label="主题任务卡片：签到"]') as HTMLElement
   const expand = host.querySelector('[aria-label="打开主题任务：签到"]') as HTMLButtonElement

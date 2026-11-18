@@ -211,7 +211,13 @@ class SessionMetadataStore:
                     if "llm_index" in changes:
                         row["llm_index"] = changes["llm_index"]
                     if "theme_task" in changes:
-                        row["theme_task"] = changes["theme_task"]
+                        config = changes["theme_task"]
+                        if config is None:
+                            if (active := row.get("theme_task")) is not None:
+                                row["previous_theme_task"] = active
+                        else:
+                            row.pop("previous_theme_task", None)
+                        row["theme_task"] = config
                     if "project_name" in changes:
                         value = changes["project_name"]
                         row["project_name"] = value.strip() if isinstance(value, str) and value.strip() else None

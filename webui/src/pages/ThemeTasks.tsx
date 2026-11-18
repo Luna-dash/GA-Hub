@@ -26,9 +26,10 @@ export function elapsed(run: ThemeRun, now: number) {
 }
 
 export function ThemeTaskSettings({ session, onClose, onSaved }: { session: HubSession; onClose: () => void; onSaved: () => void }) {
+  const config = session.theme_task ?? session.previous_theme_task
   const [title, setTitle] = useState(session.title)
-  const [instruction, setInstruction] = useState(session.theme_task?.instruction ?? '')
-  const [description, setDescription] = useState(session.theme_task?.description ?? '')
+  const [instruction, setInstruction] = useState(config?.instruction ?? '')
+  const [description, setDescription] = useState(config?.description ?? '')
   const [key, setKey] = useState(session.llm_key ?? '')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)

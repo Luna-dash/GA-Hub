@@ -3624,6 +3624,7 @@ export interface components {
         /** HubSession */
         HubSession: {
             theme_task?: components["schemas"]["ThemeTaskConfig"] | null;
+            previous_theme_task?: components["schemas"]["ThemeTaskConfig"] | null;
             /** Id */
             id: string;
             /** Title */

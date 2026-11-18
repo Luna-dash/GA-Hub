@@ -478,6 +478,7 @@ class SessionModelUpdate(BaseModel):
 
 class HubSession(BaseModel):
     theme_task: ThemeTaskConfig | None = None
+    previous_theme_task: ThemeTaskConfig | None = None
     id: str
     title: str
     kind: str = "user"

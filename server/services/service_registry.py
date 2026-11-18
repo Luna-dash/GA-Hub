@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:  # pragma: no cover - runtime imports stay minimal
+    from ..nova_component import NovaComponent
     from .app_services import AppServices
     from .session_lifecycle import SessionLifecycle
 
@@ -51,15 +52,43 @@ class ServicePanelItem:
 class ServiceRegistry:
     def __init__(
         self, services: "AppServices | None" = None,
-        *, sessions: "SessionLifecycle | None" = None,
+        *, sessions: "SessionLifecycle | None" = None, nova: "NovaComponent | None" = None,
     ) -> None:
         # Lifespan-owned instances win over singleton probes when present.
         self._services = services
         self._sessions = sessions
+        self._nova_component = nova
         self._readers: list[Callable[[], ServicePanelItem | None]] = [
             self._agent, self._feishu, self._wechat, self._conductor,
             self._goalhive, self._autonomous, self._tasks,
         ]
+        if nova is not None:
+            self._readers.append(self._nova)
+
+    def _nova(self) -> ServicePanelItem | None:
+        if self._nova_component is None:
+            return None
+        name = 'Nova 连通器'
+        try:
+            status = self._nova_component.runtime_status()
+        except OSError:
+            return ServicePanelItem('nova', name, 'error', '无法读取本机绑定状态', '/dashboard')
+        paired = status['paired']
+        if status['error']:
+            return ServicePanelItem('nova', name, 'error', '连通器异常，请检查远程连接设置', '/dashboard',
+                                    health='attention' if paired else 'unknown', expected_running=bool(paired))
+        if paired is None:
+            return ServicePanelItem('nova', name, 'error', '状态尚未读取', '/dashboard')
+        if not paired:
+            return ServicePanelItem('nova', name, 'stopped', '未绑定 Nova 账号', '/dashboard')
+        if status['connected']:
+            return ServicePanelItem('nova', name, 'running', '已连接 Nova 云端', '/dashboard',
+                                    expected_running=True)
+        if status['running']:
+            return ServicePanelItem('nova', name, 'ready', '正在连接或重试', '/dashboard',
+                                    health='attention', expected_running=True)
+        return ServicePanelItem('nova', name, 'stopped', '已绑定，连通器未运行', '/dashboard',
+                                health='attention', expected_running=True)
 
     def _owned_services(self) -> "AppServices | None":
         return self._services

@@ -55,6 +55,24 @@ describe('Dashboard status-only services', () => {
     host.remove()
   })
 
+  it('renders an online Nova connector alongside other services', async () => {
+    const nova = {
+      id: 'nova', name: 'Nova 连通器', href: '/dashboard', state: 'running',
+      summary: '已连接 Nova 云端', metrics: {}, error: null,
+      activity: 'active', health: 'healthy', expected_running: true,
+    }
+    apiMock.servicePanel.mockResolvedValue({ services: [nova], timestamp: 1 })
+    await act(async () => {
+      root.render(<QueryClientProvider client={client}><MemoryRouter><Dashboard /></MemoryRouter></QueryClientProvider>)
+    })
+    for (let attempt = 0; attempt < 20 && !host.textContent?.includes(nova.summary); attempt += 1) {
+      await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)) })
+    }
+    expect(host.textContent).toContain(nova.name)
+    expect(host.textContent).toContain(nova.summary)
+    expect(host.textContent).not.toContain('需要处理')
+  })
+
   it('shows Feishu runtime details without rendering a page link', async () => {
     await act(async () => {
       root.render(

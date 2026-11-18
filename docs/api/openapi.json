@@ -8460,6 +8460,16 @@
               }
             ]
           },
+          "previous_theme_task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeTaskConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "type": "string",
             "title": "Id"

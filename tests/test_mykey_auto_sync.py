@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import struct
+import subprocess
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -50,16 +51,26 @@ def test_probe_reads_only_authenticated_metadata(monkeypatch, capsys, status):
         streams.append(response)
         return response
 
+    def get_passphrase():
+        print('synthetic credential module banner')
+        return 'synthetic'
+
+    def run_path(*args, **kwargs):
+        print('synthetic helper banner')
+        return helper
+
     helper = {
-        'get_passphrase': lambda: 'synthetic', 'derive_storage_key': lambda _: 'test-storage',
+        'get_passphrase': get_passphrase, 'derive_storage_key': lambda _: 'test-storage',
         'get_base_url': lambda override=None: override or 'https://synthetic.invalid', 'derive_meta_key': lambda _: key,
         'decrypt': lambda k, blob, aad: AESGCM(k).decrypt(blob[5:17], blob[17:], aad),
     }
-    monkeypatch.setattr(runpy, 'run_path', lambda *args, **kwargs: helper)
+    monkeypatch.setattr(runpy, 'run_path', run_path)
     monkeypatch.setattr(urllib.request, 'urlopen', urlopen)
     monkeypatch.setattr('sys.argv', ['probe', 'synthetic-helper.py'])
     exec(auto.PROBE_CODE, {})
-    assert json.loads(capsys.readouterr().out)['sha256'] == source_hash
+    output = capsys.readouterr()
+    assert json.loads(output.out) == {'sha256': source_hash}
+    assert output.err.splitlines() == ['synthetic helper banner', 'synthetic credential module banner']
     assert len(streams) == 2 and all(s.closed for s in streams)
     assert sum(s.bytes_read for s in streams) == len(header) + len(encrypted) + (9 if status == 200 else 0)
 
@@ -97,6 +108,38 @@ def test_probe_failure_does_not_fetch_or_expose_details(monkeypatch, config):
     with pytest.raises(svc.MykeyHttpError) as exc:
         auto.checked_fetch()
     assert 'private' not in str(exc.value.detail)
+    fetch.assert_not_called()
+
+
+@pytest.mark.parametrize(('failure', 'diagnostic'), [
+    ('timeout', 'timed out'),
+    ('invalid_json', 'invalid JSON output'),
+    ('invalid_hash', 'invalid JSON output'),
+    ('child_exit', 'helper exited unsuccessfully'),
+])
+def test_probe_failure_logs_only_safe_category(monkeypatch, config, caplog, failure, diagnostic):
+    private = 'private-storage-path'
+    monkeypatch.setattr(auto._paths, 'ga_mykey_sync_script', lambda: config)
+    monkeypatch.setattr(svc, '_mykey_sync_python', lambda: 'synthetic-python')
+    monkeypatch.setattr(svc, '_sync_base_url', lambda: 'https://synthetic.invalid')
+    fetch = Mock()
+    monkeypatch.setattr(svc, 'sync_fetch', fetch)
+
+    def run(cmd, **kwargs):
+        if failure == 'timeout':
+            raise subprocess.TimeoutExpired(cmd, kwargs['timeout'], output=private, stderr=private)
+        stdout = json.dumps({'sha256': private}) if failure == 'invalid_hash' else private
+        return subprocess.CompletedProcess(cmd, 1 if failure == 'child_exit' else 0, stdout, private)
+
+    monkeypatch.setattr(auto.subprocess, 'run', run)
+    original = config.read_bytes()
+    with pytest.raises(svc.MykeyHttpError) as exc:
+        auto.checked_fetch()
+    assert exc.value.status_code == 502
+    assert private not in exc.value.detail
+    assert diagnostic in caplog.text
+    assert private not in caplog.text
+    assert config.read_bytes() == original
     fetch.assert_not_called()
 
 

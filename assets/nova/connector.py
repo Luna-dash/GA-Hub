@@ -107,7 +107,7 @@ async def pair(server, name, confirm=False):
         raise RuntimeError('Pair expired')
 
 
-async def connect_once(server, device, token, backend=None):
+async def connect_once(server, device, token, backend=None, *, on_connection=None):
     local = LocalGateway()
     local.fixed_backend = backend
     local.http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120))
@@ -176,6 +176,8 @@ async def connect_once(server, device, token, backend=None):
         pulse = None
         try:
             async with http.ws_connect(server + '/v1/agent/connect', headers={'Authorization': 'Bearer ' + token, 'X-Nova-Device': device}, heartbeat=25, max_msg_size=55 * 1024 * 1024, compress=0) as ws:
+                if on_connection is not None:
+                    on_connection(True)
                 pulse = asyncio.create_task(heartbeat(ws))
                 print('Nova 已连接，设备：' + device, flush=True)
                 async for msg in ws:
@@ -195,6 +197,8 @@ async def connect_once(server, device, token, backend=None):
                         task = tasks.get(data['id'])
                         if task: task.cancel()
         finally:
+            if on_connection is not None:
+                on_connection(False)
             active = list(tasks.values()) + ([pulse] if pulse else [])
             for task in active: task.cancel()
             await asyncio.gather(*active, return_exceptions=True)
@@ -202,7 +206,7 @@ async def connect_once(server, device, token, backend=None):
             await local.close()
 
 
-async def run(backend=None):
+async def run(backend=None, *, on_connection=None):
     config = json.loads((STATE / 'device.json').read_text(encoding='utf-8'))
     server = config['server']
     blob = win32cred.CredRead(credential_target(server), 1)['CredentialBlob']
@@ -210,7 +214,7 @@ async def run(backend=None):
     delay = 2
     while True:
         try:
-            await connect_once(server, config['device'], token, backend)
+            await connect_once(server, config['device'], token, backend, on_connection=on_connection)
             delay = 2
         except aiohttp.WSServerHandshakeError as e:
             if e.status in (401, 403): raise RuntimeError('设备已撤销或凭证无效，请重新配对。') from e
