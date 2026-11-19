@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 def _session_run_capacity() -> int:
     """Return the bounded session-run capacity (default %d).
 
-    The gate is shared by webui chat, wechat, scheduled and autonomous
+    The gate is shared by webui chat, scheduled and autonomous
     producers, so the default leaves headroom above interactive use alone.
     """ % constants.SESSION_RUN_CAPACITY_DEFAULT
     raw = os.environ.get(
@@ -227,7 +227,7 @@ class SessionLifecycle:
         return self._scheduled_chats
 
     def system_channels(self) -> SystemChannels:
-        """System-channel registry (wechat / autonomous / tasks)."""
+        """System-channel registry (autonomous / tasks)."""
         return self._system_channels
 
     def attach_coordinator(self, coordinator: SessionCoordinator) -> None:

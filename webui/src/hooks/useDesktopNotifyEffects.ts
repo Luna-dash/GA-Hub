@@ -62,9 +62,6 @@ export function useDesktopNotifyEffects() {
         })
       })().catch(() => undefined)
     })
-    const unsubscribeWechat = hubEventClient.subscribe('wechat:incoming', () => {
-      void notify('你有新的微信消息', { body: '可以进入微信查看。', confirmText: '查看微信', tag: 'wechat-incoming', onOpen: () => navigate('/wechat') })
-    })
     const unsubscribeConductor = hubEventClient.subscribe('conductor:workflow_completed', () => {
       void notify('流程结果可以查看了', { body: 'Conductor 本次流程已结束，可以查看结果了。', confirmText: '查看流程', tag: 'conductor-task-done', onOpen: () => navigate('/conductor') })
     })
@@ -76,7 +73,6 @@ export function useDesktopNotifyEffects() {
     return () => {
       alive = false
       unsubscribeRuntime()
-      unsubscribeWechat()
       unsubscribeConductor()
       unsubscribeConductorFailed()
     }

@@ -46,7 +46,7 @@ ENV_MYKEY_BASE_URL = "GA_MYKEY_BASE_URL"
 
 # ── session run capacity (server/routes/sessions.py + session_coordinator) ──
 # GAHUB_* env override for how many sessions may run concurrently; the gate
-# is shared by webui chat, wechat, scheduled and autonomous producers, so
+# is shared by webui chat, scheduled and autonomous producers, so
 # the ceiling must leave headroom above interactive use alone (default 10).
 ENV_SESSION_RUN_CAPACITY = "GAHUB_SESSION_RUN_CAPACITY"
 # gahub_app engine (conductor_client): engine temp/journal locations.

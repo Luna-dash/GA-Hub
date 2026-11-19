@@ -4,7 +4,6 @@ import { ManagedJsonSocket, type ManagedSocketState } from './managedJsonSocket'
 export const CONTROL_EVENT_PREFIXES = [
   'agent:',
   'session:',
-  'wechat:',
   'conductor:',
   'autonomous:',
   'task:',

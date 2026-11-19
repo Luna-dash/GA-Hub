@@ -226,7 +226,7 @@ async def list_sessions(
     # other blocking call in this file.
     rows = await asyncio.to_thread(lifecycle.store.list)
     if not include_system:
-        # System channels (wechat / autonomous / scheduled tasks) are hub
+        # System channels (autonomous / scheduled tasks) are hub
         # plumbing, not user chats: hide them unless explicitly asked for.
         rows = [row for row in rows if row.get("kind") != "system"]
     return SessionListResp(total=len(rows), items=rows)

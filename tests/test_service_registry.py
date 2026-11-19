@@ -157,47 +157,6 @@ def test_panel_omits_hidden_service() -> None:
     assert [item["id"] for item in panel["services"]] == ["visible"]
 
 
-def test_wechat_is_hidden_until_it_has_really_connected(tmp_path) -> None:
-    token_file = tmp_path / "token.json"
-    log_file = tmp_path / "wechat_log.jsonl"
-
-    with (
-        mock.patch("server.services.wechat_service.WeChatService._instance", None),
-        mock.patch("server.services.wechat_service.WX_LOG_FILE", log_file),
-        mock.patch("server.services.wx_bot_client.TOKEN_FILE_DEFAULT", token_file),
-    ):
-        assert ServiceRegistry()._wechat() is None
-        token_file.write_text("persisted", encoding="utf-8")
-        item = ServiceRegistry()._wechat()
-
-    assert item is not None
-    assert item.state == "stopped"
-    assert item.summary == "已连接过，当前未运行"
-    assert item.href == "/dashboard"
-
-
-def test_wechat_running_instance_is_visible_without_persisted_files(tmp_path) -> None:
-    service = mock.Mock()
-    service.status.return_value = {
-        "logged_in": True,
-        "polling": True,
-        "contacts": 0,
-        "log_count": 0,
-    }
-
-    with (
-        mock.patch("server.services.wechat_service.WeChatService._instance", service),
-        mock.patch("server.services.wechat_service.WX_LOG_FILE", tmp_path / "missing-log"),
-        mock.patch("server.services.wx_bot_client.TOKEN_FILE_DEFAULT", tmp_path / "missing-token"),
-    ):
-        item = ServiceRegistry()._wechat()
-
-    assert item is not None
-    assert item.state == "running"
-    assert item.summary == "消息轮询中"
-    assert item.href == "/dashboard"
-
-
 def test_conductor_and_goalhive_share_inactive_semantics_before_use() -> None:
     with (
         mock.patch("server.services.conductor_service.ConductorService._instance", None),

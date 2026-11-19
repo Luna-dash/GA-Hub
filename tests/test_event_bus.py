@@ -242,7 +242,7 @@ class EventBusBehaviorTests(unittest.TestCase):
             await asyncio.sleep(0)
 
             bus.publish("chat:hello", {"x": 1})
-            bus.publish("wechat:msg", {"x": 2})
+            bus.publish("conductor:msg", {"x": 2})
             bus.publish("chat:bye", {"x": 3})
 
             await asyncio.wait_for(asyncio.gather(t_chat, t_all), timeout=2.0)
@@ -251,7 +251,7 @@ class EventBusBehaviorTests(unittest.TestCase):
         chat, all_ = self._run(scenario())
         self.assertEqual(chat, ["chat:hello", "chat:bye"])
         # all_ saw the first two publishes (we stop after 2)
-        self.assertEqual(all_[:2], ["chat:hello", "wechat:msg"])
+        self.assertEqual(all_[:2], ["chat:hello", "conductor:msg"])
 
     def test_publish_burst_coalesces_loop_wakeup_and_preserves_order(self):
         async def scenario():
@@ -291,8 +291,8 @@ class EventBusBehaviorTests(unittest.TestCase):
             # Publish before any subscriber exists.
             bus.publish("chat:a", {})
             bus.publish("chat:b", {})
-            bus.publish("wechat:c", {})
-            bus.publish("wechat:d", {})
+            bus.publish("conductor:c", {})
+            bus.publish("conductor:d", {})
 
             seen: list[str] = []
 
@@ -313,13 +313,13 @@ class EventBusBehaviorTests(unittest.TestCase):
             bus.attach_loop(asyncio.get_running_loop())
             bus.publish("agent:status", {"phase": "old"})
             bus.publish("chat:next", {"content": "old"})
-            bus.publish("wechat:message_in", {"text": "old"})
+            bus.publish("conductor:status", {"text": "old"})
 
             seen: list[str] = []
 
             async def consume():
                 async for evt in bus.subscribe(
-                    ("agent:", "wechat:"),
+                    ("agent:", "conductor:"),
                     replay=10,
                 ):
                     seen.append(evt.topic)
@@ -332,7 +332,7 @@ class EventBusBehaviorTests(unittest.TestCase):
         self.assertEqual(
             self._run(scenario()),
             [
-                "agent:status", "wechat:message_in",
+                "agent:status", "conductor:status",
             ],
         )
 
@@ -340,10 +340,10 @@ class EventBusBehaviorTests(unittest.TestCase):
         async def scenario():
             bus = EventBus(queue_size=2)
             bus.attach_loop(asyncio.get_running_loop())
-            subscription = await bus.subscribe_after(("agent:", "wechat:"))
+            subscription = await bus.subscribe_after(("agent:", "conductor:"))
             try:
                 bus.publish("agent:status", {})
-                bus.publish("wechat:message_in", {})
+                bus.publish("conductor:status", {})
                 for i in range(5):
                     bus.publish("chat:next", {"i": i})
                 await asyncio.sleep(0)
@@ -357,7 +357,7 @@ class EventBusBehaviorTests(unittest.TestCase):
                 await subscription.close()
 
         queued, resync_reason = self._run(scenario())
-        self.assertEqual(queued, ["agent:status", "wechat:message_in"])
+        self.assertEqual(queued, ["agent:status", "conductor:status"])
         self.assertIsNone(resync_reason)
 
     def test_empty_prefix_in_union_preserves_match_all_semantics(self):
@@ -378,10 +378,10 @@ class EventBusBehaviorTests(unittest.TestCase):
             cursor = bus._next_event_id - 1
             bus.publish("chat:next", {})
             bus.publish("session:runtime", {})
-            bus.publish("wechat:message_in", {})
+            bus.publish("conductor:status", {})
 
             subscription = await bus.subscribe_after(
-                ("session:", "wechat:"),
+                ("session:", "conductor:"),
                 after_event_id=cursor,
                 epoch=bus.epoch,
             )
@@ -392,7 +392,7 @@ class EventBusBehaviorTests(unittest.TestCase):
 
         self.assertEqual(
             self._run(scenario()),
-            ["session:runtime", "wechat:message_in"],
+            ["session:runtime", "conductor:status"],
         )
 
     def test_subscribe_after_initial_replay_is_filtered_and_bounded(self):
@@ -459,7 +459,7 @@ class EventBusBehaviorTests(unittest.TestCase):
         # No loop attached → publishes still record history (just don't fan out).
         for i in range(5):
             bus.publish("chat:x", {"i": i})
-        bus.publish("wechat:y", {})
+        bus.publish("conductor:y", {})
 
         chat_hist = bus.history("chat:")
         self.assertEqual(len(chat_hist), 5)

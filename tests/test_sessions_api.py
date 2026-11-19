@@ -56,7 +56,7 @@ def test_session_list_hides_system_channels_unless_asked(tmp_path: Path, monkeyp
         visible = client.post("/api/sessions", json={"title": "用户会话"}).json()
         assert visible["kind"] == "user"
         # The rows SystemChannels.ensure() materializes for background producers.
-        store.ensure("system-wechat", title="微信 Bot", kind="system")
+        store.ensure("system-scheduled_task", title="定时任务", kind="system")
         store.ensure("system-autonomous", title="自主模式", kind="system")
 
         default_list = client.get("/api/sessions").json()
@@ -66,14 +66,14 @@ def test_session_list_hides_system_channels_unless_asked(tmp_path: Path, monkeyp
         everything = client.get("/api/sessions?include_system=true").json()
         assert {row["id"] for row in everything["items"]} == {
             visible["id"],
-            "system-wechat",
+            "system-scheduled_task",
             "system-autonomous",
         }
         assert everything["total"] == 3
         system_rows = [
             row for row in everything["items"] if row["kind"] == "system"
         ]
-        assert {row["title"] for row in system_rows} == {"微信 Bot", "自主模式"}
+        assert {row["title"] for row in system_rows} == {"定时任务", "自主模式"}
 
 
 def test_session_metadata_crud_is_message_free(tmp_path: Path, monkeypatch) -> None:

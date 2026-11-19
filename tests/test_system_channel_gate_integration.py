@@ -4,8 +4,7 @@ test_system_channels.py wires producers to a FakeCoordinator, so it proves
 routing shape but never exercises the admission gate.  These tests bind the
 real SessionCoordinator (capacity=1) through real SystemChannels and assert
 the failure modes from the 2026-09 review: a refused admission reaches the
-producer as AgentBusyError, is NOT counted as a fired trigger, answers the
-wechat user with a busy notice, and cannot kill the autonomous idle loop.
+producer as AgentBusyError, is NOT counted as a fired trigger, and cannot kill the autonomous idle loop.
 """
 from __future__ import annotations
 
@@ -20,23 +19,6 @@ from server.services.session_coordinator import (
 )
 from server.services.session_metadata import SessionMetadataStore
 from server.services.system_channels import SystemChannels
-
-try:
-    # wechat_service refuses to import before GA_ROOT is configured (a
-    # module-level guard) — on a machine without a GA checkout the wechat
-    # tests below degrade to skip instead of erroring at runtime.
-    from server.services import wechat_service as _wechat_service
-except RuntimeError as _exc:  # pragma: no cover - environment-dependent
-    _wechat_service = None
-    _WECHAT_SKIP = str(_exc)
-else:
-    _WECHAT_SKIP = None
-
-_wechat_needs_ga = pytest.mark.skipif(
-    _wechat_service is None,
-    reason=f"GA checkout not configured on this machine ({_WECHAT_SKIP})",
-)
-
 
 class _GateRuntime:
     """Minimal runtime: real handle lifecycle plus agent introspection."""
@@ -91,50 +73,9 @@ def gate():
 def _busy(exc_reason: str):
     """A submit that always hits the gate's refusal."""
     def submit(_text: str, **_kwargs):
-        raise AgentBusyError("system-wechat", "run-1", capacity=1,
+        raise AgentBusyError("system-scheduled_task", "run-1", capacity=1,
                              active_count=1, reason=exc_reason)
     return submit
-
-
-@_wechat_needs_ga
-def test_wechat_busy_reply_reaches_the_user(gate) -> None:
-    """A capacity-refused wechat message answers with a busy notice instead of
-    dying silently inside the handler thread."""
-    from server.services.wechat_service import WeChatService
-
-    channel = gate.channels.channel("wechat")
-    service = object.__new__(WeChatService)
-    service.channel = channel
-    sent: list[tuple[str, str]] = []
-    service._send_text = lambda uid, text, ctx="": sent.append((uid, text))
-
-    # Occupy the single capacity slot through the SAME coordinator the
-    # wechat channel submits into.
-    gate.coordinator.submit("occupy", session_id="other-session")
-    channel.submit = _busy(AgentBusyError.REASON_CAPACITY_FULL)
-
-    service._run_agent_stream("wx-user", "hello", [], "")
-
-    assert len(sent) == 1
-    assert "稍后再试" in sent[0][1]
-
-    gate.runtimes["other-session"].handle.finished = True
-
-
-@_wechat_needs_ga
-def test_wechat_session_active_reply_names_the_conflict(gate) -> None:
-    from server.services.wechat_service import WeChatService
-
-    channel = gate.channels.channel("wechat")
-    service = object.__new__(WeChatService)
-    service.channel = channel
-    sent: list[tuple[str, str]] = []
-    service._send_text = lambda uid, text, ctx="": sent.append((uid, text))
-
-    channel.submit = _busy(AgentBusyError.REASON_SESSION_ACTIVE)
-    service._run_agent_stream("wx-user", "hello", [], "")
-
-    assert "已有任务在处理中" in sent[0][1]
 
 
 def test_task_fire_refusal_does_not_consume_the_trigger(gate) -> None:

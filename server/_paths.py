@@ -28,7 +28,6 @@ table — keep the two lists in sync):
     gahub_journal/journal.jsonl → conductor engine durable journal
     email_config.json           → email notification settings
     ui_preferences.json         → sidebar navigation visibility
-    wechat_log.jsonl            → wechat message log
     logs/                       → backend.log (run.py logging setup)
     mykey-backups/              → mykey.py backup rotation
     memory-backups/             → conflict-safe Memory editor backups

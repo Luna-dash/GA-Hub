@@ -157,7 +157,7 @@ class SessionMetadataStore:
             data = self._read()
             timestamp = _now()
             row = {
-                # ``kind`` separates hub-owned system channels (wechat /
+                # ``kind`` separates hub-owned system channels (
                 # autonomous / scheduled tasks, created with explicit stable
                 # ids) from user-created sessions. Rows written before the
                 # field existed simply have none and always read as user.

@@ -2,7 +2,7 @@
 
 Before the merge the hub ran two chat executions in parallel: web sessions
 went through ``SessionCoordinator`` (capacity gate, precise abort, SessionStore
-history), while wechat / autonomous / scheduled tasks talked to the global
+history), while autonomous and scheduled tasks talked to the global
 ``AgentService`` singleton (no gate, one-size-fits-all abort, legacy history).
 Every background producer now owns a stable ``kind="system"`` session row and
 enters the SAME coordinator, so one admission gate and one abort semantics
@@ -34,7 +34,6 @@ log = logging.getLogger(__name__)
 # Stable, self-describing session ids. The id IS the channel key so the row is
 # idempotent across restarts (ensure() is a no-op once it exists).
 SYSTEM_CHANNEL_TITLES: dict[str, str] = {
-    "wechat": "微信 Bot",
     "autonomous": "自主模式",
     "scheduled_task": "定时任务",
 }

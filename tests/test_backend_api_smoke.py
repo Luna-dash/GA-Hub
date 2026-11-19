@@ -241,14 +241,14 @@ class BackendApiSmokeTests(unittest.TestCase):
         app = main.create_app()
         with TestClient(app, base_url="http://127.0.0.1") as client:
             self.event_bus.bus.publish("chat:next", {"content": "excluded"})
-            self.event_bus.bus.publish("wechat:message_in", {"text": "included"})
+            self.event_bus.bus.publish("conductor:status", {"text": "included"})
             with client.websocket_connect(
-                "/ws/events?prefix=agent:&prefix=wechat:&replay=2",
+                "/ws/events?prefix=agent:&prefix=conductor:&replay=2",
                 headers={"origin": "http://127.0.0.1:8765"},
             ) as websocket:
                 event = websocket.receive_json()
 
-        self.assertEqual(event["topic"], "wechat:message_in")
+        self.assertEqual(event["topic"], "conductor:status")
         self.assertEqual(event["payload"]["text"], "included")
 
     def test_event_websocket_rejects_external_origin(self) -> None:

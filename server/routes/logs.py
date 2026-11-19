@@ -45,11 +45,6 @@ def log_backend(tail: int = Query(default=200, ge=1, le=5000)) -> LogLinesResp:
     return {"lines": _tail(str(path), tail, redact=True), "file": path.name}
 
 
-@router.get("/api/logs/wechat")
-def log_wechat(tail: int = Query(default=200, ge=1, le=5000)) -> LogLinesResp:
-    return {"lines": _tail(str(_paths.temp_dir() / "wechatapp.log"), tail), "file": None}
-
-
 @router.get("/api/logs/agent")
 def log_agent(tail: int = Query(default=200, ge=1, le=5000)) -> LogLinesResp:
     """Returns tail of the most recent model_responses log for the current PID."""

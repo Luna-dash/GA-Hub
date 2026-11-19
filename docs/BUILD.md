@@ -122,7 +122,7 @@ build_all.bat
   （`tsc -b --noEmit`、vitest、api:check），**故意不阻断打包**（独立 workflow，
   产物可用性优先——这条通道的价值就是「没有开发环境的机器也能拿到能双击的 exe」）。
 - **后端 pytest 不进 CI**（口径要诚实）：套件在**采集期**就依赖 GA 仓库——3 个服务
-  模块（`agent_service.py:25`、`goalhive_service.py:20`、`wechat_service.py:32`）在导入
+  模块（`agent_service.py:25`、`goalhive_service.py:20`）在导入
   期就要求 `GA_ROOT`，另有若干测试模块直接 `from frontends...` 导入。实测（空
   `ADMIN_DATA`、无 GA）：**17 errors 中断整跑，0 passed**；加
   `--continue-on-collection-errors` 也只能到 910 passed / 6 failed / 11 skipped

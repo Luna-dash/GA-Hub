@@ -105,12 +105,6 @@ describe('state notifications', () => {
     await act(async () => emit(settled))
     expect(m.notify).toHaveBeenCalledWith('会话有更新', expect.objectContaining({ tag: 's1:r1', confirmText: '查看会话' }))
   })
-  it('reports incoming WeChat messages without exposing the message', () => {
-    m.handlers.get('wechat:incoming')?.({ payload: { content: 'PRIVATE MESSAGE' } })
-    expect(m.notify).toHaveBeenCalledWith('你有新的微信消息', expect.objectContaining({ body: '可以进入微信查看。', confirmText: '查看微信' }))
-    m.notify.mock.calls[0][1].onOpen()
-    expect(m.navigate).toHaveBeenCalledWith('/wechat')
-  })
   it('retains different completions', async () => {
     await act(async () => { emit(settled); emit({ ...settled, completed_run_id: 'r2' }) })
     expect(m.notify).toHaveBeenCalledTimes(2)

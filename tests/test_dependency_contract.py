@@ -3,8 +3,7 @@
 requirements.txt is the pinned, reproducible snapshot of the dependency
 ranges declared in pyproject.toml.  The BUILD.md fresh-machine flow installs
 only from requirements.txt, so a dependency declared in pyproject but not
-pinned here produces an environment where lazy runtime imports (qrcode,
-python-multipart, PIL, ...) fail with ImportError — historically exactly the
+pinned here produces an environment where lazy runtime imports (e.g. python-multipart) fail with ImportError — historically exactly the
 gap that shipped.  Normalization: dist name lowercased, ``-``/``_`` folded.
 """
 from __future__ import annotations

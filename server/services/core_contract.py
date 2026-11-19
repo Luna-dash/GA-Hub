@@ -141,7 +141,6 @@ _REQUIRED_GA_SYMBOLS: dict[str, tuple[str, ...]] = {
     # ── remaining direct GA dependencies (debt registry in the boundary test) ─
     "agentmain": (),  # class members are checked by _REQUIRED_CLASS_MEMBERS
     "frontends.btw_cmd": ("handle_frontend_command",),
-    "frontends.chatapp_common": ("public_access", "to_allowed_set"),
     "ga": (),      # GA's own package root, patched in-process by ga_subprocess_patch
     "llmcore": ("resolve_client",),
     "mykey": (),   # imported by server/run.py for GA's key bootstrap

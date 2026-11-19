@@ -1,11 +1,11 @@
 """Async event bus with topic-style fan-out.
 
-Bridges blocking producer threads (agent run loop, WeChat polling) and
+Bridges blocking producer threads (e.g. the agent run loop) and
 asyncio consumers (WebSocket subscribers). Producers call ``publish``
 from any thread; consumers ``subscribe`` from the asyncio event loop.
 
 Topics use ``namespace:event`` convention. A subscriber may filter by one
-or more prefixes (e.g. ``"wechat:"``) or subscribe to all (``""``).
+or more prefixes (e.g. ``"agent:"``) or subscribe to all (``""``).
 """
 from __future__ import annotations
 

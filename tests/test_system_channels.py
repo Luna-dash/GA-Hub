@@ -71,7 +71,7 @@ def store(tmp_path) -> SessionMetadataStore:
 
 def _channel(store: SessionMetadataStore, coordinator: FakeCoordinator) -> SystemChannel:
     return SystemChannel(
-        "wechat",
+        "autonomous",
         coordinator=lambda: coordinator,
         store=store,
         llm_key_resolver=lambda row: "resolved-key" if row.get("llm_key") is None else row["llm_key"],
@@ -79,8 +79,8 @@ def _channel(store: SessionMetadataStore, coordinator: FakeCoordinator) -> Syste
 
 
 def test_system_session_id_is_stable_and_prefixed() -> None:
-    assert system_session_id("wechat") == "system-wechat"
-    assert set(SYSTEM_CHANNEL_TITLES) == {"wechat", "autonomous", "scheduled_task"}
+    assert system_session_id("scheduled_task") == "system-scheduled_task"
+    assert set(SYSTEM_CHANNEL_TITLES) == {"autonomous", "scheduled_task"}
 
 
 def test_unknown_channel_is_rejected(store: SessionMetadataStore) -> None:
@@ -100,25 +100,25 @@ def test_submit_creates_system_row_once_and_routes_through_coordinator(
     coordinator = FakeCoordinator()
     channel = _channel(store, coordinator)
 
-    handle = channel.submit("hello", source="wechat")
+    handle = channel.submit("hello", source="autonomous")
 
-    row = store.get("system-wechat")
+    row = store.get("system-autonomous")
     assert row["kind"] == "system"
-    assert row["title"] == "微信 Bot"
+    assert row["title"] == "自主模式"
     # Routing: same session id every time, resolved llm key, original source tag.
     assert coordinator.stream_calls == [
         {
             "text": "hello",
-            "session_id": "system-wechat",
-            "source": "wechat",
+            "session_id": "system-autonomous",
+            "source": "autonomous",
             "images": None,
             "llm_key": "resolved-key",
         }
     ]
     assert handle.stream_id == "stream-1"
 
-    channel.submit("again", source="wechat")
-    rows = [r for r in store.list() if r["id"] == "system-wechat"]
+    channel.submit("again", source="autonomous")
+    rows = [r for r in store.list() if r["id"] == "system-autonomous"]
     assert len(rows) == 1
 
 
@@ -129,7 +129,7 @@ def test_abort_is_scoped_to_the_channel_session(store: SessionMetadataStore) -> 
     state = channel.abort()
 
     assert state == "aborted-state"
-    assert coordinator.abort_calls == ["system-wechat"]
+    assert coordinator.abort_calls == ["system-autonomous"]
 
 
 def test_agent_and_llm_commands_touch_only_the_channel_runtime(
@@ -141,9 +141,9 @@ def test_agent_and_llm_commands_touch_only_the_channel_runtime(
     channel.switch_llm(2)
     channel.list_llms()
 
-    assert coordinator.ensure_calls == ["system-wechat", "system-wechat"]
+    assert coordinator.ensure_calls == ["system-autonomous", "system-autonomous"]
     # switch_llm goes through the runtime, not a global singleton.
-    assert coordinator.runtimes["system-wechat"].switch_llm_calls == [2]
+    assert coordinator.runtimes["system-autonomous"].switch_llm_calls == [2]
 
 
 def test_system_channels_registry_caches_channels(store: SessionMetadataStore) -> None:
@@ -155,7 +155,7 @@ def test_system_channels_registry_caches_channels(store: SessionMetadataStore) -
         store=store,
         llm_key_resolver=lambda row: None,
     )
-    assert registry.channel("wechat") is registry.channel("wechat")
-    assert registry.channel("wechat").session_id == "system-wechat"
+    assert registry.channel("autonomous") is registry.channel("autonomous")
     assert registry.channel("autonomous").session_id == "system-autonomous"
+    assert registry.channel("scheduled_task").session_id == "system-scheduled_task"
     assert registry.channel("scheduled_task").session_id == "system-scheduled_task"

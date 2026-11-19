@@ -8,7 +8,7 @@ from unittest import mock
 
 import pytest
 
-from server.routes import agent, autonomous, conductor, conversations, memory, mykey, sessions, tasks, upload, wechat
+from server.routes import agent, autonomous, conductor, conversations, memory, mykey, sessions, tasks, upload
 from server.schemas import ChatRetryConfigReq, MemoryWriteReq, RewindReq
 from server.services import mykey_service
 
@@ -57,20 +57,6 @@ def _domain(store=None, coordinator=None):
     if coordinator is not None:
         domain.attach_coordinator(coordinator)
     return domain
-
-
-def test_wechat_send_runs_in_worker_thread() -> None:
-    service = SimpleNamespace(
-        bot=SimpleNamespace(has_token=True),
-        send_text=lambda *_args: _slow_result({"ok": True}),
-        send_file=mock.Mock(),
-    )
-    request = wechat.WxSendReq(uid="user", text="hello")
-
-    with mock.patch.object(wechat, "svc", return_value=service):
-        result = asyncio.run(_run_with_probe(wechat.send(request, _domain())))
-
-    assert result == {"ok": True}
 
 
 def test_email_probe_runs_in_worker_thread() -> None:

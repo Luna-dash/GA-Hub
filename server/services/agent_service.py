@@ -175,7 +175,7 @@ class StreamHandle:
     """A live agent task stream with one legacy queue consumer.
 
     WebSocket clients receive the bus/snapshot projection; ``display_queue``
-    remains a compatibility channel for the synchronous WeChat consumer.
+    also supports synchronous consumers such as Goal/Hive.
     """
     stream_id: str
     display_queue: "_q.Queue"
@@ -369,7 +369,7 @@ class AgentService:
         self._current_title: str = ""
         # User-preferred LLM. Persisted to admin config so it survives
         # restarts; also used to detect (and log) drift caused by other call
-        # sites (autonomous tasks, /llm wechat command, inline_eval, etc.)
+        # sites (autonomous tasks, inline_eval, etc.)
         self._llm_preferences = LlmPreferenceStore()
 
     # ── lifecycle ────────────────────────────────────────────────
@@ -660,10 +660,10 @@ class AgentService:
     ) -> StreamHandle:
         """Enqueue a task; spawn a single fan-out drainer that publishes
         chat:* events to the bus AND keeps the StreamHandle's display_queue
-        full for legacy sync consumers (wechat_service)."""
+        full for synchronous consumers."""
         # User-initiated submissions use an explicit page-scoped override when
         # provided; otherwise they reassert the persisted/global preference.
-        # Other sources (autonomous, wechat, reflect) keep whatever llm_no is
+        # Other sources (autonomous, reflect) keep whatever llm_no is
         # currently active unless an explicit override is supplied.
         if llm_key is not None:
             self._select_llm_for_key(llm_key)

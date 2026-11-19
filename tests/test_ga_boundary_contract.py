@@ -49,7 +49,6 @@ LEGACY_DIRECT_IMPORTS = {
     ("server/services/ga_subprocess_patch.py", "import", "ga", ()),
     ("server/services/goalhive_service.py", "from", "agentmain", ("GeneraticAgent",)),
     ("server/services/mykey_service.py", "from", "llmcore", ("resolve_client",)),
-    ("server/services/wechat_service.py", "from", "frontends.chatapp_common", ("public_access", "to_allowed_set")),
 }
 
 # The probe's own imports exist to check GA, not to use it.

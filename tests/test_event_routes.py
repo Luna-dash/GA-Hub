@@ -95,13 +95,13 @@ def event_client(monkeypatch):
 
 def test_event_route_passes_all_repeated_prefixes_to_bus() -> None:
     fake_bus = _FakeBus()
-    websocket = _FakeWebSocket("prefix=agent%3A&prefix=wechat%3A&replay=7")
+    websocket = _FakeWebSocket("prefix=agent%3A&prefix=conductor%3A&replay=7")
 
     with mock.patch.object(events, "bus", fake_bus):
         asyncio.run(events.ws_events(websocket))
 
     assert websocket.accepted
-    assert fake_bus.prefix == ("agent:", "wechat:")
+    assert fake_bus.prefix == ("agent:", "conductor:")
     assert fake_bus.replay == 7
 
 
@@ -191,16 +191,16 @@ def test_valid_cursor_replays_only_matching_prefixes(event_client) -> None:
     cursor = test_bus.history()[-1].event_id
     test_bus.publish("chat:next", {"content": "excluded"})
     test_bus.publish("session:runtime", {"status": "running"})
-    test_bus.publish("wechat:message_in", {"text": "included"})
+    test_bus.publish("conductor:status", {"text": "included"})
 
     with client.websocket_connect(
         "/ws/events?cursor=1"
         f"&after_event_id={cursor}&epoch={test_bus.epoch}"
-        "&prefix=session:&prefix=wechat:",
+        "&prefix=session:&prefix=conductor:",
         headers=TRUSTED_ORIGIN,
     ) as websocket:
         session_event = websocket.receive_json()
-        wechat_event = websocket.receive_json()
+        conductor_event = websocket.receive_json()
         replay_done = websocket.receive_json()
 
     assert session_event == {
@@ -210,10 +210,10 @@ def test_valid_cursor_replays_only_matching_prefixes(event_client) -> None:
         "event_id": cursor + 2,
         "epoch": test_bus.epoch,
     }
-    assert wechat_event == {
-        "topic": "wechat:message_in",
+    assert conductor_event == {
+        "topic": "conductor:status",
         "payload": {"text": "included"},
-        "ts": wechat_event["ts"],
+        "ts": conductor_event["ts"],
         "event_id": cursor + 3,
         "epoch": test_bus.epoch,
     }

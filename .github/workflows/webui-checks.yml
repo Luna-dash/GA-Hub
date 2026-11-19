@@ -8,7 +8,7 @@ name: webui-checks
 # 注：desktop-build 里的 vite build 会顺带跑 tsc，但 vitest 与 api:check 平时没人跑。
 #
 # 后端 pytest 不进 CI —— 套件在**采集期**就依赖 GA 仓库：3 个服务模块
-# （agent_service.py:25 / goalhive_service.py:20 / wechat_service.py:32）导入期就要求
+# （agent_service.py:25 / goalhive_service.py:20）导入期就要求
 # GA_ROOT，另有测试模块直接 `from frontends...` 导入。实测无 GA 时 17 errors 中断整跑
 # （0 passed），加 --continue-on-collection-errors 也只能到 910 passed / 6 failed。
 # 后端验证仍在本地 `python scripts\build_all.py --full` 做（见 docs/BUILD.md）。

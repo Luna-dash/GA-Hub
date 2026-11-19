@@ -110,9 +110,8 @@ interface ChatState {
 }
 
 // LiveChat shows the user's own webui session + admin-side flows
-// (autonomous evolution, reflect, /llm internal). It does NOT show the
-// wechat bot — those live in the dedicated WechatBot page so the two
-// channels don't pollute each other.
+// (autonomous evolution, reflect, /llm internal). Keep legacy IM messages
+// out of this transcript so existing history stays scoped to its source.
 /**
  * Reusable ("stable") system-notice bubbles: one key rewrites one bubble in
  * place (streamId `sys:<key>`) instead of appending, so repeating an action

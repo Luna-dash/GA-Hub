@@ -2,7 +2,7 @@
 
 Uploads go to admin's own data dir (``~/.genericagent-admin/uploads/``)
 so we never write into the GenericAgent repo. ``files-by-path`` allows
-previewing files inside GA's ``temp/`` (e.g. wechat-received media).
+previewing files inside GA's ``temp/``.
 """
 from __future__ import annotations
 
@@ -259,7 +259,7 @@ async def upload(file: UploadFile = File(...)) -> UploadResp:
     """Accept image / file uploads (paste, drag-drop, or button picker).
 
     Returns ``{file_id, name, path, url, mime, size}``. ``path`` is the
-    absolute disk path to be passed to the agent / wechat send. ``url``
+    absolute disk path to be passed to the agent. ``url``
     is a relative URL the frontend can use directly in <img src=...>.
     """
     name = file.filename or "untitled"

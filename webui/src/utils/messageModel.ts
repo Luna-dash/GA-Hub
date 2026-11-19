@@ -32,6 +32,7 @@ export interface ChatMsg {
   pendingWebuiId?: string          // identifies the exact optimistic bubble for rollback
 }
 
+// Older histories can still contain this source after channel removal.
 const HIDDEN_SOURCES = new Set(['wechat'])
 const isHiddenSource = (s?: string) => !!s && HIDDEN_SOURCES.has(s)
 

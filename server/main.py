@@ -6,7 +6,7 @@ Two startup modes:
   plus a static SPA. The user picks a GenericAgent directory; backend then
   needs to be restarted to enter normal mode.
 
-* **Normal mode**: full router set, agent + wechat + scheduler bootstrap.
+* **Normal mode**: full router set, agent + scheduler bootstrap.
 
 This module is path-agnostic: it doesn't compute its own ROOT, instead it
 relies on ``server._paths`` for everything that involves the GA project.
@@ -269,12 +269,12 @@ def _normal_routers() -> tuple[APIRouter, ...]:
     """Load the runtime routes atomically; diagnostics have no GA dependency."""
     from .routes import (
         agent, feishu, conversations, memory, autonomous, conductor, upload,
-        wechat, logs, mykey, services, sessions, preferences, tasks,
+        logs, mykey, services, sessions, preferences, tasks,
         tokens, goalhive, anti, file_transfer,
     )
     return tuple(module.router for module in (
         agent, feishu, conversations, memory, autonomous, conductor, upload,
-        wechat, logs, mykey, services, sessions, preferences, tasks,
+        logs, mykey, services, sessions, preferences, tasks,
         tokens, goalhive, anti, file_transfer,
     ))
 

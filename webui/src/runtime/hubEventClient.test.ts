@@ -42,9 +42,9 @@ describe('HubEventClient', () => {
   it('uses one control-plane socket for many subscribers and excludes chat', () => {
     const client = new HubEventClient()
     const agent = vi.fn()
-    const wechat = vi.fn()
+    const conductor = vi.fn()
     client.subscribe('agent:', agent)
-    client.subscribe('wechat:', wechat)
+    client.subscribe('conductor:', conductor)
 
     client.start()
     client.start()
@@ -62,10 +62,10 @@ describe('HubEventClient', () => {
 
     socket.open()
     socket.message({ topic: 'chat:next', payload: { content: 'excluded' }, ts: 1 })
-    socket.message({ topic: 'wechat:message_in', payload: { text: 'hello' }, ts: 2 })
+    socket.message({ topic: 'conductor:workflow_failed', payload: { text: 'hello' }, ts: 2 })
 
     expect(agent).not.toHaveBeenCalled()
-    expect(wechat).toHaveBeenCalledTimes(1)
+    expect(conductor).toHaveBeenCalledTimes(1)
     client.stop()
   })
 

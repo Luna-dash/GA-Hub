@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from .conductor_service import ConductorService
     from .feishu_service import FeishuService
     from .scheduler_host import SchedulerHost
-    from .wechat_service import WeChatService
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +27,6 @@ class AppServices:
     feishu: FeishuService | None = None
     scheduler_host: SchedulerHost | None = None
     mykey_sync: Any | None = None
-    wechat: "WeChatService | None" = None
 
     def clear(self) -> None:
         """Forget every owner before a new lifespan or after teardown."""
@@ -37,7 +35,6 @@ class AppServices:
         self.feishu = None
         self.scheduler_host = None
         self.mykey_sync = None
-        self.wechat = None
 
     def status_snapshot(self) -> dict[str, Any]:
         """Merge per-service status reports; failures degrade, never raise."""
@@ -67,16 +64,6 @@ class AppServices:
                     log.warning("scheduler host shutdown exceeded its graceful deadline")
             except Exception:
                 log.exception("scheduler host shutdown failed")
-        # wx threads submit through the coordinator: stop them while the
-        # producers shut down, before the agent they can invoke. WeChat is
-        # lazily built (first /api/wechat/login), so cover both the owned
-        # slot and the compatibility singleton.
-        try:
-            from .wechat_service import WeChatService
-
-            WeChatService.shutdown_existing()
-        except Exception:
-            log.exception("wechat shutdown failed")
         if self.feishu is not None:
             try:
                 self.feishu.shutdown()

@@ -405,8 +405,7 @@ class SessionCoordinator:
         """Admit one run and also return its stream handle.
 
         Background channels (system sessions) consume the handle directly
-        (wechat relays display_queue items back into the chat; the schedulers
-        watch ``finished``/``final_text``), so admission must hand it back
+        (the schedulers watch ``finished``/``final_text``), so admission must hand it back
         without a second lookup racing the watcher.
         """
         # Admission — capacity check plus per-session identity reservation — is

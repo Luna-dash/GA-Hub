@@ -16,7 +16,6 @@
 一个为 GenericAgent 提供的**现代化桌面管理界面**：
 
 - 💬 **实时聊天**：直接和 Agent 对话，支持图片粘贴/拖放、会话恢复与 Turn 自动折叠
-- 🤖 **微信机器人**：扫码登录、联系人列表、消息记录、手动发文/图/文件、白名单
 - 🗂️ **对话管理**：浏览/搜索/重命名/删除/导出 GA 的全部历史会话
 - 🧠 **记忆 & SOP**：可视化编辑 GA 的 `global_mem.txt` / `*_sop.md`
 - 🌳 **技能库浏览**：查看 `memory/skill_search/`
@@ -84,14 +83,11 @@ cd GA-Hub
 | `~/.genericagent-admin/gahub_journal/journal.jsonl` | Conductor 引擎持久化日志 | ❌ |
 | `~/.genericagent-admin/email_config.json` | 邮件通知配置 | ❌ |
 | `~/.genericagent-admin/ui_preferences.json` | 侧边栏导航可见性 | ❌ |
-| `~/.genericagent-admin/wechat_log.jsonl` | 微信消息日志 | ❌ |
 | `~/.genericagent-admin/logs/` | 后端日志（backend.log） | ❌ |
 | `~/.genericagent-admin/mykey-backups/` | mykey.py 编辑前的备份轮转 | ❌ |
 | `~/.genericagent-admin/memory-backups/` | Memory 每次实际写入前的原始字节备份 | ❌ |
 | `~/.genericagent-admin/uploads/` | 前端粘贴/拖放的文件 | ❌ |
-| `~/.wxbot/token.json` | 微信登录 token（与官方 wechatapp.py 共享） | ❌ |
 | `<GA>/memory/` | 用户通过“记忆 & SOP”页面授权编辑的 Memory 文件 | ✅ |
-| `<GA>/temp/wechat_media/` | 接收的微信媒体（GA 自己用） | ✅ |
 | `<GA>/temp/autonomous_reports/` | Agent 自主任务的产出报告（沿用 SOP 约定） | ✅ |
 
 > `<GA>/memory/` 可能包含 Git 跟踪文件，保存后应像普通源码改动一样审阅、提交或暂存。
@@ -182,7 +178,7 @@ LiveChat 使用以下 session-scoped 链路：
 
 事件游标仅保证**当前服务进程、单实例 EventBus、有限内存保留窗口**内的增量恢复；
 它不是跨进程持久化日志。当前部署边界仍是本机回环、单 worker；聊天执行统一经过
-SessionCoordinator 准入（网页会话与微信/自主/定时等系统会话走同一扇门）。
+SessionCoordinator 准入（网页会话与自主/定时等系统会话走同一扇门）。
 abort 超时会保守地继续占用活动槽并提示重启服务，避免旧 worker 与新 run 并发污染。
 
 兼容边界：LiveChat 新功能只使用 session HTTP + session WebSocket，session WS

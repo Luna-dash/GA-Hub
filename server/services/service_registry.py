@@ -8,8 +8,8 @@ An application-bound registry prefers the lifespan-owned instances recorded
 in ``AppServices`` (agent, feishu, scheduler host) so ``/api/status``,
 ``/api/health`` and ``/api/services/panel`` observe the same objects during
 partial startup/teardown. The module-global ``registry`` stays as a
-compatibility seam for tests and unbound callers; optional services not
-owned by the lifespan (WeChat, Goal/Hive) remain singleton observers.
+compatibility seam for tests and unbound callers; Goal/Hive remains a
+singleton observer outside the lifespan.
 """
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ class ServiceRegistry:
         self._sessions = sessions
         self._nova_component = nova
         self._readers: list[Callable[[], ServicePanelItem | None]] = [
-            self._agent, self._feishu, self._wechat, self._conductor,
+            self._agent, self._feishu, self._conductor,
             self._goalhive, self._autonomous, self._tasks,
         ]
         if nova is not None:
@@ -236,37 +236,6 @@ class ServiceRegistry:
             {"PID": status.get("pid") or "—", "模式": "外部" if status.get("external") else "内建"},
             error=err,
             health=health,
-        )
-
-    @staticmethod
-    def _wechat() -> ServicePanelItem | None:
-        from .wechat_service import WX_LOG_FILE, WeChatService
-        from .wx_bot_client import TOKEN_FILE_DEFAULT
-
-        svc = WeChatService._instance
-        persisted = any(
-            path.is_file() and path.stat().st_size > 0
-            for path in (TOKEN_FILE_DEFAULT, WX_LOG_FILE)
-        )
-        if svc is None:
-            if not persisted:
-                return None
-            return ServicePanelItem(
-                "wechat", "微信 Bot", "stopped", "已连接过，当前未运行", "/dashboard",
-            )
-
-        status = svc.status()
-        connected = bool(
-            persisted or status.get("logged_in") or status.get("polling")
-            or status.get("contacts") or status.get("log_count")
-        )
-        if not connected:
-            return None
-        active = bool(status.get("polling"))
-        return ServicePanelItem(
-            "wechat", "微信 Bot", "running" if active else "stopped",
-            "消息轮询中" if active else "已连接过，当前未运行", "/dashboard",
-            {"联系人": status.get("contacts", 0), "日志": status.get("log_count", 0)},
         )
 
     def _conductor(self) -> ServicePanelItem:

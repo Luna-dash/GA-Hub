@@ -11,7 +11,7 @@
 
 GA-Hub 当前同时存在两种 `AgentService` 实例域：
 
-1. `AgentService.instance()` 是 legacy 全局实例，继续服务 `/api/agent/*`、微信、自动任务等尚未迁移的入口。
+1. `AgentService.instance()` 是 legacy 全局实例，继续服务 `/api/agent/*`、自动任务等尚未迁移的入口。
 2. `SessionRuntimeFactory` 为每个 Hub session 创建 `AgentService(session_id=...)`，由 `SessionCoordinator` 管理，拥有该 session 的 GA agent、原生 archive、运行状态和实时事件。
 
 二者并存本身不是错误；真正的风险是同一个产品界面混用两个实例域。例如 LiveChat 的普通消息进入 session runtime，而 BTW 或 rewind 却调用全局 `/api/agent/*`，操作的就可能不是用户当前看到的会话。

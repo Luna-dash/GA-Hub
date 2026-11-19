@@ -19,15 +19,6 @@ bbed3cf、d63f98a、7572e21、ea68615、16b4f08）。
 - [x] wechat submit 防护 + 按拒绝原因回送忙碌提示（dac6a10；⚠️ 启用微信前置仍有效）
 - [x] 真 coordinator 闸门集成测试（tests/test_system_channel_gate_integration.py）
 
-## 启用微信 Bot 前置条件
-
-微信链路现状（2026-09-03 确认）：服务端全链路存活
-（`routes/wechat.py` 已挂载、`WeChatService`/`wx_bot_client.py` 完整、桌面通知
-订阅仍在），但上轮清理删掉了管理页（FeishuBot/WechatBot.tsx）及前端全部 `wx*`
-API 封装，而服务端无开机自启（`WeChatService.instance()` 仅由 `/api/wechat/login`
-懒创建）。**当前没有任何界面入口可启动微信 bot。** 重新启用需要：恢复最小登录
-入口（Dashboard 服务面板按钮即可）。submit 忙碌防护已就位（dac6a10）。
-
 ## 会话管理 ✅
 
 - [x] SessionRail 统一稳定排序（4e89e76：单一最近活动键，停止任务不再跳行；

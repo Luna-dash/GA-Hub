@@ -34,17 +34,6 @@ CHAT_REWOUND = "chat:rewound"
 # ── session runtime status ──────────────────────────────────────
 SESSION_RUNTIME = "session:runtime"
 
-# ── wechat channel ──────────────────────────────────────────────
-WECHAT_MESSAGE_IN = "wechat:message_in"
-WECHAT_MESSAGE_OUT = "wechat:message_out"
-WECHAT_QR_STATUS = "wechat:qr_status"
-WECHAT_POLLING = "wechat:polling"
-WECHAT_LOGOUT = "wechat:logout"
-WECHAT_ERROR = "wechat:error"
-WECHAT_BLOCKED = "wechat:blocked"
-WECHAT_ALLOWLIST = "wechat:allowlist"
-WECHAT_LOG_CLEARED = "wechat:log_cleared"
-
 # ── feishu channel ──────────────────────────────────────────────
 FEISHU_STARTED = "feishu:started"
 FEISHU_STOPPED = "feishu:stopped"

@@ -19,7 +19,6 @@ rich==15.0.0
 APScheduler==3.11.2
 pycryptodome==3.23.0
 python-multipart==0.0.27
-qrcode==8.2
 Pillow==12.2.0
 
 # 构建与测试工具链（httpx 仅路由测试使用，不进运行时）
