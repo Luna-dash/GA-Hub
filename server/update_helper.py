@@ -182,7 +182,16 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0 if result.get("state") not in {"failed", "rolled_back"} else 2
     except (OSError, ValueError, KeyError, subprocess.SubprocessError, psutil.Error) as exc:
-        print(f"Update refused: {exc}", flush=True)
+        msg = f"Update refused: {exc}"
+        print(msg, flush=True)
+        logs_dir = admin / "logs"
+        if logs_dir.is_dir():
+            try:
+                from datetime import datetime
+                with (logs_dir / "update_helper.log").open("a", encoding="utf-8") as fh:
+                    fh.write(f"[{datetime.now().isoformat(timespec='seconds')}] {args.command}: {msg}\n")
+            except OSError:
+                pass
         return 1
 
 

@@ -1485,6 +1485,8 @@ fn reveal_main_window<R: Runtime>(window: &WebviewWindow<R>) {
 #[cfg(windows)]
 fn follow_current_update() -> Result<bool, String> {
     use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
     if std::env::var_os("GA_HUB_UPDATE_NONCE").is_some() { return Ok(false); }
     let admin = std::env::var_os("GA_ADMIN_DATA").map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(|p| std::path::PathBuf::from(p).join(".genericagent-admin")))
@@ -1494,15 +1496,51 @@ fn follow_current_update() -> Result<bool, String> {
     let value: serde_json::Value = serde_json::from_slice(&std::fs::read(pointer).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     let target = value["executable"].as_str().ok_or("Invalid current update pointer")?;
-    let current = std::env::current_exe().map_err(|e| e.to_string())?;
-    if std::fs::canonicalize(target).map_err(|e| e.to_string())? == std::fs::canonicalize(&current).map_err(|e| e.to_string())? {
+    let target_path = Path::new(target);
+    if !target_path.is_file() {
+        record_startup_diagnostic(&format!(
+            "follow_current_update: pointer target missing ({target}), continuing with current executable"
+        ));
         return Ok(false);
     }
-    // Use the helper bundled beside this trusted launcher, not a pointer URL.
-    let _child = std::process::Command::new(current.with_file_name("ga-hub-update.exe"))
-        .arg("--admin-data").arg(admin).arg("launch")
-        .arg("--launcher-pid").arg(std::process::id().to_string())
-        .creation_flags(0x08000000).spawn().map_err(|e| e.to_string())?;
+    let current = std::env::current_exe().map_err(|e| e.to_string())?;
+    if std::fs::canonicalize(target_path).map_err(|e| e.to_string())? == std::fs::canonicalize(&current).map_err(|e| e.to_string())? {
+        return Ok(false);
+    }
+    let helper = current.with_file_name("ga-hub-update.exe");
+    if !helper.is_file() {
+        record_startup_diagnostic(&format!(
+            "follow_current_update: helper missing ({}), continuing with current executable",
+            helper.display()
+        ));
+        return Ok(false);
+    }
+    record_startup_diagnostic(&format!(
+        "follow_current_update: redirecting {} -> {target} via {}",
+        current.display(),
+        helper.display()
+    ));
+    let launcher_pid = std::process::id().to_string();
+    // Break away from any permissive caller Job (e.g. IDE terminal or shell
+    // wrapper) so ga-hub-update.exe passes outside_job() instead of refusing
+    // silently behind CREATE_NO_WINDOW; fall back when breakaway is disallowed.
+    let spawn_with_flags = |flags: u32| {
+        std::process::Command::new(&helper)
+            .arg("--admin-data")
+            .arg(&admin)
+            .arg("launch")
+            .arg("--launcher-pid")
+            .arg(&launcher_pid)
+            .creation_flags(flags)
+            .spawn()
+    };
+    let _child = match spawn_with_flags(CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB) {
+        Ok(child) => child,
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+            spawn_with_flags(CREATE_NO_WINDOW).map_err(|e| e.to_string())?
+        }
+        Err(err) => return Err(err.to_string()),
+    };
     Ok(true)
 }
 
@@ -1511,7 +1549,11 @@ fn main() {
     match follow_current_update() {
         Ok(true) => return,
         Ok(false) => (),
-        Err(error) => { eprintln!("{error}"); std::process::exit(1); }
+        Err(error) => {
+            record_startup_diagnostic(&format!("follow_current_update failed: {error}"));
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
     }
     let exit = ExitCoordinator::new();
     let exit_setup = exit.clone();
