@@ -403,3 +403,53 @@ def test_feishu_autostart_states_surface_in_registry_panel() -> None:
     item = bound._feishu()
     assert (item.state, item.health, item.error) == ("error", "attention", "missing app_secret")
     assert item.summary == "自动启动失败：missing app_secret"
+
+
+def test_goalhive_panel_read_never_constructs_service() -> None:
+    from server.services import goalhive_service
+    from server.services.app_services import AppServices
+
+    goalhive_factory = mock.Mock(side_effect=AssertionError("status must not construct GoalHive"))
+
+    with (
+        mock.patch.object(goalhive_service, "_service", None),
+        mock.patch.object(goalhive_service, "get_goalhive_service", goalhive_factory),
+    ):
+        goalhive_item = ServiceRegistry()._goalhive()
+
+    assert (goalhive_item.state, goalhive_item.summary) == ("stopped", "尚未启用")
+    goalhive_factory.assert_not_called()
+
+    owned_goalhive = mock.Mock()
+    owned_goalhive.panel_status.return_value = {"running": True, "message_count": 4}
+    bound = ServiceRegistry(AppServices(goalhive=owned_goalhive))
+
+    with (
+        mock.patch.object(goalhive_service, "_service", None),
+    ):
+        g_item = bound._goalhive()
+
+    assert (g_item.state, g_item.metrics) == ("running", {"消息": 4})
+
+
+def test_scheduler_host_service_of_returns_registered_service() -> None:
+    from server.services.app_services import AppServices
+    from server.services.scheduler_host import SchedulerHost
+
+    host = SchedulerHost(runtime_factory=mock.Mock())
+    svc = SimpleNamespace(
+        _sched=SimpleNamespace(running=True),
+        _stop_event=SimpleNamespace(is_set=lambda: False),
+        schedules={"a": SimpleNamespace(enabled=True)},
+    )
+    host.register("autonomous", lambda: svc, starter="start", stopper="shutdown")
+    assert host.service_of("autonomous") is None
+
+    svc.start = mock.Mock()
+    svc.shutdown = mock.Mock()
+    host.start_all()
+    assert host.service_of("autonomous") is svc
+    assert host.service_of("missing") is None
+
+    item = ServiceRegistry(AppServices(scheduler_host=host))._autonomous()
+    assert (item.state, item.metrics) == ("running", {"计划": 1, "启用": 1})

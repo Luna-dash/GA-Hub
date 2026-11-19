@@ -8,8 +8,8 @@ An application-bound registry prefers the lifespan-owned instances recorded
 in ``AppServices`` (agent, feishu, scheduler host) so ``/api/status``,
 ``/api/health`` and ``/api/services/panel`` observe the same objects during
 partial startup/teardown. The module-global ``registry`` stays as a
-compatibility seam for tests and unbound callers; Goal/Hive remains a
-singleton observer outside the lifespan.
+compatibility seam for tests and unbound callers, including Goal/Hive
+when it has not yet been registered with the app.
 """
 from __future__ import annotations
 
@@ -257,17 +257,18 @@ class ServiceRegistry:
             {"子 Agent": running, "已停止": stopped, "消息": len(svc.chat_messages)},
         )
 
-    @staticmethod
-    def _goalhive() -> ServicePanelItem:
+    def _goalhive(self=None) -> ServicePanelItem:
         from . import goalhive_service
-        svc = goalhive_service._service
-        if svc is None:
+
+        owned = getattr(self._owned_services(), "goalhive", None) if self is not None else None
+        status = goalhive_service.peek_goalhive_status(owned)
+        if status is None:
             return ServicePanelItem("goalhive", "Goal / Hive", "stopped", "尚未启用", "/goal-hive")
-        running = svc.is_running()
+        running = bool(status.get("running"))
         return ServicePanelItem(
             "goalhive", "Goal / Hive", "running" if running else "stopped",
             "独立 Agent 正在执行" if running else "当前未运行", "/goal-hive",
-            {"消息": len(svc.get_messages())},
+            {"消息": status.get("message_count", 0)},
         )
 
     def _scheduler_service(self, domain: str):
@@ -279,6 +280,9 @@ class ServiceRegistry:
         """
         host = getattr(self._owned_services(), "scheduler_host", None)
         if host is not None:
+            getter = getattr(host, "service_of", None)
+            if callable(getter):
+                return getter(domain)
             for item in getattr(host, "_registrations", ()):
                 if item.name == domain and item.service is not None:
                     return item.service

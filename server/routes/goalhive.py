@@ -32,6 +32,10 @@ async def ws_goalhive(ws: WebSocket):
         return
     await ws.accept()
     service = get_goalhive_service()
+    ws_app = getattr(ws, "app", None)
+    services = getattr(getattr(ws_app, "state", None), "services", None)
+    if services is not None and hasattr(services, "goalhive") and services.goalhive is None:
+        services.goalhive = service
     
     # Send initial snapshot
     try:

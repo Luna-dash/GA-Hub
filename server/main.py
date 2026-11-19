@@ -530,18 +530,10 @@ def create_app() -> FastAPI:
                 except Exception:
                     log.exception("session runtime abort failed")
                 await _cancel_background_task(feishu_autostart_task)
-                # Closes every lifespan-owned service, the conductor engine
-                # included: its supervisor session is stopped and the spawned
-                # gahub_app process reaped (no orphan engines after app close).
-                # The desktop sidecar runs this same app/lifespan, so both
-                # entry points share the one close path.
+                # Closes every lifespan-owned service (including lazily constructed
+                # Goal/Hive and the conductor engine), reaping spawned child
+                # processes cleanly. The desktop sidecar shares this exact lifespan.
                 services.shutdown_all()
-                try:
-                    from .services.goalhive_service import shutdown_goalhive_service
-                    if not shutdown_goalhive_service():
-                        log.warning("goalhive shutdown exceeded its graceful deadline")
-                except Exception:
-                    log.exception("goalhive shutdown failed")
             finally:
                 if session_runtime_shutdown_ok:
                     try:

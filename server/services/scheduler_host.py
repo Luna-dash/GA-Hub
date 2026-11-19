@@ -47,6 +47,14 @@ class SchedulerHost:
                 self._runtime = self._runtime_factory()
             return self._runtime
 
+    def service_of(self, name: str) -> Any | None:
+        """Return the started domain service by registration name without constructing."""
+        with self._lock:
+            for item in self._registrations:
+                if item.name == name and item.service is not None:
+                    return item.service
+        return None
+
     def register(
         self,
         name: str,

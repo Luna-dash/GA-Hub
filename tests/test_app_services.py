@@ -8,6 +8,7 @@ services, and full reference release on clear().
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest import mock
 
 from server.services.app_services import AppServices
 
@@ -105,10 +106,21 @@ def test_shutdown_all_follows_dependency_order() -> None:
         agent=_Tracked("agent"),
         conductor=_Tracked("conductor"),
         feishu=_Tracked("feishu"),
+        goalhive=_Tracked("goalhive"),
         scheduler_host=_Host("unused-name"),
     )
     services.shutdown_all()
-    assert order == ["scheduler_host", "feishu", "conductor", "agent"]
+    assert order == ["scheduler_host", "goalhive", "feishu", "conductor", "agent"]
+
+
+def test_shutdown_all_isolates_goalhive_failure() -> None:
+    agent = _Agent()
+    goalhive = mock.Mock()
+    goalhive.shutdown.side_effect = RuntimeError("goalhive boom")
+    services = AppServices(agent=agent, goalhive=goalhive)
+    services.shutdown_all()
+    goalhive.shutdown.assert_called_once_with()
+    assert agent.shutdown_calls == 1
 
 
 def test_shutdown_all_isolates_one_service_failure() -> None:
@@ -134,6 +146,7 @@ def test_clear_releases_every_owner() -> None:
         agent=_Agent(),
         conductor=_Conductor(),
         feishu=_Feishu(),
+        goalhive=object(),
         scheduler_host=_SchedulerHost(),
         mykey_sync=object(),
     )
@@ -141,6 +154,7 @@ def test_clear_releases_every_owner() -> None:
     assert services.agent is None
     assert services.conductor is None
     assert services.feishu is None
+    assert services.goalhive is None
     assert services.scheduler_host is None
     assert services.mykey_sync is None
     # A cleared snapshot observes nothing and shuts nothing down.

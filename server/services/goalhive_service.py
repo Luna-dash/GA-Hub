@@ -451,6 +451,13 @@ class GoalHiveService:
         with self._lock:
             return self._active_stream_id is not None
 
+    def panel_status(self) -> dict[str, object]:
+        """Return a read-only panel summary without touching agent state."""
+        return {
+            "running": self.is_running(),
+            "message_count": len(self.get_messages()),
+        }
+
     def abort(self) -> None:
         """Abort the current stream."""
         with self._lifecycle_lock:
@@ -480,6 +487,26 @@ _service: GoalHiveService | None = None
 _service_lock = threading.Lock()
 
 
+def peek_goalhive_service() -> GoalHiveService | None:
+    """Return the active GoalHive singleton without constructing one."""
+    with _service_lock:
+        return _service
+
+
+def peek_goalhive_status(service: GoalHiveService | None = None) -> dict[str, object] | None:
+    """Return read-only GoalHive status if initialized, else None."""
+    svc = service if service is not None else peek_goalhive_service()
+    if svc is None:
+        return None
+    reader = getattr(svc, "panel_status", None)
+    if callable(reader):
+        return reader()
+    return {
+        "running": bool(svc.is_running()),
+        "message_count": len(svc.get_messages()),
+    }
+
+
 def get_goalhive_service() -> GoalHiveService:
     """Singleton accessor."""
     global _service
@@ -490,16 +517,20 @@ def get_goalhive_service() -> GoalHiveService:
     return _service
 
 
-def shutdown_goalhive_service(timeout: float = 2.0) -> bool:
-    """Close the existing singleton without constructing one during shutdown."""
+def clear_goalhive_service(service: GoalHiveService) -> None:
+    """Forget the module singleton if it still points to a stopped owner."""
     global _service
     with _service_lock:
-        service = _service
-    if service is None:
+        if _service is service:
+            _service = None
+
+
+def shutdown_goalhive_service(timeout: float = 2.0) -> bool:
+    """Close the existing singleton without constructing one during shutdown."""
+    svc = peek_goalhive_service()
+    if svc is None:
         return True
-    stopped = service.shutdown(timeout=timeout)
+    stopped = svc.shutdown(timeout=timeout)
     if stopped:
-        with _service_lock:
-            if _service is service:
-                _service = None
+        clear_goalhive_service(svc)
     return stopped

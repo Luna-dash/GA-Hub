@@ -8,6 +8,7 @@ using a getter that might construct fresh work during partial startup/teardown.
 from __future__ import annotations
 
 import logging
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +28,7 @@ class AppServices:
     feishu: FeishuService | None = None
     scheduler_host: SchedulerHost | None = None
     mykey_sync: Any | None = None
+    goalhive: Any | None = None
 
     def clear(self) -> None:
         """Forget every owner before a new lifespan or after teardown."""
@@ -35,6 +37,7 @@ class AppServices:
         self.feishu = None
         self.scheduler_host = None
         self.mykey_sync = None
+        self.goalhive = None
 
     def status_snapshot(self) -> dict[str, Any]:
         """Merge per-service status reports; failures degrade, never raise."""
@@ -64,6 +67,19 @@ class AppServices:
                     log.warning("scheduler host shutdown exceeded its graceful deadline")
             except Exception:
                 log.exception("scheduler host shutdown failed")
+        # Goal/Hive runs its own agent/tools; stop it before conductor & agent.
+        try:
+            if self.goalhive is not None:
+                stopped = self.goalhive.shutdown()
+                if stopped is False:
+                    log.warning("goalhive shutdown exceeded its graceful deadline")
+                elif "server.services.goalhive_service" in sys.modules:
+                    sys.modules["server.services.goalhive_service"].clear_goalhive_service(self.goalhive)
+            elif "server.services.goalhive_service" in sys.modules:
+                if not sys.modules["server.services.goalhive_service"].shutdown_goalhive_service():
+                    log.warning("goalhive shutdown exceeded its graceful deadline")
+        except Exception:
+            log.exception("goalhive shutdown failed")
         if self.feishu is not None:
             try:
                 self.feishu.shutdown()
