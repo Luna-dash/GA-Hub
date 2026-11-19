@@ -14,6 +14,7 @@ import { errorMessageFromError } from '@/utils/sessionUi'
 import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 import { CronCardLine, CronPreview } from '@/components/CronPreview'
+import { CloseIconButton, Plus, RefreshIcon } from '@/components/ActionIcons'
 
 export default function Autonomous() {
   const qc = useQueryClient()
@@ -80,7 +81,10 @@ export default function Autonomous() {
         <button
           onClick={() => setEditor({ type: 'idle', enabled: true, name: '' })}
           className="ga-btn-primary"
-        >+ 新建计划</button>
+        >
+          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+          <span>新建计划</span>
+        </button>
       }
     >
       <div className="p-6 space-y-6 max-w-6xl mx-auto">
@@ -326,14 +330,14 @@ function ReportDrawer({
     <ModalOverlay onClose={onClose} align="right" panelClassName="w-[42rem] max-w-[94vw] h-full border-l p-6 overflow-y-auto">
         <div className="flex items-baseline justify-between mb-3">
           <h3 className="text-sm font-mono text-slate-300">{name}</h3>
-          <button onClick={onClose} aria-label="关闭报告" className="text-slate-400 text-xl leading-none">×</button>
+          <CloseIconButton label="关闭报告" variant="ghost" iconSize={16} onClick={onClose} className="text-slate-400 hover:text-slate-200" />
         </div>
         {isLoading ? (
           <div role="status" className="py-12 text-center text-sm text-ink-muted">正在读取报告…</div>
         ) : isError ? (
           <div role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft p-4 text-sm text-status-danger space-y-3">
             <p>报告加载失败：{errorMessage || '未知错误'}</p>
-            <button type="button" onClick={onRetry} className="ga-btn">重试</button>
+            <button type="button" onClick={onRetry} className="ga-btn"><RefreshIcon size={13} /><span>重试</span></button>
           </div>
         ) : (
           <MessageContent content={content ?? ''} format="markdown" />

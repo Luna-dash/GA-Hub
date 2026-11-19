@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CircleAlert, LoaderCircle, Power, Radio, ShieldCheck, ShieldMinus, ShieldX } from 'lucide-react'
+import { LoaderCircle, ShieldCheck, ShieldMinus, ShieldX } from 'lucide-react'
 import clsx from 'clsx'
 import type { components } from '@/api/generated/schema'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
+import { StatusIconGlyph, statusBadgeToneClass, type StatusBadgeKind } from './ActionIcons'
 
 type Status = components['schemas']['AntiDaemonStatus']
 const key = ['anti-daemon-status'] as const
@@ -45,34 +46,39 @@ export function AntiDaemonControl() {
     : auth === 'checking' ? '正在验证 agy 登录' : auth === 'unverified' ? '无法验证 agy 登录' : 'agy 登录状态未知'
   const detail = (canStart ? start.error?.message : undefined) ?? status.error?.message ?? status.data?.detail
   const loading = busy || !state
-  const GatewayIcon = loading ? LoaderCircle : running ? Radio : canStart ? Power : CircleAlert
+  const gatewayKind: StatusBadgeKind = loading
+    ? 'connecting'
+    : running
+      ? 'connected'
+      : state === 'unavailable'
+        ? 'error'
+        : 'offline'
   const AuthIcon = auth === 'checking' ? LoaderCircle : auth === 'authenticated' ? ShieldCheck
     : auth === 'login_required' ? ShieldX : ShieldMinus
   const gatewayTitle = [label, detail].filter(Boolean).join(' · ')
 
   return (
-    <div className="flex shrink-0 items-center gap-1" aria-label="Anti 状态" role="group">
+    <div className="flex shrink-0 items-center gap-1.5" aria-label="Anti 状态" role="group">
       <span className="inline-flex" title={gatewayTitle}>
         <button
           type="button"
-          className={clsx('inline-flex size-8 items-center justify-center rounded-lg border',
-            running ? 'border-status-success-line bg-status-success-soft text-status-success'
-              : 'border-line bg-bg-card text-ink-muted',
-            canStart && 'hover:border-accent/40 hover:bg-bg-soft hover:text-accent focus-visible:outline focus-visible:outline-accent')}
+          className={clsx('ga-badge', statusBadgeToneClass(gatewayKind),
+            canStart && 'cursor-pointer hover:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent')}
           aria-label={label}
           disabled={!canStart}
           onClick={() => start.mutate()}
         >
-          <GatewayIcon size={16} aria-hidden="true" className={clsx(loading && 'motion-safe:animate-spin')} />
+          <StatusIconGlyph kind={gatewayKind} />
         </button>
       </span>
       <span title={auth === 'authenticated' ? `${authLabel}（登录验证不代表模型推理可用）` : authLabel}
         role="img" aria-label={authLabel}
-        className={clsx('inline-flex size-8 items-center justify-center rounded-lg border',
-          auth === 'authenticated' ? 'border-status-success-line bg-status-success-soft text-status-success'
-            : auth === 'login_required' ? 'border-status-warning-line bg-status-warning-soft text-status-warning'
-              : 'border-line bg-bg-card text-ink-muted')}>
-        <AuthIcon size={16} aria-hidden="true" className={clsx(auth === 'checking' && 'motion-safe:animate-spin')} />
+        className={clsx('ga-badge',
+          auth === 'authenticated' ? 'ga-badge-connected'
+            : auth === 'login_required' ? 'ga-badge-connecting'
+              : auth === 'checking' ? 'ga-badge-connecting'
+                : 'border-line bg-bg-card text-ink-muted')}>
+        <AuthIcon className={clsx('h-3.5 w-3.5', auth === 'checking' && 'animate-spin motion-safe:animate-spin')} strokeWidth={1.85} aria-hidden="true" />
       </span>
       <span role="status" className="sr-only">
         {running ? authLabel : label}{detail && `：${detail}`}

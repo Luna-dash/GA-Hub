@@ -33,6 +33,7 @@ import { RunningTranscript } from './RunningTranscript'
 import { CollapseToLatestButton } from './CollapseToLatestButton'
 import { useConversationCollapse } from './ConversationCollapse'
 import { bubbleTone } from './bubbleTone'
+import { ChevronDisclosureIcon, Paperclip, RewindIcon, Square } from './ActionIcons'
 import type { PasteAttachment } from '@/api/types'
 import { api } from '@/api/client'
 import { AttachmentImage, isImageAttachment } from './AttachmentImage'
@@ -319,7 +320,10 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
             </>}
           </div>
           {stopped && !useHistoryProjection && (
-            <p className="mt-2 text-xs italic leading-5 text-status-warning-muted">⏹任务中止</p>
+            <p className="mt-2 flex items-center gap-1.5 text-xs italic leading-5 text-status-warning-muted">
+              <Square size={10} className="shrink-0 fill-current" aria-hidden="true" />
+              <span>任务中止</span>
+            </p>
           )}
         </div>
         {(timeLabel || startedAt) && (
@@ -410,7 +414,10 @@ function HistoryTranscriptReply({
       {!conversationManaged && visibleProcessTurns.length > 0 && detailsExpanded && <CollapseToLatestButton onClick={collapseProcess} />}
       <div ref={latestRef} data-transcript-latest />
       {stoppedState && (
-        <p className="mt-2 text-xs italic leading-5 text-status-warning-muted">⏹任务中止</p>
+        <p className="mt-2 flex items-center gap-1.5 text-xs italic leading-5 text-status-warning-muted">
+          <Square size={10} className="shrink-0 fill-current" aria-hidden="true" />
+          <span>任务中止</span>
+        </p>
       )}
 
     </>
@@ -439,7 +446,7 @@ function LazyProcessFold({ turns, onDetailsChange }: { turns: AssistantTranscrip
         }}
         className="flex w-full items-center gap-2 rounded-md border border-line bg-bg-soft px-3 py-2 text-left text-xs font-medium text-ink-muted transition-colors hover:bg-bg-card hover:text-ink"
       >
-        <span aria-hidden="true" className={clsx('inline-block transition-transform', open && 'rotate-90')}>›</span>
+        <ChevronDisclosureIcon open={open} size={13} />
         <span>{open ? '收起执行过程' : '查看执行过程'}</span>
         <span className="ml-auto shrink-0 tabular-nums text-ink-faint">共 {turns.length} 个 Turn</span>
       </button>
@@ -472,7 +479,7 @@ function LazyTranscriptTurn({ turn, onOpenChange }: { turn: AssistantTranscriptT
       onOpenChange(expanded)
     }}>
       <summary className="flex cursor-pointer list-none items-start gap-2 py-2 text-xs leading-5 text-ink-muted hover:text-ink [&::-webkit-details-marker]:hidden">
-        <span aria-hidden="true" className={clsx('mt-0.5 inline-block transition-transform', open && 'rotate-90')}>›</span>
+        <ChevronDisclosureIcon open={open} size={13} className="mt-1" />
         <span className="shrink-0 font-medium text-ink-faint">Turn {turn.turn}</span>
         <span className="min-w-0 break-words">{title}</span>
       </summary>
@@ -521,7 +528,7 @@ function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
             title={a.name}
             className="px-3 py-2 rounded-md border border-line bg-bg-card text-xs text-ink hover:bg-bg-soft inline-flex items-center gap-2 max-w-[16rem]"
           >
-            <span>📎</span>
+            <Paperclip size={13} strokeWidth={1.85} className="shrink-0 text-ink-muted" aria-hidden="true" />
             <span className="truncate">{a.name}</span>
             {!!a.size && <span className="text-ink-faint shrink-0">{fmtSize(a.size)}</span>}
           </a>
@@ -536,11 +543,10 @@ function RewindChip({ onClick }: { onClick: () => void }) {
     <button
       onClick={onClick}
       title="回退此轮对话（删除本轮提问与回复）"
-      className="px-2.5 py-1 text-[11px] leading-none rounded-md
-                 bg-bg-soft border border-line text-ink-muted
-                 hover:text-accent hover:bg-bg-card transition-colors"
+      className="ga-btn-chip hover:text-accent"
     >
-      ↺ 回退
+      <RewindIcon size={12} />
+      <span>回退</span>
     </button>
   )
 }

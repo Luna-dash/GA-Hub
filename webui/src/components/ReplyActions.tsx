@@ -3,10 +3,11 @@ import { QueryClientContext } from '@tanstack/react-query'
 import { toast } from '@/stores/toastStore'
 import { useCopy } from '@/utils/clipboard'
 import { errorMessageFromError } from '@/utils/sessionUi'
+import { CopyIcon, FileText } from './ActionIcons'
 import { FileLinkContext } from './FileCitation'
 import { fileTransferQueryKey, saveTransferReply } from './FileTransferBox'
 
-const actionClass = 'rounded-md border border-line bg-bg-soft px-2.5 py-1 text-[11px] leading-none text-ink-muted transition-colors hover:bg-bg-card hover:text-ink disabled:opacity-50'
+const actionClass = 'ga-btn-chip'
 
 export function ReplyActions({ text, engine, canSave, project }: {
   text: string; engine: 'chat' | 'anti'; canSave: boolean; project?: string
@@ -36,12 +37,14 @@ export function ReplyActions({ text, engine, canSave, project }: {
 
   return <>
     <button type="button" onClick={() => copy(text)} title="复制结论" className={actionClass}>
-      {copied ? '✓ 已复制' : '⧉ 复制'}
+      <CopyIcon copied={copied} size={12} />
+      <span>{copied ? '已复制' : '复制'}</span>
     </button>
     {canSave && sessionId && (
       <button type="button" onClick={() => void save()} disabled={saving}
         title="将回复结论保存为 Markdown 并放入传递箱" className={actionClass}>
-        {saving ? '保存中…' : '转成文档'}
+        <FileText size={12} strokeWidth={1.85} aria-hidden="true" className="shrink-0" />
+        <span>{saving ? '保存中…' : '转成文档'}</span>
       </button>
     )}
   </>

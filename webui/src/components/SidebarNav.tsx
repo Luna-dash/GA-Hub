@@ -12,6 +12,7 @@ import {
 } from '@/config/navigation'
 import { AntiMark } from './AntiMark'
 import { storageKeys } from '@/config/storageKeys'
+import { ChevronsLeft, ChevronsRight } from './ActionIcons'
 function NavIcon({ name }: { name: NavIconName }) {
   const common = {
     fill: 'none',
@@ -209,7 +210,9 @@ export function SidebarNav() {
             <span className="ga-nav-icon relative"><span aria-hidden="true"><NavIcon name={it.icon} /></span>{it.id === 'theme-tasks' && unreadTheme && <span role="status" aria-label="主题任务有未读完成结果" className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-bg-deep" />}</span>
             {!collapsed && (
               <>
-                <span className="ga-nav-label">{it.label}</span>
+                <span className="ga-nav-label">
+                  {it.id === 'anti' ? <span className="ga-nav-label-four-ideographs">{it.label.split(' ').map(word => <span key={word}>{word}</span>)}</span> : it.label}
+                </span>
                 <span className="ga-nav-chev" aria-hidden="true">›</span>
               </>
             )}
@@ -250,19 +253,11 @@ export function SidebarNav() {
             collapsed ? 'ga-sidebar-fold-collapsed' : '',
           )}
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" className="ga-sidebar-fold-icon">
-            {collapsed ? (
-              <>
-                <path d="m10 17 5-5-5-5" />
-                <path d="m16 17 5-5-5-5" transform="translate(-2 0)" />
-              </>
-            ) : (
-              <>
-                <path d="m14 17-5-5 5-5" />
-                <path d="m8 17-5-5 5-5" transform="translate(2 0)" />
-              </>
-            )}
-          </svg>
+          {collapsed ? (
+            <ChevronsRight aria-hidden="true" focusable="false" className="ga-sidebar-fold-icon" />
+          ) : (
+            <ChevronsLeft aria-hidden="true" focusable="false" className="ga-sidebar-fold-icon" />
+          )}
           {!collapsed && <span>折叠</span>}
         </button>
       </div>

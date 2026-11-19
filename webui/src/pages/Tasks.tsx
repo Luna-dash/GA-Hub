@@ -12,7 +12,7 @@ import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 import { CronExpressionParser } from 'cron-parser'
 import { CronCardLine, CronPreview } from '@/components/CronPreview'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Mail, Plus } from '@/components/ActionIcons'
 
 const RUNS_PER_PAGE = 10
 const pageButtonClass = 'inline-grid size-8 place-items-center rounded-md border border-line bg-bg-card text-ink hover:border-accent hover:text-accent focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 disabled:hover:border-line disabled:hover:text-ink'
@@ -70,7 +70,10 @@ export default function Tasks() {
         <button
           onClick={() => setEditor({ type: 'cron', enabled: true, cron: '0 8 * * *', name: '', notify_email: false })}
           className="ga-btn-primary"
-        >+ 新建任务</button>
+        >
+          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+          <span>新建任务</span>
+        </button>
       }
     >
       <div className="p-6 space-y-6 max-w-6xl mx-auto">
@@ -258,63 +261,63 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
   }
   return (
     <ModalOverlay onClose={() => { if (!saving) onClose() }} closeOnBackdrop={!saving} labelledBy="task-dialog-title" panelClassName="p-6 w-[38rem] max-w-[92vw] max-h-[92vh] overflow-y-auto">
-        <h3 id="task-dialog-title" className="text-base font-semibold mb-4">{initial.id ? '编辑定时任务' : '新建定时任务'}</h3>
-        <Field label="名称">
-          <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="每日早报" />
+      <h3 id="task-dialog-title" className="text-base font-semibold mb-4">{initial.id ? '编辑定时任务' : '新建定时任务'}</h3>
+      <Field label="名称">
+        <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="每日早报" />
+      </Field>
+      <Field label="类型">
+        <select value={s.type} onChange={(e) => setS({ ...s, type: e.target.value as TaskScheduleType })} className={inp}>
+          <option value="cron">定时 (Cron)</option>
+          <option value="interval">周期 (Interval)</option>
+        </select>
+      </Field>
+      {s.type === 'cron' && (
+        <Field label="Cron 表达式">
+          <input value={s.cron || ''} onChange={(e) => setS({ ...s, cron: e.target.value })} className={inp + ' font-mono'} placeholder="分 时 日 月 周（本地时区）" />
+          <CronPreview expr={s.cron || ''} />
         </Field>
-        <Field label="类型">
-          <select value={s.type} onChange={(e) => setS({ ...s, type: e.target.value as TaskScheduleType })} className={inp}>
-            <option value="cron">定时 (Cron)</option>
-            <option value="interval">周期 (Interval)</option>
-          </select>
+      )}
+      {s.type === 'interval' && (
+        <Field label="间隔分钟">
+          <input type="number" min={1} value={s.interval_minutes ?? 60}
+            onChange={(e) => setS({ ...s, interval_minutes: +e.target.value })} className={inp} />
         </Field>
-        {s.type === 'cron' && (
-          <Field label="Cron 表达式">
-            <input value={s.cron || ''} onChange={(e) => setS({ ...s, cron: e.target.value })} className={inp + ' font-mono'} placeholder="分 时 日 月 周（本地时区）" />
-            <CronPreview expr={s.cron || ''} />
+      )}
+      <Field label="任务 Prompt">
+        <textarea
+          value={s.prompt || ''}
+          onChange={(e) => setS({ ...s, prompt: e.target.value })}
+          rows={5}
+          className={inp + ' resize-none text-xs leading-relaxed'}
+          placeholder="每天抓取 XXX 信息，总结成 5 条要点；如果有重要变化，请在结论里标出。"
+        />
+      </Field>
+      <Field label="邮件通知">
+        <label className="inline-flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={!!s.notify_email} onChange={(e) => setS({ ...s, notify_email: e.target.checked })} />
+          <span className="text-slate-300">任务完成后发送邮件</span>
+        </label>
+      </Field>
+      {s.notify_email && (
+        <>
+          <Field label="收件人（留空使用默认收件人）">
+            <input value={s.email_to || ''} onChange={(e) => setS({ ...s, email_to: e.target.value })} className={inp} placeholder="you@example.com" />
           </Field>
-        )}
-        {s.type === 'interval' && (
-          <Field label="间隔分钟">
-            <input type="number" min={1} value={s.interval_minutes ?? 60}
-                   onChange={(e) => setS({ ...s, interval_minutes: +e.target.value })} className={inp} />
+          <Field label="邮件标题">
+            <input value={s.email_subject || ''} onChange={(e) => setS({ ...s, email_subject: e.target.value })} className={inp} placeholder="GenericAgent 定时任务结果: {name}" />
           </Field>
-        )}
-        <Field label="任务 Prompt">
-          <textarea
-            value={s.prompt || ''}
-            onChange={(e) => setS({ ...s, prompt: e.target.value })}
-            rows={5}
-            className={inp + ' resize-none text-xs leading-relaxed'}
-            placeholder="每天抓取 XXX 信息，总结成 5 条要点；如果有重要变化，请在结论里标出。"
-          />
-        </Field>
-        <Field label="邮件通知">
-          <label className="inline-flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={!!s.notify_email} onChange={(e) => setS({ ...s, notify_email: e.target.checked })} />
-            <span className="text-slate-300">任务完成后发送邮件</span>
-          </label>
-        </Field>
-        {s.notify_email && (
-          <>
-            <Field label="收件人（留空使用默认收件人）">
-              <input value={s.email_to || ''} onChange={(e) => setS({ ...s, email_to: e.target.value })} className={inp} placeholder="you@example.com" />
-            </Field>
-            <Field label="邮件标题">
-              <input value={s.email_subject || ''} onChange={(e) => setS({ ...s, email_subject: e.target.value })} className={inp} placeholder="GenericAgent 定时任务结果: {name}" />
-            </Field>
-          </>
-        )}
-        <Field label="启用">
-          <label className="inline-flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={!!s.enabled} onChange={(e) => setS({ ...s, enabled: e.target.checked })} />
-            <span className="text-slate-300">保存后立即生效</span>
-          </label>
-        </Field>
-        <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-slate-300 disabled:opacity-50">取消</button>
-          <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-50">{saving ? '保存中…' : '保存'}</button>
-        </div>
+        </>
+      )}
+      <Field label="启用">
+        <label className="inline-flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={!!s.enabled} onChange={(e) => setS({ ...s, enabled: e.target.checked })} />
+          <span className="text-slate-300">保存后立即生效</span>
+        </label>
+      </Field>
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-slate-300 disabled:opacity-50">取消</button>
+        <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-50">{saving ? '保存中…' : '保存'}</button>
+      </div>
     </ModalOverlay>
   )
 }
@@ -396,7 +399,7 @@ function EmailSettings() {
     <section>
       <div className="flex items-center justify-between mb-3 gap-3">
         <h2 className="text-sm font-semibold text-slate-300">邮件设置</h2>
-        <button onClick={startEdit} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5">配置 SMTP</button>
+        <button onClick={startEdit} className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5"><Mail className="h-3.5 w-3.5" aria-hidden="true" /><span>配置 SMTP</span></button>
       </div>
       <div className="rounded-xl border border-line bg-bg-card p-4 text-sm text-slate-400">
         {data?.host

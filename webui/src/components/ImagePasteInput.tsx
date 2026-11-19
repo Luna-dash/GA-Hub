@@ -7,7 +7,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { LoaderCircle, RotateCw, X } from 'lucide-react'
+import { LoaderCircle } from 'lucide-react'
+import { CloseIconButton, Plus, RotateCw, SendHorizontal, Square, X } from './ActionIcons'
 import { ScheduleClockFace, scheduleClockButtonClass } from './ScheduleClockFace'
 import { api } from '@/api/client'
 import { AttachmentImage, isImageAttachment } from './AttachmentImage'
@@ -341,7 +342,7 @@ export function ImagePasteInput({
       }}
     >
       {referenceBusy && <div role="status" className="px-3 pt-2 text-xs text-ink-muted">正在读取文件引用…</div>}
-      {referenceError && <div role="alert" className="px-3 pt-2 text-xs text-status-danger">{referenceError}<button type="button" onClick={() => setReferenceError(undefined)} className="ml-2">关闭</button></div>}
+      {referenceError && <div role="alert" className="flex items-center gap-1.5 px-3 pt-2 text-xs text-status-danger"><span>{referenceError}</span><CloseIconButton label="关闭" variant="compact" iconSize={12} onClick={() => setReferenceError(undefined)} /></div>}
       {/* Align with the input: 4px row inset + 40px picker + 8px gap. */}
       {(attachments.length > 0 || attachmentsBlocked) && (
         <div className={clsx('flex flex-wrap items-start gap-1.5 pr-1 pt-2', acceptFiles ? 'pl-[3.25rem]' : 'pl-1')}>
@@ -356,12 +357,13 @@ export function ImagePasteInput({
                 attachment={a}
                 className="h-full w-full rounded-lg border border-line object-cover"
               />
-              <button
-                type="button"
+              <CloseIconButton
+                label={`移除 ${a.name}`}
+                variant="badge"
+                iconSize={11}
                 onClick={() => removeAttachment(a.file_id)}
-                className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border border-line bg-bg/90 text-xs leading-none text-slate-300 hover:border-status-danger-line hover:text-status-danger"
-                aria-label={`移除 ${a.name}`}
-              >×</button>
+                className="absolute right-1 top-1 border-line bg-bg/90 text-slate-300 hover:border-status-danger-line hover:text-status-danger"
+              />
             </div>
           ) : (
             <div
@@ -371,12 +373,13 @@ export function ImagePasteInput({
               data-attachment-kind="file"
             >
               <span className="min-w-0 break-all text-xs leading-4 text-slate-200">{a.name}{a.source === 'local_ref' && <small className="ml-1 text-ink-muted">本地引用</small>}</span>
-              <button
-                type="button"
+              <CloseIconButton
+                label={`移除 ${a.name}`}
+                variant="badge"
+                iconSize={11}
                 onClick={() => removeAttachment(a.file_id)}
-                className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-xs leading-none text-slate-400 hover:text-status-danger"
-                aria-label={`移除 ${a.name}`}
-              >×</button>
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 border-transparent bg-transparent text-slate-400 hover:bg-bg-card hover:text-status-danger"
+              />
             </div>
           ))}
           {pendingUploads.map((item) => (
@@ -443,7 +446,18 @@ export function ImagePasteInput({
 
       <div className="flex items-end gap-2 p-1">
         {acceptFiles && (
-          <label className="flex h-10 w-10 shrink-0 self-center cursor-pointer items-center justify-center rounded-xl text-2xl font-light leading-none text-accent hover:bg-accent/10 hover:text-accent transition" title="添加文件"
+          <label
+            role="button"
+            tabIndex={0}
+            aria-label="添加文件"
+            className="flex h-10 w-10 shrink-0 self-center cursor-pointer items-center justify-center rounded-xl text-accent transition hover:bg-accent/10 hover:text-accent"
+            title="添加文件"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                e.currentTarget.click()
+              }
+            }}
             onClick={(e) => {
               if (canReferenceLocalFiles()) {
                 e.preventDefault()
@@ -453,13 +467,17 @@ export function ImagePasteInput({
                   if (alive.current && token === actionRef.current) await addPaths(paths)
                 })
               }
-            }}>
-            +
+            }}
+          >
+            <Plus className="h-5 w-5" aria-hidden="true" />
             <input
               type="file"
               multiple
               className="hidden"
-              onChange={(e) => upload(Array.from(e.target.files || []))}
+              onChange={(e) => {
+                upload(Array.from(e.target.files || []))
+                e.target.value = ''
+              }}
             />
           </label>
         )}
@@ -554,13 +572,17 @@ export function ImagePasteInput({
           onClick={stopActive ? onStop : submit}
           disabled={disabled || (stopActive ? stopDisabled : submitDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0))}
           className={clsx(
-            'flex h-10 items-center justify-center rounded-xl px-4 text-sm font-medium text-white transition disabled:opacity-40 disabled:shadow-none',
+            'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white transition disabled:opacity-40 disabled:shadow-none',
             onSchedule && 'mb-0.5',
             stopActive ? 'bg-status-danger hover:bg-status-danger-strong' : 'bg-accent hover:brightness-110',
           )}
-          aria-label={stopActive ? '停止' : submitLabel}
+          aria-label={stopActive ? '停止' : (submitLabel ?? '发送')}
           title={stopActive ? '停止当前会话任务' : attachmentHint ?? submitLabel ?? '发送消息'}
-        >{stopActive ? '停止' : '发送'}</button>
+        >{stopActive ? (
+          <Square className="h-4 w-4 fill-current" aria-hidden="true" />
+        ) : (
+          <SendHorizontal className="h-4 w-4" aria-hidden="true" />
+        )}</button>
       </div>
 
       {btwOpen && btwSessionId && (
@@ -670,12 +692,13 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
           <div className="text-sm font-medium text-status-warning">BTW 旁路提问</div>
           <div className="text-[11px] text-status-warning-strong">不打断主任务，答案只显示在这个小窗里</div>
         </div>
-        <button
-          type="button"
+        <CloseIconButton
+          label="关闭 BTW"
+          variant="ghost"
+          iconSize={15}
           onClick={onClose}
-          className="h-7 w-7 rounded-lg text-ink-muted hover:bg-bg-soft hover:text-ink"
-          aria-label="关闭 BTW"
-        >×</button>
+          className="h-7 w-7 text-ink-muted hover:bg-bg-soft hover:text-ink"
+        />
       </div>
 
       <div className="max-h-80 overflow-y-auto p-3 space-y-3 text-sm">
@@ -716,8 +739,10 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
           type="button"
           onClick={ask}
           disabled={loading || !text.trim()}
-          className="px-3 py-2 rounded-xl bg-status-warning text-white text-sm font-medium hover:bg-status-warning-strong disabled:opacity-40"
-        >提问</button>
+          aria-label="提问"
+          title="发送旁路提问"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-status-warning text-white transition hover:bg-status-warning-strong disabled:opacity-40"
+        ><SendHorizontal className="h-4 w-4" aria-hidden="true" /></button>
       </div>
     </div>
   )

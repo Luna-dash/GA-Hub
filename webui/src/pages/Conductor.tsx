@@ -28,6 +28,7 @@ import {
 import { useConductorData } from '@/hooks/useConductorData'
 import { useSharedModelSelection } from '@/hooks/useSharedModelSelection'
 import { queryKeys } from '@/queries/queryKeys'
+import { StatusIconBadge } from '@/components/ActionIcons'
 import { usePageState } from '@/utils/pageState'
 import { toast } from '@/stores/toastStore'
 import { errorMessageFromError, structuredErrorDetailFromError } from '@/utils/sessionUi'
@@ -651,13 +652,25 @@ export default function Conductor() {
             value the strip below reads — not from isEnsuring: the bring-up
             call returns long before the engine is ready, and only the window
             covers that whole span. */}
-        <span className={`ga-badge ${!engineStarting && status?.started ? 'ga-badge-connected' : 'ga-badge-offline'}`}>
-          {engineStarting
-            ? '启动中…'
-            : status === undefined
-              ? '连接中'
-              : status.started ? '运行中' : ensureFailed ? '启动失败' : '未运行'}
-        </span>
+        <StatusIconBadge
+          kind={
+            engineStarting || status === undefined
+              ? 'connecting'
+              : status.started
+                ? 'running'
+                : ensureFailed
+                  ? 'error'
+                  : 'idle'
+          }
+          label={
+            engineStarting
+              ? '启动中…'
+              : status === undefined
+                ? '连接中'
+                : status.started ? '运行中' : ensureFailed ? '启动失败' : '未运行'
+          }
+          srText
+        />
         </>
       }
       middleArea={

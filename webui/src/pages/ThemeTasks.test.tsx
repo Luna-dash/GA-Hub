@@ -409,7 +409,7 @@ it('keeps a completed compact card unread until its conclusion is expanded', asy
 })
 
 it('shows an empty-state message in the session picker when no non-theme sessions match', async () => {
-  await click('＋ 从会话转入')
+  await click('从会话转入')
   const dlg = host.querySelector('[role="dialog"]')!
   expect(dlg.getAttribute('aria-labelledby')).toBe('theme-pick-title')
   expect(dlg.textContent).toContain('暂无可转入的普通会话')

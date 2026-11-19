@@ -12,6 +12,7 @@ import {
   usefulMetrics,
 } from '@/utils/dashboardUi'
 import { queryKeys } from '@/queries/queryKeys'
+import { RefreshIcon } from '@/components/ActionIcons'
 
 const exactNf = new Intl.NumberFormat('zh-CN')
 const compactNf = new Intl.NumberFormat('en', { notation: 'compact', compactDisplay: 'short', maximumSignificantDigits: 3 })
@@ -147,7 +148,7 @@ function ErrorBox({ text, onRetry }: { text: string; onRetry?: () => void }) {
   return (
     <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-xs text-status-danger">
       <span>{text}</span>
-      {onRetry && <button type="button" onClick={onRetry} className="ga-btn shrink-0 py-1 text-xs">重试</button>}
+      {onRetry && <button type="button" onClick={onRetry} className="ga-btn shrink-0 py-1 text-xs"><RefreshIcon size={12} /><span>重试</span></button>}
     </div>
   )
 }

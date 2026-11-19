@@ -3,8 +3,10 @@ import { createPortal } from 'react-dom'
 import type { TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
-import { Brain, ClipboardList, RotateCw } from 'lucide-react'
+import { Brain, ClipboardList } from 'lucide-react'
+import { CloseIconButton, RotateCw } from '@/components/ActionIcons'
 import { ChatComposerFrame, ChatUtilityDock, chatTranscriptClass } from '@/components/ChatLayout'
+import { bubbleTone } from '@/components/bubbleTone'
 import { ImagePasteInput } from '@/components/ImagePasteInput'
 import { AntiDaemonControl } from '@/components/AntiDaemonControl'
 import { AntiIcon } from '@/components/AntiMark'
@@ -127,7 +129,7 @@ export default function AntiChat() {
     setCreating(true)
   }
   const closeCreate = () => { if (!create.isPending) setCreating(false) }
-  return <PageShell title="Anti会话" wrapHeader
+  return <PageShell title="Agy 会话" wrapHeader
     titleExtra={<AntiDaemonControl />}
     actions={<div ref={setHeaderActions} className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2" />}>
     <div className="flex h-full min-h-0 min-w-0 flex-col md:flex-row">
@@ -135,7 +137,7 @@ export default function AntiChat() {
         runtimes={railRuntimes} currentId={selected?.id ?? null} onSelect={setSid} onCreate={openCreate}
         onRename={(id, title) => rename.mutateAsync({ id, title }).then(() => undefined)}
         onDelete={id => remove.mutateAsync(id)}
-        deleteDetail="将删除 Hub 中的 Anti 会话及其消息记录，不会删除项目文件或已保存的产物。" />
+        deleteDetail="将删除 Hub 中的 Agy 会话及其消息记录，不会删除项目文件或已保存的产物。" />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Errors items={[sessions.error, rename.error, remove.error]} />
         {selected ? <Conversation key={selected.id} session={selected} headerActions={headerActions} /> :
@@ -276,30 +278,27 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
         </div>}
         <div className="space-y-5">
           {history.data?.map(run => <article className="space-y-3" key={run.id}>
-            <div className="ml-auto w-fit max-w-[88%] rounded-2xl rounded-tr-md border border-line/60 bg-bg-card px-4 py-2.5 text-sm text-ink">
+            <div className={`w-fit max-w-full rounded-lg px-3.5 py-3 text-sm ${bubbleTone('user').surfaceClass}`}>
               <MessageContent format="text" content={run.prompt} />
             </div>
-            <div className="flex min-w-0 items-start gap-2">
-              <AntiIcon className="mt-1 h-6 w-6 shrink-0 text-accent" />
-              <div className="group/anti-reply min-w-0 space-y-2 rounded-2xl rounded-tl-md border border-line/60 bg-bg-card px-3 py-2.5 text-sm text-ink">
-                {run.status !== 'success' && <p role="status" className="text-xs text-ink-muted">
-                  {run.status}{run.error ? ` · ${run.error}` : ''}
-                  {run.error_detail && <span className="mt-1 block text-sm text-ink">{run.error_detail}</span>}
-                </p>}
-                <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, engine: 'anti' }}>
-                  <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
-                    <AntiTaskProgress active={active(run)} loadEvents={signal => request<AntiEvent[]>(`${path}/${run.id}/events`, signal)}
-                      runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}>
-                      {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
-                    </AntiTaskProgress>
-                    {run.status === 'success' && run.answer?.trim() && (
-                      <div className="pointer-events-none flex flex-wrap justify-end gap-2 opacity-0 transition-opacity group-hover/anti-reply:pointer-events-auto group-hover/anti-reply:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-                        <ReplyActions text={run.answer} engine="anti" project={project} canSave />
-                      </div>
-                    )}
-                  </FileTransferConclusion.Provider>
-                </FileLinkContext.Provider>
-              </div>
+            <div className={`group/anti-reply w-fit min-w-0 max-w-full space-y-2 rounded-lg px-3.5 py-3 text-sm ${bubbleTone('assistant').surfaceClass}`}>
+              {run.status !== 'success' && <p role="status" className="text-xs text-ink-muted">
+                {run.status}{run.error ? ` · ${run.error}` : ''}
+                {run.error_detail && <span className="mt-1 block text-sm text-ink">{run.error_detail}</span>}
+              </p>}
+              <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, engine: 'anti' }}>
+                <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
+                  <AntiTaskProgress active={active(run)} loadEvents={signal => request<AntiEvent[]>(`${path}/${run.id}/events`, signal)}
+                    runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}>
+                    {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
+                  </AntiTaskProgress>
+                  {run.status === 'success' && run.answer?.trim() && (
+                    <div className="pointer-events-none flex flex-wrap justify-end gap-2 opacity-0 transition-opacity group-hover/anti-reply:pointer-events-auto group-hover/anti-reply:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+                      <ReplyActions text={run.answer} engine="anti" project={project} canSave />
+                    </div>
+                  )}
+                </FileTransferConclusion.Provider>
+              </FileLinkContext.Provider>
             </div>
           </article>)}
           <Errors items={[history.error, live.error, send.error, cancel.error]} />
@@ -310,8 +309,14 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
       {references.length > 0 && <ul aria-label="引用文件" className="flex flex-wrap gap-1 px-3 pt-2 text-xs">
         {references.map(file => <li key={file.path} className="flex min-w-0 items-center gap-1 rounded-md bg-bg-soft px-2 py-1" title={file.path}>
           <span className="truncate">{file.name}</span>
-          <button type="button" aria-label={`移除引用 ${file.name}`} disabled={Boolean(pending) || Boolean(current)}
-            className="text-ink-muted hover:text-accent disabled:opacity-40" onClick={() => setReferences(old => old.filter(item => item.path !== file.path))}>×</button>
+          <CloseIconButton
+            label={`移除引用 ${file.name}`}
+            variant="compact"
+            iconSize={12}
+            disabled={Boolean(pending) || Boolean(current)}
+            className="text-ink-muted hover:text-accent disabled:opacity-40"
+            onClick={() => setReferences(old => old.filter(item => item.path !== file.path))}
+          />
         </li>)}
       </ul>}
       <ImagePasteInput

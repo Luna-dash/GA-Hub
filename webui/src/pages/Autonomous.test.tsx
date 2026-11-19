@@ -72,7 +72,7 @@ describe('Autonomous schedule dialog & report drawer', () => {
     expect(disabledPill.className).not.toContain('bg-slate-700')
     expect(disabledPill.className).toContain('text-ink-muted')
 
-    await act(async () => button('+ 新建计划').click())
+    await act(async () => button('新建计划').click())
     const dlg = host.querySelector('[role="dialog"]')!
     const numInput = dlg.querySelector<HTMLInputElement>('input[type="number"]')!
     await act(async () => {

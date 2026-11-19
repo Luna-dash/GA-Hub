@@ -23,6 +23,7 @@ import { focusChatScrollFromUtilityRail } from '@/utils/utilityRailFocus'
 import { useChatPerformanceProbe } from '@/utils/useChatPerformanceProbe'
 import { MessageBubble } from './MessageBubble'
 import { ConversationCollapseProvider, ConversationCollapseControl } from './ConversationCollapse'
+import { ArrowDown, ArrowUp } from './ActionIcons'
 import { VirtualMessageList, type VirtualMessageListHandle } from './VirtualMessageList'
 import { Z_LAYERS } from '@/config/zLayers'
 
@@ -651,26 +652,29 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
                 <div className="mt-auto flex shrink-0 flex-col gap-1.5 text-xs text-ink">
                   <button
                     onClick={jumpToBottom}
-                    className="min-h-9 rounded-lg border border-line bg-bg-soft/95 px-1 py-1 leading-tight shadow-md backdrop-blur hover:bg-bg-card"
+                    className="inline-flex min-h-9 items-center justify-center gap-1 rounded-lg border border-line bg-bg-soft/95 px-2 py-1 leading-tight shadow-md backdrop-blur hover:bg-bg-card"
                     title={unread > 0 ? `${unread} 条新消息，跳到最新` : '跳到最新消息'}
                   >
-                    ↓ {unread > 0 ? unread : '底部'}
+                    <ArrowDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span>{unread > 0 ? unread : '底部'}</span>
                   </button>
                   <button
                     onClick={() => jumpToTurn(-1)}
                     disabled={activeTurn <= 0}
-                    className="h-9 rounded-lg border border-line bg-bg-soft/95 px-1 shadow-md backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
+                    className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-line bg-bg-soft/95 px-2 shadow-md backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
                     title="定位到上一轮问答"
                   >
-                    ↑ 上节
+                    <ArrowUp className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span>上节</span>
                   </button>
                   <button
                     onClick={() => jumpToTurn(1)}
                     disabled={activeTurn < 0 || activeTurn >= turnCount - 1}
-                    className="h-9 rounded-lg border border-line bg-bg-soft/95 px-1 shadow-md backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
+                    className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-line bg-bg-soft/95 px-2 shadow-md backdrop-blur hover:bg-bg-card disabled:cursor-not-allowed disabled:opacity-35"
                     title="定位到下一轮问答"
                   >
-                    ↓ 下节
+                    <ArrowDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span>下节</span>
                   </button>
                 </div>
               )}

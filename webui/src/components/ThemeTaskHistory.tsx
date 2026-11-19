@@ -6,8 +6,9 @@ import { applyEvent, historyToMessages, prependUniqueHistory, type ChatMsg } fro
 import { scanTranscript } from '@/utils/transcriptProtocol'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { ThemeConversationHistory } from './ThemeConversationHistory'
+import { ArrowDown, ArrowRight, RefreshIcon, StatusIconBadge } from './ActionIcons'
 
-const action = 'rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-bg-soft disabled:opacity-40'
+const action = 'inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-bg-soft disabled:opacity-40'
 
 /** Read-only session projection. Never activates or mutates the global chat store. */
 export type ThemeTaskTab = 'report' | 'current' | 'history'
@@ -149,9 +150,16 @@ function SessionTimeline({ sessionId, runId, current, enabled, active, onShowRep
   return <section className="overflow-hidden rounded-2xl border border-line">
     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-bg-soft/30 px-4 py-3 text-xs text-slate-500">
       <span>{current ? (active ? '本次执行 · 实时过程' : '最近一次执行') : '原会话历史 · 只读'}</span>
-      <span>{connection === 'open' ? (active ? '实时连接' : '已同步') : '连接中'}<button className={`${action} ml-2`} disabled={loading} onClick={() => void load()}>刷新</button></span>
+      <span className="inline-flex items-center gap-2">
+        <StatusIconBadge
+          kind={connection === 'open' ? (active ? 'running' : 'connected') : 'connecting'}
+          label={connection === 'open' ? (active ? '实时连接' : '已同步') : '连接中'}
+          className="h-6 w-6"
+        />
+        <button className={action} disabled={loading} onClick={() => void load()}><RefreshIcon spinning={loading} size={12} /><span>刷新</span></button>
+      </span>
     </div>
-    {error && <p role="alert" className="px-4 py-3 text-xs text-status-danger">读取失败：{error}<button className={`${action} ml-2`} disabled={loading} onClick={() => void load()}>重试</button></p>}
+    {error && <p role="alert" className="px-4 py-3 text-xs text-status-danger">读取失败：{error}<button className={`${action} ml-2`} disabled={loading} onClick={() => void load()}><RefreshIcon spinning={loading} size={12} /><span>重试</span></button></p>}
     <div ref={viewport} tabIndex={0} aria-label={current ? '本次过程时间线' : '会话历史时间线'} className="max-h-[65dvh] min-h-64 overflow-y-auto overscroll-contain p-4 sm:p-5 [overflow-anchor:none]" onScroll={event => {
       const el = event.currentTarget; position.current = el.scrollTop; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64
       if (follow.current) setUnseen(false)
@@ -164,11 +172,11 @@ function SessionTimeline({ sessionId, runId, current, enabled, active, onShowRep
         : null)}
     </div>
     {current && visible.length > 0 && !active && !visible.some(message => message.streaming) && <div className="border-t border-line px-4 py-3 text-sm">
-      <span className="mr-3 text-slate-500">结果</span><button className="text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={onShowReport}>查看结论 →</button>
+      <span className="mr-3 text-slate-500">结果</span><button className="inline-flex items-center gap-1 text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={onShowReport}><span>查看结论</span><ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></button>
     </div>}
     {unseen && <div className="border-t border-line p-2 text-center"><button className={action} onClick={() => {
       follow.current = true; setUnseen(false)
       if (viewport.current) { viewport.current.scrollTop = viewport.current.scrollHeight; position.current = viewport.current.scrollTop }
-    }}>有新内容 · 回到底部 ↓</button></div>}
+    }}><span>有新内容 · 回到底部</span><ArrowDown className="h-3.5 w-3.5" aria-hidden="true" /></button></div>}
   </section>
 }

@@ -21,6 +21,7 @@ import { memo, ReactNode, useMemo } from 'react'
 import { useCopy } from '@/utils/clipboard'
 import { looksLikeToolTrace } from '@/utils/toolTrace'
 import { renderMarkdownTree } from '@/utils/markdownRenderCache'
+import { CopyIcon } from './ActionIcons'
 // Light paper-ish theme; token colors further tuned under .prose-chat in CSS
 import 'highlight.js/styles/github.css'
 
@@ -175,10 +176,11 @@ function CodeBlock({ children }: { children: any }) {
             <button
               type="button"
               onClick={() => copy(text)}
-              className="md-code-copy"
+              className="md-code-copy inline-flex items-center gap-1"
               title="复制代码"
             >
-              {copied ? '✓ 已复制' : '复制'}
+              <CopyIcon copied={copied} size={12} />
+              <span>{copied ? '已复制' : '复制'}</span>
             </button>
           )}
         </div>

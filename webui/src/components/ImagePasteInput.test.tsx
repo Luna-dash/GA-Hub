@@ -101,8 +101,7 @@ describe('ImagePasteInput slash command ownership', () => {
 
     expect(Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
       .some((button) => button.textContent === 'BTW')).toBe(false)
-    let action = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent === '发送')
+    let action = container.querySelector<HTMLButtonElement>('button[aria-label="发送"]')
     expect(action).toBeTruthy()
     expect(action?.disabled).toBe(false)
     act(() => action?.click())
@@ -121,8 +120,7 @@ describe('ImagePasteInput slash command ownership', () => {
         />,
       )
     })
-    action = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent === '停止')
+    action = container.querySelector<HTMLButtonElement>('button[aria-label="停止"]')
     expect(action).toBeTruthy()
     expect(action?.disabled).toBe(false)
     act(() => action?.click())

@@ -7,6 +7,7 @@ import { parseAssistantTranscript, renderAskUserPayload } from '@/utils/assistan
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { replySegmentsTurns } from '@/utils/replySegments'
 import { MessageContent } from './MessageContent'
+import { ChevronLeft, ChevronRight, RefreshIcon } from './ActionIcons'
 
 type ConversationSection = { id: string; question: string; answers: ChatMsg[] }
 
@@ -36,7 +37,7 @@ function SectionConclusion({ answers }: { answers: ChatMsg[] }) {
   return content ? <MessageContent content={content} format="markdown" markdownMode="chat" /> : <p className="text-sm text-slate-500">{pending ? '正在执行，尚无结论' : '本节未记录结论'}</p>
 }
 
-const navigation = 'rounded-lg px-3 py-1.5 text-xs text-slate-400 transition-colors hover:bg-bg-soft hover:text-slate-200 disabled:cursor-default disabled:opacity-30'
+const navigation = 'inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs text-slate-400 transition-colors hover:bg-bg-soft hover:text-slate-200 disabled:cursor-default disabled:opacity-30'
 
 /** Read-only archive projection, independent of the active chat session. */
 export function ThemeConversationHistory({ sessionId, enabled }: { sessionId: string; enabled: boolean }) {
@@ -142,11 +143,11 @@ export function ThemeConversationHistory({ sessionId, enabled }: { sessionId: st
 
   return <section className="overflow-hidden rounded-2xl border border-line" aria-label="对话分节">
     <nav aria-label="会话历史分节导航" className="flex items-center justify-between border-b border-line px-2 py-2">
-      <button type="button" className={navigation} disabled={loading || (index <= 0 && !hasMore)} onClick={() => void previous()}>← 上节</button>
+      <button type="button" className={navigation} disabled={loading || (index <= 0 && !hasMore)} onClick={() => void previous()}><ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" /><span>上节</span></button>
       <span className="text-xs text-slate-500">{section ? `${hasMore ? '… / ' : ''}${index + 1} / ${sections.length}` : '暂无对话'}</span>
-      <button type="button" className={navigation} disabled={loading || index < 0 || index >= sections.length - 1} onClick={() => setSelected(index + 1 === sections.length - 1 ? null : sections[index + 1].id)}>下节 →</button>
+      <button type="button" className={navigation} disabled={loading || index < 0 || index >= sections.length - 1} onClick={() => setSelected(index + 1 === sections.length - 1 ? null : sections[index + 1].id)}><span>下节</span><ChevronRight className="h-3.5 w-3.5" aria-hidden="true" /></button>
     </nav>
-    {error && <div role="alert" className="flex items-center justify-between gap-3 px-5 py-3 text-xs text-status-danger"><span>{error}</span><button className={navigation} onClick={() => void load()}>重试</button></div>}
+    {error && <div role="alert" className="flex items-center justify-between gap-3 px-5 py-3 text-xs text-status-danger"><span>{error}</span><button className={navigation} onClick={() => void load()}><RefreshIcon spinning={loading} size={12} /><span>重试</span></button></div>}
     <div ref={viewport} className="max-h-[65vh] min-h-48 overflow-y-auto px-5 py-5 sm:px-6" aria-busy={loading}>
       {loading && <p role="status" className="mb-3 text-xs text-slate-500">正在读取…</p>}
       {section ? <article className="min-w-0 space-y-6">

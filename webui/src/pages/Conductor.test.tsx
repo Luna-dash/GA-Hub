@@ -1731,7 +1731,7 @@ describe('Conductor chat scroll restoration', () => {
     expect(recoveryStrip()?.textContent).toBe('正在启动调度引擎…')
     // A starting engine is not a connected one: the badge keeps its offline tone.
     expect(badge?.classList.contains('ga-badge-connected')).toBe(false)
-    expect(badge?.classList.contains('ga-badge-offline')).toBe(true)
+    expect(badge?.classList.contains('ga-badge-connecting')).toBe(true)
   })
 
   it('reads a ready engine as 运行中 with no startup wording anywhere', async () => {

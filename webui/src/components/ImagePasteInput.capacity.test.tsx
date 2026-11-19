@@ -31,7 +31,7 @@ describe('attachment capacity invariants across entry points', () => {
     return <ImagePasteInput text="hello" onText={() => {}} attachments={items} onAttachments={setItems}
       onSubmit={send} onSchedule={schedule} stopActive={stopActive} onStop={stop} autoFocus={false} />
   }
-  function button(text: string) { return Array.from(host.querySelectorAll('button')).find((b) => b.textContent === text)! }
+  function button(text: string) { return Array.from(host.querySelectorAll('button')).find((b) => b.getAttribute('aria-label') === text || b.textContent === text)! }
   async function render(initial: number, desktopMode = false, stopActive = false) {
     vi.spyOn(desktop, 'canReferenceLocalFiles').mockReturnValue(desktopMode)
     await act(async () => root.render(<Harness initial={initial} stopActive={stopActive} />))

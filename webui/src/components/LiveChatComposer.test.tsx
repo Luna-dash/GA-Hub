@@ -75,8 +75,7 @@ describe('LiveChatComposer draft boundary', () => {
       <LiveChatComposer draftKey={DRAFT_KEY} onSubmit={onSubmit} />,
     ))
 
-    const send = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent === '发送')
+    const send = host.querySelector<HTMLButtonElement>('button[aria-label="发送"]')
     act(() => send?.click())
 
     expect(onSubmit).toHaveBeenCalledOnce()
@@ -151,7 +150,7 @@ describe('LiveChatComposer draft boundary', () => {
     expect(onSchedule).toHaveBeenCalledOnce()
     expect(onSubmit).not.toHaveBeenCalled()
     if (running) {
-      const stop = Array.from(host.querySelectorAll('button')).find((button) => button.textContent === '停止')!
+      const stop = host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')!
       act(() => stop.click())
       expect(onStop).toHaveBeenCalledOnce()
     }
@@ -186,8 +185,7 @@ describe('LiveChatComposer draft boundary', () => {
       />,
     ))
 
-    const stop = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent === '停止')
+    const stop = host.querySelector<HTMLButtonElement>('button[aria-label="停止"]')
     expect(stop?.disabled).toBe(false)
     act(() => stop?.click())
     expect(onStop).toHaveBeenCalledOnce()
@@ -199,7 +197,7 @@ describe('LiveChatComposer draft boundary', () => {
     act(() => root.render(<LiveChatComposer draftKey={DRAFT_KEY} onSubmit={(draft) => {
       useDraftStore.getState().beginSubmission(draft.draftKey, draft.text, draft.attachments)
     }} />))
-    const send = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent === '发送')!
+    const send = host.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!
     act(() => send.click())
     const textarea = host.querySelector('textarea')!
     expect(textarea.value).toBe('')

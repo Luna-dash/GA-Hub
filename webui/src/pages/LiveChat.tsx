@@ -28,6 +28,7 @@ import {
 } from '@/components/LiveChatTranscript'
 import { SessionRail } from '@/components/SessionRail'
 import { ModalOverlay } from '@/components/ModalOverlay'
+import { StatusIconBadge, Trash2 } from '@/components/ActionIcons'
 import {
   findLatestRewindStreamId,
   rewindTurnCountFromAssistant,
@@ -744,124 +745,123 @@ export default function LiveChat() {
 
   return (
     <FileLinkContext.Provider value={{ sessionId: session?.id, projectPath: activeProjectPath }}>
-    <PageShell
-      title="实时聊天"
-      titleExtra={
-        <span className={`ga-badge ${conn === 'open' ? 'ga-badge-connected' : conn === 'connecting' ? 'ga-badge-connecting' : 'ga-badge-offline'}`}>
-          {conn === 'open' ? '已连接' : conn === 'connecting' ? '连接中…' : '断开'}
-        </span>
-      }
-      middleArea={
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <label
-            htmlFor="current-project-select"
-            className="shrink-0 text-xs font-medium text-slate-500"
-          >
-            绑定项目：
-          </label>
-          <div className="flex min-w-0 shrink-0 items-center">
-            <ProjectSelect
-              id="current-project-select"
-              value={session?.project_path || ''}
-              onChange={(path) => { void changeProject(path) }}
-              disabled={!session || projectSaving || projectsQuery.isLoading}
-              title={activeProjectPath || '选择当前会话的项目'}
-              options={[
-                { key: '', name: '未绑定项目' },
-                ...projects.map((project) => ({
-                  key: project.path,
-                  name: `${project.display_name || projectDisplayName(project.path, project.name)}${project.dangling ? '（路径不可用）' : ''}`,
-                  disabled: project.dangling,
-                })),
-                { key: '__new__', name: '新建项目…' },
-              ]}
-            />
-            <button
-              type="button"
-              onClick={() => { void deleteCurrentProject() }}
-              disabled={!session?.project_path || projectSaving || !projects.some((item) => item.path === session.project_path)}
-              className="project-select-delete -ml-px inline-flex h-[35px] w-9 shrink-0 items-center justify-center border border-line text-slate-500 hover:z-10 hover:border-status-danger-line hover:bg-status-danger-soft hover:text-status-danger disabled:cursor-not-allowed disabled:opacity-35"
-              title="删除当前项目索引（不会删除目录文件）"
-              aria-label="删除当前项目索引"
+      <PageShell
+        title="实时聊天"
+        titleExtra={
+          <StatusIconBadge
+            kind={conn === 'open' ? 'connected' : conn === 'connecting' ? 'connecting' : 'offline'}
+            label={conn === 'open' ? '已连接' : conn === 'connecting' ? '连接中…' : '断开'}
+          />
+        }
+        middleArea={
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <label
+              htmlFor="current-project-select"
+              className="shrink-0 text-xs font-medium text-slate-500"
             >
-              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-                <path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v6m4-6v6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
+              绑定项目：
+            </label>
+            <div className="flex min-w-0 shrink-0 items-center">
+              <ProjectSelect
+                id="current-project-select"
+                value={session?.project_path || ''}
+                onChange={(path) => { void changeProject(path) }}
+                disabled={!session || projectSaving || projectsQuery.isLoading}
+                title={activeProjectPath || '选择当前会话的项目'}
+                options={[
+                  { key: '', name: '未绑定项目' },
+                  ...projects.map((project) => ({
+                    key: project.path,
+                    name: `${project.display_name || projectDisplayName(project.path, project.name)}${project.dangling ? '（路径不可用）' : ''}`,
+                    disabled: project.dangling,
+                  })),
+                  { key: '__new__', name: '新建项目…' },
+                ]}
+              />
+              <button
+                type="button"
+                onClick={() => { void deleteCurrentProject() }}
+                disabled={!session?.project_path || projectSaving || !projects.some((item) => item.path === session.project_path)}
+                className="project-select-delete -ml-px inline-flex h-[35px] w-9 shrink-0 items-center justify-center border border-line text-slate-500 hover:z-10 hover:border-status-danger-line hover:bg-status-danger-soft hover:text-status-danger disabled:cursor-not-allowed disabled:opacity-35"
+                title="删除当前项目索引（不会删除目录文件）"
+                aria-label="删除当前项目索引"
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            <span
+              className="min-w-0 flex-1 truncate text-xs text-slate-500"
+              title={activeProjectPath || '当前会话未绑定项目'}
+              aria-label="当前项目路径"
+            >
+              {activeProjectPath || '未绑定项目'}
+            </span>
           </div>
-          <span
-            className="min-w-0 flex-1 truncate text-xs text-slate-500"
-            title={activeProjectPath || '当前会话未绑定项目'}
-            aria-label="当前项目路径"
-          >
-            {activeProjectPath || '未绑定项目'}
-          </span>
-        </div>
-      }
-      actions={<>
-        <MainModelSelect
-          llms={llms}
-          value={selectedLlmKey ?? ''}
-          onChange={(llmKey) => { void changeModel(llmKey) }}
-          disabled={!session || !selectedLlmKey || llmLoading || llmSaving || sessionRunning}
-          className="max-w-[400px]"
-          title={sessionRunning ? '任务运行中，结束后可切换模型' : !session || !selectedLlmKey ? '当前没有可用模型，请先在「LLM管理」中配置模型' : '选择当前会话使用的模型'}
-          aria-label="当前会话模型"
-        />
-      </>}
-    >
-      <div className="flex h-full min-h-0 flex-col md:flex-row">
-        <SessionRail
-          projects={projects}
-          sessions={sessions.filter(s => !s.theme_task)}
-          runtimes={runtimes}
-          currentId={session?.id ?? null}
-          onSelect={selectSession}
-          onCreate={createSession}
-          onImportFromHistory={openHistoryImport}
-          creating={creatingSession}
-          onRename={renameSession}
-          onDelete={deleteSession}
-        />
-        {/* Keep the composer in the transcript column so the rail spans the full height. */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <LiveChatTranscript
-            key={session?.id ?? 'transcript-empty'}
-            ref={transcriptRef}
-            sessionId={session?.id ?? null}
-            sessionError={sessionError}
-            fileTransfer={{ canInsert: Boolean(session), onInsert: insertTransferredFile }}
-            scheduledChats={scheduledChats}
-            scheduleNow={scheduleNow}
-            onCancelSchedule={cancelSchedule}
-            onRewind={handleRewind}
+        }
+        actions={<>
+          <MainModelSelect
+            llms={llms}
+            value={selectedLlmKey ?? ''}
+            onChange={(llmKey) => { void changeModel(llmKey) }}
+            disabled={!session || !selectedLlmKey || llmLoading || llmSaving || sessionRunning}
+            className="max-w-[400px]"
+            title={sessionRunning ? '任务运行中，结束后可切换模型' : !session || !selectedLlmKey ? '当前没有可用模型，请先在「LLM管理」中配置模型' : '选择当前会话使用的模型'}
+            aria-label="当前会话模型"
           />
-          <LiveChatComposer
-            draftKey={draftKey}
-            sessionId={session?.id}
-            onSubmit={submit}
-            onSchedule={openSchedule}
-            onStop={() => {
-              const sid = session?.id
-              if (!sid || sessionIdRef.current !== sid || (!sessionRunning && !retryPending)) return
-              void api.abortSession(sid)
-                .then(() => refreshRuntime(sid))
-                .catch((e: unknown) => {
-                  pushSystem(`_停止任务失败：${errorMessageFromError(e)}_`)
-                })
-            }}
-            stopActive={sessionRunning || retryPending}
-            onSlashCommand={handleSlashCommand}
-            placeholder="输入消息，或输入 / 查看命令"
-            disabled={creatingSession}
-            submitDisabled={streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair}
-            scheduleDisabled={llmSaving || sessionLlmNeedsRepair}
+        </>}
+      >
+        <div className="flex h-full min-h-0 flex-col md:flex-row">
+          <SessionRail
+            projects={projects}
+            sessions={sessions.filter(s => !s.theme_task)}
+            runtimes={runtimes}
+            currentId={session?.id ?? null}
+            onSelect={selectSession}
+            onCreate={createSession}
+            onImportFromHistory={openHistoryImport}
+            creating={creatingSession}
+            onRename={renameSession}
+            onDelete={deleteSession}
           />
+          {/* Keep the composer in the transcript column so the rail spans the full height. */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <LiveChatTranscript
+              key={session?.id ?? 'transcript-empty'}
+              ref={transcriptRef}
+              sessionId={session?.id ?? null}
+              sessionError={sessionError}
+              fileTransfer={{ canInsert: Boolean(session), onInsert: insertTransferredFile }}
+              scheduledChats={scheduledChats}
+              scheduleNow={scheduleNow}
+              onCancelSchedule={cancelSchedule}
+              onRewind={handleRewind}
+            />
+            <LiveChatComposer
+              draftKey={draftKey}
+              sessionId={session?.id}
+              onSubmit={submit}
+              onSchedule={openSchedule}
+              onStop={() => {
+                const sid = session?.id
+                if (!sid || sessionIdRef.current !== sid || (!sessionRunning && !retryPending)) return
+                void api.abortSession(sid)
+                  .then(() => refreshRuntime(sid))
+                  .catch((e: unknown) => {
+                    pushSystem(`_停止任务失败：${errorMessageFromError(e)}_`)
+                  })
+              }}
+              stopActive={sessionRunning || retryPending}
+              onSlashCommand={handleSlashCommand}
+              placeholder="输入消息，或输入 / 查看命令"
+              disabled={creatingSession}
+              submitDisabled={streaming || sessionRunning || llmSaving || sessionLlmNeedsRepair}
+              scheduleDisabled={llmSaving || sessionLlmNeedsRepair}
+            />
+          </div>
         </div>
-      </div>
 
-      {scheduleOpen && (
-        <ModalOverlay onClose={() => { if (!scheduleSaving) setScheduleOpen(false) }} labelledBy="schedule-title" closeOnBackdrop={false} panelClassName="p-5 w-full max-w-md rounded-2xl">
+        {scheduleOpen && (
+          <ModalOverlay onClose={() => { if (!scheduleSaving) setScheduleOpen(false) }} labelledBy="schedule-title" closeOnBackdrop={false} panelClassName="p-5 w-full max-w-md rounded-2xl">
             <h2 id="schedule-title" className="text-lg font-semibold text-ink">定时发送</h2>
             <p className="mt-1 text-sm text-ink-faint">选择未来 48 小时内的发送时间，支持跨到第二天。</p>
             <label className="mt-4 block text-sm font-medium text-ink">
@@ -895,9 +895,9 @@ export default function LiveChat() {
                 onClick={() => { void saveSchedule() }}
               >{scheduleSaving ? '保存中…' : '确认定时'}</button>
             </div>
-        </ModalOverlay>
-      )}
-    </PageShell>
+          </ModalOverlay>
+        )}
+      </PageShell>
     </FileLinkContext.Provider>
   )
 }

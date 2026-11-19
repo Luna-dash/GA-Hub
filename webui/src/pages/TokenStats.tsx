@@ -6,6 +6,7 @@ import type { TokenDayStats, TokenStatsResponse, TokenThreadStats, TokenTotals }
 import { compactTokens, sessionTitle, sumUsage, topSessions, usageAxis, usageRangeDays, visibleWeeks, type DailyUsageRange } from '@/utils/tokenStatsUi'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
+import { RefreshIcon } from '@/components/ActionIcons'
 import '@/styles/token-stats.css'
 
 const exact = (value: number) => value.toLocaleString('zh-CN')
@@ -125,7 +126,7 @@ export default function TokenStats() {
   return <PageShell title="用量统计">
     <div className="token-stats">
       {stats.isLoading && <div className="token-card token-empty" role="status">正在读取用量统计…</div>}
-      {stats.isError && <div className="token-card token-error" role="alert"><span>用量统计加载失败，请稍后重试。</span><button className="token-text-button" onClick={() => void stats.refetch()}>重新加载</button></div>}
+      {stats.isError && <div className="token-card token-error" role="alert"><span>用量统计加载失败，请稍后重试。</span><button className="token-text-button inline-flex items-center gap-1.5" onClick={() => void stats.refetch()}><RefreshIcon size={12} /><span>重新加载</span></button></div>}
       {data?.available === false && <div className="token-card token-empty">Token 统计尚未就绪，发生请求后会在这里显示。</div>}
       {data?.available && <>
         <div className="token-toolbar"><div><span className="token-eyebrow">用量概览</span><p className="token-note">{shown[0]?.date} — {today} · 更新于 {new Date(data.timestamp * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</p></div><div className="token-range-control" role="group" aria-label="统计区间">{ranges.map(item => <button key={item.value} aria-pressed={range === item.value} onClick={() => { setRange(item.value); setActiveDate(null) }}>{item.label}</button>)}</div></div>

@@ -6,6 +6,7 @@ import type { ConductorSubagent } from '@/api/types'
 import { MessageContent } from '@/components/MessageContent'
 import { queryKeys } from '@/queries/queryKeys'
 import { toast } from '@/stores/toastStore'
+import { CopyIcon, ExternalLink, FolderOpen } from '@/components/ActionIcons'
 import { writeClipboard } from '@/utils/clipboard'
 import { formatClock } from '@/utils/timeFormat'
 import type { SubagentRowControl } from './presentation'
@@ -144,27 +145,30 @@ export function WorkerDossier({
                     {mark} {path}
                     {item.desc ? ` · ${item.desc}` : ''}
                     {item.path && (
-                      <span className="ml-2 inline-flex gap-2 align-baseline text-[11px] text-status-info">
+                      <span className="ml-2 inline-flex items-center gap-2 align-baseline text-[11px] text-status-info">
                         <button
                           type="button"
-                          className="underline-offset-2 hover:underline"
+                          className="inline-flex items-center gap-1 underline-offset-2 hover:underline"
                           onClick={() => void revealDeliverable(item.path!, 'open')}
                         >
-                          打开
+                          <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                          <span>打开</span>
                         </button>
                         <button
                           type="button"
-                          className="underline-offset-2 hover:underline"
+                          className="inline-flex items-center gap-1 underline-offset-2 hover:underline"
                           onClick={() => void revealDeliverable(item.path!, 'folder')}
                         >
-                          所在位置
+                          <FolderOpen className="h-3 w-3" aria-hidden="true" />
+                          <span>所在位置</span>
                         </button>
                         <button
                           type="button"
-                          className="underline-offset-2 hover:underline"
+                          className="inline-flex items-center gap-1 underline-offset-2 hover:underline"
                           onClick={() => void copyPath(item.path!)}
                         >
-                          复制路径
+                          <CopyIcon size={12} />
+                          <span>复制路径</span>
                         </button>
                       </span>
                     )}

@@ -284,7 +284,7 @@ describe('MyKey upload button visibility', () => {
     click('备份历史')
     await settle()
     expect(host.textContent).toContain('old.bak')
-    click('↩ 回滚')
+    click('回滚')
     await settle()
     expect(apiMock.restoreMyKeyBackup).toHaveBeenCalledWith('old.bak')
     click('备份历史')

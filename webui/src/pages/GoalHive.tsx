@@ -14,6 +14,7 @@ import { dialog } from '@/stores/dialogStore'
 import { GoalHiveSocket } from '@/runtime/goalHiveSocket'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
+import { CloseIconButton, Play, Settings2, Square, StatusIconBadge, Trash2 } from '@/components/ActionIcons'
 
 type GoalMode = 'goal' | 'hive'
 
@@ -138,11 +139,11 @@ export default function GoalHive() {
   const submit = (event: FormEvent) => {
     event.preventDefault()
     if (!canSubmit || !wsRef.current) return
-    
+
     // Build combined text for goal/hive prompt
     const parts = [target.trim(), condition.trim()].filter(Boolean)
     const text = parts.join('\n')
-    
+
     const sent = wsRef.current.send({
       type: 'submit',
       text,
@@ -176,9 +177,10 @@ export default function GoalHive() {
     <PageShell
       title="Goal Hive"
       titleExtra={
-        <span className={`ga-badge ${streaming ? 'ga-badge-connected' : conn === 'connecting' ? 'ga-badge-connecting' : 'ga-badge-offline'}`}>
-          {streaming ? '运行中' : conn === 'connecting' ? '连接中' : '未运行'}
-        </span>
+        <StatusIconBadge
+          kind={streaming ? 'running' : conn === 'connecting' ? 'connecting' : 'idle'}
+          label={streaming ? '运行中' : conn === 'connecting' ? '连接中' : '未运行'}
+        />
       }
       actions={
         <div className="flex h-9 items-center gap-2 whitespace-nowrap">
@@ -201,9 +203,13 @@ export default function GoalHive() {
             aria-expanded={subagentSettingsOpen}
             onClick={openSubagentSettings}
           >
-            子代理设置
+            <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>子代理设置</span>
           </button>
-          <button onClick={abort} disabled={!streaming} className="ga-btn-danger">停止</button>
+          <button onClick={abort} disabled={!streaming} className="ga-btn-danger">
+            <Square className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
+            <span>停止</span>
+          </button>
         </div>
       }
     >
@@ -277,9 +283,10 @@ export default function GoalHive() {
               <button
                 type="submit"
                 disabled={!canSubmit}
-                className="shrink-0 px-4 py-2 rounded-lg bg-accent text-white text-sm hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                启动 {config.title}
+                <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
+                <span>启动 {config.title}</span>
               </button>
             </div>
           </form>
@@ -291,8 +298,9 @@ export default function GoalHive() {
               <div className="text-sm font-medium text-ink">独立输出</div>
               <div className="text-xs text-ink-faint">独立 GoalHive 通道</div>
             </div>
-            <button type="button" onClick={() => { void reset() }} className="text-xs px-3 py-1.5 rounded-lg border border-line text-ink-muted hover:text-ink">
-              清空历史
+            <button type="button" onClick={() => { void reset() }} className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-line text-ink-muted hover:text-ink">
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>清空历史</span>
             </button>
           </div>
           <div ref={logRef} className="flex-1 min-h-0 overflow-auto p-5 space-y-4">
@@ -320,35 +328,33 @@ export default function GoalHive() {
           labelledBy="goal-hive-subagent-settings-title"
           panelClassName="w-full max-w-md"
         >
-            <div className="flex items-center justify-between border-b border-line/70 px-5 py-4">
-              <h2 id="goal-hive-subagent-settings-title" className="text-base font-semibold text-ink">子代理设置</h2>
-              <button
-                type="button"
-                onClick={closeSubagentSettings}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none text-ink-muted hover:bg-bg-soft hover:text-ink"
-                aria-label="关闭子代理设置"
-                title="关闭"
-              >
-                ×
-              </button>
-            </div>
-            <div className="px-5 py-5">
-              <label className="block text-sm font-medium text-ink">
-                默认模型
-                <SubagentModelSelect
-                  llms={llms}
-                  value={draftSubagentLlmKey}
-                  onChange={setDraftSubagentLlmKey}
-                  className="mt-2 w-full"
-                  aria-label="Hive 子代理默认模型"
-                  autoFocus
-                />
-              </label>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-line/70 px-5 py-4">
-              <button type="button" className="ga-btn" onClick={closeSubagentSettings}>取消</button>
-              <button type="button" className="ga-btn ga-btn-primary" onClick={saveSubagentSettings}>保存</button>
-            </div>
+          <div className="flex items-center justify-between border-b border-line/70 px-5 py-4">
+            <h2 id="goal-hive-subagent-settings-title" className="text-base font-semibold text-ink">子代理设置</h2>
+            <CloseIconButton
+              label="关闭子代理设置"
+              variant="ghost"
+              iconSize={16}
+              onClick={closeSubagentSettings}
+              className="h-8 w-8 text-ink-muted hover:bg-bg-soft hover:text-ink"
+            />
+          </div>
+          <div className="px-5 py-5">
+            <label className="block text-sm font-medium text-ink">
+              默认模型
+              <SubagentModelSelect
+                llms={llms}
+                value={draftSubagentLlmKey}
+                onChange={setDraftSubagentLlmKey}
+                className="mt-2 w-full"
+                aria-label="Hive 子代理默认模型"
+                autoFocus
+              />
+            </label>
+          </div>
+          <div className="flex justify-end gap-2 border-t border-line/70 px-5 py-4">
+            <button type="button" className="ga-btn" onClick={closeSubagentSettings}>取消</button>
+            <button type="button" className="ga-btn ga-btn-primary" onClick={saveSubagentSettings}>保存</button>
+          </div>
         </ModalOverlay>
       )}
     </PageShell>

@@ -6,6 +6,7 @@ import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { queryKeys } from '@/queries/queryKeys'
 import { ModalOverlay } from '@/components/ModalOverlay'
+import { CloseIconButton, History, RefreshIcon, RewindIcon, RotateCcw, Save } from '@/components/ActionIcons'
 import { myKeyParseErrorFromError } from '@/utils/sessionUi'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { formatDateTime } from '@/utils/formatTime'
@@ -85,12 +86,13 @@ export function RawView({ data, onWrite, onDirtyChange }: {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowBackups(true)}
-            className="px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5">备份历史</button>
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5"><History className="h-3.5 w-3.5" aria-hidden="true" /><span>备份历史</span></button>
           <button onClick={() => { setText(data.raw); setBaseline(data.raw); setRemoteChanged(false) }} disabled={!dirty && !remoteChanged}
-            className="px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5 disabled:opacity-40">还原</button>
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5 disabled:opacity-40"><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /><span>还原</span></button>
           <button onClick={save} disabled={!dirty || saving}
-            className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-40">
-            {saving ? '保存中…' : '保存并热更新'}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-white hover:brightness-110 disabled:opacity-40">
+            <Save className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>{saving ? '保存中…' : '保存并热更新'}</span>
           </button>
         </div>
       </div>
@@ -178,7 +180,7 @@ function BackupDrawer({ onClose, onRestored }: {
             <h3 className="text-base font-semibold">备份历史</h3>
             <p className="text-xs text-slate-500 mt-0.5">最近 10 份；保存在 admin 数据目录，与 GA 仓库无关</p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-200 text-xl leading-none">×</button>
+          <CloseIconButton label="关闭备份历史" variant="ghost" iconSize={16} onClick={onClose} className="text-slate-400 hover:text-slate-200" />
         </header>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {isLoading && <div className="text-slate-500 text-sm p-4">载入中…</div>}
@@ -190,8 +192,9 @@ function BackupDrawer({ onClose, onRestored }: {
               <div className="flex items-baseline justify-between gap-2 mb-1">
                 <div className="text-xs text-slate-400 font-mono truncate" title={b.name}>{b.name}</div>
                 <button onClick={() => restore(b.name)} disabled={busy !== null}
-                  className="text-xs px-2.5 py-1 rounded bg-accent text-white disabled:opacity-40">
-                  {busy === b.name ? '回滚中…' : '↩ 回滚'}
+                  className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-accent text-white hover:brightness-110 disabled:opacity-40">
+                  <RewindIcon size={12} />
+                  <span>{busy === b.name ? '回滚中…' : '回滚'}</span>
                 </button>
               </div>
               <div className="text-[10px] text-slate-500">
@@ -201,7 +204,7 @@ function BackupDrawer({ onClose, onRestored }: {
           ))}
         </div>
         <footer className="border-t border-line px-4 py-2 text-xs text-slate-500 flex items-center justify-end">
-          <button onClick={() => refetch()} className="text-accent hover:underline">↻ 刷新</button>
+          <button onClick={() => refetch()} className="inline-flex items-center gap-1 text-accent hover:underline"><RefreshIcon size={12} /><span>刷新</span></button>
         </footer>
     </ModalOverlay>
   )

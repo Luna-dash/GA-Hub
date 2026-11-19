@@ -6,6 +6,7 @@ import { TranscriptRecordContent } from './TranscriptRecordContent'
 import { AskUserCard } from './AskUserCard'
 import { CollapseToLatestButton } from './CollapseToLatestButton'
 import { useConversationCollapse } from './ConversationCollapse'
+import { ChevronDisclosureIcon, ChevronUp } from './ActionIcons'
 
 /** One chronological process. Only the running view uses this light projection. */
 export function RunningTranscript({ transcript, askUserDraftKey, askUserInteractive, recoveryStatus, recoveryBeforeTurn, recoveryTitle = '自动重连' }: {
@@ -49,8 +50,8 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
   const retryHasOutput = recoveryBeforeTurn !== undefined && turns.slice(recoveryBeforeTurn).some(turn => visibleTurns.includes(turn))
   const recoveryOpen = recoveryExpanded ?? !retryHasOutput
   const recoveryRow = recoveryStatus && <div data-recovery-turn className="min-w-0 text-xs text-ink-muted">
-    <button type="button" aria-expanded={recoveryOpen} className="flex w-full gap-2 px-1 py-2 text-left" onClick={() => setRecoveryExpanded(!recoveryOpen)}>
-      <span aria-hidden="true">{recoveryOpen ? '▾' : '▸'}</span><span>{recoveryTitle}</span>
+    <button type="button" aria-expanded={recoveryOpen} className="flex w-full items-center gap-1.5 px-1 py-2 text-left" onClick={() => setRecoveryExpanded(!recoveryOpen)}>
+      <ChevronDisclosureIcon open={recoveryOpen} size={13} /><span>{recoveryTitle}</span>
     </button>
     {recoveryOpen && <div className="pb-2 pl-5">{recoveryStatus}</div>}
   </div>
@@ -135,9 +136,9 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
                 {recoveryStatus && recoveryBeforeTurn === index && recoveryRow}
                 {visible && <div data-running-turn={turn.turn} className="min-w-0">
                 <button type="button" aria-expanded={full} aria-label={`${full ? '收起完整记录' : '展开完整记录'} · Turn ${turn.turn}`} aria-controls={`running-${askUserDraftKey || 'turn'}-${turn.turn}`}
-                  className="flex w-full items-start gap-2 rounded px-1 py-2 text-left text-xs text-ink-muted hover:bg-bg-soft"
+                  className="flex w-full items-start gap-1.5 rounded px-1 py-2 text-left text-xs text-ink-muted hover:bg-bg-soft"
                   onClick={() => toggleFull(turn.turn)}>
-                  <span aria-hidden="true" className="shrink-0 text-ink-faint">{full ? '▾' : '▸'}</span>
+                  <ChevronDisclosureIcon open={full} size={13} className="mt-0.5 text-ink-faint" />
                   <span className="shrink-0 text-ink-faint">Turn {turn.turn}</span>
                   <span className="min-w-0 break-words text-ink">{title}</span>
                   {active && <span aria-label="正在输出" className="ml-auto mt-1 h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />}
@@ -146,8 +147,8 @@ export function RunningTranscript({ transcript, askUserDraftKey, askUserInteract
                   {full ? <div data-full-record>
                     <TranscriptRecordContent content={turn.rawContent ?? turn.content} cache={!active} />
                     <button type="button" aria-label={`收起完整记录 · Turn ${turn.turn}`}
-                      className="mt-3 flex items-center gap-1 rounded px-2 py-1 text-xs text-ink-muted hover:bg-bg-soft"
-                      onClick={() => toggleFull(turn.turn)}><span aria-hidden="true">⌃</span> 收起完整记录</button>
+                      className="mt-3 inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-ink-muted hover:bg-bg-soft"
+                      onClick={() => toggleFull(turn.turn)}><ChevronUp size={13} aria-hidden="true" /><span>收起完整记录</span></button>
                   </div> : <>{turn.parts.map((part, partIndex) => part.kind === 'text'
                     ? <MessageContent key={partIndex} content={part.text} format="markdown" cache={!active} />
                     : <p key={partIndex} data-tool-hint className="break-words text-[11px] leading-relaxed text-ink-faint">↳ {formatToolHint(part.labels)}</p>)}

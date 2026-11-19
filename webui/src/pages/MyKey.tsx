@@ -30,6 +30,22 @@ import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
 import { getMyKeyShowUpload, MYKEY_SHOW_UPLOAD_EVENT, MYKEY_SYNC_CONFIRM, myKeySyncSuccess, myKeySyncFailure } from '@/utils/mykeySyncUi'
 import { errorMessageFromError, myKeyParseErrorFromError } from '@/utils/sessionUi'
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronDown,
+  CloseIconButton,
+  CopyIcon,
+  Download,
+  Eye,
+  EyeOff,
+  FolderOpen,
+  Pencil,
+  Play,
+  RefreshIcon,
+  Trash2,
+  Upload,
+} from '@/components/ActionIcons'
 
 type Tab = 'structured' | 'raw'
 
@@ -190,12 +206,12 @@ export default function MyKey() {
               </button>
             ))}
           </div>
-          <button onClick={() => refetch()} className="ga-btn">↻ 刷新</button>
+          <button onClick={() => refetch()} className="ga-btn"><RefreshIcon size={14} /><span>刷新</span></button>
           {showUpload && (
-            <button onClick={handleUploadSync} disabled={syncBusy !== null} className="ga-btn">{syncBusy === 'upload' ? '上传中…' : '⬆ 上传mykey'}</button>
+            <button onClick={handleUploadSync} disabled={syncBusy !== null} className="ga-btn"><Upload className="h-3.5 w-3.5" aria-hidden="true" /><span>{syncBusy === 'upload' ? '上传中…' : '上传mykey'}</span></button>
           )}
-          <button onClick={handleFetchSync} disabled={syncBusy !== null} className="ga-btn">{syncBusy === 'fetch' ? '下载中…' : '⬇ 下载mykey'}</button>
-          <button onClick={handleOpenFile} className="ga-btn">📂 打开文件</button>
+          <button onClick={handleFetchSync} disabled={syncBusy !== null} className="ga-btn"><Download className="h-3.5 w-3.5" aria-hidden="true" /><span>{syncBusy === 'fetch' ? '下载中…' : '下载mykey'}</span></button>
+          <button onClick={handleOpenFile} className="ga-btn"><FolderOpen className="h-3.5 w-3.5" aria-hidden="true" /><span>打开文件</span></button>
         </div>
       }
     >
@@ -222,7 +238,7 @@ export default function MyKey() {
         {isError && (
           <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-status-danger-line bg-status-danger-soft px-4 py-3 text-sm text-status-danger">
             <span>读取 mykey.py 失败：{errorMessageFromError(error)}</span>
-            <button type="button" onClick={() => void refetch()} className="ga-btn shrink-0">重试</button>
+            <button type="button" onClick={() => void refetch()} className="ga-btn shrink-0"><RefreshIcon size={14} /><span>重试</span></button>
           </div>
         )}
         {data && !data.exists && (
@@ -415,9 +431,7 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
               <span className="text-[11px] text-slate-500 font-mono">L{String(s.lineno)}</span>
             )}
             <span className="mykey-card__chevron" aria-hidden="true">
-              <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
-                <path d="M5 7.5L10 12.5L15 7.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <ChevronDown className="h-4 w-4" aria-hidden="true" />
             </span>
           </div>
         </div>
@@ -454,12 +468,13 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
             ) : null}
           </div>
           <div className="mt-3 flex gap-2 flex-wrap">
-            <button onClick={onEdit} className="mykey-card__action mykey-card__action--primary">编辑</button>
-            <button onClick={onDuplicate} className="mykey-card__action">复制</button>
-            <button onClick={onDelete} className="mykey-card__action mykey-card__action--danger">删除</button>
+            <button onClick={onEdit} className="mykey-card__action mykey-card__action--primary"><Pencil className="h-3 w-3" aria-hidden="true" /><span>编辑</span></button>
+            <button onClick={onDuplicate} className="mykey-card__action"><CopyIcon size={12} /><span>复制</span></button>
+            <button onClick={onDelete} className="mykey-card__action mykey-card__action--danger"><Trash2 className="h-3 w-3" aria-hidden="true" /><span>删除</span></button>
             {canTest && (
               <button onClick={runTest} disabled={testing} className="mykey-card__action mykey-card__action--success">
-                {testing ? '测试中…' : '测 ping'}
+                <Play className="h-3 w-3" aria-hidden="true" />
+                <span>{testing ? '测试中…' : '测 ping'}</span>
               </button>
             )}
           </div>
@@ -551,7 +566,14 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
             {mode === 'create' ? '新增链路' : mode === 'duplicate' ? '复制链路' : '编辑链路'}
             <span className="ml-2 text-xs text-slate-500">{sessionMeta(s.type).label}</span>
           </h3>
-          <button type="button" disabled={saving} onClick={onClose} className="text-slate-400 hover:text-slate-200 text-xl leading-none disabled:opacity-40" aria-label="关闭弹窗">×</button>
+          <CloseIconButton
+            label="关闭弹窗"
+            variant="ghost"
+            iconSize={16}
+            disabled={saving}
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-200 disabled:opacity-40"
+          />
         </div>
 
         <Field label="变量名（mykey.py 里的 Python 变量）" hint="必须包含 api/config/cookie 之一及所选渠道关键字（oai、claude、mixin；原生渠道另需 native）。">
@@ -576,8 +598,18 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
                   autoComplete="off"
                 />
                 <button onClick={() => setShowKey(!showKey)} type="button"
-                  className="px-3 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm shrink-0">
-                  {showKey ? '🙈 隐藏' : '👁 显示'}
+                  className="inline-flex items-center gap-1.5 px-3 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm shrink-0">
+                  {showKey ? (
+                    <>
+                      <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>隐藏</span>
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>显示</span>
+                    </>
+                  )}
                 </button>
               </div>
             </Field>
@@ -707,12 +739,17 @@ function MixinFields({ s, setS, allSessions }: { s: MyKeySession; setS: (v: MyKe
               <input value={n} onChange={(e) => {
                 const next = [...llmNos]; next[i] = e.target.value; setNos(next)
               }} list="mixin-name-candidates" className={inp + ' font-mono flex-1'} />
-              <button onClick={() => move(i, -1)} disabled={i === 0}
-                className="px-2 py-1.5 text-xs rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-30">↑</button>
-              <button onClick={() => move(i, 1)} disabled={i === llmNos.length - 1}
-                className="px-2 py-1.5 text-xs rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-30">↓</button>
-              <button onClick={() => setNos(llmNos.filter((_, k) => k !== i))}
-                className="px-2 py-1.5 text-xs rounded border border-status-danger-line text-status-danger hover:bg-status-danger-soft">×</button>
+              <button onClick={() => move(i, -1)} disabled={i === 0} aria-label="上移" title="上移"
+                className="inline-flex items-center justify-center px-2 py-1.5 text-xs rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-30"><ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /></button>
+              <button onClick={() => move(i, 1)} disabled={i === llmNos.length - 1} aria-label="下移" title="下移"
+                className="inline-flex items-center justify-center px-2 py-1.5 text-xs rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-30"><ArrowDown className="h-3.5 w-3.5" aria-hidden="true" /></button>
+              <CloseIconButton
+                label={`移除 ${n || `第 ${i + 1} 项`}`}
+                variant="compact"
+                iconSize={14}
+                onClick={() => setNos(llmNos.filter((_, k) => k !== i))}
+                className="px-2 py-1.5 rounded border border-status-danger-line text-status-danger hover:bg-status-danger-soft"
+              />
             </div>
           ))}
           {candidates.length > 0 && (

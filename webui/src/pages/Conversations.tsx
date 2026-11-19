@@ -24,6 +24,19 @@ import {
 } from '@/queries/conversations'
 import { queryKeys } from '@/queries/queryKeys'
 import { conversationCountsText, CONVERSATION_COUNTS_HELP } from '@/utils/conversationCounts'
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ChevronDisclosureIcon,
+  ExternalLink,
+  FileJson,
+  FileText,
+  FolderDown,
+  Pencil,
+  Trash2,
+} from '@/components/ActionIcons'
 
 type ViewMode = 'round' | 'flat'
 type Msg = ConversationMessage
@@ -370,9 +383,16 @@ export default function Conversations() {
                     title="上一页"
                     disabled={page === 0}
                     onClick={() => setPage(page - 1)}
-                    className="px-2 py-1 disabled:opacity-30"
+                    className="inline-flex items-center justify-center gap-1 px-2 py-1 disabled:opacity-30"
                   >
-                    {collapsed ? '↑' : '← 上页'}
+                    {collapsed ? (
+                      <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+                    ) : (
+                      <>
+                        <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>上页</span>
+                      </>
+                    )}
                   </button>
                   <span title={`第 ${page + 1} 页`}>{collapsed ? page + 1 : `第 ${page + 1} 页`}</span>
                   <button
@@ -380,9 +400,16 @@ export default function Conversations() {
                     title="下一页"
                     disabled={(page + 1) * limit >= total}
                     onClick={() => setPage(page + 1)}
-                    className="px-2 py-1 disabled:opacity-30"
+                    className="inline-flex items-center justify-center gap-1 px-2 py-1 disabled:opacity-30"
                   >
-                    {collapsed ? '↓' : '下页 →'}
+                    {collapsed ? (
+                      <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+                    ) : (
+                      <>
+                        <span>下页</span>
+                        <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                      </>
+                    )}
                   </button>
                 </div>
               )}
@@ -430,20 +457,22 @@ export default function Conversations() {
                     <button
                       type="button"
                       onClick={() => { void openSession(boundSessionId) }}
-                      className="shrink-0 px-3 py-1.5 rounded-lg bg-accent text-white text-sm"
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm text-white hover:brightness-110"
                       title="这条归档已属于一条会话，切换到该会话继续"
                     >
-                      打开该会话
+                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>打开该会话</span>
                     </button>
                   ) : (
                     <button
                       type="button"
                       onClick={() => { void handleImport(detail.id) }}
                       disabled={importing === detail.id}
-                      className="shrink-0 px-3 py-1.5 rounded-lg bg-accent text-white text-sm disabled:opacity-40"
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm text-white hover:brightness-110 disabled:opacity-40"
                       title="把这条归档复制成一条新会话（源文件保持只读），之后可无缝继续对话"
                     >
-                      {importing === detail.id ? '导入中…' : '导入为会话'}
+                      <FolderDown className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>{importing === detail.id ? '导入中…' : '导入为会话'}</span>
                     </button>
                   )}
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
@@ -451,32 +480,36 @@ export default function Conversations() {
                       <button
                         type="button"
                         onClick={() => handleRename(detail.id, detail.title || '')}
-                        className="px-3 py-1.5 text-sm text-slate-300 hover:bg-white/5"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-300 hover:bg-white/5"
                       >
-                        重命名
+                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>重命名</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => handleDelete(detail.id, detail.title || '')}
-                        className="border-l border-line px-3 py-1.5 text-sm text-status-danger hover:bg-status-danger-soft"
+                        className="inline-flex items-center gap-1.5 border-l border-line px-3 py-1.5 text-sm text-status-danger hover:bg-status-danger-soft"
                       >
-                        删除
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>删除</span>
                       </button>
                     </div>
                     <div className="flex overflow-hidden rounded-lg border border-line">
                       <button
                         type="button"
                         onClick={() => handleExport(detail.id, 'md')}
-                        className="px-3 py-1.5 text-sm text-slate-300 hover:bg-white/5"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-300 hover:bg-white/5"
                       >
-                        导出 MD
+                        <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>导出 MD</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => handleExport(detail.id, 'json')}
-                        className="border-l border-line px-3 py-1.5 text-sm text-slate-300 hover:bg-white/5"
+                        className="inline-flex items-center gap-1.5 border-l border-line px-3 py-1.5 text-sm text-slate-300 hover:bg-white/5"
                       >
-                        JSON
+                        <FileJson className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>JSON</span>
                       </button>
                     </div>
                   </div>
@@ -560,9 +593,10 @@ function RoundView({
                         <button
                           type="button"
                           onClick={() => setOpenConclusion((s) => ({ ...s, [roundKey]: !isProcessOpen }))}
-                          className="shrink-0 text-xs text-accent hover:underline"
+                          className="inline-flex shrink-0 items-center gap-1 text-xs text-accent hover:underline"
                         >
-                          {isProcessOpen ? '收起过程' : '展开过程'}
+                          <ChevronDisclosureIcon open={isProcessOpen} size={12} />
+                          <span>{isProcessOpen ? '收起过程' : '展开过程'}</span>
                         </button>
                       )}
                     </div>

@@ -613,7 +613,7 @@ describe('MessageBubble render isolation', () => {
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} stopped={manualStop} />))
     expect(markdownRender).toHaveBeenCalledTimes(1)
     expect(markdownRender.mock.calls[0][0].children).toBe('检查卸载清理')
-    expect(host.textContent.includes('⏹任务中止')).toBe(manualStop)
+    expect(host.textContent.includes('任务中止')).toBe(manualStop)
     expect(host.textContent).toContain('查看执行过程')
     expect(host.textContent).not.toContain('111| useEffect')
     const copy = host.querySelector('button[title="复制结论"]')
@@ -638,13 +638,13 @@ describe('MessageBubble render isolation', () => {
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} stopped />))
 
     // 停止态统一：正文=被截止轮的最后一条有效 summary；不再回落上一轮完整正文
-    expect(host.textContent).toContain('⏹任务中止')
+    expect(host.textContent).toContain('任务中止')
     expect(host.textContent).not.toContain('以下为上一轮的完整结论')
     expect(host.textContent).not.toContain('已完成迁移。')
     expect(markdownRender.mock.calls[0][0].children).toBe('执行清理命令')
     // 提示行置于最后（在正文之后）
     const text = host.textContent || ''
-    expect(text.indexOf('执行清理命令')).toBeLessThan(text.indexOf('⏹任务中止'))
+    expect(text.indexOf('执行清理命令')).toBeLessThan(text.indexOf('任务中止'))
     // 悬空轮留在折叠里，不顶掉结论
     expect(host.textContent).toContain('查看执行过程')
     expect(host.textContent).not.toContain('该条历史回复未包含可提取的最终回答')
@@ -662,7 +662,7 @@ describe('MessageBubble render isolation', () => {
 
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} stopped />))
 
-    expect(host.textContent).toContain('⏹任务中止')
+    expect(host.textContent).toContain('任务中止')
     // 该轮摘要作为"被打断时在做什么"的上下文兜底展示
     expect(markdownRender).toHaveBeenCalledTimes(1)
     expect(markdownRender.mock.calls[0][0].children).toBe('命令仍在执行')
@@ -683,12 +683,12 @@ describe('MessageBubble render isolation', () => {
 
     // 停止事实在位（当场，abort 事件）：正文=该轮 summary，提示行统一置尾
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} stopped />))
-    expect(host.textContent).toContain('⏹任务中止')
+    expect(host.textContent).toContain('任务中止')
     expect(markdownRender.mock.calls[0][0].children).toBe('执行清理命令')
 
     // 无事实位（事后重载/轮询/进程重启）：启发式触发同一条提示行，呈现完全一致
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
-    expect(host.textContent).not.toContain('⏹任务中止')
+    expect(host.textContent).not.toContain('任务中止')
     expect(host.textContent).not.toContain('已手动停止')
     expect(host.textContent).not.toContain('本轮以工具调用收尾')
   })
@@ -705,20 +705,20 @@ describe('MessageBubble render isolation', () => {
 
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} stopped />))
     // 尾轮正文完整：正文保留（不换成摘要），提示行统一追加在最后
-    expect(host.textContent).toContain('⏹任务中止')
+    expect(host.textContent).toContain('任务中止')
     expect(host.textContent).not.toContain('以下为上一轮的完整结论')
     expect(markdownRender.mock.calls.at(-1)?.[0].children).toContain('结论保持有效')
   })
 
   it('shows the live-path stop notice below the content for a short stopped reply without turn markers', () => {
-    // 短内容 + 无 turn 标记 → 不走投影分支，直播路径同样以"⏹任务中止"收尾
+    // 短内容 + 无 turn 标记 → 不走投影分支，直播路径同样以"任务中止"收尾
     act(() => root.render(<MessageBubble role="assistant" content="先想一下" streaming={false} stopped />))
-    expect(host.textContent).toContain('⏹任务中止')
+    expect(host.textContent).toContain('任务中止')
     expect(markdownRender).toHaveBeenCalledTimes(1)
     expect(markdownRender.mock.calls[0][0].children).toBe('先想一下')
     // 提示行位于内容之后（末尾）
     const text = host.textContent || ''
-    expect(text.indexOf('先想一下')).toBeLessThan(text.indexOf('⏹任务中止'))
+    expect(text.indexOf('先想一下')).toBeLessThan(text.indexOf('任务中止'))
   })
 
   it('hides the conclusion body when a stopped reply has no summary at all', () => {
@@ -732,7 +732,7 @@ describe('MessageBubble render isolation', () => {
 
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} stopped />))
     // 无有效 summary：正文不展示，仅保留过程折叠与停止提示行
-    expect(host.textContent).toContain('⏹任务中止')
+    expect(host.textContent).toContain('任务中止')
     expect(markdownRender).not.toHaveBeenCalled()
     expect(host.textContent).toContain('查看执行过程')
     expect(host.textContent).not.toContain('该条历史回复未包含可提取的最终回答')

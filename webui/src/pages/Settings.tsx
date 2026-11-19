@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Bell, Download, Globe, KeyRound, MessagesSquare, Palette, Settings2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, FolderOpen, RefreshIcon, RotateCcw, Save } from '@/components/ActionIcons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { NovaSettingsPanel } from '@/components/NovaSettingsPanel'
@@ -231,15 +232,15 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
                 type="button"
                 onClick={pickGaRoot}
                 disabled={picking || validating}
-                className="px-3 py-2 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm disabled:opacity-40"
-              >{picking ? '选择中…' : '浏览…'}</button>
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm disabled:opacity-40"
+              ><FolderOpen className="h-3.5 w-3.5" aria-hidden="true" /><span>{picking ? '选择中…' : '浏览…'}</span></button>
             )}
             <button
               type="button"
               onClick={() => validate(input)}
               disabled={validating}
-              className="px-3 py-2 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm"
-            >{validating ? '检测中…' : '检测'}</button>
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm"
+            ><RefreshIcon spinning={validating} size={13} /><span>{validating ? '检测中…' : '检测'}</span></button>
           </div>
 
           {validResult && (
@@ -267,14 +268,14 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
             <button
               onClick={save}
               disabled={saving || !input.trim()}
-              className="px-4 py-2 rounded-lg bg-accent text-white text-sm disabled:opacity-40"
-            >{saving ? '保存中…' : '保存配置'}</button>
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-white text-sm hover:brightness-110 disabled:opacity-40"
+            ><Save className="h-3.5 w-3.5" aria-hidden="true" /><span>{saving ? '保存中…' : '保存配置'}</span></button>
             {isTauriDesktop() && saveMsg && !saving && (
               <button
                 onClick={restartBackend}
                 disabled={restarting}
-                className="px-4 py-2 rounded-lg border border-accent text-accent text-sm hover:bg-accent/10 disabled:opacity-40"
-              >{restarting ? '重启中…' : '重启后端'}</button>
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-accent text-accent text-sm hover:bg-accent/10 disabled:opacity-40"
+              ><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /><span>{restarting ? '重启中…' : '重启后端'}</span></button>
             )}
             {saveMsg && <span className="text-sm text-status-success whitespace-pre-line">{saveMsg}</span>}
             {saveErr && <span className="text-sm text-status-danger whitespace-pre-line">{saveErr}</span>}
@@ -341,8 +342,8 @@ function NavManagementPanel() {
         <button
           type="button"
           onClick={() => update(defaultNavPreferences())}
-          className="text-xs px-2 py-1 rounded border border-line text-slate-300 hover:bg-white/5"
-        >恢复默认</button>
+          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-line text-slate-300 hover:bg-white/5"
+        ><RotateCcw className="h-3 w-3" aria-hidden="true" /><span>恢复默认</span></button>
       </div>
       <div className="text-xs text-slate-500 mb-3">勾选要显示的条目，并用上下按钮调整顺序；设置入口始终保留。</div>
       <div className="space-y-1">
@@ -358,8 +359,8 @@ function NavManagementPanel() {
                 aria-label={`显示${item.label}`}
               />
               <span className="flex-1 text-sm text-slate-200">{item.label}</span>
-              <button type="button" disabled={index === 0} onClick={() => move(index, -1)} className="px-1.5 text-slate-400 disabled:opacity-30" aria-label={`上移${item.label}`}>↑</button>
-              <button type="button" disabled={index === preferences.length - 1} onClick={() => move(index, 1)} className="px-1.5 text-slate-400 disabled:opacity-30" aria-label={`下移${item.label}`}>↓</button>
+              <button type="button" disabled={index === 0} onClick={() => move(index, -1)} className="inline-flex items-center justify-center px-1.5 py-1 text-slate-400 hover:text-slate-200 disabled:opacity-30" aria-label={`上移${item.label}`} title={`上移${item.label}`}><ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /></button>
+              <button type="button" disabled={index === preferences.length - 1} onClick={() => move(index, 1)} className="inline-flex items-center justify-center px-1.5 py-1 text-slate-400 hover:text-slate-200 disabled:opacity-30" aria-label={`下移${item.label}`} title={`下移${item.label}`}><ArrowDown className="h-3.5 w-3.5" aria-hidden="true" /></button>
             </div>
           )
         })}

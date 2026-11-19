@@ -5,6 +5,15 @@ import { sessionActivity, sessionPreview, sessionRecencyMs, sessionStatusLabel }
 import { usePageState } from '@/utils/pageState'
 import { RAIL_TITLE_SCALE_EVENT, railTitlePercent, getRailTitleScale } from '@/utils/railAppearance'
 import { storageKeys } from '@/config/storageKeys'
+import {
+  ChevronDown,
+  CollapseChevronsIcon,
+  Download,
+  PinGlyph,
+  Plus,
+  RailFoldGlyph,
+  Trash2,
+} from './ActionIcons'
 
 interface SessionRailProps {
   storageScope?: 'anti'
@@ -453,9 +462,9 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                   disabled={creating}
                   aria-label="新建空会话"
                   title="新建空会话"
-                  className="flex w-8 flex-none items-center justify-center border-r border-line/50 text-base leading-none text-accent transition hover:bg-black/5 active:scale-[0.98] disabled:opacity-50"
+                  className="flex w-8 flex-none items-center justify-center border-r border-line/50 text-accent transition hover:bg-black/5 active:scale-[0.98] disabled:opacity-50"
                 >
-                  <span aria-hidden="true">＋</span>
+                  <Plus className="h-4 w-4" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -478,11 +487,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                 data-testid="create-session-import"
                 className="flex w-9 flex-none items-center justify-center border-l border-line/50 bg-bg text-ink-muted transition hover:text-ink active:scale-[0.98]"
               >
-                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M12 3v11" />
-                  <path d="m7 10 5 5 5-5" />
-                  <path d="M4 19h16" />
-                </svg>
+                <Download className="h-4 w-4" aria-hidden="true" />
               </button>
             )}
           </div>
@@ -560,9 +565,9 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                               disabled={activity === 'active' || deletingId === session.id}
                               aria-label={`删除 ${sessionTitle(session)}`}
                               title={activity === 'active' ? '请先停止任务再删除' : (deleteDetail ?? '删除会话索引（不影响归档文件）')}
-                              className="flex h-6 w-6 items-center justify-center rounded text-xs leading-none text-status-danger transition-colors hover:bg-status-danger-soft disabled:cursor-not-allowed disabled:opacity-25"
+                              className="flex h-6 w-6 items-center justify-center rounded text-status-danger transition-colors hover:bg-status-danger-soft disabled:cursor-not-allowed disabled:opacity-25"
                             >
-                              ×
+                              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                             </button>
                           )}
                         </div>
@@ -613,18 +618,10 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                     title={group.projectPath || group.name}
                     className="flex min-h-[30px] min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-1 text-left text-xs font-bold tracking-wide text-ink-muted/90 transition hover:text-ink"
                   >
-                    <svg
-                      viewBox="0 0 24 24"
+                    <ChevronDown
                       aria-hidden="true"
                       className={clsx('h-3 w-3 flex-none transition-transform duration-200', groupClosed && '-rotate-90')}
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.4"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="m6 9 6 6 6-6" />
-                    </svg>
+                    />
                     <span className="min-w-0 flex-1 truncate">{group.name}</span>
                   </button>
                   <button
@@ -639,10 +636,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                       isPinned ? 'text-accent' : 'text-ink-faint/70 hover:text-ink-muted',
                     )}
                   >
-                    <svg viewBox="0 0 24 24" className="h-3 w-3" fill={isPinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z" />
-                      <path d="M12 15v6" />
-                    </svg>
+                    <PinGlyph pinned={isPinned} className="h-3 w-3" />
                   </button>
                   {groupExpandable && (
                     <button
@@ -654,9 +648,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                       title={groupShowAll ? '仅显示最近3个会话' : '展开全部会话'}
                       className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-faint opacity-0 transition hover:bg-accent/10 hover:text-accent focus-visible:opacity-100 focus-visible:outline-accent group-hover/project-header:opacity-100 group-focus-within/project-header:opacity-100 [@media(hover:none)]:opacity-100"
                     >
-                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d={groupShowAll ? 'm7 9 5-5 5 5M7 20l5-5 5 5' : 'm7 4 5 5 5-5M7 15l5 5 5-5'} />
-                      </svg>
+                      <CollapseChevronsIcon direction={groupShowAll ? 'expand' : 'collapse'} className="h-3.5 w-3.5" />
                     </button>
                   )}
                   {!groupExpandable && <span aria-hidden="true" className="h-6 w-6 flex-none" />}
@@ -719,12 +711,8 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
           collapsed ? 'top-0 md:-right-5' : 'top-32 md:-right-5 md:top-1/2',
         )}
       >
-        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 md:hidden" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d={collapsed ? 'm6 9 6 6 6-6' : 'm6 15 6-6 6 6'} />
-        </svg>
-        <svg aria-hidden="true" viewBox="0 0 24 24" className="hidden h-3.5 w-3.5 shrink-0 md:block" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d={collapsed ? 'm9 6 6 6-6 6' : 'm15 6-6 6 6 6'} />
-        </svg>
+        <RailFoldGlyph direction={collapsed ? 'down' : 'up'} className="h-3.5 w-3.5 shrink-0 md:hidden" />
+        <RailFoldGlyph direction={collapsed ? 'right' : 'left'} className="hidden h-3.5 w-3.5 shrink-0 md:block" />
       </button>
     </div>
   )
