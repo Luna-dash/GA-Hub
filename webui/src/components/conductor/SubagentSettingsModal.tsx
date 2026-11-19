@@ -129,7 +129,7 @@ export function SubagentSettingsModal({ llms, value, locked, autoAccept, engineS
             <div className="border-t border-line/70 pt-4">
               <p className="text-sm font-medium text-ink">引擎</p>
               <p className="mt-1 text-xs text-ink-muted">
-                进入本页会自动启动引擎（幂等：已在运行的引擎会被跳过）。停止后需重新进入本页或发送消息才会再次启动。
+                进入页面或发送任务时会自动启动引擎；停止后可随时重新触发。
               </p>
               <button
                 type="button"

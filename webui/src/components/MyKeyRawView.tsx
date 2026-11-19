@@ -92,7 +92,7 @@ export function RawView({ data, onWrite, onDirtyChange }: {
           <button onClick={save} disabled={!dirty || saving}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-white hover:brightness-110 disabled:opacity-40">
             <Save className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>{saving ? '保存中…' : '保存并热更新'}</span>
+            <span>{saving ? '保存中…' : '保存并应用'}</span>
           </button>
         </div>
       </div>
@@ -156,7 +156,7 @@ function BackupDrawer({ onClose, onRestored }: {
   const restore = async (name: string) => {
     const ok = await dialog.confirm(
       '回滚到此备份？',
-      `当前内容会先被保存为新的备份再被覆盖（不会丢失）。`,
+      `回滚前会自动备份当前内容。`,
       { confirmText: '回滚' },
     )
     if (!ok) return
@@ -178,7 +178,7 @@ function BackupDrawer({ onClose, onRestored }: {
         <header className="px-5 py-3 border-b border-line flex items-baseline justify-between">
           <div>
             <h3 className="text-base font-semibold">备份历史</h3>
-            <p className="text-xs text-slate-500 mt-0.5">最近 10 份；保存在 admin 数据目录，与 GA 仓库无关</p>
+            <p className="text-xs text-slate-500 mt-0.5">保留最近 10 份本地备份</p>
           </div>
           <CloseIconButton label="关闭备份历史" variant="ghost" iconSize={16} onClick={onClose} className="text-slate-400 hover:text-slate-200" />
         </header>

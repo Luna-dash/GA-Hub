@@ -185,7 +185,7 @@ export function DesktopRuntimeGate({ children }: { children: ReactNode }) {
           <GatePanel
             title="后端已断开"
             message={state.error}
-            hint="重启只影响后端进程：端口与会话不变，界面会自动重新加载。"
+            hint="重启后将自动恢复当前界面与会话。"
             restarting={restarting}
             onRestart={() => void restart()}
           />

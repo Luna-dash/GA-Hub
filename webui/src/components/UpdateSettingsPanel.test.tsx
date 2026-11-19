@@ -41,7 +41,7 @@ describe('UpdateSettingsPanel', () => {
     await act(async () => button('校验并准备').click())
     expect(updateApi.prepare).toHaveBeenCalledWith('D:\\release.zip', 'a'.repeat(64), true)
     expect(button('取消候选更新')).toBeTruthy()
-    expect(host.textContent).toContain('固定60秒倒计时')
+    expect(host.textContent).toContain('倒计时 60 秒')
     expect(button('唤醒独立执行器')).toBeTruthy()
   })
   it.each(['', '   '])('allows a blank checksum (%j) but still requires trust and path', async checksum => {
@@ -71,7 +71,7 @@ describe('UpdateSettingsPanel', () => {
     await act(async () => root.render(<UpdateSettingsPanel />))
     expect(host.querySelector('[class*="text-amber-"]')).toBeNull()
     expect(host.querySelector('[class*="text-slate-"]')).toBeNull()
-    for (const text of ['先在线准备候选包', '候选包已准备', '交接：已就绪，等待确认']) {
+    for (const text of ['先在线准备更新包', '更新包已就绪', '交接：已就绪，等待确认']) {
       const element = Array.from(host.querySelectorAll('p, div')).find(node => node.textContent?.startsWith(text))
       expect(element?.classList.contains('text-ink')).toBe(true)
     }

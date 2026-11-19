@@ -220,7 +220,7 @@ export default function MyKey() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="font-semibold">云端自动同步</h2>
-              <p className="mt-1 text-xs text-slate-500">每天本机时间 12:00 检查，有差异才下载；应用需保持运行，午后启动会补查。</p>
+              <p className="mt-1 text-xs text-slate-500">每天 12:00 自动检查并同步云端配置。</p>
             </div>
             <label className="flex items-center gap-2">
               <input type="checkbox" aria-label="启用每日自动同步" checked={autoSync.data?.enabled ?? false}
@@ -307,7 +307,7 @@ function StructuredView({ data, onWrite, onProxyDirtyChange }: {
   const remove = async (s: MyKeySession) => {
     const ok = await dialog.confirm(
       `删除 ${s.var}？`,
-      `这会从 mykey.py 移除该变量定义。备份会自动保留，可在抽屉里回滚。`,
+      `确定从 mykey.py 删除该配置？删除前会自动保留备份。`,
       { tone: 'danger', confirmText: '删除' },
     )
     if (!ok) return
@@ -707,7 +707,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-slate-300 disabled:opacity-40">取消</button>
           <button onClick={save} disabled={saving} className="px-4 py-1.5 rounded-lg bg-accent text-white disabled:opacity-40">
-            {saving ? '保存中…' : '保存并热更新'}
+            {saving ? '保存中…' : '保存并应用'}
           </button>
         </div>
     </ModalOverlay>

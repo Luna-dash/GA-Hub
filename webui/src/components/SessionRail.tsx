@@ -564,7 +564,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                               onClick={() => setConfirmDeleteId(session.id)}
                               disabled={activity === 'active' || deletingId === session.id}
                               aria-label={`删除 ${sessionTitle(session)}`}
-                              title={activity === 'active' ? '请先停止任务再删除' : (deleteDetail ?? '删除会话索引（不影响归档文件）')}
+                              title={activity === 'active' ? '请先停止任务再删除' : (deleteDetail ?? '删除会话')}
                               className="flex h-6 w-6 items-center justify-center rounded text-status-danger transition-colors hover:bg-status-danger-soft disabled:cursor-not-allowed disabled:opacity-25"
                             >
                               <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />

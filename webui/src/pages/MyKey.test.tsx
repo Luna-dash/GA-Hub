@@ -83,7 +83,7 @@ describe('MyKey upload button visibility', () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
     const toggle = host.querySelector<HTMLInputElement>('[aria-label="启用每日自动同步"]')!
     expect(toggle.checked).toBe(true)
-    expect(host.textContent).toContain('每天本机时间 12:00')
+    expect(host.textContent).toContain('每天 12:00 自动检查并同步云端配置')
     expect(host.textContent).toContain('云端与本地一致，无需下载')
     await act(async () => { toggle.click(); await new Promise((resolve) => setTimeout(resolve, 20)) })
     expect(apiMock.setMyKeyAutoSync).toHaveBeenCalledWith(false)
@@ -214,7 +214,7 @@ describe('MyKey upload button visibility', () => {
     act(() => host.querySelector<HTMLButtonElement>('.mykey-card__toggle')!.click())
     click('编辑')
     input(host.querySelector<HTMLInputElement>('[role="dialog"] input')!, 'oai_config_b')
-    click('保存并热更新')
+    click('保存并应用')
     await settle()
     expect(apiMock.mutateMyKey).toHaveBeenCalledWith(expect.objectContaining({
       action: 'rename', var: 'oai_config_a', new_var: 'oai_config_b', type: 'oai',
@@ -232,7 +232,7 @@ describe('MyKey upload button visibility', () => {
     click('复制')
     expect(host.querySelector<HTMLInputElement>('[role="dialog"] input')!.value).toBe('oai_config_a_copy_2')
     apiMock.mutateMyKey.mockRejectedValueOnce({ body: { detail: { message: '变量已存在' } } })
-    click('保存并热更新')
+    click('保存并应用')
     await settle()
     expect(apiMock.mutateMyKey).toHaveBeenCalledWith(expect.objectContaining({
       action: 'duplicate', var: 'oai_config_a', new_var: 'oai_config_a_copy_2',

@@ -126,7 +126,7 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
 
   return <>
     <button type="button" className="path-link" disabled={busy}
-      title={`${resolved || path}\n匹配范围：${info?.scope || projectPath || '未绑定项目'}（按点击时绑定）`}
+      title={resolved || path}
       onClick={() => { void reveal() }}
       onContextMenu={event => {
         event.preventDefault(); setMenu({ x: event.clientX, y: event.clientY })
@@ -136,7 +136,7 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
       <div className="fixed inset-0" style={{ zIndex: Z_LAYERS.contextMenu }} onClick={() => setMenu(null)} />
       <div className="fixed max-h-[70vh] min-w-48 max-w-[90vw] overflow-auto rounded-lg border border-[#D8C6A6] bg-[#FFF9ED] py-1 shadow-lg"
         style={{ left: Math.min(menu.x, Math.max(8, window.innerWidth - 440)), top: Math.min(menu.y, Math.max(8, window.innerHeight - 260)), zIndex: Z_LAYERS.contextMenu + 1 }}>
-        <div className="px-3 py-1 text-xs break-all">匹配范围：{info?.scope || projectPath || '未绑定项目'}（按点击时绑定）</div>
+        <div className="px-3 py-1 text-xs break-all">匹配范围：{info?.scope || projectPath || '未绑定项目'}</div>
         {info && !resolved && <div className="px-3 py-1 text-sm">{info.incomplete ? '搜索达到预算或部分目录不可读，结果未完整；请选择明确路径' : info.ambiguous ? '存在多个匹配，请选择' : '未找到文件，请使用完整路径'}</div>}
         {!resolved && info?.candidates?.map(candidate => item(candidate, () => { void reveal('open', candidate) }, busy))}
         {item(info?.is_dir ? '打开文件夹' : '定位文件', () => { void reveal('open', resolved!) }, busy || !resolved)}

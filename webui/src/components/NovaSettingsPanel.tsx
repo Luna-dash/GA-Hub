@@ -57,7 +57,6 @@ export function NovaSettingsPanel() {
           <dt className="shrink-0 text-slate-500">设备码</dt>
           <dd className="min-w-0"><code className="select-text break-all font-mono text-slate-300">{status.device || '不可用'}</code></dd>
         </dl>
-        {status.running && <p className="text-xs leading-relaxed text-slate-500">本机运行状态不代表云端在线。</p>}
       </div>
       {status.error && <p role="alert" className="break-words text-sm text-status-warning">连接器错误：{status.error}</p>}
       {status.paired && <div className="flex flex-wrap gap-2">
@@ -79,15 +78,15 @@ export function NovaSettingsPanel() {
         <label className="flex items-start gap-2 text-xs leading-relaxed text-slate-300"><input className="mt-0.5 shrink-0" type="checkbox" checked={confirmed} disabled={busy} onChange={e => setConfirmed(e.target.checked)} />{revoking ? '确认撤销授权并清除本机绑定，保留设备码' : '允许此账号通过 Nova 远程操作这台电脑'}</label>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
           <button type="submit" disabled={busy || !confirmed || !status.device} className={`shrink-0 rounded-lg px-4 py-2 text-sm text-white disabled:opacity-40 ${revoking ? 'bg-status-danger hover:bg-status-danger-strong' : 'bg-accent hover:brightness-110'}`}>{busy ? '处理中…' : revoking ? '确认撤销关联' : register ? '注册并关联本机' : '登录并关联本机'}</button>
-          <p className="text-xs text-slate-500">密码仅用于本次验证，不会保存。</p>
+          <p className="text-xs text-slate-500">密码仅用于本次验证，不作保存。</p>
         </div>
       </form>}
       <details className="border-t border-line pt-3 text-xs text-slate-500">
         <summary className="w-fit cursor-pointer text-slate-400 hover:text-slate-200">连接与安全说明</summary>
         <ul className="mt-2 list-disc space-y-1.5 pl-4 leading-relaxed">
-          <li>关联后，Nova 随 GA-Hub 自动启动；不影响原有隧道。</li>
+          <li>关联后将随 GA-Hub 自动启动。</li>
           <li>关联凭据保存在 Windows 凭据管理器中。</li>
-          <li>设备码是本机标识，不是硬件指纹；更新不变，更换系统用户或删除本机数据可能改变。</li>
+          <li>设备码为本机标识，升级软件不会改变。</li>
         </ul>
       </details>
     </>}

@@ -260,7 +260,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
               className="w-full bg-bg-soft border border-line rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"
             />
             <div className="text-xs text-slate-500 mt-1">
-              用于 SOP / code_run 执行 Python。优先级：GA_PYTHON 环境变量 → 此处配置 → GA 项目虚拟环境 → 本机 Python。
+              指定执行脚本所用的 Python 路径（留空则自动检测）。
             </div>
           </div>
 
@@ -525,7 +525,7 @@ function ChatRetryPanel() {
     <div className="rounded-xl border border-line bg-bg-card p-4">
       <div className="text-sm font-semibold mb-1">实时聊天自动重试</div>
       <div className="text-xs text-slate-500 mb-3">
-        当 Agent 回复末尾出现可恢复的网络/传输错误（例如 !!!Error: SSLError）时，后端会自动发起一次继续/重试请求。
+        遇到临时网络异常时自动重试当前请求。
       </div>
 
       <div className="flex items-center gap-4 flex-wrap">
@@ -539,7 +539,7 @@ function ChatRetryPanel() {
           <span>{cfg.enabled ? '已开启' : '已关闭'}</span>
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="定时任务/自主会话等无人值守来源的重试预算（按原始触发来源判定）">
+        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="普通对话的最大自动重试次数">
           <span className="text-slate-500">最大重试次数</span>
           <input
             type="number"
@@ -552,7 +552,7 @@ function ChatRetryPanel() {
           />
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="定时任务/自主会话等无人值守来源的重试预算（按原始触发来源判定）">
+        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="普通对话的最大自动重试次数">
           <span className="text-slate-500">定时任务最大重试次数</span>
           <input
             type="number"
@@ -580,12 +580,12 @@ function ChatRetryPanel() {
           <input type="number" min={0} max={600} step="1" value={cfg.backoff_max_seconds ?? 60} onChange={(e) => updateCfg({ backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="定时任务/自主会话等无人值守来源使用独立的退避曲线（起步更稳）">
+        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="无人值守任务的起始重试间隔">
           定时基础间隔（秒）
           <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_base_seconds ?? 5} onChange={(e) => updateCfg({ scheduled_backoff_base_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="定时任务单次等待上限，默认 10 分钟">
+        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="无人值守任务的单次最长等待，默认 10 分钟">
           定时单次最长等待（秒）
           <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_max_seconds ?? 600} onChange={(e) => updateCfg({ scheduled_backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
@@ -601,7 +601,7 @@ function ChatRetryPanel() {
         {msg && <span className={`text-xs ${msg.startsWith('保存失败') ? 'text-status-danger' : 'text-status-success'}`}>{msg}</span>}
       </div>
       <div className="text-[11px] text-slate-600 mt-2">
-        计数按同一次逻辑提交累加，达到上限后会停止并保留错误回复；非可恢复错误不会重试。
+        达到重试上限后停止并保留提示。
       </div>
     </div>
   )

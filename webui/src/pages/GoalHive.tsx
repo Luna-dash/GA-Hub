@@ -165,7 +165,7 @@ export default function GoalHive() {
     if (msgs.length > 0 || streaming) {
       const ok = await dialog.confirm(
         '清空 Goal Hive 历史？',
-        '将清除当前页面输出及独立通道的 Agent 对话上下文，且无法恢复。',
+        '将清空当前对话记录及上下文，无法恢复。',
         { confirmText: '清空历史', tone: 'danger' },
       )
       if (!ok) return
@@ -274,7 +274,7 @@ export default function GoalHive() {
             </label>
 
             <div className="rounded-xl border border-line bg-bg-soft/70 p-4 space-y-2">
-              <div className="text-xs uppercase tracking-[0.16em] text-ink-faint">将发送到本页独立通道</div>
+              <div className="text-xs uppercase tracking-[0.16em] text-ink-faint">发送预览</div>
               <pre className="whitespace-pre-wrap break-words text-sm text-[#3B3326] font-mono">{preview || `${config.command} ...`}</pre>
             </div>
 
@@ -295,8 +295,8 @@ export default function GoalHive() {
         <section className="rounded-2xl border border-line bg-bg-card shadow-sm flex flex-col min-h-0 overflow-hidden">
           <div className="px-5 py-4 border-b border-line flex items-center justify-between">
             <div>
-              <div className="text-sm font-medium text-ink">独立输出</div>
-              <div className="text-xs text-ink-faint">独立 GoalHive 通道</div>
+              <div className="text-sm font-medium text-ink">执行输出</div>
+              <div className="text-xs text-ink-faint">实时输出</div>
             </div>
             <button type="button" onClick={() => { void reset() }} className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-line text-ink-muted hover:text-ink">
               <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />

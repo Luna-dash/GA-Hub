@@ -34,7 +34,7 @@ describe('Nova embedded settings', () => {
     expect(details.open).toBe(false)
     expect(details.querySelector('summary')?.textContent).toBe('连接与安全说明')
     expect(details.textContent).toContain('Windows 凭据管理器')
-    expect(details.textContent).toContain('不影响原有隧道')
+    expect(details.textContent).toContain('自动启动')
     expect(host.querySelector('code')?.className).toContain('break-all')
     expect(host.querySelector('form .grid')?.className).toContain('sm:grid-cols-2')
   })
@@ -43,7 +43,6 @@ describe('Nova embedded settings', () => {
     vi.mocked(novaApi.status).mockResolvedValue({ ...status, paired: true, running: true })
     await act(async () => root.render(<NovaSettingsPanel />))
     expect(host.textContent).toContain('连接器运行中')
-    expect(host.textContent).toContain('本机运行状态不代表云端在线。')
     expect(host.querySelector('form')).toBeNull()
   })
 

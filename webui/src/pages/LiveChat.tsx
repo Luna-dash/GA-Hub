@@ -554,7 +554,7 @@ export default function LiveChat() {
       if (value === '__new__') {
         const proceed = await dialog.confirm(
           '选择项目根目录',
-          '请选择需要 GA 协助处理的项目文件夹。GA-Hub 会为它建立项目索引，并在目录中维护 project_memory.md；不会移动或复制其他文件。',
+          '选择要绑定的项目文件夹，用于关联工作目录与项目记忆。',
           { confirmText: '选择目录' },
         )
         if (!proceed) return
@@ -570,7 +570,7 @@ export default function LiveChat() {
         let displayName = projectDisplayName(selection.path, '')
         while (true) {
           const entered = await dialog.prompt('命名项目', {
-            message: '为项目设置显示名称，不会修改实际目录。',
+            message: '设置项目的显示名称（不修改本地目录名）。',
             defaultValue: displayName,
             placeholder: '项目名称（最多 100 字）',
             confirmText: '创建并绑定',
@@ -610,7 +610,7 @@ export default function LiveChat() {
     const displayName = selected.display_name || projectDisplayName(selected.path, selected.name)
     const confirmed = await dialog.confirm(
       `移除“${displayName}”的项目映射？`,
-      '会移除 GA 工作区中的目录映射和项目注册，不会删除原始项目目录、代码、其中的 memory 或其他文件。当前会话将先取消绑定。',
+      '仅移除工作区中的项目绑定，不删除本地目录及文件。',
       { confirmText: '移除映射', tone: 'danger' },
     )
     if (!confirmed) return
@@ -783,7 +783,7 @@ export default function LiveChat() {
                 onClick={() => { void deleteCurrentProject() }}
                 disabled={!session?.project_path || projectSaving || !projects.some((item) => item.path === session.project_path)}
                 className="project-select-delete -ml-px inline-flex h-[35px] w-9 shrink-0 items-center justify-center border border-line text-slate-500 hover:z-10 hover:border-status-danger-line hover:bg-status-danger-soft hover:text-status-danger disabled:cursor-not-allowed disabled:opacity-35"
-                title="删除当前项目索引（不会删除目录文件）"
+                title="移除项目绑定"
                 aria-label="删除当前项目索引"
               >
                 <Trash2 className="h-4 w-4" aria-hidden="true" />

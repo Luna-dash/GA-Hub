@@ -42,7 +42,7 @@ export function ReplyActions({ text, engine, canSave, project }: {
     </button>
     {canSave && sessionId && (
       <button type="button" onClick={() => void save()} disabled={saving}
-        title="将回复结论保存为 Markdown 并放入传递箱" className={actionClass}>
+        title="保存为文档" className={actionClass}>
         <FileText size={12} strokeWidth={1.85} aria-hidden="true" className="shrink-0" />
         <span>{saving ? '保存中…' : '转成文档'}</span>
       </button>

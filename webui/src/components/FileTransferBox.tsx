@@ -92,13 +92,13 @@ export function FileTransferBox({ canInsert, onInsert }: FileTransferBoxProps) {
       <header className="mb-2 flex items-center justify-between gap-2">
         <h2 className="font-semibold">文件传递箱</h2>
         <div className="flex items-center gap-1">
-          <button type="button" title="清空索引（不删除原文件）" aria-label="清空索引" className="ga-btn-icon"
+          <button type="button" title="清空列表" aria-label="清空索引" className="ga-btn-icon"
             disabled={!files.data?.length || clear.isPending} onClick={() => setConfirmClear(true)}><Trash2 size={15} aria-hidden="true" /></button>
           <button type="button" title="关闭" aria-label="关闭文件传递箱" className="ga-btn-icon" onClick={close}><X size={16} aria-hidden="true" /></button>
         </div>
       </header>
       {confirmClear && <div className="mb-2 flex items-center gap-2 rounded-lg border border-line p-2 text-xs">
-        <span className="flex-1">清空所有会话的共享索引？不会删除原文件。</span>
+        <span className="flex-1">清空文件传递箱列表？（仅移除列表，不删除原文件）</span>
         <button type="button" className="text-ink-muted" onClick={() => setConfirmClear(false)} disabled={clear.isPending}>取消</button>
         <button type="button" className="text-accent" onClick={() => clear.mutate()} disabled={clear.isPending}>确认清空</button>
       </div>}

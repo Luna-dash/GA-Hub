@@ -86,8 +86,8 @@ export function UpdateSettingsPanel() {
   const inputClass = 'w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink'
   return <section className="rounded-xl border border-line bg-bg-card p-4 space-y-3" aria-label="桌面程序更新">
     <h2 className="font-medium">桌面程序更新</h2>
-    <p className="text-sm text-ink">先在线准备候选包，再唤醒独立执行器；就绪后需再次确认，固定60秒倒计时结束后正常关闭并切换。不会等待所有会话空闲。</p>
-    <p className="text-sm text-ink-muted">仅接受可信来源的 Windows 便携发布包。校验和用于完整性验证，不能代替来源认证。准备不会退出或覆盖当前程序。</p>
+    <p className="text-sm text-ink">先在线准备更新包，就绪后确认升级；倒计时 60 秒后将自动重启切换。</p>
+    <p className="text-sm text-ink-muted">仅支持可信来源的 Windows 更新包；准备过程不影响当前运行。</p>
     <div className="space-y-2 rounded-lg border border-line p-3">
       <p className="text-sm">更新源：Luna-dash/GA-Hub · GitHub 正式稳定版（不含预发布）</p>
       <button className="rounded-lg bg-accent px-3 py-2 text-sm text-white hover:brightness-110 disabled:opacity-40" disabled={locked || !status} onClick={() => void online()}>检查正式版本</button>
@@ -104,7 +104,7 @@ export function UpdateSettingsPanel() {
         <progress className="block h-2 w-full accent-sky-600" aria-label="安装包下载进度" max={100} value={percent} />
         <p className="text-xs text-ink-muted">{megabytes(received)}{total > 0 && ` / ${megabytes(total)} · ${percent}%`}</p>
       </>}
-      {downloading && <p className="text-xs text-ink-muted">下载在后台继续，可以离开此页面；返回后会自动恢复进度。校验完成前不会切换版本。</p>}
+      {downloading && <p className="text-xs text-ink-muted">后台下载中，可切换其他页面。</p>}
       {downloading && task.updated_at && Date.now() / 1000 - task.updated_at > 15 && <p className="text-xs text-ink-muted">暂未收到新进度，正在等待网络或校验响应，请勿重复下载。</p>}
       {taskError && !release && <button className="rounded-lg border border-line px-3 py-2 disabled:opacity-40" disabled={locked} onClick={() => void online(true)}>重新下载并校验</button>}
     </div>}
@@ -115,7 +115,7 @@ export function UpdateSettingsPanel() {
     <label className="block text-sm">SHA-256（选填）
       <input className={inputClass} value={sha256} onChange={e => setSha256(e.target.value)} placeholder="可留空；填写时需为可信渠道提供的64位校验和" spellCheck={false} disabled={locked} />
     </label>
-    <p className="text-xs text-ink-muted">留空时自动计算文件哈希并校验包内文件，但不与外部校验和比对；请仅导入可信来源的安装包。</p>
+    <p className="text-xs text-ink-muted">可选填 SHA-256 用于校验安装包完整性。</p>
     <label className="flex items-start gap-2 text-sm text-ink">
       <input type="checkbox" checked={trusted} onChange={e => setTrusted(e.target.checked)} disabled={locked} />
       我已核实安装包来源可信（如填写校验和，也已核实其来源）
@@ -126,7 +126,7 @@ export function UpdateSettingsPanel() {
       {status.plan.commit && <span className="block break-all text-xs text-ink-muted">源码提交：{status.plan.commit}</span>}
     </div>}
     {status?.plan.state === 'prepared' && <>
-      <p className="text-sm text-ink">候选包已准备。唤醒前自动执行冻结依赖、隔离设置模式及页面资源预检，失败则禁止交接。此预检不等于完整桌面或核心验收；当前应用不会关闭。</p>
+      <p className="text-sm text-ink">更新包已就绪，点击下方按钮即可执行升级（当前应用暂不关闭）。</p>
       <button className="rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-40" disabled={locked} onClick={() => void handoff(false)}>唤醒独立执行器</button>
       <button className="rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-40" disabled={locked} onClick={() => void act(true)}>取消候选更新</button>
     </>}

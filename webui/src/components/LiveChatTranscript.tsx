@@ -568,7 +568,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
                   className="ga-btn"
                   disabled={olderHistoryStatus === 'loading' || loadingAllHistory}
                   onClick={() => { void handleLoadAllHistory() }}
-                  title="从最新一页开始连续加载，直到会话最早一条消息"
+                  title="加载完整历史消息"
                 >
                   {loadingAllHistory ? `正在加载全部历史…（已加载 ${allHistoryLoadedItems} 条）` : '加载全部历史'}
                 </button>

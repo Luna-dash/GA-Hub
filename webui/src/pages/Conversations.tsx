@@ -458,7 +458,7 @@ export default function Conversations() {
                       type="button"
                       onClick={() => { void openSession(boundSessionId) }}
                       className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm text-white hover:brightness-110"
-                      title="这条归档已属于一条会话，切换到该会话继续"
+                      title="打开对应会话继续对话"
                     >
                       <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                       <span>打开该会话</span>
@@ -469,7 +469,7 @@ export default function Conversations() {
                       onClick={() => { void handleImport(detail.id) }}
                       disabled={importing === detail.id}
                       className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm text-white hover:brightness-110 disabled:opacity-40"
-                      title="把这条归档复制成一条新会话（源文件保持只读），之后可无缝继续对话"
+                      title="导入为新会话继续对话"
                     >
                       <FolderDown className="h-3.5 w-3.5" aria-hidden="true" />
                       <span>{importing === detail.id ? '导入中…' : '导入为会话'}</span>

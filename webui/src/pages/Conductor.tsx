@@ -722,7 +722,7 @@ export default function Conductor() {
             <div className="conductor-header-engine flex items-center gap-2">
               <button onClick={retryEnsure}
                 className={`ga-btn ga-btn-primary ${ENGINE_TOGGLE_LAYOUT}`}
-                title="重新拉起 Conductor 引擎（幂等：已在运行的引擎不会被重复启动，也不会重跑任何任务）">
+                title="重新启动 Conductor 引擎">
                 <Play size={13} />重试启动
               </button>
             </div>

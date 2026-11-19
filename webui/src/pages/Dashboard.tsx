@@ -71,24 +71,24 @@ export default function Dashboard() {
 
         {attention.length > 0 && (
           <section>
-            <SectionTitle title="需要处理" hint="只在预期运行的模块停止，或状态无法读取时出现" />
+            <SectionTitle title="需要处理" hint="异常或已停止的模块" />
             <div className="space-y-2">{attention.map((service) => <ActionRow key={service.id} service={service} />)}</div>
           </section>
         )}
 
         <section>
-          <SectionTitle title="当前活动" hint="此刻正在执行、监听或调度的模块" />
+          <SectionTitle title="当前活动" hint="正在运行的模块" />
           {active.length > 0 ? (
             <div className="flex flex-wrap gap-2">{active.map((service) => (
               <ServiceSurface key={service.id} service={service} className="rounded-lg border border-status-info-line bg-status-info-soft px-3 py-2">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-status-info animate-pulse mr-2 align-middle" /><span className="text-sm text-slate-200">{service.name}</span><span className="ml-2 text-xs text-slate-500">{service.summary}</span>
               </ServiceSurface>
             ))}</div>
-          ) : <p className="rounded-lg border border-line/70 bg-bg-card/40 px-3 py-3 text-xs text-slate-500">当前没有后台活动；这不影响待命模块接收任务。</p>}
+          ) : <p className="rounded-lg border border-line/70 bg-bg-card/40 px-3 py-3 text-xs text-slate-500">当前没有后台任务运行。</p>}
         </section>
 
         <section>
-          <SectionTitle title="全部模块" hint="完整入口；未运行表示当前无活动，不等于故障" />
+          <SectionTitle title="全部模块" hint="所有功能模块" />
           <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-2">
             {services.map((service) => <ServiceRow key={service.id} service={service} />)}
           </div>
@@ -97,7 +97,7 @@ export default function Dashboard() {
 
         {tokens.data?.available && totals && (
           <section>
-            <SectionTitle title="Token 用量" hint="统计范围内的累计值，不代表当前并发请求" link="/tokens" />
+            <SectionTitle title="Token 用量" hint="统计周期内累计" link="/tokens" />
             <div className="rounded-xl border border-line bg-bg-card px-4 py-3 flex flex-wrap gap-x-7 gap-y-3">
               <TokenFact label="请求累计" value={totals.requests} />
               <TokenFact label="输入" value={totals.input} />

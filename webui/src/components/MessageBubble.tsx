@@ -542,7 +542,7 @@ function RewindChip({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      title="回退此轮对话（删除本轮提问与回复）"
+      title="回退此轮对话"
       className="ga-btn-chip hover:text-accent"
     >
       <RewindIcon size={12} />
