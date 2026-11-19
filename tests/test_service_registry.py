@@ -94,13 +94,8 @@ def test_session_panel_reports_abort_timeout_as_needing_attention(session_domain
         assert coordinator.shutdown(timeout=2)
 
 
-def test_autonomous_panel_uses_stop_event_and_reports_running() -> None:
-    service = SimpleNamespace(
-        _sched=SimpleNamespace(running=True),
-        _stop_event=mock.Mock(),
-        schedules={"active": SimpleNamespace(enabled=True)},
-    )
-    service._stop_event.is_set.return_value = False
+def test_autonomous_panel_uses_public_status_and_reports_running() -> None:
+    service = SimpleNamespace(panel_status=mock.Mock(return_value={"running": True, "total": 1, "enabled": 1}))
 
     with mock.patch("server.services.autonomous_scheduler.AutonomousScheduler._instance", service):
         item = ServiceRegistry()._autonomous()
@@ -110,14 +105,11 @@ def test_autonomous_panel_uses_stop_event_and_reports_running() -> None:
     assert item.health == "healthy"
     assert item.expected_running is True
     assert item.metrics == {"计划": 1, "启用": 1}
-    service._stop_event.is_set.assert_called_once_with()
+    service.panel_status.assert_called_once_with()
 
 
 def test_stopped_scheduler_only_needs_attention_when_a_plan_is_enabled() -> None:
-    service = SimpleNamespace(
-        _sched=SimpleNamespace(running=False),
-        schedules={"daily": SimpleNamespace(enabled=True)},
-    )
+    service = SimpleNamespace(panel_status=lambda: {"running": False, "total": 1, "enabled": 1})
 
     with mock.patch("server.services.task_scheduler.TaskScheduler._instance", service):
         item = ServiceRegistry()._tasks()
@@ -272,19 +264,9 @@ def test_app_bound_registry_prefers_owned_services_over_singletons(tmp_path) -> 
 def test_scheduler_domain_reader_prefers_the_host_registration() -> None:
     from server.services.app_services import AppServices
 
-    host_service = SimpleNamespace(
-        _sched=SimpleNamespace(running=True),
-        _stop_event=mock.Mock(),
-        schedules={"host-plan": SimpleNamespace(enabled=True)},
-    )
-    host_service._stop_event.is_set.return_value = False
-    singleton_service = SimpleNamespace(
-        _sched=SimpleNamespace(running=False),
-        schedules={"stale": SimpleNamespace(enabled=True)},
-    )
-    host = SimpleNamespace(
-        _registrations=[SimpleNamespace(name="autonomous", service=host_service)],
-    )
+    host_service = SimpleNamespace(panel_status=lambda: {"running": True, "total": 1, "enabled": 1})
+    singleton_service = SimpleNamespace(panel_status=lambda: {"running": False, "total": 1, "enabled": 1})
+    host = SimpleNamespace(service_of=mock.Mock(return_value=host_service))
 
     bound = ServiceRegistry(AppServices(scheduler_host=host))
 
@@ -295,6 +277,8 @@ def test_scheduler_domain_reader_prefers_the_host_registration() -> None:
 
     assert item.state == "running"
     assert item.metrics == {"计划": 1, "启用": 1}
+
+    host.service_of.assert_called_once_with("autonomous")
 
     # Without an owner, the singleton fallback keeps the legacy behavior.
     unbound = ServiceRegistry()
@@ -437,11 +421,7 @@ def test_scheduler_host_service_of_returns_registered_service() -> None:
     from server.services.scheduler_host import SchedulerHost
 
     host = SchedulerHost(runtime_factory=mock.Mock())
-    svc = SimpleNamespace(
-        _sched=SimpleNamespace(running=True),
-        _stop_event=SimpleNamespace(is_set=lambda: False),
-        schedules={"a": SimpleNamespace(enabled=True)},
-    )
+    svc = SimpleNamespace(panel_status=lambda: {"running": True, "total": 1, "enabled": 1})
     host.register("autonomous", lambda: svc, starter="start", stopper="shutdown")
     assert host.service_of("autonomous") is None
 
@@ -453,3 +433,84 @@ def test_scheduler_host_service_of_returns_registered_service() -> None:
 
     item = ServiceRegistry(AppServices(scheduler_host=host))._autonomous()
     assert (item.state, item.metrics) == ("running", {"计划": 1, "启用": 1})
+
+
+def test_scheduler_panel_waits_for_schedule_updates() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event, Lock
+
+    from server.services.autonomous_scheduler import AutonomousScheduler
+
+    lock = Lock()
+    reading = Event()
+
+    class ObservedLock:
+        def __enter__(self):
+            reading.set()
+            return lock.__enter__()
+
+        def __exit__(self, *exc):
+            return lock.__exit__(*exc)
+
+    scheduler = object.__new__(AutonomousScheduler)
+    scheduler._lock = ObservedLock()
+    scheduler._sched = SimpleNamespace(running=True)
+    scheduler._stop_event = Event()
+    scheduler.schedules = {"disabled": SimpleNamespace(enabled=False)}
+    registry = ServiceRegistry()
+    registry._readers = (registry._autonomous,)
+
+    def read_panel():
+        try:
+            return registry.panel()["services"][0]
+        finally:
+            # Also signal if a reader bypasses the lock and completes early.
+            reading.set()
+
+    with mock.patch.object(AutonomousScheduler, "_instance", scheduler), ThreadPoolExecutor() as pool:
+        with lock:
+            future = pool.submit(read_panel)
+            assert reading.wait(5), "panel reader did not run"
+            scheduler.schedules["new"] = SimpleNamespace(enabled=True)
+        item = future.result(timeout=5)
+
+    assert item["state"] == "running"
+    assert item["error"] is None
+    assert item["metrics"] == {"计划": 2, "启用": 1}
+
+
+def test_scheduler_panel_status_and_peek_instance_never_construct() -> None:
+    from threading import Lock
+
+    from server.services.autonomous_scheduler import AutonomousScheduler
+    from server.services.task_scheduler import TaskScheduler
+
+    sched = SimpleNamespace(
+        _lock=Lock(),
+        _sched=SimpleNamespace(running=True),
+        _stop_event=SimpleNamespace(is_set=lambda: False),
+        schedules={
+            "a": SimpleNamespace(enabled=True),
+            "b": SimpleNamespace(enabled=False),
+        },
+    )
+    assert AutonomousScheduler.panel_status(sched) == {"running": True, "total": 2, "enabled": 1}
+
+    stopped_sched = SimpleNamespace(
+        _lock=Lock(),
+        _sched=SimpleNamespace(running=True),
+        _stop_event=SimpleNamespace(is_set=lambda: True),
+        schedules={"a": SimpleNamespace(enabled=True)},
+    )
+    assert TaskScheduler.panel_status(stopped_sched) == {"running": False, "total": 1, "enabled": 1}
+
+    with (
+        mock.patch.object(AutonomousScheduler, "_instance", None),
+        mock.patch.object(TaskScheduler, "_instance", None),
+        mock.patch.object(AutonomousScheduler, "instance", side_effect=AssertionError("must not construct")),
+        mock.patch.object(TaskScheduler, "instance", side_effect=AssertionError("must not construct")),
+    ):
+        assert AutonomousScheduler.peek_instance() is None
+        assert TaskScheduler.peek_instance() is None
+        assert ServiceRegistry()._autonomous().state == "stopped"
+        assert ServiceRegistry()._tasks().state == "stopped"

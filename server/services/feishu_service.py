@@ -82,6 +82,11 @@ class FeishuService:
             self._autostart_error = error
 
     @classmethod
+    def peek_instance(cls) -> "FeishuService | None":
+        """Return the active FeishuService without constructing one."""
+        return cls._instance
+
+    @classmethod
     def instance(cls) -> "FeishuService":
         if cls._instance is None:
             cls._instance = cls()

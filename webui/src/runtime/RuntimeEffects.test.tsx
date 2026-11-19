@@ -136,6 +136,23 @@ describe('RuntimeEffects', () => {
       }])
     })
 
+    it('preserves an authored row even when its kind string is empty', () => {
+      const onEvent = mount()
+      const activity = {
+        id: 'ep:42', request_id: 'r1', kind: '',
+        at: 1_700_000_010, atMs: 1_700_000_010_000, text: 'Hub activity',
+      }
+
+      onEvent({
+        topic: 'conductor:subagent_spawned',
+        event_id: 42,
+        ts: activity.at,
+        payload: { request_id: 'r1', id: 'w1', activity },
+      })
+
+      expect(useConductorStore.getState().activity).toMatchObject([activity])
+    })
+
     it('falls back to the local label table for a hub without authored rows', () => {
       const onEvent = mount()
 

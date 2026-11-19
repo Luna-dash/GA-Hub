@@ -154,6 +154,11 @@ class SchedulerDomainBase:
         return True
 
     @classmethod
+    def peek_instance(cls: type[_SelfT]) -> _SelfT | None:
+        """Return the active singleton without constructing one."""
+        return cls._instance  # type: ignore[return-value]
+
+    @classmethod
     def instance(
         cls: type[_SelfT],
         channel: SystemChannel | None = None,
@@ -206,6 +211,15 @@ class SchedulerDomainBase:
                 f.write(json.dumps(run.to_dict(), ensure_ascii=False) + "\n")
 
     # ── lifecycle ────────────────────────────────────────────────
+    def panel_status(self) -> dict[str, int | bool]:
+        """Return read-only scheduler state without touching APScheduler jobs."""
+        with self._lock:
+            return {
+                "running": self._sched.running and not self._stop_event.is_set(),
+                "total": len(self.schedules),
+                "enabled": sum(1 for item in self.schedules.values() if item.enabled),
+            }
+
     def start(self) -> None:
         if self._watchers.stopping:
             self._check_restart_allowed()

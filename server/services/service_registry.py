@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:  # pragma: no cover - runtime imports stay minimal
     from ..nova_component import NovaComponent
     from .app_services import AppServices
+    from .scheduler_domain_base import SchedulerDomainBase
     from .session_lifecycle import SessionLifecycle
 
 
@@ -136,9 +137,7 @@ class ServiceRegistry:
         if self._sessions is not None:
             return self._session_activity()
         from .agent_service import AgentService
-        service = getattr(self._owned_services(), "agent", None)
-        if service is None:
-            service = AgentService._instance
+        service = getattr(self._owned_services(), "agent", None) or AgentService.peek_instance()
         if service is None:
             return ServicePanelItem(
                 "agent", "Agent", "stopped", "服务尚未初始化", "/chat",
@@ -181,9 +180,7 @@ class ServiceRegistry:
     def _feishu(self) -> ServicePanelItem:
         from .. import _paths
         from .feishu_service import FeishuService
-        service = getattr(self._owned_services(), "feishu", None)
-        if service is None:
-            service = FeishuService._instance
+        service = getattr(self._owned_services(), "feishu", None) or FeishuService.peek_instance()
         if service is None:
             script = (
                 _paths.ga_fsapp_path()
@@ -240,9 +237,7 @@ class ServiceRegistry:
 
     def _conductor(self) -> ServicePanelItem:
         from .conductor_service import ConductorService
-        svc = getattr(self._owned_services(), "conductor", None)
-        if svc is None:
-            svc = ConductorService._instance
+        svc = getattr(self._owned_services(), "conductor", None) or ConductorService.peek_instance()
         if svc is None:
             return ServicePanelItem("conductor", "Conductor", "stopped", "尚未启用", "/conductor")
         running, stopped = svc.pool.counts()
@@ -271,58 +266,45 @@ class ServiceRegistry:
             {"消息": status.get("message_count", 0)},
         )
 
-    def _scheduler_service(self, domain: str):
-        """Resolve a scheduler-domain service from the owned host or singleton.
+    def _scheduler_service(self, domain: str) -> "SchedulerDomainBase | None":
+        """Return the app-owned scheduler domain without constructing it."""
+        services = self._owned_services()
+        host = services.scheduler_host if services is not None else None
+        return host.service_of(domain) if host is not None else None
 
-        The lifespan owns the host; its registrations hold the started
-        instances. Unbound callers (tests, standalone tools) fall back to the
-        class singletons exactly as before.
-        """
-        host = getattr(self._owned_services(), "scheduler_host", None)
-        if host is not None:
-            getter = getattr(host, "service_of", None)
-            if callable(getter):
-                return getter(domain)
-            for item in getattr(host, "_registrations", ()):
-                if item.name == domain and item.service is not None:
-                    return item.service
-        return None
+    @staticmethod
+    def _scheduler_panel(
+        service_id: str,
+        name: str,
+        href: str,
+        svc: "SchedulerDomainBase | None",
+    ) -> ServicePanelItem:
+        if svc is None:
+            return ServicePanelItem(service_id, name, "stopped", "调度器尚未初始化", href)
+        status = svc.panel_status()
+        running = status["running"]
+        total = status["total"]
+        enabled = status["enabled"]
+        expected = enabled > 0
+        needs_attention = expected and not running
+        return ServicePanelItem(
+            service_id, name, "running" if running else "stopped",
+            ("调度器运行中" if running else
+             "已启用计划，但调度器已停止" if needs_attention else "当前没有运行计划"),
+            href, {"计划": total, "启用": enabled},
+            health="attention" if needs_attention else "healthy",
+            expected_running=expected,
+        )
 
     def _autonomous(self) -> ServicePanelItem:
         from .autonomous_scheduler import AutonomousScheduler
-        svc = self._scheduler_service("autonomous") or AutonomousScheduler._instance
-        if svc is None:
-            return ServicePanelItem("autonomous", "自主进化", "stopped", "调度器尚未初始化", "/autonomous")
-        running = bool(svc._sched.running and not svc._stop_event.is_set())
-        enabled = sum(1 for item in svc.schedules.values() if item.enabled)
-        expected = enabled > 0
-        needs_attention = expected and not running
-        return ServicePanelItem(
-            "autonomous", "自主进化", "running" if running else "stopped",
-            ("调度器运行中" if running else
-             "已启用计划，但调度器已停止" if needs_attention else "当前没有运行计划"),
-            "/autonomous", {"计划": len(svc.schedules), "启用": enabled},
-            health="attention" if needs_attention else "healthy",
-            expected_running=expected,
-        )
+        svc = self._scheduler_service("autonomous") or AutonomousScheduler.peek_instance()
+        return self._scheduler_panel("autonomous", "自主进化", "/autonomous", svc)
 
     def _tasks(self) -> ServicePanelItem:
         from .task_scheduler import TaskScheduler
-        svc = self._scheduler_service("tasks") or TaskScheduler._instance
-        if svc is None:
-            return ServicePanelItem("task_scheduler", "定时任务", "stopped", "调度器尚未初始化", "/tasks")
-        running = bool(svc._sched.running)
-        enabled = sum(1 for item in svc.schedules.values() if item.enabled)
-        expected = enabled > 0
-        needs_attention = expected and not running
-        return ServicePanelItem(
-            "task_scheduler", "定时任务", "running" if running else "stopped",
-            ("调度器运行中" if running else
-             "已启用计划，但调度器已停止" if needs_attention else "当前没有运行计划"),
-            "/tasks", {"计划": len(svc.schedules), "启用": enabled},
-            health="attention" if needs_attention else "healthy",
-            expected_running=expected,
-        )
+        svc = self._scheduler_service("tasks") or TaskScheduler.peek_instance()
+        return self._scheduler_panel("task_scheduler", "定时任务", "/tasks", svc)
 
 
 registry = ServiceRegistry()

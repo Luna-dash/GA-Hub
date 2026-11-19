@@ -435,6 +435,11 @@ class ConductorService:
 
 
     @classmethod
+    def peek_instance(cls) -> "ConductorService | None":
+        """Return the active ConductorService without constructing one."""
+        return cls._instance
+
+    @classmethod
     def instance(cls) -> "ConductorService":
         if cls._instance is None:
             with cls._lock:

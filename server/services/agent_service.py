@@ -374,6 +374,11 @@ class AgentService:
 
     # ── lifecycle ────────────────────────────────────────────────
     @classmethod
+    def peek_instance(cls) -> "AgentService | None":
+        """Return the active AgentService without constructing one."""
+        return cls._instance
+
+    @classmethod
     def instance(cls) -> "AgentService":
         if cls._instance is None:
             with cls._instance_creation_lock:

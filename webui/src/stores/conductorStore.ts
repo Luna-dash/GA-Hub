@@ -57,7 +57,7 @@ type SnapshotVersion = { boot_id?: string | null; snapshot_revision?: number }
 
 // Legacy sidecar only (a current hub authors the row itself — see
 // conductor_activity.py): engine worker-event name → activity kind. This table
-// and RuntimeEffects.WORKER_EVENT_LABEL must cover the SAME names, and a gap
+// and useConductorRuntimeEffects.WORKER_EVENT_LABEL must cover the SAME names, and a gap
 // is silent — `addWorkerActivity` drops a row it cannot colour, so
 // started/reworked/cancelled/killed (labels without a kind here) simply never
 // appeared in the timeline on an older sidecar. Keep the two tables' key sets
