@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   api,
+  antiApi,
   DEFAULT_HTTP_TIMEOUT_MS,
   HttpTimeoutError,
   MYKEY_SYNC_HTTP_TIMEOUT_MS,
@@ -13,6 +14,20 @@ function pendingFetch() {
     if (signal?.aborted) rejectAbort()
     else signal?.addEventListener('abort', rejectAbort, { once: true })
   }))
+}
+
+function delayedResponseBody(format: 'json' | 'text') {
+  let finish = () => {}
+  const readBody = vi.fn((signal?: AbortSignal | null) => new Promise<unknown>((resolve, reject) => {
+    finish = () => resolve(format === 'json' ? [] : 'body')
+    signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+  }))
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => ({
+    ok: true,
+    headers: new Headers({ 'Content-Type': format === 'json' ? 'application/json' : 'text/plain' }),
+    [format]: () => readBody(init?.signal),
+  }))
+  return { fetchMock, readBody, finish: () => finish() }
 }
 
 describe('api request failure handling', () => {
@@ -97,6 +112,50 @@ describe('api request failure handling', () => {
     await vi.advanceTimersByTimeAsync(25)
 
     await assertion
+  })
+
+  it('waits for the model catalog after a slow gateway failure and CLI fallback', async () => {
+    vi.useFakeTimers()
+    const catalog = { items: [{ id: 'm1', display_name: 'Model 1' }] }
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((resolve, reject) => {
+      // Gateway connect/read (2s + 23s), then up to 24s for the CLI.
+      const timer = setTimeout(() => resolve(Response.json(catalog)), 49_000)
+      init?.signal?.addEventListener('abort', () => {
+        clearTimeout(timer)
+        reject(new DOMException('Aborted', 'AbortError'))
+      }, { once: true })
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = antiApi.models().catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(49_000)
+    expect(await result).toEqual(catalog)
+  })
+
+  it.each(['json', 'text'] as const)('preserves cancellation while reading a %s response body', async (format) => {
+    const { fetchMock, readBody, finish } = delayedResponseBody(format)
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+    const result = antiApi.runEvents('s1', 'r1', controller.signal).catch((error: unknown) => error)
+    await Promise.resolve()
+    expect(readBody).toHaveBeenCalledOnce()
+
+    controller.abort()
+    finish() // Let the request settle even if the client lost the abort signal.
+    expect(await result).toMatchObject({ name: 'AbortError' })
+  })
+
+  it.each(['json', 'text'] as const)('keeps the deadline active while reading a %s response body', async (format) => {
+    vi.useFakeTimers()
+    const { fetchMock, readBody, finish } = delayedResponseBody(format)
+    vi.stubGlobal('fetch', fetchMock)
+    const result = antiApi.runEvents('s1', 'r1').catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(readBody).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_HTTP_TIMEOUT_MS)
+    finish()
+    expect(await result).toBeInstanceOf(HttpTimeoutError)
   })
 
   it('allows mykey sync to outlive the normal request deadline', async () => {
@@ -261,5 +320,33 @@ describe('api request failure handling', () => {
     // carry one so the engine replays instead of double-admitting.
     expect(typeof body.operation_id).toBe('string')
     expect(body.operation_id.length).toBeGreaterThan(0)
+  })
+
+  it('routes Agy daemon and run requests through antiApi with headers, abort signal and HttpError status', async () => {
+    const { antiApi, HttpError } = await import('./client')
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state: 'ready', agy_available: true, auth_state: 'authenticated' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'invalid effort' }), {
+        status: 422,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const controller = new AbortController()
+    const status = await antiApi.daemonStatus(controller.signal)
+    expect(status.state).toBe('ready')
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/anti/status', expect.objectContaining({
+      method: 'GET',
+      headers: { 'X-GA-Hub-Action': 'verify-anti-auth' },
+    }))
+
+    await expect(antiApi.submitRun('s1', {
+      prompt: 'hi', operation: 'op-1', model: 'm1', effort: 'bad',
+    })).rejects.toSatisfy((error: unknown) => (
+      error instanceof HttpError && error.status === 422 && error.message === 'invalid effort'
+    ))
   })
 })

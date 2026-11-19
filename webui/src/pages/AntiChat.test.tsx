@@ -7,10 +7,19 @@ import { expect, it, vi } from 'vitest'
 import AntiChat from './AntiChat'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
 
-vi.mock('@/api/client', () => ({ api: { projects: async () => ({ items: [
-  { name: 'demo', display_name: 'Demo project', path: 'D:/demo' },
-  { name: 'other', display_name: 'Other project', path: 'D:/other' },
-] }) } }))
+vi.mock('@/api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/client')>()
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      projects: async () => ({ items: [
+        { name: 'demo', display_name: 'Demo project', path: 'D:/demo' },
+        { name: 'other', display_name: 'Other project', path: 'D:/other' },
+      ] }),
+    },
+  }
+})
 vi.mock('@/runtime/runtimeConfig', () => ({ resolveApiUrl: (path: string) => path }))
 
 it('starts Anti on demand from the page header without leaving the chat', async () => {

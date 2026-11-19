@@ -1,37 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { LoaderCircle, ShieldCheck, ShieldMinus, ShieldX } from 'lucide-react'
 import clsx from 'clsx'
-import type { components } from '@/api/generated/schema'
-import { resolveApiUrl } from '@/runtime/runtimeConfig'
+import { antiApi } from '@/api/client'
 import { StatusIconGlyph, statusBadgeToneClass, type StatusBadgeKind } from './ActionIcons'
 
-type Status = components['schemas']['AntiDaemonStatus']
 const key = ['anti-daemon-status'] as const
-
-async function request(path: 'status' | 'start', signal?: AbortSignal): Promise<Status> {
-  const starting = path === 'start'
-  const res = await fetch(resolveApiUrl(`/api/anti/${path}`), {
-    signal,
-    method: starting ? 'POST' : 'GET',
-    headers: { 'X-GA-Hub-Action': starting ? 'start-anti' : 'verify-anti-auth' },
-  })
-  if (!res.ok) {
-    const error = await res.json().catch(() => null)
-    throw new Error(typeof error?.detail === 'string' ? error.detail : `Anti 请求失败 (${res.status})`)
-  }
-  return res.json()
-}
 
 export function useAntiDaemonStatus() {
   const cache = useQueryClient()
   const status = useQuery({
     queryKey: key,
-    queryFn: ({ signal }) => request('status', signal),
+    queryFn: ({ signal }) => antiApi.daemonStatus(signal),
     retry: false,
     refetchInterval: ({ state }) => state.data?.state === 'starting' || state.data?.auth_state === 'checking' ? 1_000 : 10_000,
   })
   const start = useMutation({
-    mutationFn: () => request('start'),
+    mutationFn: () => antiApi.daemonStart(),
     onMutate: () => cache.cancelQueries({ queryKey: key }),
     onSuccess: data => { cache.setQueryData(key, data) },
   })

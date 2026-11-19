@@ -22,13 +22,11 @@ import { ModalOverlay } from '@/components/ModalOverlay'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import { usePageState } from '@/utils/pageState'
 import { ThemedSelect } from '@/components/ThemedSelect'
-import { api } from '@/api/client'
-import { resolveApiUrl } from '@/runtime/runtimeConfig'
+import { antiApi, api, HttpError, type AntiModels, type AntiRun, type AntiSession, type AntiSubmission } from '@/api/client'
 
-type Session = { id: string; project: string; title: string; workspace: string; updated_at?: string | null; active_run_id?: string | null }
-type Run = { id: string; status: string; operation: string; prompt: string; answer: string | null; error: string | null; error_detail?: string | null }
+type Session = AntiSession
+type Run = AntiRun
 const active = (run: Run) => ['submitting', 'queued', 'running', 'unknown'].includes(run.status)
-const base = '/api/anti/sessions'
 const sessionsKey = ['anti-sessions'] as const
 const DEFAULT_FAMILY = 'gemini-4-hydrogen'
 const DEFAULT_MODEL = { id: `${DEFAULT_FAMILY}-high`, display_name: 'Gemini 4 Hydrogen (High)' }
@@ -37,7 +35,7 @@ const efforts = [
   { key: 'low', name: 'low' }, { key: 'medium', name: 'medium' }, { key: 'high', name: 'high' },
   { key: 'xhigh', name: 'xhigh' }, { key: 'max', name: 'max' },
 ]
-type Models = { items: { id: string; display_name: string }[] }
+type Models = AntiModels
 
 function modelFamilies(items: Models['items']) {
   const families = new Map<string, { key: string; name: string; variants: Partial<Record<string, string>>; plain?: string }>()
@@ -53,29 +51,11 @@ function modelFamilies(items: Models['items']) {
   }
   return [...families.values()]
 }
-type Submission = { prompt: string; operation: string; model: string; effort: string; references?: Pick<TransferredFile, 'id' | 'path'>[] }
+type Submission = AntiSubmission
 
 function Errors({ items }: { items: (Error | null)[] }) {
   return <>{items.filter(Boolean).map((error, index) =>
     <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-sm text-status-danger [overflow-wrap:anywhere]" key={index}>{error?.message}</p>)}</>
-}
-
-class AntiRequestError extends Error {
-  constructor(readonly status: number, message: string) { super(message) }
-}
-
-async function request<T>(path: string, signal?: AbortSignal, body?: object, method = body ? 'POST' : 'GET'): Promise<T> {
-  const res = await fetch(resolveApiUrl(path), {
-    signal, method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  if (!res.ok) {
-    const error = await res.json().catch(() => null)
-    throw new AntiRequestError(res.status, typeof error?.detail === 'string' ? error.detail : `Anti 请求失败 (${res.status})`)
-  }
-  if (res.status === 204) return undefined as T
-  return res.json()
 }
 
 const EMPTY_ATTACHMENTS: [] = []
@@ -88,14 +68,14 @@ export default function AntiChat() {
   const [headerActions, setHeaderActions] = useState<HTMLDivElement | null>(null)
   const daemon = useAntiDaemonStatus()
   const projects = useQuery({ queryKey: ['anti-projects'], queryFn: api.projects })
-  const sessions = useQuery({ queryKey: sessionsKey, queryFn: ({ signal }) => request<Session[]>(base, signal), refetchInterval: 5000 })
+  const sessions = useQuery({ queryKey: sessionsKey, queryFn: ({ signal }) => antiApi.sessions(signal), refetchInterval: 5000 })
   const updateList = async (update: (rows: Session[]) => Session[]) => {
     await cache.cancelQueries({ queryKey: sessionsKey, exact: true })
     cache.setQueryData<Session[]>(sessionsKey, old => update(old ?? []))
     void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
   }
   const create = useMutation({
-    mutationFn: (projectName: string) => request<Session>(base, undefined, { project: projectName }),
+    mutationFn: (projectName: string) => antiApi.createSession(projectName),
     onSuccess: async session => {
       await updateList(rows => [session, ...rows.filter(row => row.id !== session.id)])
       setSid(session.id)
@@ -104,11 +84,11 @@ export default function AntiChat() {
   })
   const rename = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) =>
-      request<Session>(`${base}/${id}`, undefined, { title }, 'PATCH'),
+      antiApi.renameSession(id, title),
     onSuccess: session => updateList(rows => rows.map(row => row.id === session.id ? { ...row, ...session } : row)),
   })
   const remove = useMutation({
-    mutationFn: (id: string) => request<void>(`${base}/${id}`, undefined, undefined, 'DELETE'),
+    mutationFn: (id: string) => antiApi.deleteSession(id),
     onSuccess: async (_, id) => {
       await updateList(rows => rows.filter(row => row.id !== id))
       setSid(current => current === id ? '' : current)
@@ -188,7 +168,7 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
   const followTranscript = useRef(true)
   const models = useQuery({
     queryKey: ['anti-models'],
-    queryFn: ({ signal }) => request<Models>('/api/anti/models', signal),
+    queryFn: ({ signal }) => antiApi.models(signal),
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
     refetchIntervalInBackground: false,
@@ -201,15 +181,14 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
   const effort = effortOptions.find(option => option.key === preferredEffort)?.key
     ?? effortOptions.find(option => option.key === DEFAULT_EFFORT)?.key ?? effortOptions[0]?.key ?? DEFAULT_EFFORT
   const model = family?.variants[effort] ?? family?.plain ?? DEFAULT_MODEL.id
-  const path = `${base}/${sid}/runs`
   const key = ['anti-runs', sid]
-  const history = useQuery({ queryKey: key, queryFn: ({ signal }) => request<Run[]>(path, signal),
+  const history = useQuery({ queryKey: key, queryFn: ({ signal }) => antiApi.runs(sid, signal),
     refetchInterval: query => query.state.data?.some(active) || pending ? 1500 : false })
   const current = history.data?.find(active)
   const live = useQuery({
     queryKey: ['anti-live', sid, current?.id], enabled: Boolean(current), refetchInterval: 900,
     queryFn: async ({ signal }) => {
-      const run = await request<Run>(`${path}/${current!.id}`, signal)
+      const run = await antiApi.run(sid, current!.id, signal)
       if (!active(run)) {
         cache.setQueryData<Run[]>(key, old => old?.map(row => row.id === run.id ? run : row))
         void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
@@ -225,13 +204,13 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
     }
   }, [history.data, pending])
   const send = useMutation({
-    mutationFn: (body: Submission) => request<Run>(path, undefined, body),
+    mutationFn: (body: Submission) => antiApi.submitRun(sid, body),
     onSuccess: run => {
       cache.setQueryData<Run[]>(key, old => [...(old ?? []).filter(row => row.id !== run.id), run])
       setPrompt(''); setPending(undefined); setReferences([])
     },
     onError: error => {
-      if (error instanceof AntiRequestError && error.status === 422) setPending(undefined)
+      if (error instanceof HttpError && error.status === 422) setPending(undefined)
     },
     onSettled: () => {
       void cache.invalidateQueries({ queryKey: key })
@@ -239,7 +218,7 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
     },
   })
   const cancel = useMutation({
-    mutationFn: (rid: string) => request<Run>(`${path}/${rid}/cancel`, undefined, {}),
+    mutationFn: (rid: string) => antiApi.cancelRun(sid, rid),
     onSuccess: run => {
       cache.setQueryData<Run[]>(key, old => old?.map(row => row.id === run.id ? run : row))
       void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
@@ -293,7 +272,7 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
               </p>}
               <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, engine: 'anti' }}>
                 <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
-                  <AntiTaskProgress active={active(run)} loadEvents={signal => request<AntiEvent[]>(`${path}/${run.id}/events`, signal)}
+                  <AntiTaskProgress active={active(run)} loadEvents={signal => antiApi.runEvents<AntiEvent[]>(sid, run.id, signal)}
                     runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}>
                     {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
                   </AntiTaskProgress>

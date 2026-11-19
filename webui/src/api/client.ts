@@ -77,12 +77,12 @@ export interface SessionMessagePageOptions {
   signal?: AbortSignal
 }
 
-class HttpError extends Error {
+export class HttpError extends Error {
   status: number
   body: any
   code: 'http_error'
-  constructor(status: number, body: any) {
-    super(typeof body === 'string' ? body : JSON.stringify(body))
+  constructor(status: number, body: any, message?: string) {
+    super(message ?? (typeof body === 'string' ? body : JSON.stringify(body)))
     this.name = 'HttpError'
     this.code = 'http_error'
     this.status = status
@@ -170,14 +170,22 @@ async function http<T>(method: string, path: string, body?: unknown, init?: Http
       signal: abortContext.signal,
     })
     if (!res.ok) {
-      let msg: any = await res.text()
-      try { msg = JSON.parse(msg) } catch {}
+      let msg: any = null
+      if (typeof res.text === 'function') {
+        msg = await res.text()
+        try { msg = JSON.parse(msg) } catch { }
+      } else if (typeof res.json === 'function') {
+        msg = await res.json().catch(() => null)
+      }
       throw new HttpError(res.status, msg)
     }
     if (res.status === 204) return undefined as unknown as T
-    const ct = res.headers.get('content-type') || ''
-    if (ct.includes('application/json')) return res.json() as Promise<T>
-    return res.text() as unknown as T
+    const ct = res.headers?.get?.('content-type') || ''
+    // Keep the abort signal and deadline active until the response body is read.
+    if (ct.includes('application/json') || (!ct && typeof res.json === 'function' && typeof res.text !== 'function')) {
+      return (await res.json()) as T
+    }
+    return (await res.text()) as unknown as T
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       if (abortContext.source() === 'external') throw error
@@ -186,7 +194,7 @@ async function http<T>(method: string, path: string, body?: unknown, init?: Http
     if (error instanceof TypeError) {
       const networkError = new Error(`Network request failed: ${requestPath}`)
       networkError.name = 'NetworkError'
-      ;(networkError as Error & { code: string }).code = 'network_error'
+        ; (networkError as Error & { code: string }).code = 'network_error'
       throw networkError
     }
     throw error
@@ -387,7 +395,7 @@ export const api = {
       if (error instanceof TypeError) {
         const networkError = new Error('Network request failed: /api/upload')
         networkError.name = 'NetworkError'
-        ;(networkError as Error & { code: string }).code = 'network_error'
+          ; (networkError as Error & { code: string }).code = 'network_error'
         throw networkError
       }
       throw error
@@ -623,4 +631,78 @@ export const updateApi = {
   cancel: (id: string) => http<UpdatePlan>('POST', '/api/updates/cancel', { id }),
   request: (id: string) => http('POST', '/api/updates/request', { id }),
   approve: (id: string) => http('POST', '/api/updates/approve', { id }),
+}
+
+export type AntiDaemonStatus = ApiComponents['schemas']['AntiDaemonStatus']
+export type AntiSession = {
+  id: string
+  project: string
+  title: string
+  workspace: string
+  updated_at?: string | null
+  active_run_id?: string | null
+}
+export type AntiRun = {
+  id: string
+  status: string
+  operation: string
+  prompt: string
+  answer: string | null
+  error: string | null
+  error_detail?: string | null
+}
+export type AntiModels = { items: { id: string; display_name: string }[] }
+export type AntiSubmission = {
+  prompt: string
+  operation: string
+  model: string
+  effort: string
+  references?: { id: number; path: string }[]
+}
+
+async function antiHttp<T>(method: string, path: string, body?: unknown, init?: HttpOptions): Promise<T> {
+  try {
+    return await http<T>(method, path, body, init)
+  } catch (error) {
+    if (error instanceof HttpError) {
+      const detail = typeof error.body?.detail === 'string'
+        ? error.body.detail
+        : `Anti 请求失败 (${error.status})`
+      throw new HttpError(error.status, error.body, detail)
+    }
+    throw error
+  }
+}
+
+export const antiApi = {
+  daemonStatus: (signal?: AbortSignal) =>
+    antiHttp<AntiDaemonStatus>('GET', '/api/anti/status', undefined, {
+      signal,
+      headers: { 'X-GA-Hub-Action': 'verify-anti-auth' },
+    }),
+  daemonStart: () =>
+    antiHttp<AntiDaemonStatus>('POST', '/api/anti/start', undefined, {
+      headers: { 'X-GA-Hub-Action': 'start-anti' },
+    }),
+  models: (signal?: AbortSignal) =>
+    // Allow the gateway attempt (2s connect + 23s read) and the 24s CLI fallback.
+    antiHttp<AntiModels>('GET', '/api/anti/models', undefined, { signal, timeoutMs: 60_000 }),
+  sessions: (signal?: AbortSignal) =>
+    antiHttp<AntiSession[]>('GET', '/api/anti/sessions', undefined, { signal }),
+  createSession: (project: string) =>
+    antiHttp<AntiSession>('POST', '/api/anti/sessions', { project }),
+  renameSession: (id: string, title: string) =>
+    antiHttp<AntiSession>('PATCH', `/api/anti/sessions/${id}`, { title }),
+  deleteSession: (id: string) =>
+    antiHttp<void>('DELETE', `/api/anti/sessions/${id}`),
+  runs: (sessionId: string, signal?: AbortSignal) =>
+    antiHttp<AntiRun[]>('GET', `/api/anti/sessions/${sessionId}/runs`, undefined, { signal }),
+  run: (sessionId: string, runId: string, signal?: AbortSignal) =>
+    antiHttp<AntiRun>('GET', `/api/anti/sessions/${sessionId}/runs/${runId}`, undefined, { signal }),
+  runEvents: <T = unknown[]>(sessionId: string, runId: string, signal?: AbortSignal) =>
+    antiHttp<T>('GET', `/api/anti/sessions/${sessionId}/runs/${runId}/events`, undefined, { signal }),
+  submitRun: (sessionId: string, body: AntiSubmission) =>
+    antiHttp<AntiRun>('POST', `/api/anti/sessions/${sessionId}/runs`, body),
+  cancelRun: (sessionId: string, runId: string) =>
+    antiHttp<AntiRun>('POST', `/api/anti/sessions/${sessionId}/runs/${runId}/cancel`, {}),
 }
