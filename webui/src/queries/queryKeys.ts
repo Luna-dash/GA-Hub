@@ -39,6 +39,9 @@ export const queryKeys = {
   agent: {
     chatRetryConfig: ['agent.chatRetryConfig'] as const,
   },
+  appearance: {
+    fonts: ['appearance.fonts'] as const,
+  },
   memory: {
     global: ['mem.global'] as const,
     insight: ['mem.insight'] as const,

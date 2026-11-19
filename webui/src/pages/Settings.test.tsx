@@ -4,10 +4,19 @@ import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Settings from './Settings'
-import { api, novaApi, updateApi } from '@/api/client'
+import { api, fontApi, novaApi, updateApi } from '@/api/client'
 
 vi.mock('@/api/client', () => ({
   api: { setupStatus: vi.fn(), setupValidate: vi.fn(), setupSave: vi.fn(), chatRetryConfig: vi.fn(), saveChatRetryConfig: vi.fn() },
+  fontApi: {
+    settings: vi.fn(),
+    download: vi.fn(),
+    activate: vi.fn(),
+    updatePreferences: vi.fn(),
+    deletePack: vi.fn(),
+    manifest: vi.fn(),
+    importFile: vi.fn(),
+  },
   novaApi: { status: vi.fn(), action: vi.fn() },
   updateApi: { status: vi.fn(), prepare: vi.fn(), cancel: vi.fn() },
 }))
@@ -40,6 +49,23 @@ beforeEach(() => {
   vi.mocked(api.chatRetryConfig).mockResolvedValue({ enabled: true, max_attempts: 2 } as any)
   vi.mocked(updateApi.status).mockResolvedValue({ plan: { state: 'idle' }, supported: true, sources: ['trusted-local-archive'], data_epoch: 1 })
   vi.mocked(novaApi.status).mockResolvedValue({ device: 'device-test', paired: false, running: false })
+  vi.mocked(fontApi.settings).mockResolvedValue({
+    active_pack: 'system',
+    bold_style: 'restrained',
+    packs: [{
+      id: 'harmonyos-sans-sc',
+      name: 'HarmonyOS Sans SC + Inter / JetBrains Mono',
+      summary: 'test pack',
+      license: 'HarmonyOS Sans License',
+      mode: 'enhanced',
+      approx_bytes: 13000000,
+      installed: false,
+      installed_bytes: 0,
+      active: false,
+      removable: true,
+    }],
+    download: null,
+  })
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host)
 })

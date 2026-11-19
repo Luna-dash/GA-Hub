@@ -208,6 +208,142 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/appearance/fonts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Font Settings */
+        get: operations["get_font_settings_api_appearance_fonts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/appearance/fonts/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Download Font Pack */
+        post: operations["download_font_pack_api_appearance_fonts_download_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/appearance/fonts/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate Font Pack */
+        post: operations["activate_font_pack_api_appearance_fonts_activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/appearance/fonts/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Font Preferences */
+        put: operations["update_font_preferences_api_appearance_fonts_preferences_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/appearance/fonts/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Local Font */
+        post: operations["import_local_font_api_appearance_fonts_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/appearance/fonts/{pack_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Font Pack */
+        delete: operations["delete_font_pack_api_appearance_fonts__pack_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/appearance/fonts/packs/{pack_id}/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Font Pack Manifest */
+        get: operations["get_font_pack_manifest_api_appearance_fonts_packs__pack_id__manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/appearance/fonts/packs/{pack_id}/files/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Font Pack File */
+        get: operations["get_font_pack_file_api_appearance_fonts_packs__pack_id__files__filename__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events/recent": {
         parameters: {
             query?: never;
@@ -2186,6 +2322,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/anti/profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Rename Agy Profile */
+        patch: operations["rename_agy_profile_api_anti_profiles__profile_id__patch"];
+        trace?: never;
+    };
     "/api/anti/profiles/{profile_id}/login": {
         parameters: {
             query?: never;
@@ -2913,6 +3066,11 @@ export interface components {
             run_id: string;
             /** Stream Id */
             stream_id: string;
+        };
+        /** Body_import_local_font_api_appearance_fonts_import_post */
+        Body_import_local_font_api_appearance_fonts_import_post: {
+            /** File */
+            file: string;
         };
         /** Body_upload_api_upload_post */
         Body_upload_api_upload_post: {
@@ -3765,6 +3923,93 @@ export interface components {
             last_check_ts: number;
         } & {
             [key: string]: unknown;
+        };
+        /** FontDownloadResp */
+        FontDownloadResp: {
+            /** Pack Id */
+            pack_id: string;
+            /** Phase */
+            phase: string;
+            /**
+             * Received Bytes
+             * @default 0
+             */
+            received_bytes: number;
+            /** Total Bytes */
+            total_bytes?: number | null;
+            /** Updated At */
+            updated_at?: number | null;
+            /** Error */
+            error?: string | null;
+        };
+        /** FontFaceEntryResp */
+        FontFaceEntryResp: {
+            /** Family */
+            family: string;
+            /** File */
+            file: string;
+            /** Weight */
+            weight: string;
+            /** Style */
+            style: string;
+            /** Format */
+            format: string;
+            /** Unicoderange */
+            unicodeRange?: string | null;
+        };
+        /** FontPackInfoResp */
+        FontPackInfoResp: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Summary */
+            summary: string;
+            /** License */
+            license: string;
+            /** Mode */
+            mode: string;
+            /** Approx Bytes */
+            approx_bytes: number;
+            /** Installed */
+            installed: boolean;
+            /** Installed Bytes */
+            installed_bytes: number;
+            /** Active */
+            active: boolean;
+            /** Removable */
+            removable: boolean;
+        };
+        /** FontPackManifestResp */
+        FontPackManifestResp: {
+            /** Pack Id */
+            pack_id: string;
+            /** Name */
+            name: string;
+            /** Mode */
+            mode: string;
+            /** Faces */
+            faces: components["schemas"]["FontFaceEntryResp"][];
+        };
+        /** FontPackSelectReq */
+        FontPackSelectReq: {
+            /** Pack Id */
+            pack_id: string;
+        };
+        /** FontPreferencesReq */
+        FontPreferencesReq: {
+            /** Bold Style */
+            bold_style?: string | null;
+        };
+        /** FontSettingsResp */
+        FontSettingsResp: {
+            /** Active Pack */
+            active_pack: string;
+            /** Bold Style */
+            bold_style: string;
+            /** Packs */
+            packs: components["schemas"]["FontPackInfoResp"][];
+            download?: components["schemas"]["FontDownloadResp"] | null;
         };
         /** FsCheckResp */
         FsCheckResp: {
@@ -5666,6 +5911,252 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_font_settings_api_appearance_fonts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FontSettingsResp"];
+                };
+            };
+        };
+    };
+    download_font_pack_api_appearance_fonts_download_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FontPackSelectReq"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FontSettingsResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_font_pack_api_appearance_fonts_activate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FontPackSelectReq"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FontSettingsResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_font_preferences_api_appearance_fonts_preferences_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FontPreferencesReq"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FontSettingsResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_local_font_api_appearance_fonts_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_local_font_api_appearance_fonts_import_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FontSettingsResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_font_pack_api_appearance_fonts__pack_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FontSettingsResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_font_pack_manifest_api_appearance_fonts_packs__pack_id__manifest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FontPackManifestResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_font_pack_file_api_appearance_fonts_packs__pack_id__files__filename__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pack_id: string;
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -9282,6 +9773,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgyProfiles"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_agy_profile_api_anti_profiles__profile_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgyProfileCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyProfile"];
                 };
             };
             /** @description Validation Error */

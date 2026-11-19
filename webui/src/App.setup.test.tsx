@@ -13,6 +13,10 @@ vi.mock('@/api/client', () => ({
   api: {
     setupStatus: vi.fn(),
   },
+  fontApi: {
+    settings: vi.fn().mockRejectedValue(new Error('setup')),
+    manifest: vi.fn(),
+  },
 }))
 vi.mock('@/pages/Settings', () => ({
   default: ({ initialMode }: { initialMode?: string }) => <div data-setup-mode={initialMode}>Setup</div>,

@@ -26,8 +26,9 @@
   --c-bg-card-rgb: 231 223 207; /* = #E7DFCF */
   --c-line: #A99572;          /* 细棕灰边框 */
   --c-line-rgb: 169 149 114;  /* = #A99572 */
-  --c-accent: #8A6438;        /* 克制复古棕 */
-  --c-accent-rgb: 138 100 56; /* = #8A6438，供 Tailwind alpha 变体（bg-accent/10 等） */
+  --c-accent: #7A562D;        /* 克制复古棕（与白字/纸底均达 WCAG AA） */
+  --c-accent-rgb: 122 86 45;  /* = #7A562D，供 Tailwind alpha 变体（bg-accent/10 等） */
+  --c-accent-hover: #644522;  /* 悬停深棕：加深而非变淡 */
   --c-accent-soft: #D3C3A6;
   --c-accent-soft-rgb: 211 195 166; /* = #D3C3A6 */
   --c-scrollbar-thumb: #9E8965;
@@ -36,20 +37,39 @@
   --c-overlay-soft-strong: rgba(54, 42, 28, 0.10);
   --c-text: #2C2418;
   --c-text-rgb: 44 36 24;     /* = #2C2418 */
-  --c-text-muted: #665741;
-  --c-text-muted-rgb: 102 87 65; /* = #665741 */
-  --c-text-faint: #86775F;
-  --c-text-faint-rgb: 134 119 95; /* = #86775F */
+  --c-text-muted: #524533;
+  --c-text-muted-rgb: 82 69 51; /* = #524533，全纸面 ≥ 5.6:1 */
+  --c-text-faint: #61523E;
+  --c-text-faint-rgb: 97 82 62; /* = #61523E，即使在 bg-soft 上亦 ≥ 4.5:1 */
+  --c-disabled-bg: #CEC3B0;
+  --c-disabled-text: #564734;
+  --c-disabled-line: #B2A289;
   --c-sidebar: #0B261D;
   --c-sidebar-soft: #12382B;
   --c-sidebar-text: #E8DFC9;
   color-scheme: light;
 }
 
+html {
+  font-synthesis-weight: none;
+  --ga-font-sans: 'PingFang SC', 'Microsoft YaHei UI', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --ga-font-mono: 'Cascadia Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
+}
+
+html[data-font-pack="latin-enhanced"] {
+  --ga-font-sans: 'GA Latin Sans', 'PingFang SC', 'Microsoft YaHei UI', system-ui, -apple-system, sans-serif;
+  --ga-font-mono: 'GA Mono', 'Cascadia Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
+}
+
+html[data-font-pack="enhanced"] {
+  --ga-font-sans: 'GA Latin Sans', 'GA CJK Sans', 'PingFang SC', 'Microsoft YaHei UI', system-ui, -apple-system, sans-serif;
+  --ga-font-mono: 'GA Mono', 'Cascadia Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
+}
+
 html, body, #root { height: 100%; }
 
 body {
-  font-family: 'Inter', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  font-family: var(--ga-font-sans);
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   -webkit-font-smoothing: antialiased;
   color: var(--c-text);
@@ -61,7 +81,28 @@ body {
 }
 
 code, pre, .font-mono {
-  font-family: 'JetBrains Mono', 'Cascadia Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
+  font-family: var(--ga-font-mono);
+}
+
+/* 科学字体字重策略：
+   1) system / latin-enhanced 下中文字体仍依赖微软雅黑（仅 400/700 两档），
+      克制模式下保持 400 字形尺寸不跳 msyhbd.ttc，用微描边+深墨色实现不膨胀的加粗；
+   2) enhanced 下已具备原生 500/600 中粗体，正文 strong 收敛在 600 以保持页面平衡。 */
+html:not([data-font-pack="enhanced"])[data-bold-style="restrained"] body :is(strong, b, .font-medium, .font-semibold) {
+  font-weight: 400;
+  -webkit-text-stroke: 0.28px currentColor;
+  letter-spacing: 0.01em;
+}
+html:not([data-font-pack="enhanced"])[data-bold-style="restrained"] body :is(.font-bold, h1, h2) {
+  font-weight: 400;
+  -webkit-text-stroke: 0.36px currentColor;
+  letter-spacing: 0.01em;
+}
+html:not([data-font-pack="enhanced"])[data-bold-style="restrained"] .prose-chat :is(strong, b) {
+  color: #1E170E;
+}
+html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(strong, b) {
+  font-weight: 600;
 }
 
 /* Keep native scrolling and a constant gutter; only the thumb changes visibility.
@@ -172,7 +213,7 @@ code, pre, .font-mono {
   color: var(--c-text);
 }
 .prose-chat code {
-  font-family: '"JetBrains Mono", "Fira Code", monospace';
+  font-family: var(--ga-font-mono);
   font-size: 0.92em;
   color: #8A5A1F;
 }
@@ -860,13 +901,19 @@ code, pre, .font-mono {
 
 /* 暖棕选区，替代浏览器默认刺眼蓝 */
 ::selection {
-  background-color: rgba(138, 100, 56, 0.22);
+  background-color: rgb(var(--c-accent-rgb) / 0.22);
   color: var(--c-text);
 }
 
-/* 原生控件（checkbox/radio/range/progress）统一主题色 */
+/* 原生控件（checkbox/radio/range/progress/select）统一主题色 */
 :root {
   accent-color: var(--c-accent);
+}
+
+select,
+option {
+  background-color: var(--c-bg-card);
+  color: var(--c-text);
 }
 
 /* 统一键盘可访问焦点环：仅键盘聚焦时出现，鼠标点击不显，避免与
@@ -880,7 +927,7 @@ summary:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid rgba(138, 100, 56, 0.55);
+  outline: 2px solid rgb(var(--c-accent-rgb) / 0.65);
   outline-offset: 2px;
   border-radius: 6px;
 }

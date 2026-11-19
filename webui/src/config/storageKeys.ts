@@ -42,6 +42,8 @@ export const storageKeys = {
   railTitleScale: 'gahub.rail-title-scale',
   /** Relative to the desktop baseline (legacy title scale 60%). */
   railTitleScaleRelative: 'gahub.rail-title-scale.relative.v2',
+  /** fontLoader: cached font pack mode & bold strategy for zero-flash boot. */
+  fontAppearanceCache: 'gahub.fontAppearance.v1',
   /** mykeySyncUi: '1'/'0' upload hint visibility. */
   mykeyShowUpload: 'gahub.mykey-show-upload',
   /** chatPerformance: '1' = performance mode enabled. */

@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { NovaSettingsPanel } from '@/components/NovaSettingsPanel'
 import { UpdateSettingsPanel } from '@/components/UpdateSettingsPanel'
+import { FontAppearancePanel } from '@/components/FontAppearancePanel'
 import type { ChatRetryConfig } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { notify, useNotifyStore } from '@/utils/notify'
@@ -268,7 +269,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
             <button
               onClick={save}
               disabled={saving || !input.trim()}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-white text-sm hover:brightness-110 disabled:opacity-40"
+              className="ga-solid-primary inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm"
             ><Save className="h-3.5 w-3.5" aria-hidden="true" /><span>{saving ? '保存中…' : '保存配置'}</span></button>
             {isTauriDesktop() && saveMsg && !saving && (
               <button
@@ -294,6 +295,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
           {!inSetup && <>
             <div id="settings-panel-appearance" role="tabpanel" aria-labelledby="settings-tab-appearance" tabIndex={0} hidden={activeTab !== 'appearance'} className="space-y-5">
               <ChatAppearancePanel />
+              <FontAppearancePanel />
               <NavManagementPanel />
             </div>
             <div id="settings-panel-chat" role="tabpanel" aria-labelledby="settings-tab-chat" tabIndex={0} hidden={activeTab !== 'chat'}>
@@ -593,7 +595,7 @@ function ChatRetryPanel() {
         <button
           onClick={save}
           disabled={saving || isLoading}
-          className="px-3 py-1.5 rounded-lg bg-accent text-white text-sm disabled:opacity-40"
+          className="ga-solid-primary px-3 py-1.5 rounded-lg text-sm"
         >
           {saving ? '保存中…' : '保存'}
         </button>
@@ -626,9 +628,9 @@ function NotifyPanel() {
     setTesting('发送中…')
     try {
       const shown = await notify('测试提醒', { body: '会话有新结果或需要互动时，将使用此消息窗提醒。', force: true })
-      setTesting(shown ? '✅ 主题消息窗正常' : '提醒已关闭')
+      setTesting(shown ? '主题消息窗正常' : '提醒已关闭')
     } catch (e) {
-      setTesting(`⚠ 网络异常：${(e as Error).message}`)
+      setTesting(`网络异常：${(e as Error).message}`)
     } finally {
       window.setTimeout(() => setTesting(null), 3500)
     }
@@ -670,7 +672,7 @@ function NotifyPanel() {
 
       {unsupported && (
         <div className="mt-2 text-xs text-status-warning">
-          ⚠ 当前系统暂不支持（{backendName}）。仅 macOS / Windows / Linux 已实现。
+          当前系统暂不支持（{backendName}）。仅 macOS / Windows / Linux 已实现。
         </div>
       )}
     </div>

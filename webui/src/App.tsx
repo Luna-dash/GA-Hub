@@ -13,6 +13,7 @@ import { APP_PAGES } from '@/config/pages'
 import { hubEventClient } from '@/runtime/hubEventClient'
 import { queryKeys } from '@/queries/queryKeys'
 import { RuntimeEffects } from '@/runtime/RuntimeEffects'
+import { initFontAppearance, syncFontAppearance } from '@/utils/fontLoader'
 
 const routeFallback = (
   <div className="h-full flex items-center justify-center text-ink-faint text-sm">载入中…</div>
@@ -30,6 +31,11 @@ const SettingsPage = PAGE_ROUTES.find((page) => page.id === 'settings')!.Compone
 export default function App() {
   const start = useAgentStore((s) => s.start)
   const stop = useAgentStore((s) => s.stop)
+
+  useEffect(() => {
+    initFontAppearance()
+    void syncFontAppearance()
+  }, [])
 
   // Probe setup status — if backend has no GA_ROOT, force the Settings page
   const { data: setup, isLoading, isError, error, refetch, failureCount } = useQuery({
@@ -71,7 +77,7 @@ export default function App() {
           </div>
           <button
             onClick={() => refetch()}
-            className="px-4 py-2 rounded-lg bg-accent text-white text-sm hover:brightness-110"
+            className="ga-solid-primary px-4 py-2 rounded-lg text-sm"
           >
             重试
           </button>

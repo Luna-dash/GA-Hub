@@ -399,6 +399,324 @@
         }
       }
     },
+    "/api/appearance/fonts": {
+      "get": {
+        "tags": [
+          "appearance"
+        ],
+        "summary": "Get Font Settings",
+        "operationId": "get_font_settings_api_appearance_fonts_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FontSettingsResp"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/appearance/fonts/download": {
+      "post": {
+        "tags": [
+          "appearance"
+        ],
+        "summary": "Download Font Pack",
+        "operationId": "download_font_pack_api_appearance_fonts_download_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FontPackSelectReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FontSettingsResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/appearance/fonts/activate": {
+      "post": {
+        "tags": [
+          "appearance"
+        ],
+        "summary": "Activate Font Pack",
+        "operationId": "activate_font_pack_api_appearance_fonts_activate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FontPackSelectReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FontSettingsResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/appearance/fonts/preferences": {
+      "put": {
+        "tags": [
+          "appearance"
+        ],
+        "summary": "Update Font Preferences",
+        "operationId": "update_font_preferences_api_appearance_fonts_preferences_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FontPreferencesReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FontSettingsResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/appearance/fonts/import": {
+      "post": {
+        "tags": [
+          "appearance"
+        ],
+        "summary": "Import Local Font",
+        "operationId": "import_local_font_api_appearance_fonts_import_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_local_font_api_appearance_fonts_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FontSettingsResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/appearance/fonts/{pack_id}": {
+      "delete": {
+        "tags": [
+          "appearance"
+        ],
+        "summary": "Delete Font Pack",
+        "operationId": "delete_font_pack_api_appearance_fonts__pack_id__delete",
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FontSettingsResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/appearance/fonts/packs/{pack_id}/manifest": {
+      "get": {
+        "tags": [
+          "appearance"
+        ],
+        "summary": "Get Font Pack Manifest",
+        "operationId": "get_font_pack_manifest_api_appearance_fonts_packs__pack_id__manifest_get",
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FontPackManifestResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/appearance/fonts/packs/{pack_id}/files/{filename}": {
+      "get": {
+        "tags": [
+          "appearance"
+        ],
+        "summary": "Get Font Pack File",
+        "operationId": "get_font_pack_file_api_appearance_fonts_packs__pack_id__files__filename__get",
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Filename"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/events/recent": {
       "get": {
         "summary": "Recent Events",
@@ -4898,6 +5216,58 @@
         }
       }
     },
+    "/api/anti/profiles/{profile_id}": {
+      "patch": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Rename Agy Profile",
+        "operationId": "rename_agy_profile_api_anti_profiles__profile_id__patch",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgyProfileCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyProfile"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/anti/profiles/{profile_id}/login": {
       "post": {
         "tags": [
@@ -6821,6 +7191,20 @@
           "stream_id"
         ],
         "title": "AutonomousTriggerResp"
+      },
+      "Body_import_local_font_api_appearance_fonts_import_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_local_font_api_appearance_fonts_import_post"
       },
       "Body_upload_api_upload_post": {
         "properties": {
@@ -9047,6 +9431,265 @@
         ],
         "title": "FeishuProcessStatus",
         "description": "Feishu gateway status, or an initialization diagnostic.\n\nThe OpenAPI schema intentionally describes the complete healthy response;\ninitialization failures are represented by ``error`` in ``/api/status``."
+      },
+      "FontDownloadResp": {
+        "properties": {
+          "pack_id": {
+            "type": "string",
+            "title": "Pack Id"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "received_bytes": {
+            "type": "integer",
+            "title": "Received Bytes",
+            "default": 0
+          },
+          "total_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Bytes"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pack_id",
+          "phase"
+        ],
+        "title": "FontDownloadResp"
+      },
+      "FontFaceEntryResp": {
+        "properties": {
+          "family": {
+            "type": "string",
+            "title": "Family"
+          },
+          "file": {
+            "type": "string",
+            "title": "File"
+          },
+          "weight": {
+            "type": "string",
+            "title": "Weight"
+          },
+          "style": {
+            "type": "string",
+            "title": "Style"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format"
+          },
+          "unicodeRange": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unicoderange"
+          }
+        },
+        "type": "object",
+        "required": [
+          "family",
+          "file",
+          "weight",
+          "style",
+          "format"
+        ],
+        "title": "FontFaceEntryResp"
+      },
+      "FontPackInfoResp": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "license": {
+            "type": "string",
+            "title": "License"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "approx_bytes": {
+            "type": "integer",
+            "title": "Approx Bytes"
+          },
+          "installed": {
+            "type": "boolean",
+            "title": "Installed"
+          },
+          "installed_bytes": {
+            "type": "integer",
+            "title": "Installed Bytes"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "removable": {
+            "type": "boolean",
+            "title": "Removable"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "summary",
+          "license",
+          "mode",
+          "approx_bytes",
+          "installed",
+          "installed_bytes",
+          "active",
+          "removable"
+        ],
+        "title": "FontPackInfoResp"
+      },
+      "FontPackManifestResp": {
+        "properties": {
+          "pack_id": {
+            "type": "string",
+            "title": "Pack Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "faces": {
+            "items": {
+              "$ref": "#/components/schemas/FontFaceEntryResp"
+            },
+            "type": "array",
+            "title": "Faces"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pack_id",
+          "name",
+          "mode",
+          "faces"
+        ],
+        "title": "FontPackManifestResp"
+      },
+      "FontPackSelectReq": {
+        "properties": {
+          "pack_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9-]+$",
+            "title": "Pack Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pack_id"
+        ],
+        "title": "FontPackSelectReq"
+      },
+      "FontPreferencesReq": {
+        "properties": {
+          "bold_style": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?:restrained|standard)$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bold Style"
+          }
+        },
+        "type": "object",
+        "title": "FontPreferencesReq"
+      },
+      "FontSettingsResp": {
+        "properties": {
+          "active_pack": {
+            "type": "string",
+            "title": "Active Pack"
+          },
+          "bold_style": {
+            "type": "string",
+            "title": "Bold Style"
+          },
+          "packs": {
+            "items": {
+              "$ref": "#/components/schemas/FontPackInfoResp"
+            },
+            "type": "array",
+            "title": "Packs"
+          },
+          "download": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FontDownloadResp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "active_pack",
+          "bold_style",
+          "packs"
+        ],
+        "title": "FontSettingsResp"
       },
       "FsCheckResp": {
         "properties": {

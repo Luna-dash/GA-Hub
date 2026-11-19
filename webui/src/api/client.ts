@@ -598,6 +598,36 @@ export const updateApi = {
   approve: (id: string) => http('POST', '/api/updates/approve', { id }),
 }
 
+export type FontSettings = ApiComponents['schemas']['FontSettingsResp']
+export type FontPackInfo = ApiComponents['schemas']['FontPackInfoResp']
+export type FontPackManifest = ApiComponents['schemas']['FontPackManifestResp']
+
+export const fontApi = {
+  settings: () => http<FontSettings>('GET', '/api/appearance/fonts'),
+  download: (packId: string) => http<FontSettings>('POST', '/api/appearance/fonts/download', { pack_id: packId }),
+  activate: (packId: string) => http<FontSettings>('POST', '/api/appearance/fonts/activate', { pack_id: packId }),
+  updatePreferences: (boldStyle: 'restrained' | 'standard') =>
+    http<FontSettings>('PUT', '/api/appearance/fonts/preferences', { bold_style: boldStyle }),
+  deletePack: (packId: string) => http<FontSettings>('DELETE', `/api/appearance/fonts/${encodeURIComponent(packId)}`),
+  manifest: (packId: string) => http<FontPackManifest>('GET', `/api/appearance/fonts/packs/${encodeURIComponent(packId)}/manifest`),
+  importFile: async (file: File): Promise<FontSettings> => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const abortContext = requestAbortContext(undefined, 60_000)
+    try {
+      const res = await fetch(resolveApiUrl('/api/appearance/fonts/import'), {
+        method: 'POST',
+        body: fd,
+        signal: abortContext.signal,
+      })
+      if (!res.ok) throw new HttpError(res.status, await res.text())
+      return await res.json() as FontSettings
+    } finally {
+      abortContext.cleanup()
+    }
+  },
+}
+
 export type AntiDaemonStatus = ApiComponents['schemas']['AntiDaemonStatus']
 export type AntiSession = ApiComponents['schemas']['AntiSessionResp']
 export type AntiRun = ApiComponents['schemas']['AntiRunResp']

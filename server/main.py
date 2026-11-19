@@ -545,7 +545,9 @@ def create_app() -> FastAPI:
     # ── always-available endpoints ──
     app.include_router(_setup_router())
     from .routes.updates import router as updates_router
+    from .routes.appearance import router as appearance_router
     app.include_router(updates_router)
+    app.include_router(appearance_router)
     app.include_router(event_routes.router)
 
     @app.get("/api/status", response_model=AppStatusResp, response_model_exclude_unset=True)
