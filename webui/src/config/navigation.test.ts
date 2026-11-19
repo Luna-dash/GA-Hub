@@ -9,11 +9,17 @@ describe('sidebar navigation', () => {
       { id: 'theme-tasks', icon: 'themeTasks' },
     ])
   })
-  it('places missing Anti chat and theme tasks below chat without resetting other pages', () => {
+  it('places missing Anti chat (hidden by default) and theme tasks below chat without resetting other pages', () => {
     const saved = [{ id: 'memory', visible: true }, { id: 'chat', visible: true }, { id: 'dashboard', visible: false }]
     const result = normalizeNavPreferences(saved)
-    expect(result.slice(0, 5)).toEqual([saved[0], saved[1], { id: 'anti', visible: true }, { id: 'theme-tasks', visible: true }, saved[2]])
+    expect(result.slice(0, 5)).toEqual([saved[0], saved[1], { id: 'anti', visible: false }, { id: 'theme-tasks', visible: true }, saved[2]])
     expect(new Set(result.map(item => item.id)).size).toBe(NAV_ITEMS.length)
+  })
+  it('hides Anti chat by default and preserves manual enablement', () => {
+    const emptyNormalized = normalizeNavPreferences([])
+    expect(emptyNormalized.find(item => item.id === 'anti')).toEqual({ id: 'anti', visible: false })
+    const manuallyEnabled = emptyNormalized.map(item => item.id === 'anti' ? { ...item, visible: true } : item)
+    expect(normalizeNavPreferences(manuallyEnabled).find(item => item.id === 'anti')).toEqual({ id: 'anti', visible: true })
   })
   it('preserves the saved order and visibility of Anti chat and theme tasks', () => {
     const saved = [{ id: 'theme-tasks', visible: false }, { id: 'memory', visible: true }, { id: 'chat', visible: true }, { id: 'anti', visible: false }]

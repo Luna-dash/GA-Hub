@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { UserRound } from 'lucide-react'
 import clsx from 'clsx'
 import type { components } from '@/api/generated/schema'
 import { antiApi } from '@/api/client'
@@ -202,9 +203,26 @@ export function AntiAgyProfiles({ profiles, refresh, daemon }: {
     )
   }
 
+  const triggerLabel = selected ? `Agy 账号：${selected.name}` : 'Agy 账号'
+  const customActive = Boolean(selected && selected.id !== 'default')
+
   return <>
-    <button type="button" className={secondary} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>
-      Agy 账号{selected ? `：${selected.name}` : ''}
+    <button
+      type="button"
+      className={clsx(
+        'relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-line bg-bg-card transition hover:bg-bg-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+        customActive ? 'text-accent' : 'text-ink-muted hover:text-ink',
+      )}
+      aria-label={triggerLabel}
+      title={triggerLabel}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      onClick={() => setOpen(true)}
+    >
+      <UserRound className="h-4 w-4" strokeWidth={1.85} aria-hidden="true" />
+      {customActive && (
+        <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-accent" aria-hidden="true" />
+      )}
     </button>
     {open && createPortal(<ModalOverlay onClose={close} labelledBy="agy-accounts-title"
       panelClassName="max-h-[90vh] w-full max-w-lg space-y-4 overflow-auto p-4 sm:p-5">

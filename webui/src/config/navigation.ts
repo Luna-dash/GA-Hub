@@ -9,9 +9,12 @@ export const NAV_ITEMS: NavItem[] = APP_PAGES
   .filter((page) => page.inNav)
   .map(({ id, to, label, navIcon }) => ({ id, to, label, icon: navIcon }))
 
+const DEFAULT_VISIBLE = new Map(APP_PAGES.map((page) => [page.id, page.defaultVisible !== false]))
+
 export const NAV_PREFERENCES_EVENT = 'gahub:nav-preferences'
 
-export const defaultNavPreferences = (): NavPreference[] => NAV_ITEMS.map(({ id }) => ({ id, visible: true }))
+export const defaultNavPreferences = (): NavPreference[] =>
+  NAV_ITEMS.map(({ id }) => ({ id, visible: DEFAULT_VISIBLE.get(id) ?? true }))
 
 export function normalizeNavPreferences(value: unknown): NavPreference[] {
   const known = new Set(NAV_ITEMS.map(({ id }) => id))
@@ -25,7 +28,7 @@ export function normalizeNavPreferences(value: unknown): NavPreference[] {
     }
   }
   const savedIds = new Set(result.map(item => item.id))
-  for (const { id } of NAV_ITEMS) if (!savedIds.has(id)) result.push({ id, visible: true })
+  for (const { id } of NAV_ITEMS) if (!savedIds.has(id)) result.push({ id, visible: DEFAULT_VISIBLE.get(id) ?? true })
   // Move only newly added pages; keep the saved order and visibility intact.
   const placeMissingAfter = (id: string, anchor: string) => {
     if (savedIds.has(id)) return

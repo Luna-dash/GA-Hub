@@ -4,13 +4,11 @@ import { createRoot } from 'react-dom/client'
 import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { expect, it, vi, beforeEach } from 'vitest'
-import { resetPageState } from '@/utils/pageState'
 import AntiChat from './AntiChat'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
 
 beforeEach(() => {
   localStorage.clear()
-  resetPageState()
 })
 
 vi.mock('@/api/client', async (importOriginal) => {
@@ -19,10 +17,12 @@ vi.mock('@/api/client', async (importOriginal) => {
     ...actual,
     api: {
       ...actual.api,
-      projects: async () => ({ items: [
-        { name: 'demo', display_name: 'Demo project', path: 'D:/demo' },
-        { name: 'other', display_name: 'Other project', path: 'D:/other' },
-      ] }),
+      projects: async () => ({
+        items: [
+          { name: 'demo', display_name: 'Demo project', path: 'D:/demo' },
+          { name: 'other', display_name: 'Other project', path: 'D:/other' },
+        ]
+      }),
     },
   }
 })
@@ -64,10 +64,12 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     if (path === '/api/anti/account-usage') {
       expect(init?.method).toBe('POST')
       expect(new Headers(init?.headers).get('X-GA-Hub-Action')).toBe('check-anti-usage')
-      return reply({ state: 'authenticated', rows: [{
-        model: 'Example Model', limit: 'Weekly Limit Remaining', remaining_pct: 42.5,
-        resets_at: '2026-11-20T08:00:00Z',
-      }] })
+      return reply({
+        state: 'authenticated', rows: [{
+          model: 'Example Model', limit: 'Weekly Limit Remaining', remaining_pct: 42.5,
+          resets_at: '2026-11-20T08:00:00Z',
+        }]
+      })
     }
     if (path === '/api/anti/sessions') return reply([])
     throw new Error(`Unexpected request: ${path}`)
@@ -124,8 +126,9 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     expect(usageRequests()).toHaveLength(1)
     expect(host.querySelector('output')?.dataset.page).toBe('/anti')
     const accountButton = () => [...host.querySelectorAll('header button')]
-      .find(button => button.textContent?.startsWith('Agy 账号')) as HTMLButtonElement | undefined
-    await wait(() => expect(accountButton()?.textContent).toBe('Agy 账号：系统默认'))
+      .find(button => button.getAttribute('aria-label')?.startsWith('Agy 账号')) as HTMLButtonElement | undefined
+    await wait(() => expect(accountButton()?.getAttribute('aria-label')).toBe('Agy 账号：系统默认'))
+    expect(accountButton()?.textContent?.trim()).toBe('')
     await act(async () => accountButton()!.click())
     const dialog = document.querySelector('[role="dialog"][aria-labelledby="agy-accounts-title"]')
     expect(dialog?.parentElement?.parentElement).toBe(document.body)
@@ -133,10 +136,10 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     expect(switchButton).toBeDefined()
     await act(async () => switchButton!.click())
     await wait(() => expect(dialog?.querySelector('[role="alert"]')?.textContent).toBe('还有运行中的任务'))
-    expect(accountButton()?.textContent).toBe('Agy 账号：系统默认')
+    expect(accountButton()?.getAttribute('aria-label')).toBe('Agy 账号：系统默认')
     rejectSwitch = false
     await act(async () => switchButton!.click())
-    await wait(() => expect(accountButton()?.textContent).toBe('Agy 账号：工作'))
+    await wait(() => expect(accountButton()?.getAttribute('aria-label')).toBe('Agy 账号：工作'))
     const edit = dialog?.querySelector<HTMLButtonElement>('button[aria-label="修改备注：工作"]')
     expect(edit).toBeTruthy()
     await act(async () => edit!.click())
@@ -149,7 +152,7 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     const save = [...dialog!.querySelectorAll('button')].find(button => button.textContent === '保存备注')!
     expect(save.disabled).toBe(false)
     await act(async () => save.click())
-    await wait(() => expect(accountButton()?.textContent).toBe('Agy 账号：主力'))
+    await wait(() => expect(accountButton()?.getAttribute('aria-label')).toBe('Agy 账号：主力'))
     expect(dialog?.querySelector('#agy-edit-name')).toBeNull()
   } finally {
     await act(async () => root.unmount())
@@ -181,20 +184,24 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     if (path === `${base}/one` && init?.method === 'PATCH') { session.title = body.title; return reply(session) }
     if (path === `${base}/one` && init?.method === 'DELETE') { created = false; return { ok: true, status: 204 } }
     if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
-    if (path === '/api/anti/models') return reply({ items: [
-      { id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' },
-      { id: 'gemini-4-hydrogen-low', display_name: 'Gemini 4 Hydrogen (Low)' },
-      { id: 'alternate-medium', display_name: 'Alternate (Medium)' },
-      { id: 'alternate-low', display_name: 'Alternate (Low)' },
-      ...(catalogUpdated ? [{ id: 'gemini-4-neon-xhigh', display_name: 'Gemini 4 Neon (XHigh)' }] : []),
-    ] })
+    if (path === '/api/anti/models') return reply({
+      items: [
+        { id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' },
+        { id: 'gemini-4-hydrogen-low', display_name: 'Gemini 4 Hydrogen (Low)' },
+        { id: 'alternate-medium', display_name: 'Alternate (Medium)' },
+        { id: 'alternate-low', display_name: 'Alternate (Low)' },
+        ...(catalogUpdated ? [{ id: 'gemini-4-neon-xhigh', display_name: 'Gemini 4 Neon (XHigh)' }] : []),
+      ]
+    })
     if (path === '/api/file-transfer/reply') return { ok: true, status: 204 }
     if (path === `${base}/one/runs`) {
       if (!body) return reply([...runs])
       const run = outcome === 'success'
         ? { ...body, id: 'run', status: 'success', answer: 'Done', artifact: 'D:/legacy/old-archive.md' }
-        : { ...body, id: 'run', status: 'cli_error', error: 'AUTH_ERROR',
-            error_detail: '请先使用官方 Antigravity CLI 登录，再重试。' }
+        : {
+          ...body, id: 'run', status: 'cli_error', error: 'AUTH_ERROR',
+          error_detail: '请先使用官方 Antigravity CLI 登录，再重试。'
+        }
       runs.push(run)
       session.title = body.prompt
       return reply(run)
@@ -484,7 +491,7 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     expect(document.body.textContent).toContain('正常')
 
     // Profile modal: capture current login as new profile & delete inactive profile with confirmation
-    const accountsBtn = [...host.querySelectorAll('button')].find(b => b.textContent?.startsWith('Agy 账号：')) as HTMLButtonElement
+    const accountsBtn = [...host.querySelectorAll('button')].find(b => b.getAttribute('aria-label')?.startsWith('Agy 账号：')) as HTMLButtonElement
     await act(async () => { accountsBtn.click() })
     await flush()
     expect(document.body.textContent).toContain('已验证登录')

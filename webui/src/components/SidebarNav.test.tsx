@@ -5,6 +5,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { SidebarNav } from './SidebarNav'
+import { defaultNavPreferences } from '@/config/navigation'
+import { setNavPreferences } from '@/stores/navPreferenceStore'
 import { recordThemeCompletion, readThemeCompletion } from '@/stores/themeCompletionStore'
 import type { ThemeRun } from '@/api/types'
 
@@ -36,8 +38,12 @@ describe('SidebarNav', () => {
     })
   }
 
-  it('keeps Anti as a navigation link without a daemon control', async () => {
+  it('hides Anti by default and keeps it as a navigation link without a daemon control when enabled', async () => {
     await renderNav()
+    expect(host.querySelector('nav a[href="/anti"]')).toBeNull()
+    act(() => {
+      setNavPreferences(defaultNavPreferences().map((item) => item.id === 'anti' ? { ...item, visible: true } : item))
+    })
     expect(host.querySelector('nav a[href="/anti"]')).not.toBeNull()
     expect(host.querySelector('button[aria-label="启动 Anti"]')).toBeNull()
   })

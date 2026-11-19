@@ -21,6 +21,7 @@ export interface AppPageMeta {
   label: string
   navIcon: NavIconName
   inNav: boolean
+  defaultVisible?: boolean
   palette: { label: string; icon: string }
   loader: () => Promise<{ default: ComponentType<any> }>
 }
@@ -58,6 +59,7 @@ export const APP_PAGES: readonly AppPageMeta[] = [
     label: 'Agy 会话',
     navIcon: 'anti',
     inNav: true,
+    defaultVisible: false,
     palette: { label: 'Agy 会话 / Anti Chat', icon: '✦' },
     loader: () => import('@/pages/AntiChat'),
   },
