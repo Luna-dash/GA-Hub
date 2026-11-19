@@ -71,8 +71,26 @@ def launch_current(store: UpdateStore, admin_data: Path) -> int:
     ensure_no_desktop(store, active)
     ensure_no_desktop(store, completed)
     env = desktop_environment(admin_data)
-    child = subprocess.Popen([str(candidate / EXECUTABLES[0])], cwd=candidate, env=env,
-                             stdin=subprocess.DEVNULL, close_fds=True)
+    spawn_kwargs = {
+        "cwd": candidate,
+        "env": env,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    if os.name == "nt":
+        breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+        try:
+            child = subprocess.Popen(
+                [str(candidate / EXECUTABLES[0])],
+                creationflags=breakaway,
+                **spawn_kwargs,
+            )
+        except OSError:
+            child = subprocess.Popen([str(candidate / EXECUTABLES[0])], **spawn_kwargs)
+    else:
+        child = subprocess.Popen([str(candidate / EXECUTABLES[0])], **spawn_kwargs)
     return child.pid
 
 
@@ -176,8 +194,14 @@ def main(argv: list[str] | None = None) -> int:
                         launcher.wait(timeout=15)
                     except psutil.NoSuchProcess:
                         pass
-                if not outside_job():
-                    raise ValueError("Launch helper must run outside a Windows Job")
+                if os.name == "nt" and not outside_job():
+                    from .services.update_job import desktop_job_memberships
+                    try:
+                        in_desktop_job = any(desktop_job_memberships())
+                    except OSError:
+                        in_desktop_job = False
+                    if in_desktop_job:
+                        raise ValueError("Launch helper must run outside a live Hub desktop Job")
                 result = {"pid": launch_current(store, admin)}
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return 0 if result.get("state") not in {"failed", "rolled_back"} else 2
