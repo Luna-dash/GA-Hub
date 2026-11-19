@@ -1,12 +1,17 @@
 """Local daemon lifecycle without launching the production CLI."""
+import socket
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
+import requests
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from server.constants import ENV_ANTICLI_PORT
 from server.routes import anti
 from server.services import anti_daemon as svc
+from server.services.service_registry import ServiceRegistry
 
 
 class Process:
@@ -240,3 +245,112 @@ def test_agy_profiles_switch_idle_managed_gateway(tmp_path, monkeypatch, failure
     status = svc.AntiDaemonStatus(state='ready', active_count=0)
     assert client.post(f'{url}/default/switch', headers=headers).json()['active'] == 'default'
     assert spawned[-1][1]['env']['HOME'] == 'original'
+
+
+def test_panel_status_is_read_only_nonblocking_and_respects_switch_recovery(monkeypatch):
+    daemon = svc.AntiDaemon()
+    calls = []
+
+    class FakeAdapter:
+        def request(self, method, path, **kwargs):
+            calls.append((method, path, kwargs))
+            try:
+                raise ConnectionRefusedError()
+            except ConnectionRefusedError as exc:
+                raise svc.AntiTransportError(503, 'offline') from exc
+
+    monkeypatch.setattr(svc, 'sys', SimpleNamespace(platform='linux'))
+    monkeypatch.setattr(svc, 'AntiAdapter', FakeAdapter)
+    monkeypatch.setattr(svc.anti_component, 'executable', lambda: (_ for _ in ()).throw(AssertionError('must not probe executable')))
+
+    assert daemon.panel_status() == svc.AntiDaemonStatus(state='stopped', detail=None)
+    assert calls == [('GET', '/health', {'connect_timeout': 0.15, 'read_timeout': 0.3})]
+
+    # Contended lock (e.g. during account switch) degrades immediately instead of blocking.
+    assert daemon._lock.acquire(timeout=1)
+    try:
+        assert daemon.panel_status().state == 'starting'
+    finally:
+        daemon._lock.release()
+
+    # Healthy gateway without agy binary surfaces detail, and never hits /v1/auth.
+    class ReadyNoAgyAdapter:
+        def request(self, method, path, **kwargs):
+            assert path == '/health'
+            return {'status': 'ok', 'version': '1.0', 'agy_binary': None, 'active_count': 2}
+
+    monkeypatch.setattr(svc, 'AntiAdapter', ReadyNoAgyAdapter)
+    daemon._failure = 'previous failure'
+    assert daemon.panel_status() == svc.AntiDaemonStatus(
+        state='ready', agy_available=False, active_count=2, detail='AntiCLI 已启动，但找不到官方 agy CLI',
+    )
+    assert daemon._failure == 'previous failure'
+    assert daemon.status().state == 'ready'
+    assert daemon._failure is None
+
+    # Switch-recovery lock keeps lingering listener marked unavailable.
+    daemon._switch_recovery_required = True
+    assert daemon.panel_status() == svc.AntiDaemonStatus(state='unavailable', detail=svc._SWITCH_RECOVERY)
+
+
+@pytest.mark.parametrize(('http_status', 'body'), [(503, b'{}'), (200, b'not json'), (200, b'{"status":"ok"}')])
+@pytest.mark.parametrize('switch_recovery', [False, True])
+def test_panel_unhealthy_listener_needs_attention(monkeypatch, http_status, body, switch_recovery):
+    daemon = svc.AntiDaemon()
+    daemon._switch_recovery_required = switch_recovery
+    monkeypatch.setattr(svc, 'daemon', daemon)
+    response = requests.Response()
+    response.status_code = http_status
+    response._content = body
+    monkeypatch.setattr(requests.Session, 'request', lambda *a, **kw: response)
+
+    status = daemon.panel_status()
+    assert status.state == 'unavailable'
+    if switch_recovery:
+        assert status.detail == svc._SWITCH_RECOVERY
+    else:
+        assert '健康检查未通过' in status.detail
+    item = ServiceRegistry._anti()
+    assert (item.state, item.health) == ('error', 'attention')
+
+
+@pytest.mark.parametrize('error', [requests.ConnectTimeout(), requests.ReadTimeout()])
+def test_panel_does_not_treat_timeout_as_connection_refused(monkeypatch, error):
+    def timeout(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(requests.Session, 'request', timeout)
+    status = svc.AntiDaemon().panel_status()
+    assert status.state == 'unavailable'
+    assert '无法确认' in status.detail
+
+
+def test_panel_reports_closed_loopback_port_as_stopped(monkeypatch):
+    with socket.socket() as bound:
+        bound.bind(('127.0.0.1', 0))  # Keep the port reserved without listening.
+        monkeypatch.setenv(ENV_ANTICLI_PORT, str(bound.getsockname()[1]))
+        assert svc.AntiDaemon().panel_status() == svc.AntiDaemonStatus(state='stopped')
+
+
+def test_panel_reports_managed_exit_without_cleaning_registration(monkeypatch):
+    daemon = svc.AntiDaemon()
+    process = Process()
+    process.code = 17
+    daemon._process = process
+    daemon._failure = 'previous failure'
+    forget = MagicMock()
+    monkeypatch.setattr(svc.child_job, 'forget', forget)
+
+    def closed_connection(*args, **kwargs):
+        raise ConnectionRefusedError()
+
+    monkeypatch.setattr(requests.Session, 'request', closed_connection)
+    monkeypatch.setattr(svc.socket, 'create_connection', closed_connection)
+    status = daemon.panel_status()
+    assert status == svc.AntiDaemonStatus(state='stopped', detail='AntiCLI 已退出（退出码 17）')
+    assert daemon._process is process
+    assert daemon._failure == 'previous failure'
+    forget.assert_not_called()
+    assert daemon.status() == status
+    assert daemon._process is None
+    forget.assert_called_once_with(process.pid)

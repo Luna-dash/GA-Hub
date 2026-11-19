@@ -514,3 +514,54 @@ def test_scheduler_panel_status_and_peek_instance_never_construct() -> None:
         assert TaskScheduler.peek_instance() is None
         assert ServiceRegistry()._autonomous().state == "stopped"
         assert ServiceRegistry()._tasks().state == "stopped"
+
+
+def test_anti_daemon_panel_states_surface_in_registry_and_panel() -> None:
+    from server.services import anti_daemon
+    from server.services.anti_daemon import AntiDaemonStatus
+
+    fake_daemon = mock.Mock()
+    with (
+        mock.patch.object(anti_daemon, "daemon", fake_daemon),
+        mock.patch("server.services.anti_engine.daemon_port", return_value=8787),
+    ):
+        fake_daemon.panel_status.return_value = AntiDaemonStatus(state="stopped")
+        item = ServiceRegistry()._anti()
+        assert (item.id, item.state, item.health, item.href, item.expected_running) == (
+            "anti", "stopped", "healthy", "/anti", False,
+        )
+        assert item.summary == "按需启动，当前未运行"
+
+        fake_daemon.panel_status.return_value = AntiDaemonStatus(state="starting")
+        item = ServiceRegistry()._anti()
+        assert (item.state, item.activity, item.health) == ("ready", "standby", "healthy")
+
+        fake_daemon.panel_status.return_value = AntiDaemonStatus(
+            state="ready", agy_available=True, active_count=2,
+        )
+        item = ServiceRegistry()._anti()
+        assert (item.state, item.activity, item.health, item.metrics) == (
+            "running", "active", "healthy", {"端口": 8787, "运行任务": 2},
+        )
+        assert item.summary == "网关运行中（2 个任务）"
+
+        fake_daemon.panel_status.return_value = AntiDaemonStatus(
+            state="ready", agy_available=False, active_count=0,
+            detail="AntiCLI 已启动，但找不到官方 agy CLI",
+        )
+        item = ServiceRegistry()._anti()
+        assert (item.state, item.health, item.error) == (
+            "error", "attention", "AntiCLI 已启动，但找不到官方 agy CLI",
+        )
+
+        fake_daemon.panel_status.return_value = AntiDaemonStatus(
+            state="stopped", detail="AntiCLI 已退出（退出码 1）",
+        )
+        item = ServiceRegistry()._anti()
+        assert (item.state, item.health, item.error) == (
+            "error", "attention", "AntiCLI 已退出（退出码 1）",
+        )
+
+        registry = ServiceRegistry()
+        registry._readers = [registry._anti]
+        assert registry.panel()["services"][0]["id"] == "anti"

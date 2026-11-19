@@ -40,6 +40,18 @@ class AntiError(Exception):
         self.status = status
 
 
+class AntiTransportError(AntiError):
+    @property
+    def connection_refused(self) -> bool:
+        # requests/urllib3 wrap the socket exception in their cause chain.
+        cause = self.__cause__
+        while cause is not None:
+            if isinstance(cause, ConnectionRefusedError):
+                return True
+            cause = cause.__cause__ or cause.__context__
+        return False
+
+
 def daemon_port() -> int:
     try:
         port = int(os.environ.get(ENV_ANTICLI_PORT, "8787"))
@@ -51,17 +63,22 @@ def daemon_port() -> int:
 
 
 class AntiAdapter:
-    def request(self, method: str, path: str, *, read_timeout: float = 8, **kwargs):
+    def request(self, method: str, path: str, *, connect_timeout: float = 2, read_timeout: float = 8, **kwargs):
         port = daemon_port()
         try:
             with requests.Session() as client:
                 client.trust_env = False  # only the official agy child uses the system proxy
                 res = client.request(method, f"http://127.0.0.1:{port}{path}",
-                                     timeout=(2, read_timeout), allow_redirects=False, **kwargs)
-            if res.status_code != 200:
-                raise AntiError(res.status_code, "AntiCLI did not accept the request")
+                                     timeout=(connect_timeout, read_timeout), allow_redirects=False, **kwargs)
+        except OSError as exc:
+            raise AntiTransportError(503, "AntiCLI is unavailable or returned an invalid response") from exc
+        except ValueError as exc:
+            raise AntiError(503, "AntiCLI is unavailable or returned an invalid response") from exc
+        if res.status_code != 200:
+            raise AntiError(res.status_code, "AntiCLI did not accept the request")
+        try:
             return res.json()
-        except (requests.RequestException, ValueError) as exc:
+        except ValueError as exc:
             raise AntiError(503, "AntiCLI is unavailable or returned an invalid response") from exc
 
     def submit(self, run: dict, workspace: Path, conversation: str | None) -> None:

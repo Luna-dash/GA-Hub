@@ -15,7 +15,7 @@ from typing import Literal, get_args
 
 from ..process_utils import hidden_process_kwargs
 from . import anti_component, anti_profiles, child_job
-from .anti_engine import AntiAdapter, AntiError, daemon_port
+from .anti_engine import AntiAdapter, AntiError, AntiTransportError, daemon_port
 
 log = logging.getLogger(__name__)
 _SWITCH_RECOVERY = "AntiCLI 切换失败：请停止残留网关，释放端口后重新启动当前 Agy 账号的网关"
@@ -100,6 +100,65 @@ class AntiDaemon:
     def status(self, *, verify_auth: bool = False) -> AntiDaemonStatus:
         with self._lock:
             return self._active_status(daemon_port(), verify_auth=verify_auth)
+
+    def panel_status(self) -> AntiDaemonStatus:
+        """Read-only, bounded-latency status snapshot for the Dashboard panel."""
+        if not self._lock.acquire(timeout=0.05):
+            return AntiDaemonStatus(state="starting", detail="正在操作 Agy 网关…")
+        try:
+            port = daemon_port()
+            # Winsock can take around two seconds to report a refused loopback connection.
+            connect_timeout = 3.0 if sys.platform == "win32" else 0.15
+            health = None
+            refused = False
+            unreachable = False
+            try:
+                health = AntiAdapter().request(
+                    "GET", "/health", connect_timeout=connect_timeout, read_timeout=0.3,
+                )
+            except AntiTransportError as exc:
+                refused = exc.connection_refused
+                unreachable = True
+            except AntiError:
+                pass  # A response was received but didn't pass the health check.
+
+            if self._switch_recovery_required:
+                return AntiDaemonStatus(
+                    state="stopped" if refused else "unavailable", detail=_SWITCH_RECOVERY,
+                )
+
+            if (isinstance(health, dict) and health.get("status") == "ok"
+                    and isinstance(health.get("version"), str) and "agy_binary" in health
+                    and type(health.get("active_count")) is int):
+                agy = bool(health["agy_binary"])
+                return AntiDaemonStatus(
+                    state="ready",
+                    agy_available=agy,
+                    active_count=health["active_count"],
+                    detail=None if agy else "AntiCLI 已启动，但找不到官方 agy CLI",
+                )
+
+            failure = self._failure
+            if self._process is not None:
+                code = self._process.poll()
+                if code is None:
+                    if time.monotonic() < self._deadline:
+                        return AntiDaemonStatus(state="starting")
+                    if unreachable:
+                        return AntiDaemonStatus(state="unavailable", detail="AntiCLI 已启动，但健康检查超时")
+                else:
+                    failure = f"AntiCLI 已退出（退出码 {code}）"
+
+            if refused:
+                return AntiDaemonStatus(state="stopped", detail=failure)
+            if unreachable:
+                return AntiDaemonStatus(state="unavailable", detail=f"无法确认本机端口 {port} 的状态")
+            return AntiDaemonStatus(
+                state="unavailable",
+                detail=f"本机端口 {port} 有响应，但 AntiCLI 健康检查未通过",
+            )
+        finally:
+            self._lock.release()
 
     def start(self) -> AntiDaemonStatus:
         with self._lock:

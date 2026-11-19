@@ -61,7 +61,7 @@ class ServiceRegistry:
         self._nova_component = nova
         self._readers: list[Callable[[], ServicePanelItem | None]] = [
             self._agent, self._feishu, self._conductor,
-            self._goalhive, self._autonomous, self._tasks,
+            self._goalhive, self._anti, self._autonomous, self._tasks,
         ]
         if nova is not None:
             self._readers.append(self._nova)
@@ -264,6 +264,57 @@ class ServiceRegistry:
             "goalhive", "Goal / Hive", "running" if running else "stopped",
             "独立 Agent 正在执行" if running else "当前未运行", "/goal-hive",
             {"消息": status.get("message_count", 0)},
+        )
+
+    @staticmethod
+    def _anti() -> ServicePanelItem:
+        from .anti_daemon import daemon
+        from .anti_engine import AntiError, daemon_port
+
+        try:
+            port = daemon_port()
+            status = daemon.panel_status()
+        except AntiError as exc:
+            return ServicePanelItem(
+                "anti", "AntiCLI 网关", "error", str(exc), "/anti",
+                error=str(exc), health="attention",
+            )
+
+        if status.state == "ready":
+            if status.agy_available is False:
+                msg = status.detail or "AntiCLI 已启动，但找不到官方 agy CLI"
+                return ServicePanelItem(
+                    "anti", "AntiCLI 网关", "error", msg, "/anti",
+                    {"端口": port}, error=msg, health="attention",
+                )
+            active = status.active_count or 0
+            summary = f"网关运行中（{active} 个任务）" if active > 0 else "网关运行中，等待任务"
+            return ServicePanelItem(
+                "anti", "AntiCLI 网关", "running", summary, "/anti",
+                {"端口": port, "运行任务": active},
+            )
+
+        if status.state == "starting":
+            return ServicePanelItem(
+                "anti", "AntiCLI 网关", "ready",
+                status.detail or "正在启动 AntiCLI 网关…", "/anti",
+            )
+
+        if status.state == "unavailable":
+            msg = status.detail or "AntiCLI 网关不可用"
+            return ServicePanelItem(
+                "anti", "AntiCLI 网关", "error", msg, "/anti",
+                error=msg, health="attention",
+            )
+
+        if status.detail:
+            return ServicePanelItem(
+                "anti", "AntiCLI 网关", "error", status.detail, "/anti",
+                error=status.detail, health="attention",
+            )
+
+        return ServicePanelItem(
+            "anti", "AntiCLI 网关", "stopped", "按需启动，当前未运行", "/anti",
         )
 
     def _scheduler_service(self, domain: str) -> "SchedulerDomainBase | None":

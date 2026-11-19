@@ -73,6 +73,25 @@ describe('Dashboard status-only services', () => {
     expect(host.textContent).not.toContain('需要处理')
   })
 
+  it('renders AntiCLI gateway status linking to /anti without degrading healthy state when stopped', async () => {
+    const anti = {
+      id: 'anti', name: 'AntiCLI 网关', href: '/anti', state: 'stopped',
+      summary: '按需启动，当前未运行', metrics: {}, error: null,
+      activity: 'inactive', health: 'healthy', expected_running: false,
+    }
+    apiMock.servicePanel.mockResolvedValue({ services: [anti], timestamp: 1 })
+    await act(async () => {
+      root.render(<QueryClientProvider client={client}><MemoryRouter><Dashboard /></MemoryRouter></QueryClientProvider>)
+    })
+    for (let attempt = 0; attempt < 20 && !host.textContent?.includes(anti.name); attempt += 1) {
+      await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)) })
+    }
+    expect(host.textContent).toContain('AntiCLI 网关')
+    expect(host.textContent).toContain('按需启动，当前未运行')
+    expect(host.querySelector('a[href="/anti"]')).not.toBeNull()
+    expect(host.textContent).not.toContain('需要处理')
+  })
+
   it('shows Feishu runtime details without rendering a page link', async () => {
     await act(async () => {
       root.render(
