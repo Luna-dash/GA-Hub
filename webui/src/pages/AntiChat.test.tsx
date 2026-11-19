@@ -166,7 +166,7 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     await wait(() => {
       expect(host.querySelector('.ga-page-header')?.textContent).not.toContain(session.workspace)
       expect(control('模型').querySelector(':scope > .model-select-label')?.textContent).toBe('Gemini 4 Hydrogen')
-      expect(control('思考等级').querySelector(':scope > .model-select-label')?.textContent).toBe('思考：高')
+      expect(control('思考等级').querySelector(':scope > .model-select-label')?.textContent).toBe('high')
     })
     await wait(() => expect(cache.getQueryState(['anti-models'])?.status).toBe('success'))
     const header = host.querySelector('.ga-page-header')!
@@ -182,8 +182,8 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     expect(transcript.contains(host.querySelector('[data-file-composer]'))).toBe(false)
     expect(host.querySelector('[data-file-composer] textarea')?.getAttribute('aria-label')).toBe('发给 Anti')
     await choose('模型', 'Alternate')
-    expect(control('思考等级').textContent).toContain('思考：低')
-    await choose('思考等级', '中')
+    expect(control('思考等级').textContent).toContain('low')
+    await choose('思考等级', 'medium')
     if (outcome === 'success') {
       await act(async () => {
         focusManager.setFocused(false)
@@ -195,9 +195,9 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
         items: expect.arrayContaining([expect.objectContaining({ id: 'gemini-4-neon-xhigh' })]),
       }))
       expect(control('模型').textContent).toContain('Alternate')
-      expect(control('思考等级').textContent).toContain('思考：中')
+      expect(control('思考等级').textContent).toContain('medium')
       await choose('模型', 'Gemini 4 Neon')
-      expect(control('思考等级').textContent).toContain('思考：极高')
+      expect(control('思考等级').textContent).toContain('xhigh')
     }
     const input = host.querySelector('textarea')!
     await act(async () => {

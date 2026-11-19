@@ -34,8 +34,8 @@ const DEFAULT_FAMILY = 'gemini-4-hydrogen'
 const DEFAULT_MODEL = { id: `${DEFAULT_FAMILY}-high`, display_name: 'Gemini 4 Hydrogen (High)' }
 const DEFAULT_EFFORT = 'high'
 const efforts = [
-  { key: 'low', name: '低' }, { key: 'medium', name: '中' }, { key: 'high', name: '高' },
-  { key: 'xhigh', name: '极高' }, { key: 'max', name: '最高' },
+  { key: 'low', name: 'low' }, { key: 'medium', name: 'medium' }, { key: 'high', name: 'high' },
+  { key: 'xhigh', name: 'xhigh' }, { key: 'max', name: 'max' },
 ]
 type Models = { items: { id: string; display_name: string }[] }
 
@@ -262,8 +262,8 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
     {headerActions && createPortal(<>
       <MainModelSelect aria-label="模型" className="min-w-0 max-w-[min(400px,24vw)]" title={models.error ? '暂时无法读取模型列表，可继续使用默认模型' : '模型'}
         llms={families} value={family?.key} onChange={setFamilyKey} disabled={Boolean(current || pending) || models.isPending} />
-      <ThemedSelect aria-label="思考等级" options={effortOptions} value={effort} onChange={setEffort}
-        displayName={option => `思考：${option.name}`} placeholder="思考：高"
+      <ThemedSelect aria-label="思考等级" title="思考等级" options={effortOptions} value={effort} onChange={setEffort}
+        displayName={option => option.name} placeholder={DEFAULT_EFFORT}
         renderMark={() => <span className="model-select-mark"><Brain size={16} aria-hidden="true" /></span>}
         disabled={Boolean(current || pending)} />
       {models.error && <button type="button" className="ga-btn-icon" title="重试加载模型" aria-label="重试加载模型" onClick={() => void models.refetch()}><RotateCw size={16} aria-hidden="true" /></button>}
