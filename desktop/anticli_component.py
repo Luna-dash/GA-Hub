@@ -23,6 +23,88 @@ _QUIET_MODEL_PROBE = _MODEL_PROBE + (
 )
 
 
+def _replace_once(content: bytes, old: bytes, new: bytes, label: str) -> bytes:
+    if content.count(old) != 1:
+        raise RuntimeError(f"Cannot apply AntiCLI {label} fix to the pinned source")
+    return content.replace(old, new, 1)
+
+
+def _retry_empty_conversation(content: bytes) -> bytes:
+    """Patch only the reviewed snapshot. Keep the existing spawn/reap and slot logic."""
+    start = b"                spawn = asyncio.create_task(asyncio.create_subprocess_exec(\n"
+    end = b"                    cleanup.result()\n                    raise\n"
+    if content.count(start) != 1 or content.count(end) != 1:
+        raise RuntimeError("Cannot locate the pinned AntiCLI execution block")
+    first = content.index(start)
+    last = content.index(end, first) + len(end)
+    block = content[first:last]
+    emit = b'''                            if evt is not None:
+                                self.ledger.append_event(evt)
+                                self.coordinator.publish(run_id, evt.model_dump())
+                                if on_event is not None:
+                                    on_event(evt)
+'''
+    buffered = b'''                            if evt is None:
+                                continue
+                            if pending is not None:
+                                emit_event(pending)
+                                pending = None
+                            if (attempt == 0 and retry_enabled and len(state.events) == 1
+                                    and evt.event_type == "result" and not state.conversation_id
+                                    and state.result_status == "ERROR" and not state.final_answer
+                                    and state.result_error == empty_conversation_error):
+                                pending = evt
+                            else:
+                                emit_event(evt)
+'''
+    block = _replace_once(block, emit, buffered, "startup event buffering")
+    block = _replace_once(block, b"                    assert proc.stdout is not None\n",
+                          b"                    nonlocal pending\n                    assert proc.stdout is not None\n",
+                          "startup event buffering")
+    block = _replace_once(block, b"                        timeout=float(validated.timeout_seconds) + 5.0,\n",
+                          b"                        timeout=max(0.0, deadline - time.monotonic()),\n",
+                          "startup retry deadline")
+    setup = b'''                # Retry only a fresh read-only Hub turn, when the CLI explicitly reports
+                # that it could not create a conversation and no other event was seen.
+                retry_enabled = (validated.caller_id == "ga-hub" and validated.mode == "plan"
+                                 and validated.disable_slash_commands and not validated.conversation_id)
+                empty_conversation_error = (
+                    "failed to start conversation: backend returned an empty conversation id"
+                )
+                deadline = started_mono + float(validated.timeout_seconds) + 5.0
+
+                def emit_event(evt):
+                    self.ledger.append_event(evt)
+                    self.coordinator.publish(run_id, evt.model_dump())
+                    if on_event is not None:
+                        on_event(evt)
+
+                for attempt in range(2):
+                    pending = None
+'''
+    finish = b'''                    if pending is None:
+                        break
+                    outcome = classify_outcome(exit_code, timed_out, "".join(stderr_chunks), state)
+                    if (outcome[:2] != ("cli_error", "CLI_ERROR")
+                            or deadline - time.monotonic() < 1.0):
+                        emit_event(pending)
+                        break
+                    # Child has exited and both readers drained; preserve the first failure
+                    # without publishing a terminal result to the Hub under the same run ID.
+                    trace_path.replace(run_dir / "startup-retry.ndjson")
+                    await asyncio.sleep(0.25)
+                    if deadline <= time.monotonic():
+                        (run_dir / "startup-retry.ndjson").replace(trace_path)
+                        emit_event(pending)
+                        break
+                    state = StreamParseState(run_id=run_id, model=target_model)
+                    stderr_chunks.clear()
+'''
+    return content[:first] + setup + b"".join(
+        b"    " + line if line.strip() else line for line in block.splitlines(keepends=True)
+    ) + finish + content[last:]
+
+
 def stage_source(source: Path, destination: Path) -> Path:
     root = source / "src"
     files = sorted(p for p in (root / "anticli").rglob("*")
@@ -34,9 +116,9 @@ def stage_source(source: Path, destination: Path) -> Path:
         raise RuntimeError(f"AntiCLI {SOURCE_VERSION} source checksum mismatch: {digest}")
     for name, content in snapshot:
         if name.as_posix() == "anticli/core/runner.py":
-            if content.count(_MODEL_PROBE) != 1:
-                raise RuntimeError("Cannot apply the AntiCLI model probe window fix")
-            content = content.replace(_MODEL_PROBE, _QUIET_MODEL_PROBE, 1)
+            content = _replace_once(content, _MODEL_PROBE, _QUIET_MODEL_PROBE, "model probe window")
+            content = _retry_empty_conversation(content)
+            compile(content, name.as_posix(), "exec")
         path = destination / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
