@@ -637,6 +637,12 @@ body {
   text-overflow: clip;
   translate: 0.5rem 0;
 }
+/* 宽度按四个汉字及其字距计算，空余宽度留在 Agy 与「会话」之间。 */
+.ga-sidebar .ga-nav-label-four-ideographs {
+  display: inline-flex;
+  min-width: calc(4ic + 4 * 0.02em);
+  justify-content: space-between;
+}
 /* 右端 chevron — 绝对定位，避免不可见时仍挤占标签宽度 */
 .ga-sidebar .ga-nav-chev {
   position: absolute;
