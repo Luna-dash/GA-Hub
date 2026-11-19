@@ -21,7 +21,7 @@ export function ThemeTaskTabs({ tab, onChange }: { tab: ThemeTaskTab; onChange: 
       event.preventDefault()
       const index = event.key === 'Home' ? 0 : event.key === 'End' ? 2 : (keys.indexOf(key) + direction + 3) % 3
       onChange(keys[index]); (event.currentTarget.parentElement?.children[index] as HTMLElement)?.focus()
-    }} className={`whitespace-nowrap rounded-md px-3 py-2 text-xs transition-colors ${tab === key ? 'bg-accent/10 font-medium text-accent' : 'text-slate-500 hover:bg-bg-soft hover:text-accent'}`} onClick={() => onChange(key)}>{label}</button>)}
+    }} className={`whitespace-nowrap rounded-md px-3 py-2 text-xs transition-colors ${tab === key ? 'bg-accent/10 font-medium text-accent' : 'text-ink-faint hover:bg-bg-soft hover:text-accent'}`} onClick={() => onChange(key)}>{label}</button>)}
   </div>
 }
 export function ThemeTaskHistory({ sessionId, runId, active, children, expanded = true, selectedTab, onTabChange }: {
@@ -54,11 +54,11 @@ function ProcessSummary({ message }: { message: ChatMsg }) {
   return <article className="min-w-0">
     <ol className="space-y-2 text-sm leading-relaxed">
       {rows.map((row, index) => <li key={index} className="flex items-baseline gap-3">
-        <span aria-hidden="true" className="shrink-0 text-xs text-slate-500">{row.label || '·'}</span>
+        <span aria-hidden="true" className="shrink-0 text-xs text-ink-faint">{row.label || '·'}</span>
         <span className="min-w-0 whitespace-pre-wrap break-words">{row.summary || '本轮未记录摘要'}</span>
       </li>)}
     </ol>
-    {!rows.length && <p className="text-xs text-slate-500">{message.streaming ? '等待过程摘要…' : '未记录过程摘要'}</p>}
+    {!rows.length && <p className="text-xs text-ink-faint">{message.streaming ? '等待过程摘要…' : '未记录过程摘要'}</p>}
   </article>
 }
 
@@ -148,7 +148,7 @@ function SessionTimeline({ sessionId, runId, current, enabled, active, onShowRep
     position.current = el.scrollTop
   }, [visible, enabled, runId])
   return <section className="overflow-hidden rounded-2xl border border-line">
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-bg-soft/30 px-4 py-3 text-xs text-slate-500">
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-bg-soft/30 px-4 py-3 text-xs text-ink-faint">
       <span>{current ? (active ? '本次执行 · 实时过程' : '最近一次执行') : '原会话历史 · 只读'}</span>
       <span className="inline-flex items-center gap-2">
         <StatusIconBadge
@@ -165,14 +165,14 @@ function SessionTimeline({ sessionId, runId, current, enabled, active, onShowRep
       if (follow.current) setUnseen(false)
     }}>
       {!current && page?.has_more && page.next_before != null && <div className="mb-4 text-center"><button className={action} disabled={loading} onClick={() => void load(page.next_before!)}>加载更早消息</button></div>}
-      {loading && <p role="status" className="mb-3 text-center text-xs text-slate-500">正在读取…</p>}
-      {!visible.length && !loading && <p className="py-16 text-center text-sm text-slate-500">{current ? !runId ? '暂无可关联的执行记录，可在会话历史中查看。' : active ? '等待本次执行内容…' : '暂无本次执行记录，可在会话历史中查看。' : '暂无会话历史'}</p>}
+      {loading && <p role="status" className="mb-3 text-center text-xs text-ink-faint">正在读取…</p>}
+      {!visible.length && !loading && <p className="py-16 text-center text-sm text-ink-faint">{current ? !runId ? '暂无可关联的执行记录，可在会话历史中查看。' : active ? '等待本次执行内容…' : '暂无本次执行记录，可在会话历史中查看。' : '暂无会话历史'}</p>}
       {visible.filter(message => !current || message.role === 'assistant').map((message, index) => current
         ? <ProcessSummary key={`${message.runId ?? ''}:${message.streamId ?? message.timestamp ?? index}:${message.role}`} message={message} />
         : null)}
     </div>
     {current && visible.length > 0 && !active && !visible.some(message => message.streaming) && <div className="border-t border-line px-4 py-3 text-sm">
-      <span className="mr-3 text-slate-500">结果</span><button className="inline-flex items-center gap-1 text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={onShowReport}><span>查看结论</span><ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></button>
+      <span className="mr-3 text-ink-faint">结果</span><button className="inline-flex items-center gap-1 text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={onShowReport}><span>查看结论</span><ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></button>
     </div>}
     {unseen && <div className="border-t border-line p-2 text-center"><button className={action} onClick={() => {
       follow.current = true; setUnseen(false)

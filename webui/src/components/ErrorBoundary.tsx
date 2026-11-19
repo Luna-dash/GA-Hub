@@ -29,8 +29,8 @@ export class ErrorBoundary extends Component<Props, State> {
         <div className="flex items-center justify-center min-h-screen bg-bg-soft">
           <div className="max-w-md p-6 space-y-4 text-center">
             <div className="text-6xl">⚠️</div>
-            <h1 className="text-xl font-semibold text-slate-200">页面渲染出错</h1>
-            <p className="text-sm text-slate-400">
+            <h1 className="text-xl font-semibold text-ink">页面渲染出错</h1>
+            <p className="text-sm text-ink-muted">
               {this.state.error?.message || '未知错误'}
             </p>
             <button

@@ -220,7 +220,7 @@ export default function MyKey() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="font-semibold">云端自动同步</h2>
-              <p className="mt-1 text-xs text-slate-500">每天 12:00 自动检查并同步云端配置。</p>
+              <p className="mt-1 text-xs text-ink-faint">每天 12:00 自动检查并同步云端配置。</p>
             </div>
             <label className="flex items-center gap-2">
               <input type="checkbox" aria-label="启用每日自动同步" checked={autoSync.data?.enabled ?? false}
@@ -228,13 +228,13 @@ export default function MyKey() {
               每日同步
             </label>
           </div>
-          <p role="status" className="mt-2 text-xs text-slate-500">
+          <p role="status" className="mt-2 text-xs text-ink-faint">
             {autoSync.isError ? '自动同步状态暂不可用' : autoSync.data
               ? `${autoSync.data.running ? '正在检查云端…' : autoSync.data.message}${autoSync.data.last_checked ? ` · 最近检查 ${new Date(autoSync.data.last_checked).toLocaleString()}` : ''}`
               : '读取同步状态…'}
           </p>
         </section>
-        {isLoading && <div className="text-slate-500 text-sm">载入中…</div>}
+        {isLoading && <div className="text-ink-faint text-sm">载入中…</div>}
         {isError && (
           <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-status-danger-line bg-status-danger-soft px-4 py-3 text-sm text-status-danger">
             <span>读取 mykey.py 失败：{errorMessageFromError(error)}</span>
@@ -323,7 +323,7 @@ function StructuredView({ data, onWrite, onProxyDirtyChange }: {
     <div className="flex flex-col gap-6 flex-1 min-h-0">
       <section>
         <div className="flex items-baseline justify-between mb-3">
-          <h2 className="text-sm font-semibold text-slate-300">LLM 链路（{sessions.length}）</h2>
+          <h2 className="text-sm font-semibold text-ink">LLM 链路（{sessions.length}）</h2>
           <div className="mykey-channel-actions" aria-label="新增渠道">
             {CREATE_TYPES.map((type) => (
               <button key={type} type="button" onClick={() => startCreate(type)}
@@ -354,7 +354,7 @@ function StructuredView({ data, onWrite, onProxyDirtyChange }: {
             )
           })}
           {sessions.length === 0 && mixins.length === 0 && (
-            <div className="md:col-span-2 text-slate-500 text-sm py-8 text-center border border-dashed border-line rounded-xl">
+            <div className="md:col-span-2 text-ink-faint text-sm py-8 text-center border border-dashed border-line rounded-xl">
               尚未配置任何链路。点上方 <strong>+ Claude (native)</strong> 或 <strong>+ OpenAI (native)</strong> 添加第一条。
             </div>
           )}
@@ -420,7 +420,7 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
             {!expanded && (
               <div className="mt-1.5 flex items-center gap-2 min-w-0">
                 <div className="mykey-card__dot" aria-hidden="true" />
-                <div className="min-w-0 truncate text-[13px] leading-5 text-slate-500 font-medium tracking-[0.01em]" title={String(summary)}>
+                <div className="min-w-0 truncate text-[13px] leading-5 text-ink-faint font-medium tracking-[0.01em]" title={String(summary)}>
                   {String(summary)}
                 </div>
               </div>
@@ -428,7 +428,7 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
           </div>
           <div className="flex items-center gap-2 shrink-0 pl-2">
             {expanded && s.lineno != null && (
-              <span className="text-[11px] text-slate-500 font-mono">L{String(s.lineno)}</span>
+              <span className="text-[11px] text-ink-faint font-mono">L{String(s.lineno)}</span>
             )}
             <span className="mykey-card__chevron" aria-hidden="true">
               <ChevronDown className="h-4 w-4" aria-hidden="true" />
@@ -449,9 +449,9 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
             ) : (
               <dl className="space-y-1.5 text-xs">
                 <div className="flex items-start gap-2">
-                  <dt className="text-slate-500 shrink-0 w-24">apis</dt>
-                  <dd className="min-w-0 flex-1 font-mono text-slate-300 break-all leading-5">
-                    {Array.isArray(s.fields.llm_nos) && s.fields.llm_nos.length > 0 ? s.fields.llm_nos.join(' → ') : <span className="text-slate-600">—</span>}
+                  <dt className="text-ink-faint shrink-0 w-24">apis</dt>
+                  <dd className="min-w-0 flex-1 font-mono text-ink break-all leading-5">
+                    {Array.isArray(s.fields.llm_nos) && s.fields.llm_nos.length > 0 ? s.fields.llm_nos.join(' → ') : <span className="text-ink-faint">—</span>}
                   </dd>
                 </div>
                 <KV k="max_retries" v={String(s.fields.max_retries ?? '—')} />
@@ -484,10 +484,10 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
                 <div className="space-y-0.5">
                   <div className="text-status-success">
                     ✓ {testResult.latency_ms ?? '?'} ms
-                    {testResult.model && <span className="text-slate-500 ml-2 font-mono">{testResult.model}</span>}
+                    {testResult.model && <span className="text-ink-faint ml-2 font-mono">{testResult.model}</span>}
                   </div>
                   {testResult.preview && (
-                    <div className="text-slate-400 break-words font-mono leading-snug">→ {testResult.preview}</div>
+                    <div className="text-ink-muted break-words font-mono leading-snug">→ {testResult.preview}</div>
                   )}
                 </div>
               ) : (
@@ -504,9 +504,9 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
 function KV({ k, v, mono }: { k: string; v: any; mono?: boolean }) {
   return (
     <div className="flex items-baseline gap-2">
-      <dt className="text-slate-500 shrink-0 w-24">{k}</dt>
-      <dd className={`text-slate-300 truncate ${mono ? 'font-mono' : ''}`} title={String(v ?? '')}>
-        {v == null || v === '' ? <span className="text-slate-600">—</span> : String(v)}
+      <dt className="text-ink-faint shrink-0 w-24">{k}</dt>
+      <dd className={`text-ink truncate ${mono ? 'font-mono' : ''}`} title={String(v ?? '')}>
+        {v == null || v === '' ? <span className="text-ink-faint">—</span> : String(v)}
       </dd>
     </div>
   )
@@ -564,7 +564,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
         <div className="flex items-baseline justify-between mb-4">
           <h3 className="text-base font-semibold">
             {mode === 'create' ? '新增链路' : mode === 'duplicate' ? '复制链路' : '编辑链路'}
-            <span className="ml-2 text-xs text-slate-500">{sessionMeta(s.type).label}</span>
+            <span className="ml-2 text-xs text-ink-faint">{sessionMeta(s.type).label}</span>
           </h3>
           <CloseIconButton
             label="关闭弹窗"
@@ -572,7 +572,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
             iconSize={16}
             disabled={saving}
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-200 disabled:opacity-40"
+            className="text-ink-muted hover:text-ink disabled:opacity-40"
           />
         </div>
 
@@ -654,7 +654,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
               <label className="inline-flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={!!s.fields.fake_cc_system_prompt}
                   onChange={(e) => setField('fake_cc_system_prompt', e.target.checked || undefined)} />
-                <span className="text-slate-300">CC switch / 反代渠道必须勾选</span>
+                <span className="text-ink">CC switch / 反代渠道必须勾选</span>
               </label>
             </Field>
           </>
@@ -680,7 +680,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
         {s.type === 'mixin' && <MixinFields s={s} setS={setS} allSessions={allSessions} />}
 
         <details className="mt-3">
-          <summary className="text-xs text-slate-400 cursor-pointer">高级（max_retries / read_timeout / temperature / max_tokens / context_win / proxy）</summary>
+          <summary className="text-xs text-ink-muted cursor-pointer">高级（max_retries / read_timeout / temperature / max_tokens / context_win / proxy）</summary>
           <div className="pt-2 grid grid-cols-2 gap-2">
             <NumField label="max_retries" v={s.fields.max_retries} onChange={(v) => setField('max_retries', v)} />
             <NumField label="connect_timeout" v={s.fields.connect_timeout} onChange={(v) => setField('connect_timeout', v)} />
@@ -696,7 +696,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
               <label className="inline-flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={s.fields.stream !== false}
                   onChange={(e) => setField('stream', e.target.checked ? undefined : false)} />
-                <span className="text-slate-300">默认开启；遇 SSE 截断关掉保命</span>
+                <span className="text-ink">默认开启；遇 SSE 截断关掉保命</span>
               </label>
             </Field>
           </div>
@@ -705,7 +705,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
         {err && <div className="mt-3 text-xs text-status-danger bg-status-danger-soft border border-status-danger-line rounded p-2 break-words">{err}</div>}
 
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-slate-300 disabled:opacity-40">取消</button>
+          <button type="button" onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-ink disabled:opacity-40">取消</button>
           <button onClick={save} disabled={saving} className="px-4 py-1.5 rounded-lg bg-accent text-white disabled:opacity-40">
             {saving ? '保存中…' : '保存并应用'}
           </button>
@@ -831,11 +831,11 @@ function GlobalsSection({ globals_, onWrite, rawText, onDirtyChange }: {
 
   return (
     <section className="mt-auto">
-      <h2 className="text-sm font-semibold text-slate-300 mb-3">全局配置</h2>
+      <h2 className="text-sm font-semibold text-ink mb-3">全局配置</h2>
       <div className="rounded-xl border border-line bg-bg-card p-4 space-y-3">
         <div className="flex items-end gap-2">
           <div className="flex-1">
-            <div className="text-xs text-slate-500 mb-1">proxy（所有未单独指定的 session 共用）</div>
+            <div className="text-xs text-ink-faint mb-1">proxy（所有未单独指定的 session 共用）</div>
             <input value={proxy} onChange={(e) => setProxy(e.target.value)}
               className={inp + ' font-mono'} placeholder="http://127.0.0.1:7890（留空禁用）" />
           </div>
@@ -850,12 +850,12 @@ function GlobalsSection({ globals_, onWrite, rawText, onDirtyChange }: {
         </p>}
         {otherGlobals.length > 0 && (
           <details>
-            <summary className="text-xs text-slate-400 cursor-pointer">其它全局变量（{otherGlobals.length}）— 在「原始」tab 编辑</summary>
+            <summary className="text-xs text-ink-muted cursor-pointer">其它全局变量（{otherGlobals.length}）— 在「原始」tab 编辑</summary>
             <dl className="pt-2 space-y-1 text-xs">
               {otherGlobals.map(([k, v]) => (
                 <div key={k} className="flex items-baseline gap-2">
-                  <dt className="text-slate-500 font-mono w-44 shrink-0">{k}</dt>
-                  <dd className="text-slate-300 font-mono truncate" title={JSON.stringify(v)}>
+                  <dt className="text-ink-faint font-mono w-44 shrink-0">{k}</dt>
+                  <dd className="text-ink font-mono truncate" title={JSON.stringify(v)}>
                     {summarizeGlobal(v)}
                   </dd>
                 </div>
@@ -877,14 +877,14 @@ function summarizeGlobal(v: any): string {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────
-const inp = 'w-full bg-bg-card border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent text-slate-200'
+const inp = 'w-full bg-bg-card border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent text-ink'
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="mb-3">
-      <div className="text-xs text-slate-500 mb-1">{label}</div>
+      <div className="text-xs text-ink-faint mb-1">{label}</div>
       {children}
-      {hint && <div className="text-[10px] text-slate-600 mt-1">{hint}</div>}
+      {hint && <div className="text-[10px] text-ink-faint mt-1">{hint}</div>}
     </div>
   )
 }

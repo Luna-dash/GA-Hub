@@ -50,7 +50,7 @@ function GatePanel({ title, message, hint, restarting, onRestart }: GatePanelPro
   return (
     <div className="max-w-md space-y-4 px-6 text-center">
       <div className="text-status-danger text-base font-medium">{title}</div>
-      <div className="text-slate-400 text-sm break-all whitespace-pre-wrap font-mono bg-bg-card border border-line rounded-lg p-3">
+      <div className="text-ink-muted text-sm break-all whitespace-pre-wrap font-mono bg-bg-card border border-line rounded-lg p-3">
         {message}
       </div>
       <button
@@ -61,7 +61,7 @@ function GatePanel({ title, message, hint, restarting, onRestart }: GatePanelPro
       >
         {restarting ? '正在重启后端…' : '重启后端'}
       </button>
-      <div className="text-slate-500 text-xs">{hint}</div>
+      <div className="text-ink-faint text-xs">{hint}</div>
     </div>
   )
 }

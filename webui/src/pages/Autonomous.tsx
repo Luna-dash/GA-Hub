@@ -90,37 +90,37 @@ export default function Autonomous() {
       <div className="p-6 space-y-6 max-w-6xl mx-auto">
         {/* schedules */}
         <section>
-          <h2 className="text-sm font-semibold text-slate-300 mb-3">调度计划</h2>
+          <h2 className="text-sm font-semibold text-ink mb-3">调度计划</h2>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {schedules.map((s) => <ScheduleCard key={s.id} s={s} onEdit={() => setEditor(s)} onFire={() => triggerNow(s.id)} />)}
-            {schedules.length === 0 && <div className="text-slate-500 text-sm">尚无计划</div>}
+            {schedules.length === 0 && <div className="text-ink-faint text-sm">尚无计划</div>}
           </div>
         </section>
 
         {/* runs */}
         <section>
-          <h2 className="text-sm font-semibold text-slate-300 mb-3">触发历史</h2>
+          <h2 className="text-sm font-semibold text-ink mb-3">触发历史</h2>
           <div className="rounded-xl border border-line bg-bg-card overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="bg-bg-soft text-xs text-slate-400">
+              <thead className="bg-bg-soft text-xs text-ink-muted">
                 <tr><th className="text-left p-2.5">时间</th><th className="text-left p-2.5">计划</th><th className="text-left p-2.5">提示</th><th className="text-left p-2.5">报告</th></tr>
               </thead>
               <tbody>
                 {runs.map((r) => (
                   <tr key={r.id} className="border-t border-line/60">
-                    <td className="p-2.5 text-slate-400 whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
-                    <td className="p-2.5 text-slate-200">{r.schedule_id}</td>
-                    <td className="p-2.5 text-slate-400 truncate max-w-md">{r.prompt_preview}</td>
+                    <td className="p-2.5 text-ink-muted whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
+                    <td className="p-2.5 text-ink">{r.schedule_id}</td>
+                    <td className="p-2.5 text-ink-muted truncate max-w-md">{r.prompt_preview}</td>
                     <td className="p-2.5">
                       {r.report_paths?.length
                         ? r.report_paths.map((p) => p.split('/').pop()).map((n) => (
                           <button key={n} onClick={() => setActiveReport(n!)} className="text-accent text-xs hover:underline mr-2">{n}</button>
                         ))
-                        : <span className="text-slate-600 text-xs">—</span>}
+                        : <span className="text-ink-faint text-xs">—</span>}
                     </td>
                   </tr>
                 ))}
-                {runs.length === 0 && <tr><td colSpan={4} className="p-6 text-center text-slate-500 text-sm">尚未触发过自主任务</td></tr>}
+                {runs.length === 0 && <tr><td colSpan={4} className="p-6 text-center text-ink-faint text-sm">尚未触发过自主任务</td></tr>}
               </tbody>
             </table>
           </div>
@@ -128,7 +128,7 @@ export default function Autonomous() {
 
         {/* reports browser */}
         <section>
-          <h2 className="text-sm font-semibold text-slate-300 mb-3">所有报告 ({reports.length})</h2>
+          <h2 className="text-sm font-semibold text-ink mb-3">所有报告 ({reports.length})</h2>
           <div className="flex flex-wrap gap-2">
             {reports.map((r) => (
               <button
@@ -139,7 +139,7 @@ export default function Autonomous() {
                 {r.name}
               </button>
             ))}
-            {reports.length === 0 && <div className="text-slate-500 text-sm">temp/autonomous_reports/ 下还没有报告</div>}
+            {reports.length === 0 && <div className="text-ink-faint text-sm">temp/autonomous_reports/ 下还没有报告</div>}
           </div>
         </section>
       </div>
@@ -186,18 +186,18 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
   return (
     <div className={`rounded-xl border p-4 ${s.enabled ? 'border-accent/60 bg-accent-soft/20' : 'border-line bg-bg-card'}`}>
       <div className="flex items-baseline justify-between mb-2">
-        <div className="text-sm font-semibold text-slate-200">{s.name || s.id}</div>
+        <div className="text-sm font-semibold text-ink">{s.name || s.id}</div>
         <span className={`text-[10px] px-1.5 py-0.5 rounded ${s.enabled ? 'bg-status-success-soft text-status-success' : 'border border-line bg-bg-soft text-ink-muted'}`}>
           {s.enabled ? '启用' : '禁用'}
         </span>
       </div>
-      <div className="text-xs text-slate-500 mb-1">{s.id}</div>
-      <div className="text-sm text-slate-300 mb-2">
+      <div className="text-xs text-ink-faint mb-1">{s.id}</div>
+      <div className="text-sm text-ink mb-2">
         {s.type === 'idle' && `离线 ${s.idle_minutes} 分钟后触发`}
         {s.type === 'cron' && <CronCardLine expr={s.cron} />}
         {s.type === 'interval' && `每 ${s.interval_minutes} 分钟`}
       </div>
-      <div className="text-xs text-slate-500">已触发 {s.fire_count} 次 · 上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
+      <div className="text-xs text-ink-faint">已触发 {s.fire_count} 次 · 上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
       <div className="flex gap-2 mt-3 flex-wrap">
         <button onClick={onFire} className="text-xs px-2.5 py-1 rounded bg-accent text-white hover:brightness-110">立即触发</button>
         <button onClick={toggle} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5">{s.enabled ? '禁用' : '启用'}</button>
@@ -298,11 +298,11 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
         <Field label="启用">
           <label className="inline-flex items-center gap-2 text-sm">
             <input type="checkbox" checked={!!s.enabled} onChange={(e) => setS({ ...s, enabled: e.target.checked })} />
-            <span className="text-slate-300">立即生效</span>
+            <span className="text-ink">立即生效</span>
           </label>
         </Field>
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-slate-300 disabled:opacity-50">取消</button>
+          <button onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-ink disabled:opacity-50">取消</button>
           <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-50">{saving ? '保存中…' : '保存'}</button>
         </div>
     </ModalOverlay>
@@ -329,8 +329,8 @@ function ReportDrawer({
   return (
     <ModalOverlay onClose={onClose} align="right" panelClassName="w-[42rem] max-w-[94vw] h-full border-l p-6 overflow-y-auto">
         <div className="flex items-baseline justify-between mb-3">
-          <h3 className="text-sm font-mono text-slate-300">{name}</h3>
-          <CloseIconButton label="关闭报告" variant="ghost" iconSize={16} onClick={onClose} className="text-slate-400 hover:text-slate-200" />
+          <h3 className="text-sm font-mono text-ink">{name}</h3>
+          <CloseIconButton label="关闭报告" variant="ghost" iconSize={16} onClick={onClose} className="text-ink-muted hover:text-ink" />
         </div>
         {isLoading ? (
           <div role="status" className="py-12 text-center text-sm text-ink-muted">正在读取报告…</div>
@@ -346,12 +346,12 @@ function ReportDrawer({
   )
 }
 
-const inp = 'w-full bg-bg-card border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent text-slate-200'
+const inp = 'w-full bg-bg-card border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent text-ink'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="mb-3">
-      <div className="text-xs text-slate-500 mb-1">{label}</div>
+      <div className="text-xs text-ink-faint mb-1">{label}</div>
       {children}
     </div>
   )

@@ -78,10 +78,10 @@ export default function Tasks() {
     >
       <div className="p-6 space-y-6 max-w-6xl mx-auto">
         <section>
-          <h2 className="text-sm font-semibold text-slate-300 mb-3">任务计划</h2>
+          <h2 className="text-sm font-semibold text-ink mb-3">任务计划</h2>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {schedules.map((s) => <TaskCard key={s.id} s={s} onEdit={() => setEditor(s)} onFire={() => triggerNow(s.id)} />)}
-            {schedules.length === 0 && <div className="text-slate-500 text-sm">尚无定时任务</div>}
+            {schedules.length === 0 && <div className="text-ink-faint text-sm">尚无定时任务</div>}
           </div>
         </section>
 
@@ -89,7 +89,7 @@ export default function Tasks() {
 
         <section>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-slate-300">运行历史</h2>
+            <h2 className="text-sm font-semibold text-ink">运行历史</h2>
             {pageCount > 1 && (
               <nav aria-label="运行历史分页" className="flex items-center gap-2 text-xs text-ink-faint">
                 <button type="button" aria-label="上一页" title="上一页" className={pageButtonClass}
@@ -108,7 +108,7 @@ export default function Tasks() {
           </div>
           <div className="rounded-xl border border-line bg-bg-card overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="bg-bg-soft text-xs text-slate-400">
+              <thead className="bg-bg-soft text-xs text-ink-muted">
                 <tr>
                   <th className="text-left p-2.5">时间</th>
                   <th className="text-left p-2.5">任务</th>
@@ -120,21 +120,21 @@ export default function Tasks() {
               <tbody>
                 {pageRuns.map((r: TaskRun) => (
                   <tr key={r.id} className="border-t border-line/60 align-top">
-                    <td className="p-2.5 text-slate-400 whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
-                    <td className="p-2.5 text-slate-200">{r.task_name || r.task_id}</td>
+                    <td className="p-2.5 text-ink-muted whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
+                    <td className="p-2.5 text-ink">{r.task_name || r.task_id}</td>
                     <td className="p-2.5"><StatusBadge status={r.status} /></td>
-                    <td className="p-2.5 text-slate-400 max-w-lg">
+                    <td className="p-2.5 text-ink-muted max-w-lg">
                       <div className="line-clamp-2 break-words">{r.result_preview || r.prompt_preview || '—'}</div>
-                      {r.stream_id && <div className="text-[10px] text-slate-600 font-mono mt-1">{r.stream_id}</div>}
+                      {r.stream_id && <div className="text-[10px] text-ink-faint font-mono mt-1">{r.stream_id}</div>}
                     </td>
                     <td className="p-2.5 text-xs">
                       {r.email_sent && <span className="text-status-success">已发送</span>}
                       {!r.email_sent && r.email_error && <span className="text-status-danger" title={r.email_error}>失败</span>}
-                      {!r.email_sent && !r.email_error && <span className="text-slate-600">—</span>}
+                      {!r.email_sent && !r.email_error && <span className="text-ink-faint">—</span>}
                     </td>
                   </tr>
                 ))}
-                {runs.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-slate-500 text-sm">尚无运行历史</td></tr>}
+                {runs.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-ink-faint text-sm">尚无运行历史</td></tr>}
               </tbody>
             </table>
           </div>
@@ -182,18 +182,18 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
   return (
     <div className={`rounded-xl border p-4 ${s.enabled ? 'border-accent/60 bg-accent-soft/20' : 'border-line bg-bg-card'}`}>
       <div className="flex items-baseline justify-between mb-2 gap-2">
-        <div className="text-sm font-semibold text-slate-200 truncate" title={s.name || s.id}>{s.name || s.id}</div>
+        <div className="text-sm font-semibold text-ink truncate" title={s.name || s.id}>{s.name || s.id}</div>
         <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded ${s.enabled ? 'bg-status-success-soft text-status-success' : 'border border-line bg-bg-soft text-ink-muted'}`}>
           {s.enabled ? '启用' : '禁用'}
         </span>
       </div>
-      <div className="text-xs text-slate-500 mb-1 font-mono">{s.id}</div>
-      <div className="text-sm text-slate-300 mb-2">
+      <div className="text-xs text-ink-faint mb-1 font-mono">{s.id}</div>
+      <div className="text-sm text-ink mb-2">
         {s.type === 'cron' && <CronCardLine expr={s.cron} />}
         {s.type === 'interval' && `每 ${s.interval_minutes} 分钟`}
       </div>
-      <div className="text-xs text-slate-500">邮件 {s.notify_email ? '开启' : '关闭'} · 已触发 {s.fire_count} 次</div>
-      <div className="text-xs text-slate-500 mt-1">上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
+      <div className="text-xs text-ink-faint">邮件 {s.notify_email ? '开启' : '关闭'} · 已触发 {s.fire_count} 次</div>
+      <div className="text-xs text-ink-faint mt-1">上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
       <div className="flex gap-2 mt-3 flex-wrap">
         <button onClick={onFire} disabled={busy} className="text-xs px-2.5 py-1 rounded bg-accent text-white hover:brightness-110 disabled:opacity-40">立即触发</button>
         <button onClick={toggle} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5 disabled:opacity-40">{s.enabled ? '禁用' : '启用'}</button>
@@ -295,7 +295,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
       <Field label="邮件通知">
         <label className="inline-flex items-center gap-2 text-sm">
           <input type="checkbox" checked={!!s.notify_email} onChange={(e) => setS({ ...s, notify_email: e.target.checked })} />
-          <span className="text-slate-300">任务完成后发送邮件</span>
+          <span className="text-ink">任务完成后发送邮件</span>
         </label>
       </Field>
       {s.notify_email && (
@@ -311,11 +311,11 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
       <Field label="启用">
         <label className="inline-flex items-center gap-2 text-sm">
           <input type="checkbox" checked={!!s.enabled} onChange={(e) => setS({ ...s, enabled: e.target.checked })} />
-          <span className="text-slate-300">保存后立即生效</span>
+          <span className="text-ink">保存后立即生效</span>
         </label>
       </Field>
       <div className="flex justify-end gap-2 mt-4">
-        <button onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-slate-300 disabled:opacity-50">取消</button>
+        <button onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-ink disabled:opacity-50">取消</button>
         <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-50">{saving ? '保存中…' : '保存'}</button>
       </div>
     </ModalOverlay>
@@ -398,10 +398,10 @@ function EmailSettings() {
   return (
     <section>
       <div className="flex items-center justify-between mb-3 gap-3">
-        <h2 className="text-sm font-semibold text-slate-300">邮件设置</h2>
+        <h2 className="text-sm font-semibold text-ink">邮件设置</h2>
         <button onClick={startEdit} className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5"><Mail className="h-3.5 w-3.5" aria-hidden="true" /><span>配置 SMTP</span></button>
       </div>
-      <div className="rounded-xl border border-line bg-bg-card p-4 text-sm text-slate-400">
+      <div className="rounded-xl border border-line bg-bg-card p-4 text-sm text-ink-muted">
         {data?.host
           ? <div>{data.host}:{data.port} · {data.username || '无需登录'} · 默认收件人 {data.default_to || '未设置'} · 密码 {data.password_set ? '已保存' : '未设置'}</div>
           : <div>未配置 SMTP。任务仍会执行，但邮件通知会失败。</div>}
@@ -417,7 +417,7 @@ function EmailSettings() {
             <Field label="密码 / 授权码（留空保留旧密码）"><input type="password" value={cfg.password || ''} onChange={(e) => setCfg({ ...cfg, password: e.target.value })} className={inp} /></Field>
             <Field label="发件人"><input value={cfg.from_addr || ''} onChange={(e) => setCfg({ ...cfg, from_addr: e.target.value })} className={inp} placeholder="bot@example.com" /></Field>
             <Field label="默认收件人"><input value={cfg.default_to || ''} onChange={(e) => setCfg({ ...cfg, default_to: e.target.value })} className={inp} placeholder="you@example.com" /></Field>
-            <div className="flex gap-4 mb-3 text-sm text-slate-300">
+            <div className="flex gap-4 mb-3 text-sm text-ink">
               <label className="inline-flex items-center gap-2"><input type="checkbox" checked={!!cfg.use_tls} onChange={(e) => setCfg({ ...cfg, use_tls: e.target.checked })} />STARTTLS</label>
               <label className="inline-flex items-center gap-2"><input type="checkbox" checked={!!cfg.use_ssl} onChange={(e) => setCfg({ ...cfg, use_ssl: e.target.checked })} />SSL</label>
             </div>
@@ -426,12 +426,12 @@ function EmailSettings() {
               <button
                 onClick={test}
                 disabled={testing}
-                className="px-3 py-1.5 rounded-lg border border-line text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1.5 rounded-lg border border-line text-ink disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {testing ? '发送中…' : '发送测试'}
               </button>
               <div className="flex gap-2">
-                <button onClick={() => setEditing(false)} className="px-3 py-1.5 rounded-lg border border-line text-slate-300">取消</button>
+                <button onClick={() => setEditing(false)} className="px-3 py-1.5 rounded-lg border border-line text-ink">取消</button>
                 <button onClick={save} disabled={savingCfg} className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-50 disabled:cursor-not-allowed">{savingCfg ? '保存中…' : '保存'}</button>
               </div>
             </div>
@@ -458,12 +458,12 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`text-[10px] px-1.5 py-0.5 rounded ${cls}`}>{TASK_RUN_STATUS_LABELS[status] ?? status}</span>
 }
 
-const inp = 'w-full bg-bg-card border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent text-slate-200'
+const inp = 'w-full bg-bg-card border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent text-ink'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="mb-3">
-      <div className="text-xs text-slate-500 mb-1">{label}</div>
+      <div className="text-xs text-ink-faint mb-1">{label}</div>
       {children}
     </div>
   )

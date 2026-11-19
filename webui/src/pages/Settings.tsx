@@ -186,28 +186,28 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
           {!inSetup && (
             <div>
               <h2 className="text-base font-semibold text-ink">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.label}</h2>
-              <p className="mt-1 text-xs leading-relaxed text-slate-500">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.description}</p>
+              <p className="mt-1 text-xs leading-relaxed text-ink-faint">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.description}</p>
             </div>
           )}
           <div id="settings-panel-general" role={inSetup ? undefined : 'tabpanel'} aria-labelledby={inSetup ? undefined : 'settings-tab-general'} tabIndex={inSetup ? undefined : 0} hidden={!inSetup && activeTab !== 'general'} className="space-y-5">
         {/* current */}
         <div className="rounded-xl border border-line bg-bg-card p-4">
-          <div className="text-xs text-slate-500 mb-1">当前 GenericAgent 路径</div>
+          <div className="text-xs text-ink-faint mb-1">当前 GenericAgent 路径</div>
           <div className="font-mono text-sm break-all">
             {setup?.ga_root
               ? <span className="text-status-success">{setup.ga_root}</span>
               : <span className="text-status-danger">尚未配置</span>}
           </div>
-          <div className="text-xs text-slate-500 mt-2">
+          <div className="text-xs text-ink-faint mt-2">
             Admin 数据目录：<span className="font-mono break-all">{setup?.admin_data}</span>
           </div>
-          <div className="text-xs text-slate-500 mt-2">
+          <div className="text-xs text-ink-faint mt-2">
             Python 执行环境：
-            <span className="font-mono text-slate-300 break-all">
+            <span className="font-mono text-ink break-all">
               {setup?.resolved_python || '未找到，将回退当前进程'}
             </span>
             {setup?.resolved_python_source && (
-              <span className="ml-1 text-slate-600">({setup.resolved_python_source})</span>
+              <span className="ml-1 text-ink-faint">({setup.resolved_python_source})</span>
             )}
           </div>
         </div>
@@ -215,7 +215,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
         {/* picker */}
         <div className="rounded-xl border border-line bg-bg-card p-4">
           <div className="text-sm font-semibold mb-3">选择目录与执行环境</div>
-          <div className="text-xs text-slate-500 mb-3">
+          <div className="text-xs text-ink-faint mb-3">
             必须包含 <code>agentmain.py</code> 与 <code>memory/</code>。
           </div>
 
@@ -252,14 +252,14 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
           )}
 
           <div className="mt-4">
-            <div className="text-xs text-slate-500 mb-1">Python 解释器（可选）</div>
+            <div className="text-xs text-ink-faint mb-1">Python 解释器（可选）</div>
             <input
               value={pythonInput}
               onChange={(e) => { pythonDirtyRef.current = true; setPythonInput(e.target.value) }}
               placeholder="/path/to/python；留空则自动使用 GA 虚拟环境或本机 Python"
               className="w-full bg-bg-soft border border-line rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"
             />
-            <div className="text-xs text-slate-500 mt-1">
+            <div className="text-xs text-ink-faint mt-1">
               指定执行脚本所用的 Python 路径（留空则自动检测）。
             </div>
           </div>
@@ -345,7 +345,7 @@ function NavManagementPanel() {
           className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-line text-ink hover:bg-ink/5"
         ><RotateCcw className="h-3 w-3" aria-hidden="true" /><span>恢复默认</span></button>
       </div>
-      <div className="text-xs text-slate-500 mb-3">勾选要显示的条目，并用上下按钮调整顺序；设置入口始终保留。</div>
+      <div className="text-xs text-ink-faint mb-3">勾选要显示的条目，并用上下按钮调整顺序；设置入口始终保留。</div>
       <div className="space-y-1">
         {preferences.map((preference, index) => {
           const item = NAV_ITEMS.find((candidate) => candidate.id === preference.id)
@@ -358,9 +358,9 @@ function NavManagementPanel() {
                 onChange={(event) => update(preferences.map((entry, i) => i === index ? { ...entry, visible: event.target.checked } : entry))}
                 aria-label={`显示${item.label}`}
               />
-              <span className="flex-1 text-sm text-slate-200">{item.label}</span>
-              <button type="button" disabled={index === 0} onClick={() => move(index, -1)} className="inline-flex items-center justify-center px-1.5 py-1 text-slate-400 hover:text-slate-200 disabled:opacity-30" aria-label={`上移${item.label}`} title={`上移${item.label}`}><ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /></button>
-              <button type="button" disabled={index === preferences.length - 1} onClick={() => move(index, 1)} className="inline-flex items-center justify-center px-1.5 py-1 text-slate-400 hover:text-slate-200 disabled:opacity-30" aria-label={`下移${item.label}`} title={`下移${item.label}`}><ArrowDown className="h-3.5 w-3.5" aria-hidden="true" /></button>
+              <span className="flex-1 text-sm text-ink">{item.label}</span>
+              <button type="button" disabled={index === 0} onClick={() => move(index, -1)} className="inline-flex items-center justify-center px-1.5 py-1 text-ink-muted hover:text-ink disabled:opacity-30" aria-label={`上移${item.label}`} title={`上移${item.label}`}><ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /></button>
+              <button type="button" disabled={index === preferences.length - 1} onClick={() => move(index, 1)} className="inline-flex items-center justify-center px-1.5 py-1 text-ink-muted hover:text-ink disabled:opacity-30" aria-label={`下移${item.label}`} title={`下移${item.label}`}><ArrowDown className="h-3.5 w-3.5" aria-hidden="true" /></button>
             </div>
           )
         })}
@@ -393,7 +393,7 @@ function MyKeySyncPanel() {
   return (
     <div className="bg-bg-card border border-line rounded-xl p-4">
       <div className="font-medium mb-1">mykey 同步</div>
-      <div className="text-xs text-slate-500 mb-3">
+      <div className="text-xs text-ink-faint mb-3">
         LLM 管理页默认只提供「下载 mykey」。「上传 mykey」会用本机内容覆盖同步服务器版本、
         影响其他设备，默认隐藏；在此手动确认后才显示。
       </div>
@@ -421,9 +421,9 @@ function ChatAppearancePanel() {
   return (
     <div className="bg-bg-card border border-line rounded-xl p-4">
       <div className="font-medium mb-1">会话显示</div>
-      <div className="text-xs text-slate-500 mb-3">以桌面当前字号为默认基准（100%），按百分比缩小或放大，仅影响当前设备。</div>
+      <div className="text-xs text-ink-faint mb-3">以桌面当前字号为默认基准（100%），按百分比缩小或放大，仅影响当前设备。</div>
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-sm text-slate-500">会话字体</span>
+        <span className="text-sm text-ink-faint">会话字体</span>
         <input
           type="range"
           min={CHAT_FONT_SCALE_MIN}
@@ -448,7 +448,7 @@ function ChatAppearancePanel() {
         字体大小预览：GA 会话输出示例
       </div>
       <div className="mt-4 flex items-center gap-3 flex-wrap">
-        <span className="text-sm text-slate-500">栏目标题</span>
+        <span className="text-sm text-ink-faint">栏目标题</span>
         <input
           type="range"
           min={RAIL_TITLE_SCALE_MIN}
@@ -470,7 +470,7 @@ function ChatAppearancePanel() {
         </button>
       </div>
       <div className="mt-3 rounded-lg border border-line bg-bg-soft px-3 py-2">
-        <div className="truncate font-medium text-slate-200" style={{ fontSize: `${railTitlePercent(titleScale)}%` }}>
+        <div className="truncate font-medium text-ink" style={{ fontSize: `${railTitlePercent(titleScale)}%` }}>
           标题字号预览：会话管理栏条目标题
         </div>
       </div>
@@ -524,12 +524,12 @@ function ChatRetryPanel() {
   return (
     <div className="rounded-xl border border-line bg-bg-card p-4">
       <div className="text-sm font-semibold mb-1">实时聊天自动重试</div>
-      <div className="text-xs text-slate-500 mb-3">
+      <div className="text-xs text-ink-faint mb-3">
         遇到临时网络异常时自动重试当前请求。
       </div>
 
       <div className="flex items-center gap-4 flex-wrap">
-        <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+        <label className="inline-flex items-center gap-2 text-sm text-ink">
           <input
             type="checkbox"
             checked={!!cfg.enabled}
@@ -539,8 +539,8 @@ function ChatRetryPanel() {
           <span>{cfg.enabled ? '已开启' : '已关闭'}</span>
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="普通对话的最大自动重试次数">
-          <span className="text-slate-500">最大重试次数</span>
+        <label className="inline-flex items-center gap-2 text-sm text-ink" title="普通对话的最大自动重试次数">
+          <span className="text-ink-faint">最大重试次数</span>
           <input
             type="number"
             min={0}
@@ -552,8 +552,8 @@ function ChatRetryPanel() {
           />
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="普通对话的最大自动重试次数">
-          <span className="text-slate-500">定时任务最大重试次数</span>
+        <label className="inline-flex items-center gap-2 text-sm text-ink" title="普通对话的最大自动重试次数">
+          <span className="text-ink-faint">定时任务最大重试次数</span>
           <input
             type="number"
             min={0}
@@ -565,27 +565,27 @@ function ChatRetryPanel() {
           />
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+        <label className="inline-flex items-center gap-2 text-sm text-ink">
           重试基础间隔（秒）
           <input type="number" min={0} max={600} step="1" value={cfg.backoff_base_seconds ?? 2} onChange={(e) => updateCfg({ backoff_base_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+        <label className="inline-flex items-center gap-2 text-sm text-ink">
           退避倍率
           <input type="number" min={1} max={10} step="0.5" value={cfg.backoff_factor ?? 2} onChange={(e) => updateCfg({ backoff_factor: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+        <label className="inline-flex items-center gap-2 text-sm text-ink">
           单次最长等待（秒）
           <input type="number" min={0} max={600} step="1" value={cfg.backoff_max_seconds ?? 60} onChange={(e) => updateCfg({ backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="无人值守任务的起始重试间隔">
+        <label className="inline-flex items-center gap-2 text-sm text-ink" title="无人值守任务的起始重试间隔">
           定时基础间隔（秒）
           <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_base_seconds ?? 5} onChange={(e) => updateCfg({ scheduled_backoff_base_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-slate-300" title="无人值守任务的单次最长等待，默认 10 分钟">
+        <label className="inline-flex items-center gap-2 text-sm text-ink" title="无人值守任务的单次最长等待，默认 10 分钟">
           定时单次最长等待（秒）
           <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_max_seconds ?? 600} onChange={(e) => updateCfg({ scheduled_backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
         </label>
@@ -600,7 +600,7 @@ function ChatRetryPanel() {
 
         {msg && <span className={`text-xs ${msg.startsWith('保存失败') ? 'text-status-danger' : 'text-status-success'}`}>{msg}</span>}
       </div>
-      <div className="text-[11px] text-slate-600 mt-2">
+      <div className="text-[11px] text-ink-faint mt-2">
         达到重试上限后停止并保留提示。
       </div>
     </div>
@@ -642,7 +642,7 @@ function NotifyPanel() {
   return (
     <div className="rounded-xl border border-line bg-bg-card p-4">
       <div className="text-sm font-semibold mb-1">桌面通知</div>
-      <div className="text-xs text-slate-500 mb-3">
+      <div className="text-xs text-ink-faint mb-3">
         会话完成、有结果或需要互动时显示主题提醒，不展示具体输出。仅在窗口失焦/最小化时触发，不锁住主窗口。
       </div>
 
@@ -662,11 +662,11 @@ function NotifyPanel() {
           </button>
         )}
         {backendName && (
-          <span className="text-xs text-slate-500">通道：{backendName}</span>
+          <span className="text-xs text-ink-faint">通道：{backendName}</span>
         )}
       </div>
 
-      {testing && <div className="mt-2 text-xs text-slate-400">{testing}</div>}
+      {testing && <div className="mt-2 text-xs text-ink-muted">{testing}</div>}
 
       {unsupported && (
         <div className="mt-2 text-xs text-status-warning">

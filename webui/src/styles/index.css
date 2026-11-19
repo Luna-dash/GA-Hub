@@ -100,24 +100,6 @@ code, pre, .font-mono {
   }
 }
 
-/* ─── Global text remap ────────────────────────────────────────
-   The codebase heavily uses slate-* utilities tuned for dark UI.
-   Remap them globally to warm dark text so paper theme reads well
-   without touching 100+ components.
-*/
-.text-slate-50,
-.text-slate-100,
-.text-slate-200 { color: var(--c-text); }
-.text-slate-300 { color: var(--c-text); }
-.text-slate-400 { color: var(--c-text-muted); }
-.text-slate-500 { color: var(--c-text-faint); }
-.text-slate-600 { color: var(--c-text-faint); }
-
-.hover\:text-slate-100:hover,
-.hover\:text-slate-200:hover { color: var(--c-text); }
-.hover\:text-slate-300:hover { color: var(--c-text); }
-.placeholder\:text-slate-500::placeholder { color: var(--c-text-faint); }
-
 /* white/black overlay utilities */
 .bg-white\/5  { background-color: var(--c-overlay-soft); }
 .bg-white\/10 { background-color: var(--c-overlay-soft-strong); }

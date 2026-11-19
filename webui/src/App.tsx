@@ -15,7 +15,7 @@ import { queryKeys } from '@/queries/queryKeys'
 import { RuntimeEffects } from '@/runtime/RuntimeEffects'
 
 const routeFallback = (
-  <div className="h-full flex items-center justify-center text-slate-500 text-sm">载入中…</div>
+  <div className="h-full flex items-center justify-center text-ink-faint text-sm">载入中…</div>
 )
 
 // Keep route pages out of the startup bundle. The shell (stores, sockets,
@@ -70,10 +70,10 @@ export default function App() {
       <div className="flex h-screen w-screen items-center justify-center bg-bg">
         <div className="max-w-md text-center space-y-4 px-6">
           <div className="text-status-danger text-base font-medium">无法连接后端</div>
-          <div className="text-slate-400 text-sm break-all whitespace-pre-wrap font-mono bg-bg-card border border-line rounded-lg p-3">
+          <div className="text-ink-muted text-sm break-all whitespace-pre-wrap font-mono bg-bg-card border border-line rounded-lg p-3">
             {msg}
           </div>
-          <div className="text-slate-500 text-xs">
+          <div className="text-ink-faint text-xs">
             已尝试 {failureCount} 次。后端可能仍在启动，或某个路由抛了异常。
           </div>
           <button
@@ -89,9 +89,9 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center text-slate-500 text-sm">
+      <div className="flex h-screen w-screen items-center justify-center text-ink-faint text-sm">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-6 h-6 rounded-full border-2 border-slate-600 border-t-accent animate-spin" />
+          <div className="w-6 h-6 rounded-full border-2 border-line border-t-accent animate-spin" />
           <div>正在连接后端…</div>
         </div>
       </div>
@@ -119,7 +119,7 @@ export default function App() {
       <SidebarNav />
       <main className="flex-1 min-w-0 bg-transparent">
         <ErrorBoundary>
-          <Suspense fallback={<div className="h-full flex items-center justify-center text-slate-500 text-sm">载入中…</div>}>
+          <Suspense fallback={<div className="h-full flex items-center justify-center text-ink-faint text-sm">载入中…</div>}>
             <Routes>
               <Route path="/" element={<Navigate to="/chat" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />

@@ -19,7 +19,7 @@ export function MarkdownEditor({ value, onChange, height, readOnly }: Props) {
   return (
     <div className="rounded-lg border border-line overflow-hidden flex flex-col h-full">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-line bg-bg-soft text-xs">
-        <div className="text-slate-400">
+        <div className="text-ink-muted">
           {readOnly ? '只读' : 'Markdown 编辑'}
         </div>
         <div className="flex gap-1">
@@ -27,13 +27,13 @@ export function MarkdownEditor({ value, onChange, height, readOnly }: Props) {
             type="button"
             aria-pressed={!preview}
             onClick={() => setPreview(false)}
-            className={'px-2 py-1 rounded ' + (!preview ? 'bg-accent-soft text-accent' : 'text-slate-400 hover:text-slate-200')}
+            className={'px-2 py-1 rounded ' + (!preview ? 'bg-accent-soft text-accent' : 'text-ink-muted hover:text-ink')}
           >源码</button>
           <button
             type="button"
             aria-pressed={preview}
             onClick={() => setPreview(true)}
-            className={'px-2 py-1 rounded ' + (preview ? 'bg-accent-soft text-accent' : 'text-slate-400 hover:text-slate-200')}
+            className={'px-2 py-1 rounded ' + (preview ? 'bg-accent-soft text-accent' : 'text-ink-muted hover:text-ink')}
           >预览</button>
         </div>
       </div>

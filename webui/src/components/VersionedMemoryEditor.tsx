@@ -83,7 +83,7 @@ export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSav
   return (
     <div className="h-full flex flex-col space-y-2">
       <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0 text-xs text-slate-500 font-mono truncate">{label}</div>
+        <div className="min-w-0 text-xs text-ink-faint font-mono truncate">{label}</div>
         <div className="flex items-center gap-2 shrink-0">
           {remoteChanged && (
             <>

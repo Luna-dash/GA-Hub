@@ -80,7 +80,7 @@ export function RawView({ data, onWrite, onDirtyChange }: {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-2 text-slate-400">
+        <div className="flex items-center gap-2 text-ink-muted">
           <span className="font-mono break-all">{data.path}</span>
           {dirty && <span className="text-status-warning">(未保存)</span>}
         </div>
@@ -118,7 +118,7 @@ export function RawView({ data, onWrite, onDirtyChange }: {
 
       <div className="rounded-lg border border-line bg-bg-card overflow-hidden flex max-h-[70vh]">
         <div aria-hidden="true" className="select-none shrink-0 overflow-hidden bg-bg-soft border-r border-line">
-          <pre ref={lineNumbersRef} className="text-right pr-2 pl-3 py-3 text-xs font-mono leading-6 text-slate-600">
+          <pre ref={lineNumbersRef} className="text-right pr-2 pl-3 py-3 text-xs font-mono leading-6 text-ink-faint">
             {lines.map((_, i) => <div key={i} style={{ minWidth: `${pad}ch` }}>{i + 1}</div>)}
           </pre>
         </div>
@@ -178,32 +178,32 @@ function BackupDrawer({ onClose, onRestored }: {
         <header className="px-5 py-3 border-b border-line flex items-baseline justify-between">
           <div>
             <h3 className="text-base font-semibold">备份历史</h3>
-            <p className="text-xs text-slate-500 mt-0.5">保留最近 10 份本地备份</p>
+            <p className="text-xs text-ink-faint mt-0.5">保留最近 10 份本地备份</p>
           </div>
-          <CloseIconButton label="关闭备份历史" variant="ghost" iconSize={16} onClick={onClose} className="text-slate-400 hover:text-slate-200" />
+          <CloseIconButton label="关闭备份历史" variant="ghost" iconSize={16} onClick={onClose} className="text-ink-muted hover:text-ink" />
         </header>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {isLoading && <div className="text-slate-500 text-sm p-4">载入中…</div>}
+          {isLoading && <div className="text-ink-faint text-sm p-4">载入中…</div>}
           {!isLoading && backups.length === 0 && (
-            <div className="text-slate-500 text-sm p-6 text-center">尚无备份</div>
+            <div className="text-ink-faint text-sm p-6 text-center">尚无备份</div>
           )}
           {backups.map((b) => (
             <div key={b.name} className="rounded-lg border border-line bg-bg-card p-3">
               <div className="flex items-baseline justify-between gap-2 mb-1">
-                <div className="text-xs text-slate-400 font-mono truncate" title={b.name}>{b.name}</div>
+                <div className="text-xs text-ink-muted font-mono truncate" title={b.name}>{b.name}</div>
                 <button onClick={() => restore(b.name)} disabled={busy !== null}
                   className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-accent text-white hover:brightness-110 disabled:opacity-40">
                   <RewindIcon size={12} />
                   <span>{busy === b.name ? '回滚中…' : '回滚'}</span>
                 </button>
               </div>
-              <div className="text-[10px] text-slate-500">
+              <div className="text-[10px] text-ink-faint">
                 {formatDateTime(b.mtime)} · {(b.size / 1024).toFixed(1)} KB
               </div>
             </div>
           ))}
         </div>
-        <footer className="border-t border-line px-4 py-2 text-xs text-slate-500 flex items-center justify-end">
+        <footer className="border-t border-line px-4 py-2 text-xs text-ink-faint flex items-center justify-end">
           <button onClick={() => refetch()} className="inline-flex items-center gap-1 text-accent hover:underline"><RefreshIcon size={12} /><span>刷新</span></button>
         </footer>
     </ModalOverlay>

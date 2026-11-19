@@ -120,7 +120,7 @@ function memoryWriteError(error: unknown): void {
 function GlobalMem({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.global, queryFn: api.globalMem })
-  if (isLoading || !data) return <div className="text-slate-500 text-sm">载入中…</div>
+  if (isLoading || !data) return <div className="text-ink-faint text-sm">载入中…</div>
   return (
     <VersionedMemoryEditor
       label="memory/global_mem.txt"
@@ -144,7 +144,7 @@ function GlobalMem({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void 
 function Insight({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.insight, queryFn: api.insight })
-  if (isLoading || !data) return <div className="text-slate-500 text-sm">载入中…</div>
+  if (isLoading || !data) return <div className="text-ink-faint text-sm">载入中…</div>
   return (
     <VersionedMemoryEditor
       label="memory/global_mem_insight.txt"
@@ -197,18 +197,18 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
                 className={`w-full text-left px-3 py-2 text-sm border-b border-line/50 ${active === s.name ? 'bg-accent-soft text-accent' : 'text-ink hover:bg-ink/5'}`}
               >
                 <div className="truncate">{s.name}</div>
-                <div className="text-[10px] text-slate-500">{(s.size / 1024).toFixed(1)} KB</div>
+                <div className="text-[10px] text-ink-faint">{(s.size / 1024).toFixed(1)} KB</div>
               </button>
             </li>
           ))}
           {visible.length === 0 && (
-            <li className="p-3 text-slate-500 text-sm">{sops.length === 0 ? '无' : '无匹配 SOP'}</li>
+            <li className="p-3 text-ink-faint text-sm">{sops.length === 0 ? '无' : '无匹配 SOP'}</li>
           )}
         </ul>
       </div>
 
       <div className="h-full min-h-0">
-        {!active && <div className="text-slate-500 text-sm">选择左侧文档</div>}
+        {!active && <div className="text-ink-faint text-sm">选择左侧文档</div>}
         {active && cur && (
           <VersionedMemoryEditor
             key={active}
@@ -242,7 +242,7 @@ function SkillList() {
   return (
     <div className="h-full grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] gap-4 p-6">
       <div className="rounded-lg border border-line bg-bg-card overflow-hidden flex flex-col h-full">
-        <div className="px-3 py-2 border-b border-line text-xs text-slate-400">Skill 脚本</div>
+        <div className="px-3 py-2 border-b border-line text-xs text-ink-muted">Skill 脚本</div>
         <ul className="flex-1 min-h-0 overflow-y-auto">
           {skills.map((s) => (
             <li key={s.path}>
@@ -251,20 +251,20 @@ function SkillList() {
                 className={`w-full text-left px-3 py-2 text-sm border-b border-line/50 ${active === s.path ? 'bg-accent-soft text-accent' : 'text-ink hover:bg-ink/5'}`}
               >
                 <div className="truncate">{s.path}</div>
-                <div className="text-[10px] text-slate-500">{(s.size / 1024).toFixed(1)} KB</div>
+                <div className="text-[10px] text-ink-faint">{(s.size / 1024).toFixed(1)} KB</div>
               </button>
             </li>
           ))}
-          {skills.length === 0 && <li className="p-3 text-slate-500 text-sm">无</li>}
+          {skills.length === 0 && <li className="p-3 text-ink-faint text-sm">无</li>}
         </ul>
       </div>
 
       <div className="h-full flex flex-col">
-        {!active && <div className="text-slate-500 text-sm">选择左侧脚本</div>}
+        {!active && <div className="text-ink-faint text-sm">选择左侧脚本</div>}
         {active && cur && (
           <div className="flex flex-col h-full space-y-2">
-            <div className="text-xs text-slate-500 font-mono">memory/skill/{active} (只读)</div>
-            <pre className="flex-1 rounded-lg border border-line bg-bg-card p-4 text-sm text-slate-300 font-mono overflow-auto">
+            <div className="text-xs text-ink-faint font-mono">memory/skill/{active} (只读)</div>
+            <pre className="flex-1 rounded-lg border border-line bg-bg-card p-4 text-sm text-ink font-mono overflow-auto">
               {cur.content}
             </pre>
           </div>

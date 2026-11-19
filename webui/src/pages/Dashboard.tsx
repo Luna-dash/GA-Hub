@@ -25,7 +25,7 @@ const verdictTone = {
   good: 'border-status-success-line bg-status-success-soft text-status-success',
   busy: 'border-status-info-line bg-status-info-soft text-status-info',
   attention: 'border-status-warning-line bg-status-warning-soft text-status-warning',
-  unknown: 'border-slate-500/30 bg-slate-500/5 text-slate-300',
+  unknown: 'border-slate-500/30 bg-slate-500/5 text-ink',
 }
 
 export default function Dashboard() {
@@ -53,7 +53,7 @@ export default function Dashboard() {
     <PageShell
       title="状态面板"
       actions={updatedAt ? (
-        <div className="flex items-center gap-2 text-[11px] text-slate-500 tabular-nums">
+        <div className="flex items-center gap-2 text-[11px] text-ink-faint tabular-nums">
           <span className={`h-1.5 w-1.5 rounded-full ${refreshing ? 'bg-status-info animate-pulse' : 'bg-status-success'}`} />
           {refreshing ? '正在更新' : `${clock.format(updatedAt)} 更新`}
         </div>
@@ -81,10 +81,10 @@ export default function Dashboard() {
           {active.length > 0 ? (
             <div className="flex flex-wrap gap-2">{active.map((service) => (
               <ServiceSurface key={service.id} service={service} className="rounded-lg border border-status-info-line bg-status-info-soft px-3 py-2">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-status-info animate-pulse mr-2 align-middle" /><span className="text-sm text-slate-200">{service.name}</span><span className="ml-2 text-xs text-slate-500">{service.summary}</span>
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-status-info animate-pulse mr-2 align-middle" /><span className="text-sm text-ink">{service.name}</span><span className="ml-2 text-xs text-ink-faint">{service.summary}</span>
               </ServiceSurface>
             ))}</div>
-          ) : <p className="rounded-lg border border-line/70 bg-bg-card/40 px-3 py-3 text-xs text-slate-500">当前没有后台任务运行。</p>}
+          ) : <p className="rounded-lg border border-line/70 bg-bg-card/40 px-3 py-3 text-xs text-ink-faint">当前没有后台任务运行。</p>}
         </section>
 
         <section>
@@ -92,7 +92,7 @@ export default function Dashboard() {
           <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-2">
             {services.map((service) => <ServiceRow key={service.id} service={service} />)}
           </div>
-          {!panel.isLoading && services.length === 0 && !panel.isError && <p className="text-xs text-slate-500">尚未返回模块信息。</p>}
+          {!panel.isLoading && services.length === 0 && !panel.isError && <p className="text-xs text-ink-faint">尚未返回模块信息。</p>}
         </section>
 
         {tokens.data?.available && totals && (
@@ -114,7 +114,7 @@ export default function Dashboard() {
 }
 
 function SectionTitle({ title, hint, link }: { title: string; hint: string; link?: string }) {
-  return <div className="flex items-end justify-between gap-3 mb-3"><div><h2 className="text-sm font-medium text-slate-200">{title}</h2><p className="text-[11px] text-slate-500 mt-0.5">{hint}</p></div>{link && <Link to={link} className="text-xs text-accent hover:text-accent/80 shrink-0">查看详情 →</Link>}</div>
+  return <div className="flex items-end justify-between gap-3 mb-3"><div><h2 className="text-sm font-medium text-ink">{title}</h2><p className="text-[11px] text-ink-faint mt-0.5">{hint}</p></div>{link && <Link to={link} className="text-xs text-accent hover:text-accent/80 shrink-0">查看详情 →</Link>}</div>
 }
 
 function ActionRow({ service }: { service: ServicePanelItem }) {
@@ -128,9 +128,9 @@ function ServiceRow({ service }: { service: ServicePanelItem }) {
   const dot = needsAttention ? 'bg-status-warning' : service.activity === 'active' ? 'bg-status-info' : service.activity === 'standby' ? 'bg-status-success' : 'bg-slate-600'
   return (
     <ServiceSurface service={service} className={`rounded-lg border bg-bg-card px-3 py-3 min-w-0 ${needsAttention ? 'border-status-warning-line' : 'border-line'}`}>
-      <div className="flex items-center justify-between gap-3"><span className="flex items-center min-w-0"><span className={`h-2 w-2 rounded-full shrink-0 mr-2 ${dot}`} /><b className="text-sm font-medium text-slate-200 truncate">{service.name}</b></span><span className={`text-[11px] shrink-0 ${needsAttention ? 'text-status-warning' : 'text-slate-500'}`}>{serviceActivityLabel(service)}</span></div>
-      <p className="mt-1 text-xs text-slate-500 truncate" title={service.error || service.summary}>{service.error || service.summary}</p>
-      {metrics.length > 0 && <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">{metrics.map(([key, value]) => <span key={key} className="text-[10px] text-slate-600">{key} <b className="font-mono font-normal text-slate-400">{value === true ? '是' : String(value)}</b></span>)}</div>}
+      <div className="flex items-center justify-between gap-3"><span className="flex items-center min-w-0"><span className={`h-2 w-2 rounded-full shrink-0 mr-2 ${dot}`} /><b className="text-sm font-medium text-ink truncate">{service.name}</b></span><span className={`text-[11px] shrink-0 ${needsAttention ? 'text-status-warning' : 'text-ink-faint'}`}>{serviceActivityLabel(service)}</span></div>
+      <p className="mt-1 text-xs text-ink-faint truncate" title={service.error || service.summary}>{service.error || service.summary}</p>
+      {metrics.length > 0 && <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">{metrics.map(([key, value]) => <span key={key} className="text-[10px] text-ink-faint">{key} <b className="font-mono font-normal text-ink-muted">{value === true ? '是' : String(value)}</b></span>)}</div>}
     </ServiceSurface>
   )
 }

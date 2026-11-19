@@ -42,10 +42,10 @@ export function CronPreview({ expr }: { expr: string }) {
   }
 
   return (
-    <div className="mt-1.5 text-xs text-slate-400 space-y-0.5">
+    <div className="mt-1.5 text-xs text-ink-muted space-y-0.5">
       <div className="text-status-success">✓ {result.desc}</div>
       {result.next.length > 0 && (
-        <div className="text-slate-500">
+        <div className="text-ink-faint">
           下次触发：{result.next.map(formatLocal).join(' · ')}
         </div>
       )}
@@ -62,7 +62,7 @@ export function CronCardLine({ expr }: { expr: string }) {
   return (
     <div>
       <span className="font-mono text-xs">{expr}</span>
-      {next && <span className="text-xs text-slate-500 ml-2">→ {formatLocal(next)}</span>}
+      {next && <span className="text-xs text-ink-faint ml-2">→ {formatLocal(next)}</span>}
     </div>
   )
 }

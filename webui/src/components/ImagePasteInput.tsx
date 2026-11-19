@@ -362,7 +362,7 @@ export function ImagePasteInput({
                 variant="badge"
                 iconSize={11}
                 onClick={() => removeAttachment(a.file_id)}
-                className="absolute right-1 top-1 border-line bg-bg/90 text-slate-300 hover:border-status-danger-line hover:text-status-danger"
+                className="absolute right-1 top-1 border-line bg-bg/90 text-ink hover:border-status-danger-line hover:text-status-danger"
               />
             </div>
           ) : (
@@ -372,13 +372,13 @@ export function ImagePasteInput({
               title={`${a.name} · ${a.source === 'local_ref' ? '本地引用' : '已保存'} · ${a.size} 字节\n${a.path}`}
               data-attachment-kind="file"
             >
-              <span className="min-w-0 break-all text-xs leading-4 text-slate-200">{a.name}{a.source === 'local_ref' && <small className="ml-1 text-ink-muted">本地引用</small>}</span>
+              <span className="min-w-0 break-all text-xs leading-4 text-ink">{a.name}{a.source === 'local_ref' && <small className="ml-1 text-ink-muted">本地引用</small>}</span>
               <CloseIconButton
                 label={`移除 ${a.name}`}
                 variant="badge"
                 iconSize={11}
                 onClick={() => removeAttachment(a.file_id)}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 border-transparent bg-transparent text-slate-400 hover:bg-bg-card hover:text-status-danger"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 border-transparent bg-transparent text-ink-muted hover:bg-bg-card hover:text-status-danger"
               />
             </div>
           ))}
@@ -391,8 +391,8 @@ export function ImagePasteInput({
             >
               {item.preview ? (
                 <img src={item.preview} alt={item.file.name} className={clsx('h-full w-full rounded-lg border object-cover opacity-60', item.error ? 'border-status-danger-line' : 'border-line')} />
-              ) : <span className="min-w-0 break-all text-xs leading-4 text-slate-200">{item.file.name}</span>}
-              <span className={clsx('flex shrink-0 items-center text-xs', item.preview ? 'absolute bottom-0 left-0 right-0 justify-center rounded-b-lg bg-bg/90 py-0.5' : 'order-first', item.error ? 'text-status-danger' : 'text-slate-400')}>
+              ) : <span className="min-w-0 break-all text-xs leading-4 text-ink">{item.file.name}</span>}
+              <span className={clsx('flex shrink-0 items-center text-xs', item.preview ? 'absolute bottom-0 left-0 right-0 justify-center rounded-b-lg bg-bg/90 py-0.5' : 'order-first', item.error ? 'text-status-danger' : 'text-ink-muted')}>
                 {item.error ? (
                   <button type="button" disabled={disabled} onClick={() => { void runUpload(item) }} aria-label={`重试 ${item.file.name}`} title={item.error} className="flex items-center gap-1 disabled:opacity-40">
                     <RotateCw className="h-3.5 w-3.5" /><span>重试</span>
@@ -405,7 +405,7 @@ export function ImagePasteInput({
                 disabled={disabled}
                 aria-label={`移除 ${item.file.name}`}
                 title={`移除 ${item.file.name}`}
-                className={clsx('absolute flex h-5 w-5 items-center justify-center rounded-full bg-bg/90 text-slate-300 hover:text-status-danger disabled:opacity-40', item.preview ? 'right-1 top-1' : 'right-1.5 top-1/2 -translate-y-1/2')}
+                className={clsx('absolute flex h-5 w-5 items-center justify-center rounded-full bg-bg/90 text-ink hover:text-status-danger disabled:opacity-40', item.preview ? 'right-1 top-1' : 'right-1.5 top-1/2 -translate-y-1/2')}
               ><X className="h-3 w-3" /></button>
             </div>
           ))}
@@ -433,12 +433,12 @@ export function ImagePasteInput({
               className={clsx(
                 'flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition',
                 index === slashActiveIndex
-                  ? 'bg-accent/15 text-slate-100'
+                  ? 'bg-accent/15 text-ink'
                   : 'text-ink hover:bg-ink/5',
               )}
             >
               <span className="w-20 shrink-0 font-mono text-sm font-semibold text-accent">{command.name}</span>
-              <span className="text-xs text-slate-400">{command.description}</span>
+              <span className="text-xs text-ink-muted">{command.description}</span>
             </button>
           ))}
         </div>
@@ -547,7 +547,7 @@ export function ImagePasteInput({
           aria-controls={slashCommands.length > 0 ? 'slash-command-menu' : undefined}
           aria-activedescendant={slashCommands.length > 0 ? `slash-command-${slashActiveIndex}` : undefined}
           wrap="soft"
-          className="flex-1 min-w-0 w-0 bg-transparent resize-none outline-none text-slate-200 placeholder:text-slate-500 px-3 py-2 max-h-60 leading-7 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+          className="flex-1 min-w-0 w-0 bg-transparent resize-none outline-none text-ink placeholder:text-ink-faint px-3 py-2 max-h-60 leading-7 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
         />
         {/* Center the right controls on the last 44px of the textarea. */}
         {onSchedule && (
@@ -703,7 +703,7 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
 
       <div className="max-h-80 overflow-y-auto p-3 space-y-3 text-sm">
         {turns.length === 0 && (
-          <div className="text-xs text-slate-400 leading-relaxed">
+          <div className="text-xs text-ink-muted leading-relaxed">
             可以问：当前做到哪一步？为什么要这样做？有没有风险？
           </div>
         )}
@@ -712,7 +712,7 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
             <div className="ml-auto max-w-[85%] rounded-xl bg-status-warning-soft border border-status-warning-line px-3 py-2 text-status-warning whitespace-pre-wrap break-words">
               {t.q}
             </div>
-            <div className="max-w-[92%] rounded-xl bg-bg-soft border border-line px-3 py-2 text-slate-200 whitespace-pre-wrap break-words">
+            <div className="max-w-[92%] rounded-xl bg-bg-soft border border-line px-3 py-2 text-ink whitespace-pre-wrap break-words">
               {t.error ? <span className="text-status-danger">{t.error}</span> : (t.a ?? '思考中…')}
             </div>
           </div>

@@ -375,8 +375,8 @@ export default function Conversations() {
               )}
               {total > limit && (
                 <div className={collapsed
-                  ? 'sticky bottom-0 z-10 flex flex-col items-center gap-1 border-t border-line/60 bg-bg-soft py-2 text-xs text-slate-400'
-                  : 'sticky bottom-0 z-10 p-3 flex items-center justify-between border-t border-line/60 bg-bg-soft text-xs text-slate-400'}
+                  ? 'sticky bottom-0 z-10 flex flex-col items-center gap-1 border-t border-line/60 bg-bg-soft py-2 text-xs text-ink-muted'
+                  : 'sticky bottom-0 z-10 p-3 flex items-center justify-between border-t border-line/60 bg-bg-soft text-xs text-ink-muted'}
                 >
                   <button
                     aria-label="上一页"
@@ -418,7 +418,7 @@ export default function Conversations() {
         </ConversationIndexRail>
 
         <div ref={detailScrollRef} className="min-w-0 flex-1 overflow-y-auto [overflow-anchor:none]">
-          {!active && <div className="h-full flex items-center justify-center text-slate-500 text-sm">选择左侧会话查看详情</div>}
+          {!active && <div className="h-full flex items-center justify-center text-ink-faint text-sm">选择左侧会话查看详情</div>}
           {active && detailLoading && !detail && (
             <div role="status" className="h-full flex items-center justify-center text-ink-muted text-sm">正在读取会话详情…</div>
           )}
@@ -448,7 +448,7 @@ export default function Conversations() {
                   <h2 className="min-w-0 truncate text-lg font-semibold" title={conversationDisplayTitle(detail)}>
                     {conversationDisplayTitle(detail)}
                   </h2>
-                  <span className="shrink-0 text-xs text-slate-500">
+                  <span className="shrink-0 text-xs text-ink-faint">
                     {detail.messages?.length || 0} 条消息 · {rounds.length} 轮
                   </span>
                 </div>
@@ -556,7 +556,7 @@ function RoundView({
   setOpenConclusion: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
 }) {
   if (rounds.length === 0) {
-    return <div className="text-slate-500 text-sm py-8 text-center border border-dashed border-line rounded-xl">该会话暂无消息</div>
+    return <div className="text-ink-faint text-sm py-8 text-center border border-dashed border-line rounded-xl">该会话暂无消息</div>
   }
 
   return (
@@ -603,10 +603,10 @@ function RoundView({
 
                     {isProcessOpen && hasTurnSummaries && (
                       <div className="mb-4 space-y-1.5">
-                        <div className="text-[11px] tracking-wider text-slate-500">过程摘要</div>
+                        <div className="text-[11px] tracking-wider text-ink-faint">过程摘要</div>
                         {r.turnSummaries.map((ts, idx) => (
-                          <div key={`${roundKey}-ts-${idx}`} className="rounded-lg border border-line/70 bg-bg-soft/50 px-3 py-2 text-sm leading-5 text-slate-200">
-                            <span className="mr-2 text-[11px] uppercase tracking-wider text-slate-500">Turn {ts.turn}</span>
+                          <div key={`${roundKey}-ts-${idx}`} className="rounded-lg border border-line/70 bg-bg-soft/50 px-3 py-2 text-sm leading-5 text-ink">
+                            <span className="mr-2 text-[11px] uppercase tracking-wider text-ink-faint">Turn {ts.turn}</span>
                             <span className="whitespace-pre-wrap">{ts.summary}</span>
                           </div>
                         ))}
@@ -615,7 +615,7 @@ function RoundView({
 
                     {detailText && (
                       <div className={isProcessOpen && hasTurnSummaries ? 'border-t border-line/70 pt-3' : ''}>
-                        <div className="mb-2 text-[11px] tracking-wider text-slate-500">最终回答</div>
+                        <div className="mb-2 text-[11px] tracking-wider text-ink-faint">最终回答</div>
                         <MessageContent content={detailText} format="markdown" />
                       </div>
                     )}
@@ -672,7 +672,7 @@ function FlatView({ messages, scrollRef }: { messages: Msg[]; scrollRef: RefObje
 function MessageBlock({ m, label, tone }: { m: Msg; label: string; tone: 'user' | 'assistant' | 'other' }) {
   return (
     <div className={`rounded-xl border ${bubbleTone(tone, 'card').surfaceClass} p-3`}>
-      <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">{label}</div>
+      <div className="text-xs uppercase tracking-wider text-ink-faint mb-1">{label}</div>
       {/* User prompts are literal input everywhere (live chat, round view);
           the flat view previously markdown-rendered them — converge on text. */}
       <MessageContent
@@ -848,7 +848,7 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
       className={`block w-full px-3 py-2.5 text-left border-b border-line/60 group ${active ? 'bg-accent-soft' : 'hover:bg-ink/5'}`}
     >
       <div className="flex items-baseline justify-between gap-2">
-        <div className="text-sm text-slate-200 truncate font-medium" style={titleStyle} title={title}>
+        <div className="text-sm text-ink truncate font-medium" style={titleStyle} title={title}>
           {title}
         </div>
         <span
@@ -858,8 +858,8 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
           {meta.label}
         </span>
       </div>
-      <div className="text-xs text-slate-500 truncate mt-0.5">{previewText(c.last_user_preview || '')}</div>
-      <div className="text-[10px] text-slate-600 mt-0.5" title={CONVERSATION_COUNTS_HELP}>{conversationCountsText(c)}{lastActive ? ` · 最后活动 ${lastActive}` : ''}</div>
+      <div className="text-xs text-ink-faint truncate mt-0.5">{previewText(c.last_user_preview || '')}</div>
+      <div className="text-[10px] text-ink-faint mt-0.5" title={CONVERSATION_COUNTS_HELP}>{conversationCountsText(c)}{lastActive ? ` · 最后活动 ${lastActive}` : ''}</div>
     </button>
   )
 }

@@ -757,7 +757,7 @@ export default function LiveChat() {
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <label
               htmlFor="current-project-select"
-              className="shrink-0 text-xs font-medium text-slate-500"
+              className="shrink-0 text-xs font-medium text-ink-faint"
             >
               绑定项目：
             </label>
@@ -782,7 +782,7 @@ export default function LiveChat() {
                 type="button"
                 onClick={() => { void deleteCurrentProject() }}
                 disabled={!session?.project_path || projectSaving || !projects.some((item) => item.path === session.project_path)}
-                className="project-select-delete -ml-px inline-flex h-[35px] w-9 shrink-0 items-center justify-center border border-line text-slate-500 hover:z-10 hover:border-status-danger-line hover:bg-status-danger-soft hover:text-status-danger disabled:cursor-not-allowed disabled:opacity-35"
+                className="project-select-delete -ml-px inline-flex h-[35px] w-9 shrink-0 items-center justify-center border border-line text-ink-faint hover:z-10 hover:border-status-danger-line hover:bg-status-danger-soft hover:text-status-danger disabled:cursor-not-allowed disabled:opacity-35"
                 title="移除项目绑定"
                 aria-label="删除当前项目索引"
               >
@@ -790,7 +790,7 @@ export default function LiveChat() {
               </button>
             </div>
             <span
-              className="min-w-0 flex-1 truncate text-xs text-slate-500"
+              className="min-w-0 flex-1 truncate text-xs text-ink-faint"
               title={activeProjectPath || '当前会话未绑定项目'}
               aria-label="当前项目路径"
             >
