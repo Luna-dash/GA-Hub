@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { expect, it, vi } from 'vitest'
 import AntiChat from './AntiChat'
@@ -72,6 +72,7 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
   const runs: Record<string, unknown>[] = []
   const posted: Record<string, unknown>[] = []
   let created = false
+  let catalogUpdated = false
   const other = { id: 'two', title: 'Other session', project: 'other', workspace: 'D:/other' }
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     const body = init?.body && JSON.parse(String(init.body))
@@ -90,6 +91,7 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
       { id: 'gemini-4-hydrogen-low', display_name: 'Gemini 4 Hydrogen (Low)' },
       { id: 'alternate-medium', display_name: 'Alternate (Medium)' },
       { id: 'alternate-low', display_name: 'Alternate (Low)' },
+      ...(catalogUpdated ? [{ id: 'gemini-4-neon-xhigh', display_name: 'Gemini 4 Neon (XHigh)' }] : []),
     ] })
     if (path === '/api/file-transfer/reply') return { ok: true, status: 204 }
     if (path === `${base}/one/runs`) {
@@ -104,7 +106,7 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     }
     throw new Error(`Unexpected request: ${path}`)
   }))
-  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
   const host = document.createElement('div')
   document.body.append(host)
   const root = createRoot(host)
@@ -150,6 +152,21 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     await choose('模型', 'Alternate')
     expect(control('思考等级').textContent).toContain('思考：低')
     await choose('思考等级', '中')
+    if (outcome === 'success') {
+      await act(async () => {
+        focusManager.setFocused(false)
+        catalogUpdated = true
+        cache.setQueryData(['anti-models'], cache.getQueryData(['anti-models']), { updatedAt: Date.now() - 61_000 })
+        focusManager.setFocused(true)
+      })
+      await wait(() => expect(cache.getQueryData(['anti-models'])).toMatchObject({
+        items: expect.arrayContaining([expect.objectContaining({ id: 'gemini-4-neon-xhigh' })]),
+      }))
+      expect(control('模型').textContent).toContain('Alternate')
+      expect(control('思考等级').textContent).toContain('思考：中')
+      await choose('模型', 'Gemini 4 Neon')
+      expect(control('思考等级').textContent).toContain('思考：极高')
+    }
     const input = host.querySelector('textarea')!
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'Read the project')
@@ -165,7 +182,10 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
       }
     })
     expect(posted).toEqual([{ project: 'demo' }, {
-      prompt: 'Read the project', model: 'alternate-medium', effort: 'medium', operation: expect.any(String),
+      prompt: 'Read the project',
+      model: outcome === 'success' ? 'gemini-4-neon-xhigh' : 'alternate-medium',
+      effort: outcome === 'success' ? 'xhigh' : 'medium',
+      operation: expect.any(String),
     }])
     const toDocument = Array.from(host.querySelectorAll('button')).find(button => button.textContent === '转成文档')
     const saved = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/api/file-transfer/reply'))
@@ -205,6 +225,7 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
   } finally {
     await act(async () => root.unmount())
     cache.clear()
+    focusManager.setFocused(undefined)
     host.remove()
     vi.unstubAllGlobals()
   }

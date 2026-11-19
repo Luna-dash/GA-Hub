@@ -179,8 +179,15 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
   const [preferredEffort, setEffort] = useState(DEFAULT_EFFORT)
   const transcript = useRef<HTMLDivElement>(null)
   const followTranscript = useRef(true)
-  const models = useQuery({ queryKey: ['anti-models'], queryFn: ({ signal }) => request<Models>('/api/anti/models', signal),
-    staleTime: 5 * 60 * 1000, retry: false })
+  const models = useQuery({
+    queryKey: ['anti-models'],
+    queryFn: ({ signal }) => request<Models>('/api/anti/models', signal),
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    retry: false,
+  })
   const families = modelFamilies(models.data?.items ?? [DEFAULT_MODEL])
   const family = families.find(item => item.key === familyKey) ?? families[0]
   const effortOptions = efforts.filter(option => family?.plain || family?.variants[option.key])
