@@ -215,18 +215,21 @@ class AntiSessions:
 
     def list(self) -> list[dict]:
         with self.connect() as db:
-            statuses = tuple(sorted(ACTIVE))
-            placeholders = ",".join("?" for _ in statuses)
-            rows = db.execute(f"""
-                SELECT s.*, (SELECT r.id FROM runs r WHERE r.session_id=s.id
-                    AND r.status IN ({placeholders}) ORDER BY r.rowid DESC LIMIT 1) AS active_run_id
-                FROM sessions s ORDER BY s.rowid DESC
-            """, statuses)
-            return [self.public_session(dict(row)) | {"active_run_id": row["active_run_id"]} for row in rows]
+            return self._public_sessions(db)
 
     @staticmethod
-    def public_session(row: dict) -> dict:
-        return {key: row[key] for key in ("id", "project", "title", "workspace", "updated_at")} | {"engine": "anti"}
+    def _public_sessions(db: sqlite3.Connection, sid: str | None = None) -> list[dict]:
+        statuses = tuple(sorted(ACTIVE))
+        placeholders = ",".join("?" for _ in statuses)
+        where = "WHERE s.id=?" if sid is not None else ""
+        params = (*statuses, sid) if sid is not None else statuses
+        rows = db.execute(f"""
+            SELECT s.id, s.project, s.title, s.workspace, s.updated_at,
+                (SELECT r.id FROM runs r WHERE r.session_id=s.id
+                 AND r.status IN ({placeholders}) ORDER BY r.rowid DESC LIMIT 1) AS active_run_id
+            FROM sessions s {where} ORDER BY s.rowid DESC
+        """, params)
+        return [dict(row) | {"engine": "anti"} for row in rows]
 
     def create(self, name: str, title: str | None = None) -> dict:
         root, _ = project(name)
@@ -234,13 +237,13 @@ class AntiSessions:
         with self.connect() as db, db:
             db.execute("INSERT INTO sessions (id,project,workspace,title,updated_at) VALUES (?,?,?,?,?)",
                        (sid, name, str(root), title or "", _now()))
-        return self.public_session(self.session(sid))
+            return self._public_sessions(db, sid)[0]
 
     def rename(self, sid: str, title: str) -> dict:
         with self.connect() as db, db:
             if not db.execute("UPDATE sessions SET title=? WHERE id=?", (title, sid)).rowcount:
                 raise AntiError(404, "Anti session not found")
-            return self.public_session(dict(db.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()))
+            return self._public_sessions(db, sid)[0]
 
     def delete(self, sid: str) -> None:
         with self.connect() as db, db:

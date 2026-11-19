@@ -175,18 +175,22 @@ def test_anti_session_management(tmp_path, monkeypatch):
         second = client.post(base, json={'project': 'beta'}).json()
         assert first['title'] == ''
         assert first['updated_at']
+        assert first['active_run_id'] is None
         sid = first['id']
         path = f'{base}/{sid}'
         run = client.post(path + '/runs', json={'operation': 'one', 'prompt': ' A   first prompt '}).json()
         assert {item['project']: item['title'] for item in client.get(base).json()} == {
             'alpha': 'A first prompt', 'beta': '',
         }
-        assert client.patch(path, json={'title': '  Renamed  '}).json()['title'] == 'Renamed'
+        renamed = client.patch(path, json={'title': '  Renamed  '}).json()
+        assert renamed['title'] == 'Renamed'
+        assert renamed['active_run_id'] == run['id']
         assert client.patch(path, json={'title': '  '}).status_code == 422
         assert next(row for row in client.get(base).json() if row['id'] == sid)['active_run_id'] == run['id']
         assert client.delete(path).status_code == 409
         daemon.status[run['id']] = 'success'
         assert client.get(f"{path}/runs/{run['id']}").json()['status'] == 'success'
+        assert client.patch(path, json={'title': 'Renamed'}).json()['active_run_id'] is None
         artifact = artifacts / 'alpha' / f"{run['id']}.md"
         assert not artifact.exists()
         artifact.parent.mkdir(parents=True)
@@ -198,7 +202,7 @@ def test_anti_session_management(tmp_path, monkeypatch):
         assert client.delete(path).status_code == 204
         assert client.get(path + '/runs').status_code == 404
         assert client.delete(path).status_code == 404
-        assert client.get(base).json() == [second | {'active_run_id': None}]
+        assert client.get(base).json() == [second]
         assert artifact.read_text(encoding='utf8') == 'legacy reply'
     with sqlite3.connect(db) as conn:
         assert conn.execute('SELECT count(*) FROM runs WHERE session_id=?', (sid,)).fetchone()[0] == 0
