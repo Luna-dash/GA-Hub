@@ -183,7 +183,7 @@ export default function GoalHive() {
         />
       }
       actions={
-        <div className="flex h-9 items-center gap-2 whitespace-nowrap">
+        <div className="flex items-center gap-2 whitespace-nowrap">
           <span className="text-xs text-ink-muted">主模型</span>
           <MainModelSelect
             llms={llms}
@@ -213,77 +213,79 @@ export default function GoalHive() {
         </div>
       }
     >
-      <div className="grid h-full min-h-0 grid-cols-1 gap-3 p-3 md:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)] lg:gap-5 lg:p-5">
-        <section className="overflow-auto rounded-2xl border border-line bg-bg-card p-4 shadow-sm lg:p-5">
-          <div className="mb-4 inline-flex rounded-xl border border-line bg-bg-soft p-1" role="group" aria-label="Goal Hive 模式">
-            {(['goal', 'hive'] as GoalMode[]).map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => setMode(item)}
-                aria-pressed={mode === item}
-                className={clsx(
-                  'rounded-lg px-4 py-1 text-sm transition',
-                  mode === item ? 'bg-accent text-white shadow-sm' : 'text-ink-muted hover:text-ink',
-                )}
-              >
-                {item.toUpperCase()}
-              </button>
-            ))}
-          </div>
+      <div className="grid h-full min-h-0 grid-cols-1 gap-3 p-3 md:grid-cols-[minmax(19rem,24rem)_minmax(0,1fr)] lg:gap-4 lg:p-4">
+        <section className="flex flex-col min-h-0 overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
+          <form onSubmit={submit} className="flex flex-1 min-h-0 flex-col">
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
+              <div className="inline-flex rounded-xl border border-line bg-bg-soft p-1" role="group" aria-label="Goal Hive 模式">
+                {(['goal', 'hive'] as GoalMode[]).map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setMode(item)}
+                    aria-pressed={mode === item}
+                    className={clsx(
+                      'rounded-lg px-4 py-1 text-sm transition',
+                      mode === item ? 'ga-solid-primary shadow-sm' : 'text-ink-muted hover:text-ink',
+                    )}
+                  >
+                    {item.toUpperCase()}
+                  </button>
+                ))}
+              </div>
 
-          <div className="mb-4 space-y-2 lg:mb-5">
-            <div className="text-sm text-accent font-medium">{config.title}</div>
-            <h2 className="text-lg font-semibold text-ink">{config.subtitle}</h2>
-            <p className="text-sm text-ink-muted leading-6">启动输出会留在本页面的独立日志区，不跳转、不混入普通聊天页。</p>
-          </div>
+              <div className="space-y-1.5">
+                <div className="text-xs text-accent font-semibold tracking-wide uppercase">{config.title}</div>
+                <h2 className="text-base font-semibold text-ink leading-snug">{config.subtitle}</h2>
+                <p className="text-xs text-ink-muted leading-5">启动输出会留在本页面的独立日志区，不跳转、不混入普通聊天页。</p>
+              </div>
 
-          <div className="mb-4 flex flex-wrap gap-2 lg:mb-5">
-            {config.chips.map((chip) => (
-              <span key={chip} className="text-xs px-2.5 py-1 rounded-full border border-line bg-bg-soft text-ink-muted">
-                {chip}
-              </span>
-            ))}
-          </div>
+              <div className="flex flex-wrap gap-1.5">
+                {config.chips.map((chip) => (
+                  <span key={chip} className="text-[11px] px-2 py-0.5 rounded-full border border-line bg-bg-soft text-ink-muted">
+                    {chip}
+                  </span>
+                ))}
+              </div>
 
-          <form onSubmit={submit} className="space-y-3 lg:space-y-4">
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-ink">目标</span>
-              <textarea
-                ref={targetRef}
-                value={target}
-                rows={4}
-                onChange={(event) => setTarget(event.target.value)}
-                placeholder={config.placeholder}
-                wrap="soft"
-                className="w-full min-w-0 max-h-[280px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line bg-bg-soft px-4 py-3 text-sm leading-6 text-ink placeholder:text-ink-faint outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
-              />
-            </label>
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-ink">目标</span>
+                <textarea
+                  ref={targetRef}
+                  value={target}
+                  rows={3}
+                  onChange={(event) => setTarget(event.target.value)}
+                  placeholder={config.placeholder}
+                  wrap="soft"
+                  className="w-full min-w-0 max-h-[220px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line bg-bg-soft px-3.5 py-2.5 text-sm leading-6 text-ink placeholder:text-ink-faint outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+                />
+              </label>
 
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-ink">补充约束（可选）</span>
-              <textarea
-                ref={conditionRef}
-                value={condition}
-                rows={3}
-                onChange={(event) => setCondition(event.target.value)}
-                placeholder="例如：先汇报计划；不得修改记忆；预算到期后总结验证结果。"
-                wrap="soft"
-                className="w-full min-w-0 max-h-[280px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line bg-bg-soft px-4 py-3 text-sm leading-6 text-ink placeholder:text-ink-faint outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
-              />
-            </label>
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-ink">补充约束（可选）</span>
+                <textarea
+                  ref={conditionRef}
+                  value={condition}
+                  rows={2}
+                  onChange={(event) => setCondition(event.target.value)}
+                  placeholder="例如：先汇报计划；不得修改记忆；预算到期后总结验证结果。"
+                  wrap="soft"
+                  className="w-full min-w-0 max-h-[180px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line bg-bg-soft px-3.5 py-2.5 text-sm leading-6 text-ink placeholder:text-ink-faint outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+                />
+              </label>
 
-            <div className="rounded-xl border border-line bg-bg-soft/70 p-4 space-y-2">
-              <div className="text-xs uppercase tracking-[0.16em] text-ink-faint">发送预览</div>
-              <pre className="whitespace-pre-wrap break-words text-sm text-[#3B3326] font-mono">{preview || `${config.command} ...`}</pre>
+              <div className="rounded-xl border border-line bg-bg-soft/70 p-3 space-y-1">
+                <div className="text-[11px] uppercase tracking-[0.14em] text-ink-faint">发送预览</div>
+                <pre className="whitespace-pre-wrap break-words text-xs text-ink font-mono">{preview || `${config.command} ...`}</pre>
+              </div>
             </div>
 
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs text-ink-muted">{streaming ? '当前任务输出中，完成后可启动下一项。' : config.helper}</p>
+            <div className="shrink-0 border-t border-line/70 bg-bg-card px-4 py-3 flex items-center justify-between gap-3">
+              <p className="min-w-0 text-xs text-ink-muted line-clamp-2">{streaming ? '当前任务输出中，完成后可启动下一项。' : config.helper}</p>
               <button
                 type="submit"
                 disabled={!canSubmit}
-                className="ga-solid-primary inline-flex shrink-0 items-center gap-1.5 rounded-lg px-4 py-2 text-sm"
+                className="ga-btn-primary shrink-0"
               >
                 <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
                 <span>启动 {config.title}</span>

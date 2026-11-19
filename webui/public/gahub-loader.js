@@ -23,11 +23,12 @@
   var IS_TAURI = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
   if (!IS_TAURI || typeof document === 'undefined') return
 
-  var MIN_DISPLAY_MS = 3200      // 凝聚 + 至少一段可观的自转
-  var FADE_MS = 560
-  var BURST_MS = 800             // 反向解旋扩散时长
+  var MIN_DISPLAY_MS = 1200      // 凝聚 + 短暂稳态展示（兼顾首屏响应速度）
+  var FADE_MS = 420
+  var BURST_MS = 650             // 反向解旋扩散时长
   var AUTO_HIDE_MS = 15000       // 就绪信号缺失时的兜底
-  var T_CONVERGE = 750           // 第一幕：极速凝聚
+  var T_CONVERGE = 650           // 第一幕：极速凝聚
+  document.documentElement.setAttribute('data-boot-splash', '1')
 
   /* ── 样式注入（深空主题） ─────────────────────────────────────── */
   var style = document.createElement('style')
@@ -106,6 +107,7 @@
         // 静态降级（reduced-motion / 无 Canvas）或渲染循环已停：直接淡出移除。
         root.style.pointerEvents = 'none'
         root.style.opacity = '0'
+        document.documentElement.removeAttribute('data-boot-splash')
         setTimeout(function () {
           if (root.parentNode) root.parentNode.removeChild(root)
         }, FADE_MS + 80)
@@ -115,9 +117,13 @@
       snapshotted = false
       burstStart = performance.now()
       root.style.pointerEvents = 'none'
-      setTimeout(function () { root.style.opacity = '0' }, BURST_MS * 0.64)
+      setTimeout(function () {
+        root.style.opacity = '0'
+        document.documentElement.removeAttribute('data-boot-splash')
+      }, BURST_MS * 0.64)
       setTimeout(function () {
         teardown()
+        document.documentElement.removeAttribute('data-boot-splash')
         if (root.parentNode) root.parentNode.removeChild(root)
       }, BURST_MS + FADE_MS + 80)
     }, wait)

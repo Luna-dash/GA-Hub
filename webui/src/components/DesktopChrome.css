@@ -19,6 +19,15 @@
   user-select: none;
   color: var(--c-text);
 }
+html[data-boot-splash="1"] .ga-desktop-titlebar {
+  color: rgba(241, 245, 249, 0.88);
+}
+html[data-boot-splash="1"] .ga-desktop-controls button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+html[data-boot-splash="1"] .ga-desktop-controls button:active {
+  background: rgba(255, 255, 255, 0.2);
+}
 .ga-desktop-drag { pointer-events: auto; flex: 1; min-width: 0; display: flex; align-items: center; }
 .ga-desktop-controls { pointer-events: auto; display: flex; flex-shrink: 0; align-items: flex-start; }
 .ga-desktop-controls button {
@@ -55,7 +64,7 @@
 .ga-desktop-frame .ga-page-surface { border: 0; border-radius: 0; box-shadow: none; }
 .ga-desktop-frame .ga-page-header {
   min-height: 56px;
-  padding: 14px 124px 6px 16px;
+  padding: 10px 128px 10px 16px;
   column-gap: 12px;
   user-select: none;
 }

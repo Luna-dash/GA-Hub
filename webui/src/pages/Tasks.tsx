@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { EmailConfig, TaskRun, TaskSchedule, TaskScheduleType } from '@/api/types'
@@ -43,7 +43,9 @@ export default function Tasks() {
   const runs = runData?.runs ?? []
   const pageCount = Math.max(1, Math.ceil(runs.length / RUNS_PER_PAGE))
   const page = Math.min(runPage, pageCount - 1)
-  if (page !== runPage) setRunPage(page)
+  useEffect(() => {
+    if (page !== runPage) setRunPage(page)
+  }, [page, runPage])
   const start = page * RUNS_PER_PAGE
   const pageRuns = runs.slice(start, start + RUNS_PER_PAGE)
 
@@ -192,7 +194,7 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
         {s.type === 'cron' && <CronCardLine expr={s.cron} />}
         {s.type === 'interval' && `每 ${s.interval_minutes} 分钟`}
       </div>
-      <div className="text-xs text-ink-faint">邮件 {s.notify_email ? '开启' : '关闭'} · 已触发 {s.fire_count} 次</div>
+      <div className="text-xs text-ink-faint">邮件 {s.notify_email ? '开启' : '关闭'} · 已触发 {s.fire_count ?? 0} 次</div>
       <div className="text-xs text-ink-faint mt-1">上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
       <div className="flex gap-2 mt-3 flex-wrap">
         <button onClick={onFire} disabled={busy} className="ga-solid-primary text-xs px-2.5 py-1 rounded">立即触发</button>

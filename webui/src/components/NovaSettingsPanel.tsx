@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { novaApi, type NovaStatus } from '@/api/client'
 
-export function NovaSettingsPanel() {
+export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) {
   const [status, setStatus] = useState<NovaStatus | null>(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -15,13 +15,14 @@ export function NovaSettingsPanel() {
   const [confirmed, setConfirmed] = useState(false)
 
   useEffect(() => {
+    if (!active) return
     let alive = true
     const refresh = () => novaApi.status().then(s => { if (alive) setStatus(s) })
       .catch(() => { if (alive) setError('无法读取 Nova 本机状态') })
     void refresh()
     const timer = setInterval(() => { void refresh() }, 5000)
     return () => { alive = false; clearInterval(timer) }
-  }, [])
+  }, [active])
 
   const act = async (action: 'associate' | 'revoke' | 'reconnect') => {
     setBusy(true); setError(''); setMessage('')

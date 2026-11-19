@@ -3,6 +3,7 @@ import { AlertTriangle } from 'lucide-react'
 
 interface Props {
   children: ReactNode
+  resetKey?: string
 }
 
 interface State {
@@ -20,6 +21,12 @@ export class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error }
   }
 
+  componentDidUpdate(prevProps: Props) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, error: undefined })
+    }
+  }
+
   componentDidCatch(error: Error, errorInfo: any) {
     console.error('ErrorBoundary caught:', error, errorInfo)
   }
@@ -27,7 +34,7 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex items-center justify-center min-h-screen bg-bg-soft">
+        <div className="flex items-center justify-center h-full min-h-[18rem] bg-bg-soft">
           <div className="max-w-md p-6 space-y-4 text-center">
             <AlertTriangle className="h-12 w-12 mx-auto text-status-warning" strokeWidth={1.75} aria-hidden="true" />
             <h1 className="text-xl font-semibold text-ink">页面渲染出错</h1>

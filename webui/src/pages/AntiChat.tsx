@@ -171,8 +171,8 @@ export default function AntiChat() {
         {!projects.isPending && !projects.error && !available.length && <p className="text-sm text-ink-muted">暂无可用项目，请先在项目页添加一个项目。</p>}
         <Errors items={[projects.error, create.error]} />
         <div className="flex justify-end gap-2">
-          <button type="button" className="ga-btn ga-btn--quiet" onClick={closeCreate} disabled={create.isPending}>取消</button>
-          <button type="submit" className="ga-btn ga-btn--primary" disabled={!selectedProject || create.isPending}>{create.isPending ? '创建中…' : '创建会话'}</button>
+          <button type="button" className="ga-btn" onClick={closeCreate} disabled={create.isPending}>取消</button>
+          <button type="submit" className="ga-btn-primary" disabled={!selectedProject || create.isPending}>{create.isPending ? '创建中…' : '创建会话'}</button>
         </div>
       </form>
     </ModalOverlay>}

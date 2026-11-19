@@ -95,7 +95,7 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
           followRef.current = isNearScrollBottom(scrollRef.current)
           scrollMemory.chatTop = scrollRef.current?.scrollTop ?? scrollMemory.chatTop
         }}
-        className="min-h-0 flex-1 overflow-y-auto divide-y divide-line text-sm"
+        className={`min-h-0 flex-1 overflow-y-auto text-sm ${messages.length > 0 ? 'divide-y divide-line' : 'flex flex-col justify-center'}`}
       >
         {isLoading && messages.length === 0 && (
           <div className="px-4 py-8 text-center text-sm text-ink-muted">正在加载 Conductor 历史…</div>
@@ -160,8 +160,12 @@ export function TaskConversation({ messages, isLoading, isError, onRetry, follow
             </button>
           </div>
         )}
+        {newTaskOptions && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+            {newTaskOptions}
+          </div>
+        )}
         <div className="flex items-end gap-2">
-          {newTaskOptions}
           <textarea
             aria-label="任务内容"
             ref={inputRef}

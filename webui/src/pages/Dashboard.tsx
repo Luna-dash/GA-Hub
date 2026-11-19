@@ -80,8 +80,8 @@ export default function Dashboard() {
           <SectionTitle title="当前活动" hint="正在运行的模块" />
           {active.length > 0 ? (
             <div className="flex flex-wrap gap-2">{active.map((service) => (
-              <ServiceSurface key={service.id} service={service} className="rounded-lg border border-status-info-line bg-status-info-soft px-3 py-2">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-status-info animate-pulse mr-2 align-middle" /><span className="text-sm text-ink">{service.name}</span><span className="ml-2 text-xs text-ink-faint">{service.summary}</span>
+              <ServiceSurface key={service.id} service={service} className="inline-flex items-center rounded-lg border border-status-info-line bg-bg-card px-3 py-2">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-status-info animate-pulse mr-2" /><span className="text-sm text-ink">{service.name}</span><span className="ml-2 text-xs text-ink-faint">{service.summary}</span>
               </ServiceSurface>
             ))}</div>
           ) : <p className="rounded-lg border border-line/70 bg-bg-card/40 px-3 py-3 text-xs text-ink-faint">当前没有后台任务运行。</p>}
@@ -137,7 +137,8 @@ function ServiceRow({ service }: { service: ServicePanelItem }) {
 
 function ServiceSurface({ service, className, children }: { service: ServicePanelItem; className: string; children: ReactNode }) {
   if (service.href === '/dashboard') return <div className={className}>{children}</div>
-  return <Link to={service.href} className={`${className} hover:bg-bg-soft transition-colors`}>{children}</Link>
+  const displayClass = /\b(flex|inline-flex|grid|inline-block|block)\b/.test(className) ? '' : 'block '
+  return <Link to={service.href} className={`${displayClass}${className} hover:bg-bg-soft transition-colors`}>{children}</Link>
 }
 
 function TokenFact({ label, value, suffix = '' }: { label: string; value: number; suffix?: string }) {

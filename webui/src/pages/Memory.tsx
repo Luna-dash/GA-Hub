@@ -91,7 +91,7 @@ export default function Memory() {
               key={t}
               title={tabTitle(t)}
               onClick={() => changeSelection(t)}
-              className={`w-16 px-3 py-1.5 rounded-lg ${tab === t ? 'bg-accent text-white' : 'border border-line text-ink hover:bg-ink/5'}`}
+              className={`w-16 px-3 py-1.5 rounded-lg border text-sm transition ${tab === t ? 'border-transparent bg-accent text-white' : 'border-line text-ink hover:bg-ink/5'}`}
             >
               {t === 'sop' ? 'SOP' : t === 'skill' ? 'SKILL' : t === 'insight' ? 'L1' : 'L2'}
             </button>
@@ -208,7 +208,7 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
       </div>
 
       <div className="h-full min-h-0">
-        {!active && <div className="text-ink-faint text-sm">选择左侧文档</div>}
+        {!active && <div className="grid h-full place-items-center rounded-lg border border-dashed border-line bg-bg-card/40 text-ink-faint text-sm">选择左侧文档以查看或编辑</div>}
         {active && cur && (
           <VersionedMemoryEditor
             key={active}
@@ -260,7 +260,7 @@ function SkillList() {
       </div>
 
       <div className="h-full flex flex-col">
-        {!active && <div className="text-ink-faint text-sm">选择左侧脚本</div>}
+        {!active && <div className="grid h-full place-items-center rounded-lg border border-dashed border-line bg-bg-card/40 text-ink-faint text-sm">选择左侧脚本以查看内容</div>}
         {active && cur && (
           <div className="flex flex-col h-full space-y-2">
             <div className="text-xs text-ink-faint font-mono">memory/skill/{active} (只读)</div>

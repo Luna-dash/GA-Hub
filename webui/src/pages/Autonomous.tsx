@@ -139,7 +139,7 @@ export default function Autonomous() {
                 {r.name}
               </button>
             ))}
-            {reports.length === 0 && <div className="text-ink-faint text-sm">temp/autonomous_reports/ 下还没有报告</div>}
+            {reports.length === 0 && <div className="rounded-xl border border-dashed border-line bg-bg-card/50 p-6 text-center text-ink-faint text-sm">尚无自主进化报告，任务触发保存后会显示在此。</div>}
           </div>
         </section>
       </div>

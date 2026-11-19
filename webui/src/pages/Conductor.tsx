@@ -753,7 +753,7 @@ export default function Conductor() {
               queue) on top, the conversation filling everything below. CSS
               caps the board's height so a long queue can never squeeze the
               chat out of the first screen. */}
-          <main className="conductor-main">
+          <section className="conductor-main" aria-label="任务主栏">
             {/* Whitespace anywhere on the board toggles the dispatch module
                 (fold/unfold) — the flanking strips beside a centred 672px
                 module are narrow, and beside the folded one-line header they
@@ -824,7 +824,7 @@ export default function Conductor() {
                 </label>
               ) : undefined}
             />
-          </main>
+          </section>
           <aside className="conductor-context" aria-label="任务详情">
             <div className="conductor-context-tabs" role="tablist" aria-label="任务内容">
               <button id="conductor-tab-delivery" role="tab" aria-controls="conductor-panel-delivery" aria-selected={contextTab === 'delivery'} onClick={() => setContextTab('delivery')}><FileCheck2 size={14} />交付详情</button>

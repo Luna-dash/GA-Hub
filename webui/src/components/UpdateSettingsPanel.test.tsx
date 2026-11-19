@@ -168,4 +168,16 @@ describe('UpdateSettingsPanel', () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toContain('尚未提供更新接口')
     expect(button('校验并准备').disabled).toBe(true)
   })
+  it('tolerates null plan snapshots and pauses polling when inactive', async () => {
+    vi.useFakeTimers()
+    vi.mocked(updateApi.status).mockResolvedValue({ supported: true, data_epoch: 1, sources: [], plan: null as never,
+      download: { phase: 'downloading', received_bytes: 10, total_bytes: 100 } })
+    try {
+      await act(async () => root.render(<UpdateSettingsPanel active={false} />))
+      expect(host.querySelector('[role="alert"]')).toBeNull()
+      const callsAtMount = vi.mocked(updateApi.status).mock.calls.length
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+      expect(vi.mocked(updateApi.status).mock.calls.length).toBe(callsAtMount)
+    } finally { vi.useRealTimers() }
+  })
 })

@@ -8,7 +8,7 @@ export type DashboardVerdict = {
 }
 
 export function usefulMetrics(service: ServicePanelItem): ServiceMetric[] {
-  return Object.entries(service.metrics).flatMap(([label, value]) => {
+  return Object.entries(service.metrics ?? {}).flatMap(([label, value]) => {
     if (value == null || value === false || value === 0) return []
     if (typeof value === 'string' && (!value.trim() || value === '—')) return []
     return [[label, value] as ServiceMetric]

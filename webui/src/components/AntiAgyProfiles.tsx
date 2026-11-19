@@ -43,10 +43,10 @@ function authBadge(detail?: ProfileDetail, loggingIn?: boolean) {
     return { label: '登录窗口已打开', tone: 'border-accent/50 bg-accent/10 text-accent' }
   }
   if (detail?.auth_state === 'authenticated') {
-    return { label: '已验证登录', tone: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' }
+    return { label: '已验证登录', tone: 'border-status-success-line bg-status-success-soft text-status-success' }
   }
   if (detail?.auth_state === 'login_required') {
-    return { label: '需要登录', tone: 'border-status-danger/50 bg-status-danger/10 text-status-danger' }
+    return { label: '需要登录', tone: 'border-status-danger-line bg-status-danger-soft text-status-danger' }
   }
   if (detail?.has_credentials) {
     return { label: '已有凭据', tone: 'border-line bg-bg-soft text-ink' }
@@ -55,8 +55,8 @@ function authBadge(detail?: ProfileDetail, loggingIn?: boolean) {
 }
 
 function quotaTone(pct: number) {
-  if (pct >= 50) return 'text-emerald-700 dark:text-emerald-300'
-  if (pct >= 20) return 'text-amber-700 dark:text-amber-300'
+  if (pct >= 50) return 'text-status-success'
+  if (pct >= 20) return 'text-status-warning'
   return 'text-status-danger'
 }
 

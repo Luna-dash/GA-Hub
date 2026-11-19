@@ -58,5 +58,6 @@ describe('dashboard service semantics', () => {
       缺省: '—',
       文本: '在线',
     } }))).toEqual([['请求', 3], ['启用', true], ['文本', '在线']])
+    expect(usefulMetrics(service({ metrics: undefined as unknown as ServicePanelItem['metrics'] }))).toEqual([])
   })
 })

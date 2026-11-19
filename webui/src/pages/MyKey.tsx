@@ -200,7 +200,7 @@ export default function MyKey() {
               <button
                 key={t}
                 onClick={() => { void switchTab(t) }}
-                className={`px-3 py-1.5 ${tab === t ? 'bg-accent text-white' : 'text-ink hover:bg-ink/5'}`}
+                className={`px-3 py-1.5 leading-5 ${tab === t ? 'bg-accent text-white' : 'text-ink hover:bg-ink/5'}`}
               >
                 {t === 'structured' ? '结构化' : '原始'}
               </button>
@@ -230,7 +230,7 @@ export default function MyKey() {
           </div>
           <p role="status" className="mt-2 text-xs text-ink-faint">
             {autoSync.isError ? '自动同步状态暂不可用' : autoSync.data
-              ? `${autoSync.data.running ? '正在检查云端…' : autoSync.data.message}${autoSync.data.last_checked ? ` · 最近检查 ${new Date(autoSync.data.last_checked).toLocaleString()}` : ''}`
+              ? `${autoSync.data.running ? '正在检查云端…' : (autoSync.data.message || (autoSync.data.enabled ? '每日自动同步已开启' : '每日自动同步未开启'))}${autoSync.data.last_checked ? ` · 最近检查 ${new Date(autoSync.data.last_checked).toLocaleString()}` : ''}`
               : '读取同步状态…'}
           </p>
         </section>

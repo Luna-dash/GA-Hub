@@ -302,10 +302,10 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
               <ChatRetryPanel />
             </div>
             <div id="settings-panel-remote" role="tabpanel" aria-labelledby="settings-tab-remote" tabIndex={0} hidden={activeTab !== 'remote'}>
-              <NovaSettingsPanel />
+              <NovaSettingsPanel active={!inSetup && activeTab === 'remote'} />
             </div>
             <div id="settings-panel-updates" role="tabpanel" aria-labelledby="settings-tab-updates" tabIndex={0} hidden={activeTab !== 'updates'}>
-              <UpdateSettingsPanel />
+              <UpdateSettingsPanel active={!inSetup && activeTab === 'updates'} />
             </div>
             <div id="settings-panel-sync" role="tabpanel" aria-labelledby="settings-tab-sync" tabIndex={0} hidden={activeTab !== 'sync'}>
               <MyKeySyncPanel />

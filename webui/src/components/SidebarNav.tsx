@@ -159,7 +159,7 @@ export function SidebarNav() {
       className={clsx(
         'ga-sidebar shrink-0 flex flex-col shadow-[6px_0_14px_rgba(21,27,18,0.18)]',
         'transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-        collapsed ? 'w-14' : 'w-[9.5rem]',
+        collapsed ? 'w-14' : 'w-[10.25rem]',
       )}
     >
       <div className="ga-sidebar-brand-row border-b border-white/10 flex items-center">

@@ -22,7 +22,7 @@ function readableError(error: unknown): { message: string; detail: string } {
 }
 function megabytes(bytes: number) { return `${(bytes / 1024 / 1024).toFixed(1)} MB` }
 
-export function UpdateSettingsPanel() {
+export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}) {
   const [status, setStatus] = useState<UpdateStatus | null>(null)
   const [release, setRelease] = useState<UpdateRelease | null>(null)
   const [archive, setArchive] = useState('')
@@ -32,6 +32,7 @@ export function UpdateSettingsPanel() {
   const [error, setError] = useState<{ message: string; detail: string } | null>(null)
   const [statusError, setStatusError] = useState('')
   useEffect(() => {
+    if (!active) return
     let alive = true
     const refresh = () => { void updateApi.status().then(value => {
       if (alive) { setStatus(value); if (value.release) setRelease(value.release); setStatusError('') }
@@ -41,7 +42,7 @@ export function UpdateSettingsPanel() {
     refresh()
     const timer = window.setInterval(refresh, 2000)
     return () => { alive = false; window.clearInterval(timer) }
-  }, [])
+  }, [active])
   async function online(download = false) {
     setBusy(true); setError(null)
     try {
@@ -77,7 +78,7 @@ export function UpdateSettingsPanel() {
   const task = status?.download
   const downloading = !!task && activePhases.has(task.phase)
   const locked = busy || downloading || !!statusError
-  const onlinePrepared = status?.plan.state === 'prepared' && status.plan.version === release?.version
+  const onlinePrepared = status?.plan?.state === 'prepared' && status.plan?.version === release?.version
   const taskError = task?.error && ['failed', 'interrupted'].includes(task.phase) ? task.error : null
   const shownError = error ?? taskError
   const received = task?.received_bytes ?? 0
@@ -94,7 +95,7 @@ export function UpdateSettingsPanel() {
       {release && <div className="text-sm" role="status">
         当前 {release.current_version} · 最新 {release.version} · {release.available ? '有可用更新' : '已是最新版本'}
         {release.notes && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-sans">{release.notes}</pre>}
-        {release.available && <button className="mt-2 rounded-lg border border-line px-3 py-2 disabled:opacity-40" disabled={locked || status?.plan.state === 'prepared'} onClick={() => void online(true)}>{onlinePrepared ? '此版本已准备完成' : downloading ? '正在后台下载并准备…' : '下载、校验并准备更新'}</button>}
+        {release.available && <button className="mt-2 rounded-lg border border-line px-3 py-2 disabled:opacity-40" disabled={locked || status?.plan?.state === 'prepared'} onClick={() => void online(true)}>{onlinePrepared ? '此版本已准备完成' : downloading ? '正在后台下载并准备…' : '下载、校验并准备更新'}</button>}
       </div>}
       {busy && <p className="text-sm" role="status">正在处理，请勿重复操作。下载及预检可能需要数分钟。</p>}
     </div>
@@ -122,15 +123,15 @@ export function UpdateSettingsPanel() {
     </label>
     <button className="ga-solid-primary rounded-lg px-3 py-2 text-sm" disabled={locked || !status || !trusted || !archive.trim() || (!!sha256.trim() && !/^[a-fA-F0-9]{64}$/.test(sha256.trim()))} onClick={() => void act()}>校验并准备</button>
     </details>
-    {status && <div className="text-sm text-ink" role="status">状态：{stateLabels[status.plan.state] ?? '正在处理'}{status.plan.version && ` · ${status.plan.version}`}
+    {status?.plan && <div className="text-sm text-ink" role="status">状态：{stateLabels[status.plan.state] ?? '正在处理'}{status.plan.version && ` · ${status.plan.version}`}
       {status.plan.commit && <span className="block break-all text-xs text-ink-muted">源码提交：{status.plan.commit}</span>}
     </div>}
-    {status?.plan.state === 'prepared' && <>
+    {status?.plan?.state === 'prepared' && <>
       <p className="text-sm text-ink">更新包已就绪，点击下方按钮即可执行升级（当前应用暂不关闭）。</p>
       <button className="rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-40" disabled={locked} onClick={() => void handoff(false)}>唤醒独立执行器</button>
       <button className="rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-40" disabled={locked} onClick={() => void act(true)}>取消候选更新</button>
     </>}
-    {status?.handoff?.id === status?.plan.id && status?.handoff && <div role="status" className="text-sm text-ink">
+    {status?.handoff?.id && status?.handoff?.id === status?.plan?.id && <div role="status" className="text-sm text-ink">
       交接：{stateLabels[status.handoff.state] ?? '正在处理'}
       {status.handoff.state === 'ready' && <button className="ml-3 rounded-lg border border-line px-3 py-2" disabled={locked} onClick={() => void handoff(true)}>确认切换（60秒后关闭）</button>}
       {status.handoff.state === 'countdown' && <p>已放行；应用将正常关闭，当前轮次可能中断。切换过程中请勿重复启动。</p>}
