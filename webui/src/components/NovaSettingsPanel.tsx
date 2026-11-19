@@ -41,7 +41,7 @@ export function NovaSettingsPanel() {
   }
   const showAccount = status && (!status.paired || revoking)
   const inputClass = 'mt-1.5 w-full min-w-0 rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent disabled:opacity-50'
-  const secondaryButtonClass = 'rounded-lg border border-line px-3 py-2 text-sm text-slate-300 hover:bg-white/5 disabled:opacity-40'
+  const secondaryButtonClass = 'rounded-lg border border-line px-3 py-2 text-sm text-ink hover:bg-ink/5 disabled:opacity-40'
   return <section className="rounded-xl border border-line bg-bg-card p-4 space-y-4" aria-label="Nova 远程连接">
     <header>
       <h2 className="font-medium">远程连接 <span className="ml-1 text-xs font-normal text-slate-500">Nova</span></h2>

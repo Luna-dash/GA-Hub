@@ -70,7 +70,7 @@ export function ModalOverlay({
   return (
     <div
       className={clsx(
-        'bg-black/55 backdrop-blur-sm flex',
+        'bg-[#241B12]/40 backdrop-blur-[3px] flex',
         align === 'center' ? 'items-center justify-center px-4' : 'items-stretch justify-end',
       )}
       style={{ position: 'fixed', inset: 0, zIndex }}
@@ -85,7 +85,7 @@ export function ModalOverlay({
         aria-labelledby={labelledBy}
         tabIndex={-1}
         style={panelStyle}
-        className={clsx('bg-bg-soft border-line shadow-2xl focus:outline-none', align === 'center' && 'border rounded-xl', panelClassName)}
+        className={clsx('bg-bg-soft border-line shadow-[inset_0_1px_0_rgba(255,250,232,0.72),0_18px_40px_rgba(45,34,22,0.22)] focus:outline-none', align === 'center' && 'border rounded-xl', panelClassName)}
         onMouseDown={(e) => e.stopPropagation()}
       >
         {children}

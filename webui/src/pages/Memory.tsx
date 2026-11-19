@@ -91,7 +91,7 @@ export default function Memory() {
               key={t}
               title={tabTitle(t)}
               onClick={() => changeSelection(t)}
-              className={`w-16 px-3 py-1.5 rounded-lg ${tab === t ? 'bg-accent text-white' : 'border border-line text-slate-300 hover:bg-white/5'}`}
+              className={`w-16 px-3 py-1.5 rounded-lg ${tab === t ? 'bg-accent text-white' : 'border border-line text-ink hover:bg-ink/5'}`}
             >
               {t === 'sop' ? 'SOP' : t === 'skill' ? 'SKILL' : t === 'insight' ? 'L1' : 'L2'}
             </button>
@@ -194,7 +194,7 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
             <li key={s.name}>
               <button
                 onClick={() => selectSop(s.name)}
-                className={`w-full text-left px-3 py-2 text-sm border-b border-line/50 ${active === s.name ? 'bg-accent-soft text-accent' : 'text-slate-300 hover:bg-white/5'}`}
+                className={`w-full text-left px-3 py-2 text-sm border-b border-line/50 ${active === s.name ? 'bg-accent-soft text-accent' : 'text-ink hover:bg-ink/5'}`}
               >
                 <div className="truncate">{s.name}</div>
                 <div className="text-[10px] text-slate-500">{(s.size / 1024).toFixed(1)} KB</div>
@@ -248,7 +248,7 @@ function SkillList() {
             <li key={s.path}>
               <button
                 onClick={() => setActive(s.path)}
-                className={`w-full text-left px-3 py-2 text-sm border-b border-line/50 ${active === s.path ? 'bg-accent-soft text-accent' : 'text-slate-300 hover:bg-white/5'}`}
+                className={`w-full text-left px-3 py-2 text-sm border-b border-line/50 ${active === s.path ? 'bg-accent-soft text-accent' : 'text-ink hover:bg-ink/5'}`}
               >
                 <div className="truncate">{s.path}</div>
                 <div className="text-[10px] text-slate-500">{(s.size / 1024).toFixed(1)} KB</div>

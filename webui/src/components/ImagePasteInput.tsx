@@ -434,7 +434,7 @@ export function ImagePasteInput({
                 'flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition',
                 index === slashActiveIndex
                   ? 'bg-accent/15 text-slate-100'
-                  : 'text-slate-300 hover:bg-white/5',
+                  : 'text-ink hover:bg-ink/5',
               )}
             >
               <span className="w-20 shrink-0 font-mono text-sm font-semibold text-accent">{command.name}</span>

@@ -98,7 +98,7 @@ export default function Dashboard() {
         {tokens.data?.available && totals && (
           <section>
             <SectionTitle title="Token 用量" hint="统计周期内累计" link="/tokens" />
-            <div className="rounded-xl border border-line bg-bg-card px-4 py-3 flex flex-wrap gap-x-7 gap-y-3">
+            <div className="ga-paper-card px-4 py-3 flex flex-wrap gap-x-7 gap-y-3">
               <TokenFact label="请求累计" value={totals.requests} />
               <TokenFact label="输入" value={totals.input} />
               <TokenFact label="输出" value={totals.output} />
@@ -141,7 +141,7 @@ function ServiceSurface({ service, className, children }: { service: ServicePane
 }
 
 function TokenFact({ label, value, suffix = '' }: { label: string; value: number; suffix?: string }) {
-  return <div className="min-w-20"><div className="text-[11px] text-slate-500">{label}</div><div title={`${exact(value)}${suffix}`} className="font-mono text-sm text-slate-200 mt-0.5">{fmt(value)}{suffix}</div></div>
+  return <div className="min-w-20"><div className="text-[11px] text-ink-faint">{label}</div><div title={`${exact(value)}${suffix}`} className="font-mono tabular-nums text-sm text-ink mt-0.5">{fmt(value)}{suffix}</div></div>
 }
 
 function ErrorBox({ text, onRetry }: { text: string; onRetry?: () => void }) {

@@ -86,9 +86,9 @@ export function RawView({ data, onWrite, onDirtyChange }: {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowBackups(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5"><History className="h-3.5 w-3.5" aria-hidden="true" /><span>备份历史</span></button>
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-ink hover:bg-ink/5"><History className="h-3.5 w-3.5" aria-hidden="true" /><span>备份历史</span></button>
           <button onClick={() => { setText(data.raw); setBaseline(data.raw); setRemoteChanged(false) }} disabled={!dirty && !remoteChanged}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-slate-300 hover:bg-white/5 disabled:opacity-40"><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /><span>还原</span></button>
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-ink hover:bg-ink/5 disabled:opacity-40"><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /><span>还原</span></button>
           <button onClick={save} disabled={!dirty || saving}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-white hover:brightness-110 disabled:opacity-40">
             <Save className="h-3.5 w-3.5" aria-hidden="true" />

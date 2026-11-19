@@ -200,7 +200,7 @@ export default function MyKey() {
               <button
                 key={t}
                 onClick={() => { void switchTab(t) }}
-                className={`px-3 py-1.5 ${tab === t ? 'bg-accent text-white' : 'text-slate-300 hover:bg-white/5'}`}
+                className={`px-3 py-1.5 ${tab === t ? 'bg-accent text-white' : 'text-ink hover:bg-ink/5'}`}
               >
                 {t === 'structured' ? '结构化' : '原始'}
               </button>
@@ -598,7 +598,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
                   autoComplete="off"
                 />
                 <button onClick={() => setShowKey(!showKey)} type="button"
-                  className="inline-flex items-center gap-1.5 px-3 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm shrink-0">
+                  className="inline-flex items-center gap-1.5 px-3 rounded-lg border border-line text-ink hover:bg-ink/5 text-sm shrink-0">
                   {showKey ? (
                     <>
                       <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
@@ -740,9 +740,9 @@ function MixinFields({ s, setS, allSessions }: { s: MyKeySession; setS: (v: MyKe
                 const next = [...llmNos]; next[i] = e.target.value; setNos(next)
               }} list="mixin-name-candidates" className={inp + ' font-mono flex-1'} />
               <button onClick={() => move(i, -1)} disabled={i === 0} aria-label="上移" title="上移"
-                className="inline-flex items-center justify-center px-2 py-1.5 text-xs rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-30"><ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /></button>
+                className="inline-flex items-center justify-center px-2 py-1.5 text-xs rounded border border-line text-ink hover:bg-ink/5 disabled:opacity-30"><ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /></button>
               <button onClick={() => move(i, 1)} disabled={i === llmNos.length - 1} aria-label="下移" title="下移"
-                className="inline-flex items-center justify-center px-2 py-1.5 text-xs rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-30"><ArrowDown className="h-3.5 w-3.5" aria-hidden="true" /></button>
+                className="inline-flex items-center justify-center px-2 py-1.5 text-xs rounded border border-line text-ink hover:bg-ink/5 disabled:opacity-30"><ArrowDown className="h-3.5 w-3.5" aria-hidden="true" /></button>
               <CloseIconButton
                 label={`移除 ${n || `第 ${i + 1} 项`}`}
                 variant="compact"
@@ -762,7 +762,7 @@ function MixinFields({ s, setS, allSessions }: { s: MyKeySession; setS: (v: MyKe
                     if (llmNos.includes(name)) return
                     setNos([...llmNos, name])
                   }}
-                  className="px-2 py-0.5 text-[11px] rounded border border-line text-slate-300 hover:bg-white/5"
+                  className="px-2 py-0.5 text-[11px] rounded border border-line text-ink hover:bg-ink/5"
                   title="点击加入 llm_nos"
                 >
                   + {name}

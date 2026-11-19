@@ -134,7 +134,7 @@ export default function Autonomous() {
               <button
                 key={r.name}
                 onClick={() => setActiveReport(r.name)}
-                className={`px-3 py-1.5 text-xs rounded-lg border ${activeReport === r.name ? 'border-accent text-accent' : 'border-line text-slate-300 hover:bg-white/5'}`}
+                className={`px-3 py-1.5 text-xs rounded-lg border ${activeReport === r.name ? 'border-accent text-accent' : 'border-line text-ink hover:bg-ink/5'}`}
               >
                 {r.name}
               </button>
@@ -199,9 +199,9 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
       </div>
       <div className="text-xs text-slate-500">已触发 {s.fire_count} 次 · 上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
       <div className="flex gap-2 mt-3 flex-wrap">
-        <button onClick={onFire} className="text-xs px-2.5 py-1 rounded bg-accent text-white">立即触发</button>
-        <button onClick={toggle} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5">{s.enabled ? '禁用' : '启用'}</button>
-        <button onClick={onEdit} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5">编辑</button>
+        <button onClick={onFire} className="text-xs px-2.5 py-1 rounded bg-accent text-white hover:brightness-110">立即触发</button>
+        <button onClick={toggle} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5">{s.enabled ? '禁用' : '启用'}</button>
+        <button onClick={onEdit} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5">编辑</button>
         <button onClick={remove} className="text-xs px-2.5 py-1 rounded border border-status-danger-line text-status-danger hover:bg-status-danger-soft">删除</button>
       </div>
     </div>

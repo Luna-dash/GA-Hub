@@ -62,4 +62,23 @@
   .ga-badge-offline {
     @apply bg-[#E2C5BD] text-[#7A3D32] border-[#B98578];
   }
+
+  .ga-paper-card {
+    @apply rounded-xl border border-line bg-bg-card transition-[border-color,box-shadow,transform] duration-150;
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.68), 0 2px 6px rgba(45, 34, 22, 0.08);
+  }
+
+  .ga-paper-card:hover {
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.78), 0 4px 12px rgba(45, 34, 22, 0.12);
+  }
+
+  .ga-paper-popover {
+    @apply border border-line bg-bg-soft/95 backdrop-blur-md;
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.72), 0 16px 36px rgba(45, 34, 22, 0.2), 0 3px 8px rgba(45, 34, 22, 0.1);
+  }
+
+  .ga-kbd {
+    @apply inline-flex items-center rounded border border-line/80 bg-bg-card px-1.5 py-0.5 font-mono text-[10px] leading-none text-ink-muted;
+    box-shadow: 0 1px 0 rgba(45, 34, 22, 0.12);
+  }
 }

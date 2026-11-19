@@ -34,7 +34,7 @@ export function ToastHost() {
             role="status"
             onClick={() => dismiss(t.id)}
             style={{ animation: 'ga-toast-in 160ms ease-out' }}
-            className={`pointer-events-auto cursor-pointer max-w-md w-fit flex items-start gap-2.5 rounded-xl border ${tone.ring} bg-bg-soft/95 backdrop-blur-sm shadow-2xl px-4 py-2.5 text-sm text-slate-200`}
+            className={`ga-paper-popover pointer-events-auto cursor-pointer max-w-md w-fit flex items-start gap-2.5 rounded-xl border ${tone.ring} px-4 py-2.5 text-sm text-ink`}
             title="点击关闭"
           >
             <span className={`mt-0.5 font-bold ${tone.iconCls}`}>{tone.icon}</span>

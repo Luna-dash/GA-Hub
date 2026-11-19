@@ -319,7 +319,7 @@ export default function Conversations() {
               <button
                 key={m}
                 onClick={() => setViewMode(m)}
-                className={`px-3 py-1.5 ${viewMode === m ? 'bg-accent text-white' : 'text-slate-300 hover:bg-white/5'}`}
+                className={`px-3 py-1.5 ${viewMode === m ? 'bg-accent text-white' : 'text-ink hover:bg-ink/5'}`}
               >
                 {m === 'round' ? '轮次摘要' : '对话视图'}
               </button>
@@ -349,7 +349,7 @@ export default function Conversations() {
                       className={`rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
                         sourceFilter === f.value
                           ? 'border-accent bg-accent text-white'
-                          : 'border-line text-ink-muted hover:bg-white/5'
+                          : 'border-line text-ink-muted hover:bg-ink/5'
                       }`}
                     >
                       {f.label}
@@ -480,7 +480,7 @@ export default function Conversations() {
                       <button
                         type="button"
                         onClick={() => handleRename(detail.id, detail.title || '')}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-300 hover:bg-white/5"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-ink hover:bg-ink/5"
                       >
                         <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                         <span>重命名</span>
@@ -498,7 +498,7 @@ export default function Conversations() {
                       <button
                         type="button"
                         onClick={() => handleExport(detail.id, 'md')}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-300 hover:bg-white/5"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-ink hover:bg-ink/5"
                       >
                         <FileText className="h-3.5 w-3.5" aria-hidden="true" />
                         <span>导出 MD</span>
@@ -506,7 +506,7 @@ export default function Conversations() {
                       <button
                         type="button"
                         onClick={() => handleExport(detail.id, 'json')}
-                        className="inline-flex items-center gap-1.5 border-l border-line px-3 py-1.5 text-sm text-slate-300 hover:bg-white/5"
+                        className="inline-flex items-center gap-1.5 border-l border-line px-3 py-1.5 text-sm text-ink hover:bg-ink/5"
                       >
                         <FileJson className="h-3.5 w-3.5" aria-hidden="true" />
                         <span>JSON</span>
@@ -834,7 +834,7 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
         onClick={onClick}
         aria-label={`第 ${index} 条：${title}`}
         title={`${index}. ${title}\n${previewText(c.last_user_preview || '')}\n来源：${meta.label}${lastActive ? `\n最后活动：${lastActive}` : ''}`}
-        className={`flex h-11 w-full items-center justify-center border-b border-line/60 text-xs font-medium transition-colors ${active ? 'bg-accent-soft text-accent' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
+        className={`flex h-11 w-full items-center justify-center border-b border-line/60 text-xs font-medium transition-colors ${active ? 'bg-accent-soft text-accent' : 'text-ink-muted hover:bg-ink/5 hover:text-ink'}`}
       >
         {index}
       </button>
@@ -845,7 +845,7 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
     <button
       type="button"
       onClick={onClick}
-      className={`block w-full px-3 py-2.5 text-left border-b border-line/60 group ${active ? 'bg-accent-soft' : 'hover:bg-white/5'}`}
+      className={`block w-full px-3 py-2.5 text-left border-b border-line/60 group ${active ? 'bg-accent-soft' : 'hover:bg-ink/5'}`}
     >
       <div className="flex items-baseline justify-between gap-2">
         <div className="text-sm text-slate-200 truncate font-medium" style={titleStyle} title={title}>

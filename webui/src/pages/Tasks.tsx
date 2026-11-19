@@ -195,9 +195,9 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
       <div className="text-xs text-slate-500">邮件 {s.notify_email ? '开启' : '关闭'} · 已触发 {s.fire_count} 次</div>
       <div className="text-xs text-slate-500 mt-1">上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
       <div className="flex gap-2 mt-3 flex-wrap">
-        <button onClick={onFire} disabled={busy} className="text-xs px-2.5 py-1 rounded bg-accent text-white disabled:opacity-40">立即触发</button>
-        <button onClick={toggle} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-40">{s.enabled ? '禁用' : '启用'}</button>
-        <button onClick={onEdit} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5 disabled:opacity-40">编辑</button>
+        <button onClick={onFire} disabled={busy} className="text-xs px-2.5 py-1 rounded bg-accent text-white hover:brightness-110 disabled:opacity-40">立即触发</button>
+        <button onClick={toggle} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5 disabled:opacity-40">{s.enabled ? '禁用' : '启用'}</button>
+        <button onClick={onEdit} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5 disabled:opacity-40">编辑</button>
         <button onClick={remove} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-status-danger-line text-status-danger hover:bg-status-danger-soft disabled:opacity-40">删除</button>
       </div>
     </div>
@@ -399,7 +399,7 @@ function EmailSettings() {
     <section>
       <div className="flex items-center justify-between mb-3 gap-3">
         <h2 className="text-sm font-semibold text-slate-300">邮件设置</h2>
-        <button onClick={startEdit} className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5"><Mail className="h-3.5 w-3.5" aria-hidden="true" /><span>配置 SMTP</span></button>
+        <button onClick={startEdit} className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5"><Mail className="h-3.5 w-3.5" aria-hidden="true" /><span>配置 SMTP</span></button>
       </div>
       <div className="rounded-xl border border-line bg-bg-card p-4 text-sm text-slate-400">
         {data?.host

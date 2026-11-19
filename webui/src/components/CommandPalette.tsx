@@ -307,7 +307,7 @@ export function CommandPalette() {
   return (
     <div
       style={{ zIndex: Z_LAYERS.palette }}
-      className="fixed inset-0 bg-black/55 backdrop-blur-sm flex items-start justify-center pt-[9vh] px-4"
+      className="fixed inset-0 bg-[#241B12]/40 backdrop-blur-[3px] flex items-start justify-center pt-[9vh] px-4"
       onMouseDown={(e) => { if (e.target === e.currentTarget && isTopOverlay(overlayIdRef.current)) close() }}
     >
       <div
@@ -315,7 +315,7 @@ export function CommandPalette() {
         role="dialog"
         aria-modal="true"
         aria-label="命令面板"
-        className="w-full max-w-xl bg-bg-soft border border-line rounded-xl shadow-2xl overflow-hidden flex flex-col"
+        className="ga-paper-popover w-full max-w-xl rounded-xl overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <input
@@ -324,15 +324,15 @@ export function CommandPalette() {
           onChange={(e) => { setQ(e.target.value); setCursor(0) }}
           onKeyDown={onKey}
           placeholder="跳转 · 切 LLM · 触发任务 · 搜索…"
-          className="w-full bg-transparent border-b border-line px-4 py-3 text-base outline-none text-slate-200 placeholder:text-slate-500"
+          className="w-full bg-transparent border-b border-line/80 px-4 py-3 text-base outline-none text-ink placeholder:text-ink-faint"
         />
-        <div ref={listRef} className="max-h-[60vh] overflow-y-auto">
+        <div ref={listRef} className="max-h-[60vh] overflow-y-auto py-1">
           {groups.length === 0 && (
-            <div className="px-4 py-6 text-center text-sm text-slate-500">没有匹配项</div>
+            <div className="px-4 py-6 text-center text-sm text-ink-faint">没有匹配项</div>
           )}
           {groups.map((g) => (
             <div key={g.name}>
-              <div className="px-3 pt-2.5 pb-1 text-[10px] uppercase tracking-wider text-slate-500">
+              <div className="px-3.5 pt-2.5 pb-1 text-[10px] font-medium uppercase tracking-wider text-ink-faint">
                 {g.name}
               </div>
               {g.items.map(({ a, idx }) => (
@@ -342,23 +342,23 @@ export function CommandPalette() {
                   onMouseEnter={() => setCursor(idx)}
                   onClick={() => exec(a)}
                   className={clsx(
-                    'w-full flex items-center gap-3 px-3 py-2 text-sm text-left transition',
-                    idx === cursor ? 'bg-accent-soft text-accent' : 'text-slate-300 hover:bg-white/5',
+                    'w-full flex items-center gap-3 px-3.5 py-2 text-sm text-left transition-colors',
+                    idx === cursor ? 'bg-accent-soft text-accent font-medium' : 'text-ink hover:bg-ink/5',
                   )}
                 >
                   <span className="text-base shrink-0">{a.icon || '·'}</span>
                   <span className="flex-1 truncate">{a.label}</span>
-                  {a.hint && <span className="text-[10px] text-slate-500 shrink-0">{a.hint}</span>}
+                  {a.hint && <span className="text-[11px] text-ink-faint shrink-0">{a.hint}</span>}
                 </button>
               ))}
             </div>
           ))}
         </div>
-        <div className="border-t border-line px-3 py-1.5 text-[10px] text-slate-500 flex items-center gap-x-3 gap-y-1 flex-wrap">
-          <span>↑↓ 导航</span>
-          <span>↵ 执行</span>
-          <span>Esc 关闭</span>
-          <span className="ml-auto">⌘/Ctrl + K 切换</span>
+        <div className="border-t border-line/80 bg-bg-card/50 px-3.5 py-2 text-[11px] text-ink-faint flex items-center gap-x-3 gap-y-1 flex-wrap">
+          <span className="inline-flex items-center gap-1"><kbd className="ga-kbd">↑</kbd><kbd className="ga-kbd">↓</kbd> 导航</span>
+          <span className="inline-flex items-center gap-1"><kbd className="ga-kbd">↵</kbd> 执行</span>
+          <span className="inline-flex items-center gap-1"><kbd className="ga-kbd">Esc</kbd> 关闭</span>
+          <span className="ml-auto inline-flex items-center gap-1"><kbd className="ga-kbd">⌘/Ctrl</kbd>+<kbd className="ga-kbd">K</kbd> 切换</span>
         </div>
       </div>
     </div>

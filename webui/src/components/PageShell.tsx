@@ -22,7 +22,7 @@ export function PageShell({ title, titleExtra, middleArea, actions, children, la
             the section's `z-10`: a middle-area popover overflowing the header
             must paint above the body card below it (DOM order would otherwise
             let the section win the z tie). */}
-        <header className={`ga-page-header relative z-20 min-h-16 shrink-0 px-4 py-3 flex items-center gap-4 bg-bg-card/75 border-b border-line/70 ${layout === 'workspace' || wrapHeader ? 'flex-wrap' : ''} ${wrapHeader ? 'gap-y-2' : ''}`}>
+        <header className={`ga-page-header relative z-20 min-h-16 shrink-0 px-4 py-3 flex items-center gap-4 bg-bg-card/80 backdrop-blur-sm border-b border-line/70 shadow-[inset_0_1px_0_rgba(255,250,235,0.45)] ${layout === 'workspace' || wrapHeader ? 'flex-wrap' : ''} ${wrapHeader ? 'gap-y-2' : ''}`}>
           <div className="flex flex-col gap-1">
             <div className={`flex items-center gap-2 ${wrapHeader ? 'whitespace-nowrap' : ''}`}>
               <h1 className="text-base font-semibold text-ink">{title}</h1>

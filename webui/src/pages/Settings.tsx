@@ -174,7 +174,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
                   setActiveTab(SETTINGS_TABS[next].id)
                   event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
                 }}
-                className={`flex flex-col sm:flex-row items-center gap-1.5 sm:gap-2.5 rounded-lg px-2 sm:px-3 py-3 text-xs sm:text-sm text-center sm:text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${activeTab === id ? 'bg-accent/10 text-accent font-medium' : 'text-slate-400 hover:bg-white/5 hover:text-ink'}`}
+                className={`flex flex-col sm:flex-row items-center gap-1.5 sm:gap-2.5 rounded-lg px-2 sm:px-3 py-3 text-xs sm:text-sm text-center sm:text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${activeTab === id ? 'bg-accent/10 text-accent font-medium' : 'text-ink-muted hover:bg-ink/5 hover:text-ink'}`}
               >
                 <Icon size={17} className="shrink-0" aria-hidden="true" />
                 <span>{label}</span>
@@ -232,14 +232,14 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
                 type="button"
                 onClick={pickGaRoot}
                 disabled={picking || validating}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm disabled:opacity-40"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-line text-ink hover:bg-ink/5 text-sm disabled:opacity-40"
               ><FolderOpen className="h-3.5 w-3.5" aria-hidden="true" /><span>{picking ? '选择中…' : '浏览…'}</span></button>
             )}
             <button
               type="button"
               onClick={() => validate(input)}
               disabled={validating}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-line text-slate-300 hover:bg-white/5 text-sm"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-line text-ink hover:bg-ink/5 text-sm"
             ><RefreshIcon spinning={validating} size={13} /><span>{validating ? '检测中…' : '检测'}</span></button>
           </div>
 
@@ -342,7 +342,7 @@ function NavManagementPanel() {
         <button
           type="button"
           onClick={() => update(defaultNavPreferences())}
-          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-line text-slate-300 hover:bg-white/5"
+          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-line text-ink hover:bg-ink/5"
         ><RotateCcw className="h-3 w-3" aria-hidden="true" /><span>恢复默认</span></button>
       </div>
       <div className="text-xs text-slate-500 mb-3">勾选要显示的条目，并用上下按钮调整顺序；设置入口始终保留。</div>
@@ -401,7 +401,7 @@ function MyKeySyncPanel() {
         type="button"
         onClick={toggle}
         className={`px-3 py-1.5 rounded-lg text-sm transition ${
-          showUpload ? 'bg-accent text-white' : 'border border-line text-slate-300 hover:bg-white/5'
+          showUpload ? 'bg-accent text-white' : 'border border-line text-ink hover:bg-ink/5'
         }`}
       >
         {showUpload ? '上传按钮已显示 · 点击隐藏' : '显示上传按钮…'}
@@ -651,13 +651,13 @@ function NotifyPanel() {
           onClick={toggle}
           disabled={unsupported}
           className={`px-3 py-1.5 rounded-lg text-sm transition ${
-            optedIn ? 'bg-accent text-white' : 'border border-line text-slate-300 hover:bg-white/5'
+            optedIn ? 'bg-accent text-white' : 'border border-line text-ink hover:bg-ink/5'
           } disabled:opacity-40`}
         >
           {optedIn ? '已开启 · 点击关闭' : '开启桌面通知'}
         </button>
         {optedIn && !unsupported && (
-          <button onClick={test} className="text-xs px-2.5 py-1 rounded border border-line text-slate-300 hover:bg-white/5">
+          <button onClick={test} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5">
             发一条测试
           </button>
         )}
