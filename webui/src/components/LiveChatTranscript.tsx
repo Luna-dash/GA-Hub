@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { ScheduleClockFace, scheduleClockButtonClass } from './ScheduleClockFace'
 import type { ScheduledChat } from '@/api/types'
 import { decideViewportAction } from '@/utils/conversationViewport'
 import { useChatStore, type ChatMsg } from '@/stores/chatStore'
@@ -612,36 +613,34 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
             >
               {scheduledChats.length > 0 && (
                 <div data-chat-wheel-independent className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5" aria-label="待发送定时消息">
-                  {scheduledChats.map((task) => (
-                    <button
-                      key={task.id}
-                      type="button"
-                      onClick={() => onCancelSchedule(task)}
-                      onMouseEnter={(event) => {
-                        const rect = event.currentTarget.getBoundingClientRect()
-                        setHoveredSchedule({ task, top: rect.top, right: window.innerWidth - rect.left + 10 })
-                      }}
-                      onMouseLeave={() => setHoveredSchedule(null)}
-                      onFocus={(event) => {
-                        const rect = event.currentTarget.getBoundingClientRect()
-                        setHoveredSchedule({ task, top: rect.top, right: window.innerWidth - rect.left + 10 })
-                      }}
-                      onBlur={() => setHoveredSchedule(null)}
-                      className="group relative flex aspect-square w-full shrink-0 items-center justify-center overflow-hidden rounded-lg p-[2px] text-center text-xs font-semibold leading-tight text-accent shadow-sm transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-                      title="点击取消定时发送"
-                      aria-label={`${formatCompactScheduleCountdown(task.scheduled_for, scheduleNow)}后发送；悬停查看消息；点击取消`}
-                    >
-                      <span
-                        data-schedule-flow-border
-                        aria-hidden="true"
-                        className="absolute -inset-5 animate-spin bg-[conic-gradient(from_0deg,transparent_0deg,transparent_205deg,#60a5fa_245deg,#a78bfa_285deg,#f472b6_325deg,transparent_360deg)] motion-reduce:animate-none"
-                        style={{ animationDuration: '3s' }}
-                      />
-                      <span className="relative flex h-full w-full items-center justify-center rounded-[6px] bg-bg-card/95 px-1 backdrop-blur transition-colors group-hover:bg-bg-soft">
-                        {formatCompactScheduleCountdown(task.scheduled_for, scheduleNow)}
-                      </span>
-                    </button>
-                  ))}
+                  {scheduledChats.map((task) => {
+                    const countdown = formatCompactScheduleCountdown(task.scheduled_for, scheduleNow)
+                    return (
+                      <button
+                        key={task.id}
+                        type="button"
+                        onClick={() => onCancelSchedule(task)}
+                        onMouseEnter={(event) => {
+                          const rect = event.currentTarget.getBoundingClientRect()
+                          setHoveredSchedule({ task, top: rect.top, right: window.innerWidth - rect.left + 10 })
+                        }}
+                        onMouseLeave={() => setHoveredSchedule(null)}
+                        onFocus={(event) => {
+                          const rect = event.currentTarget.getBoundingClientRect()
+                          setHoveredSchedule({ task, top: rect.top, right: window.innerWidth - rect.left + 10 })
+                        }}
+                        onBlur={() => setHoveredSchedule(null)}
+                        className={`${scheduleClockButtonClass} block aspect-square w-full text-accent transition-[background-color,transform] hover:scale-[1.03]`}
+                        title="点击取消定时发送"
+                        aria-label={`${countdown}后发送；悬停查看消息；点击取消`}
+                      >
+                        <ScheduleClockFace pending />
+                        <span aria-hidden="true" className="absolute inset-x-0 bottom-[17%] whitespace-nowrap text-center text-xs font-semibold leading-none tabular-nums text-ink">
+                          {countdown}
+                        </span>
+                      </button>
+                    )
+                  })}
                 </div>
               )}
 
@@ -687,7 +686,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
             style={{ top: Math.max(12, hoveredSchedule.top), right: hoveredSchedule.right, zIndex: Z_LAYERS.tooltip }}
           >
             <div className="mb-2 flex items-center justify-between gap-3 text-xs text-ink-muted">
-              <span>定时发送内容</span>
+              <span>{formatCompactScheduleCountdown(hoveredSchedule.task.scheduled_for, scheduleNow)}后发送</span>
               <time>{formatDateTime(hoveredSchedule.task.scheduled_for)}</time>
             </div>
             <p className="max-h-48 overflow-hidden whitespace-pre-wrap break-words text-sm leading-5 text-ink">

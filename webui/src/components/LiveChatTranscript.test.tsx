@@ -91,6 +91,31 @@ describe('LiveChatTranscript reading intent', () => {
     vi.unstubAllGlobals()
   })
 
+  it('shows the remaining time on the animated clock without opening details', () => {
+    const task = {
+      id: 'task-1', session_id: 'A', text: 'send later', images: [],
+      scheduled_for: 180, created_at: 0, status: 'pending' as const,
+      sent_at: null, cancelled_at: null, last_error: null, retry_at: null,
+    }
+    const onCancelSchedule = vi.fn()
+    const renderAt = (scheduleNow: number) => act(() => root.render(
+      <LiveChatTranscript sessionId="A" sessionError="" scheduledChats={[task]} scheduleNow={scheduleNow}
+        onCancelSchedule={onCancelSchedule} onRewind={() => {}} />,
+    ))
+
+    renderAt(0)
+    const button = host.querySelector<HTMLButtonElement>('[aria-label="待发送定时消息"] button')!
+    expect(button.textContent?.trim()).toBe('3分')
+    expect(button.querySelector('[data-schedule-clock] [data-schedule-flow-border]')).not.toBeNull()
+    expect(host.querySelector('[data-schedule-tooltip]')).toBeNull()
+
+    renderAt(60_000)
+    expect(button.textContent?.trim()).toBe('2分')
+    expect(button.getAttribute('aria-label')).toContain('2分后发送')
+    act(() => button.click())
+    expect(onCancelSchedule).toHaveBeenCalledWith(task)
+  })
+
   it('saves button-to-tail immediately and restores the bottom after switching mid-scroll', () => {
     mount()
     click('底部')

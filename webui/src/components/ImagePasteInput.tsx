@@ -8,6 +8,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { LoaderCircle, RotateCw, X } from 'lucide-react'
+import { ScheduleClockFace, scheduleClockButtonClass } from './ScheduleClockFace'
 import { api } from '@/api/client'
 import { AttachmentImage, isImageAttachment } from './AttachmentImage'
 import type { PasteAttachment, UploadResult } from '@/api/types'
@@ -530,6 +531,7 @@ export function ImagePasteInput({
           wrap="soft"
           className="flex-1 min-w-0 w-0 bg-transparent resize-none outline-none text-slate-200 placeholder:text-slate-500 px-3 py-2 max-h-60 leading-7 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
         />
+        {/* Center the right controls on the last 44px of the textarea. */}
         {onSchedule && (
           <button
             type="button"
@@ -539,19 +541,23 @@ export function ImagePasteInput({
                 && (text.trim() || attachmentsRef.current.length > 0)) onSchedule()
             }}
             disabled={disabled || scheduleDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0)}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-bg-card text-sm font-medium text-ink-faint shadow-sm transition-colors hover:bg-bg-soft hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-35"
+            className={clsx(scheduleClockButtonClass, 'mb-1 h-9 w-9 text-ink-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-35')}
             title="设置定时发送"
             aria-label="设置定时发送"
-          >定时</button>
+          >
+            <ScheduleClockFace />
+          </button>
         )}
         {submitAccessory}
         <button
           type="button"
           onClick={stopActive ? onStop : submit}
           disabled={disabled || (stopActive ? stopDisabled : submitDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0))}
-          className={stopActive
-            ? 'h-10 px-4 rounded-xl bg-status-danger text-white text-sm font-medium hover:bg-status-danger-strong disabled:opacity-40 disabled:shadow-none transition flex items-center justify-center'
-            : 'h-10 px-4 rounded-xl bg-accent text-white text-sm font-medium hover:brightness-110 disabled:opacity-40 disabled:shadow-none transition flex items-center justify-center'}
+          className={clsx(
+            'flex h-10 items-center justify-center rounded-xl px-4 text-sm font-medium text-white transition disabled:opacity-40 disabled:shadow-none',
+            onSchedule && 'mb-0.5',
+            stopActive ? 'bg-status-danger hover:bg-status-danger-strong' : 'bg-accent hover:brightness-110',
+          )}
           aria-label={stopActive ? '停止' : submitLabel}
           title={stopActive ? '停止当前会话任务' : attachmentHint ?? submitLabel ?? '发送消息'}
         >{stopActive ? '停止' : '发送'}</button>

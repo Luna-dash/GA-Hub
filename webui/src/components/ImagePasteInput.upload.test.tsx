@@ -90,7 +90,7 @@ describe('attachment upload lifecycle', () => {
     add(new File(['png'], 'screen.png', { type: 'image/png' }))
     expect(host.querySelector('img')?.getAttribute('src')).toBe('blob:preview')
     expect(button('发送').disabled).toBe(true)
-    expect(button('定时').disabled).toBe(true)
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="设置定时发送"]')?.disabled).toBe(true)
     act(() => host.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true })))
     expect(onSubmit).not.toHaveBeenCalled()
     await act(async () => upload.resolve({ ...result('screen.png'), mime: 'image/png' }))

@@ -172,13 +172,14 @@ describe('attachment capacity invariants across entry points', () => {
   })
   it('blocks send, Enter and schedule for an already-oversized restored draft, but allows recovery', async () => {
     await render(257)
-    expect(button('发送').disabled).toBe(true); expect(button('定时').disabled).toBe(true)
+    const scheduleButton = host.querySelector<HTMLButtonElement>('[aria-label="设置定时发送"]')!
+    expect(button('发送').disabled).toBe(true); expect(scheduleButton.disabled).toBe(true)
     act(() => host.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true })))
     expect(send).not.toHaveBeenCalled(); expect(schedule).not.toHaveBeenCalled()
     expect(host.querySelector('[role=alert]')?.textContent).toContain('256')
     act(() => host.querySelector<HTMLButtonElement>('[aria-label="移除 0.txt"]')!.click())
-    expect(latest).toHaveLength(256); expect(button('发送').disabled).toBe(false); expect(button('定时').disabled).toBe(false)
-    act(() => { button('发送').click(); button('定时').click() })
+    expect(latest).toHaveLength(256); expect(button('发送').disabled).toBe(false); expect(scheduleButton.disabled).toBe(false)
+    act(() => { button('发送').click(); scheduleButton.click() })
     expect(send).toHaveBeenCalledOnce(); expect(schedule).toHaveBeenCalledOnce()
   })
   it('leaves stop available even for an oversized restored draft', async () => {
@@ -189,7 +190,8 @@ describe('attachment capacity invariants across entry points', () => {
   it('guards scheduling synchronously while a native chooser is opening', async () => {
     vi.mocked(desktop.selectAttachmentPaths).mockReturnValue(new Promise(() => {}))
     await render(0, true)
-    act(() => { host.querySelector('label')!.click(); button('定时').click() })
+    const scheduleButton = host.querySelector<HTMLButtonElement>('[aria-label="设置定时发送"]')!
+    act(() => { host.querySelector('label')!.click(); scheduleButton.click() })
     expect(schedule).not.toHaveBeenCalled()
   })
 })
