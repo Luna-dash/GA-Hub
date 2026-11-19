@@ -10,10 +10,13 @@ import { writeClipboard } from '@/utils/clipboard'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { isAppInternalUrl, isHttpUrl, openExternalIfNeeded } from '@/utils/openExternal'
 import { Z_LAYERS } from '@/config/zLayers'
+import { APP_PAGES } from '@/config/pages'
 
 export const FileLinkContext = createContext<{ sessionId?: string; projectPath?: string; engine?: 'chat' | 'anti' }>({})
 export const FileTransferConclusion = createContext<{ engine: 'chat' | 'anti'; sessionId?: string; project?: string } | null>(null)
-const APP_ROUTE = /^\/(?:chat|dashboard|theme-tasks|feishu|conversations|memory|goal-hive|conductor|mykey|tasks|autonomous|tokens|settings)(?:[/?#]|$)/
+const APP_ROUTE = new RegExp(
+  `^/(?:${[...APP_PAGES.map((page) => page.id), 'feishu'].join('|')})(?:[/?#]|$)`,
+)
 
 export function isLocalCitation(target: string): boolean {
   if (!target || target.startsWith('#') || APP_ROUTE.test(target) || /^\/api\/(?:files(?:\/|\?|$)|files-by-path(?:\?|$))/.test(target)) return false

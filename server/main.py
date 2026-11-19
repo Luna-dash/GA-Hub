@@ -154,6 +154,12 @@ for _ext, _mime in (
     mimetypes.add_type(_mime, _ext)
 
 WEBUI_DIST = _paths.ADMIN_ROOT / "webui" / "dist"
+# Keep in sync with webui/src/config/pages.ts plus explicit legacy redirects.
+SPA_ROUTES = frozenset({
+    "chat", "dashboard", "theme-tasks", "feishu", "conversations",
+    "memory", "goal-hive", "conductor", "mykey", "tasks",
+    "autonomous", "tokens", "settings", "anti",
+})
 
 
 def _setup_router() -> APIRouter:
@@ -251,10 +257,7 @@ def _mount_static(app: FastAPI) -> None:
             return FileResponse(str(full))
         # Only registered SPA routes receive the shell. Missing resources
         # and model-generated local paths must never replay the loader.
-        spa_routes = {"chat", "dashboard", "theme-tasks", "feishu", "conversations",
-                      "memory", "goal-hive", "conductor", "mykey", "tasks",
-                      "autonomous", "tokens", "settings", "anti"}
-        if path.split("/", 1)[0] not in spa_routes or Path(path).suffix:
+        if path.split("/", 1)[0] not in SPA_ROUTES or Path(path).suffix:
             return JSONResponse({"detail": "not found"}, status_code=404)
         idx = dist_root / "index.html"
         if idx.is_file():

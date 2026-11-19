@@ -28,5 +28,12 @@ describe('sidebar navigation', () => {
     const saved = NAV_ITEMS.filter(item => item.id !== 'theme-tasks').map(({ id }) => ({ id, visible: true }))
     expect(normalizeNavPreferences(saved).map(item => item.id)).toEqual(NAV_ITEMS.map(item => item.id))
   })
+  it('preserves full custom order and hidden entries across all pages without resetting', () => {
+    const custom = [...NAV_ITEMS].reverse().map((item, idx) => ({
+      id: item.id,
+      visible: idx % 3 !== 0,
+    }))
+    expect(normalizeNavPreferences(custom)).toEqual(custom)
+  })
 
 })

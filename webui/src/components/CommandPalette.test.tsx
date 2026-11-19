@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CommandPalette } from './CommandPalette'
+import { APP_PAGES } from '@/config/pages'
 import { useChatStore } from '@/stores/chatStore'
 import { storageKeys } from '@/config/storageKeys'
 import { queryKeys } from '@/queries/queryKeys'
@@ -207,5 +208,19 @@ describe('command palette new conversation', () => {
     const sopBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.includes('deploy_sop.md'))!
     await act(async () => sopBtn.click())
     expect(host.querySelector('output')?.textContent).toBe('/memory?tab=sop&sop=deploy_sop.md')
+  })
+
+  it('lists every declared page including Anti chat (/anti) and navigates to it', async () => {
+    await act(async () => { window.dispatchEvent(new Event('gahub:command-palette')) })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)) })
+
+    const dlg = host.querySelector<HTMLElement>('[role="dialog"]')!
+    for (const page of APP_PAGES) {
+      expect(dlg.textContent).toContain(page.palette.label)
+    }
+
+    const antiBtn = Array.from(dlg.querySelectorAll('button')).find((b) => b.textContent?.includes('Agy 会话'))!
+    await act(async () => antiBtn.click())
+    expect(host.querySelector('output')?.textContent).toBe('/anti')
   })
 })

@@ -9,7 +9,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useAgentStore } from '@/stores/agentStore'
 import { hydrateNavPreferences } from '@/stores/navPreferenceStore'
 import { api } from '@/api/client'
-import { routeLoaders } from '@/routes/routeLoaders'
+import { APP_PAGES } from '@/config/pages'
 import { hubEventClient } from '@/runtime/hubEventClient'
 import { queryKeys } from '@/queries/queryKeys'
 import { RuntimeEffects } from '@/runtime/RuntimeEffects'
@@ -20,19 +20,12 @@ const routeFallback = (
 
 // Keep route pages out of the startup bundle. The shell (stores, sockets,
 // sidebar, command palette) loads first; individual feature pages load on demand.
-const Dashboard = lazy(routeLoaders.dashboard)
-const LiveChat = lazy(routeLoaders.chat)
-const AntiChat = lazy(routeLoaders.anti)
-const ThemeTasks = lazy(() => import('./pages/ThemeTasks'))
-const Conversations = lazy(routeLoaders.conversations)
-const Memory = lazy(routeLoaders.memory)
-const GoalHive = lazy(routeLoaders.goalHive)
-const Conductor = lazy(routeLoaders.conductor)
-const MyKey = lazy(routeLoaders.mykey)
-const Settings = lazy(routeLoaders.settings)
-const Tasks = lazy(routeLoaders.tasks)
-const Autonomous = lazy(routeLoaders.autonomous)
-const TokenStats = lazy(routeLoaders.tokens)
+const PAGE_ROUTES = APP_PAGES.map((page) => ({
+  ...page,
+  Component: lazy(page.loader),
+}))
+const ConversationsPage = PAGE_ROUTES.find((page) => page.id === 'conversations')!.Component
+const SettingsPage = PAGE_ROUTES.find((page) => page.id === 'settings')!.Component
 
 export default function App() {
   const start = useAgentStore((s) => s.start)
@@ -104,7 +97,7 @@ export default function App() {
       <div className="app-aurora flex h-screen w-screen overflow-hidden">
         <main className="flex-1 min-w-0 bg-transparent">
           <Suspense fallback={routeFallback}>
-            <Settings initialMode="setup" />
+            <SettingsPage initialMode="setup" />
           </Suspense>
         </main>
         <DialogHost />
@@ -122,21 +115,11 @@ export default function App() {
           <Suspense fallback={<div className="h-full flex items-center justify-center text-ink-faint text-sm">载入中…</div>}>
             <Routes>
               <Route path="/" element={<Navigate to="/chat" replace />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/chat" element={<LiveChat />} />
-              <Route path="/anti" element={<AntiChat />} />
-              <Route path="/theme-tasks" element={<ThemeTasks />} />
+              {PAGE_ROUTES.map(({ id, to, Component }) => (
+                <Route key={id} path={to} element={<Component />} />
+              ))}
               <Route path="/feishu" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/conversations" element={<Conversations />} />
-              <Route path="/conversations/:id" element={<Conversations />} />
-              <Route path="/memory" element={<Memory />} />
-              <Route path="/goal-hive" element={<GoalHive />} />
-              <Route path="/conductor" element={<Conductor />} />
-              <Route path="/mykey" element={<MyKey />} />
-              <Route path="/tasks" element={<Tasks />} />
-              <Route path="/autonomous" element={<Autonomous />} />
-              <Route path="/tokens" element={<TokenStats />} />
-              <Route path="/settings" element={<Settings />} />
+              <Route path="/conversations/:id" element={<ConversationsPage />} />
               <Route path="*" element={<Navigate to="/chat" replace />} />
             </Routes>
           </Suspense>

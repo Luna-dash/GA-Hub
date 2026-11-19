@@ -17,6 +17,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { Z_LAYERS } from '@/config/zLayers'
+import { APP_PAGES } from '@/config/pages'
 import { isTopOverlay, registerOverlay, restoreOverlayFocus } from '@/utils/overlayStack'
 import { api } from '@/api/client'
 import { noticeKeys, useChatStore } from '@/stores/chatStore'
@@ -142,25 +143,14 @@ export function CommandPalette() {
 
   const actions = useMemo<Action[]>(() => {
     const acts: Action[] = []
-    // Page jumps
-    const pages = [
-      { p: '/dashboard', label: '状态面板 / Dashboard', icon: '▦' },
-      { p: '/chat', label: '实时聊天 / Live Chat', icon: '💬' },
-      { p: '/theme-tasks', label: '主题任务 / Theme Tasks', icon: '🗂' },
-      { p: '/conversations', label: '历史对话 / Conversations', icon: '🗂️' },
-      { p: '/memory', label: '记忆体系 / Memory & SOP', icon: '🧠' },
-      { p: '/conductor', label: '指挥模式 / Conductor', icon: '🎼' },
-      { p: '/goal-hive', label: 'Goal模式 / Goal Hive', icon: '🐝' },
-      { p: '/mykey', label: 'LLM管理 / MyKey', icon: '🔐' },
-      { p: '/tasks', label: '定时任务 / Tasks', icon: '☑' },
-      { p: '/autonomous', label: '自主进化 / Autonomous', icon: '🌀' },
-      { p: '/tokens', label: '用量统计 / Token Usage', icon: '◫' },
-      { p: '/settings', label: '系统设置 / Settings', icon: '⚙️' },
-    ]
-    for (const x of pages) {
+    // Page jumps (derived from the single page manifest)
+    for (const page of APP_PAGES) {
       acts.push({
-        id: `nav:${x.p}`, group: '页面', icon: x.icon, label: x.label,
-        run: () => nav(x.p),
+        id: `nav:${page.to}`,
+        group: '页面',
+        icon: page.palette.icon,
+        label: page.palette.label,
+        run: () => nav(page.to),
       })
     }
 

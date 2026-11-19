@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from server import main
@@ -11,7 +14,7 @@ def test_only_registered_routes_receive_spa(tmp_path, monkeypatch):
     app = FastAPI()
     main._mount_static(app)
     with TestClient(app) as client:
-        for path in ["/", "/chat", "/anti", "/settings?tab=x", "/conversations/session"]:
+        for path in ["/", "/chat", "/anti", "/theme-tasks", "/settings?tab=x", "/conversations/session"]:
             response = client.get(path)
             assert response.status_code == 200
             assert response.text == "<html>shell</html>"
@@ -21,3 +24,15 @@ def test_only_registered_routes_receive_spa(tmp_path, monkeypatch):
             assert response.status_code == 404
             assert "<html>shell</html>" not in response.text
         assert client.get("/icon.svg").text == "<svg/>"
+
+
+def test_spa_routes_match_frontend_page_manifest():
+    root = Path(__file__).resolve().parents[1]
+    pages_ts = (root / "webui" / "src" / "config" / "pages.ts").read_text(encoding="utf-8")
+    app_tsx = (root / "webui" / "src" / "App.tsx").read_text(encoding="utf-8")
+
+    manifest_ids = set(re.findall(r"\bid:\s*'([a-z0-9-]+)'", pages_ts))
+    explicit_redirects = set(re.findall(r'<Route\s+path="/([a-z0-9-]+)"\s+element=\{<Navigate\b', app_tsx))
+
+    assert manifest_ids
+    assert main.SPA_ROUTES == (manifest_ids | explicit_redirects)

@@ -1,36 +1,11 @@
-export const routeLoaders = {
-  dashboard: () => import('@/pages/Dashboard'),
-  chat: () => import('@/pages/LiveChat'),
-  anti: () => import('@/pages/AntiChat'),
-  conversations: () => import('@/pages/Conversations'),
-  memory: () => import('@/pages/Memory'),
-  goalHive: () => import('@/pages/GoalHive'),
-  conductor: () => import('@/pages/Conductor'),
-  mykey: () => import('@/pages/MyKey'),
-  settings: () => import('@/pages/Settings'),
-  tasks: () => import('@/pages/Tasks'),
-  autonomous: () => import('@/pages/Autonomous'),
-  tokens: () => import('@/pages/TokenStats'),
-}
+import { APP_PAGES, type AppPageMeta } from '@/config/pages'
 
-const loadersByPath: Record<string, () => Promise<unknown>> = {
-  '/dashboard': routeLoaders.dashboard,
-  '/chat': routeLoaders.chat,
-  '/anti': routeLoaders.anti,
-  '/conversations': routeLoaders.conversations,
-  '/memory': routeLoaders.memory,
-  '/goal-hive': routeLoaders.goalHive,
-  '/conductor': routeLoaders.conductor,
-  '/mykey': routeLoaders.mykey,
-  '/settings': routeLoaders.settings,
-  '/tasks': routeLoaders.tasks,
-  '/autonomous': routeLoaders.autonomous,
-  '/tokens': routeLoaders.tokens,
-}
+const pagesByPath: Record<string, AppPageMeta> = Object.fromEntries(
+  APP_PAGES.map((page) => [page.to, page]),
+)
 
 export function preloadRoute(path: string): void {
   const pathname = path.split('?')[0]
-  const direct = loadersByPath[pathname]
-  const loader = direct ?? (pathname.startsWith('/conversations/') ? routeLoaders.conversations : undefined)
-  if (loader) void loader()
+  const entry = pagesByPath[pathname] ?? (pathname.startsWith('/conversations/') ? pagesByPath['/conversations'] : undefined)
+  if (entry) void entry.loader()
 }

@@ -1,26 +1,13 @@
-import { storageKeys } from '@/config/storageKeys'
+import { APP_PAGES, type NavIconName } from '@/config/pages'
 
-export type NavIconName =
-  | 'dashboard' | 'chat' | 'anti' | 'conversations' | 'memory'
-  | 'conductor' | 'goalHive' | 'mykey' | 'themeTasks' | 'tasks' | 'autonomous' | 'tokens' | 'settings'
+export type { NavIconName }
 
 export interface NavItem { id: string; to: string; label: string; icon: NavIconName }
 export interface NavPreference { id: string; visible: boolean }
 
-export const NAV_ITEMS: NavItem[] = [
-  { id: 'dashboard', to: '/dashboard', label: '状态面板', icon: 'dashboard' },
-  { id: 'chat', to: '/chat', label: '实时聊天', icon: 'chat' },
-  { id: 'anti', to: '/anti', label: 'Agy 会话', icon: 'anti' },
-  { id: 'theme-tasks', to: '/theme-tasks', label: '主题任务', icon: 'themeTasks' },
-  { id: 'conductor', to: '/conductor', label: '指挥模式', icon: 'conductor' },
-  { id: 'goal-hive', to: '/goal-hive', label: 'Goal模式', icon: 'goalHive' },
-  { id: 'conversations', to: '/conversations', label: '历史对话', icon: 'conversations' },
-  { id: 'memory', to: '/memory', label: '记忆体系', icon: 'memory' },
-  { id: 'mykey', to: '/mykey', label: 'LLM管理', icon: 'mykey' },
-  { id: 'tasks', to: '/tasks', label: '定时任务', icon: 'tasks' },
-  { id: 'autonomous', to: '/autonomous', label: '自主进化', icon: 'autonomous' },
-  { id: 'tokens', to: '/tokens', label: '用量统计', icon: 'tokens' },
-]
+export const NAV_ITEMS: NavItem[] = APP_PAGES
+  .filter((page) => page.inNav)
+  .map(({ id, to, label, navIcon }) => ({ id, to, label, icon: navIcon }))
 
 export const NAV_PREFERENCES_EVENT = 'gahub:nav-preferences'
 

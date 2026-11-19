@@ -213,7 +213,7 @@ describe('MarkdownView responsive wrapping', () => {
     expect(copyItem?.disabled).toBe(true)
   })
   it('keeps resources, routes and unsafe schemes out of file resolution', () => {
-    for (const target of ['/chat', '#here', '/api/files/id.pdf', '/api/files-by-path?path=x',
+    for (const target of ['/chat', '/anti', '/theme-tasks?open=1', '#here', '/api/files/id.pdf', '/api/files-by-path?path=x',
       'https://example.com/a.md', 'javascript:alert(1)']) expect(isLocalCitation(target)).toBe(false)
     for (const target of ['report.md', '../notes/a.md', '/tmp/a.md', 'file:///D:/a.md']) expect(isLocalCitation(target)).toBe(true)
     act(() => root.render(<MarkdownView>{'[bad](javascript:alert) [attachment](/api/files/a.pdf) [anchor](#here)'}</MarkdownView>))
