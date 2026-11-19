@@ -5,20 +5,8 @@ import type { components as GeneratedApiComponents } from './generated/schema'
 type ApiSchemas = GeneratedApiComponents['schemas']
 
 // ── Setup ─────────────────────────────────────────────────
-export interface SetupCandidate {
-  path: string
-  valid: boolean
-}
-
-export interface SetupStatus {
-  configured: boolean
-  ga_root: string | null
-  python_path: string | null
-  resolved_python: string | null
-  resolved_python_source: string
-  admin_data: string
-  candidates: SetupCandidate[]
-}
+export type SetupCandidate = ApiSchemas['SetupCandidateResp']
+export type SetupStatus = ApiSchemas['SetupStatusResp']
 
 export type AgentStatus = ApiSchemas['GlobalAgentStatus']
 export type ConversationSummary = ApiSchemas['ConversationSummaryResp']
@@ -32,20 +20,7 @@ export type ConversationDeleteResponse = ApiSchemas['ConversationMutationResp']
 export type ConversationImportResponse = ApiSchemas['ConversationImportResp']
 export type ConversationMessage = ApiSchemas['ConversationMessageResp']
 
-export interface LLMInfo {
-  key: string
-  index: number
-  name: string
-  current: boolean
-  preferred?: boolean
-  kind?: 'mixin' | 'single'
-  members?: string[]
-  active_member?: string
-  in_mixin?: boolean
-  model?: string
-  api_base?: string
-  api_key_masked?: string
-}
+export type LLMInfo = ApiSchemas['LLMInfoResp']
 
 export type MemoryTextResponse = ApiSchemas['MemoryTextResp']
 export type MemoryWriteRequest = ApiSchemas['MemoryWriteReq']
@@ -58,31 +33,21 @@ export interface SessionSnapshot {
   rounds: number
 }
 
-export interface ThemeTaskConfig { instruction: string; description: string }
-export interface ThemeRun { session_id: string; run_id: string; started_at: number; finished_at: number | null; turns: number; model_key: string | null; model_name: string | null; outcome: string | null; report: string; interrupted?: boolean }
+export type ThemeTaskConfig = ApiSchemas['ThemeTaskConfig']
+// ThemeRunResp allows extra keys (index signature); Omit<> would collapse the
+// known fields to `unknown`, so alias it directly.
+export type ThemeRun = ApiSchemas['ThemeRunResp']
 
-export interface HubSession {
-  theme_task?: ThemeTaskConfig | null
-  previous_theme_task?: ThemeTaskConfig | null
-  id: string
-  title: string
-  llm_key?: string | null
-  llm_index: number | null
-  archive_path: string | null
-  project_name?: string | null
-  project_path?: string | null
-  created_at: string
-  updated_at: string
+export type HubSession = Omit<ApiSchemas['HubSession'], 'kind' | 'status'> & {
+  kind?: string
+  status?: string
 }
 
-export interface ProjectItem {
-  display_name?: string | null
-  name: string
-  path: string
+export type ProjectItem = Omit<ApiSchemas['ProjectItem'], 'last_used' | 'mem_lines' | 'source' | 'dangling'> & {
   last_used?: number
   mem_lines?: number
-  memory_path?: string | null
-  dangling: boolean
+  source?: string | null
+  dangling?: boolean
 }
 
 export type SessionRuntime = ApiSchemas['SessionRuntimeResp']
@@ -106,22 +71,7 @@ export type SessionMessagesResponse = Omit<
   next_before?: number | null
 }
 
-export interface ChatRetryConfig {
-  enabled: boolean
-  max_attempts: number
-  /** Retry budget for unattended sources (scheduled / autonomous chats). */
-  scheduled_max_attempts?: number
-  /** Seconds before the first automatic retry attempt. */
-  backoff_base_seconds?: number
-  /** Multiplier applied per subsequent attempt (>= 1). */
-  backoff_factor?: number
-  /** Upper bound for any single computed backoff delay. */
-  backoff_max_seconds?: number
-  /** Backoff base for unattended scheduled sources (slower ramp, default 5s). */
-  scheduled_backoff_base_seconds?: number
-  /** Per-wait ceiling for unattended scheduled sources (default 10 min). */
-  scheduled_backoff_max_seconds?: number
-}
+export type ChatRetryConfig = ApiSchemas['ChatRetryConfigReq']
 
 export type ScheduledChat = ApiSchemas['ScheduledChatResp']
 export type ScheduledChatListResponse = ApiSchemas['ScheduledChatListResp']
@@ -229,11 +179,7 @@ export interface ChatRetryReason {
   marker: string
 }
 
-export interface BtwResp {
-  ok: boolean
-  content: string
-  error?: string
-}
+export type BtwResp = ApiSchemas['BtwResp']
 
 export type ChatEventCursor = { event_id: number; epoch: string }
 export type ChatWSMeta = { turn_segs?: string[]; event_id?: number; epoch?: string; session_id?: string; run_id?: string; logical_id?: string; outcome?: 'completed' | 'cancelled' | 'failed' | null }
@@ -295,31 +241,14 @@ export type ConductorWorkflowListResponse = ApiSchemas['ConductorWorkflowListRes
 export type ConductorActivityEvent = ApiSchemas['ConductorActivityEvent']
 export type ConductorActivityListResponse = ApiSchemas['ConductorActivityListResp']
 
-export interface TokenThreadStats {
-  thread: string
-  title: string
-  requests: number
-  input: number
-  output: number
-  cache_create: number
-  cache_read: number
-  total: number
-  cache_hit_rate: number
-  elapsed_seconds: number
+export type TokenTotals = ApiSchemas['TokenTotalsResp']
+export type TokenThreadStats = Omit<ApiSchemas['TokenThreadStatsResp'], 'updated_at'> & {
+  updated_at?: number
 }
-
-export interface TokenTotals extends Omit<TokenThreadStats, 'thread' | 'title' | 'elapsed_seconds'> {}
-export interface TokenWeekStats extends TokenTotals { week_start: string; week_end: string }
-export interface TokenDayStats extends TokenTotals { date: string }
-export interface TokenStatsResponse {
-  available: boolean
+export type TokenWeekStats = ApiSchemas['TokenWeekStatsResp']
+export type TokenDayStats = ApiSchemas['TokenDayStatsResp']
+export type TokenStatsResponse = Omit<ApiSchemas['TokenStatsResp'], 'threads'> & {
   threads: TokenThreadStats[]
-  totals: TokenTotals
-  timestamp: number
-  all_time: TokenTotals
-  current_week: TokenWeekStats
-  weeks: TokenWeekStats[]
-  days: TokenDayStats[]
 }
 export interface TokenHistoryPoint extends TokenTotals { timestamp: number }
 

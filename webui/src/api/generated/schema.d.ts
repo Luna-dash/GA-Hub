@@ -2740,6 +2740,18 @@ export interface components {
             text: string;
             step?: components["schemas"]["AntiStep"] | null;
         };
+        /** AntiModelItem */
+        AntiModelItem: {
+            /** Id */
+            id: string;
+            /** Display Name */
+            display_name: string;
+        };
+        /** AntiModelList */
+        AntiModelList: {
+            /** Items */
+            items: components["schemas"]["AntiModelItem"][];
+        };
         /** AntiRunCreate */
         AntiRunCreate: {
             /** Operation */
@@ -2760,6 +2772,25 @@ export interface components {
             /** References */
             references?: components["schemas"]["AntiFileReference"][];
         };
+        /** AntiRunResp */
+        AntiRunResp: {
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+            /** Operation */
+            operation: string;
+            /** Prompt */
+            prompt: string;
+            /** Answer */
+            answer?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Error Detail */
+            error_detail?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** AntiSessionCreate */
         AntiSessionCreate: {
             /** Project */
@@ -2771,6 +2802,29 @@ export interface components {
         AntiSessionRename: {
             /** Title */
             title: string;
+        };
+        /** AntiSessionResp */
+        AntiSessionResp: {
+            /** Id */
+            id: string;
+            /** Project */
+            project: string;
+            /** Title */
+            title: string;
+            /** Workspace */
+            workspace: string;
+            /** Updated At */
+            updated_at?: string | null;
+            /** Active Run Id */
+            active_run_id?: string | null;
+            /**
+             * Engine
+             * @default anti
+             * @constant
+             */
+            engine: "anti";
+        } & {
+            [key: string]: unknown;
         };
         /** AntiStep */
         AntiStep: {
@@ -4003,6 +4057,60 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
+        /** LLMInfoResp */
+        LLMInfoResp: {
+            /** Index */
+            index: number;
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /** Current */
+            current: boolean;
+            /**
+             * Preferred
+             * @default false
+             */
+            preferred: boolean;
+            /**
+             * Kind
+             * @default single
+             * @enum {string}
+             */
+            kind: "mixin" | "single";
+            /** Members */
+            members?: string[];
+            /**
+             * Active Member
+             * @default
+             */
+            active_member: string;
+            /**
+             * In Mixin
+             * @default false
+             */
+            in_mixin: boolean;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Api Base
+             * @default
+             */
+            api_base: string;
+            /**
+             * Api Key Masked
+             * @default
+             */
+            api_key_masked: string;
+        };
+        /** LLMListResp */
+        LLMListResp: {
+            /** Llms */
+            llms: components["schemas"]["LLMInfoResp"][];
+        };
         /** LLMSwitch */
         LLMSwitch: {
             /** Index */
@@ -4272,6 +4380,26 @@ export interface components {
              * @default false
              */
             confirm: boolean;
+        };
+        /** NovaStatusResp */
+        NovaStatusResp: {
+            /** Device */
+            device?: string | null;
+            /** Paired */
+            paired?: boolean | null;
+            /**
+             * Running
+             * @default false
+             */
+            running: boolean;
+            /** Error */
+            error?: string | null;
+            /** Server */
+            server?: string | null;
+            /** Local Token */
+            local_token?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /** PrepareUpdate */
         PrepareUpdate: {
@@ -4732,12 +4860,41 @@ export interface components {
             /** Llm Index */
             llm_index?: number | null;
         };
+        /** SetupCandidateResp */
+        SetupCandidateResp: {
+            /** Path */
+            path: string;
+            /** Valid */
+            valid: boolean;
+            /** Error */
+            error?: string | null;
+        };
         /** SetupReq */
         SetupReq: {
             /** Ga Root */
             ga_root: string;
             /** Python Path */
             python_path?: string | null;
+        };
+        /** SetupStatusResp */
+        SetupStatusResp: {
+            /** Configured */
+            configured: boolean;
+            /** Ga Root */
+            ga_root: string | null;
+            /** Python Path */
+            python_path?: string | null;
+            /** Resolved Python */
+            resolved_python?: string | null;
+            /**
+             * Resolved Python Source
+             * @default
+             */
+            resolved_python_source: string;
+            /** Admin Data */
+            admin_data: string;
+            /** Candidates */
+            candidates: components["schemas"]["SetupCandidateResp"][];
         };
         /** SkillDetailResp */
         SkillDetailResp: {
@@ -4910,6 +5067,41 @@ export interface components {
             /** Stream Id */
             stream_id: string;
         };
+        /** ThemeRunEnvelopeResp */
+        ThemeRunEnvelopeResp: {
+            run?: components["schemas"]["ThemeRunResp"] | null;
+        };
+        /** ThemeRunResp */
+        ThemeRunResp: {
+            /** Session Id */
+            session_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Started At */
+            started_at: number;
+            /** Finished At */
+            finished_at?: number | null;
+            /**
+             * Turns
+             * @default 0
+             */
+            turns: number;
+            /** Model Key */
+            model_key?: string | null;
+            /** Model Name */
+            model_name?: string | null;
+            /** Outcome */
+            outcome?: string | null;
+            /**
+             * Report
+             * @default
+             */
+            report: string;
+            /** Interrupted */
+            interrupted?: boolean | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** ThemeTaskConfig */
         ThemeTaskConfig: {
             /** Instruction */
@@ -4919,6 +5111,194 @@ export interface components {
              * @default
              */
             description: string;
+        };
+        /** TokenDayStatsResp */
+        TokenDayStatsResp: {
+            /**
+             * Requests
+             * @default 0
+             */
+            requests: number;
+            /**
+             * Input
+             * @default 0
+             */
+            input: number;
+            /**
+             * Output
+             * @default 0
+             */
+            output: number;
+            /**
+             * Cache Create
+             * @default 0
+             */
+            cache_create: number;
+            /**
+             * Cache Read
+             * @default 0
+             */
+            cache_read: number;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Cache Hit Rate
+             * @default 0
+             */
+            cache_hit_rate: number;
+            /** Date */
+            date: string;
+        };
+        /** TokenStatsResp */
+        TokenStatsResp: {
+            /** Available */
+            available: boolean;
+            /** Threads */
+            threads: components["schemas"]["TokenThreadStatsResp"][];
+            totals: components["schemas"]["TokenTotalsResp"];
+            /** Timestamp */
+            timestamp: number;
+            all_time: components["schemas"]["TokenTotalsResp"];
+            current_week: components["schemas"]["TokenWeekStatsResp"];
+            /** Weeks */
+            weeks: components["schemas"]["TokenWeekStatsResp"][];
+            /** Days */
+            days: components["schemas"]["TokenDayStatsResp"][];
+        };
+        /** TokenThreadStatsResp */
+        TokenThreadStatsResp: {
+            /**
+             * Requests
+             * @default 0
+             */
+            requests: number;
+            /**
+             * Input
+             * @default 0
+             */
+            input: number;
+            /**
+             * Output
+             * @default 0
+             */
+            output: number;
+            /**
+             * Cache Create
+             * @default 0
+             */
+            cache_create: number;
+            /**
+             * Cache Read
+             * @default 0
+             */
+            cache_read: number;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Cache Hit Rate
+             * @default 0
+             */
+            cache_hit_rate: number;
+            /** Thread */
+            thread: string;
+            /** Title */
+            title: string;
+            /**
+             * Elapsed Seconds
+             * @default 0
+             */
+            elapsed_seconds: number;
+            /**
+             * Updated At
+             * @default 0
+             */
+            updated_at: number;
+        };
+        /** TokenTotalsResp */
+        TokenTotalsResp: {
+            /**
+             * Requests
+             * @default 0
+             */
+            requests: number;
+            /**
+             * Input
+             * @default 0
+             */
+            input: number;
+            /**
+             * Output
+             * @default 0
+             */
+            output: number;
+            /**
+             * Cache Create
+             * @default 0
+             */
+            cache_create: number;
+            /**
+             * Cache Read
+             * @default 0
+             */
+            cache_read: number;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Cache Hit Rate
+             * @default 0
+             */
+            cache_hit_rate: number;
+        };
+        /** TokenWeekStatsResp */
+        TokenWeekStatsResp: {
+            /**
+             * Requests
+             * @default 0
+             */
+            requests: number;
+            /**
+             * Input
+             * @default 0
+             */
+            input: number;
+            /**
+             * Output
+             * @default 0
+             */
+            output: number;
+            /**
+             * Cache Create
+             * @default 0
+             */
+            cache_create: number;
+            /**
+             * Cache Read
+             * @default 0
+             */
+            cache_read: number;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Cache Hit Rate
+             * @default 0
+             */
+            cache_hit_rate: number;
+            /** Week Start */
+            week_start: string;
+            /** Week End */
+            week_end: string;
         };
         /** TransferredFile */
         TransferredFile: {
@@ -4942,10 +5322,92 @@ export interface components {
             /** Size */
             size: number;
         };
+        /** UpdateDownloadErrorResp */
+        UpdateDownloadErrorResp: {
+            /** Message */
+            message: string;
+            /** Detail */
+            detail: string;
+        };
+        /** UpdateDownloadResp */
+        UpdateDownloadResp: {
+            /** Phase */
+            phase: string;
+            /** Received Bytes */
+            received_bytes?: number | null;
+            /** Total Bytes */
+            total_bytes?: number | null;
+            /** Started At */
+            started_at?: number | null;
+            /** Updated At */
+            updated_at?: number | null;
+            release?: components["schemas"]["UpdateReleaseResp"] | null;
+            /** Plan Id */
+            plan_id?: string | null;
+            error?: components["schemas"]["UpdateDownloadErrorResp"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** UpdateHandoffResp */
+        UpdateHandoffResp: {
+            /** Id */
+            id: string;
+            /** State */
+            state: string;
+            /** Not Before */
+            not_before?: number | null;
+            /** Error */
+            error?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** UpdateIdentity */
         UpdateIdentity: {
             /** Id */
             id: string;
+        };
+        /** UpdatePlanResp */
+        UpdatePlanResp: {
+            /** State */
+            state: string;
+            /** Id */
+            id?: string | null;
+            /** Version */
+            version?: string | null;
+            /** Commit */
+            commit?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** UpdateReleaseResp */
+        UpdateReleaseResp: {
+            /** Current Version */
+            current_version: string;
+            /** Version */
+            version: string;
+            /** Available */
+            available: boolean;
+            /** Tag */
+            tag: string;
+            /** Notes */
+            notes: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** UpdateStatusResp */
+        UpdateStatusResp: {
+            download?: components["schemas"]["UpdateDownloadResp"] | null;
+            release?: components["schemas"]["UpdateReleaseResp"] | null;
+            plan: components["schemas"]["UpdatePlanResp"];
+            /** Supported */
+            supported: boolean;
+            /** Sources */
+            sources: string[];
+            /** Data Epoch */
+            data_epoch: number;
+            handoff?: components["schemas"]["UpdateHandoffResp"] | null;
+        } & {
+            [key: string]: unknown;
         };
         /** UploadResp */
         UploadResp: {
@@ -5124,7 +5586,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SetupStatusResp"];
                 };
             };
         };
@@ -5210,9 +5672,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UpdateStatusResp"];
                 };
             };
         };
@@ -5236,9 +5696,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UpdatePlanResp"];
                 };
             };
             /** @description Validation Error */
@@ -5267,9 +5725,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UpdateReleaseResp"];
                 };
             };
         };
@@ -5289,9 +5745,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UpdateDownloadResp"];
                 };
             };
         };
@@ -5311,9 +5765,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UpdatePlanResp"];
                 };
             };
         };
@@ -5372,9 +5824,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UpdatePlanResp"];
                 };
             };
             /** @description Validation Error */
@@ -5711,7 +6161,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ChatRetryConfigReq"];
                 };
             };
         };
@@ -5735,7 +6185,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ChatRetryConfigReq"];
                 };
             };
             /** @description Validation Error */
@@ -5815,7 +6265,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["LLMListResp"];
                 };
             };
         };
@@ -8885,9 +9335,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ThemeRunEnvelopeResp"];
                 };
             };
             /** @description Validation Error */
@@ -9236,7 +9684,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TokenStatsResp"];
                 };
             };
         };
@@ -9316,7 +9764,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AntiModelList"];
                 };
             };
         };
@@ -9336,7 +9784,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AntiSessionResp"][];
                 };
             };
         };
@@ -9360,7 +9808,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AntiSessionResp"];
                 };
             };
             /** @description Validation Error */
@@ -9424,7 +9872,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AntiSessionResp"];
                 };
             };
             /** @description Validation Error */
@@ -9455,7 +9903,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AntiRunResp"][];
                 };
             };
             /** @description Validation Error */
@@ -9490,7 +9938,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AntiRunResp"];
                 };
             };
             /** @description Validation Error */
@@ -9522,7 +9970,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AntiRunResp"];
                 };
             };
             /** @description Validation Error */
@@ -9588,7 +10036,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AntiRunResp"];
                 };
             };
             /** @description Validation Error */
@@ -9817,7 +10265,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["NovaStatusResp"];
                 };
             };
         };
@@ -9841,7 +10289,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["NovaStatusResp"];
                 };
             };
             /** @description Validation Error */
@@ -9874,7 +10322,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["NovaStatusResp"];
                 };
             };
             /** @description Validation Error */
@@ -9903,7 +10351,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["NovaStatusResp"];
                 };
             };
         };

@@ -33,6 +33,7 @@ from ..schemas import (
     ProjectListResp,
     ProjectCreate,
     SessionProjectUpdate,
+    ThemeRunEnvelopeResp,
     RunSubmit,
     ScheduledChatCreate,
     ScheduledChatResp,
@@ -702,7 +703,7 @@ async def delete_session(lifecycle: SessionDomain, session_id: str):
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/api/sessions/{session_id}/theme-run")
+@router.get("/api/sessions/{session_id}/theme-run", response_model=ThemeRunEnvelopeResp)
 async def theme_run(lifecycle: SessionDomain, session_id: str) -> dict:
     await asyncio.to_thread(_session, lifecycle, session_id)
     from ..services import theme_task_runs

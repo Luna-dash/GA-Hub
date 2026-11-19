@@ -26,6 +26,41 @@ class AgentTitleReq(BaseModel):
     title: str = ""
 
 
+class SetupCandidateResp(BaseModel):
+    path: str
+    valid: bool
+    error: str | None = None
+
+
+class SetupStatusResp(BaseModel):
+    configured: bool
+    ga_root: str | None
+    python_path: str | None = None
+    resolved_python: str | None = None
+    resolved_python_source: str = ""
+    admin_data: str
+    candidates: list[SetupCandidateResp]
+
+
+class LLMInfoResp(BaseModel):
+    index: int
+    key: str
+    name: str
+    current: bool
+    preferred: bool = False
+    kind: Literal["mixin", "single"] = "single"
+    members: list[str] = Field(default_factory=list)
+    active_member: str = ""
+    in_mixin: bool = False
+    model: str = ""
+    api_base: str = ""
+    api_key_masked: str = ""
+
+
+class LLMListResp(BaseModel):
+    llms: list[LLMInfoResp]
+
+
 # ── application status ─────────────────────────────────────────────────────
 class GlobalAgentStatus(BaseModel):
     is_running: bool
@@ -464,6 +499,62 @@ class SessionCreate(BaseModel):
 class ThemeTaskConfig(BaseModel):
     instruction: str = Field(min_length=1, max_length=20000)
     description: str = Field(default="", max_length=1000)
+
+
+class ThemeRunResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    session_id: str
+    run_id: str
+    started_at: float
+    finished_at: float | None = None
+    turns: int = 0
+    model_key: str | None = None
+    model_name: str | None = None
+    outcome: str | None = None
+    report: str = ""
+    interrupted: bool | None = None
+
+
+class ThemeRunEnvelopeResp(BaseModel):
+    run: ThemeRunResp | None = None
+
+
+class TokenTotalsResp(BaseModel):
+    requests: int = 0
+    input: int = 0
+    output: int = 0
+    cache_create: int = 0
+    cache_read: int = 0
+    total: int = 0
+    cache_hit_rate: float = 0.0
+
+
+class TokenThreadStatsResp(TokenTotalsResp):
+    thread: str
+    title: str
+    elapsed_seconds: float = 0.0
+    updated_at: int = 0
+
+
+class TokenWeekStatsResp(TokenTotalsResp):
+    week_start: str
+    week_end: str
+
+
+class TokenDayStatsResp(TokenTotalsResp):
+    date: str
+
+
+class TokenStatsResp(BaseModel):
+    available: bool
+    threads: list[TokenThreadStatsResp]
+    totals: TokenTotalsResp
+    timestamp: int
+    all_time: TokenTotalsResp
+    current_week: TokenWeekStatsResp
+    weeks: list[TokenWeekStatsResp]
+    days: list[TokenDayStatsResp]
 
 
 class SessionUpdate(BaseModel):

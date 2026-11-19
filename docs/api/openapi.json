@@ -17,7 +17,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatusResp"
+                }
               }
             }
           }
@@ -115,9 +117,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Update Status Api Updates Get"
+                  "$ref": "#/components/schemas/UpdateStatusResp"
                 }
               }
             }
@@ -148,9 +148,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Prepare Update Api Updates Prepare Post"
+                  "$ref": "#/components/schemas/UpdatePlanResp"
                 }
               }
             }
@@ -181,9 +179,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Check Release Api Updates Release Get"
+                  "$ref": "#/components/schemas/UpdateReleaseResp"
                 }
               }
             }
@@ -204,9 +200,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Download Release Api Updates Release Download Post"
+                  "$ref": "#/components/schemas/UpdateDownloadResp"
                 }
               }
             }
@@ -227,9 +221,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Prepare Release Api Updates Release Prepare Post"
+                  "$ref": "#/components/schemas/UpdatePlanResp"
                 }
               }
             }
@@ -303,9 +295,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Cancel Update Api Updates Cancel Post"
+                  "$ref": "#/components/schemas/UpdatePlanResp"
                 }
               }
             }
@@ -661,7 +651,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ChatRetryConfigReq"
+                }
               }
             }
           }
@@ -685,7 +677,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ChatRetryConfigReq"
+                }
               }
             }
           },
@@ -765,7 +759,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LLMListResp"
+                }
               }
             }
           }
@@ -4639,9 +4635,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Theme Run Api Sessions  Session Id  Theme Run Get"
+                  "$ref": "#/components/schemas/ThemeRunEnvelopeResp"
                 }
               }
             }
@@ -5068,7 +5062,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TokenStatsResp"
+                }
               }
             }
           }
@@ -5150,7 +5146,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AntiModelList"
+                }
               }
             }
           }
@@ -5169,7 +5167,13 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AntiSessionResp"
+                  },
+                  "type": "array",
+                  "title": "Response Sessions Api Anti Sessions Get"
+                }
               }
             }
           }
@@ -5196,7 +5200,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AntiSessionResp"
+                }
               }
             }
           },
@@ -5246,7 +5252,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AntiSessionResp"
+                }
               }
             }
           },
@@ -5319,7 +5327,13 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AntiRunResp"
+                  },
+                  "title": "Response Runs Api Anti Sessions  Sid  Runs Get"
+                }
               }
             }
           },
@@ -5367,7 +5381,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AntiRunResp"
+                }
               }
             }
           },
@@ -5416,7 +5432,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AntiRunResp"
+                }
               }
             }
           },
@@ -5545,7 +5563,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AntiRunResp"
+                }
               }
             }
           },
@@ -5756,7 +5776,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/NovaStatusResp"
+                }
               }
             }
           }
@@ -5782,7 +5804,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/NovaStatusResp"
+                }
               }
             }
           },
@@ -5818,7 +5842,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/NovaStatusResp"
+                }
               }
             }
           },
@@ -5844,7 +5870,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/NovaStatusResp"
+                }
               }
             }
           }
@@ -6094,6 +6122,40 @@
         ],
         "title": "AntiMessageDelta"
       },
+      "AntiModelItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "title": "AntiModelItem"
+      },
+      "AntiModelList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AntiModelItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "AntiModelList"
+      },
       "AntiRunCreate": {
         "properties": {
           "operation": {
@@ -6143,6 +6205,68 @@
         ],
         "title": "AntiRunCreate"
       },
+      "AntiRunResp": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "operation": {
+            "type": "string",
+            "title": "Operation"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "error_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Detail"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "operation",
+          "prompt"
+        ],
+        "title": "AntiRunResp"
+      },
       "AntiSessionCreate": {
         "properties": {
           "project": {
@@ -6185,6 +6309,63 @@
           "title"
         ],
         "title": "AntiSessionRename"
+      },
+      "AntiSessionResp": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "project": {
+            "type": "string",
+            "title": "Project"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "active_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Run Id"
+          },
+          "engine": {
+            "type": "string",
+            "const": "anti",
+            "title": "Engine",
+            "default": "anti"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "project",
+          "title",
+          "workspace"
+        ],
+        "title": "AntiSessionResp"
       },
       "AntiStep": {
         "properties": {
@@ -9605,6 +9786,96 @@
         ],
         "title": "HubSession"
       },
+      "LLMInfoResp": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "current": {
+            "type": "boolean",
+            "title": "Current"
+          },
+          "preferred": {
+            "type": "boolean",
+            "title": "Preferred",
+            "default": false
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "mixin",
+              "single"
+            ],
+            "title": "Kind",
+            "default": "single"
+          },
+          "members": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Members"
+          },
+          "active_member": {
+            "type": "string",
+            "title": "Active Member",
+            "default": ""
+          },
+          "in_mixin": {
+            "type": "boolean",
+            "title": "In Mixin",
+            "default": false
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "default": ""
+          },
+          "api_base": {
+            "type": "string",
+            "title": "Api Base",
+            "default": ""
+          },
+          "api_key_masked": {
+            "type": "string",
+            "title": "Api Key Masked",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "key",
+          "name",
+          "current"
+        ],
+        "title": "LLMInfoResp"
+      },
+      "LLMListResp": {
+        "properties": {
+          "llms": {
+            "items": {
+              "$ref": "#/components/schemas/LLMInfoResp"
+            },
+            "type": "array",
+            "title": "Llms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "llms"
+        ],
+        "title": "LLMListResp"
+      },
       "LLMSwitch": {
         "properties": {
           "index": {
@@ -10393,6 +10664,73 @@
           "password"
         ],
         "title": "NovaAccountRequest"
+      },
+      "NovaStatusResp": {
+        "properties": {
+          "device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device"
+          },
+          "paired": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paired"
+          },
+          "running": {
+            "type": "boolean",
+            "title": "Running",
+            "default": false
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "server": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server"
+          },
+          "local_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Token"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "NovaStatusResp"
       },
       "PrepareUpdate": {
         "properties": {
@@ -11763,6 +12101,35 @@
         "type": "object",
         "title": "SessionUpdate"
       },
+      "SetupCandidateResp": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "valid": {
+            "type": "boolean",
+            "title": "Valid"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "valid"
+        ],
+        "title": "SetupCandidateResp"
+      },
       "SetupReq": {
         "properties": {
           "ga_root": {
@@ -11786,6 +12153,71 @@
           "ga_root"
         ],
         "title": "SetupReq"
+      },
+      "SetupStatusResp": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "ga_root": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ga Root"
+          },
+          "python_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Python Path"
+          },
+          "resolved_python": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Python"
+          },
+          "resolved_python_source": {
+            "type": "string",
+            "title": "Resolved Python Source",
+            "default": ""
+          },
+          "admin_data": {
+            "type": "string",
+            "title": "Admin Data"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/SetupCandidateResp"
+            },
+            "type": "array",
+            "title": "Candidates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "configured",
+          "ga_root",
+          "admin_data",
+          "candidates"
+        ],
+        "title": "SetupStatusResp"
       },
       "SkillDetailResp": {
         "properties": {
@@ -12201,6 +12633,111 @@
         ],
         "title": "TaskTriggerResp"
       },
+      "ThemeRunEnvelopeResp": {
+        "properties": {
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeRunResp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ThemeRunEnvelopeResp"
+      },
+      "ThemeRunResp": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "started_at": {
+            "type": "number",
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "turns": {
+            "type": "integer",
+            "title": "Turns",
+            "default": 0
+          },
+          "model_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Key"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "report": {
+            "type": "string",
+            "title": "Report",
+            "default": ""
+          },
+          "interrupted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interrupted"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "session_id",
+          "run_id",
+          "started_at"
+        ],
+        "title": "ThemeRunResp"
+      },
       "ThemeTaskConfig": {
         "properties": {
           "instruction": {
@@ -12221,6 +12758,265 @@
           "instruction"
         ],
         "title": "ThemeTaskConfig"
+      },
+      "TokenDayStatsResp": {
+        "properties": {
+          "requests": {
+            "type": "integer",
+            "title": "Requests",
+            "default": 0
+          },
+          "input": {
+            "type": "integer",
+            "title": "Input",
+            "default": 0
+          },
+          "output": {
+            "type": "integer",
+            "title": "Output",
+            "default": 0
+          },
+          "cache_create": {
+            "type": "integer",
+            "title": "Cache Create",
+            "default": 0
+          },
+          "cache_read": {
+            "type": "integer",
+            "title": "Cache Read",
+            "default": 0
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "cache_hit_rate": {
+            "type": "number",
+            "title": "Cache Hit Rate",
+            "default": 0.0
+          },
+          "date": {
+            "type": "string",
+            "title": "Date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "date"
+        ],
+        "title": "TokenDayStatsResp"
+      },
+      "TokenStatsResp": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "threads": {
+            "items": {
+              "$ref": "#/components/schemas/TokenThreadStatsResp"
+            },
+            "type": "array",
+            "title": "Threads"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/TokenTotalsResp"
+          },
+          "timestamp": {
+            "type": "integer",
+            "title": "Timestamp"
+          },
+          "all_time": {
+            "$ref": "#/components/schemas/TokenTotalsResp"
+          },
+          "current_week": {
+            "$ref": "#/components/schemas/TokenWeekStatsResp"
+          },
+          "weeks": {
+            "items": {
+              "$ref": "#/components/schemas/TokenWeekStatsResp"
+            },
+            "type": "array",
+            "title": "Weeks"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/TokenDayStatsResp"
+            },
+            "type": "array",
+            "title": "Days"
+          }
+        },
+        "type": "object",
+        "required": [
+          "available",
+          "threads",
+          "totals",
+          "timestamp",
+          "all_time",
+          "current_week",
+          "weeks",
+          "days"
+        ],
+        "title": "TokenStatsResp"
+      },
+      "TokenThreadStatsResp": {
+        "properties": {
+          "requests": {
+            "type": "integer",
+            "title": "Requests",
+            "default": 0
+          },
+          "input": {
+            "type": "integer",
+            "title": "Input",
+            "default": 0
+          },
+          "output": {
+            "type": "integer",
+            "title": "Output",
+            "default": 0
+          },
+          "cache_create": {
+            "type": "integer",
+            "title": "Cache Create",
+            "default": 0
+          },
+          "cache_read": {
+            "type": "integer",
+            "title": "Cache Read",
+            "default": 0
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "cache_hit_rate": {
+            "type": "number",
+            "title": "Cache Hit Rate",
+            "default": 0.0
+          },
+          "thread": {
+            "type": "string",
+            "title": "Thread"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "elapsed_seconds": {
+            "type": "number",
+            "title": "Elapsed Seconds",
+            "default": 0.0
+          },
+          "updated_at": {
+            "type": "integer",
+            "title": "Updated At",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "thread",
+          "title"
+        ],
+        "title": "TokenThreadStatsResp"
+      },
+      "TokenTotalsResp": {
+        "properties": {
+          "requests": {
+            "type": "integer",
+            "title": "Requests",
+            "default": 0
+          },
+          "input": {
+            "type": "integer",
+            "title": "Input",
+            "default": 0
+          },
+          "output": {
+            "type": "integer",
+            "title": "Output",
+            "default": 0
+          },
+          "cache_create": {
+            "type": "integer",
+            "title": "Cache Create",
+            "default": 0
+          },
+          "cache_read": {
+            "type": "integer",
+            "title": "Cache Read",
+            "default": 0
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "cache_hit_rate": {
+            "type": "number",
+            "title": "Cache Hit Rate",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "title": "TokenTotalsResp"
+      },
+      "TokenWeekStatsResp": {
+        "properties": {
+          "requests": {
+            "type": "integer",
+            "title": "Requests",
+            "default": 0
+          },
+          "input": {
+            "type": "integer",
+            "title": "Input",
+            "default": 0
+          },
+          "output": {
+            "type": "integer",
+            "title": "Output",
+            "default": 0
+          },
+          "cache_create": {
+            "type": "integer",
+            "title": "Cache Create",
+            "default": 0
+          },
+          "cache_read": {
+            "type": "integer",
+            "title": "Cache Read",
+            "default": 0
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "cache_hit_rate": {
+            "type": "number",
+            "title": "Cache Hit Rate",
+            "default": 0.0
+          },
+          "week_start": {
+            "type": "string",
+            "title": "Week Start"
+          },
+          "week_end": {
+            "type": "string",
+            "title": "Week End"
+          }
+        },
+        "type": "object",
+        "required": [
+          "week_start",
+          "week_end"
+        ],
+        "title": "TokenWeekStatsResp"
       },
       "TransferredFile": {
         "properties": {
@@ -12281,6 +13077,154 @@
         ],
         "title": "TransferredFile"
       },
+      "UpdateDownloadErrorResp": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message",
+          "detail"
+        ],
+        "title": "UpdateDownloadErrorResp"
+      },
+      "UpdateDownloadResp": {
+        "properties": {
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "received_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Bytes"
+          },
+          "total_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Bytes"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpdateReleaseResp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpdateDownloadErrorResp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "phase"
+        ],
+        "title": "UpdateDownloadResp"
+      },
+      "UpdateHandoffResp": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "not_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Before"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "state"
+        ],
+        "title": "UpdateHandoffResp"
+      },
       "UpdateIdentity": {
         "properties": {
           "id": {
@@ -12294,6 +13238,148 @@
           "id"
         ],
         "title": "UpdateIdentity"
+      },
+      "UpdatePlanResp": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "title": "UpdatePlanResp"
+      },
+      "UpdateReleaseResp": {
+        "properties": {
+          "current_version": {
+            "type": "string",
+            "title": "Current Version"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "tag": {
+            "type": "string",
+            "title": "Tag"
+          },
+          "notes": {
+            "type": "string",
+            "title": "Notes"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "current_version",
+          "version",
+          "available",
+          "tag",
+          "notes"
+        ],
+        "title": "UpdateReleaseResp"
+      },
+      "UpdateStatusResp": {
+        "properties": {
+          "download": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpdateDownloadResp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpdateReleaseResp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plan": {
+            "$ref": "#/components/schemas/UpdatePlanResp"
+          },
+          "supported": {
+            "type": "boolean",
+            "title": "Supported"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "data_epoch": {
+            "type": "integer",
+            "title": "Data Epoch"
+          },
+          "handoff": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpdateHandoffResp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "plan",
+          "supported",
+          "sources",
+          "data_epoch"
+        ],
+        "title": "UpdateStatusResp"
       },
       "UploadResp": {
         "properties": {

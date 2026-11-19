@@ -35,6 +35,39 @@ class AntiAccountUsage(BaseModel):
     rows: list[AntiAccountQuotaRow]
 
 
+class AntiModelItem(BaseModel):
+    id: str
+    display_name: str
+
+
+class AntiModelList(BaseModel):
+    items: list[AntiModelItem]
+
+
+class AntiSessionResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    id: str
+    project: str
+    title: str
+    workspace: str
+    updated_at: str | None = None
+    active_run_id: str | None = None
+    engine: Literal["anti"] = "anti"
+
+
+class AntiRunResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    id: str
+    status: str
+    operation: str
+    prompt: str
+    answer: str | None = None
+    error: str | None = None
+    error_detail: str | None = None
+
+
 class AntiSessionCreate(BaseModel):
     project: Annotated[str, StringConstraints(min_length=1, max_length=160)]
     title: AntiSessionTitle | None = None
@@ -130,22 +163,22 @@ def check_account_usage(request: Request):
         raise HTTPException(502, "AntiCLI 返回了无法识别的额度报告。") from exc
 
 
-@router.get("/models")
+@router.get("/models", response_model=AntiModelList)
 def models():
     return _call("models")
 
 
-@router.get("/sessions")
+@router.get("/sessions", response_model=list[AntiSessionResp])
 def sessions():
     return _call("list")
 
 
-@router.post("/sessions")
+@router.post("/sessions", response_model=AntiSessionResp)
 def create_session(body: AntiSessionCreate):
     return _call("create", body.project, body.title)
 
 
-@router.patch("/sessions/{sid}")
+@router.patch("/sessions/{sid}", response_model=AntiSessionResp)
 def rename_session(sid: str, body: AntiSessionRename):
     return _call("rename", sid, body.title)
 
@@ -155,18 +188,18 @@ def delete_session(sid: str):
     _call("delete", sid)
 
 
-@router.get("/sessions/{sid}/runs")
+@router.get("/sessions/{sid}/runs", response_model=list[AntiRunResp])
 def runs(sid: str):
     return _call("history", sid)
 
 
-@router.post("/sessions/{sid}/runs")
+@router.post("/sessions/{sid}/runs", response_model=AntiRunResp)
 def submit_run(sid: str, body: AntiRunCreate):
     return _call("submit", sid, body.operation, body.prompt, body.model, body.effort,
                  [(ref.id, ref.path) for ref in body.references])
 
 
-@router.get("/sessions/{sid}/runs/{rid}")
+@router.get("/sessions/{sid}/runs/{rid}", response_model=AntiRunResp)
 def run(sid: str, rid: str):
     return _call("refresh", sid, rid)
 
@@ -176,6 +209,6 @@ def events(sid: str, rid: str, after: int = Query(default=0, ge=0)) -> list[Anti
     return _call("events", sid, rid, after)
 
 
-@router.post("/sessions/{sid}/runs/{rid}/cancel")
+@router.post("/sessions/{sid}/runs/{rid}/cancel", response_model=AntiRunResp)
 def cancel(sid: str, rid: str):
     return _call("cancel", sid, rid)

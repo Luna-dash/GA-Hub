@@ -11,6 +11,7 @@ from ..schemas import (
     BtwReq,
     BtwResp,
     ChatRetryConfigReq,
+    LLMListResp,
     LLMSwitch,
 )
 from ..services.agent_service import AgentService
@@ -67,12 +68,12 @@ async def history():
     return {"history": svc().get_history()}
 
 
-@router.get("/api/agent/chat-retry-config")
+@router.get("/api/agent/chat-retry-config", response_model=ChatRetryConfigReq)
 async def get_chat_retry_config():
     return await asyncio.to_thread(lambda: load_chat_retry_config().to_dict())
 
 
-@router.put("/api/agent/chat-retry-config")
+@router.put("/api/agent/chat-retry-config", response_model=ChatRetryConfigReq)
 async def put_chat_retry_config(req: ChatRetryConfigReq):
     return await asyncio.to_thread(lambda: save_chat_retry_config(req.model_dump()).to_dict())
 
@@ -118,7 +119,7 @@ def _restore_session_sync(service: AgentService, idx: int) -> tuple[str, str] | 
 
 
 # ── LLMs ─────────────────────────────────────────────────────────
-@router.get("/api/llms")
+@router.get("/api/llms", response_model=LLMListResp)
 async def list_llms():
     # list_llms reloads mykey.py and rebuilds LLM clients — worker thread.
     return {"llms": await asyncio.to_thread(svc().list_llms)}

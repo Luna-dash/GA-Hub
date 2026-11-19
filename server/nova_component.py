@@ -25,6 +25,17 @@ class NovaAccountRequest(BaseModel):
     confirm: bool = False
 
 
+class NovaStatusResp(BaseModel):
+    model_config = {'extra': 'allow'}
+
+    device: str | None = None
+    paired: bool | None = None
+    running: bool = False
+    error: str | None = None
+    server: str | None = None
+    local_token: str | None = None
+
+
 
 class NovaComponent:
     def __init__(self):
@@ -257,22 +268,22 @@ class NovaComponent:
                 await self.start()
                 return {'paired': True, 'device': done['device']}
 
-        @router.get('/nova/settings')
+        @router.get('/nova/settings', response_model=NovaStatusResp)
         async def settings(r: Request):
             self.guard(r)
             return JSONResponse({**self.snapshot(), 'local_token': self.nonce}, headers={'Cache-Control': 'no-store'})
 
-        @router.post('/nova/associate')
+        @router.post('/nova/associate', response_model=NovaStatusResp)
         async def associate(r: Request, body: NovaAccountRequest):
             self.guard(r)
             return await self.account_action(body)
 
-        @router.post('/nova/revoke')
+        @router.post('/nova/revoke', response_model=NovaStatusResp)
         async def revoke(r: Request, body: NovaAccountRequest):
             self.guard(r)
             return await self.account_action(body, unlink=True)
 
-        @router.post('/nova/reconnect')
+        @router.post('/nova/reconnect', response_model=NovaStatusResp)
         async def reconnect(r: Request):
             self.guard(r)
             async with self.lock:

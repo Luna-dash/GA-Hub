@@ -92,6 +92,21 @@ class BackendApiSmokeTests(unittest.TestCase):
             self.assertEqual(events.status_code, 200)
             self.assertIn("events", events.json())
 
+    def test_setup_candidates_report_probe_errors(self) -> None:
+        candidates = [Path("valid"), Path("invalid"), Path("broken")]
+        app = main.create_app()
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            with mock.patch.object(main._paths, "candidate_paths", return_value=candidates), mock.patch.object(
+                main._paths, "is_valid_ga_root", side_effect=[True, False, OSError("probe failed")],
+            ):
+                response = client.get("/api/setup/status")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["candidates"], [
+            {"path": "valid", "valid": True, "error": None},
+            {"path": "invalid", "valid": False, "error": None},
+            {"path": "broken", "valid": False, "error": "probe failed"},
+        ])
+
     def test_status_response_contract_is_explicit(self) -> None:
         app = main.create_app()
         with TestClient(app, base_url="http://127.0.0.1") as client:

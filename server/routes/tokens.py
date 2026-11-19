@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from .. import _paths
+from ..schemas import TokenStatsResp
 from ..services.session_metadata import SessionMetadataStore
 
 log = logging.getLogger(__name__)
@@ -245,6 +246,6 @@ def _weekly_response(data: dict[str, Any], timestamp: int) -> dict[str, Any]:
 
 
 
-@router.get("/stats")
+@router.get("/stats", response_model=TokenStatsResp)
 def token_stats():
     return _native_ledger_usage()

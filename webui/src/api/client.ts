@@ -557,14 +557,7 @@ export const api = {
 }
 
 // Local-only Nova settings. Never persist account passwords or cloud cookies.
-export interface NovaStatus {
-  device?: string
-  paired?: boolean
-  running: boolean
-  error?: string | null
-  server?: string
-  local_token?: string
-}
+export type NovaStatus = ApiComponents['schemas']['NovaStatusResp']
 export interface NovaAccountInput {
   username: string
   password: string
@@ -587,38 +580,10 @@ export const novaApi = {
   },
 }
 
-export interface UpdatePlan {
-  state: string
-  id?: string
-  version?: string
-  commit?: string
-}
-export interface UpdateDownload {
-  phase: string
-  received_bytes?: number
-  total_bytes?: number | null
-  started_at?: number
-  updated_at?: number
-  release?: UpdateRelease
-  plan_id?: string
-  error?: { message: string; detail: string } | null
-}
-export interface UpdateStatus {
-  download?: UpdateDownload | null
-  release?: UpdateRelease | null
-  plan: UpdatePlan
-  supported: boolean
-  sources: string[]
-  data_epoch: number
-  handoff?: { id: string; state: string; not_before?: number; error?: string } | null
-}
-export interface UpdateRelease {
-  current_version: string
-  version: string
-  available: boolean
-  tag: string
-  notes: string
-}
+export type UpdatePlan = ApiComponents['schemas']['UpdatePlanResp']
+export type UpdateDownload = ApiComponents['schemas']['UpdateDownloadResp']
+export type UpdateStatus = ApiComponents['schemas']['UpdateStatusResp']
+export type UpdateRelease = ApiComponents['schemas']['UpdateReleaseResp']
 export const updateApi = {
   release: () => http<UpdateRelease>('GET', '/api/updates/release', undefined, { timeoutMs: 90000 }),
   download: () => http<UpdateDownload>('POST', '/api/updates/release/download', {}, { timeoutMs: 15000 }),
@@ -634,24 +599,9 @@ export const updateApi = {
 }
 
 export type AntiDaemonStatus = ApiComponents['schemas']['AntiDaemonStatus']
-export type AntiSession = {
-  id: string
-  project: string
-  title: string
-  workspace: string
-  updated_at?: string | null
-  active_run_id?: string | null
-}
-export type AntiRun = {
-  id: string
-  status: string
-  operation: string
-  prompt: string
-  answer: string | null
-  error: string | null
-  error_detail?: string | null
-}
-export type AntiModels = { items: { id: string; display_name: string }[] }
+export type AntiSession = ApiComponents['schemas']['AntiSessionResp']
+export type AntiRun = ApiComponents['schemas']['AntiRunResp']
+export type AntiModels = ApiComponents['schemas']['AntiModelList']
 export type AntiSubmission = {
   prompt: string
   operation: string

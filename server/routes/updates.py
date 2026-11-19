@@ -22,11 +22,69 @@ class UpdateIdentity(BaseModel):
     id: str = Field(pattern=r"^[a-f0-9]{32}$")
 
 
+class UpdatePlanResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    state: str
+    id: str | None = None
+    version: str | None = None
+    commit: str | None = None
+
+
+class UpdateReleaseResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    current_version: str
+    version: str
+    available: bool
+    tag: str
+    notes: str
+
+
+class UpdateDownloadErrorResp(BaseModel):
+    message: str
+    detail: str
+
+
+class UpdateDownloadResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    phase: str
+    received_bytes: int | None = None
+    total_bytes: int | None = None
+    started_at: float | None = None
+    updated_at: float | None = None
+    release: UpdateReleaseResp | None = None
+    plan_id: str | None = None
+    error: UpdateDownloadErrorResp | None = None
+
+
+class UpdateHandoffResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    id: str
+    state: str
+    not_before: float | None = None
+    error: str | None = None
+
+
+class UpdateStatusResp(BaseModel):
+    model_config = {"extra": "allow"}
+
+    download: UpdateDownloadResp | None = None
+    release: UpdateReleaseResp | None = None
+    plan: UpdatePlanResp
+    supported: bool
+    sources: list[str]
+    data_epoch: int
+    handoff: UpdateHandoffResp | None = None
+
+
 def store() -> UpdateStore:
     return UpdateStore(_paths.ADMIN_DATA / "updates")
 
 
-@router.get("")
+@router.get("", response_model=UpdateStatusResp)
 def update_status() -> dict:
     import sys
     updates = store()
@@ -38,7 +96,7 @@ def update_status() -> dict:
             "handoff": update_handoff.read_json(handoff) if handoff.exists() else None}
 
 
-@router.post("/prepare")
+@router.post("/prepare", response_model=UpdatePlanResp)
 def prepare_update(body: PrepareUpdate) -> dict:
     try:
         return store().prepare(Path(body.archive), body.sha256, trusted=body.trusted_source_confirmed)
@@ -46,7 +104,7 @@ def prepare_update(body: PrepareUpdate) -> dict:
         raise HTTPException(400, str(exc)) from exc
 
 
-@router.get("/release")
+@router.get("/release", response_model=UpdateReleaseResp)
 def check_release() -> dict:
     try:
         return update_release.check(store().root)
@@ -54,7 +112,7 @@ def check_release() -> dict:
         raise HTTPException(502, str(exc)) from exc
 
 
-@router.post("/release/download", status_code=202)
+@router.post("/release/download", status_code=202, response_model=UpdateDownloadResp)
 def download_release() -> dict:
     try:
         return update_download.start(store())
@@ -62,7 +120,7 @@ def download_release() -> dict:
         raise HTTPException(409, update_download.failure(exc)) from exc
 
 
-@router.post("/release/prepare")
+@router.post("/release/prepare", response_model=UpdatePlanResp)
 def prepare_release() -> dict:
     try:
         return update_release.prepare(store())
@@ -80,7 +138,7 @@ def preflight_update(body: UpdateIdentity) -> dict:
         raise HTTPException(409, str(exc)) from exc
 
 
-@router.post("/cancel")
+@router.post("/cancel", response_model=UpdatePlanResp)
 def cancel_update(body: UpdateIdentity) -> dict:
     try:
         return store().cancel(body.id)

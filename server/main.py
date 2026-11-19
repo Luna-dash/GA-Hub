@@ -34,7 +34,7 @@ from . import _paths
 from .constants import ENV_GAHUB_ALLOWED_HOSTS
 from .origin_policy import LOOPBACK_HTTP_ORIGIN_REGEX, TAURI_UI_ORIGINS
 from .routes import events as event_routes  # safe to import in setup mode
-from .schemas import AppStatusResp, SetupReq
+from .schemas import AppStatusResp, SetupReq, SetupStatusResp
 from .services.app_services import AppServices
 from .services.event_bus import bus
 from .services.core_contract import ContractReport, require_core_contract
@@ -166,7 +166,7 @@ def _setup_router() -> APIRouter:
     """
     r = APIRouter(prefix="/api/setup", tags=["setup"])
 
-    @r.get("/status")
+    @r.get("/status", response_model=SetupStatusResp)
     async def setup_status():
         # Per-path try/except so a single broken path (e.g. an unmounted
         # volume on macOS, a permission error on Windows) doesn't 500 the
