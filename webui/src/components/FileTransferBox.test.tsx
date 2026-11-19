@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { expect, it, vi } from 'vitest'
-import { FileTransferBox } from './FileTransferBox'
+import { FileTransferBox, fileTransferQueryKey } from './FileTransferBox'
 
 vi.mock('@/runtime/runtimeConfig', () => ({ resolveApiUrl: (path: string) => path }))
 
@@ -11,7 +11,7 @@ it('inserts an available file into the active draft and shares confirmed clearin
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const file = { id: 1, path: 'D:/project/final.md', name: 'final.md', size: 1, engine: 'chat', project: null, available: true }
   const stale = { ...file, id: 2, path: 'D:/project/stale.md', name: 'stale.md', available: false }
-  let files = [file, stale]
+  let files: typeof file[] = []
   const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
     expect(path).toBe('/api/file-transfer')
     if (init?.method === 'DELETE') files = []
@@ -31,14 +31,22 @@ it('inserts an available file into the active draft and shares confirmed clearin
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
     assertion()
   })
+  const trigger = () => host.querySelector('[aria-label="文件传递箱"]')!
   try {
     await render('chat', chatDraft)
+    await settle(() => expect(host.querySelector('[role="status"]')?.textContent).toBe('箱内有 0 个文件'))
+    expect(trigger().textContent).toBe('')
+    files = [file, stale]
+    await act(async () => { await client.invalidateQueries({ queryKey: fileTransferQueryKey }) })
+    await settle(() => expect(trigger().textContent).toBe('2'))
+    expect(trigger().getAttribute('aria-expanded')).toBe('false')
     await click('[aria-label="文件传递箱"]')
     await settle(() => expect(host.querySelector<HTMLButtonElement>(`[title="${stale.path}"]`)?.disabled).toBe(true))
     await click(`[title="${file.path}"]`)
     expect(chatDraft.mock.calls).toEqual([[file]])
     expect(host.querySelector('[role="dialog"]')).toBeNull()
     await render('anti', antiDraft)
+    expect(trigger().textContent).toBe('2')
     await click('[aria-label="文件传递箱"]')
     await settle(() => expect(host.querySelector(`[title="${file.path}"]`)).not.toBeNull())
     await click(`[title="${file.path}"]`)
@@ -48,6 +56,7 @@ it('inserts an available file into the active draft and shares confirmed clearin
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false)
     await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === '确认清空')!.click())
     await settle(() => expect(host.textContent).toContain('暂无手动放入的文件'))
+    expect(trigger().textContent).toBe('')
     await render('chat', chatDraft)
     await click('[aria-label="文件传递箱"]')
     await settle(() => expect(host.textContent).toContain('暂无手动放入的文件'))

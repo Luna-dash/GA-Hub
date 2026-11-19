@@ -7,7 +7,7 @@ export const chatTranscriptClass = 'relative min-w-0 flex-1 overflow-x-hidden ov
 export function ChatUtilityDock({ fileTransfer, children }: { fileTransfer?: FileTransferBoxProps; children?: ReactNode }) {
   return (
     <div className="pointer-events-none absolute inset-x-2 inset-y-3 z-10 flex flex-col items-end gap-2">
-      {fileTransfer && <div className="mx-4 shrink-0 self-stretch"><FileTransferBox {...fileTransfer} /></div>}
+      {fileTransfer && <div className="ml-4 mr-0.5 shrink-0 self-stretch"><FileTransferBox {...fileTransfer} /></div>}
       {children}
     </div>
   )

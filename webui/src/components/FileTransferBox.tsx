@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FileStack, Trash2, X } from 'lucide-react'
+import { Trash2, X } from 'lucide-react'
+import fileTransferSymbol from '@/assets/file-transfer-symbol.png'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 
 export interface TransferredFile {
@@ -50,8 +51,11 @@ export function FileTransferBox({ canInsert, onInsert }: FileTransferBoxProps) {
   const panel = useRef<HTMLElement>(null)
   const cache = useQueryClient()
   const queryKey = fileTransferQueryKey
-  const files = useQuery({ queryKey, enabled: open, staleTime: 0, refetchInterval: open ? 2500 : false,
+  const countId = useId()
+  const files = useQuery({ queryKey, staleTime: 0, refetchInterval: open ? 2500 : false,
     queryFn: async ({ signal }): Promise<TransferredFile[]> => (await request('GET', signal)).json() })
+  const fileCount = files.data?.length ?? 0
+  const countText = files.data ? `箱内有 ${fileCount} 个文件` : undefined
   const clear = useMutation({ mutationFn: () => request('DELETE'), onSuccess: async () => {
     await cache.cancelQueries({ queryKey })
     cache.setQueryData(queryKey, [])
@@ -59,14 +63,29 @@ export function FileTransferBox({ canInsert, onInsert }: FileTransferBoxProps) {
     await cache.invalidateQueries({ queryKey })
   } })
   const close = () => { setOpen(false); setConfirmClear(false); trigger.current?.focus() }
+  const toggle = () => {
+    if (open) {
+      close()
+    } else {
+      setOpen(true)
+      void files.refetch({ cancelRefetch: false })
+    }
+  }
   useEffect(() => { if (open) panel.current?.focus() }, [open])
 
   return <div className="relative flex justify-end">
-    <button ref={trigger} type="button" title="文件传递箱" aria-label="文件传递箱" aria-expanded={open}
-      className="pointer-events-auto relative grid size-9 place-items-center rounded-full border border-line/75 bg-gradient-to-br from-bg-card to-accent-soft/70 text-ink-muted shadow-sm transition-colors before:pointer-events-none before:absolute before:inset-[3px] before:rounded-full before:border before:border-bg-card/80 hover:border-accent/65 hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent aria-expanded:border-accent aria-expanded:from-accent-soft aria-expanded:to-accent-soft aria-expanded:text-ink"
-      onClick={() => open ? close() : setOpen(true)}>
-      <FileStack size={17} strokeWidth={1.65} aria-hidden="true" />
+    <button ref={trigger} type="button" title={countText ? `文件传递箱 · ${countText}` : '文件传递箱'}
+      aria-label="文件传递箱" aria-describedby={countText ? countId : undefined} aria-expanded={open}
+      className="pointer-events-auto relative grid size-[54px] place-items-center rounded-full border border-line bg-bg-card text-accent shadow-sm transition-colors hover:border-accent hover:bg-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 aria-expanded:border-accent aria-expanded:bg-accent-soft aria-expanded:text-ink"
+      onClick={toggle}>
+      <span aria-hidden="true" className="h-10 w-8 bg-current"
+        style={{ mask: `url(${fileTransferSymbol}) center / contain no-repeat` }} />
+      {fileCount > 0 && <span aria-hidden="true"
+        className="absolute right-0 top-0 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none text-white tabular-nums ring-2 ring-bg-card">
+        {fileCount > 99 ? '99+' : fileCount}
+      </span>}
     </button>
+    <span id={countId} role="status" className="sr-only">{countText}</span>
     {open && <section ref={panel} tabIndex={-1} role="dialog" aria-label="共享文件传递箱"
       onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); close() } }}
       className="pointer-events-auto absolute right-0 top-full z-40 mt-2 w-full max-w-[22rem] rounded-xl border border-line bg-bg-card p-3 text-sm text-ink shadow-lg">
@@ -78,7 +97,6 @@ export function FileTransferBox({ canInsert, onInsert }: FileTransferBoxProps) {
           <button type="button" title="关闭" aria-label="关闭文件传递箱" className="ga-btn-icon" onClick={close}><X size={16} aria-hidden="true" /></button>
         </div>
       </header>
-      <p className="mb-2 text-xs text-ink-muted">在会话结论里右键文件链接手动放入。点击箱内文件加入当前草稿。</p>
       {confirmClear && <div className="mb-2 flex items-center gap-2 rounded-lg border border-line p-2 text-xs">
         <span className="flex-1">清空所有会话的共享索引？不会删除原文件。</span>
         <button type="button" className="text-ink-muted" onClick={() => setConfirmClear(false)} disabled={clear.isPending}>取消</button>
