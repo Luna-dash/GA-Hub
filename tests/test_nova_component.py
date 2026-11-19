@@ -10,17 +10,18 @@ from unittest.mock import Mock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from server.nova_component import NovaComponent
+from server.routes.nova import build_nova_router
+from server.services.nova_service import NovaService
 
 
 class NovaComponentTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.component = NovaComponent()
+        self.component = NovaService()
         self.component.connector = SimpleNamespace(STATE=Path(self.tmp.name), identity=lambda: 'a'*24,
             win32cred=SimpleNamespace(CredDelete=Mock()), credential_target=lambda s: 'target')
         app = FastAPI()
-        app.include_router(self.component.router())
+        app.include_router(build_nova_router(self.component))
         self.client = TestClient(app)
 
     def tearDown(self):
@@ -30,9 +31,9 @@ class NovaComponentTest(unittest.TestCase):
     def test_frozen_artifact_roots_use_configured_deliverables_not_bundle(self):
         import server._paths as paths
         connector = SimpleNamespace()
-        component = NovaComponent()
+        component = NovaService()
         configured = Path(self.tmp.name) / 'actual-ga' / 'temp'
-        with patch('server.nova_component.importlib.import_module', return_value=connector), \
+        with patch('server.services.nova_service.importlib.import_module', return_value=connector), \
              patch.object(paths, 'conductor_deliverables_dir', return_value=configured), \
              patch.object(sys, 'frozen', True, create=True), \
              patch.object(sys, '_MEIPASS', str(Path(self.tmp.name) / 'bundle'), create=True), \
@@ -52,8 +53,24 @@ class NovaComponentTest(unittest.TestCase):
         headers={'Origin':'http://testserver','X-Nova-Local':self.component.nonce}
         self.assertEqual(self.client.post('/nova/pair/finish',json={},headers=headers).status_code,409)
 
+    def test_pair_start_checks_existing_binding_before_reading_request_body(self):
+        (Path(self.tmp.name) / 'device.json').touch()
+        headers = {
+            'Origin': 'http://testserver',
+            'X-Nova-Local': self.component.nonce,
+            'Content-Type': 'application/json',
+        }
+        with TestClient(self.client.app, raise_server_exceptions=False) as client:
+            for body in ('{}', '', 'null'):
+                with self.subTest(body=body):
+                    response = client.post('/nova/pair/start', content=body, headers=headers)
+                    self.assertEqual(response.status_code, 409, response.text)
+                    self.assertEqual(response.json(), {
+                        'detail': 'Already paired; revoke the device in Nova before rebinding',
+                    })
+
     def test_remote_configuration_blocked(self):
-        app=FastAPI();app.include_router(self.component.router())
+        app=FastAPI();app.include_router(build_nova_router(self.component))
         with TestClient(app, client=('203.0.113.7',5000)) as client:
             self.assertEqual(client.get('/nova').status_code,403)
             self.assertEqual(client.get('/nova/status').status_code,403)
@@ -71,7 +88,7 @@ class NovaComponentTest(unittest.TestCase):
 
 class NovaLifecycleTest(unittest.IsolatedAsyncioTestCase):
     async def test_optional_import_failure_does_not_stop_hub(self):
-        c=NovaComponent()
+        c=NovaService()
         with patch.object(c,'load',side_effect=ImportError):
             await c.start()
         self.assertEqual(c.error,'ImportError')
@@ -97,7 +114,7 @@ class NovaLifecycleTest(unittest.IsolatedAsyncioTestCase):
                 await fail.wait()
                 raise RuntimeError('sensitive connection details')
 
-            c = NovaComponent()
+            c = NovaService()
             registry = ServiceRegistry(nova=c)
 
             def panel_entry():
@@ -149,7 +166,7 @@ class IdentityTest(unittest.TestCase):
 
 class EmbeddedSettingsTest(unittest.TestCase):
     def test_settings_protection_and_explicit_confirmation(self):
-        app=FastAPI(); component=NovaComponent(); app.include_router(component.router())
+        app=FastAPI(); component=NovaService(); app.include_router(build_nova_router(component))
         with tempfile.TemporaryDirectory() as tmp:
             component.connector=SimpleNamespace(STATE=Path(tmp), identity=lambda:'d'*24)
             client=TestClient(app,base_url='http://localhost',client=('127.0.0.1',5000))

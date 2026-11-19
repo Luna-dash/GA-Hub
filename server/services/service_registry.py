@@ -18,8 +18,8 @@ from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:  # pragma: no cover - runtime imports stay minimal
-    from ..nova_component import NovaComponent
     from .app_services import AppServices
+    from .nova_service import NovaService
     from .scheduler_domain_base import SchedulerDomainBase
     from .session_lifecycle import SessionLifecycle
 
@@ -53,7 +53,7 @@ class ServicePanelItem:
 class ServiceRegistry:
     def __init__(
         self, services: "AppServices | None" = None,
-        *, sessions: "SessionLifecycle | None" = None, nova: "NovaComponent | None" = None,
+        *, sessions: "SessionLifecycle | None" = None, nova: "NovaService | None" = None,
     ) -> None:
         # Lifespan-owned instances win over singleton probes when present.
         self._services = services

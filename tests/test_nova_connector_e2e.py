@@ -15,7 +15,8 @@ from aiohttp.test_utils import TestClient, TestServer
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from server.nova_component import NovaComponent
+from server.routes.nova import NovaAccountRequest, build_nova_router
+from server.services.nova_service import NovaService, NovaServiceError
 connector_path = str(ROOT / 'assets/nova')
 sys.path.insert(0, connector_path)
 import connector
@@ -111,8 +112,6 @@ class SettingsAccountE2E(unittest.IsolatedAsyncioTestCase):
         import aiohttp
         from types import SimpleNamespace
         from unittest.mock import Mock, AsyncMock
-        from fastapi import HTTPException
-        from server.nova_component import NovaAccountRequest
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             nova = cloud.Nova(root/'cloud.sqlite', 'http://localhost')
@@ -124,7 +123,7 @@ class SettingsAccountE2E(unittest.IsolatedAsyncioTestCase):
             def session(**kwargs):
                 # Production uses HTTPS secure cookies; this isolated server uses HTTP.
                 return original_session(cookie_jar=aiohttp.CookieJar(unsafe=True, treat_as_secure_origin=[public]), **kwargs)
-            component = NovaComponent()
+            component = NovaService()
             state = root/'state'; state.mkdir()
             def save(server, device, name, token):
                 (state/'device.json').write_text(json.dumps({'server':server,'device':device,'name':name}))
@@ -134,25 +133,34 @@ class SettingsAccountE2E(unittest.IsolatedAsyncioTestCase):
                 win32cred=SimpleNamespace(CredDelete=delete))
             component.start = AsyncMock(); component.stop = AsyncMock()
             account = dict(username='settingsuser', password='settings-password', confirm=True)
+            def call(req: NovaAccountRequest, *, unlink=False):
+                return component.account_action(
+                    username=req.username,
+                    password=req.password.get_secret_value(),
+                    name=req.name,
+                    invite=req.invite.get_secret_value() if req.invite else None,
+                    confirm=req.confirm,
+                    unlink=unlink,
+                )
             try:
-                with patch('server.nova_component.PUBLIC', public), patch.object(aiohttp, 'ClientSession', session):
+                with patch('server.services.nova_service.PUBLIC', public), patch.object(aiohttp, 'ClientSession', session):
                     invite = nova.store.invite()
-                    result = await component.account_action(NovaAccountRequest(**account, invite=invite))
+                    result = await call(NovaAccountRequest(**account, invite=invite))
                     self.assertTrue(result['paired']); self.assertEqual(result['device'], 'c'*24)
                     self.assertEqual(nova.store.one('SELECT count(*) AS n FROM sessions')['n'], 0)
-                    with self.assertRaises(HTTPException) as conflict:
-                        await component.account_action(NovaAccountRequest(**account))
-                    self.assertEqual(conflict.exception.status_code,409)
+                    with self.assertRaises(NovaServiceError) as conflict:
+                        await call(NovaAccountRequest(**account))
+                    self.assertEqual(conflict.exception.status,409)
                     delete.side_effect = OSError('simulated credential failure')
-                    with self.assertRaises(HTTPException):
-                        await component.account_action(NovaAccountRequest(**account), unlink=True)
+                    with self.assertRaises(NovaServiceError):
+                        await call(NovaAccountRequest(**account), unlink=True)
                     self.assertTrue((state/'device.json').exists())
                     self.assertEqual(nova.store.one('SELECT revoked FROM devices')['revoked'], 1)
                     delete.side_effect = None
-                    result = await component.account_action(NovaAccountRequest(**account), unlink=True)
+                    result = await call(NovaAccountRequest(**account), unlink=True)
                     self.assertFalse(result['paired']); self.assertEqual(result['device'], 'c'*24)
                     self.assertEqual(nova.store.one('SELECT count(*) AS n FROM sessions')['n'], 0)
-                    result = await component.account_action(NovaAccountRequest(**account))
+                    result = await call(NovaAccountRequest(**account))
                     self.assertTrue(result['paired'])
                     self.assertEqual(nova.store.one('SELECT revoked FROM devices')['revoked'], 0)
             finally:
