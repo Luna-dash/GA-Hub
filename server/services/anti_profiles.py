@@ -74,6 +74,19 @@ def add(name: str) -> Profile:
     return profile
 
 
+def rename(profile_id: str, name: str) -> Profile:
+    active, profiles = _load()
+    if not any(p.id == profile_id for p in profiles):
+        raise AntiError(404, "找不到 Agy 账号")
+    if profile_id == DEFAULT:
+        raise AntiError(409, "系统默认账号不能修改备注")
+    if any(p.id != profile_id and p.name.casefold() == name.casefold() for p in profiles):
+        raise AntiError(409, "已有同名 Agy 账号")
+    renamed = Profile(profile_id, name)
+    _save(active, [renamed if p.id == profile_id else p for p in profiles])
+    return renamed
+
+
 def select(profile_id: str) -> None:
     active, profiles = _load()
     if not any(p.id == profile_id for p in profiles):

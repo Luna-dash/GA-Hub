@@ -222,6 +222,10 @@ class AntiDaemon:
         with self._lock:
             return anti_profiles.add(name)
 
+    def rename_profile(self, profile_id: str, name: str):
+        with self._lock:
+            return anti_profiles.rename(profile_id, name)
+
     def _await_ready(self, port: int) -> None:
         process = self._process
         assert process is not None

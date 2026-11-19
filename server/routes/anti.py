@@ -199,6 +199,15 @@ def switch_agy_profile(profile_id: str, request: Request):
         raise HTTPException(exc.status, str(exc)) from exc
 
 
+@router.patch("/profiles/{profile_id}", response_model=AgyProfile)
+def rename_agy_profile(profile_id: str, body: AgyProfileCreate, request: Request):
+    _profile_action(request)
+    try:
+        return asdict(daemon.rename_profile(profile_id, body.name))
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
 @router.post("/profiles/{profile_id}/login", status_code=204)
 def login_agy_profile(profile_id: str, request: Request):
     _profile_action(request)

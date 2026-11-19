@@ -26,6 +26,7 @@ it('starts Anti on demand from the page header without leaving the chat', async 
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   let started = false
   let active = 'default'
+  let rejectSwitch = true
   const profiles = [{ id: 'default', name: '系统默认' }, { id: 'work', name: '工作' }]
   const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
     const reply = (data: unknown) => ({ ok: true, json: async () => JSON.parse(JSON.stringify(data)) })
@@ -34,9 +35,17 @@ it('starts Anti on demand from the page header without leaving the chat', async 
       return reply(started ? { state: 'ready', agy_available: true, auth_state: 'authenticated' } : { state: 'stopped' })
     }
     if (path === '/api/anti/profiles') return reply({ active, profiles })
+    if (path === '/api/anti/profiles/work') {
+      expect(init?.method).toBe('PATCH')
+      expect(new Headers(init?.headers).get('X-GA-Hub-Action')).toBe('manage-agy-profiles')
+      expect(JSON.parse(init?.body as string)).toEqual({ name: '主力' })
+      profiles[1].name = '主力'
+      return reply(profiles[1])
+    }
     if (path === '/api/anti/profiles/work/switch') {
       expect(init?.method).toBe('POST')
       expect(new Headers(init?.headers).get('X-GA-Hub-Action')).toBe('manage-agy-profiles')
+      if (rejectSwitch) return { ok: false, json: async () => ({ detail: '还有运行中的任务' }) }
       active = 'work'
       return reply({ active, profiles })
     }
@@ -113,10 +122,29 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     await wait(() => expect(accountButton()?.textContent).toBe('Agy 账号：系统默认'))
     await act(async () => accountButton()!.click())
     const dialog = document.querySelector('[role="dialog"][aria-labelledby="agy-accounts-title"]')
-    const switchButton = [...(dialog?.querySelectorAll('button') ?? [])].find(button => button.textContent === '切换')
+    expect(dialog?.parentElement?.parentElement).toBe(document.body)
+    const switchButton = dialog?.querySelector<HTMLButtonElement>('button[aria-label="切换到工作"]')
     expect(switchButton).toBeDefined()
     await act(async () => switchButton!.click())
+    await wait(() => expect(dialog?.querySelector('[role="alert"]')?.textContent).toBe('还有运行中的任务'))
+    expect(accountButton()?.textContent).toBe('Agy 账号：系统默认')
+    rejectSwitch = false
+    await act(async () => switchButton!.click())
     await wait(() => expect(accountButton()?.textContent).toBe('Agy 账号：工作'))
+    const edit = dialog?.querySelector<HTMLButtonElement>('button[aria-label="修改备注：工作"]')
+    expect(edit).toBeTruthy()
+    await act(async () => edit!.click())
+    const nameField = dialog?.querySelector<HTMLInputElement>('#agy-edit-name')
+    expect(nameField?.value).toBe('工作')
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(nameField, '  主力  ')
+      nameField!.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const save = [...dialog!.querySelectorAll('button')].find(button => button.textContent === '保存备注')!
+    expect(save.disabled).toBe(false)
+    await act(async () => save.click())
+    await wait(() => expect(accountButton()?.textContent).toBe('Agy 账号：主力'))
+    expect(dialog?.querySelector('#agy-edit-name')).toBeNull()
   } finally {
     await act(async () => root.unmount())
     cache.clear()

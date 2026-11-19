@@ -137,6 +137,30 @@ def test_auth_status_requested_only_by_ui_and_unavailable_on_legacy_daemon(monke
         assert data["auth_state"] == expected
 
 
+def test_agy_profile_rename_preserves_identity_and_selection(tmp_path, monkeypatch):
+    client = make_client(monkeypatch)
+    monkeypatch.setattr(svc.anti_profiles._paths, 'ADMIN_DATA', tmp_path)
+    url = '/api/anti/profiles'
+    headers = {'X-GA-Hub-Action': 'manage-agy-profiles'}
+    work = client.post(url, headers=headers, json={'name': 'Work'}).json()
+    assert client.post(url, headers=headers, json={'name': 'Personal'}).status_code == 200
+    svc.anti_profiles.select(work['id'])
+    target = f"{url}/{work['id']}"
+    body = {'name': '  Office  '}
+    assert client.patch(target, json=body).status_code == 403
+    assert client.patch(target, json=body, headers=headers | {'Origin': 'https://outside.example'}).status_code == 403
+    assert client.patch(target, json={'name': 'personal'}, headers=headers).status_code == 409
+    assert client.patch(f'{url}/default', json=body, headers=headers).status_code == 409
+    assert client.patch(f'{url}/missing', json=body, headers=headers).status_code == 404
+    assert client.patch(target, json={'name': ' '}, headers=headers).status_code == 422
+    renamed = client.patch(target, json=body, headers=headers)
+    assert renamed.status_code == 200
+    assert renamed.json() == {'id': work['id'], 'name': 'Office'}
+    settings = client.get(url).json()
+    assert settings['active'] == work['id']
+    assert renamed.json() in settings['profiles']
+
+
 @pytest.mark.parametrize("failure", [None, "spawn", "exit", "rollback"])
 def test_agy_profiles_switch_idle_managed_gateway(tmp_path, monkeypatch, failure):
     client = make_client(monkeypatch)
