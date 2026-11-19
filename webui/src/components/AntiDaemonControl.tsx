@@ -66,8 +66,9 @@ export function AntiDaemonControl({ status, start, state, busy, running }: Retur
       <span className="inline-flex" title={gatewayTitle}>
         <button
           type="button"
-          className={clsx('ga-badge', statusBadgeToneClass(gatewayKind),
-            canStart && 'cursor-pointer hover:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent')}
+          className={clsx('ga-badge', canStart
+            ? 'border-status-danger bg-status-danger text-white cursor-pointer hover:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
+            : statusBadgeToneClass(gatewayKind))}
           aria-label={label}
           disabled={!canStart}
           onClick={() => start.mutate()}
