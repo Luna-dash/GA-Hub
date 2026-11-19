@@ -59,8 +59,9 @@ header:has(.conductor-header-actions) { flex-wrap: wrap; }
 header:has(.conductor-header-history) > div:has(.conductor-header-history) { flex-basis: auto; }
 .conductor-icon-button { width: 32px; height: 32px; flex: 0 0 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; color: var(--c-text-muted); }
 .conductor-icon-button:hover { background: var(--c-accent-soft); color: var(--c-accent); }
-.conductor-send-button { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex: 0 0 40px; border-radius: 5px; color: white; background: var(--c-accent); }
-.conductor-send-button:disabled { opacity: .45; }
+.conductor-send-button { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex: 0 0 40px; border-radius: 5px; color: white; background: var(--c-accent); transition: background-color .15s ease; }
+.conductor-send-button:hover:not(:disabled) { background: var(--c-accent-hover); }
+.conductor-send-button:disabled { background: var(--c-disabled-bg); color: var(--c-disabled-text); border: 1px solid var(--c-disabled-line); opacity: 1; cursor: not-allowed; }
 .conductor-recovery { margin: -10px -12px 10px; padding: 9px 12px; border-bottom: 1px solid #EBD8AC; background: #FFF3D8; font-size: 12px; color: #7A4F08; overflow-wrap: anywhere; }
 .conductor-current { min-width: 0; background: var(--c-bg-card); border: 1px solid var(--c-line); border-radius: 12px; padding: 10px 14px 12px; box-shadow: 0 2px 10px rgba(45, 34, 22, 0.06); }
 .conductor-current-title-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
@@ -183,7 +184,7 @@ header:has(.conductor-header-history) > div:has(.conductor-header-history) { fle
    a fully transparent button is still in the tab order, so keyboard users
    used to land on an invisible control. Focus within the row also reveals
    it, which is what makes tabbing to it legible. */
-.conductor-history-delete { flex: 0 0 30px; display: inline-flex; align-items: center; justify-content: center; color: var(--c-text-faint); background: transparent; border: 0; cursor: pointer; opacity: .38; transition: opacity .12s ease, color .12s ease; }
+.conductor-history-delete { flex: 0 0 30px; display: inline-flex; align-items: center; justify-content: center; color: var(--c-text-faint); background: transparent; border: 0; cursor: pointer; opacity: .62; transition: opacity .12s ease, color .12s ease; }
 .conductor-history-item:hover .conductor-history-delete, .conductor-history-item:focus-within .conductor-history-delete { opacity: 1; }
 .conductor-history-delete:hover { color: #9E3328; }
 .conductor-history-delete:disabled { cursor: default; }

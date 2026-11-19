@@ -457,7 +457,7 @@ export default function Conversations() {
                     <button
                       type="button"
                       onClick={() => { void openSession(boundSessionId) }}
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm text-white hover:brightness-110"
+                      className="ga-solid-primary inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm"
                       title="打开对应会话继续对话"
                     >
                       <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
@@ -468,7 +468,7 @@ export default function Conversations() {
                       type="button"
                       onClick={() => { void handleImport(detail.id) }}
                       disabled={importing === detail.id}
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm text-white hover:brightness-110 disabled:opacity-40"
+                      className="ga-solid-primary inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm"
                       title="导入为新会话继续对话"
                     >
                       <FolderDown className="h-3.5 w-3.5" aria-hidden="true" />

@@ -2,13 +2,14 @@
 // Mounted once at App root. Self-contained styling (scoped keyframes) so it
 // doesn't touch the shared index.css that other work may be editing.
 
+import { CheckCircle2, Info, XCircle, type LucideIcon } from 'lucide-react'
 import { useToastStore, type ToastKind } from '@/stores/toastStore'
 import { Z_LAYERS } from '@/config/zLayers'
 
-const TONE: Record<ToastKind, { ring: string; icon: string; iconCls: string }> = {
-  success: { ring: 'border-status-success-line', icon: '✓', iconCls: 'text-status-success' },
-  error: { ring: 'border-status-danger-line', icon: '✕', iconCls: 'text-status-danger' },
-  info: { ring: 'border-status-info-line', icon: 'ℹ', iconCls: 'text-status-info' },
+const TONE: Record<ToastKind, { ring: string; Icon: LucideIcon; iconCls: string }> = {
+  success: { ring: 'border-status-success-line', Icon: CheckCircle2, iconCls: 'text-status-success' },
+  error: { ring: 'border-status-danger-line', Icon: XCircle, iconCls: 'text-status-danger' },
+  info: { ring: 'border-status-info-line', Icon: Info, iconCls: 'text-status-info' },
 }
 
 export function ToastHost() {
@@ -19,7 +20,7 @@ export function ToastHost() {
 
   return (
     <div style={{ zIndex: Z_LAYERS.toast }}
-    className="fixed inset-x-0 bottom-5 flex flex-col items-center gap-2 px-4 pointer-events-none">
+      className="fixed inset-x-0 bottom-5 flex flex-col items-center gap-2 px-4 pointer-events-none">
       <style>{`
         @keyframes ga-toast-in {
           from { opacity: 0; transform: translateY(12px) scale(0.98); }
@@ -37,7 +38,7 @@ export function ToastHost() {
             className={`ga-paper-popover pointer-events-auto cursor-pointer max-w-md w-fit flex items-start gap-2.5 rounded-xl border ${tone.ring} px-4 py-2.5 text-sm text-ink`}
             title="点击关闭"
           >
-            <span className={`mt-0.5 font-bold ${tone.iconCls}`}>{tone.icon}</span>
+            <tone.Icon className={`mt-0.5 h-4 w-4 shrink-0 ${tone.iconCls}`} strokeWidth={2} aria-hidden="true" />
             <span className="whitespace-pre-line leading-5 break-words">{t.message}</span>
           </div>
         )

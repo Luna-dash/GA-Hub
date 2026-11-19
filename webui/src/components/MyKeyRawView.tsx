@@ -90,7 +90,7 @@ export function RawView({ data, onWrite, onDirtyChange }: {
           <button onClick={() => { setText(data.raw); setBaseline(data.raw); setRemoteChanged(false) }} disabled={!dirty && !remoteChanged}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-ink hover:bg-ink/5 disabled:opacity-40"><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /><span>还原</span></button>
           <button onClick={save} disabled={!dirty || saving}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-white hover:brightness-110 disabled:opacity-40">
+            className="ga-solid-primary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg">
             <Save className="h-3.5 w-3.5" aria-hidden="true" />
             <span>{saving ? '保存中…' : '保存并应用'}</span>
           </button>
@@ -192,12 +192,12 @@ function BackupDrawer({ onClose, onRestored }: {
               <div className="flex items-baseline justify-between gap-2 mb-1">
                 <div className="text-xs text-ink-muted font-mono truncate" title={b.name}>{b.name}</div>
                 <button onClick={() => restore(b.name)} disabled={busy !== null}
-                  className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-accent text-white hover:brightness-110 disabled:opacity-40">
+                  className="ga-solid-primary inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded">
                   <RewindIcon size={12} />
                   <span>{busy === b.name ? '回滚中…' : '回滚'}</span>
                 </button>
               </div>
-              <div className="text-[10px] text-ink-faint">
+              <div className="text-[11px] text-ink-faint">
                 {formatDateTime(b.mtime)} · {(b.size / 1024).toFixed(1)} KB
               </div>
             </div>

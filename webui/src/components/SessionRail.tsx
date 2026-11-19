@@ -537,7 +537,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                           }}
                           disabled={savingId === session.id}
                           aria-label={`重命名 ${sessionTitle(session)}`}
-                          className="m-2 mb-1 w-[calc(100%-1rem)] rounded-md border border-accent/45 bg-white/90 px-2 py-1 text-sm text-ink outline-none ring-accent/20 focus:ring-2"
+                          className="m-2 mb-1 w-[calc(100%-1rem)] rounded-md border border-accent/45 bg-bg-card px-2 py-1 text-sm text-ink outline-none ring-accent/20 focus:ring-2"
                         />
                       ) : (
                         <button
@@ -594,7 +594,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
                           // leading-none: at 200px rail width the inherited
                           // 1.5 line-height made this button 24.5px tall and
                           // the strip 38.5px — compact it to ~33px.
-                          className="shrink-0 whitespace-nowrap rounded bg-status-danger px-2 py-1 leading-none text-white disabled:opacity-50"
+                          className="ga-solid-danger shrink-0 whitespace-nowrap rounded px-2 py-1 leading-none"
                         >
                           {deletingId === session.id ? '删除中…' : '确认'}
                         </button>
@@ -685,8 +685,8 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
               title={`${sessionTitle(session)} · ${activityLabel[activity]}`}
               aria-label={`${sessionTitle(session)}，${activityLabel[activity]}`}
               className={clsx(
-                'group flex h-6 w-6 min-w-6 flex-none items-center justify-center rounded-full border border-line bg-bg-card/95 p-0 shadow-sm backdrop-blur-sm transition-[background-color,box-shadow,transform] hover:-translate-y-px hover:bg-white hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 md:hover:-translate-x-px md:hover:translate-y-0',
-                currentId === session.id && 'border-[#A69676] bg-white shadow-md',
+                'group flex h-6 w-6 min-w-6 flex-none items-center justify-center rounded-full border border-line bg-bg-card/95 p-0 shadow-sm backdrop-blur-sm transition-[background-color,box-shadow,transform] hover:-translate-y-px hover:bg-bg-card hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 md:hover:-translate-x-px md:hover:translate-y-0',
+                currentId === session.id && 'border-accent bg-bg-card ring-1 ring-accent/35 shadow-md',
               )}
             >
               <span
@@ -705,7 +705,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
         title={collapsed ? '展开会话管理' : '折叠会话管理'}
         className={clsx(
           // 外侧半椭圆：桌面竖向且薄，保留渐变浮雕；SVG 几何居中。
-          'absolute z-30 flex items-center justify-center border border-line/70 bg-[var(--c-scrollbar-thumb)] bg-gradient-to-b from-bg-card/20 to-transparent text-bg-card shadow-[inset_0_1px_0_rgb(255_255_255_/_0.3),0_2px_5px_rgb(0_0_0_/_0.16)] transition-[filter,background-color,box-shadow] duration-300 hover:bg-[var(--c-scrollbar-thumb-hover)] hover:brightness-105 hover:shadow-[inset_0_1px_0_rgb(255_255_255_/_0.4),0_3px_7px_rgb(0_0_0_/_0.2)] active:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+          'absolute z-30 flex items-center justify-center border border-[#54432B]/70 bg-[#6B583D] bg-gradient-to-b from-bg-card/15 to-transparent text-[#FAF4E6] shadow-[inset_0_1px_0_rgb(255_255_255_/_0.25),0_2px_5px_rgb(0_0_0_/_0.18)] transition-[background-color,box-shadow] duration-300 hover:bg-[#5A4932] hover:shadow-[inset_0_1px_0_rgb(255_255_255_/_0.3),0_3px_7px_rgb(0_0_0_/_0.22)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
           'left-1/2 h-5 w-[60px] -translate-x-1/2 rounded-[0_0_50%_50%/0_0_100%_100%] border-t-0',
           'md:left-auto md:top-1/2 md:h-[60px] md:w-5 md:translate-x-0 md:-translate-y-1/2 md:rounded-[0_100%_100%_0/0_50%_50%_0] md:border-l-0 md:border-t',
           collapsed ? 'top-0 md:-right-5' : 'top-32 md:-right-5 md:top-1/2',

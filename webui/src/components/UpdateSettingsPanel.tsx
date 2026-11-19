@@ -90,7 +90,7 @@ export function UpdateSettingsPanel() {
     <p className="text-sm text-ink-muted">仅支持可信来源的 Windows 更新包；准备过程不影响当前运行。</p>
     <div className="space-y-2 rounded-lg border border-line p-3">
       <p className="text-sm">更新源：Luna-dash/GA-Hub · GitHub 正式稳定版（不含预发布）</p>
-      <button className="rounded-lg bg-accent px-3 py-2 text-sm text-white hover:brightness-110 disabled:opacity-40" disabled={locked || !status} onClick={() => void online()}>检查正式版本</button>
+      <button className="ga-solid-primary rounded-lg px-3 py-2 text-sm" disabled={locked || !status} onClick={() => void online()}>检查正式版本</button>
       {release && <div className="text-sm" role="status">
         当前 {release.current_version} · 最新 {release.version} · {release.available ? '有可用更新' : '已是最新版本'}
         {release.notes && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-sans">{release.notes}</pre>}
@@ -120,7 +120,7 @@ export function UpdateSettingsPanel() {
       <input type="checkbox" checked={trusted} onChange={e => setTrusted(e.target.checked)} disabled={locked} />
       我已核实安装包来源可信（如填写校验和，也已核实其来源）
     </label>
-    <button className="rounded-lg bg-accent px-3 py-2 text-sm text-white hover:brightness-110 disabled:opacity-40" disabled={locked || !status || !trusted || !archive.trim() || (!!sha256.trim() && !/^[a-fA-F0-9]{64}$/.test(sha256.trim()))} onClick={() => void act()}>校验并准备</button>
+    <button className="ga-solid-primary rounded-lg px-3 py-2 text-sm" disabled={locked || !status || !trusted || !archive.trim() || (!!sha256.trim() && !/^[a-fA-F0-9]{64}$/.test(sha256.trim()))} onClick={() => void act()}>校验并准备</button>
     </details>
     {status && <div className="text-sm text-ink" role="status">状态：{stateLabels[status.plan.state] ?? '正在处理'}{status.plan.version && ` · ${status.plan.version}`}
       {status.plan.commit && <span className="block break-all text-xs text-ink-muted">源码提交：{status.plan.commit}</span>}

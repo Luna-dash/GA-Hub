@@ -57,7 +57,7 @@ function GatePanel({ title, message, hint, restarting, onRestart }: GatePanelPro
         type="button"
         onClick={onRestart}
         disabled={restarting}
-        className="px-4 py-2 rounded-lg bg-accent text-white text-sm hover:brightness-110 disabled:opacity-40"
+        className="ga-solid-primary px-4 py-2 rounded-lg text-sm"
       >
         {restarting ? '正在重启后端…' : '重启后端'}
       </button>

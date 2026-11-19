@@ -572,9 +572,9 @@ export function ImagePasteInput({
           onClick={stopActive ? onStop : submit}
           disabled={disabled || (stopActive ? stopDisabled : submitDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0))}
           className={clsx(
-            'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white transition disabled:opacity-40 disabled:shadow-none',
+            'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
             onSchedule && 'mb-0.5',
-            stopActive ? 'bg-status-danger hover:bg-status-danger-strong' : 'bg-accent hover:brightness-110',
+            stopActive ? 'ga-solid-danger' : 'ga-solid-primary',
           )}
           aria-label={stopActive ? '停止' : (submitLabel ?? '发送')}
           title={stopActive ? '停止当前会话任务' : attachmentHint ?? submitLabel ?? '发送消息'}
@@ -741,7 +741,7 @@ function BtwDialog({ sessionId, onClose }: { sessionId: string; onClose: () => v
           disabled={loading || !text.trim()}
           aria-label="提问"
           title="发送旁路提问"
-          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-status-warning text-white transition hover:bg-status-warning-strong disabled:opacity-40"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-status-warning text-white transition-colors hover:bg-status-warning-strong disabled:bg-[var(--c-disabled-bg)] disabled:text-[var(--c-disabled-text)] disabled:border disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:cursor-not-allowed"
         ><SendHorizontal className="h-4 w-4" aria-hidden="true" /></button>
       </div>
     </div>

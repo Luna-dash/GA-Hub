@@ -187,7 +187,7 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
     <div className={`rounded-xl border p-4 ${s.enabled ? 'border-accent/60 bg-accent-soft/20' : 'border-line bg-bg-card'}`}>
       <div className="flex items-baseline justify-between mb-2">
         <div className="text-sm font-semibold text-ink">{s.name || s.id}</div>
-        <span className={`text-[10px] px-1.5 py-0.5 rounded ${s.enabled ? 'bg-status-success-soft text-status-success' : 'border border-line bg-bg-soft text-ink-muted'}`}>
+        <span className={`text-[11px] px-1.5 py-0.5 rounded ${s.enabled ? 'bg-status-success-soft text-status-success' : 'border border-line bg-bg-soft text-ink-muted'}`}>
           {s.enabled ? '启用' : '禁用'}
         </span>
       </div>
@@ -199,7 +199,7 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
       </div>
       <div className="text-xs text-ink-faint">已触发 {s.fire_count} 次 · 上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
       <div className="flex gap-2 mt-3 flex-wrap">
-        <button onClick={onFire} className="text-xs px-2.5 py-1 rounded bg-accent text-white hover:brightness-110">立即触发</button>
+        <button onClick={onFire} className="ga-solid-primary text-xs px-2.5 py-1 rounded">立即触发</button>
         <button onClick={toggle} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5">{s.enabled ? '禁用' : '启用'}</button>
         <button onClick={onEdit} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5">编辑</button>
         <button onClick={remove} className="text-xs px-2.5 py-1 rounded border border-status-danger-line text-status-danger hover:bg-status-danger-soft">删除</button>
@@ -303,7 +303,7 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
         </Field>
         <div className="flex justify-end gap-2 mt-4">
           <button onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-ink disabled:opacity-50">取消</button>
-          <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-50">{saving ? '保存中…' : '保存'}</button>
+          <button onClick={save} disabled={saving} className="ga-solid-primary px-3 py-1.5 rounded-lg">{saving ? '保存中…' : '保存'}</button>
         </div>
     </ModalOverlay>
   )

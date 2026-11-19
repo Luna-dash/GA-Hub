@@ -50,7 +50,7 @@ export function NovaSettingsPanel() {
     {!status ? <p className="text-sm text-ink-muted" role="status">正在读取本机状态…</p> : <>
       <div className="rounded-lg border border-line bg-bg-soft/60 p-3 space-y-3">
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className={`rounded-md px-2 py-1 ${status.paired ? 'bg-status-success-soft text-status-success' : 'bg-white/5 text-ink-muted'}`}>{status.paired ? '已关联账号' : '未关联账号'}</span>
+          <span className={`rounded-md px-2 py-1 ${status.paired ? 'bg-status-success-soft text-status-success' : 'border border-line bg-bg-card text-ink-muted'}`}>{status.paired ? '已关联账号' : '未关联账号'}</span>
           <span className="text-ink-muted">{status.running ? '连接器运行中' : '连接器未运行'}</span>
         </div>
         <dl className="flex flex-col gap-1 text-xs sm:flex-row sm:items-start sm:gap-3">
@@ -77,7 +77,7 @@ export function NovaSettingsPanel() {
         </div>
         <label className="flex items-start gap-2 text-xs leading-relaxed text-ink"><input className="mt-0.5 shrink-0" type="checkbox" checked={confirmed} disabled={busy} onChange={e => setConfirmed(e.target.checked)} />{revoking ? '确认撤销授权并清除本机绑定，保留设备码' : '允许此账号通过 Nova 远程操作这台电脑'}</label>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-          <button type="submit" disabled={busy || !confirmed || !status.device} className={`shrink-0 rounded-lg px-4 py-2 text-sm text-white disabled:opacity-40 ${revoking ? 'bg-status-danger hover:bg-status-danger-strong' : 'bg-accent hover:brightness-110'}`}>{busy ? '处理中…' : revoking ? '确认撤销关联' : register ? '注册并关联本机' : '登录并关联本机'}</button>
+          <button type="submit" disabled={busy || !confirmed || !status.device} className={`shrink-0 rounded-lg px-4 py-2 text-sm ${revoking ? 'ga-solid-danger' : 'ga-solid-primary'}`}>{busy ? '处理中…' : revoking ? '确认撤销关联' : register ? '注册并关联本机' : '登录并关联本机'}</button>
           <p className="text-xs text-ink-faint">密码仅用于本次验证，不作保存。</p>
         </div>
       </form>}

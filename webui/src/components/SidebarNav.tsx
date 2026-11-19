@@ -207,7 +207,7 @@ export function SidebarNav() {
               clsx('ga-sidebar-item', collapsed && 'ga-sidebar-item-collapsed', isActive && 'active')
             }
           >
-            <span className="ga-nav-icon relative"><span aria-hidden="true"><NavIcon name={it.icon} /></span>{it.id === 'theme-tasks' && unreadTheme && <span role="status" aria-label="主题任务有未读完成结果" className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-bg-deep" />}</span>
+            <span className="ga-nav-icon relative"><span aria-hidden="true"><NavIcon name={it.icon} /></span>{it.id === 'theme-tasks' && unreadTheme && <span role="status" aria-label="主题任务有未读完成结果" className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[var(--c-sidebar)]" />}</span>
             {!collapsed && (
               <>
                 <span className="ga-nav-label">

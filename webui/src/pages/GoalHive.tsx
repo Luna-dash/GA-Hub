@@ -283,7 +283,7 @@ export default function GoalHive() {
               <button
                 type="submit"
                 disabled={!canSubmit}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                className="ga-solid-primary inline-flex shrink-0 items-center gap-1.5 rounded-lg px-4 py-2 text-sm"
               >
                 <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
                 <span>启动 {config.title}</span>

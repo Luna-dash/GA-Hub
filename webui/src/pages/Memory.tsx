@@ -197,7 +197,7 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
                 className={`w-full text-left px-3 py-2 text-sm border-b border-line/50 ${active === s.name ? 'bg-accent-soft text-accent' : 'text-ink hover:bg-ink/5'}`}
               >
                 <div className="truncate">{s.name}</div>
-                <div className="text-[10px] text-ink-faint">{(s.size / 1024).toFixed(1)} KB</div>
+                <div className="text-[11px] text-ink-faint">{(s.size / 1024).toFixed(1)} KB</div>
               </button>
             </li>
           ))}
@@ -251,7 +251,7 @@ function SkillList() {
                 className={`w-full text-left px-3 py-2 text-sm border-b border-line/50 ${active === s.path ? 'bg-accent-soft text-accent' : 'text-ink hover:bg-ink/5'}`}
               >
                 <div className="truncate">{s.path}</div>
-                <div className="text-[10px] text-ink-faint">{(s.size / 1024).toFixed(1)} KB</div>
+                <div className="text-[11px] text-ink-faint">{(s.size / 1024).toFixed(1)} KB</div>
               </button>
             </li>
           ))}

@@ -195,7 +195,7 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
       <div className="text-xs text-ink-faint">邮件 {s.notify_email ? '开启' : '关闭'} · 已触发 {s.fire_count} 次</div>
       <div className="text-xs text-ink-faint mt-1">上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
       <div className="flex gap-2 mt-3 flex-wrap">
-        <button onClick={onFire} disabled={busy} className="text-xs px-2.5 py-1 rounded bg-accent text-white hover:brightness-110 disabled:opacity-40">立即触发</button>
+        <button onClick={onFire} disabled={busy} className="ga-solid-primary text-xs px-2.5 py-1 rounded">立即触发</button>
         <button onClick={toggle} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5 disabled:opacity-40">{s.enabled ? '禁用' : '启用'}</button>
         <button onClick={onEdit} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5 disabled:opacity-40">编辑</button>
         <button onClick={remove} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-status-danger-line text-status-danger hover:bg-status-danger-soft disabled:opacity-40">删除</button>
@@ -316,7 +316,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
       </Field>
       <div className="flex justify-end gap-2 mt-4">
         <button onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-ink disabled:opacity-50">取消</button>
-        <button onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-50">{saving ? '保存中…' : '保存'}</button>
+        <button onClick={save} disabled={saving} className="ga-solid-primary px-3 py-1.5 rounded-lg">{saving ? '保存中…' : '保存'}</button>
       </div>
     </ModalOverlay>
   )
@@ -432,7 +432,7 @@ function EmailSettings() {
               </button>
               <div className="flex gap-2">
                 <button onClick={() => setEditing(false)} className="px-3 py-1.5 rounded-lg border border-line text-ink">取消</button>
-                <button onClick={save} disabled={savingCfg} className="px-3 py-1.5 rounded-lg bg-accent text-white disabled:opacity-50 disabled:cursor-not-allowed">{savingCfg ? '保存中…' : '保存'}</button>
+                <button onClick={save} disabled={savingCfg} className="ga-solid-primary px-3 py-1.5 rounded-lg">{savingCfg ? '保存中…' : '保存'}</button>
               </div>
             </div>
           </div>

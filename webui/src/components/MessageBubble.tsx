@@ -277,7 +277,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
           {tagLabel && (
             <div className="mb-1.5 text-[11px] font-medium leading-4 text-ink-faint">{tagLabel}</div>
           )}
-          <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover/msg:opacity-100 group-focus-within/msg:opacity-100 transition-opacity">
+          <div className="absolute top-3 right-3 flex items-center gap-2 opacity-45 hover:opacity-100 group-hover/msg:opacity-100 group-focus-within/msg:opacity-100 focus-within:opacity-100 transition-opacity">
             {streamId && onRewind && !streaming && (
               <RewindChip onClick={() => onRewind(streamId)} />
             )}

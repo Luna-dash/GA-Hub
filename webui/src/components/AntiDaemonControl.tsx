@@ -51,7 +51,7 @@ export function AntiDaemonControl({ status, start, state, busy, running }: Retur
         <button
           type="button"
           className={clsx('ga-badge', canStart
-            ? 'border-status-danger bg-status-danger text-white cursor-pointer hover:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
+            ? 'border-status-danger bg-status-danger text-white cursor-pointer hover:border-status-danger-strong hover:bg-status-danger-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
             : statusBadgeToneClass(gatewayKind))}
           aria-label={label}
           disabled={!canStart}

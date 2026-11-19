@@ -98,7 +98,7 @@ export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSav
           <button
             disabled={!dirty || saving}
             onClick={save}
-            className="px-3 py-1.5 rounded-lg bg-accent text-white text-sm disabled:opacity-40"
+            className="ga-solid-primary px-3 py-1.5 rounded-lg text-sm"
           >{saving ? '保存中…' : dirty ? '保存' : '已保存'}</button>
         </div>
       </div>

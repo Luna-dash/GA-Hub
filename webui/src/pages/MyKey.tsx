@@ -216,7 +216,7 @@ export default function MyKey() {
       }
     >
       <div className="p-6 max-w-5xl mx-auto h-full flex flex-col">
-        <section aria-label="云端自动同步" className="mb-4 rounded-xl border border-paper-line bg-paper-elevated p-4 text-sm">
+        <section aria-label="云端自动同步" className="mb-4 rounded-xl border border-line bg-bg-card p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="font-semibold">云端自动同步</h2>
@@ -706,7 +706,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
 
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-ink disabled:opacity-40">取消</button>
-          <button onClick={save} disabled={saving} className="px-4 py-1.5 rounded-lg bg-accent text-white disabled:opacity-40">
+          <button onClick={save} disabled={saving} className="ga-solid-primary px-4 py-1.5 rounded-lg">
             {saving ? '保存中…' : '保存并应用'}
           </button>
         </div>
@@ -840,7 +840,7 @@ function GlobalsSection({ globals_, onWrite, rawText, onDirtyChange }: {
               className={inp + ' font-mono'} placeholder="http://127.0.0.1:7890（留空禁用）" />
           </div>
           <button onClick={saveProxy} disabled={!dirty || saving || conflict}
-            className="px-3 py-1.5 rounded-lg bg-accent text-white text-sm disabled:opacity-40">
+            className="ga-solid-primary px-3 py-1.5 rounded-lg text-sm">
             {saving ? '保存中…' : '保存 proxy'}
           </button>
         </div>

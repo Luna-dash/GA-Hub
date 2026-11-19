@@ -811,7 +811,11 @@ export default function Conductor() {
               newTaskOptions={antiProjects?.items.some(item => !item.dangling) ? (
                 <label>
                   新任务的 Anti 项目（可选）{' '}
-                  <select value={antiProject} onChange={event => setAntiProject(event.target.value)}>
+                  <select
+                    value={antiProject}
+                    onChange={event => setAntiProject(event.target.value)}
+                    className="rounded-md border border-line bg-bg-card px-2 py-1 text-xs text-ink outline-none focus:border-accent"
+                  >
                     <option value="">不启用 Anti 委派</option>
                     {antiProjects.items.filter(item => !item.dangling).map(item => (
                       <option key={item.name} value={item.name}>{item.display_name ?? item.name}</option>

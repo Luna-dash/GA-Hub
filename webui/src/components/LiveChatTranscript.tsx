@@ -583,7 +583,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           )}
           {!sessionError && historyStatus === 'loading_history' && msgs.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-ink-faint">
-              <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-600 border-t-accent" />
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent" />
               <div>正在恢复历史对话…</div>
             </div>
           )}
@@ -686,7 +686,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
           <div
             data-schedule-tooltip
             role="tooltip"
-            className="pointer-events-none fixed w-72 -translate-y-1 rounded-xl border border-line bg-bg-card/98 p-3 text-left shadow-xl backdrop-blur"
+            className="pointer-events-none fixed w-72 -translate-y-1 rounded-xl border border-line bg-bg-card/95 p-3 text-left shadow-xl backdrop-blur"
             style={{ top: Math.max(12, hoveredSchedule.top), right: hoveredSchedule.right, zIndex: Z_LAYERS.tooltip }}
           >
             <div className="mb-2 flex items-center justify-between gap-3 text-xs text-ink-muted">

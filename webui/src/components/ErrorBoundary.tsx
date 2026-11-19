@@ -1,4 +1,5 @@
 import { Component, ReactNode } from 'react'
+import { AlertTriangle } from 'lucide-react'
 
 interface Props {
   children: ReactNode
@@ -28,7 +29,7 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="flex items-center justify-center min-h-screen bg-bg-soft">
           <div className="max-w-md p-6 space-y-4 text-center">
-            <div className="text-6xl">⚠️</div>
+            <AlertTriangle className="h-12 w-12 mx-auto text-status-warning" strokeWidth={1.75} aria-hidden="true" />
             <h1 className="text-xl font-semibold text-ink">页面渲染出错</h1>
             <p className="text-sm text-ink-muted">
               {this.state.error?.message || '未知错误'}
@@ -38,7 +39,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 this.setState({ hasError: false, error: undefined })
                 window.location.href = '/'
               }}
-              className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+              className="ga-btn-primary px-4 py-2 font-medium rounded-lg"
             >
               返回首页
             </button>

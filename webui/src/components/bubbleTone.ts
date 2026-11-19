@@ -21,8 +21,8 @@ const CARD_TONES: Record<string, BubbleTone> = {
   system: { surfaceClass: 'border-status-warning-line bg-status-warning-soft' },
 }
 
-const CHAT_OTHER: BubbleTone = { surfaceClass: 'border border-slate-700 bg-bg-soft text-ink' }
-const CARD_OTHER: BubbleTone = { surfaceClass: 'border-slate-700 bg-bg-soft' }
+const CHAT_OTHER: BubbleTone = { surfaceClass: 'border border-line bg-bg-soft text-ink' }
+const CARD_OTHER: BubbleTone = { surfaceClass: 'border-line bg-bg-soft' }
 
 export function bubbleTone(role: string | undefined | null, variant: BubbleVariant = 'chat'): BubbleTone {
   const table = variant === 'card' ? CARD_TONES : CHAT_TONES
