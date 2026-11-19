@@ -130,13 +130,21 @@ def test_shutdown_all_isolates_conductor_failure() -> None:
 
 
 def test_clear_releases_every_owner() -> None:
-    services = AppServices(agent=_Agent(), conductor=_Conductor(), feishu=_Feishu(),
-                           scheduler_host=_SchedulerHost())
+    services = AppServices(
+        agent=_Agent(),
+        conductor=_Conductor(),
+        feishu=_Feishu(),
+        scheduler_host=_SchedulerHost(),
+        mykey_sync=object(),
+        wechat=object(),  # type: ignore[arg-type]
+    )
     services.clear()
     assert services.agent is None
     assert services.conductor is None
     assert services.feishu is None
     assert services.scheduler_host is None
+    assert services.mykey_sync is None
+    assert services.wechat is None
     # A cleared snapshot observes nothing and shuts nothing down.
     assert services.status_snapshot() == {}
     services.shutdown_all()

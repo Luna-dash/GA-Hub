@@ -36,6 +36,7 @@ class AppServices:
         self.conductor = None
         self.feishu = None
         self.scheduler_host = None
+        self.mykey_sync = None
         self.wechat = None
 
     def status_snapshot(self) -> dict[str, Any]:
