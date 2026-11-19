@@ -28,6 +28,14 @@ it('starts Anti on demand from the page header without leaving the chat', async 
       started = true
       return reply({ state: 'starting' })
     }
+    if (path === '/api/anti/account-usage') {
+      expect(init?.method).toBe('POST')
+      expect(new Headers(init?.headers).get('X-GA-Hub-Action')).toBe('check-anti-usage')
+      return reply({ state: 'authenticated', rows: [{
+        model: 'Example Model', limit: 'Weekly Limit Remaining', remaining_pct: 42.5,
+        resets_at: '2026-11-20T08:00:00Z',
+      }] })
+    }
     if (path === '/api/anti/sessions') return reply([])
     throw new Error(`Unexpected request: ${path}`)
   })
@@ -50,12 +58,36 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     </QueryClientProvider>))
     await wait(() => expect(button('启动 Anti')?.disabled).toBe(false))
     expect(fetchMock.mock.calls.filter(([path]) => path === '/api/anti/start')).toHaveLength(0)
+    const usageButton = button('检测反重力额度')!
+    const usageRequests = () => fetchMock.mock.calls.filter(([path]) => path === '/api/anti/account-usage')
+    expect(usageButton.getAttribute('aria-disabled')).toBe('true')
+    await act(async () => usageButton.click())
+    expect(usageRequests()).toHaveLength(0)
     await act(async () => button('启动 Anti')!.click())
     await wait(() => expect(button('Anti 启动中')?.disabled).toBe(true))
     expect(fetchMock.mock.calls.filter(([path]) => path === '/api/anti/start')).toHaveLength(1)
     await act(async () => cache.refetchQueries({ queryKey: ['anti-daemon-status'] }))
     await wait(() => expect(button('Anti 网关运行中')?.disabled).toBe(true))
-    expect(host.querySelector('[role=status]')?.textContent).toBe('agy 已验证登录')
+    expect(host.querySelector('[role=img][aria-label="agy 已验证登录"]')).not.toBeNull()
+    expect(usageRequests()).toHaveLength(0)
+    expect(usageButton.closest('header')).not.toBeNull()
+    expect(host.querySelector('[role=group][aria-label="Anti 状态"]')?.contains(usageButton)).toBe(false)
+    const tooltip = () => document.body.querySelector('[role=tooltip]')
+    await act(async () => usageButton.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+    expect(tooltip()?.textContent).toContain('点击检测官方剩余额度。')
+    expect(tooltip()?.closest('header')).toBeNull()
+    expect(usageRequests()).toHaveLength(0)
+    await act(async () => usageButton.click())
+    await wait(() => expect(tooltip()?.textContent).toContain('42.5%'))
+    expect(usageRequests()).toHaveLength(1)
+    expect(tooltip()?.textContent).toContain('Example Model')
+    expect(tooltip()?.textContent).toContain('每周额度')
+    expect(tooltip()?.querySelector('time')?.dateTime).toBe('2026-11-20T08:00:00Z')
+    await act(async () => usageButton.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })))
+    expect(tooltip()).toBeNull()
+    await act(async () => usageButton.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+    expect(tooltip()?.textContent).toContain('42.5%')
+    expect(usageRequests()).toHaveLength(1)
     expect(host.querySelector('output')?.dataset.page).toBe('/anti')
   } finally {
     await act(async () => root.unmount())

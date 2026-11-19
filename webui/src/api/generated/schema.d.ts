@@ -2326,6 +2326,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/anti/account-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check Account Usage */
+        post: operations["check_account_usage_api_anti_account_usage_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/anti/models": {
         parameters: {
             query?: never;
@@ -2662,6 +2679,30 @@ export interface components {
              * @default
              */
             title: string;
+        };
+        /** AntiAccountQuotaRow */
+        AntiAccountQuotaRow: {
+            /** Model */
+            model: string;
+            /** Limit */
+            limit: string;
+            /** Remaining Pct */
+            remaining_pct: number;
+            /**
+             * Resets At
+             * Format: date-time
+             */
+            resets_at: string;
+        };
+        /** AntiAccountUsage */
+        AntiAccountUsage: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "authenticated" | "login_required" | "unverified";
+            /** Rows */
+            rows: components["schemas"]["AntiAccountQuotaRow"][];
         };
         /** AntiDaemonStatus */
         AntiDaemonStatus: {
@@ -9230,6 +9271,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AntiDaemonStatus"];
+                };
+            };
+        };
+    };
+    check_account_usage_api_anti_account_usage_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiAccountUsage"];
                 };
             };
         };

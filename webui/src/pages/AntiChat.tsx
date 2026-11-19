@@ -8,7 +8,8 @@ import { CloseIconButton, RotateCw } from '@/components/ActionIcons'
 import { ChatComposerFrame, ChatUtilityDock, chatTranscriptClass } from '@/components/ChatLayout'
 import { bubbleTone } from '@/components/bubbleTone'
 import { ImagePasteInput } from '@/components/ImagePasteInput'
-import { AntiDaemonControl } from '@/components/AntiDaemonControl'
+import { AntiDaemonControl, useAntiDaemonStatus } from '@/components/AntiDaemonControl'
+import { AntiAccountUsageButton } from '@/components/AntiAccountUsageButton'
 import { AntiIcon } from '@/components/AntiMark'
 import { MessageContent } from '@/components/MessageContent'
 import { FileLinkContext, FileTransferConclusion } from '@/components/FileCitation'
@@ -85,6 +86,7 @@ export default function AntiChat() {
   const [sid, setSid] = usePageState('antiChat.currentSession', '')
   const [creating, setCreating] = useState(false)
   const [headerActions, setHeaderActions] = useState<HTMLDivElement | null>(null)
+  const daemon = useAntiDaemonStatus()
   const projects = useQuery({ queryKey: ['anti-projects'], queryFn: api.projects })
   const sessions = useQuery({ queryKey: sessionsKey, queryFn: ({ signal }) => request<Session[]>(base, signal), refetchInterval: 5000 })
   const updateList = async (update: (rows: Session[]) => Session[]) => {
@@ -130,8 +132,11 @@ export default function AntiChat() {
   }
   const closeCreate = () => { if (!create.isPending) setCreating(false) }
   return <PageShell title="Agy 会话" wrapHeader
-    titleExtra={<AntiDaemonControl />}
-    actions={<div ref={setHeaderActions} className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2" />}>
+    titleExtra={<AntiDaemonControl {...daemon} />}
+    actions={<>
+      <div ref={setHeaderActions} className="empty:hidden flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2" />
+      <AntiAccountUsageButton running={daemon.running} onChecked={daemon.refresh} />
+    </>}>
     <div className="flex h-full min-h-0 min-w-0 flex-col md:flex-row">
       <SessionRail storageScope="anti" projects={projects.data?.items} sessions={railSessions}
         runtimes={railRuntimes} currentId={selected?.id ?? null} onSelect={setSid} onCreate={openCreate}

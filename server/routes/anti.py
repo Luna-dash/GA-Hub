@@ -3,11 +3,11 @@ from dataclasses import asdict
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, ValidationError
 
 from ..origin_policy import is_allowed_ui_origin
 from ..services.anti_daemon import AntiAuthState, AntiDaemonState, daemon
-from ..services.anti_engine import DEFAULT_EFFORT, DEFAULT_MODEL, AntiError, AntiSessions
+from ..services.anti_engine import DEFAULT_EFFORT, DEFAULT_MODEL, AntiAdapter, AntiError, AntiSessions
 
 router = APIRouter(prefix="/api/anti", tags=["anti"])
 
@@ -21,6 +21,18 @@ class AntiDaemonStatus(BaseModel):
     agy_available: bool | None = None
     active_count: int | None = None
     auth_state: AntiAuthState | None = None
+
+
+class AntiAccountQuotaRow(BaseModel):
+    model: str = Field(min_length=1, max_length=128)
+    limit: str = Field(min_length=1, max_length=128)
+    remaining_pct: float = Field(ge=0, le=100)
+    resets_at: AwareDatetime
+
+
+class AntiAccountUsage(BaseModel):
+    state: Literal["authenticated", "login_required", "unverified"]
+    rows: list[AntiAccountQuotaRow]
 
 
 class AntiSessionCreate(BaseModel):
@@ -98,6 +110,24 @@ def start_daemon(request: Request):
         return asdict(daemon.start())
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.post("/account-usage", response_model=AntiAccountUsage)
+def check_account_usage(request: Request):
+    if not is_allowed_ui_origin(request.headers.get("origin")):
+        raise HTTPException(403, "Untrusted UI origin")
+    if request.headers.get("x-ga-hub-action") != "check-anti-usage":
+        raise HTTPException(403, "Missing Anti usage action")
+    try:
+        report = AntiAdapter().request("POST", "/v1/account-usage", read_timeout=30,
+                                       headers={"X-AntiCLI-Action": "check-account-usage"})
+        return AntiAccountUsage.model_validate(report)
+    except AntiError as exc:
+        if exc.status == 404:
+            raise HTTPException(503, "当前 AntiCLI 网关版本不支持额度检测，请更新网关。") from exc
+        raise HTTPException(503, "无法连接 AntiCLI 网关，请检查网关状态后重试。") from exc
+    except ValidationError as exc:
+        raise HTTPException(502, "AntiCLI 返回了无法识别的额度报告。") from exc
 
 
 @router.get("/models")

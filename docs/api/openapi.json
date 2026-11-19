@@ -5117,6 +5117,27 @@
         }
       }
     },
+    "/api/anti/account-usage": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Check Account Usage",
+        "operationId": "check_account_usage_api_anti_account_usage_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiAccountUsage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/anti/models": {
       "get": {
         "tags": [
@@ -5886,6 +5907,67 @@
         },
         "type": "object",
         "title": "AgentTitleReq"
+      },
+      "AntiAccountQuotaRow": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Model"
+          },
+          "limit": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Limit"
+          },
+          "remaining_pct": {
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Remaining Pct"
+          },
+          "resets_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Resets At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model",
+          "limit",
+          "remaining_pct",
+          "resets_at"
+        ],
+        "title": "AntiAccountQuotaRow"
+      },
+      "AntiAccountUsage": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "authenticated",
+              "login_required",
+              "unverified"
+            ],
+            "title": "State"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/AntiAccountQuotaRow"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state",
+          "rows"
+        ],
+        "title": "AntiAccountUsage"
       },
       "AntiDaemonStatus": {
         "properties": {

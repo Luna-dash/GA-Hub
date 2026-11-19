@@ -9,7 +9,7 @@ import sys
 from .runtime_dependencies import runtime_binary_args
 
 SOURCE_VERSION = "0.1.0"
-SOURCE_SHA256 = "58a2f3794a130b1e5013473c6f68e5129e855ec574d0defbc1fc5ae65e829b35"
+SOURCE_SHA256 = "9f077937c8f9d952015bea5e8eda76698172dacce49768661083ff6899a3bfe1"
 
 # AntiCLI's model lookup runs in both the daemon and the standalone command.
 # Hiding the outer CLI process does not hide this Windows console subprocess.

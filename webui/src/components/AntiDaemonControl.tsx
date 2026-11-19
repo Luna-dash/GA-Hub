@@ -22,7 +22,7 @@ async function request(path: 'status' | 'start', signal?: AbortSignal): Promise<
   return res.json()
 }
 
-export function AntiDaemonControl() {
+export function useAntiDaemonStatus() {
   const cache = useQueryClient()
   const status = useQuery({
     queryKey: key,
@@ -38,6 +38,10 @@ export function AntiDaemonControl() {
   const state = status.isError ? 'unavailable' : status.data?.state
   const busy = start.isPending || state === 'starting'
   const running = !busy && state === 'ready'
+  return { status, start, state, busy, running, refresh: () => { void cache.invalidateQueries({ queryKey: key }) } }
+}
+
+export function AntiDaemonControl({ status, start, state, busy, running }: ReturnType<typeof useAntiDaemonStatus>) {
   const canStart = !busy && state === 'stopped'
   const label = busy ? 'Anti 启动中' : running ? 'Anti 网关运行中' : canStart ? '启动 Anti'
     : state === 'unavailable' ? 'Anti 网关不可用' : '正在检查 Anti'
