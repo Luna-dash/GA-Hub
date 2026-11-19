@@ -157,7 +157,16 @@ build_all.bat
 python scripts/build_all.py --full --anticli-source D:\study\anticli
 ```
 
-构建环境需安装该 checkout 的运行依赖。打包的是 AntiCLI 网关，不包含官方 `agy`，也不会代为登录。运行时先复用已运行的本地网关；否则从 Anti 页面手动启动，优先使用随包组件，未随包时查找 `PATH` 上的 `anticli`。随包组件的数据独立保存在 GA-Hub 管理数据目录。AntiChat 始终以 `plan` 模式提交；选择项目外的引用文件时，仅把所选文件的副本所在目录授予该次运行，不开放源文件的父目录。
+可以用 `--anticli-python <解释器路径>` 指定独立的 AntiCLI 构建环境。该环境只需装
+AntiCLI checkout 的 `[project.dependencies]` 与 `requirements.txt` 钉住的 PyInstaller，
+无需安装测试依赖。省略该参数时，沿用 sidecar 的解释器，并在其中安装 AntiCLI 的运行依赖。
+
+要精简随包依赖，建议使用隔离的 CPython 虚拟环境，通过 `GA_HUB_PYTHON` 指定 sidecar
+解释器，只装 `requirements.txt` 的运行与打包依赖。`pytest` 和 `httpx` 用于测试，
+可在另一个装齐 `requirements.txt` 的环境中运行后端测试。`--full` 会在 sidecar
+解释器中运行测试，使用精简环境冻结时，请单独跑测试，再用普通构建入口打包。
+
+打包的是 AntiCLI 网关，不包含官方 `agy`，也不会代为登录。运行时先复用已运行的本地网关；否则从 Anti 页面手动启动，优先使用随包组件，未随包时查找 `PATH` 上的 `anticli`。随包组件的数据独立保存在 GA-Hub 管理数据目录。AntiChat 始终以 `plan` 模式提交；选择项目外的引用文件时，仅把所选文件的副本所在目录授予该次运行，不开放源文件的父目录。
 
 ### 冻结 sidecar 的 GA 运行依赖（rich / durable rewind）
 
