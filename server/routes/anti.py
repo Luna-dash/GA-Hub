@@ -1,4 +1,8 @@
-"""Direct Anti conversations, independent of the GA session engine."""
+"""Direct Anti conversations, independent of the GA session engine.
+
+Project workspaces and artifact directories intentionally reuse GA's
+registered workspace table rather than duplicating project management.
+"""
 from dataclasses import asdict
 from typing import Annotated, Literal
 

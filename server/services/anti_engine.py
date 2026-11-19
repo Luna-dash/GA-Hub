@@ -1,4 +1,8 @@
-"""Project-scoped AntiCLI integration; model discovery is read-only."""
+"""Project-scoped AntiCLI integration; model discovery is read-only.
+
+Independent of GA's session engine, while project workspace resolution and
+artifact storage reuse GA's workspace registry and temp layout.
+"""
 from __future__ import annotations
 
 import json
