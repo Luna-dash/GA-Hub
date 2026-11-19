@@ -399,3 +399,48 @@ def test_services_panel_route_reads_the_app_bound_registry() -> None:
             response = client.get("/api/services/panel")
     assert response.status_code == 200
     assert response.json()["services"][0]["id"] == "marker"
+
+
+def test_feishu_autostart_states_surface_in_registry_panel() -> None:
+    from server.services.app_services import AppServices
+
+    feishu = mock.Mock()
+    bound = ServiceRegistry(AppServices(feishu=feishu))
+
+    feishu.status.return_value = {
+        "running": False,
+        "fsapp_exists": True,
+        "pid": None,
+        "external": False,
+        "autostart_state": "waiting",
+        "autostart_remaining_seconds": 120,
+        "autostart_error": None,
+    }
+    item = bound._feishu()
+    assert (item.state, item.health) == ("ready", "healthy")
+    assert item.summary == "等待自动启动（约 120s 后）"
+
+    feishu.status.return_value = {
+        "running": False,
+        "fsapp_exists": True,
+        "pid": None,
+        "external": False,
+        "autostart_state": "starting",
+        "autostart_remaining_seconds": None,
+        "autostart_error": None,
+    }
+    item = bound._feishu()
+    assert (item.state, item.summary, item.health) == ("ready", "正在自动启动…", "healthy")
+
+    feishu.status.return_value = {
+        "running": False,
+        "fsapp_exists": True,
+        "pid": None,
+        "external": False,
+        "autostart_state": "failed",
+        "autostart_remaining_seconds": None,
+        "autostart_error": "missing app_secret",
+    }
+    item = bound._feishu()
+    assert (item.state, item.health, item.error) == ("error", "attention", "missing app_secret")
+    assert item.summary == "自动启动失败：missing app_secret"

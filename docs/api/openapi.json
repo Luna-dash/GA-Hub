@@ -9351,6 +9351,39 @@
             "type": "number",
             "title": "Last Check Ts",
             "default": 0
+          },
+          "autostart_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Autostart State"
+          },
+          "autostart_remaining_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Autostart Remaining Seconds"
+          },
+          "autostart_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Autostart Error"
           }
         },
         "type": "object",

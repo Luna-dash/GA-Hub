@@ -196,10 +196,46 @@ class ServiceRegistry:
             )
         status = service.status()
         exists = bool(status.get("fsapp_exists"))
+        running = bool(status.get("running"))
+        autostart_state = status.get("autostart_state")
+        autostart_error = status.get("autostart_error")
+        autostart_remaining = status.get("autostart_remaining_seconds")
+
+        if running:
+            state = "running"
+            summary = "Bot 进程运行中"
+            health = "healthy"
+            err = None
+        elif autostart_state == "starting":
+            state = "ready"
+            summary = "正在自动启动…"
+            health = "healthy"
+            err = None
+        elif autostart_state == "waiting" and exists:
+            state = "ready"
+            summary = (
+                f"等待自动启动（约 {autostart_remaining}s 后）"
+                if isinstance(autostart_remaining, int) and autostart_remaining > 0
+                else "等待自动启动…"
+            )
+            health = "healthy"
+            err = None
+        elif autostart_state == "failed" and autostart_error:
+            state = "error"
+            err = str(autostart_error)
+            summary = f"自动启动失败：{err}"
+            health = "attention"
+        else:
+            state = "ready" if exists else "stopped"
+            summary = "已配置，当前未运行" if exists else "服务脚本未配置"
+            health = "healthy"
+            err = None
+
         return ServicePanelItem(
-            "feishu", "飞书 Bot", "running" if status.get("running") else ("ready" if exists else "stopped"),
-            "Bot 进程运行中" if status.get("running") else ("已配置，当前未运行" if exists else "服务脚本未配置"), "/dashboard",
+            "feishu", "飞书 Bot", state, summary, "/dashboard",
             {"PID": status.get("pid") or "—", "模式": "外部" if status.get("external") else "内建"},
+            error=err,
+            health=health,
         )
 
     @staticmethod

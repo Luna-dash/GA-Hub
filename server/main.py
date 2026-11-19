@@ -66,11 +66,29 @@ async def _delayed_feishu_autostart(
     off the critical startup path and reuse FeishuService.start() for de-duplication
     against an already-running/manual fsapp.py process.
     """
-    await asyncio.sleep(max(0, delay_seconds))
+    wait = max(0, delay_seconds)
+    setter = getattr(service, "set_autostart_state", None)
+    if callable(setter):
+        setter("waiting", eta=time.time() + wait)
     try:
+        await asyncio.sleep(wait)
+        if callable(setter):
+            setter("starting")
         result = await asyncio.to_thread(service.start)
+        if callable(setter):
+            if isinstance(result, dict) and result.get("ok") is False:
+                reason = str(result.get("reason") or result.get("error") or "")
+                setter("skipped", error=reason or None)
+            else:
+                setter("completed")
         log.info("feishu auto-start completed after %ss: %s", delay_seconds, result)
+    except asyncio.CancelledError:
+        if callable(setter):
+            setter(None)
+        raise
     except Exception as e:
+        if callable(setter):
+            setter("failed", error=str(e))
         log.warning("feishu auto-start skipped after %ss: %s", delay_seconds, e)
 
 

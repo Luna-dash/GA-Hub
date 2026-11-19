@@ -65,6 +65,21 @@ class FeishuService:
         self._log_refresh_last_success = 0.0
         self._poll_stop = threading.Event()
         self._poll_thread: threading.Thread | None = None
+        self._autostart_state: str | None = None
+        self._autostart_eta: float | None = None
+        self._autostart_error: str | None = None
+
+    def set_autostart_state(
+        self,
+        state: str | None,
+        *,
+        eta: float | None = None,
+        error: str | None = None,
+    ) -> None:
+        with self._lock:
+            self._autostart_state = state
+            self._autostart_eta = eta
+            self._autostart_error = error
 
     @classmethod
     def instance(cls) -> "FeishuService":
@@ -345,11 +360,22 @@ class FeishuService:
             running = self._running_locked()
             pid = proc.pid if proc and running else None
             returncode = None if proc is None else proc.poll()
+            autostart_state = self._autostart_state
+            autostart_eta = self._autostart_eta
+            autostart_error = self._autostart_error
         external = False
         if not running:
             ext_pid = self._status_external_pid()
             if ext_pid:
                 running, pid, returncode, external = True, ext_pid, None, True
+        if running and autostart_state in ("waiting", "starting", "failed"):
+            autostart_state = "completed"
+            autostart_error = None
+        autostart_remaining = (
+            max(0, int(round(autostart_eta - time.time())))
+            if not running and autostart_state == "waiting" and autostart_eta is not None
+            else None
+        )
         return {
             "running": running,
             "pid": pid,
@@ -362,6 +388,9 @@ class FeishuService:
             "log_exists": log_file.is_file(),
             "last_check": last_check,
             "last_check_ts": last_check_ts,
+            "autostart_state": autostart_state,
+            "autostart_remaining_seconds": autostart_remaining,
+            "autostart_error": autostart_error,
         }
 
     def save_keys(self, app_id: str, app_secret: str, allowed_users: str = "") -> dict[str, Any]:

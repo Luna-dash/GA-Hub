@@ -3930,6 +3930,12 @@ export interface components {
              * @default 0
              */
             last_check_ts: number;
+            /** Autostart State */
+            autostart_state?: string | null;
+            /** Autostart Remaining Seconds */
+            autostart_remaining_seconds?: number | null;
+            /** Autostart Error */
+            autostart_error?: string | null;
         };
         /** FsStopResp */
         FsStopResp: {

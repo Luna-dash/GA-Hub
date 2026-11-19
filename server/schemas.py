@@ -1203,6 +1203,9 @@ class FsStatusResp(BaseModel):
     log_exists: bool
     last_check: FsCheckResp | None = None
     last_check_ts: float = 0
+    autostart_state: str | None = None
+    autostart_remaining_seconds: int | None = None
+    autostart_error: str | None = None
 
 
 class FsKeysResp(BaseModel):
