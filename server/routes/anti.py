@@ -4,9 +4,11 @@ Project workspaces and artifact directories intentionally reuse GA's
 registered workspace table rather than duplicating project management.
 """
 from dataclasses import asdict
+import json
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, ValidationError
 
 from ..origin_policy import is_allowed_ui_origin
@@ -150,6 +152,42 @@ def start_daemon(request: Request):
         raise HTTPException(exc.status, str(exc)) from exc
 
 
+@router.post("/stop", response_model=AntiDaemonStatus)
+def stop_daemon(request: Request):
+    if not is_allowed_ui_origin(request.headers.get("origin")):
+        raise HTTPException(403, "Untrusted UI origin")
+    if request.headers.get("x-ga-hub-action") != "stop-anti":
+        raise HTTPException(403, "Missing Anti stop action")
+    try:
+        return asdict(daemon.stop())
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.post("/restart", response_model=AntiDaemonStatus)
+def restart_daemon(request: Request):
+    if not is_allowed_ui_origin(request.headers.get("origin")):
+        raise HTTPException(403, "Untrusted UI origin")
+    if request.headers.get("x-ga-hub-action") != "restart-anti":
+        raise HTTPException(403, "Missing Anti restart action")
+    try:
+        return asdict(daemon.restart())
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+class AgyProfileUsageSnapshot(BaseModel):
+    checked_at: str
+    min_remaining_pct: float | None = None
+    rows: list[AntiAccountQuotaRow] = Field(default_factory=list)
+
+
+class AgyProfileDetail(BaseModel):
+    has_credentials: bool = False
+    auth_state: str | None = None
+    usage: AgyProfileUsageSnapshot | None = None
+
+
 class AgyProfile(BaseModel):
     id: str
     name: str
@@ -158,10 +196,27 @@ class AgyProfile(BaseModel):
 class AgyProfiles(BaseModel):
     active: str
     profiles: list[AgyProfile]
+    login_profile: str | None = None
+    details: dict[str, AgyProfileDetail] | None = None
 
 
 class AgyProfileCreate(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
+
+
+class AntiQuotaPool(BaseModel):
+    model_config = {"extra": "allow"}
+
+    model_group: str
+    display_name: str
+    status: str
+    cooldown_remaining_seconds: int = 0
+    window_5h_pct: float | None = None
+    window_7d_pct: float | None = None
+
+
+class AntiBreakerResetReq(BaseModel):
+    model_group: str | None = Field(default=None, max_length=64)
 
 
 def _profile_action(request: Request) -> None:
@@ -171,16 +226,21 @@ def _profile_action(request: Request) -> None:
         raise HTTPException(403, "Missing Agy profile action")
 
 
-@router.get("/profiles", response_model=AgyProfiles)
+@router.get("/profiles", response_model=AgyProfiles, response_model_exclude_none=True)
 def agy_profiles():
     try:
         active, profiles = anti_profiles.snapshot()
-        return {"active": active, "profiles": [asdict(profile) for profile in profiles]}
+        return {
+            "active": active,
+            "profiles": [asdict(profile) for profile in profiles],
+            "login_profile": daemon.active_login_profile(),
+            "details": anti_profiles.snapshot_details(),
+        }
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 
 
-@router.post("/profiles", response_model=AgyProfile)
+@router.post("/profiles", response_model=AgyProfile, response_model_exclude_none=True)
 def create_agy_profile(body: AgyProfileCreate, request: Request):
     _profile_action(request)
     try:
@@ -189,7 +249,16 @@ def create_agy_profile(body: AgyProfileCreate, request: Request):
         raise HTTPException(exc.status, str(exc)) from exc
 
 
-@router.post("/profiles/{profile_id}/switch", response_model=AgyProfiles)
+@router.post("/profiles/capture", response_model=AgyProfile, response_model_exclude_none=True)
+def capture_agy_profile(body: AgyProfileCreate, request: Request):
+    _profile_action(request)
+    try:
+        return asdict(daemon.capture_profile(body.name))
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.post("/profiles/{profile_id}/switch", response_model=AgyProfiles, response_model_exclude_none=True)
 def switch_agy_profile(profile_id: str, request: Request):
     _profile_action(request)
     try:
@@ -199,11 +268,21 @@ def switch_agy_profile(profile_id: str, request: Request):
         raise HTTPException(exc.status, str(exc)) from exc
 
 
-@router.patch("/profiles/{profile_id}", response_model=AgyProfile)
+@router.patch("/profiles/{profile_id}", response_model=AgyProfile, response_model_exclude_none=True)
 def rename_agy_profile(profile_id: str, body: AgyProfileCreate, request: Request):
     _profile_action(request)
     try:
         return asdict(daemon.rename_profile(profile_id, body.name))
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.delete("/profiles/{profile_id}", status_code=204)
+def delete_agy_profile(profile_id: str, request: Request):
+    _profile_action(request)
+    try:
+        daemon.delete_profile(profile_id)
+        AntiSessions().delete_profile_conversations(profile_id)
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 
@@ -224,16 +303,49 @@ def check_account_usage(request: Request):
     if request.headers.get("x-ga-hub-action") != "check-anti-usage":
         raise HTTPException(403, "Missing Anti usage action")
     try:
-        with daemon.submission():
+        with daemon.submission() as profile_id:
             report = AntiAdapter().request("POST", "/v1/account-usage", read_timeout=30,
                                            headers={"X-AntiCLI-Action": "check-account-usage"})
-        return AntiAccountUsage.model_validate(report)
+        parsed = AntiAccountUsage.model_validate(report)
+        anti_profiles.record_usage(
+            profile_id,
+            parsed.state,
+            [json.loads(row.model_dump_json()) for row in parsed.rows],
+        )
+        return parsed
     except AntiError as exc:
         if exc.status == 404:
             raise HTTPException(503, "当前 AntiCLI 网关版本不支持额度检测，请更新网关。") from exc
         raise HTTPException(503, "无法连接 AntiCLI 网关，请检查网关状态后重试。") from exc
     except ValidationError as exc:
         raise HTTPException(502, "AntiCLI 返回了无法识别的额度报告。") from exc
+
+
+@router.get("/quota", response_model=list[AntiQuotaPool])
+def gateway_quota():
+    try:
+        with daemon.submission():
+            data = AntiAdapter().request("GET", "/v1/quota")
+        if not isinstance(data, list):
+            return []
+        return [AntiQuotaPool.model_validate(item) for item in data]
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(502, "AntiCLI 返回了无法识别的配额状态。") from exc
+
+
+@router.post("/breaker/reset", status_code=204)
+def reset_gateway_breaker(body: AntiBreakerResetReq, request: Request):
+    if not is_allowed_ui_origin(request.headers.get("origin")):
+        raise HTTPException(403, "Untrusted UI origin")
+    if request.headers.get("x-ga-hub-action") != "manage-anti-gateway":
+        raise HTTPException(403, "Missing Anti gateway action")
+    try:
+        with daemon.submission():
+            AntiAdapter().request("POST", "/v1/breaker/reset", json={"model_group": body.model_group})
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
 
 
 @router.get("/models", response_model=AntiModelList)
@@ -288,6 +400,25 @@ def run(sid: str, rid: str):
 @router.get("/sessions/{sid}/runs/{rid}/events", response_model_exclude_none=True)
 def events(sid: str, rid: str, after: int = Query(default=0, ge=0)) -> list[AntiEvent]:
     return _call("events", sid, rid, after)
+
+
+@router.get("/sessions/{sid}/runs/{rid}/events/stream")
+def events_stream(sid: str, rid: str):
+    try:
+        gen = AntiSessions().stream_events(sid, rid)
+        first = next(gen, None)
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+    def iter_sse():
+        if first is not None:
+            yield first
+        try:
+            yield from gen
+        except AntiError:
+            return
+
+    return StreamingResponse(iter_sse(), media_type="text/event-stream")
 
 
 @router.post("/sessions/{sid}/runs/{rid}/cancel", response_model=AntiRunResp)

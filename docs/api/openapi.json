@@ -5114,6 +5114,48 @@
         }
       }
     },
+    "/api/anti/stop": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Stop Daemon",
+        "operationId": "stop_daemon_api_anti_stop_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiDaemonStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/restart": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Restart Daemon",
+        "operationId": "restart_daemon_api_anti_restart_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiDaemonStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/anti/profiles": {
       "get": {
         "tags": [
@@ -5140,6 +5182,47 @@
         ],
         "summary": "Create Agy Profile",
         "operationId": "create_agy_profile_api_anti_profiles_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgyProfileCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyProfile"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/profiles/capture": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Capture Agy Profile",
+        "operationId": "capture_agy_profile_api_anti_profiles_capture_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5266,6 +5349,39 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Delete Agy Profile",
+        "operationId": "delete_agy_profile_api_anti_profiles__profile_id__delete",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/anti/profiles/{profile_id}/login": {
@@ -5317,6 +5433,65 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AntiAccountUsage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/quota": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Gateway Quota",
+        "operationId": "gateway_quota_api_anti_quota_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AntiQuotaPool"
+                  },
+                  "type": "array",
+                  "title": "Response Gateway Quota Api Anti Quota Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/breaker/reset": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Reset Gateway Breaker",
+        "operationId": "reset_gateway_breaker_api_anti_breaker_reset_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntiBreakerResetReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -5705,6 +5880,55 @@
                   },
                   "title": "Response Events Api Anti Sessions  Sid  Runs  Rid  Events Get"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/runs/{rid}/events/stream": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Events Stream",
+        "operationId": "events_stream_api_anti_sessions__sid__runs__rid__events_stream_get",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          },
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Rid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -6159,6 +6383,69 @@
         ],
         "title": "AgyProfileCreate"
       },
+      "AgyProfileDetail": {
+        "properties": {
+          "has_credentials": {
+            "type": "boolean",
+            "title": "Has Credentials",
+            "default": false
+          },
+          "auth_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth State"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgyProfileUsageSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "AgyProfileDetail"
+      },
+      "AgyProfileUsageSnapshot": {
+        "properties": {
+          "checked_at": {
+            "type": "string",
+            "title": "Checked At"
+          },
+          "min_remaining_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Remaining Pct"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/AntiAccountQuotaRow"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "checked_at"
+        ],
+        "title": "AgyProfileUsageSnapshot"
+      },
       "AgyProfiles": {
         "properties": {
           "active": {
@@ -6171,6 +6458,31 @@
             },
             "type": "array",
             "title": "Profiles"
+          },
+          "login_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Login Profile"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/AgyProfileDetail"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
           }
         },
         "type": "object",
@@ -6240,6 +6552,24 @@
           "rows"
         ],
         "title": "AntiAccountUsage"
+      },
+      "AntiBreakerResetReq": {
+        "properties": {
+          "model_group": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Group"
+          }
+        },
+        "type": "object",
+        "title": "AntiBreakerResetReq"
       },
       "AntiDaemonStatus": {
         "properties": {
@@ -6399,6 +6729,57 @@
           "items"
         ],
         "title": "AntiModelList"
+      },
+      "AntiQuotaPool": {
+        "properties": {
+          "model_group": {
+            "type": "string",
+            "title": "Model Group"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "cooldown_remaining_seconds": {
+            "type": "integer",
+            "title": "Cooldown Remaining Seconds",
+            "default": 0
+          },
+          "window_5h_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window 5H Pct"
+          },
+          "window_7d_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window 7D Pct"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "model_group",
+          "display_name",
+          "status"
+        ],
+        "title": "AntiQuotaPool"
       },
       "AntiRunCreate": {
         "properties": {

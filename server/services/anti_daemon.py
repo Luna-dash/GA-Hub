@@ -179,9 +179,9 @@ class AntiDaemon:
         options = anti_component.child_options(executable)
         if profile_id != anti_profiles.DEFAULT:
             env = options.get("env", os.environ.copy())
-            if env.get("ANTICLI_DATA_DIR"):
-                env = {**env, "ANTICLI_DATA_DIR": str(Path(env["ANTICLI_DATA_DIR"]).expanduser().resolve())}
-            options["env"] = anti_profiles.profile_env(profile_id, env)
+            env = anti_profiles.profile_env(profile_id, env)
+            env["ANTICLI_DATA_DIR"] = str(anti_profiles.profile_data_dir(profile_id))
+            options["env"] = env
         return executable, options
 
     def _start(self, port: int, profile_id: str, prepared: tuple[str, dict] | None = None) -> AntiDaemonStatus:
@@ -202,8 +202,71 @@ class AntiDaemon:
         return AntiDaemonStatus(state="starting")
 
     def _require_login_closed(self, *profiles: str) -> None:
-        if self._login is not None and self._login.poll() is None and self._login_profile in profiles:
-            raise AntiError(409, "请完成官方 agy 登录并关闭登录窗口后再操作")
+        if self._login is not None:
+            if self._login.poll() is None:
+                if self._login_profile in profiles:
+                    raise AntiError(409, "请完成官方 agy 登录并关闭登录窗口后再操作")
+                return
+            child_job.forget(self._login.pid)
+            self._login = None
+            self._login_profile = None
+
+    def active_login_profile(self) -> str | None:
+        with self._lock:
+            if self._login is None:
+                return None
+            if self._login.poll() is None:
+                return self._login_profile
+            child_job.forget(self._login.pid)
+            self._login = None
+            self._login_profile = None
+            return None
+
+    def stop(self) -> AntiDaemonStatus:
+        with self._lock:
+            port = daemon_port()
+            status = self._active_status(port)
+            if status.state == "stopped":
+                self._switch_recovery_required = False
+                return AntiDaemonStatus(state="stopped")
+            process = self._process
+            if process is None or process.poll() is not None:
+                if process is not None:
+                    child_job.forget(process.pid)
+                    self._process = None
+                raise AntiError(409, "当前由外部启动的 AntiCLI 正在运行；请手动停止外部网关")
+            if status.active_count:
+                raise AntiError(409, "当前有正在运行的 Anti 任务，请先停止或等待任务结束")
+            if not child_job.terminate_tree(process.pid):
+                raise AntiError(503, "无法停止托管 AntiCLI 网关")
+            self._process = None
+            self._failure = None
+            after = self._status(port)
+            if after.state != "stopped":
+                raise AntiError(503, "AntiCLI 网关退出后端口仍被占用")
+            self._switch_recovery_required = False
+            return AntiDaemonStatus(state="stopped")
+
+    def restart(self) -> AntiDaemonStatus:
+        with self._lock:
+            port = daemon_port()
+            status = self._active_status(port)
+            if status.state != "stopped":
+                process = self._process
+                if process is None or process.poll() is not None:
+                    raise AntiError(409, "当前由外部启动的 AntiCLI 正在运行；请先停止外部网关")
+                if status.active_count:
+                    raise AntiError(409, "当前有正在运行的 Anti 任务，请先停止或等待任务结束")
+                if not child_job.terminate_tree(process.pid):
+                    raise AntiError(503, "无法停止托管 AntiCLI 网关")
+                self._process = None
+                if self._status(port).state != "stopped":
+                    raise AntiError(503, "AntiCLI 端口仍被占用，无法重启")
+            profile_id = anti_profiles.snapshot()[0]
+            self._require_login_closed(profile_id)
+            starting = self._start(port, profile_id)
+            self._switch_recovery_required = False
+            return starting
 
     @contextmanager
     def submission(self):
@@ -222,9 +285,19 @@ class AntiDaemon:
         with self._lock:
             return anti_profiles.add(name)
 
+    def capture_profile(self, name: str):
+        with self._lock:
+            self._require_login_closed(anti_profiles.DEFAULT)
+            return anti_profiles.capture_default(name)
+
     def rename_profile(self, profile_id: str, name: str):
         with self._lock:
             return anti_profiles.rename(profile_id, name)
+
+    def delete_profile(self, profile_id: str) -> None:
+        with self._lock:
+            self._require_login_closed(profile_id)
+            anti_profiles.delete(profile_id)
 
     def _await_ready(self, port: int) -> None:
         process = self._process
@@ -307,7 +380,7 @@ class AntiDaemon:
                 if status.state != "stopped" and (status.state != "ready" or status.active_count != 0):
                     raise AntiError(409, "请等 Agy 网关就绪且任务全部结束后再登录")
             executable = anti_profiles.agy_executable()
-            env = anti_profiles.profile_env(profile_id, os.environ.copy())
+            env = anti_profiles.system_proxy_env(anti_profiles.profile_env(profile_id, os.environ.copy()))
             cwd = Path(env.get("USERPROFILE") or Path.home())
             try:
                 self._login = child_job.spawn([executable], kind="agy-login", marker=executable,

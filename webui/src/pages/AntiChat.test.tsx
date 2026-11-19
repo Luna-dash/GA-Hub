@@ -3,9 +3,15 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, useLocation } from 'react-router-dom'
-import { expect, it, vi } from 'vitest'
+import { expect, it, vi, beforeEach } from 'vitest'
+import { resetPageState } from '@/utils/pageState'
 import AntiChat from './AntiChat'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
+
+beforeEach(() => {
+  localStorage.clear()
+  resetPageState()
+})
 
 vi.mock('@/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/client')>()
@@ -366,6 +372,202 @@ it('reloads the final trace even when the first live request is still pending', 
       details.dispatchEvent(new Event('toggle'))
     })
     expect(loadEvents).toHaveBeenCalledTimes(3)
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('supports profile capture/delete, gateway stop/restart, quota pool reset, and SSE streaming', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  let gatewayState = 'ready'
+  let profilesList = [
+    { id: 'default', name: '系统默认' },
+    { id: 'work', name: '工作' },
+  ]
+  const details: Record<string, unknown> = {
+    default: {
+      has_credentials: true,
+      auth_state: 'authenticated',
+      usage: {
+        checked_at: '2026-11-20T08:00:00Z',
+        min_remaining_pct: 65,
+        rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 65, resets_at: '2026-11-20T08:00:00Z' }],
+      },
+    },
+    work: { has_credentials: false, auth_state: 'login_required' },
+  }
+  let pools = [{ model_group: 'gemini-4', display_name: 'Gemini 4', status: 'cooling_down', cooldown_remaining_seconds: 30 }]
+
+  const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
+    const reply = (data: unknown, status = 200) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => JSON.parse(JSON.stringify(data)),
+    })
+    if (path === '/api/anti/status') {
+      return reply({ state: gatewayState, agy_available: true, auth_state: 'authenticated' })
+    }
+    if (path === '/api/anti/stop') {
+      expect(new Headers(init?.headers).get('X-GA-Hub-Action')).toBe('stop-anti')
+      gatewayState = 'stopped'
+      return reply({ state: 'stopped' })
+    }
+    if (path === '/api/anti/restart') {
+      expect(new Headers(init?.headers).get('X-GA-Hub-Action')).toBe('restart-anti')
+      gatewayState = 'ready'
+      return reply({ state: 'ready', agy_available: true, auth_state: 'authenticated' })
+    }
+    if (path === '/api/anti/profiles') {
+      return reply({ active: 'default', profiles: profilesList, details })
+    }
+    if (path === '/api/anti/profiles/capture') {
+      expect(new Headers(init?.headers).get('X-GA-Hub-Action')).toBe('manage-agy-profiles')
+      const body = JSON.parse(String(init?.body))
+      const created = { id: 'cloned', name: body.name }
+      profilesList = [...profilesList, created]
+      details.cloned = { has_credentials: true, auth_state: 'authenticated' }
+      return reply(created)
+    }
+    if (path === '/api/anti/profiles/work' && init?.method === 'DELETE') {
+      profilesList = profilesList.filter(p => p.id !== 'work')
+      return reply(undefined, 204)
+    }
+    if (path === '/api/anti/quota') {
+      return reply(pools)
+    }
+    if (path === '/api/anti/breaker/reset') {
+      expect(new Headers(init?.headers).get('X-GA-Hub-Action')).toBe('manage-anti-gateway')
+      pools = [{ model_group: 'gemini-4', display_name: 'Gemini 4', status: 'normal', cooldown_remaining_seconds: 0 }]
+      return reply(undefined, 204)
+    }
+    if (path === '/api/anti/sessions') return reply([])
+    throw new Error(`Unexpected request: ${path}`)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await Promise.resolve(); await new Promise(r => setTimeout(r, 0)) })
+
+  try {
+    await act(async () => root.render(
+      <MemoryRouter initialEntries={['/anti']}>
+        <QueryClientProvider client={cache}>
+          <AntiChat />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    ))
+    await flush()
+
+    // Gateway restart & stop buttons work directly from the header
+    const restartBtn = host.querySelector('button[aria-label="重启 Anti 网关"]') as HTMLButtonElement
+    expect(restartBtn).toBeTruthy()
+    await act(async () => { restartBtn.click() })
+    await flush()
+
+    // Quota button displays cached percentage immediately on hover & allows pool/breaker inspection
+    const usageBtn = host.querySelector('button[aria-label="检测反重力额度"]') as HTMLButtonElement
+    await act(async () => { usageBtn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
+    await flush()
+    expect(document.body.textContent).toContain('65%')
+    const checkPoolsBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '查看网关配额池 / 熔断') as HTMLButtonElement
+    await act(async () => { checkPoolsBtn.click() })
+    await flush()
+    expect(document.body.textContent).toContain('冷却 30s')
+    const resetBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '重置熔断') as HTMLButtonElement
+    await act(async () => { resetBtn.click() })
+    await flush()
+    expect(document.body.textContent).toContain('正常')
+
+    // Profile modal: capture current login as new profile & delete inactive profile with confirmation
+    const accountsBtn = [...host.querySelectorAll('button')].find(b => b.textContent?.startsWith('Agy 账号：')) as HTMLButtonElement
+    await act(async () => { accountsBtn.click() })
+    await flush()
+    expect(document.body.textContent).toContain('已验证登录')
+    expect(document.body.textContent).toContain('最低剩余 65%')
+
+    const nameInput = document.body.querySelector('#agy-profile-name') as HTMLInputElement
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setValue.call(nameInput, '克隆号')
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const captureBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent?.trim() === '从当前登录另存') as HTMLButtonElement
+    await act(async () => { captureBtn.click() })
+    await flush()
+    expect(profilesList.some(p => p.name === '克隆号')).toBe(true)
+
+    const delBtn = document.body.querySelector('button[aria-label="删除账号：工作"]') as HTMLButtonElement
+    await act(async () => { delBtn.click() })
+    const confirmDel = document.body.querySelector('button[aria-label="确认删除：工作"]') as HTMLButtonElement
+    await act(async () => { confirmDel.click() })
+    await flush()
+    expect(profilesList.some(p => p.id === 'work')).toBe(false)
+
+    // Gateway stop button
+    const stopBtn = host.querySelector('button[aria-label="停止 Anti 网关"]') as HTMLButtonElement
+    await act(async () => { stopBtn.click() })
+    await flush()
+    expect(host.textContent).toContain('启动 Anti 网关')
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('streams live events via EventSource when streamUrl is provided', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  let activeSource: {
+    onopen: (() => void) | null
+    onmessage: ((event: MessageEvent<string>) => void) | null
+    close: ReturnType<typeof vi.fn>
+  } | null = null
+  class FakeEventSource {
+    onopen: (() => void) | null = null
+    onmessage: ((event: MessageEvent<string>) => void) | null = null
+    onerror: (() => void) | null = null
+    close = vi.fn()
+    addEventListener = vi.fn()
+    constructor(_url: string) {
+      activeSource = this
+    }
+  }
+  vi.stubGlobal('EventSource', FakeEventSource)
+
+  const cache = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } })
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const loadEvents = vi.fn<(signal: AbortSignal) => Promise<AntiEvent[]>>().mockResolvedValue([])
+  const onEventsChanged = vi.fn()
+
+  try {
+    await act(async () => root.render(
+      <QueryClientProvider client={cache}>
+        <AntiTaskProgress
+          runKey="sse-run"
+          active
+          loadEvents={loadEvents}
+          streamUrl="/api/anti/sessions/s1/runs/r1/events/stream"
+          onEventsChanged={onEventsChanged}
+        >
+          {partial => <div data-testid="sse-answer">{partial}</div>}
+        </AntiTaskProgress>
+      </QueryClientProvider>,
+    ))
+    expect(activeSource).not.toBeNull()
+    await act(async () => {
+      activeSource?.onopen?.()
+      activeSource?.onmessage?.(new MessageEvent('message', {
+        data: JSON.stringify({ seq: 1, type: 'message.delta', text: '流式回复片段' }),
+      }))
+    })
+    expect(host.querySelector('[data-testid="sse-answer"]')?.textContent).toBe('流式回复片段')
   } finally {
     await act(async () => root.unmount())
     cache.clear()

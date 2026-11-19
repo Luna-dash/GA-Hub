@@ -22,6 +22,7 @@ import { SessionRail } from '@/components/SessionRail'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import type { HubSession, SessionRuntime } from '@/api/types'
 import { usePageState } from '@/utils/pageState'
+import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import { ThemedSelect } from '@/components/ThemedSelect'
 import { antiApi, api, HttpError, type AntiModels, type AntiRun, type AntiSession, type AntiSubmission } from '@/api/client'
 
@@ -113,12 +114,22 @@ export default function AntiChat() {
     setCreating(true)
   }
   const closeCreate = () => { if (!create.isPending) setCreating(false) }
+  const selectedProfile = profiles.data?.profiles.find(item => item.id === profiles.data?.active)
+  const cachedUsage = profiles.data?.active ? profiles.data?.details?.[profiles.data.active]?.usage : undefined
   return <PageShell title="Agy 会话" wrapHeader
     titleExtra={<AntiDaemonControl {...daemon} />}
     actions={<>
       <div ref={setHeaderActions} className="empty:hidden flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2" />
-      <AntiAgyProfiles profiles={profiles} refresh={daemon.refresh} />
-      <AntiAccountUsageButton key={profiles.data?.active} running={daemon.running} onChecked={daemon.refresh} />
+      <AntiAgyProfiles profiles={profiles} refresh={daemon.refresh} daemon={daemon} />
+      <AntiAccountUsageButton
+        key={profiles.data?.active}
+        running={daemon.running}
+        cachedUsage={cachedUsage}
+        onChecked={() => {
+          daemon.refresh()
+          void cache.invalidateQueries({ queryKey: ['agy-profiles'], exact: true })
+        }}
+      />
     </>}>
     <div className="flex h-full min-h-0 min-w-0 flex-col md:flex-row">
       <SessionRail storageScope="anti" projects={projects.data?.items} sessions={railSessions}
@@ -127,8 +138,17 @@ export default function AntiChat() {
         onDelete={id => remove.mutateAsync(id)}
         deleteDetail="将删除此会话及消息记录，不删除本地项目文件。" />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {daemon.state === 'stopped' && !daemon.busy && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-bg-soft px-4 py-2 text-xs text-ink-muted">
+            <span>Anti 网关当前已停止，需要启动网关后才能发送消息或检测额度。</span>
+            <button type="button" className="ga-btn-primary shrink-0" onClick={() => daemon.start.mutate()}>
+              启动 Anti 网关
+            </button>
+          </div>
+        )}
         <Errors items={[sessions.error, rename.error, remove.error]} />
-        {selected ? <Conversation key={selected.id} session={selected} headerActions={headerActions} profileId={profiles.data?.active} /> :
+        {selected ? <Conversation key={selected.id} session={selected} headerActions={headerActions}
+          profileId={profiles.data?.active} profileName={selectedProfile?.name} /> :
           <div className="relative flex flex-1">
             <ChatUtilityDock fileTransfer={{ canInsert: false, onInsert: () => {} }} />
             <div className="m-auto flex max-w-sm flex-col items-center gap-3 px-5 text-center text-sm text-ink-muted">
@@ -159,16 +179,16 @@ export default function AntiChat() {
   </PageShell>
 }
 
-function Conversation({ session, headerActions, profileId }: {
-  session: Session; headerActions: HTMLDivElement | null; profileId?: string
+function Conversation({ session, headerActions, profileId, profileName }: {
+  session: Session; headerActions: HTMLDivElement | null; profileId?: string; profileName?: string
 }) {
   const { id: sid, project, workspace } = session
   const cache = useQueryClient()
   const [prompt, setPrompt] = useState('')
   const [references, setReferences] = useState<TransferredFile[]>([])
   const [pending, setPending] = useState<Submission>()
-  const [familyKey, setFamilyKey] = useState(DEFAULT_FAMILY)
-  const [preferredEffort, setEffort] = useState(DEFAULT_EFFORT)
+  const [familyKey, setFamilyKey] = usePageState('antiChat.modelFamily', DEFAULT_FAMILY)
+  const [preferredEffort, setEffort] = usePageState('antiChat.effort', DEFAULT_EFFORT)
   const transcript = useRef<HTMLDivElement>(null)
   const followTranscript = useRef(true)
   const models = useQuery({
@@ -279,6 +299,7 @@ function Conversation({ session, headerActions, profileId }: {
               <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, engine: 'anti' }}>
                 <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
                   <AntiTaskProgress active={active(run)} loadEvents={signal => antiApi.runEvents<AntiEvent[]>(sid, run.id, signal)}
+                    streamUrl={active(run) ? resolveApiUrl(`/api/anti/sessions/${sid}/runs/${run.id}/events/stream`) : undefined}
                     runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}>
                     {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
                   </AntiTaskProgress>
@@ -296,6 +317,11 @@ function Conversation({ session, headerActions, profileId }: {
       </div>
     </div>
     <ChatComposerFrame>
+      {profileId && profileId !== 'default' && (
+        <div className="border-b border-line/50 px-3 py-1 text-[11px] text-ink-muted">
+          当前隔离账号：{profileName ?? profileId}（多轮上下文按账号独立续接）
+        </div>
+      )}
       {references.length > 0 && <ul aria-label="引用文件" className="flex flex-wrap gap-1 px-3 pt-2 text-xs">
         {references.map(file => <li key={file.path} className="flex min-w-0 items-center gap-1 rounded-md bg-bg-soft px-2 py-1" title={file.path}>
           <span className="truncate">{file.name}</span>

@@ -4,6 +4,7 @@ import { useMutation } from '@tanstack/react-query'
 import { Gauge, LoaderCircle } from 'lucide-react'
 import clsx from 'clsx'
 import type { components } from '@/api/generated/schema'
+import { antiApi, type AgyProfileUsageSnapshot } from '@/api/client'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 
 type Usage = components['schemas']['AntiAccountUsage']
@@ -34,8 +35,21 @@ function limitLabel(limit: string) {
   return limit
 }
 
-export function AntiAccountUsageButton({ running, onChecked }: { running: boolean; onChecked: () => void }) {
+export function AntiAccountUsageButton({
+  running,
+  cachedUsage,
+  onChecked,
+}: {
+  running: boolean
+  cachedUsage?: AgyProfileUsageSnapshot | null
+  onChecked: () => void
+}) {
   const usage = useMutation({ mutationFn: checkUsage, onSettled: onChecked })
+  const pools = useMutation({ mutationFn: () => antiApi.quota() })
+  const resetBreaker = useMutation({
+    mutationFn: (modelGroup?: string) => antiApi.resetBreaker(modelGroup),
+    onSuccess: () => { pools.mutate() },
+  })
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const [dismissed, setDismissed] = useState(false)
@@ -50,7 +64,7 @@ export function AntiAccountUsageButton({ running, onChecked }: { running: boolea
     const update = () => {
       const anchor = button.current?.getBoundingClientRect()
       if (!anchor) return
-      const width = Math.min(272, window.innerWidth - 16)
+      const width = Math.min(288, window.innerWidth - 16)
       setPosition({ top: anchor.bottom, left: Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8)),
         maxHeight: Math.max(0, window.innerHeight - anchor.bottom - 16) })
     }
@@ -69,7 +83,11 @@ export function AntiAccountUsageButton({ running, onChecked }: { running: boolea
       document.removeEventListener('pointerdown', outside)
     }
   }, [open])
-  const rows = running ? usage.data?.rows : undefined
+  const liveRows = usage.data?.rows
+  const fallbackRows = !usage.data && !usage.isError ? cachedUsage?.rows : undefined
+  const rows = running ? (liveRows ?? fallbackRows) : undefined
+  const poolRows = pools.data
+  const coolingPools = poolRows?.filter(p => p.status === 'cooling_down' || (p.cooldown_remaining_seconds ?? 0) > 0) ?? []
   const message = !running ? '请先启动 Anti 网关。'
     : usage.isPending ? '正在检测官方额度…'
     : usage.isError ? usage.error.message
@@ -105,9 +123,16 @@ export function AntiAccountUsageButton({ running, onChecked }: { running: boolea
         <Icon size={16} aria-hidden="true" className={clsx(usage.isPending && 'motion-safe:animate-spin')} />
       </button>
       {open && position && createPortal(
-        <div ref={panel} className="fixed z-[60] w-[min(17rem,calc(100vw-16px))] pt-2" style={{ top: position.top, left: position.left }}>
+        <div ref={panel} className="fixed z-[60] w-[min(18rem,calc(100vw-16px))] pt-2" style={{ top: position.top, left: position.left }}>
           <div id={tooltipId} role="tooltip" className="overflow-y-auto overscroll-contain rounded-xl border border-line bg-bg-card p-3 text-xs text-ink shadow-lg" style={{ maxHeight: position.maxHeight }}>
-            <div className="font-semibold">反重力剩余额度</div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold">反重力剩余额度</span>
+              {!liveRows && fallbackRows?.length && cachedUsage?.checked_at ? (
+                <span className="text-[11px] text-ink-muted tabular-nums">
+                  缓存 · {resetFormat.format(new Date(cachedUsage.checked_at))}
+                </span>
+              ) : null}
+            </div>
             {rows?.length ? (
               <ul className="mt-1 divide-y divide-line">
                 {rows.map(row => (
@@ -120,6 +145,46 @@ export function AntiAccountUsageButton({ running, onChecked }: { running: boolea
                 ))}
               </ul>
             ) : <p className="mt-1 text-ink-muted">{message}</p>}
+            {running && (
+              <div className="mt-2 border-t border-line/70 pt-2 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    className="text-accent hover:underline"
+                    disabled={pools.isPending}
+                    onClick={() => { pools.mutate() }}
+                  >
+                    {pools.isPending ? '正在查询网关配额池…' : '查看网关配额池 / 熔断'}
+                  </button>
+                  {coolingPools.length > 0 && (
+                    <button
+                      type="button"
+                      className="text-status-danger hover:underline"
+                      disabled={resetBreaker.isPending}
+                      onClick={() => resetBreaker.mutate(undefined)}
+                    >
+                      {resetBreaker.isPending ? '重置中…' : '重置熔断'}
+                    </button>
+                  )}
+                </div>
+                {pools.isError && <p className="text-status-danger">{pools.error.message}</p>}
+                {resetBreaker.isError && <p className="text-status-danger">{resetBreaker.error.message}</p>}
+                {poolRows && poolRows.length > 0 && (
+                  <ul className="space-y-1 text-[11px] text-ink-muted">
+                    {poolRows.map(pool => (
+                      <li key={pool.model_group} className="flex items-center justify-between gap-2">
+                        <span className="truncate">{pool.display_name}</span>
+                        <span className={clsx('tabular-nums font-medium', pool.status === 'cooling_down' ? 'text-status-danger' : 'text-ink')}>
+                          {pool.status === 'cooling_down'
+                            ? `冷却 ${pool.cooldown_remaining_seconds ?? 0}s`
+                            : '正常'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </div>
         </div>, document.body,
       )}

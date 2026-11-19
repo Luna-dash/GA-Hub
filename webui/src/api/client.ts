@@ -632,6 +632,12 @@ export type AntiDaemonStatus = ApiComponents['schemas']['AntiDaemonStatus']
 export type AntiSession = ApiComponents['schemas']['AntiSessionResp']
 export type AntiRun = ApiComponents['schemas']['AntiRunResp']
 export type AntiModels = ApiComponents['schemas']['AntiModelList']
+export type AntiAccountUsage = ApiComponents['schemas']['AntiAccountUsage']
+export type AntiQuotaPool = ApiComponents['schemas']['AntiQuotaPool']
+export type AgyProfile = ApiComponents['schemas']['AgyProfile']
+export type AgyProfileDetail = ApiComponents['schemas']['AgyProfileDetail']
+export type AgyProfileUsageSnapshot = ApiComponents['schemas']['AgyProfileUsageSnapshot']
+export type AgyProfiles = ApiComponents['schemas']['AgyProfiles']
 export type AntiSubmission = {
   prompt: string
   operation: string
@@ -663,6 +669,34 @@ export const antiApi = {
   daemonStart: () =>
     antiHttp<AntiDaemonStatus>('POST', '/api/anti/start', undefined, {
       headers: { 'X-GA-Hub-Action': 'start-anti' },
+    }),
+  daemonStop: () =>
+    antiHttp<AntiDaemonStatus>('POST', '/api/anti/stop', undefined, {
+      headers: { 'X-GA-Hub-Action': 'stop-anti' },
+    }),
+  daemonRestart: () =>
+    antiHttp<AntiDaemonStatus>('POST', '/api/anti/restart', undefined, {
+      headers: { 'X-GA-Hub-Action': 'restart-anti' },
+    }),
+  profiles: (signal?: AbortSignal) =>
+    antiHttp<AgyProfiles>('GET', '/api/anti/profiles', undefined, { signal }),
+  captureProfile: (name: string) =>
+    antiHttp<AgyProfile>('POST', '/api/anti/profiles/capture', { name }, {
+      headers: { 'X-GA-Hub-Action': 'manage-agy-profiles' },
+    }),
+  deleteProfile: (id: string) =>
+    antiHttp<void>('DELETE', `/api/anti/profiles/${encodeURIComponent(id)}`, undefined, {
+      headers: { 'X-GA-Hub-Action': 'manage-agy-profiles' },
+    }),
+  accountUsage: () =>
+    antiHttp<AntiAccountUsage>('POST', '/api/anti/account-usage', undefined, {
+      headers: { 'X-GA-Hub-Action': 'check-anti-usage' },
+    }),
+  quota: (signal?: AbortSignal) =>
+    antiHttp<AntiQuotaPool[]>('GET', '/api/anti/quota', undefined, { signal }),
+  resetBreaker: (modelGroup?: string) =>
+    antiHttp<void>('POST', '/api/anti/breaker/reset', { model_group: modelGroup ?? null }, {
+      headers: { 'X-GA-Hub-Action': 'manage-anti-gateway' },
     }),
   models: (signal?: AbortSignal) =>
     // Allow the gateway attempt (2s connect + 23s read) and the 24s CLI fallback.

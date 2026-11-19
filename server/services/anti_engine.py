@@ -283,6 +283,10 @@ class AntiSessions:
             db.execute("DELETE FROM profile_conversations WHERE session_id=?", (sid,))
             db.execute("DELETE FROM runs WHERE session_id=?", (sid,))
 
+    def delete_profile_conversations(self, profile_id: str) -> None:
+        with self.connect() as db, db:
+            db.execute("DELETE FROM profile_conversations WHERE profile_id=?", (profile_id,))
+
     def session(self, sid: str) -> dict:
         with self.connect() as db:
             row = db.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()
@@ -402,6 +406,29 @@ class AntiSessions:
                                (sid, profile_id, remote["conversation_id"]))
         return self.run(sid, rid)
 
+    @staticmethod
+    def _normalize_raw_event(row: dict) -> dict | None:
+        if row.get("event_type") != "step_update":
+            return None
+        try:
+            raw = json.loads(row.get("raw_json") or "{}")
+        except (TypeError, ValueError):
+            raw = {}
+        raw_step = raw.get("step_update") if isinstance(raw, dict) else None
+        raw_step = raw_step if isinstance(raw_step, dict) else {}
+        step = _public_step(row, raw_step)
+        delta = raw_step.get("text_delta")
+        # A CLI event can update the step and carry text at the same sequence.
+        kind = row.get("step_type") or raw_step.get("step_type")
+        if kind in (None, "agent_response") and isinstance(delta, str) and delta:
+            event: dict = {"seq": row["seq"], "type": "message.delta", "text": delta}
+            if step is not None:
+                event["step"] = step
+            return event
+        if step is not None:
+            return {"seq": row["seq"], "type": "step.update", "step": step}
+        return None
+
     def events(self, sid: str, rid: str, after: int) -> list[dict]:
         self.run(sid, rid)
         try:
@@ -412,26 +439,47 @@ class AntiSessions:
             raise
         events = []
         for row in rows:
-            if row["seq"] <= after or row.get("event_type") != "step_update":
+            if row["seq"] <= after:
                 continue
-            try:
-                raw = json.loads(row.get("raw_json") or "{}")
-            except (TypeError, ValueError):
-                raw = {}
-            raw_step = raw.get("step_update") if isinstance(raw, dict) else None
-            raw_step = raw_step if isinstance(raw_step, dict) else {}
-            step = _public_step(row, raw_step)
-            delta = raw_step.get("text_delta")
-            # A CLI event can update the step and carry text at the same sequence.
-            kind = row.get("step_type") or raw_step.get("step_type")
-            if kind in (None, "agent_response") and isinstance(delta, str) and delta:
-                event = {"seq": row["seq"], "type": "message.delta", "text": delta}
-                if step is not None:
-                    event["step"] = step
-                events.append(event)
-            elif step is not None:
-                events.append({"seq": row["seq"], "type": "step.update", "step": step})
+            normalized = self._normalize_raw_event(row)
+            if normalized is not None:
+                events.append(normalized)
         return events
+
+    def stream_events(self, sid: str, rid: str):
+        """Yield normalized SSE lines proxied from AntiCLI's native SSE endpoint."""
+        self.run(sid, rid)
+        port = daemon_port()
+        with requests.Session() as client:
+            client.trust_env = False
+            with client.get(
+                f"http://127.0.0.1:{port}/v1/runs/{rid}/events?stream=true&include_raw=true",
+                stream=True,
+                timeout=(2, 30),
+                allow_redirects=False,
+            ) as resp:
+                if resp.status_code != 200:
+                    raise AntiError(resp.status_code, "AntiCLI SSE stream unavailable")
+                for raw_line in resp.iter_lines(decode_unicode=True):
+                    if not raw_line or not raw_line.startswith("data:"):
+                        continue
+                    payload_str = raw_line[5:].strip()
+                    if not payload_str:
+                        continue
+                    try:
+                        row = json.loads(payload_str)
+                    except ValueError:
+                        continue
+                    if not isinstance(row, dict):
+                        continue
+                    if row.get("event_type") == "__done__":
+                        yield f"event: done\ndata: {json.dumps({'status': row.get('status')}, ensure_ascii=False)}\n\n"
+                        return
+                    if "seq" not in row:
+                        continue
+                    normalized = self._normalize_raw_event(row)
+                    if normalized is not None:
+                        yield f"data: {json.dumps(normalized, ensure_ascii=False)}\n\n"
 
     def cancel(self, sid: str, rid: str) -> dict:
         run = self.run(sid, rid)

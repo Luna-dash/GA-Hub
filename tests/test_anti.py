@@ -331,3 +331,34 @@ def test_conversation_resume_is_per_agy_profile(tmp_path, monkeypatch):
         daemon.status[run['id']] = 'success'
         assert sessions.refresh(sid, run['id'])['status'] == 'success'
         resumes[profile] = run['id']
+
+
+def test_events_stream_sse_proxy(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine, 'project', lambda name: (tmp_path, tmp_path / 'artifacts'))
+    daemon = FakeDaemon()
+    sessions = engine.AntiSessions(tmp_path / 'anti.sqlite', daemon)
+    sid = sessions.create('project')['id']
+    run = sessions.submit(sid, 'sse-op', 'stream me')
+
+    class FakeSseResp:
+        status_code = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def iter_lines(self, decode_unicode=True):
+            yield 'data: {"seq": 1, "event_type": "step_update", "step_type": "agent_response", "raw_json": "{\\"step_update\\": {\\"text_delta\\": \\"hello sse\\"}}"}'
+
+    monkeypatch.setattr(engine.requests.Session, 'get', lambda *a, **kw: FakeSseResp())
+    monkeypatch.setattr(anti, 'AntiSessions', lambda: sessions)
+    app = FastAPI()
+    app.include_router(anti.router)
+    client = TestClient(app)
+
+    resp = client.get(f'/api/anti/sessions/{sid}/runs/{run["id"]}/events/stream')
+    assert resp.status_code == 200
+    assert 'text/event-stream' in resp.headers['content-type']
+    assert 'hello sse' in resp.text

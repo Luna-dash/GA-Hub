@@ -49,29 +49,64 @@ function collectEvents(events: AntiEvent[] = []) {
   return { steps: [...steps.values()], partial: reply.join('') }
 }
 
-export function AntiTaskProgress({ active, runKey, loadEvents, onEventsChanged, children }: {
+export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEventsChanged, children }: {
   active: boolean
   runKey: string
   loadEvents: (signal: AbortSignal) => Promise<AntiEvent[]>
+  streamUrl?: string
   onEventsChanged: () => void
   children: (partial: string) => ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const [startedLive] = useState(active)
+  const [streamEvents, setStreamEvents] = useState<AntiEvent[]>([])
+  const [streamConnected, setStreamConnected] = useState(false)
+
+  useEffect(() => {
+    setStreamEvents([])
+    setStreamConnected(false)
+    if (!active || !streamUrl || typeof EventSource === 'undefined') return
+    const source = new EventSource(streamUrl)
+    const onPayload = (raw: string) => {
+      try {
+        const parsed = JSON.parse(raw) as AntiEvent | { type?: string }
+        if (parsed && (parsed.type === 'message.delta' || parsed.type === 'step.update')) {
+          setStreamEvents(old => [...old, parsed as AntiEvent])
+        }
+      } catch {
+        // Ignore malformed or keepalive SSE frames; polling fallback recovers full state.
+      }
+    }
+    const handleEvent = (event: MessageEvent<string>) => onPayload(event.data)
+    source.onopen = () => setStreamConnected(true)
+    source.onmessage = handleEvent
+    source.addEventListener('message.delta', handleEvent as EventListener)
+    source.addEventListener('step.update', handleEvent as EventListener)
+    source.onerror = () => {
+      setStreamConnected(false)
+      source.close()
+    }
+    return () => {
+      setStreamConnected(false)
+      source.close()
+    }
+  }, [active, runKey, streamUrl])
+
   const { data, isPending, isError, refetch } = useQuery({
     // A separate terminal request cannot reuse an in-flight live poll.
     queryKey: ['anti-run-events', runKey, active ? 'active' : 'terminal'],
     queryFn: ({ signal }) => loadEvents(signal),
     enabled: active || startedLive || open,
-    refetchInterval: active ? 900 : false,
+    refetchInterval: active && !streamConnected ? 900 : false,
     staleTime: Infinity,
     placeholderData: keepPreviousData,
     retry: false,
   })
+  const events = streamEvents.length >= (data?.length ?? 0) && streamEvents.length > 0 ? streamEvents : data
   useEffect(() => {
     if (active || startedLive) onEventsChanged()
-  }, [data, active, startedLive, onEventsChanged])
-  const { steps, partial } = useMemo(() => collectEvents(data), [data])
+  }, [events, active, startedLive, onEventsChanged])
+  const { steps, partial } = useMemo(() => collectEvents(events), [events])
   const latest = steps.at(-1)
 
   return <>

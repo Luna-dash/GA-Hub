@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { LoaderCircle, ShieldCheck, ShieldMinus, ShieldX } from 'lucide-react'
+import { LoaderCircle, RotateCw, ShieldCheck, ShieldMinus, ShieldX, Square } from 'lucide-react'
 import clsx from 'clsx'
 import { antiApi } from '@/api/client'
 import { StatusIconGlyph, statusBadgeToneClass, type StatusBadgeKind } from './ActionIcons'
@@ -19,20 +19,35 @@ export function useAntiDaemonStatus() {
     onMutate: () => cache.cancelQueries({ queryKey: key }),
     onSuccess: data => { cache.setQueryData(key, data) },
   })
+  const stop = useMutation({
+    mutationFn: () => antiApi.daemonStop(),
+    onMutate: () => cache.cancelQueries({ queryKey: key }),
+    onSuccess: data => { cache.setQueryData(key, data) },
+  })
+  const restart = useMutation({
+    mutationFn: () => antiApi.daemonRestart(),
+    onMutate: () => cache.cancelQueries({ queryKey: key }),
+    onSuccess: data => { cache.setQueryData(key, data) },
+  })
   const state = status.isError ? 'unavailable' : status.data?.state
-  const busy = start.isPending || state === 'starting'
+  const busy = start.isPending || stop.isPending || restart.isPending || state === 'starting'
   const running = !busy && state === 'ready'
-  return { status, start, state, busy, running, refresh: () => { void cache.invalidateQueries({ queryKey: key }) } }
+  return { status, start, stop, restart, state, busy, running, refresh: () => { void cache.invalidateQueries({ queryKey: key }) } }
 }
 
-export function AntiDaemonControl({ status, start, state, busy, running }: ReturnType<typeof useAntiDaemonStatus>) {
+export function AntiDaemonControl({ status, start, stop, restart, state, busy, running }: ReturnType<typeof useAntiDaemonStatus>) {
   const canStart = !busy && state === 'stopped'
+  const canControl = !busy && (running || state === 'unavailable')
   const label = busy ? 'Anti 启动中' : running ? 'Anti 网关运行中' : canStart ? '启动 Anti'
     : state === 'unavailable' ? 'Anti 网关不可用' : '正在检查 Anti'
   const auth = running && status.data?.agy_available ? status.data.auth_state ?? 'unverified' : null
   const authLabel = auth === 'authenticated' ? 'agy 已验证登录' : auth === 'login_required' ? 'agy 需要登录'
     : auth === 'checking' ? '正在验证 agy 登录' : auth === 'unverified' ? '无法验证 agy 登录' : 'agy 登录状态未知'
-  const detail = (canStart ? start.error?.message : undefined) ?? status.error?.message ?? status.data?.detail
+  const detail = (canStart ? start.error?.message : undefined)
+    ?? stop.error?.message
+    ?? restart.error?.message
+    ?? status.error?.message
+    ?? status.data?.detail
   const loading = busy || !state
   const gatewayKind: StatusBadgeKind = loading
     ? 'connecting'
@@ -69,6 +84,26 @@ export function AntiDaemonControl({ status, start, state, busy, running }: Retur
                 : 'border-line bg-bg-card text-ink-muted')}>
         <AuthIcon className={clsx('h-3.5 w-3.5', auth === 'checking' && 'animate-spin motion-safe:animate-spin')} strokeWidth={1.85} aria-hidden="true" />
       </span>
+      {canControl && <>
+        <button
+          type="button"
+          className="ga-badge border-line bg-bg-card text-ink-muted hover:border-accent/50 hover:text-ink cursor-pointer"
+          aria-label="重启 Anti 网关"
+          title="重启 Anti 网关"
+          onClick={() => restart.mutate()}
+        >
+          <RotateCw className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden="true" />
+        </button>
+        {running && <button
+          type="button"
+          className="ga-badge border-line bg-bg-card text-ink-muted hover:border-status-danger hover:text-status-danger cursor-pointer"
+          aria-label="停止 Anti 网关"
+          title="停止 Anti 网关"
+          onClick={() => stop.mutate()}
+        >
+          <Square className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden="true" />
+        </button>}
+      </>}
       <span role="status" className="sr-only">
         {running ? authLabel : label}{detail && `：${detail}`}
       </span>
