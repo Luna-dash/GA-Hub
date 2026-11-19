@@ -2326,6 +2326,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/anti/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Agy Profiles */
+        get: operations["agy_profiles_api_anti_profiles_get"];
+        put?: never;
+        /** Create Agy Profile */
+        post: operations["create_agy_profile_api_anti_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/anti/profiles/{profile_id}/switch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Switch Agy Profile */
+        post: operations["switch_agy_profile_api_anti_profiles__profile_id__switch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/anti/profiles/{profile_id}/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Login Agy Profile */
+        post: operations["login_agy_profile_api_anti_profiles__profile_id__login_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/anti/account-usage": {
         parameters: {
             query?: never;
@@ -2679,6 +2731,25 @@ export interface components {
              * @default
              */
             title: string;
+        };
+        /** AgyProfile */
+        AgyProfile: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** AgyProfileCreate */
+        AgyProfileCreate: {
+            /** Name */
+            name: string;
+        };
+        /** AgyProfiles */
+        AgyProfiles: {
+            /** Active */
+            active: string;
+            /** Profiles */
+            profiles: components["schemas"]["AgyProfile"][];
         };
         /** AntiAccountQuotaRow */
         AntiAccountQuotaRow: {
@@ -9725,6 +9796,119 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AntiDaemonStatus"];
+                };
+            };
+        };
+    };
+    agy_profiles_api_anti_profiles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyProfiles"];
+                };
+            };
+        };
+    };
+    create_agy_profile_api_anti_profiles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgyProfileCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyProfile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    switch_agy_profile_api_anti_profiles__profile_id__switch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyProfiles"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    login_agy_profile_api_anti_profiles__profile_id__login_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

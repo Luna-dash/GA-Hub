@@ -9,6 +9,7 @@ import { ChatComposerFrame, ChatUtilityDock, chatTranscriptClass } from '@/compo
 import { bubbleTone } from '@/components/bubbleTone'
 import { ImagePasteInput } from '@/components/ImagePasteInput'
 import { AntiDaemonControl, useAntiDaemonStatus } from '@/components/AntiDaemonControl'
+import { AntiAgyProfiles, useAgyProfiles } from '@/components/AntiAgyProfiles'
 import { AntiAccountUsageButton } from '@/components/AntiAccountUsageButton'
 import { AntiIcon } from '@/components/AntiMark'
 import { MessageContent } from '@/components/MessageContent'
@@ -67,6 +68,7 @@ export default function AntiChat() {
   const [creating, setCreating] = useState(false)
   const [headerActions, setHeaderActions] = useState<HTMLDivElement | null>(null)
   const daemon = useAntiDaemonStatus()
+  const profiles = useAgyProfiles()
   const projects = useQuery({ queryKey: ['anti-projects'], queryFn: api.projects })
   const sessions = useQuery({ queryKey: sessionsKey, queryFn: ({ signal }) => antiApi.sessions(signal), refetchInterval: 5000 })
   const updateList = async (update: (rows: Session[]) => Session[]) => {
@@ -115,7 +117,8 @@ export default function AntiChat() {
     titleExtra={<AntiDaemonControl {...daemon} />}
     actions={<>
       <div ref={setHeaderActions} className="empty:hidden flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2" />
-      <AntiAccountUsageButton running={daemon.running} onChecked={daemon.refresh} />
+      <AntiAgyProfiles profiles={profiles} refresh={daemon.refresh} />
+      <AntiAccountUsageButton key={profiles.data?.active} running={daemon.running} onChecked={daemon.refresh} />
     </>}>
     <div className="flex h-full min-h-0 min-w-0 flex-col md:flex-row">
       <SessionRail storageScope="anti" projects={projects.data?.items} sessions={railSessions}
@@ -125,7 +128,7 @@ export default function AntiChat() {
         deleteDetail="将删除此会话及消息记录，不删除本地项目文件。" />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Errors items={[sessions.error, rename.error, remove.error]} />
-        {selected ? <Conversation key={selected.id} session={selected} headerActions={headerActions} /> :
+        {selected ? <Conversation key={selected.id} session={selected} headerActions={headerActions} profileId={profiles.data?.active} /> :
           <div className="relative flex flex-1">
             <ChatUtilityDock fileTransfer={{ canInsert: false, onInsert: () => {} }} />
             <div className="m-auto flex max-w-sm flex-col items-center gap-3 px-5 text-center text-sm text-ink-muted">
@@ -156,7 +159,9 @@ export default function AntiChat() {
   </PageShell>
 }
 
-function Conversation({ session, headerActions }: { session: Session; headerActions: HTMLDivElement | null }) {
+function Conversation({ session, headerActions, profileId }: {
+  session: Session; headerActions: HTMLDivElement | null; profileId?: string
+}) {
   const { id: sid, project, workspace } = session
   const cache = useQueryClient()
   const [prompt, setPrompt] = useState('')
@@ -167,7 +172,8 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
   const transcript = useRef<HTMLDivElement>(null)
   const followTranscript = useRef(true)
   const models = useQuery({
-    queryKey: ['anti-models'],
+    queryKey: ['anti-models', profileId],
+    enabled: Boolean(profileId),
     queryFn: ({ signal }) => antiApi.models(signal),
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,

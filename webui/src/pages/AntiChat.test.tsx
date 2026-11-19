@@ -25,11 +25,20 @@ vi.mock('@/runtime/runtimeConfig', () => ({ resolveApiUrl: (path: string) => pat
 it('starts Anti on demand from the page header without leaving the chat', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   let started = false
+  let active = 'default'
+  const profiles = [{ id: 'default', name: '系统默认' }, { id: 'work', name: '工作' }]
   const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
     const reply = (data: unknown) => ({ ok: true, json: async () => JSON.parse(JSON.stringify(data)) })
     if (path === '/api/anti/status') {
       expect(new Headers(init?.headers).get('X-GA-Hub-Action')).toBe('verify-anti-auth')
       return reply(started ? { state: 'ready', agy_available: true, auth_state: 'authenticated' } : { state: 'stopped' })
+    }
+    if (path === '/api/anti/profiles') return reply({ active, profiles })
+    if (path === '/api/anti/profiles/work/switch') {
+      expect(init?.method).toBe('POST')
+      expect(new Headers(init?.headers).get('X-GA-Hub-Action')).toBe('manage-agy-profiles')
+      active = 'work'
+      return reply({ active, profiles })
     }
     if (path === '/api/anti/start') {
       expect(init?.method).toBe('POST')
@@ -99,6 +108,15 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     expect(tooltip()?.textContent).toContain('42.5%')
     expect(usageRequests()).toHaveLength(1)
     expect(host.querySelector('output')?.dataset.page).toBe('/anti')
+    const accountButton = () => [...host.querySelectorAll('header button')]
+      .find(button => button.textContent?.startsWith('Agy 账号')) as HTMLButtonElement | undefined
+    await wait(() => expect(accountButton()?.textContent).toBe('Agy 账号：系统默认'))
+    await act(async () => accountButton()!.click())
+    const dialog = document.querySelector('[role="dialog"][aria-labelledby="agy-accounts-title"]')
+    const switchButton = [...(dialog?.querySelectorAll('button') ?? [])].find(button => button.textContent === '切换')
+    expect(switchButton).toBeDefined()
+    await act(async () => switchButton!.click())
+    await wait(() => expect(accountButton()?.textContent).toBe('Agy 账号：工作'))
   } finally {
     await act(async () => root.unmount())
     cache.clear()
@@ -128,6 +146,7 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     if (path === `${base}/two/runs`) return reply([])
     if (path === `${base}/one` && init?.method === 'PATCH') { session.title = body.title; return reply(session) }
     if (path === `${base}/one` && init?.method === 'DELETE') { created = false; return { ok: true, status: 204 } }
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
     if (path === '/api/anti/models') return reply({ items: [
       { id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' },
       { id: 'gemini-4-hydrogen-low', display_name: 'Gemini 4 Hydrogen (Low)' },
@@ -178,7 +197,7 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
       expect(control('模型').querySelector(':scope > .model-select-label')?.textContent).toBe('Gemini 4 Hydrogen')
       expect(control('思考等级').querySelector(':scope > .model-select-label')?.textContent).toBe('high')
     })
-    await wait(() => expect(cache.getQueryState(['anti-models'])?.status).toBe('success'))
+    await wait(() => expect(cache.getQueryState(['anti-models', 'default'])?.status).toBe('success'))
     const header = host.querySelector('.ga-page-header')!
     expect(header.contains(control('模型'))).toBe(true)
     expect(header.contains(control('思考等级'))).toBe(true)
@@ -198,10 +217,10 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
       await act(async () => {
         focusManager.setFocused(false)
         catalogUpdated = true
-        cache.setQueryData(['anti-models'], cache.getQueryData(['anti-models']), { updatedAt: Date.now() - 61_000 })
+        cache.setQueryData(['anti-models', 'default'], cache.getQueryData(['anti-models', 'default']), { updatedAt: Date.now() - 61_000 })
         focusManager.setFocused(true)
       })
-      await wait(() => expect(cache.getQueryData(['anti-models'])).toMatchObject({
+      await wait(() => expect(cache.getQueryData(['anti-models', 'default'])).toMatchObject({
         items: expect.arrayContaining([expect.objectContaining({ id: 'gemini-4-neon-xhigh' })]),
       }))
       expect(control('模型').textContent).toContain('Alternate')

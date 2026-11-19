@@ -150,6 +150,10 @@ class AntiSessions:
                 id TEXT PRIMARY KEY, project TEXT NOT NULL, workspace TEXT NOT NULL,
                 title TEXT NOT NULL, conversation TEXT
             );
+            CREATE TABLE IF NOT EXISTS profile_conversations (
+                session_id TEXT NOT NULL, profile_id TEXT NOT NULL, conversation TEXT NOT NULL,
+                PRIMARY KEY(session_id, profile_id)
+            );
             CREATE TABLE IF NOT EXISTS runs (
                 id TEXT PRIMARY KEY, session_id TEXT NOT NULL, operation TEXT NOT NULL,
                 prompt TEXT NOT NULL, status TEXT NOT NULL, answer TEXT,
@@ -159,7 +163,7 @@ class AntiSessions:
         """)
         # Existing direct-chat databases predate per-run settings. Do not rewrite history.
         columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
-        run_columns = ("model", "effort", "references_json", "error_detail")
+        run_columns = ("model", "effort", "references_json", "error_detail", "profile_id")
         if not set(run_columns).issubset(columns):
             with conn:
                 conn.execute("BEGIN IMMEDIATE")
@@ -182,10 +186,12 @@ class AntiSessions:
                         conn.execute("UPDATE sessions SET title=? WHERE id=?", (_prompt_title(first_prompt or ""), sid))
         return closing(conn)
 
-    def models(self) -> dict:
+    def models(self, allow_fallback: bool = True) -> dict:
         try:
             upstream = self.adapter.request("GET", "/v1/models", read_timeout=23)
         except AntiError:
+            if not allow_fallback:
+                raise
             # Browsing the official catalog must not start the AntiCLI daemon.
             executable = anti_component.executable()
             if not executable:
@@ -253,6 +259,7 @@ class AntiSessions:
             if not db.execute("DELETE FROM sessions WHERE id=?", (sid,)).rowcount:
                 raise AntiError(404, "Anti session not found")
             # Only remove Hub records. Shared artifacts and the remote conversation are left intact.
+            db.execute("DELETE FROM profile_conversations WHERE session_id=?", (sid,))
             db.execute("DELETE FROM runs WHERE session_id=?", (sid,))
 
     def session(self, sid: str) -> dict:
@@ -269,7 +276,7 @@ class AntiSessions:
 
     def submit(self, sid: str, operation: str, prompt: str,
                model: str = DEFAULT_MODEL, effort: str = DEFAULT_EFFORT,
-               references: list[tuple[int, str]] | None = None) -> dict:
+               references: list[tuple[int, str]] | None = None, profile_id: str = "default") -> dict:
         session = self.session(sid)
         workspace, artifacts = self.bound_project(session)
         references = list(dict.fromkeys(references or []))
@@ -291,6 +298,10 @@ class AntiSessions:
             if not current:
                 raise AntiError(404, "Anti session not found")
             conversation = current[0]
+            if profile_id != "default":
+                row = db.execute("SELECT conversation FROM profile_conversations WHERE session_id=? AND profile_id=?",
+                                 (sid, profile_id)).fetchone()
+                conversation = row[0] if row is not None else None
             stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             rid = f"run_{stamp}_{uuid4().hex}"
             if references:
@@ -298,8 +309,8 @@ class AntiSessions:
                     paths, add_dirs = prepare_references(references, workspace, artifacts / "references" / rid)
                 except ReferenceError as exc:
                     raise AntiError(422, str(exc)) from exc
-            db.execute("INSERT INTO runs (id,session_id,operation,prompt,status,model,effort,references_json) "
-                       "VALUES (?,?,?,?,?,?,?,?)", (rid, sid, operation, prompt, "submitting", model, effort, refs_json))
+            db.execute("INSERT INTO runs (id,session_id,operation,prompt,status,model,effort,references_json,profile_id) "
+                       "VALUES (?,?,?,?,?,?,?,?,?)", (rid, sid, operation, prompt, "submitting", model, effort, refs_json, profile_id))
             db.execute("UPDATE sessions SET title=COALESCE(NULLIF(title,''), ?), updated_at=? WHERE id=?",
                        (_prompt_title(prompt), _now(), sid))
         run = self.run(sid, rid)
@@ -361,7 +372,13 @@ class AntiSessions:
                 (status, answer, error, error_detail, rid, *ACTIVE),
             )
             if updated.rowcount and status == "success" and remote.get("conversation_id"):
-                db.execute("UPDATE sessions SET conversation=? WHERE id=?", (remote["conversation_id"], sid))
+                profile_id = run["profile_id"] or "default"
+                if profile_id == "default":
+                    db.execute("UPDATE sessions SET conversation=? WHERE id=?", (remote["conversation_id"], sid))
+                else:
+                    db.execute("INSERT INTO profile_conversations VALUES (?,?,?) "
+                               "ON CONFLICT(session_id, profile_id) DO UPDATE SET conversation=excluded.conversation",
+                               (sid, profile_id, remote["conversation_id"]))
         return self.run(sid, rid)
 
     def events(self, sid: str, rid: str, after: int) -> list[dict]:

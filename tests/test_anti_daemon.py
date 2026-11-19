@@ -1,6 +1,7 @@
 """Local daemon lifecycle without launching the production CLI."""
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -129,3 +130,85 @@ def test_auth_status_requested_only_by_ui_and_unavailable_on_legacy_daemon(monke
         data = client.get("/api/anti/status", headers=headers).json()
         assert data["state"] == "ready"
         assert data["auth_state"] == expected
+
+
+@pytest.mark.parametrize("failure", [None, "spawn", "exit"])
+def test_agy_profiles_switch_idle_managed_gateway(tmp_path, monkeypatch, failure):
+    client = make_client(monkeypatch)
+    daemon = anti.daemon
+    monkeypatch.setattr(svc.anti_profiles._paths, 'ADMIN_DATA', tmp_path)
+    monkeypatch.setattr(svc.anti_profiles, 'agy_executable', lambda: 'official-agy.exe')
+    monkeypatch.setattr(svc.anti_component, 'executable', lambda: 'fake-anticli.exe')
+    monkeypatch.setattr(svc.anti_component, 'child_options', lambda exe: {'env': {'HOME': 'original'}})
+    status = svc.AntiDaemonStatus(state='ready', active_count=0)
+    spawned = []
+    stopped = []
+
+    def spawn(command, **kwargs):
+        nonlocal status
+        spawned.append((command, kwargs))
+        process = Process()
+        if command[1:2] == ['serve']:
+            if kwargs['env']['HOME'] != 'original' and failure:
+                if failure == 'spawn':
+                    raise OSError('spawn failure')
+                process.code = 1
+            else:
+                status = svc.AntiDaemonStatus(state='ready', active_count=0)
+        return process
+
+    def stop(pid):
+        nonlocal status
+        stopped.append(pid)
+        status = svc.AntiDaemonStatus(state='stopped')
+        return True
+
+    monkeypatch.setattr(daemon, '_status', lambda *args, **kwargs: status)
+    monkeypatch.setattr(svc.child_job, 'spawn', spawn)
+    monkeypatch.setattr(svc.child_job, 'terminate_tree', stop)
+    monkeypatch.setattr(svc.child_job, 'forget', lambda pid: None)
+    url = '/api/anti/profiles'
+    headers = {'X-GA-Hub-Action': 'manage-agy-profiles'}
+    assert client.post(url, json={'name': 'Work'}).status_code == 403
+    assert client.post(url, json={'name': 'Work'}, headers=headers | {'Origin': 'https://outside.example'}).status_code == 403
+    assert client.get(url).json()['active'] == 'default'
+    profile = client.post(url, json={'name': ' Work '}, headers=headers).json()
+    assert profile['name'] == 'Work'
+    switch = f"{url}/{profile['id']}/switch"
+    assert client.post(switch, headers=headers).status_code == 409  # external gateway
+    daemon._process = Process()
+    status = svc.AntiDaemonStatus(state='ready', active_count=1)
+    assert client.post(switch, headers=headers).status_code == 409
+    assert not stopped and not spawned
+    if svc.os.name == 'nt':
+        login = f"{url}/{profile['id']}/login"
+        assert client.post(login, headers=headers).status_code == 204
+        command, options = spawned.pop()
+        assert command == ['official-agy.exe']
+        assert options['env']['HOME'] == options['env']['USERPROFILE']
+        assert client.post(switch, headers=headers).status_code == 409
+        daemon._login.code = 0
+    status = svc.AntiDaemonStatus(state='ready', active_count=0)
+    response = client.post(switch, headers=headers)
+    if failure:
+        assert response.status_code == 503
+        assert '已恢复原网关' in response.json()['detail']
+        assert client.get(url).json()['active'] == 'default'
+        assert client.get('/api/anti/status').json()['state'] == 'ready'
+        assert stopped == [Process.pid]
+        assert len(spawned) == 2
+        assert spawned[-1][1]['env']['HOME'] == 'original'
+        with daemon.submission() as current:
+            assert current == 'default'
+        return
+    assert response.json()['active'] == profile['id']
+    assert stopped == [Process.pid]
+    command, options = spawned[-1]
+    assert command[1:4] == ['serve', '--host', '127.0.0.1']
+    assert options['env']['HOME'] == str(tmp_path / 'agy-profiles' / profile['id'] / 'home')
+    assert options['env']['ANTICLI_AGY_PATH'] == 'official-agy.exe'
+    with daemon.submission() as current:
+        assert current == profile['id']
+    status = svc.AntiDaemonStatus(state='ready', active_count=0)
+    assert client.post(f'{url}/default/switch', headers=headers).json()['active'] == 'default'
+    assert spawned[-1][1]['env']['HOME'] == 'original'

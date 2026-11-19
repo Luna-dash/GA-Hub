@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, ValidationError
 
 from ..origin_policy import is_allowed_ui_origin
+from ..services import anti_profiles
 from ..services.anti_daemon import AntiAuthState, AntiDaemonState, daemon
 from ..services.anti_engine import DEFAULT_EFFORT, DEFAULT_MODEL, AntiAdapter, AntiError, AntiSessions
 
@@ -145,6 +146,64 @@ def start_daemon(request: Request):
         raise HTTPException(exc.status, str(exc)) from exc
 
 
+class AgyProfile(BaseModel):
+    id: str
+    name: str
+
+
+class AgyProfiles(BaseModel):
+    active: str
+    profiles: list[AgyProfile]
+
+
+class AgyProfileCreate(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
+
+
+def _profile_action(request: Request) -> None:
+    if not is_allowed_ui_origin(request.headers.get("origin")):
+        raise HTTPException(403, "Untrusted UI origin")
+    if request.headers.get("x-ga-hub-action") != "manage-agy-profiles":
+        raise HTTPException(403, "Missing Agy profile action")
+
+
+@router.get("/profiles", response_model=AgyProfiles)
+def agy_profiles():
+    try:
+        active, profiles = anti_profiles.snapshot()
+        return {"active": active, "profiles": [asdict(profile) for profile in profiles]}
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.post("/profiles", response_model=AgyProfile)
+def create_agy_profile(body: AgyProfileCreate, request: Request):
+    _profile_action(request)
+    try:
+        return asdict(daemon.add_profile(body.name))
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.post("/profiles/{profile_id}/switch", response_model=AgyProfiles)
+def switch_agy_profile(profile_id: str, request: Request):
+    _profile_action(request)
+    try:
+        daemon.switch_profile(profile_id)
+        return agy_profiles()
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.post("/profiles/{profile_id}/login", status_code=204)
+def login_agy_profile(profile_id: str, request: Request):
+    _profile_action(request)
+    try:
+        daemon.login_profile(profile_id)
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
 @router.post("/account-usage", response_model=AntiAccountUsage)
 def check_account_usage(request: Request):
     if not is_allowed_ui_origin(request.headers.get("origin")):
@@ -152,8 +211,9 @@ def check_account_usage(request: Request):
     if request.headers.get("x-ga-hub-action") != "check-anti-usage":
         raise HTTPException(403, "Missing Anti usage action")
     try:
-        report = AntiAdapter().request("POST", "/v1/account-usage", read_timeout=30,
-                                       headers={"X-AntiCLI-Action": "check-account-usage"})
+        with daemon.submission():
+            report = AntiAdapter().request("POST", "/v1/account-usage", read_timeout=30,
+                                           headers={"X-AntiCLI-Action": "check-account-usage"})
         return AntiAccountUsage.model_validate(report)
     except AntiError as exc:
         if exc.status == 404:
@@ -165,7 +225,11 @@ def check_account_usage(request: Request):
 
 @router.get("/models", response_model=AntiModelList)
 def models():
-    return _call("models")
+    try:
+        with daemon.submission() as profile_id:
+            return _call("models", profile_id == anti_profiles.DEFAULT)
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
 
 
 @router.get("/sessions", response_model=list[AntiSessionResp])
@@ -195,8 +259,12 @@ def runs(sid: str):
 
 @router.post("/sessions/{sid}/runs", response_model=AntiRunResp)
 def submit_run(sid: str, body: AntiRunCreate):
-    return _call("submit", sid, body.operation, body.prompt, body.model, body.effort,
-                 [(ref.id, ref.path) for ref in body.references])
+    try:
+        with daemon.submission() as profile_id:
+            return _call("submit", sid, body.operation, body.prompt, body.model, body.effort,
+                         [(ref.id, ref.path) for ref in body.references], profile_id)
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
 
 
 @router.get("/sessions/{sid}/runs/{rid}", response_model=AntiRunResp)

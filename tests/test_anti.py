@@ -308,3 +308,26 @@ def test_anti_safe_error_details_persist_in_history(tmp_path, monkeypatch):
         assert run['error_detail'] == expected
         assert raw_marker not in str(run)
         assert engine.AntiSessions(sessions.db, daemon).history(sid)[-1] == run
+
+
+def test_conversation_resume_is_per_agy_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine, 'project', lambda name: (tmp_path, tmp_path / 'artifacts'))
+    daemon = FakeDaemon()
+    request = daemon.request
+
+    def remote(method, path, **kwargs):
+        result = request(method, path, **kwargs)
+        if 'conversation_id' in result:
+            result['conversation_id'] = path.rsplit('/', 1)[1]
+        return result
+
+    daemon.request = remote
+    sessions = engine.AntiSessions(tmp_path / 'anti.sqlite', daemon)
+    sid = sessions.create('project')['id']
+    resumes = {}
+    for index, profile in enumerate(('default', 'alpha', 'beta', 'alpha', 'default', 'beta')):
+        run = sessions.submit(sid, f'op{index}', 'hello', profile_id=profile)
+        assert daemon.calls[-1][1] == resumes.get(profile)
+        daemon.status[run['id']] = 'success'
+        assert sessions.refresh(sid, run['id'])['status'] == 'success'
+        resumes[profile] = run['id']

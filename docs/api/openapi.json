@@ -5113,6 +5113,143 @@
         }
       }
     },
+    "/api/anti/profiles": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Agy Profiles",
+        "operationId": "agy_profiles_api_anti_profiles_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyProfiles"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Create Agy Profile",
+        "operationId": "create_agy_profile_api_anti_profiles_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgyProfileCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyProfile"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/profiles/{profile_id}/switch": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Switch Agy Profile",
+        "operationId": "switch_agy_profile_api_anti_profiles__profile_id__switch_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyProfiles"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/profiles/{profile_id}/login": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Login Agy Profile",
+        "operationId": "login_agy_profile_api_anti_profiles__profile_id__login_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/anti/account-usage": {
       "post": {
         "tags": [
@@ -5935,6 +6072,60 @@
         },
         "type": "object",
         "title": "AgentTitleReq"
+      },
+      "AgyProfile": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "AgyProfile"
+      },
+      "AgyProfileCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "AgyProfileCreate"
+      },
+      "AgyProfiles": {
+        "properties": {
+          "active": {
+            "type": "string",
+            "title": "Active"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/AgyProfile"
+            },
+            "type": "array",
+            "title": "Profiles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "active",
+          "profiles"
+        ],
+        "title": "AgyProfiles"
       },
       "AntiAccountQuotaRow": {
         "properties": {
