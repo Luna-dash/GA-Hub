@@ -132,7 +132,7 @@ def test_auth_status_requested_only_by_ui_and_unavailable_on_legacy_daemon(monke
         assert data["auth_state"] == expected
 
 
-@pytest.mark.parametrize("failure", [None, "spawn", "exit"])
+@pytest.mark.parametrize("failure", [None, "spawn", "exit", "rollback"])
 def test_agy_profiles_switch_idle_managed_gateway(tmp_path, monkeypatch, failure):
     client = make_client(monkeypatch)
     daemon = anti.daemon
@@ -149,9 +149,9 @@ def test_agy_profiles_switch_idle_managed_gateway(tmp_path, monkeypatch, failure
         spawned.append((command, kwargs))
         process = Process()
         if command[1:2] == ['serve']:
-            if kwargs['env']['HOME'] != 'original' and failure:
-                if failure == 'spawn':
-                    raise OSError('spawn failure')
+            if kwargs['env']['HOME'] != 'original' and failure == 'spawn':
+                raise OSError('spawn failure')
+            if kwargs['env']['HOME'] != 'original' and failure == 'exit':
                 process.code = 1
             else:
                 status = svc.AntiDaemonStatus(state='ready', active_count=0)
@@ -160,6 +160,8 @@ def test_agy_profiles_switch_idle_managed_gateway(tmp_path, monkeypatch, failure
     def stop(pid):
         nonlocal status
         stopped.append(pid)
+        if failure == 'rollback' and len(stopped) == 2:
+            return False
         status = svc.AntiDaemonStatus(state='stopped')
         return True
 
@@ -189,7 +191,33 @@ def test_agy_profiles_switch_idle_managed_gateway(tmp_path, monkeypatch, failure
         assert client.post(switch, headers=headers).status_code == 409
         daemon._login.code = 0
     status = svc.AntiDaemonStatus(state='ready', active_count=0)
+    if failure == 'rollback':
+        def fail_save(*args):
+            raise svc.AntiError(503, '无法保存 Agy 账号设置')
+
+        monkeypatch.setattr(svc.anti_profiles, '_save', fail_save)
     response = client.post(switch, headers=headers)
+    if failure == 'rollback':
+        assert response.status_code == 503
+        assert '原网关未能恢复' in response.json()['detail']
+        assert client.get(url).json()['active'] == 'default'
+        assert len(spawned) == 1 and len(stopped) == 2
+        assert client.get('/api/anti/status').json()['state'] == 'unavailable'
+        assert client.get('/api/anti/models').status_code == 503
+        start = {'X-GA-Hub-Action': 'start-anti'}
+        assert client.post('/api/anti/start', headers=start).json()['state'] == 'unavailable'
+
+        # A healthy response from an orphaned listener must not lift the block.
+        daemon._process.code = 0
+        assert client.get('/api/anti/status').json()['state'] == 'unavailable'
+        assert client.get('/api/anti/models').status_code == 503
+
+        status = svc.AntiDaemonStatus(state='stopped')
+        assert client.post('/api/anti/start', headers=start).json()['state'] == 'starting'
+        assert spawned[-1][1]['env']['HOME'] == 'original'
+        with daemon.submission() as current:
+            assert current == 'default'
+        return
     if failure:
         assert response.status_code == 503
         assert '已恢复原网关' in response.json()['detail']

@@ -18,6 +18,7 @@ from . import anti_component, anti_profiles, child_job
 from .anti_engine import AntiAdapter, AntiError, daemon_port
 
 log = logging.getLogger(__name__)
+_SWITCH_RECOVERY = "AntiCLI 切换失败：请停止残留网关，释放端口后重新启动当前 Agy 账号的网关"
 
 
 AntiDaemonState = Literal["stopped", "starting", "ready", "unavailable"]
@@ -38,6 +39,7 @@ class AntiDaemon:
         self._lock = threading.Lock()
         self._process: subprocess.Popen | None = None
         self._profile_id = anti_profiles.DEFAULT
+        self._switch_recovery_required = False
         self._login: subprocess.Popen | None = None
         self._login_profile: str | None = None
         self._deadline = 0.0
@@ -86,19 +88,30 @@ class AntiDaemon:
         except OSError:
             return AntiDaemonStatus(state="unavailable", detail=f"无法确认本机端口 {port} 的状态")
 
+    def _active_status(self, port: int, *, verify_auth: bool = False) -> AntiDaemonStatus:
+        if not self._switch_recovery_required:
+            return self._status(port, verify_auth=verify_auth)
+        # Health alone cannot identify the listening process's account, even
+        # after the candidate root process has exited.
+        if self._status(port).state == "stopped":
+            return AntiDaemonStatus(state="stopped", detail=_SWITCH_RECOVERY)
+        return AntiDaemonStatus(state="unavailable", detail=_SWITCH_RECOVERY)
+
     def status(self, *, verify_auth: bool = False) -> AntiDaemonStatus:
         with self._lock:
-            return self._status(daemon_port(), verify_auth=verify_auth)
+            return self._active_status(daemon_port(), verify_auth=verify_auth)
 
     def start(self) -> AntiDaemonStatus:
         with self._lock:
             port = daemon_port()
-            status = self._status(port)
+            status = self._active_status(port)
             if status.state != "stopped":
                 return status
             profile_id = anti_profiles.snapshot()[0]
             self._require_login_closed(profile_id)
-            return self._start(port, profile_id)
+            starting = self._start(port, profile_id)
+            self._switch_recovery_required = False
+            return starting
 
     def _options(self, profile_id: str) -> tuple[str, dict]:
         executable = anti_component.executable()
@@ -136,6 +149,8 @@ class AntiDaemon:
     @contextmanager
     def submission(self):
         with self._lock:
+            if self._switch_recovery_required:
+                raise AntiError(503, _SWITCH_RECOVERY)
             profile_id = anti_profiles.snapshot()[0]
             self._require_login_closed(profile_id)
             if profile_id != anti_profiles.DEFAULT and (
@@ -181,7 +196,7 @@ class AntiDaemon:
                 return
             self._require_login_closed(active, profile_id)
             port = daemon_port()
-            status = self._status(port)
+            status = self._active_status(port)
             if status.state == "stopped":
                 anti_profiles.select(profile_id)
                 return
@@ -195,6 +210,7 @@ class AntiDaemon:
             if not child_job.terminate_tree(process.pid):
                 raise AntiError(503, "无法停止托管 AntiCLI，未切换账号")
             self._process = None
+            self._switch_recovery_required = True
             if self._status(port).state != "stopped":
                 raise AntiError(409, "AntiCLI 端口仍被占用，未切换账号")
             try:
@@ -207,7 +223,9 @@ class AntiDaemon:
                 except AntiError:
                     log.warning("Failed to restore previous AntiCLI gateway", exc_info=True)
                     raise AntiError(503, f"未切换账号：{exc}；原网关未能恢复，请检查网关状态") from exc
+                self._switch_recovery_required = False
                 raise AntiError(exc.status, f"未切换账号：{exc}；已恢复原网关") from exc
+            self._switch_recovery_required = False
 
     def login_profile(self, profile_id: str) -> None:
         with self._lock:
@@ -222,7 +240,7 @@ class AntiDaemon:
                 child_job.forget(self._login.pid)
                 self._login = None
             if active == profile_id:
-                status = self._status(daemon_port())
+                status = self._active_status(daemon_port())
                 if status.state != "stopped" and (status.state != "ready" or status.active_count != 0):
                     raise AntiError(409, "请等 Agy 网关就绪且任务全部结束后再登录")
             executable = anti_profiles.agy_executable()
