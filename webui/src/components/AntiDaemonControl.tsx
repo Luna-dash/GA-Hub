@@ -75,7 +75,7 @@ export function AntiDaemonControl({ status, start, state, busy, running }: Retur
           <StatusIconGlyph kind={gatewayKind} />
         </button>
       </span>
-      <span title={auth === 'authenticated' ? `${authLabel}（登录验证不代表模型推理可用）` : authLabel}
+      <span title={authLabel}
         role="img" aria-label={authLabel}
         className={clsx('ga-badge',
           auth === 'authenticated' ? 'ga-badge-connected'

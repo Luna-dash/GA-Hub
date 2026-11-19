@@ -142,7 +142,7 @@ export default function AntiChat() {
         runtimes={railRuntimes} currentId={selected?.id ?? null} onSelect={setSid} onCreate={openCreate}
         onRename={(id, title) => rename.mutateAsync({ id, title }).then(() => undefined)}
         onDelete={id => remove.mutateAsync(id)}
-        deleteDetail="将删除 Hub 中的 Agy 会话及其消息记录，不会删除项目文件或已保存的产物。" />
+        deleteDetail="将删除此会话及消息记录，不删除本地项目文件。" />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Errors items={[sessions.error, rename.error, remove.error]} />
         {selected ? <Conversation key={selected.id} session={selected} headerActions={headerActions} /> :
@@ -260,7 +260,7 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
   }
   return <>
     {headerActions && createPortal(<>
-      <MainModelSelect aria-label="模型" className="min-w-0 max-w-[min(400px,24vw)]" title={models.error ? '暂时无法读取模型列表，可继续使用默认模型' : '模型'}
+      <MainModelSelect aria-label="模型" className="min-w-0 max-w-[min(400px,24vw)]" title={models.error ? '模型列表加载失败' : '模型'}
         llms={families} value={family?.key} onChange={setFamilyKey} disabled={Boolean(current || pending) || models.isPending} />
       <ThemedSelect aria-label="思考等级" title="思考等级" options={effortOptions} value={effort} onChange={setEffort}
         displayName={option => option.name} placeholder={DEFAULT_EFFORT}
@@ -336,7 +336,7 @@ function Conversation({ session, headerActions }: { session: Session; headerActi
         maxLength={24000}
         onSubmit={submit}
         submitDisabled={Boolean(current) || send.isPending || !history.isSuccess}
-        submitAccessory={<span title="Plan · 只读规划" className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-bg-soft px-2 text-xs font-medium text-ink-muted">
+        submitAccessory={<span title="规划模式" className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-bg-soft px-2 text-xs font-medium text-ink-muted">
           <ClipboardList size={14} aria-hidden="true" />Plan
         </span>}
         submitLabel={pending && send.isError ? '查询或重试同一请求' : '发送'}
