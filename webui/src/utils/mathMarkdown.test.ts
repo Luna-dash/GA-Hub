@@ -41,6 +41,11 @@ describe('normalizeMathDelimiters', () => {
     expect(normalizeMathDelimiters(input)).toBe(input)
   })
 
+  it('does not pair an unclosed \\[ with a later \\] across a blank line', () => {
+    const input = '第一段误写了未闭合 \\[ 说明\n\n第二段后面有个 \\] 结尾'
+    expect(normalizeMathDelimiters(input)).toBe(input)
+  })
+
   it('normalizes guarded single-dollar inline math without touching currency or shell variables', () => {
     expect(normalizeMathDelimiters('其中 $Q(s, a)$ 表示价值，$h_t \\in \\mathbb{R}^d$。'))
       .toBe('其中 $$Q(s, a)$$ 表示价值，$$h_t \\in \\mathbb{R}^d$$。')

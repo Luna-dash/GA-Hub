@@ -292,18 +292,19 @@ function matchStandaloneDollarLine(
   }
 }
 
+function startsBlankLine(src: string, newlineIndex: number): boolean {
+  let j = newlineIndex + 1
+  while (j < src.length && (src[j] === ' ' || src[j] === '\t' || src[j] === '\r')) j += 1
+  return src[j] === '\n'
+}
+
 function matchParenInlineMath(
   src: string,
   start: number,
 ): { body: string; nextIndex: number } | null {
   let i = start + 2
   while (i < src.length) {
-    if (src[i] === '\n') {
-      // Stop at blank line (paragraph boundary).
-      let j = i + 1
-      while (j < src.length && (src[j] === ' ' || src[j] === '\t' || src[j] === '\r')) j += 1
-      if (src[j] === '\n') return null
-    }
+    if (src[i] === '\n' && startsBlankLine(src, i)) return null
     if (src[i] === '\\' && i + 1 < src.length) {
       if (src[i + 1] === ')') {
         const body = src.slice(start + 2, i)
@@ -326,6 +327,7 @@ function matchBracketDisplayMath(
 ): { body: string; nextIndex: number } | null {
   let i = start + 2
   while (i < src.length) {
+    if (src[i] === '\n' && startsBlankLine(src, i)) return null
     if (src[i] === '\\' && i + 1 < src.length) {
       if (src[i + 1] === ']') {
         const body = src.slice(start + 2, i)
@@ -352,11 +354,7 @@ function matchBracketDisplayMath(
 function findClosingDoubleDollar(src: string, start: number): number {
   let i = start
   while (i < src.length) {
-    if (src[i] === '\n') {
-      let j = i + 1
-      while (j < src.length && (src[j] === ' ' || src[j] === '\t' || src[j] === '\r')) j += 1
-      if (src[j] === '\n') return -1
-    }
+    if (src[i] === '\n' && startsBlankLine(src, i)) return -1
     if (src[i] === '\\' && i + 1 < src.length) {
       i += 2
       continue
