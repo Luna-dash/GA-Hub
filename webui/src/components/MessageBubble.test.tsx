@@ -842,7 +842,11 @@ describe('MessageBubble render isolation', () => {
     const toolbar = copy.parentElement
     expect(toolbar?.className).toContain('opacity-0')
     expect(toolbar?.className).toContain('pointer-events-none')
+    expect(toolbar?.className).not.toContain('absolute')
     expect(toolbar?.className).toContain('group-hover/msg:opacity-100')
     expect(toolbar?.className).toContain('group-focus-within/msg:opacity-100')
+    const bubble = toolbar?.closest('.group\\/msg')
+    expect(bubble?.className).toContain('rounded-lg')
+    expect(bubble?.parentElement?.parentElement?.className).not.toContain('group/msg')
   })
 })

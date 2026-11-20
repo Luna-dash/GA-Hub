@@ -207,7 +207,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
   if (isUser) {
     const cleaned = cleanUserContent(content)
     return (
-      <div className="flex justify-start group/msg">
+      <div className="flex justify-start">
         <div className="max-w-[80%] flex items-end gap-1.5">
           <div className="min-w-0 flex flex-col items-start gap-2">
             {attachments && attachments.length > 0 && (
@@ -248,12 +248,59 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
       <span>{recoveryNotice}</span>
     </div>
   ) : null
+  const hasHeader = !compact && !isSystem
+  const toolbar = (
+    <div className="pointer-events-none flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+      {streamId && onRewind && !streaming && (
+        <RewindChip onClick={() => onRewind(streamId)} />
+      )}
+      <ReplyActions text={copySource} engine="chat"
+        canSave={role === 'assistant' && !streaming && !stopped && !historyTranscript?.stopped && !historyTranscript?.finalAskUser} />
+    </div>
+  )
+  const body = (
+    <div className={clsx("min-w-0 max-w-full", !hasHeader && "flex-1")} style={messageFontStyle}>
+      {runningTask && runningTranscript ? (
+        <RunningTranscript transcript={runningTranscript} recoveryTitle={recoveryNotice && /max_tokens|上限|续接|截断/i.test(recoveryNotice) ? '输出达到上限 · 自动续接' : recoveryNotice && /重试|retry/i.test(recoveryNotice) ? '自动重试' : '自动重连'} recoveryStatus={recoveryStatus} recoveryBeforeTurn={recoveryActive ? messagePresentation(content.slice(0, boundary), true).turns.length : undefined} askUserDraftKey={askUserDraftKey} askUserInteractive={askUserInteractive} />
+      ) : useHistoryProjection && historyTranscript ? (
+        <HistoryTranscriptReply
+          transcript={historyTranscript}
+          rawContent={content}
+          manualStop={Boolean(stopped)}
+          finalExpanded={longFinalExpanded}
+          onExpandFinal={() => setLongFinalExpanded(true)}
+          askUserDraftKey={askUserDraftKey}
+          askUserInteractive={askUserInteractive}
+        />
+      ) : <>
+        {segs.map((seg, i) => <div key={i}>
+        {i === recoveryIndex && recoveryStatus}
+        {seg.type === 'fold' ? (
+          <LazyMarkdownFold
+            key={i}
+            title={seg.title || '中间步骤'}
+            content={seg.content}
+            cache={!streaming}
+          />
+        ) : (
+          <div key={i} className={clsx(streaming && i === segs.length - 1 && 'cursor-blink')}>
+            {/* Final segment: auto-detect tool-only tails vs real prose. */}
+            <FileTransferConclusion.Provider value={!streaming && !stopped && i === segs.length - 1 ? { engine: 'chat', ...(project ? { project } : {}) } : null}>
+              <MessageContent content={seg.content} format="markdown" cache={!streaming} />
+            </FileTransferConclusion.Provider>
+          </div>
+        )}
+        </div>)}
+        {recoveryIndex === segs.length && recoveryStatus}
+      </>}
+    </div>
+  )
   return (
-    <div className="flex justify-start group/msg">
+    <div className="flex justify-start">
       <div className={clsx("max-w-full min-w-0 flex flex-col items-start gap-1.5", runningTask && "w-full")}>
         <div className={clsx(
           runningTask && "w-full",
-          "min-w-0 max-w-full relative rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.13)]",
+          "group/msg min-w-0 max-w-full relative rounded-lg shadow-[0_2px_6px_rgba(45,34,22,0.13)]",
           compact ? "px-3 py-2 text-xs" : "px-3.5 py-3",
           tone.surfaceClass
         )}>
@@ -269,57 +316,24 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
               <span className="block h-2.5 w-2.5 rounded-full bg-status-warning-soft" />
             </div>
           )}
-          {!compact && !isSystem && (
-            <div className="mb-2 flex items-center gap-2 text-[11px] font-medium text-ink-muted">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
-              GA Agent
+          {hasHeader && (
+            <div className="mb-2 flex min-h-6 items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
+              <span className="inline-flex shrink-0 items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
+                GA Agent
+              </span>
+              {toolbar}
             </div>
           )}
           {tagLabel && (
             <div className="mb-1.5 text-[11px] font-medium leading-4 text-ink-faint">{tagLabel}</div>
           )}
-          <div className="pointer-events-none absolute top-3 right-3 flex items-center gap-1.5 opacity-0 transition-opacity hover:pointer-events-auto hover:opacity-100 group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-            {streamId && onRewind && !streaming && (
-              <RewindChip onClick={() => onRewind(streamId)} />
-            )}
-            <ReplyActions text={copySource} engine="chat"
-              canSave={role === 'assistant' && !streaming && !stopped && !historyTranscript?.stopped && !historyTranscript?.finalAskUser} />
-          </div>
-          <div className="min-w-0 max-w-full" style={messageFontStyle}>
-            {runningTask && runningTranscript ? (
-              <RunningTranscript transcript={runningTranscript} recoveryTitle={recoveryNotice && /max_tokens|上限|续接|截断/i.test(recoveryNotice) ? '输出达到上限 · 自动续接' : recoveryNotice && /重试|retry/i.test(recoveryNotice) ? '自动重试' : '自动重连'} recoveryStatus={recoveryStatus} recoveryBeforeTurn={recoveryActive ? messagePresentation(content.slice(0, boundary), true).turns.length : undefined} askUserDraftKey={askUserDraftKey} askUserInteractive={askUserInteractive} />
-            ) : useHistoryProjection && historyTranscript ? (
-              <HistoryTranscriptReply
-                transcript={historyTranscript}
-                rawContent={content}
-                manualStop={Boolean(stopped)}
-                finalExpanded={longFinalExpanded}
-                onExpandFinal={() => setLongFinalExpanded(true)}
-                askUserDraftKey={askUserDraftKey}
-                askUserInteractive={askUserInteractive}
-              />
-            ) : <>
-              {segs.map((seg, i) => <div key={i}>
-              {i === recoveryIndex && recoveryStatus}
-              {seg.type === 'fold' ? (
-                <LazyMarkdownFold
-                  key={i}
-                  title={seg.title || '中间步骤'}
-                  content={seg.content}
-                  cache={!streaming}
-                />
-              ) : (
-                <div key={i} className={clsx(streaming && i === segs.length - 1 && 'cursor-blink')}>
-                  {/* Final segment: auto-detect tool-only tails vs real prose. */}
-                  <FileTransferConclusion.Provider value={!streaming && !stopped && i === segs.length - 1 ? { engine: 'chat', ...(project ? { project } : {}) } : null}>
-                    <MessageContent content={seg.content} format="markdown" cache={!streaming} />
-                  </FileTransferConclusion.Provider>
-                </div>
-              )}
-              </div>)}
-              {recoveryIndex === segs.length && recoveryStatus}
-            </>}
-          </div>
+          {hasHeader ? body : (
+            <div className="flex min-w-0 items-start justify-between gap-2">
+              {body}
+              {toolbar}
+            </div>
+          )}
           {stopped && !useHistoryProjection && (
             <p className="mt-2 flex items-center gap-1.5 text-xs italic leading-5 text-status-warning-muted">
               <Square size={10} className="shrink-0 fill-current" aria-hidden="true" />
@@ -547,9 +561,9 @@ function RewindChip({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       title="回退此轮对话"
       aria-label="回退此轮对话"
-      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-line/80 bg-bg-card/95 text-ink-muted shadow-sm transition-colors hover:border-accent/60 hover:bg-bg-soft hover:text-accent"
+      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-line/80 bg-bg-card/95 text-ink-muted transition-colors hover:border-accent/60 hover:bg-bg-soft hover:text-accent"
     >
-      <RewindIcon size={13} />
+      <RewindIcon size={12} />
     </button>
   )
 }

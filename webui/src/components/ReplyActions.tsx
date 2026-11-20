@@ -8,7 +8,7 @@ import { CopyIcon } from './ActionIcons'
 import { FileLinkContext } from './FileCitation'
 import { fileTransferQueryKey, saveTransferReply } from './FileTransferBox'
 
-const actionClass = 'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-line/80 bg-bg-card/95 text-ink-muted shadow-sm transition-colors hover:border-accent/60 hover:bg-bg-soft hover:text-ink disabled:cursor-not-allowed disabled:opacity-45'
+const actionClass = 'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-line/80 bg-bg-card/95 text-ink-muted transition-colors hover:border-accent/60 hover:bg-bg-soft hover:text-ink disabled:cursor-not-allowed disabled:opacity-45'
 
 export function ReplyActions({ text, engine, canSave, project }: {
   text: string; engine: 'chat' | 'anti'; canSave: boolean; project?: string
@@ -50,7 +50,7 @@ export function ReplyActions({ text, engine, canSave, project }: {
       aria-label={copied ? '已复制结论' : '复制结论'}
       className={actionClass}
     >
-      <CopyIcon copied={copied} size={13} />
+      <CopyIcon copied={copied} size={12} />
     </button>
     {canSave && sessionId && (
       <button
@@ -62,8 +62,8 @@ export function ReplyActions({ text, engine, canSave, project }: {
         className={actionClass}
       >
         {saving
-          ? <LoaderCircle size={13} strokeWidth={1.85} aria-hidden="true" className="shrink-0 animate-spin" />
-          : <PackagePlus size={13} strokeWidth={1.85} aria-hidden="true" className="shrink-0" />}
+          ? <LoaderCircle size={12} strokeWidth={1.85} aria-hidden="true" className="shrink-0 animate-spin" />
+          : <PackagePlus size={12} strokeWidth={1.85} aria-hidden="true" className="shrink-0" />}
       </button>
     )}
   </>
