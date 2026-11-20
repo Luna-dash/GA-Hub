@@ -296,7 +296,7 @@ function Conversation({ session, headerActions, profileId, profileName }: {
                 {run.status}{run.error ? ` · ${run.error}` : ''}
                 {run.error_detail && <span className="mt-1 block text-sm text-ink">{run.error_detail}</span>}
               </p>}
-              <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, engine: 'anti' }}>
+              <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, project, engine: 'anti' }}>
                 <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
                   <AntiTaskProgress active={active(run)} loadEvents={signal => antiApi.runEvents<AntiEvent[]>(sid, run.id, signal)}
                     streamUrl={active(run) ? resolveApiUrl(`/api/anti/sessions/${sid}/runs/${run.id}/events/stream`) : undefined}

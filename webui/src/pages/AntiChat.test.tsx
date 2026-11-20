@@ -6,9 +6,11 @@ import { MemoryRouter, useLocation } from 'react-router-dom'
 import { expect, it, vi, beforeEach } from 'vitest'
 import AntiChat from './AntiChat'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
+import { resetPageState } from '@/utils/pageState'
 
 beforeEach(() => {
   localStorage.clear()
+  resetPageState()
 })
 
 vi.mock('@/api/client', async (importOriginal) => {
@@ -242,10 +244,10 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     const header = host.querySelector('.ga-page-header')!
     expect(header.contains(control('模型'))).toBe(true)
     expect(header.contains(control('思考等级'))).toBe(true)
-    expect(header.contains(control('文件传递箱'))).toBe(false)
+    expect(header.contains(control('中转箱'))).toBe(false)
     const transcript = host.querySelector('[data-anti-chat-scroll]')!
-    expect(transcript.parentElement?.contains(control('文件传递箱'))).toBe(true)
-    expect(transcript.contains(control('文件传递箱'))).toBe(false)
+    expect(transcript.parentElement?.contains(control('中转箱'))).toBe(true)
+    expect(transcript.contains(control('中转箱'))).toBe(false)
     expect(control('发送').previousElementSibling?.textContent).toBe('Plan')
     expect(transcript.classList.contains('pr-[76px]')).toBe(true)
     expect(transcript.classList.contains('overflow-y-auto')).toBe(true)
@@ -289,13 +291,14 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
       effort: outcome === 'success' ? 'xhigh' : 'medium',
       operation: expect.any(String),
     }])
-    const toDocument = Array.from(host.querySelectorAll('button')).find(button => button.textContent === '转成文档')
+    const toDocument = host.querySelector<HTMLButtonElement>('button[title="放入中转箱"]') ?? undefined
     const saved = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/api/file-transfer/reply'))
     expect(saved()).toEqual([])
     expect(host.textContent).not.toContain('共享产物')
     expect(host.textContent).not.toContain('old-archive.md')
     if (outcome === 'success') {
-      expect(host.querySelector('button[title="复制结论"]')).not.toBeNull()
+      expect(host.querySelector('button[title="复制结论"]')?.textContent).toBe('')
+      expect(toDocument?.textContent).toBe('')
       await act(async () => toDocument!.click())
       expect(saved()).toHaveLength(1)
       expect(JSON.parse(saved()[0][1]!.body as string)).toEqual({

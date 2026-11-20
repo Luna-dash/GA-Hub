@@ -66,16 +66,18 @@ describe('MessageBubble render isolation', () => {
         <MessageBubble role="assistant" content={text} streaming={streaming} stopped={stopped} />
       </FileLinkContext.Provider>,
     ))
-    const documentButton = () => Array.from(host.querySelectorAll('button')).find(button => button.textContent === '转成文档')
+    const documentButton = () => host.querySelector<HTMLButtonElement>('button[title="放入中转箱"]')
     try {
       render(true)
-      expect(documentButton()).toBeUndefined()
+      expect(documentButton()).toBeNull()
       render(false, true)
-      expect(documentButton()).toBeUndefined()
+      expect(documentButton()).toBeNull()
       render()
       expect(fetchReply).not.toHaveBeenCalled()
       const button = documentButton()!
+      expect(button.textContent).toBe('')
       expect(button.previousElementSibling?.getAttribute('title')).toBe('复制结论')
+      expect(button.previousElementSibling?.textContent).toBe('')
       await act(async () => { button.click(); button.click() })
       expect(fetchReply).toHaveBeenCalledTimes(1)
       const [url, request] = fetchReply.mock.calls[0]
@@ -517,7 +519,7 @@ describe('MessageBubble render isolation', () => {
     ].join('\n')
 
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
-    const copyButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) => (b.textContent || '').includes('复制'))
+    const copyButton = host.querySelector<HTMLButtonElement>('button[title="复制结论"]')
     await act(async () => { copyButton?.click(); await Promise.resolve() })
 
     expect(writeText).toHaveBeenCalledTimes(1)
@@ -539,7 +541,7 @@ describe('MessageBubble render isolation', () => {
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
 
     // 无结论可复制（也无摘要）：不复刻原始转储，按钮直接隐藏
-    const copyButtons = [...host.querySelectorAll<HTMLButtonElement>('button')].filter((b) => (b.textContent || '').includes('复制'))
+    const copyButtons = [...host.querySelectorAll<HTMLButtonElement>('button[title="复制结论"]')]
     expect(copyButtons).toHaveLength(0)
   })
 
@@ -557,7 +559,7 @@ describe('MessageBubble render isolation', () => {
     ].join('\n')
 
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
-    const copyButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) => (b.textContent || '').includes('复制'))
+    const copyButton = host.querySelector<HTMLButtonElement>('button[title="复制结论"]')
     await act(async () => { copyButton?.click(); await Promise.resolve() })
 
     expect(writeText).toHaveBeenCalledTimes(1)
@@ -571,7 +573,7 @@ describe('MessageBubble render isolation', () => {
     const content = '<summary>内部摘要<' + '/summary>\n\n仅正文。'
 
     act(() => root.render(<MessageBubble role="assistant" content={content} streaming={false} />))
-    const copyButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) => (b.textContent || '').includes('复制'))
+    const copyButton = host.querySelector<HTMLButtonElement>('button[title="复制结论"]')
     await act(async () => { copyButton?.click(); await Promise.resolve() })
 
     expect(writeText).toHaveBeenCalledTimes(1)
@@ -829,11 +831,17 @@ describe('MessageBubble render isolation', () => {
     delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView
   })
 
-  it('reveals copy and rewind actions on keyboard focus as well as hover', () => {
+  it('hides icon-only copy, transit, and rewind actions until hover or keyboard focus', () => {
     act(() => root.render(
       <MessageBubble role="assistant" content="回答内容" streamId="s1" onRewind={vi.fn()} streaming={false} />,
     ))
-    const toolbar = host.querySelector<HTMLElement>('button[title="复制结论"]')?.parentElement
+    const copy = host.querySelector<HTMLElement>('button[title="复制结论"]')!
+    const rewind = host.querySelector<HTMLElement>('button[title="回退此轮对话"]')!
+    expect(copy.textContent).toBe('')
+    expect(rewind.textContent).toBe('')
+    const toolbar = copy.parentElement
+    expect(toolbar?.className).toContain('opacity-0')
+    expect(toolbar?.className).toContain('pointer-events-none')
     expect(toolbar?.className).toContain('group-hover/msg:opacity-100')
     expect(toolbar?.className).toContain('group-focus-within/msg:opacity-100')
   })

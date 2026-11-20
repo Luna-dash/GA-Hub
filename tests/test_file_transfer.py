@@ -56,6 +56,7 @@ def test_reply_document_requires_explicit_save_and_remains_after_clear(tmp_path,
         assert len(list(directory.iterdir())) == 2
         for row in rows:
             assert row["available"] and row["session_id"] == "reply-session" and row["project"] == "demo"
+            assert row["name"].startswith("demo-结论-")
             document = directory / row["name"]
             assert document.suffix == ".md" and str(document.resolve()) == row["path"]
             assert document.read_bytes() == text.encode("utf8")

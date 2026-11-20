@@ -241,7 +241,7 @@ describe('MarkdownView responsive wrapping', () => {
     await act(async () => { host.querySelector('button')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })
     expect(mocks.resolveFile).toHaveBeenCalledWith('a.md', 'anti-session', 'anti')
     expect(mocks.addTransferFile).not.toHaveBeenCalled()
-    const save = [...document.body.querySelectorAll('button')].find(b => b.textContent === '放入传递箱')!
+    const save = [...document.body.querySelectorAll('button')].find(b => b.textContent === '放入中转箱')!
     expect(save.disabled).toBe(false)
     await act(async () => { save.click() })
     expect(mocks.addTransferFile).toHaveBeenCalledTimes(1)
@@ -252,7 +252,7 @@ describe('MarkdownView responsive wrapping', () => {
     mocks.resolveFile.mockResolvedValue({ resolved: 'D:/docs/a.md', exists: true, is_dir: false })
     act(() => root.render(<FileLinkContext.Provider value={{ sessionId: 'chat-session' }}><PathLink path="a.md" display="a" /></FileLinkContext.Provider>))
     await act(async () => { host.querySelector('button')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })
-    expect(document.body.textContent).not.toContain('放入传递箱')
+    expect(document.body.textContent).not.toContain('放入中转箱')
     expect(mocks.addTransferFile).not.toHaveBeenCalled()
   })
 

@@ -12,7 +12,7 @@ import { isAppInternalUrl, isHttpUrl, openExternalIfNeeded } from '@/utils/openE
 import { Z_LAYERS } from '@/config/zLayers'
 import { APP_PAGES } from '@/config/pages'
 
-export const FileLinkContext = createContext<{ sessionId?: string; projectPath?: string; engine?: 'chat' | 'anti' }>({})
+export const FileLinkContext = createContext<{ sessionId?: string; projectPath?: string; project?: string; engine?: 'chat' | 'anti' }>({})
 export const FileTransferConclusion = createContext<{ engine: 'chat' | 'anti'; sessionId?: string; project?: string } | null>(null)
 const APP_ROUTE = new RegExp(
   `^/(?:${[...APP_PAGES.map((page) => page.id), 'feishu'].join('|')})(?:[/?#]|$)`,
@@ -110,9 +110,9 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
     try {
       await addTransferFile({ path: resolved, engine: conclusion.engine, session_id: transferSessionId, project: conclusion.project })
       void cache?.invalidateQueries({ queryKey: fileTransferQueryKey })
-      toast.success('已放入传递箱')
+      toast.success('已放入中转箱')
       setMenu(null)
-    } catch (error) { toast.error(errorMessageFromError(error, '放入传递箱失败')) }
+    } catch (error) { toast.error(errorMessageFromError(error, '放入中转箱失败')) }
     finally { gate.current = false; setBusy(false) }
   }
   const copy = async (value: string, label: string) => {
@@ -144,7 +144,7 @@ export function PathLink({ path, display }: { path: string; display: ReactNode }
         {!resolved && info?.candidates?.map(candidate => item(candidate, () => { void reveal('open', candidate) }, busy))}
         {item(info?.is_dir ? '打开文件夹' : '定位文件', () => { void reveal('open', resolved!) }, busy || !resolved)}
         {item('在资源管理器中显示', () => { void reveal('folder', resolved!) }, busy || !resolved)}
-        {conclusion && transferSessionId && !info?.is_dir && item('放入传递箱', () => { void addToTransferBox() }, busy || !resolved)}
+        {conclusion && transferSessionId && !info?.is_dir && item('放入中转箱', () => { void addToTransferBox() }, busy || !resolved)}
         {item('复制完整路径', () => { void copy(resolved!, '完整路径') }, !resolved)}
         {item('复制所在文件夹', () => { void copy(parent!, '文件夹路径') }, !parent)}
       </div>

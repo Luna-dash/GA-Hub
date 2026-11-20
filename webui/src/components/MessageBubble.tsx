@@ -11,7 +11,7 @@
 //   • Fold / tool-trace segments render MarkdownView mode=plain (no math/hljs).
 //   • Hover-revealed "复制" button on assistant messages.
 
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import { messagePresentation } from '@/utils/messagePresentation'
 import {
@@ -26,7 +26,7 @@ import { ReplyActions } from './ReplyActions'
 import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
 import { FILE_HINT } from '@/utils/sessionPrompt'
 import { MessageContent } from './MessageContent'
-import { FileTransferConclusion } from './FileCitation'
+import { FileLinkContext, FileTransferConclusion } from './FileCitation'
 import { TranscriptRecordContent } from './TranscriptRecordContent'
 import { AskUserCard } from './AskUserCard'
 import { RunningTranscript } from './RunningTranscript'
@@ -148,6 +148,7 @@ function formatDuration(milliseconds: number): string {
 }
 
 export const MessageBubble = memo(function MessageBubble({ role, content, turnSegments, streaming, stopped, recoveryNotice, recoveryOffset, tagLabel, timestamp, startedAt, finishedAt, attachments, streamId, onRewind, compact, askUserDraftKey, askUserInteractive = true }: Props) {
+  const { project } = useContext(FileLinkContext)
   const [fontScale, setFontScale] = useState(getChatFontScale)
   const [clock, setClock] = useState(Date.now)
   const [longFinalExpanded, setLongFinalExpanded] = useState(false)
@@ -277,7 +278,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
           {tagLabel && (
             <div className="mb-1.5 text-[11px] font-medium leading-4 text-ink-faint">{tagLabel}</div>
           )}
-          <div className="absolute top-3 right-3 flex items-center gap-2 opacity-45 hover:opacity-100 group-hover/msg:opacity-100 group-focus-within/msg:opacity-100 focus-within:opacity-100 transition-opacity">
+          <div className="pointer-events-none absolute top-3 right-3 flex items-center gap-1.5 opacity-0 transition-opacity hover:pointer-events-auto hover:opacity-100 group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
             {streamId && onRewind && !streaming && (
               <RewindChip onClick={() => onRewind(streamId)} />
             )}
@@ -310,7 +311,7 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
               ) : (
                 <div key={i} className={clsx(streaming && i === segs.length - 1 && 'cursor-blink')}>
                   {/* Final segment: auto-detect tool-only tails vs real prose. */}
-                  <FileTransferConclusion.Provider value={!streaming && !stopped && i === segs.length - 1 ? { engine: 'chat' } : null}>
+                  <FileTransferConclusion.Provider value={!streaming && !stopped && i === segs.length - 1 ? { engine: 'chat', ...(project ? { project } : {}) } : null}>
                     <MessageContent content={seg.content} format="markdown" cache={!streaming} />
                   </FileTransferConclusion.Provider>
                 </div>
@@ -355,6 +356,7 @@ function HistoryTranscriptReply({
   askUserDraftKey?: string
   askUserInteractive: boolean
 }) {
+  const { project } = useContext(FileLinkContext)
   const [collapseVersion, setCollapseVersion] = useState(0)
   const [detailsExpanded, setDetailsExpanded] = useState(false)
   const latestRef = useRef<HTMLDivElement>(null)
@@ -388,7 +390,7 @@ function HistoryTranscriptReply({
     <>
       {visibleProcessTurns.length > 0 && <LazyProcessFold key={collapseVersion} turns={visibleProcessTurns} onDetailsChange={setDetailsExpanded} />}
       {visibleFinal ? (
-        <FileTransferConclusion.Provider value={stoppedState ? null : { engine: 'chat' }}>
+        <FileTransferConclusion.Provider value={stoppedState ? null : { engine: 'chat', ...(project ? { project } : {}) }}>
           <StableMessageContent content={visibleFinal} format="markdown" cache />
         </FileTransferConclusion.Provider>
       ) : stoppedState || transcript.finalAskUser ? null : (
@@ -541,12 +543,13 @@ function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
 function RewindChip({ onClick }: { onClick: () => void }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       title="回退此轮对话"
-      className="ga-btn-chip hover:text-accent"
+      aria-label="回退此轮对话"
+      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-line/80 bg-bg-card/95 text-ink-muted shadow-sm transition-colors hover:border-accent/60 hover:bg-bg-soft hover:text-accent"
     >
-      <RewindIcon size={12} />
-      <span>回退</span>
+      <RewindIcon size={13} />
     </button>
   )
 }

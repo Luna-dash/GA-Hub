@@ -220,6 +220,12 @@ export default function LiveChat() {
   const activeProjectPath = session?.project_path
     ?? (session?.project_name ? projects.find((project) => project.name === session.project_name)?.path : undefined)
     ?? ''
+  const activeProjectMeta = projects.find(
+    (item) => (activeProjectPath && item.path === activeProjectPath) || (session?.project_name && item.name === session.project_name),
+  )
+  const activeProjectLabel = activeProjectPath || session?.project_name
+    ? (activeProjectMeta?.display_name || projectDisplayName(activeProjectPath, session?.project_name ?? '') || undefined)
+    : undefined
   const defaultLlmKey = defaultSessionLlmKey(llms)
   const selectedLlmKey = resolveSessionLlmKey(llms, session?.llm_key)
   const sessionLlmNeedsRepair = Boolean(
@@ -744,7 +750,7 @@ export default function LiveChat() {
   }
 
   return (
-    <FileLinkContext.Provider value={{ sessionId: session?.id, projectPath: activeProjectPath }}>
+    <FileLinkContext.Provider value={{ sessionId: session?.id, projectPath: activeProjectPath, ...(activeProjectLabel ? { project: activeProjectLabel } : {}) }}>
       <PageShell
         title="实时聊天"
         titleExtra={
