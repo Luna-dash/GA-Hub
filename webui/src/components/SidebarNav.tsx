@@ -136,7 +136,6 @@ export function SidebarNav() {
   const unreadTheme = useUnreadThemeCompletions()
   const [items, setItems] = useState<NavItem[]>(() => getVisibleNavItems())
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(storageKeys.sidebarCollapsed) === '1')
-  const openCommandPalette = () => window.dispatchEvent(new Event('gahub:command-palette'))
   const toggleCollapsed = () => {
     const next = !collapsed
     const serialized = next ? '1' : '0'
@@ -183,20 +182,6 @@ export function SidebarNav() {
               {!collapsed && <span className="ga-brand-hub">HUB</span>}
             </div>
           </button>
-          {!collapsed && (
-            <NavLink
-              to="/settings"
-              onMouseEnter={() => preloadRoute('/settings')}
-              onFocus={() => preloadRoute('/settings')}
-              className={({ isActive }) =>
-                clsx('ga-brand-settings', isActive && 'active')
-              }
-              aria-label="系统设置"
-              title="系统设置"
-            >
-              <NavIcon name="settings" />
-            </NavLink>
-          )}
         </div>
       </div>
 
@@ -226,28 +211,17 @@ export function SidebarNav() {
       </nav>
 
       <div className={clsx('flex flex-col gap-1.5 pb-2.5 pt-1.5', collapsed ? 'items-center px-1.5' : 'px-2.5')}>
-        {!collapsed && (
-          <button
-            type="button"
-            onClick={openCommandPalette}
-            className="ga-cmd-row"
-          >
-            <span>命令面板</span>
-            <kbd className="ga-cmd-kbd">Ctrl K</kbd>
-          </button>
-        )}
-        {collapsed && (
-          <NavLink
-            to="/settings"
-            onMouseEnter={() => preloadRoute('/settings')}
-            onFocus={() => preloadRoute('/settings')}
-            className="ga-sidebar-fold ga-sidebar-fold-collapsed"
-            aria-label="系统设置"
-            title="系统设置"
-          >
-            <NavIcon name="settings" />
-          </NavLink>
-        )}
+        <NavLink
+          to="/settings"
+          onMouseEnter={() => preloadRoute('/settings')}
+          onFocus={() => preloadRoute('/settings')}
+          className={clsx('ga-sidebar-fold', collapsed && 'ga-sidebar-fold-collapsed')}
+          aria-label="系统设置"
+          title="系统设置"
+        >
+          <NavIcon name="settings" />
+          {!collapsed && <span>系统设置</span>}
+        </NavLink>
         <button
           type="button"
           onClick={toggleCollapsed}
