@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import sys
@@ -51,7 +52,88 @@ class LocalGateway(gateway.Gateway):
     async def handle(self, request):
         if not request.path.startswith('/api/') or not self.authenticated(request):
             raise web.HTTPForbidden()
+        if request.path.startswith('/api/agy/'):
+            if not self.origin_ok(request):
+                raise web.HTTPForbidden()
+            return await self.handle_agy(request)
         return await super().handle(request)
+
+    async def anti_json(self, method, path, payload=None):
+        base = await self.backend()
+        try:
+            async with self.http.request(method, base + '/api/anti' + path, json=payload,
+                                         headers={'Origin': base}, allow_redirects=False,
+                                         timeout=aiohttp.ClientTimeout(total=65)) as response:
+                if not 200 <= response.status < 300:
+                    raise web.HTTPBadRequest(text='Agy 请求无效') if response.status == 422 else web.HTTPBadGateway(text='本机 Agy 请求未完成')
+                return await response.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            raise web.HTTPBadGateway(text='本机 Agy 请求未确认')
+
+    async def handle_agy(self, request):
+        path = request.path.removeprefix('/api/agy')
+        method = request.method
+        event_query = (method == 'GET' and re.fullmatch(r'/sessions/[A-Za-z0-9_-]{1,128}/runs/[A-Za-z0-9_-]{1,128}/events', path)
+                       and re.fullmatch(r'after=[0-9]{1,15}', request.query_string))
+        if (request.query_string and not event_query) or request.headers.get('Upgrade'):
+            raise web.HTTPForbidden()
+        if method == 'GET' and path == '/projects':
+            try:
+                catalog = await self.project_catalog()
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                raise web.HTTPBadGateway(text='项目列表读取失败')
+            return web.json_response({'items': [{'id': k, 'name': v['label']} for k, v in catalog.items()]})
+        if path == '/sessions' and method == 'GET':
+            rows = await self.anti_json('GET', path)
+            return web.json_response([{k: row.get(k) for k in ('id', 'project', 'title', 'updated_at', 'active_run_id')} for row in rows])
+        if method == 'POST' and path == '/sessions':
+            body = await self.agy_body(request, {'project_id', 'request_id'})
+            catalog = await self.project_catalog()
+            project = catalog.get(body['project_id']) if isinstance(body['project_id'], str) else None
+            if not project:
+                raise web.HTTPBadRequest(text='请选择已登记项目')
+            # Coalesce an uncertain response within the lifetime of this connector.
+            key = ('agy-create', request.cookies.get(gateway.COOKIE), body['request_id'])
+            if key not in self.submissions:
+                if len(self.submissions) >= 512:
+                    self.submissions.pop(next(iter(self.submissions)))
+                task = asyncio.create_task(self.anti_json('POST', path, {'project': project['name']}))
+                self.submissions[key] = (body['project_id'], task)
+            project_id, task = self.submissions[key]
+            if project_id != body['project_id']:
+                raise web.HTTPConflict(text='创建请求与原项目不一致')
+            row = await asyncio.shield(task)
+            return web.json_response({'id': row['id']})
+        match = re.fullmatch(r'/sessions/([A-Za-z0-9_-]{1,128})/runs(?:/([A-Za-z0-9_-]{1,128})(/events|/cancel)?)?', path)
+        if not match:
+            raise web.HTTPForbidden()
+        _, rid, action = match.groups()
+        payload = None
+        if method == 'POST' and not rid:
+            body = await self.agy_body(request, {'text', 'request_id'})
+            text = body['text']
+            if not isinstance(text, str) or not text.strip() or len(text) > 6000:
+                raise web.HTTPBadRequest(text='请输入 1–6000 字的指令')
+            payload = {'prompt': text, 'operation': body['request_id']}
+        elif not (method == 'GET' and action != '/cancel' or method == 'POST' and action == '/cancel'):
+            raise web.HTTPForbidden()
+        upstream = path + '?' + request.query_string if event_query else path
+        data = await self.anti_json(method, upstream, payload)
+        keys = (('seq', 'type', 'text') if action == '/events'
+                else ('id', 'status', 'prompt', 'answer', 'error', 'created_at'))
+        public = lambda row: {k: row[k] for k in keys if k in row}
+        return web.json_response([public(row) for row in data] if isinstance(data, list) else public(data))
+
+    @staticmethod
+    async def agy_body(request, keys):
+        try:
+            raw = await request.content.readexactly(request.content_length or 0) if 0 < (request.content_length or 0) <= 32768 else b''
+            data = json.loads(raw)
+            if not isinstance(data, dict) or set(data) != keys or not isinstance(data.get('request_id'), str) or not re.fullmatch(r'[a-f0-9-]{36}', data['request_id']):
+                raise ValueError()
+            return data
+        except (ValueError, asyncio.IncompleteReadError):
+            raise web.HTTPBadRequest(text='Invalid Agy request')
 
 
 def credential_target(server):
