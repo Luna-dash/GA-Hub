@@ -2967,7 +2967,10 @@ export interface components {
         AntiRunCreate: {
             /** Operation */
             operation: string;
-            /** Prompt */
+            /**
+             * Prompt
+             * @default
+             */
             prompt: string;
             /**
              * Model
@@ -2982,6 +2985,8 @@ export interface components {
             effort: "low" | "medium" | "high" | "xhigh" | "max";
             /** References */
             references?: components["schemas"]["AntiFileReference"][];
+            /** Attachments */
+            attachments?: components["schemas"]["AttachmentRef"][];
         };
         /** AntiRunResp */
         AntiRunResp: {
@@ -2999,6 +3004,8 @@ export interface components {
             error?: string | null;
             /** Error Detail */
             error_detail?: string | null;
+            /** Attachments */
+            attachments?: components["schemas"]["AttachmentRef"][];
         } & {
             [key: string]: unknown;
         };

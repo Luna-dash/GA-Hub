@@ -6837,8 +6837,8 @@
           "prompt": {
             "type": "string",
             "maxLength": 24000,
-            "minLength": 1,
-            "title": "Prompt"
+            "title": "Prompt",
+            "default": ""
           },
           "model": {
             "type": "string",
@@ -6867,12 +6867,19 @@
             "type": "array",
             "maxItems": 8,
             "title": "References"
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentRef"
+            },
+            "type": "array",
+            "maxItems": 256,
+            "title": "Attachments"
           }
         },
         "type": "object",
         "required": [
-          "operation",
-          "prompt"
+          "operation"
         ],
         "title": "AntiRunCreate"
       },
@@ -6926,6 +6933,13 @@
               }
             ],
             "title": "Error Detail"
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentRef"
+            },
+            "type": "array",
+            "title": "Attachments"
           }
         },
         "additionalProperties": true,

@@ -14,17 +14,18 @@ import { AntiAccountUsageButton } from '@/components/AntiAccountUsageButton'
 import { AntiIcon } from '@/components/AntiMark'
 import { MessageContent } from '@/components/MessageContent'
 import { FileLinkContext, FileTransferConclusion } from '@/components/FileCitation'
+import { UserAttachments } from '@/components/MessageBubble'
 import { ReplyActions } from '@/components/ReplyActions'
 import { MainModelSelect } from '@/components/ModelSelect'
 import { PageShell } from '@/components/PageShell'
 import { ProjectSelect } from '@/components/ProjectSelect'
 import { SessionRail } from '@/components/SessionRail'
 import { ModalOverlay } from '@/components/ModalOverlay'
-import type { HubSession, SessionRuntime } from '@/api/types'
+import type { HubSession, PasteAttachment, SessionRuntime } from '@/api/types'
 import { usePageState } from '@/utils/pageState'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import { ThemedSelect } from '@/components/ThemedSelect'
-import { antiApi, api, HttpError, type AntiModels, type AntiRun, type AntiSession, type AntiSubmission } from '@/api/client'
+import { antiApi, api, HttpError, type AntiAttachmentRef, type AntiModels, type AntiRun, type AntiSession, type AntiSubmission } from '@/api/client'
 
 type Session = AntiSession
 type Run = AntiRun
@@ -60,7 +61,18 @@ function Errors({ items }: { items: (Error | null)[] }) {
     <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft px-3 py-2 text-sm text-status-danger [overflow-wrap:anywhere]" key={index}>{error?.message}</p>)}</>
 }
 
-const EMPTY_ATTACHMENTS: [] = []
+function toUserAttachments(runId: string, list?: AntiAttachmentRef[]): PasteAttachment[] {
+  if (!list?.length) return []
+  return list.map((item, index) => ({
+    file_id: `${runId}-att-${index}`,
+    name: item.name || item.path.split(/[/\\]/).pop() || 'attachment',
+    path: item.path,
+    url: item.source === 'managed_upload' ? api.fileUrlByPath(item.path) : '',
+    mime: '',
+    size: item.size ?? 0,
+    source: item.source,
+  }))
+}
 
 export default function AntiChat() {
   const cache = useQueryClient()
@@ -185,6 +197,7 @@ function Conversation({ session, headerActions, profileId, profileName }: {
   const { id: sid, project, workspace } = session
   const cache = useQueryClient()
   const [prompt, setPrompt] = useState('')
+  const [attachments, setAttachments] = useState<PasteAttachment[]>([])
   const [references, setReferences] = useState<TransferredFile[]>([])
   const [pending, setPending] = useState<Submission>()
   const [familyKey, setFamilyKey] = usePageState('antiChat.modelFamily', DEFAULT_FAMILY)
@@ -226,6 +239,7 @@ function Conversation({ session, headerActions, profileId, profileName }: {
     if (pending && history.data?.some(run => run.operation === pending.operation)) {
       setPending(undefined)
       setPrompt('')
+      setAttachments([])
       setReferences([])
     }
   }, [history.data, pending])
@@ -233,7 +247,7 @@ function Conversation({ session, headerActions, profileId, profileName }: {
     mutationFn: (body: Submission) => antiApi.submitRun(sid, body),
     onSuccess: run => {
       cache.setQueryData<Run[]>(key, old => [...(old ?? []).filter(row => row.id !== run.id), run])
-      setPrompt(''); setPending(undefined); setReferences([])
+      setPrompt(''); setPending(undefined); setAttachments([]); setReferences([])
     },
     onError: error => {
       if (error instanceof HttpError && error.status === 422) setPending(undefined)
@@ -255,9 +269,18 @@ function Conversation({ session, headerActions, profileId, profileName }: {
   }, [])
   useEffect(scrollToLatest, [history.data, scrollToLatest])
   const submit = () => {
-    if (current || send.isPending || !history.isSuccess || !prompt.trim()) return
-    const body = pending ?? { prompt: prompt.trim(), model, effort,
+    const trimmedPrompt = prompt.trim()
+    if (current || send.isPending || !history.isSuccess || (!trimmedPrompt && !attachments.length && !references.length)) return
+    const body = pending ?? { prompt: trimmedPrompt, model, effort,
       ...(references.length ? { references: references.map(({ id, path }) => ({ id, path })) } : {}),
+      ...(attachments.length ? {
+        attachments: attachments.map(({ path, name, source, size }) => ({
+          path,
+          name,
+          source: source ?? 'managed_upload',
+          ...(size != null ? { size } : {}),
+        })),
+      } : {}),
       operation: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}` }
     followTranscript.current = true
     setPending(body)
@@ -287,31 +310,39 @@ function Conversation({ session, headerActions, profileId, profileName }: {
           {history.isPending ? '正在加载会话…' : '想让 Anti 为这个项目做什么？'}
         </div>}
         <div className="space-y-5">
-          {history.data?.map(run => <article className="space-y-3" key={run.id}>
-            <div className={`w-fit max-w-full rounded-lg px-3.5 py-3 text-sm ${bubbleTone('user').surfaceClass}`}>
-              <MessageContent format="text" content={run.prompt} />
-            </div>
-            <div className={`group/anti-reply w-fit min-w-0 max-w-full space-y-2 rounded-lg px-3.5 py-3 text-sm ${bubbleTone('assistant').surfaceClass}`}>
-              {run.status !== 'success' && <p role="status" className="text-xs text-ink-muted">
-                {run.status}{run.error ? ` · ${run.error}` : ''}
-                {run.error_detail && <span className="mt-1 block text-sm text-ink">{run.error_detail}</span>}
-              </p>}
-              <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, project, engine: 'anti' }}>
-                <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
-                  <AntiTaskProgress active={active(run)} loadEvents={signal => antiApi.runEvents<AntiEvent[]>(sid, run.id, signal)}
-                    streamUrl={active(run) ? resolveApiUrl(`/api/anti/sessions/${sid}/runs/${run.id}/events/stream`) : undefined}
-                    runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}>
-                    {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
-                  </AntiTaskProgress>
-                  {run.status === 'success' && run.answer?.trim() && (
-                    <div className="pointer-events-none flex flex-wrap justify-end gap-2 opacity-0 transition-opacity group-hover/anti-reply:pointer-events-auto group-hover/anti-reply:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-                      <ReplyActions text={run.answer} engine="anti" project={project} canSave />
-                    </div>
-                  )}
-                </FileTransferConclusion.Provider>
-              </FileLinkContext.Provider>
-            </div>
-          </article>)}
+          {history.data?.map(run => {
+            const userAttachments = toUserAttachments(run.id, run.attachments)
+            return <article className="space-y-3" key={run.id}>
+              <div className="flex flex-col items-start gap-2">
+                {userAttachments.length > 0 && <UserAttachments atts={userAttachments} />}
+                {run.prompt && (
+                  <div className={`w-fit max-w-full rounded-lg px-3.5 py-3 text-sm ${bubbleTone('user').surfaceClass}`}>
+                    <MessageContent format="text" content={run.prompt} />
+                  </div>
+                )}
+              </div>
+              <div className={`group/anti-reply w-fit min-w-0 max-w-full space-y-2 rounded-lg px-3.5 py-3 text-sm ${bubbleTone('assistant').surfaceClass}`}>
+                {run.status !== 'success' && <p role="status" className="text-xs text-ink-muted">
+                  {run.status}{run.error ? ` · ${run.error}` : ''}
+                  {run.error_detail && <span className="mt-1 block text-sm text-ink">{run.error_detail}</span>}
+                </p>}
+                <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, project, engine: 'anti' }}>
+                  <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
+                    <AntiTaskProgress active={active(run)} loadEvents={signal => antiApi.runEvents<AntiEvent[]>(sid, run.id, signal)}
+                      streamUrl={active(run) ? resolveApiUrl(`/api/anti/sessions/${sid}/runs/${run.id}/events/stream`) : undefined}
+                      runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}>
+                      {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
+                    </AntiTaskProgress>
+                    {run.status === 'success' && run.answer?.trim() && (
+                      <div className="pointer-events-none flex flex-wrap justify-end gap-2 opacity-0 transition-opacity group-hover/anti-reply:pointer-events-auto group-hover/anti-reply:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+                        <ReplyActions text={run.answer} engine="anti" project={project} canSave />
+                      </div>
+                    )}
+                  </FileTransferConclusion.Provider>
+                </FileLinkContext.Provider>
+              </div>
+            </article>
+          })}
           <Errors items={[history.error, live.error, send.error, cancel.error]} />
         </div>
       </div>
@@ -322,7 +353,7 @@ function Conversation({ session, headerActions, profileId, profileName }: {
           当前隔离账号：{profileName ?? profileId}（多轮上下文按账号独立续接）
         </div>
       )}
-      {references.length > 0 && <ul aria-label="引用文件" className="flex flex-wrap gap-1 px-3 pt-2 text-xs">
+      {references.length > 0 && <ul aria-label="引用文件" className="flex flex-wrap gap-1 pl-[3.25rem] pr-3 pt-2 text-xs">
         {references.map(file => <li key={file.path} className="flex min-w-0 items-center gap-1 rounded-md bg-bg-soft px-2 py-1" title={file.path}>
           <span className="truncate">{file.name}</span>
           <CloseIconButton
@@ -338,17 +369,16 @@ function Conversation({ session, headerActions, profileId, profileName }: {
       <ImagePasteInput
         text={prompt}
         onText={setPrompt}
-        attachments={EMPTY_ATTACHMENTS}
-        onAttachments={() => {}}
-        acceptFiles={false}
+        attachments={attachments}
+        onAttachments={setAttachments}
         inputLabel="发给 Anti"
-        placeholder="发给 Anti…"
+        placeholder="发给 Anti，可粘贴/拖放图片或文件…"
         readOnly={Boolean(pending)}
         maxLength={24000}
         onSubmit={submit}
         submitDisabled={Boolean(current) || send.isPending || !history.isSuccess}
-        submitAccessory={<span title="规划模式" className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-bg-soft px-2 text-xs font-medium text-ink-muted">
-          <ClipboardList size={14} aria-hidden="true" />Plan
+        submitAccessory={<span title="规划模式" className="mb-0.5 inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-line/80 bg-bg-soft px-2.5 text-xs font-medium leading-none text-ink-muted">
+          <ClipboardList size={14} className="shrink-0" aria-hidden="true" />Plan
         </span>}
         submitLabel={pending && send.isError ? '查询或重试同一请求' : '发送'}
         stopActive={Boolean(current)}

@@ -362,3 +362,64 @@ def test_events_stream_sse_proxy(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert 'text/event-stream' in resp.headers['content-type']
     assert 'hello sse' in resp.text
+
+
+def test_direct_attachments_stage_and_persist(tmp_path, monkeypatch):
+    workspace = tmp_path / 'project'
+    workspace.mkdir()
+    artifacts = tmp_path / 'artifacts'
+    uploads = tmp_path / 'uploads'
+    uploads.mkdir()
+    local = workspace / 'inside.txt'
+    local.write_text('inside', encoding='utf-8')
+    uploaded = uploads / 'shot.png'
+    uploaded.write_bytes(b'\x89PNG\r\n\x1a\n')
+    outside = tmp_path / 'secret.txt'
+    outside.write_text('outside', encoding='utf-8')
+
+    monkeypatch.setattr(transfer._paths, 'ADMIN_DATA', tmp_path / 'data')
+    monkeypatch.setattr(transfer._paths, 'admin_uploads_dir', lambda: uploads)
+    monkeypatch.setattr(engine, 'project', lambda name: (workspace.resolve(), artifacts.resolve()))
+    posted = []
+    adapter = engine.AntiAdapter()
+    monkeypatch.setattr(adapter, 'request', lambda method, path, **kw: posted.append((method, path, kw['json'])))
+    monkeypatch.setattr(anti, 'AntiSessions', lambda: engine.AntiSessions(tmp_path / 'anti.sqlite', adapter))
+    app = FastAPI()
+    app.include_router(anti.router)
+    with TestClient(app) as client:
+        base = '/api/anti/sessions'
+        sid = client.post(base, json={'project': 'project'}).json()['id']
+        url = f'{base}/{sid}/runs'
+
+        assert client.post(url, json={'operation': 'empty', 'prompt': '   '}).status_code == 422
+        assert client.post(url, json={
+            'operation': 'spoof-upload',
+            'prompt': 'hi',
+            'attachments': [{'path': str(outside), 'name': 'secret.txt', 'source': 'managed_upload'}],
+        }).status_code == 422
+        assert not posted
+
+        body = {
+            'operation': 'att-only',
+            'prompt': '',
+            'attachments': [
+                {'path': str(local), 'name': 'inside.txt', 'source': 'local_ref', 'size': 6},
+                {'path': str(uploaded), 'name': 'shot.png', 'source': 'managed_upload', 'size': 8},
+            ],
+        }
+        response = client.post(url, json=body)
+        assert response.status_code == 200, response.text
+        run = response.json()
+        assert len(run['attachments']) == 2
+        staging = artifacts / 'references' / run['id']
+        staged_file, = staging.iterdir()
+        assert staged_file.name.endswith('shot.png')
+        assert staged_file.read_bytes() == b'\x89PNG\r\n\x1a\n'
+        _, _, payload = posted[0]
+        assert payload['add_dirs'] == [str(staging)]
+        assert local.as_posix() in payload['prompt']
+        assert staged_file.as_posix() in payload['prompt']
+        assert uploaded.as_posix() not in payload['prompt']
+
+        assert client.post(url, json=body | {'attachments': [body['attachments'][0]]}).status_code == 409
+        assert client.get(url).json()[0]['attachments'] == run['attachments']

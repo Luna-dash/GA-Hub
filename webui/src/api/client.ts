@@ -642,12 +642,14 @@ export type AntiQuotaPool = ApiComponents['schemas']['AntiQuotaPool']
 export type AgyProfile = ApiComponents['schemas']['AgyProfile']
 export type AgyProfileUsageSnapshot = ApiComponents['schemas']['AgyProfileUsageSnapshot']
 export type AgyProfiles = ApiComponents['schemas']['AgyProfiles']
+export type AntiAttachmentRef = ApiComponents['schemas']['AttachmentRef']
 export type AntiSubmission = {
   prompt: string
   operation: string
   model: string
   effort: string
   references?: { id: number; path: string }[]
+  attachments?: AntiAttachmentRef[]
 }
 
 async function antiHttp<T>(method: string, path: string, body?: unknown, init?: HttpOptions): Promise<T> {

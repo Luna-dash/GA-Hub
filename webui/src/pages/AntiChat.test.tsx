@@ -249,6 +249,10 @@ it.each(['success', 'auth error'] as const)('creates a project session, sends wi
     expect(transcript.parentElement?.contains(control('中转箱'))).toBe(true)
     expect(transcript.contains(control('中转箱'))).toBe(false)
     expect(control('发送').previousElementSibling?.textContent).toBe('Plan')
+    expect(control('发送').previousElementSibling?.className).toContain('h-10')
+    expect(control('发送').previousElementSibling?.className).toContain('mb-0.5')
+    expect(control('发送').className).toContain('mb-0.5')
+    expect(host.querySelector('[data-file-composer] label[aria-label="添加文件"]')).not.toBeNull()
     expect(transcript.classList.contains('pr-[76px]')).toBe(true)
     expect(transcript.classList.contains('overflow-y-auto')).toBe(true)
     expect(transcript.contains(host.querySelector('[data-file-composer]'))).toBe(false)
@@ -578,6 +582,90 @@ it('streams live events via EventSource when streamUrl is provided', async () =>
   } finally {
     await act(async () => root.unmount())
     cache.clear()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('uploads and submits attachments in AgyChat composer even without text', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const originalCreateObjectURL = URL.createObjectURL
+  const originalRevokeObjectURL = URL.revokeObjectURL
+  URL.createObjectURL = vi.fn(() => 'blob:shot')
+  URL.revokeObjectURL = vi.fn()
+  const session = { id: 'att-s1', title: '', project: 'demo', workspace: 'D:/demo' }
+  const runs: Record<string, unknown>[] = []
+  const posted: Record<string, unknown>[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
+    if (path === '/api/anti/status') return reply({ state: 'ready', agy_available: true, auth_state: 'authenticated' })
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
+    if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
+    if (path === '/api/anti/sessions') return reply([session])
+    if (path === `/api/anti/sessions/${session.id}/runs` && !init?.body) return reply([...runs])
+    if (path === '/api/upload') {
+      return reply({
+        file_id: 'img-1',
+        name: 'shot.png',
+        path: 'C:/uploads/img-1.png',
+        url: '/api/files/img-1.png',
+        mime: 'image/png',
+        size: 42,
+      })
+    }
+    if (path === `/api/anti/sessions/${session.id}/runs` && init?.body) {
+      const body = JSON.parse(String(init.body))
+      posted.push(body)
+      const run = { ...body, id: 'run-att', status: 'success', answer: '看到了截图' }
+      runs.push(run)
+      return reply(run)
+    }
+    throw new Error(`Unexpected request: ${path}`)
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await Promise.resolve(); await new Promise(r => setTimeout(r, 0)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await flush()
+
+    const fileInput = host.querySelector<HTMLInputElement>('[data-file-composer] input[type="file"]')!
+    expect(fileInput).toBeTruthy()
+    const file = new File(['png-data'], 'shot.png', { type: 'image/png' })
+    Object.defineProperty(fileInput, 'files', { value: [file], configurable: true })
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await flush()
+
+    expect(host.querySelector('[data-file-composer] [data-attachment-kind="image"] img')).toBeTruthy()
+    const sendBtn = host.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!
+    expect(sendBtn.disabled).toBe(false)
+
+    await act(async () => { sendBtn.click() })
+    await flush()
+
+    expect(posted).toHaveLength(1)
+    expect(posted[0]).toMatchObject({
+      prompt: '',
+      attachments: [{
+        path: 'C:/uploads/img-1.png',
+        name: 'shot.png',
+        source: 'managed_upload',
+        size: 42,
+      }],
+    })
+    expect(host.textContent).toContain('看到了截图')
+    expect(host.querySelector('[data-anti-chat-scroll] img[alt="shot.png"]')).toBeTruthy()
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
+    URL.createObjectURL = originalCreateObjectURL
+    URL.revokeObjectURL = originalRevokeObjectURL
     vi.unstubAllGlobals()
   }
 })

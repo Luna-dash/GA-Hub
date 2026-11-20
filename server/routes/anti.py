@@ -9,9 +9,10 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, ValidationError
+from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, ValidationError, model_validator
 
 from ..origin_policy import is_allowed_ui_origin
+from ..schemas import AttachmentRef
 from ..services import anti_profiles
 from ..services.anti_daemon import AntiAuthState, AntiDaemonState, daemon
 from ..services.anti_engine import DEFAULT_EFFORT, DEFAULT_MODEL, AntiAdapter, AntiError, AntiSessions
@@ -73,6 +74,7 @@ class AntiRunResp(BaseModel):
     answer: str | None = None
     error: str | None = None
     error_detail: str | None = None
+    attachments: list[AttachmentRef] = Field(default_factory=list)
 
 
 class AntiSessionCreate(BaseModel):
@@ -91,10 +93,17 @@ class AntiFileReference(BaseModel):
 
 class AntiRunCreate(BaseModel):
     operation: Annotated[str, StringConstraints(pattern=r"^[a-zA-Z0-9_-]{1,80}$")]
-    prompt: Annotated[str, StringConstraints(min_length=1, max_length=24000)]
+    prompt: Annotated[str, StringConstraints(max_length=24000)] = ""
     model: Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]*$")] = DEFAULT_MODEL
     effort: Literal["low", "medium", "high", "xhigh", "max"] = DEFAULT_EFFORT
     references: list[AntiFileReference] = Field(default_factory=list, max_length=8)
+    attachments: list[AttachmentRef] = Field(default_factory=list, max_length=256)
+
+    @model_validator(mode="after")
+    def _require_input(self) -> "AntiRunCreate":
+        if not (self.prompt.strip() or self.references or self.attachments):
+            raise ValueError("请输入内容或添加附件")
+        return self
 
 
 class AntiStep(BaseModel):
@@ -381,8 +390,17 @@ def runs(sid: str):
 def submit_run(sid: str, body: AntiRunCreate):
     try:
         with daemon.submission() as profile_id:
-            return _call("submit", sid, body.operation, body.prompt, body.model, body.effort,
-                         [(ref.id, ref.path) for ref in body.references], profile_id)
+            return _call(
+                "submit",
+                sid,
+                body.operation,
+                body.prompt,
+                body.model,
+                body.effort,
+                [(ref.id, ref.path) for ref in body.references],
+                profile_id,
+                [att.model_dump() for att in body.attachments],
+            )
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 

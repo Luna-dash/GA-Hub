@@ -8,7 +8,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { LoaderCircle } from 'lucide-react'
-import { CloseIconButton, Plus, RotateCw, SendHorizontal, Square, X } from './ActionIcons'
+import { CloseIconButton, Plus, RotateCw, SendHorizontal, X } from './ActionIcons'
 import { ScheduleClockFace, scheduleClockButtonClass } from './ScheduleClockFace'
 import { api } from '@/api/client'
 import { AttachmentImage, isImageAttachment } from './AttachmentImage'
@@ -450,7 +450,7 @@ export function ImagePasteInput({
             role="button"
             tabIndex={0}
             aria-label="添加文件"
-            className="flex h-10 w-10 shrink-0 self-center cursor-pointer items-center justify-center rounded-xl text-accent transition hover:bg-accent/10 hover:text-accent"
+            className="mb-0.5 flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl text-accent transition hover:bg-accent/10 hover:text-accent"
             title="添加文件"
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
@@ -572,14 +572,17 @@ export function ImagePasteInput({
           onClick={stopActive ? onStop : submit}
           disabled={disabled || (stopActive ? stopDisabled : submitDisabled || attachmentsBlocked || (!text.trim() && attachments.length === 0))}
           className={clsx(
-            'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
-            onSchedule && 'mb-0.5',
-            stopActive ? 'ga-solid-danger' : 'ga-solid-primary',
+            'mb-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
+            stopActive
+              ? 'group border border-status-danger/40 bg-status-danger/10 text-status-danger transition-colors hover:border-status-danger/65 hover:bg-status-danger/15 hover:text-status-danger-strong disabled:cursor-not-allowed disabled:border-[var(--c-disabled-line)] disabled:bg-[var(--c-disabled-bg)] disabled:text-[var(--c-disabled-text)] disabled:opacity-100'
+              : 'ga-solid-primary',
           )}
           aria-label={stopActive ? '停止' : (submitLabel ?? '发送')}
           title={stopActive ? '停止当前会话任务' : attachmentHint ?? submitLabel ?? '发送消息'}
         >{stopActive ? (
-          <Square className="h-4 w-4 fill-current" aria-hidden="true" />
+          <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] transition-transform group-hover:scale-105 group-disabled:scale-100" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" fill="currentColor" />
+          </svg>
         ) : (
           <SendHorizontal className="h-4 w-4" aria-hidden="true" />
         )}</button>

@@ -524,7 +524,7 @@ function LazyMarkdownFold({ title, content, cache }: { title: string; content: s
   )
 }
 
-function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
+export function UserAttachments({ atts }: { atts: PasteAttachment[] }) {
   return (
     <div className="flex flex-wrap gap-2 justify-start">
       {atts.map((a) => {
