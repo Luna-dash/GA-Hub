@@ -3,44 +3,97 @@
 @layer components {
   /* 纯着色/状态原语（不含尺寸内边距），避免实底白字在 disabled:opacity 下褪成浅底白字 */
   .ga-solid-primary {
-    @apply border border-transparent bg-accent text-white hover:bg-[var(--c-accent-hover)] transition-colors;
-    @apply disabled:bg-[var(--c-disabled-bg)] disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:shadow-none disabled:cursor-not-allowed;
+    @apply border border-transparent bg-accent text-white hover:bg-[var(--c-accent-hover)] transition-all active:scale-[0.98];
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 focus-visible:ring-offset-1 focus-visible:ring-offset-bg;
+    @apply disabled:bg-[var(--c-disabled-bg)] disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 disabled:cursor-not-allowed;
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.24), 0 1px 2px rgba(45, 34, 22, 0.14);
   }
 
   .ga-solid-danger {
-    @apply border border-transparent bg-status-danger text-white hover:bg-status-danger-strong transition-colors;
-    @apply disabled:bg-[var(--c-disabled-bg)] disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:shadow-none disabled:cursor-not-allowed;
+    @apply border border-transparent bg-status-danger text-white hover:bg-status-danger-strong transition-all active:scale-[0.98];
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/45 focus-visible:ring-offset-1 focus-visible:ring-offset-bg;
+    @apply disabled:bg-[var(--c-disabled-bg)] disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 disabled:cursor-not-allowed;
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.2), 0 1px 2px rgba(45, 34, 22, 0.14);
   }
 
+  /* 纸质次级按钮：浅米卡片底 + 暖棕细边 + 顶部微高光 */
   .ga-btn {
-    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-sm leading-5 transition;
-    @apply text-[#3A3020] hover:bg-bg-soft hover:border-accent disabled:bg-bg-soft disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:opacity-100 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-line/85 bg-bg-card/90 text-sm leading-5 text-[#3A3020] transition-all active:scale-[0.98];
+    @apply hover:bg-bg-soft/90 hover:border-accent/65 hover:text-ink;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-1 focus-visible:ring-offset-bg;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:shadow-none disabled:active:scale-100 disabled:opacity-100 disabled:cursor-not-allowed;
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.72), 0 1px 2px rgba(45, 34, 22, 0.06);
+  }
+
+  .ga-btn-sm {
+    @apply inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md border border-line/85 bg-bg-card/90 text-xs leading-4 text-[#3A3020] transition-all active:scale-[0.98];
+    @apply hover:bg-bg-soft/90 hover:border-accent/65 hover:text-ink;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-1 focus-visible:ring-offset-bg;
+    @apply disabled:bg-bg-soft/75 disabled:text-[var(--c-disabled-text)] disabled:border-[var(--c-disabled-line)] disabled:shadow-none disabled:active:scale-100 disabled:opacity-100 disabled:cursor-not-allowed;
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.72), 0 1px 2px rgba(45, 34, 22, 0.05);
   }
 
   .ga-btn-primary {
     @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-sm leading-5 ga-solid-primary;
   }
 
+  .ga-btn-sm-primary {
+    @apply inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md text-xs leading-4 ga-solid-primary;
+  }
+
   .ga-btn-danger {
     @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-sm leading-5 ga-solid-danger;
+  }
+
+  .ga-btn-sm-danger {
+    @apply inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md border border-status-danger-line/85 bg-bg-card/90 text-xs leading-4 text-status-danger transition-all active:scale-[0.98];
+    @apply hover:bg-status-danger-soft hover:border-status-danger/60;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/40;
+    @apply disabled:opacity-45 disabled:shadow-none disabled:active:scale-100 disabled:cursor-not-allowed;
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.65), 0 1px 2px rgba(45, 34, 22, 0.05);
+  }
+
+  .ga-btn-warning-sm {
+    @apply inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md border border-status-warning-line bg-bg-card text-xs leading-4 text-status-warning transition-all active:scale-[0.98];
+    @apply hover:bg-status-warning-soft hover:border-status-warning/60;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-warning/40;
+    @apply disabled:opacity-45 disabled:shadow-none disabled:cursor-not-allowed;
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.65), 0 1px 2px rgba(45, 34, 22, 0.05);
+  }
+
+  .ga-btn-ghost {
+    @apply inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md text-xs leading-4 text-ink-muted transition-colors active:scale-[0.98];
+    @apply hover:bg-bg-soft hover:text-ink;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
+    @apply disabled:opacity-35 disabled:active:scale-100 disabled:cursor-not-allowed;
+  }
+
+  .ga-btn-link {
+    @apply inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-accent transition-colors;
+    @apply hover:bg-accent/10 hover:text-[var(--c-accent-hover)];
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
+    @apply disabled:opacity-45 disabled:cursor-not-allowed;
   }
 
   /* 统一图标按钮体系：方圆框 / 轻幽灵 / 紧凑小号 / 角标移除 / 气泡动作标签 */
   .ga-btn-icon {
     @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line/80 bg-bg-card text-ink-muted shadow-sm transition-colors;
     @apply hover:border-accent/60 hover:bg-bg-soft hover:text-ink active:scale-[0.97];
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
     @apply disabled:opacity-40 disabled:cursor-not-allowed;
   }
 
   .ga-btn-icon-ghost {
     @apply inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors;
     @apply hover:bg-bg-soft hover:text-ink active:scale-[0.96];
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
     @apply disabled:opacity-40 disabled:cursor-not-allowed;
   }
 
   .ga-btn-icon-sm {
     @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-line/70 bg-bg-card text-ink-muted transition-colors;
     @apply hover:border-accent/60 hover:bg-bg-soft hover:text-ink;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
     @apply disabled:opacity-35 disabled:cursor-not-allowed;
   }
 
@@ -51,8 +104,47 @@
   }
 
   .ga-btn-chip {
-    @apply inline-flex items-center gap-1 rounded-md border border-line bg-bg-soft px-2.5 py-1 text-[11px] leading-none text-ink-muted transition-colors;
-    @apply hover:border-accent/50 hover:bg-bg-card hover:text-ink disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center gap-1 rounded-md border border-line/85 bg-bg-soft/90 px-2.5 py-1 text-[11px] leading-none text-ink-muted transition-all active:scale-[0.98];
+    @apply hover:border-accent/55 hover:bg-bg-card hover:text-ink disabled:opacity-50 disabled:cursor-not-allowed;
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.55);
+  }
+
+  /* 分段切换器：内凹纸槽 + 实色激活胶囊 */
+  .ga-segmented {
+    @apply inline-flex items-center gap-0.5 rounded-xl border border-line/85 bg-bg-soft/85 p-0.5;
+    box-shadow: inset 0 1px 2px rgba(45, 34, 22, 0.08);
+  }
+
+  .ga-segmented-btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-[9px] px-3 py-1 text-xs font-medium leading-5 text-ink-muted transition-all;
+    @apply hover:bg-bg-card/55 hover:text-ink;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40;
+    @apply disabled:opacity-45 disabled:cursor-not-allowed;
+  }
+
+  .ga-segmented-btn-active {
+    @apply bg-accent text-white font-medium hover:bg-accent hover:text-white;
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.24), 0 1px 2px rgba(45, 34, 22, 0.14);
+  }
+
+  /* 组合按钮条（如 重命名 | 删除、导出 MD | JSON） */
+  .ga-btn-group {
+    @apply inline-flex items-center overflow-hidden rounded-lg border border-line/85 bg-bg-card/90 divide-x divide-line/70;
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.72), 0 1px 2px rgba(45, 34, 22, 0.06);
+  }
+
+  .ga-btn-group-item {
+    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm leading-5 text-[#3A3020] transition-colors;
+    @apply hover:bg-bg-soft/90 hover:text-ink active:bg-bg-soft;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40;
+    @apply disabled:opacity-45 disabled:cursor-not-allowed;
+  }
+
+  .ga-btn-group-item-danger {
+    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm leading-5 text-status-danger transition-colors;
+    @apply hover:bg-status-danger-soft active:bg-status-danger-soft;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-status-danger/40;
+    @apply disabled:opacity-45 disabled:cursor-not-allowed;
   }
 
   .ga-badge {

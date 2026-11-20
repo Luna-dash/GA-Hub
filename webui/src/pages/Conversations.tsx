@@ -314,12 +314,14 @@ export default function Conversations() {
       title="历史对话"
       actions={
         <div className="flex items-center gap-2">
-          <div className="flex bg-bg-card border border-line rounded-lg overflow-hidden text-xs">
+          <div className="ga-segmented text-xs" role="group" aria-label="视图模式">
             {(['round', 'flat'] as ViewMode[]).map((m) => (
               <button
                 key={m}
+                type="button"
+                aria-pressed={viewMode === m}
                 onClick={() => setViewMode(m)}
-                className={`px-3 py-1.5 ${viewMode === m ? 'bg-accent text-white' : 'text-ink hover:bg-ink/5'}`}
+                className={`ga-segmented-btn ${viewMode === m ? 'ga-segmented-btn-active' : ''}`}
               >
                 {m === 'round' ? '轮次摘要' : '对话视图'}
               </button>
@@ -379,11 +381,12 @@ export default function Conversations() {
                   : 'sticky bottom-0 z-10 p-3 flex items-center justify-between border-t border-line/60 bg-bg-soft text-xs text-ink-muted'}
                 >
                   <button
+                    type="button"
                     aria-label="上一页"
                     title="上一页"
                     disabled={page === 0}
                     onClick={() => setPage(page - 1)}
-                    className="inline-flex items-center justify-center gap-1 px-2 py-1 disabled:opacity-30"
+                    className={collapsed ? 'ga-btn-icon-sm' : 'ga-btn-ghost px-2'}
                   >
                     {collapsed ? (
                       <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
@@ -396,11 +399,12 @@ export default function Conversations() {
                   </button>
                   <span title={`第 ${page + 1} 页`}>{collapsed ? page + 1 : `第 ${page + 1} 页`}</span>
                   <button
+                    type="button"
                     aria-label="下一页"
                     title="下一页"
                     disabled={(page + 1) * limit >= total}
                     onClick={() => setPage(page + 1)}
-                    className="inline-flex items-center justify-center gap-1 px-2 py-1 disabled:opacity-30"
+                    className={collapsed ? 'ga-btn-icon-sm' : 'ga-btn-ghost px-2'}
                   >
                     {collapsed ? (
                       <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
@@ -457,7 +461,7 @@ export default function Conversations() {
                     <button
                       type="button"
                       onClick={() => { void openSession(boundSessionId) }}
-                      className="ga-solid-primary inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm"
+                      className="ga-btn-primary shrink-0"
                       title="打开对应会话继续对话"
                     >
                       <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
@@ -468,7 +472,7 @@ export default function Conversations() {
                       type="button"
                       onClick={() => { void handleImport(detail.id) }}
                       disabled={importing === detail.id}
-                      className="ga-solid-primary inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm"
+                      className="ga-btn-primary shrink-0"
                       title="导入为新会话继续对话"
                     >
                       <FolderDown className="h-3.5 w-3.5" aria-hidden="true" />
@@ -476,11 +480,11 @@ export default function Conversations() {
                     </button>
                   )}
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-                    <div className="flex overflow-hidden rounded-lg border border-line">
+                    <div className="ga-btn-group">
                       <button
                         type="button"
                         onClick={() => handleRename(detail.id, detail.title || '')}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-ink hover:bg-ink/5"
+                        className="ga-btn-group-item"
                       >
                         <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                         <span>重命名</span>
@@ -488,17 +492,17 @@ export default function Conversations() {
                       <button
                         type="button"
                         onClick={() => handleDelete(detail.id, detail.title || '')}
-                        className="inline-flex items-center gap-1.5 border-l border-line px-3 py-1.5 text-sm text-status-danger hover:bg-status-danger-soft"
+                        className="ga-btn-group-item-danger"
                       >
                         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                         <span>删除</span>
                       </button>
                     </div>
-                    <div className="flex overflow-hidden rounded-lg border border-line">
+                    <div className="ga-btn-group">
                       <button
                         type="button"
                         onClick={() => handleExport(detail.id, 'md')}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-ink hover:bg-ink/5"
+                        className="ga-btn-group-item"
                       >
                         <FileText className="h-3.5 w-3.5" aria-hidden="true" />
                         <span>导出 MD</span>
@@ -506,7 +510,7 @@ export default function Conversations() {
                       <button
                         type="button"
                         onClick={() => handleExport(detail.id, 'json')}
-                        className="inline-flex items-center gap-1.5 border-l border-line px-3 py-1.5 text-sm text-ink hover:bg-ink/5"
+                        className="ga-btn-group-item"
                       >
                         <FileJson className="h-3.5 w-3.5" aria-hidden="true" />
                         <span>JSON</span>

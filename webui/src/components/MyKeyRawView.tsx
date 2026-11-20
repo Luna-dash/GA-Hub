@@ -85,12 +85,12 @@ export function RawView({ data, onWrite, onDirtyChange }: {
           {dirty && <span className="text-status-warning">(未保存)</span>}
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setShowBackups(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-ink hover:bg-ink/5"><History className="h-3.5 w-3.5" aria-hidden="true" /><span>备份历史</span></button>
-          <button onClick={() => { setText(data.raw); setBaseline(data.raw); setRemoteChanged(false) }} disabled={!dirty && !remoteChanged}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-ink hover:bg-ink/5 disabled:opacity-40"><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /><span>还原</span></button>
-          <button onClick={save} disabled={!dirty || saving}
-            className="ga-solid-primary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg">
+          <button type="button" onClick={() => setShowBackups(true)}
+            className="ga-btn-sm"><History className="h-3.5 w-3.5" aria-hidden="true" /><span>备份历史</span></button>
+          <button type="button" onClick={() => { setText(data.raw); setBaseline(data.raw); setRemoteChanged(false) }} disabled={!dirty && !remoteChanged}
+            className="ga-btn-sm"><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /><span>还原</span></button>
+          <button type="button" onClick={save} disabled={!dirty || saving}
+            className="ga-btn-sm-primary">
             <Save className="h-3.5 w-3.5" aria-hidden="true" />
             <span>{saving ? '保存中…' : '保存并应用'}</span>
           </button>
@@ -103,9 +103,10 @@ export function RawView({ data, onWrite, onDirtyChange }: {
           <button
             type="button"
             onClick={() => { setText(data.raw); setBaseline(data.raw); setRemoteChanged(false) }}
-            className="rounded border border-status-warning-line px-2 py-1 text-status-warning hover:bg-bg-card"
+            className="ga-btn-warning-sm"
           >
-            采用最新原文
+            <RotateCcw className="h-3 w-3" aria-hidden="true" />
+            <span>采用最新原文</span>
           </button>
         </div>
       )}

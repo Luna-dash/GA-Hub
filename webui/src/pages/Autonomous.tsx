@@ -14,7 +14,7 @@ import { errorMessageFromError } from '@/utils/sessionUi'
 import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 import { CronCardLine, CronPreview } from '@/components/CronPreview'
-import { CloseIconButton, Plus, RefreshIcon } from '@/components/ActionIcons'
+import { CloseIconButton, FileText, Pencil, Play, Plus, Power, RefreshIcon, Save, Trash2 } from '@/components/ActionIcons'
 
 export default function Autonomous() {
   const qc = useQueryClient()
@@ -114,7 +114,10 @@ export default function Autonomous() {
                     <td className="p-2.5">
                       {r.report_paths?.length
                         ? r.report_paths.map((p) => p.split('/').pop()).map((n) => (
-                          <button key={n} onClick={() => setActiveReport(n!)} className="text-accent text-xs hover:underline mr-2">{n}</button>
+                          <button key={n} type="button" onClick={() => setActiveReport(n!)} className="ga-btn-link mr-2">
+                            <FileText className="h-3 w-3 shrink-0" aria-hidden="true" />
+                            <span>{n}</span>
+                          </button>
                         ))
                         : <span className="text-ink-faint text-xs">—</span>}
                     </td>
@@ -133,10 +136,12 @@ export default function Autonomous() {
             {reports.map((r) => (
               <button
                 key={r.name}
+                type="button"
                 onClick={() => setActiveReport(r.name)}
-                className={`px-3 py-1.5 text-xs rounded-lg border ${activeReport === r.name ? 'border-accent text-accent' : 'border-line text-ink hover:bg-ink/5'}`}
+                className={activeReport === r.name ? 'ga-btn-sm-primary' : 'ga-btn-sm'}
               >
-                {r.name}
+                <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span>{r.name}</span>
               </button>
             ))}
             {reports.length === 0 && <div className="rounded-xl border border-dashed border-line bg-bg-card/50 p-6 text-center text-ink-faint text-sm">尚无自主进化报告，任务触发保存后会显示在此。</div>}
@@ -199,10 +204,22 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
       </div>
       <div className="text-xs text-ink-faint">已触发 {s.fire_count} 次 · 上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
       <div className="flex gap-2 mt-3 flex-wrap">
-        <button onClick={onFire} className="ga-solid-primary text-xs px-2.5 py-1 rounded">立即触发</button>
-        <button onClick={toggle} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5">{s.enabled ? '禁用' : '启用'}</button>
-        <button onClick={onEdit} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5">编辑</button>
-        <button onClick={remove} className="text-xs px-2.5 py-1 rounded border border-status-danger-line text-status-danger hover:bg-status-danger-soft">删除</button>
+        <button type="button" onClick={onFire} className="ga-btn-sm-primary">
+          <Play className="h-3 w-3" aria-hidden="true" />
+          <span>立即触发</span>
+        </button>
+        <button type="button" onClick={toggle} className="ga-btn-sm">
+          <Power className="h-3 w-3" aria-hidden="true" />
+          <span>{s.enabled ? '禁用' : '启用'}</span>
+        </button>
+        <button type="button" onClick={onEdit} className="ga-btn-sm">
+          <Pencil className="h-3 w-3" aria-hidden="true" />
+          <span>编辑</span>
+        </button>
+        <button type="button" onClick={remove} className="ga-btn-sm-danger">
+          <Trash2 className="h-3 w-3" aria-hidden="true" />
+          <span>删除</span>
+        </button>
       </div>
     </div>
   )
@@ -302,8 +319,11 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
           </label>
         </Field>
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-ink disabled:opacity-50">取消</button>
-          <button onClick={save} disabled={saving} className="ga-solid-primary px-3 py-1.5 rounded-lg">{saving ? '保存中…' : '保存'}</button>
+          <button type="button" onClick={onClose} disabled={saving} className="ga-btn">取消</button>
+          <button type="button" onClick={save} disabled={saving} className="ga-btn-primary">
+            <Save className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>{saving ? '保存中…' : '保存'}</span>
+          </button>
         </div>
     </ModalOverlay>
   )

@@ -59,7 +59,8 @@ describe('Memory tab deep links', () => {
     return Array.from(host.querySelectorAll('button')).find((button) => button.textContent === label)!
   }
   function expectSelected(label: string) {
-    expect(tab(label).className).toContain('bg-accent ')
+    expect(tab(label).getAttribute('aria-selected')).toBe('true')
+    expect(tab(label).className).toContain('ga-segmented-btn-active')
   }
   async function navigate(name: string) {
     await act(async () => (host.querySelector(`[data-nav="${name}"]`) as HTMLButtonElement).click())

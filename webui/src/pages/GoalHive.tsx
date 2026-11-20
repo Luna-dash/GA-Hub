@@ -217,7 +217,7 @@ export default function GoalHive() {
         <section className="flex flex-col min-h-0 overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
           <form onSubmit={submit} className="flex flex-1 min-h-0 flex-col">
             <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
-              <div className="inline-flex rounded-xl border border-line bg-bg-soft p-1" role="group" aria-label="Goal Hive 模式">
+              <div className="ga-segmented" role="group" aria-label="Goal Hive 模式">
                 {(['goal', 'hive'] as GoalMode[]).map((item) => (
                   <button
                     key={item}
@@ -225,8 +225,8 @@ export default function GoalHive() {
                     onClick={() => setMode(item)}
                     aria-pressed={mode === item}
                     className={clsx(
-                      'rounded-lg px-4 py-1 text-sm transition',
-                      mode === item ? 'ga-solid-primary shadow-sm' : 'text-ink-muted hover:text-ink',
+                      'ga-segmented-btn px-4 text-sm',
+                      mode === item && 'ga-segmented-btn-active',
                     )}
                   >
                     {item.toUpperCase()}
@@ -300,7 +300,7 @@ export default function GoalHive() {
               <div className="text-sm font-medium text-ink">执行输出</div>
               <div className="text-xs text-ink-faint">实时输出</div>
             </div>
-            <button type="button" onClick={() => { void reset() }} className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-line text-ink-muted hover:text-ink">
+            <button type="button" onClick={() => { void reset() }} className="ga-btn-sm">
               <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
               <span>清空历史</span>
             </button>
@@ -355,7 +355,7 @@ export default function GoalHive() {
           </div>
           <div className="flex justify-end gap-2 border-t border-line/70 px-5 py-4">
             <button type="button" className="ga-btn" onClick={closeSubagentSettings}>取消</button>
-            <button type="button" className="ga-btn ga-btn-primary" onClick={saveSubagentSettings}>保存</button>
+            <button type="button" className="ga-btn-primary" onClick={saveSubagentSettings}>保存</button>
           </div>
         </ModalOverlay>
       )}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { RefreshIcon, Trash2, X } from '@/components/ActionIcons'
 import { UserRound } from 'lucide-react'
 import clsx from 'clsx'
 import type { components } from '@/api/generated/schema'
@@ -201,7 +202,7 @@ export function AntiAgyProfiles({
     : action.variables?.kind === 'delete' ? '正在删除账号…'
     : action.variables?.kind === 'check-usage' ? '正在刷新当前账号额度…'
     : '正在添加账号…'
-  const secondary = 'ga-btn shrink-0'
+  const secondary = 'ga-btn-sm shrink-0'
   const daemonError = daemon?.start.error ?? daemon?.stop.error ?? daemon?.restart.error
   const nonWindows = typeof navigator !== 'undefined' && /mac|linux|x11/i.test(navigator.platform)
   const editButton = (profile: Profile) => profile.id !== 'default' && (
@@ -260,7 +261,7 @@ export function AntiAgyProfiles({
           <h2 id="agy-accounts-title" className="text-base font-semibold">Agy CLI 账号</h2>
           <p className="mt-1 text-sm text-ink-muted">「系统默认」沿用当前系统的 agy 登录。其他账号各自隔离凭据与历史，切换只影响 GA-Hub。</p>
         </div>
-        <button type="button" className={secondary} onClick={close} disabled={action.isPending}>关闭</button>
+        <button type="button" className={secondary} onClick={close} disabled={action.isPending}><X className="h-3.5 w-3.5" aria-hidden="true" /><span>关闭</span></button>
       </div>
       {daemon && (
         <div className="space-y-1.5 rounded-lg border border-line/70 bg-bg-soft px-3 py-2 text-xs">
@@ -303,8 +304,9 @@ export function AntiAgyProfiles({
             <div className="border-t border-line/60 pt-2">
               <div className="mb-1 flex items-center justify-between text-[11px] text-ink-muted">
                 <span className="truncate" title={logs.data?.log_path}>最近 AntiCLI 网关日志</span>
-                <button type="button" className="text-accent hover:underline" disabled={logs.isFetching} onClick={() => void logs.refetch()}>
-                  {logs.isFetching ? '刷新中…' : '刷新'}
+                <button type="button" className="ga-btn-link" disabled={logs.isFetching} onClick={() => void logs.refetch()}>
+                  <RefreshIcon spinning={logs.isFetching} size={11} />
+                  <span>{logs.isFetching ? '刷新中…' : '刷新'}</span>
                 </button>
               </div>
               {logs.error ? (
@@ -393,15 +395,18 @@ export function AntiAgyProfiles({
                         onClick={() => setConfirmDeleteId(null)}>取消</button>
                     </div>
                   ) : (
-                    <button type="button" className={secondary} disabled={disabled}
-                      aria-label={`删除账号：${profile.name}`} onClick={() => setConfirmDeleteId(profile.id)}>删除</button>
+                    <button type="button" className="ga-btn-sm-danger shrink-0" disabled={disabled}
+                      aria-label={`删除账号：${profile.name}`} onClick={() => setConfirmDeleteId(profile.id)}>
+                      <Trash2 className="h-3 w-3" aria-hidden="true" />
+                      <span>删除</span>
+                    </button>
                   )
                 )}
                 <button type="button" className={secondary} disabled={disabled || nonWindows}
                   title={nonWindows ? '仅支持在 Windows 上直接唤起官方登录窗口' : undefined}
                   aria-label={`官方登录：${profile.name}`}
                   onClick={() => action.mutate({ kind: 'login', profile })}>官方登录</button>
-                <button type="button" className="ga-btn-primary shrink-0" disabled={disabled} aria-label={`切换到${profile.name}`}
+                <button type="button" className="ga-btn-sm-primary shrink-0" disabled={disabled} aria-label={`切换到${profile.name}`}
                   onClick={() => action.mutate({ kind: 'switch', profile })}>切换</button>
               </li>)}
             </ul>}

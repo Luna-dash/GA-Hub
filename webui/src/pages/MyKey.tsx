@@ -43,6 +43,7 @@ import {
   Pencil,
   Play,
   RefreshIcon,
+  Save,
   Trash2,
   Upload,
 } from '@/components/ActionIcons'
@@ -195,12 +196,15 @@ export default function MyKey() {
       title="LLM管理"
       actions={
         <div className="flex items-center gap-2 text-sm">
-          <div className="flex bg-bg-card border border-line rounded-lg overflow-hidden text-xs">
+          <div className="ga-segmented text-xs" role="tablist" aria-label="编辑模式">
             {(['structured', 'raw'] as Tab[]).map((t) => (
               <button
                 key={t}
+                type="button"
+                role="tab"
+                aria-selected={tab === t}
                 onClick={() => { void switchTab(t) }}
-                className={`px-3 py-1.5 leading-5 ${tab === t ? 'bg-accent text-white' : 'text-ink hover:bg-ink/5'}`}
+                className={`ga-segmented-btn ${tab === t ? 'ga-segmented-btn-active' : ''}`}
               >
                 {t === 'structured' ? '结构化' : '原始'}
               </button>
@@ -597,8 +601,7 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
                   placeholder={mode === 'edit' ? `当前: ${s.fields.apikey || '—'}` : 'sk-...'}
                   autoComplete="off"
                 />
-                <button onClick={() => setShowKey(!showKey)} type="button"
-                  className="inline-flex items-center gap-1.5 px-3 rounded-lg border border-line text-ink hover:bg-ink/5 text-sm shrink-0">
+                <button onClick={() => setShowKey(!showKey)} type="button" className="ga-btn shrink-0">
                   {showKey ? (
                     <>
                       <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
@@ -705,9 +708,10 @@ function SessionDialog({ mode, sourceVar, session, allSessions, onClose, onSaved
         {err && <div className="mt-3 text-xs text-status-danger bg-status-danger-soft border border-status-danger-line rounded p-2 break-words">{err}</div>}
 
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-ink disabled:opacity-40">取消</button>
-          <button onClick={save} disabled={saving} className="ga-solid-primary px-4 py-1.5 rounded-lg">
-            {saving ? '保存中…' : '保存并应用'}
+          <button type="button" onClick={onClose} disabled={saving} className="ga-btn">取消</button>
+          <button type="button" onClick={save} disabled={saving} className="ga-btn-primary">
+            <Save className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>{saving ? '保存中…' : '保存并应用'}</span>
           </button>
         </div>
     </ModalOverlay>
@@ -739,10 +743,10 @@ function MixinFields({ s, setS, allSessions }: { s: MyKeySession; setS: (v: MyKe
               <input value={n} onChange={(e) => {
                 const next = [...llmNos]; next[i] = e.target.value; setNos(next)
               }} list="mixin-name-candidates" className={inp + ' font-mono flex-1'} />
-              <button onClick={() => move(i, -1)} disabled={i === 0} aria-label="上移" title="上移"
-                className="inline-flex items-center justify-center px-2 py-1.5 text-xs rounded border border-line text-ink hover:bg-ink/5 disabled:opacity-30"><ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /></button>
-              <button onClick={() => move(i, 1)} disabled={i === llmNos.length - 1} aria-label="下移" title="下移"
-                className="inline-flex items-center justify-center px-2 py-1.5 text-xs rounded border border-line text-ink hover:bg-ink/5 disabled:opacity-30"><ArrowDown className="h-3.5 w-3.5" aria-hidden="true" /></button>
+              <button type="button" onClick={() => move(i, -1)} disabled={i === 0} aria-label="上移" title="上移"
+                className="ga-btn-icon"><ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /></button>
+              <button type="button" onClick={() => move(i, 1)} disabled={i === llmNos.length - 1} aria-label="下移" title="下移"
+                className="ga-btn-icon"><ArrowDown className="h-3.5 w-3.5" aria-hidden="true" /></button>
               <CloseIconButton
                 label={`移除 ${n || `第 ${i + 1} 项`}`}
                 variant="compact"
@@ -762,7 +766,7 @@ function MixinFields({ s, setS, allSessions }: { s: MyKeySession; setS: (v: MyKe
                     if (llmNos.includes(name)) return
                     setNos([...llmNos, name])
                   }}
-                  className="px-2 py-0.5 text-[11px] rounded border border-line text-ink hover:bg-ink/5"
+                  className="ga-btn-chip"
                   title="点击加入 llm_nos"
                 >
                   + {name}
@@ -839,14 +843,15 @@ function GlobalsSection({ globals_, onWrite, rawText, onDirtyChange }: {
             <input value={proxy} onChange={(e) => setProxy(e.target.value)}
               className={inp + ' font-mono'} placeholder="http://127.0.0.1:7890（留空禁用）" />
           </div>
-          <button onClick={saveProxy} disabled={!dirty || saving || conflict}
-            className="ga-solid-primary px-3 py-1.5 rounded-lg text-sm">
-            {saving ? '保存中…' : '保存 proxy'}
+          <button type="button" onClick={saveProxy} disabled={!dirty || saving || conflict}
+            className="ga-btn-primary">
+            <Save className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>{saving ? '保存中…' : '保存 proxy'}</span>
           </button>
         </div>
-        {conflict && <p role="alert" className="text-sm text-status-warning">
-          proxy 已被外部更新；草稿已保留。
-          <button className="ml-2 underline" onClick={() => { setProxy(incoming); setBaseline(incoming) }}>使用最新值</button>
+        {conflict && <p role="alert" className="text-sm text-status-warning flex items-center gap-2 flex-wrap">
+          <span>proxy 已被外部更新；草稿已保留。</span>
+          <button type="button" className="ga-btn-warning-sm" onClick={() => { setProxy(incoming); setBaseline(incoming) }}>使用最新值</button>
         </p>}
         {otherGlobals.length > 0 && (
           <details>

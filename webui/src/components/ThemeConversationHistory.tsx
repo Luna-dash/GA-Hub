@@ -37,7 +37,7 @@ function SectionConclusion({ answers }: { answers: ChatMsg[] }) {
   return content ? <MessageContent content={content} format="markdown" markdownMode="chat" /> : <p className="text-sm text-ink-faint">{pending ? '正在执行，尚无结论' : '本节未记录结论'}</p>
 }
 
-const navigation = 'inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs text-ink-muted transition-colors hover:bg-bg-soft hover:text-ink disabled:cursor-default disabled:opacity-30'
+const navigation = 'ga-btn-ghost disabled:cursor-default disabled:opacity-30'
 
 /** Read-only archive projection, independent of the active chat session. */
 export function ThemeConversationHistory({ sessionId, enabled }: { sessionId: string; enabled: boolean }) {

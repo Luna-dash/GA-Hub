@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { RefreshIcon } from '@/components/ActionIcons'
 import { FolderOpen, Trash2, X } from 'lucide-react'
 import fileTransferSymbol from '@/assets/file-transfer-symbol.png'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
@@ -113,15 +114,15 @@ export function FileTransferBox({ canInsert, onInsert }: FileTransferBoxProps) {
           <button type="button" title="关闭" aria-label="关闭中转箱" className="ga-btn-icon" onClick={close}><X size={16} aria-hidden="true" /></button>
         </div>
       </header>
-      {confirmClear && <div className="mb-2 flex items-center gap-2 rounded-lg border border-line p-2 text-xs">
+      {confirmClear && <div className="mb-2 flex items-center gap-2 rounded-lg border border-line bg-bg-soft/60 p-2 text-xs">
         <span className="flex-1">清空中转箱列表？（仅移除索引，不删除原文件）</span>
-        <button type="button" className="text-ink-muted" onClick={() => setConfirmClear(false)} disabled={clear.isPending}>取消</button>
-        <button type="button" className="text-accent" onClick={() => clear.mutate()} disabled={clear.isPending}>确认清空</button>
+        <button type="button" className="ga-btn-sm" onClick={() => setConfirmClear(false)} disabled={clear.isPending}>取消</button>
+        <button type="button" className="ga-btn-sm-danger" onClick={() => clear.mutate()} disabled={clear.isPending}>确认清空</button>
       </div>}
       {!canInsert && <p className="mb-2 text-xs text-ink-muted">请选择会话，或等待当前请求结束后再添加。</p>}
       {clear.isError && <p role="alert" className="mb-2 text-xs text-ink-muted">清空失败，请重试。</p>}
       {files.isPending ? <p className="py-2 text-ink-muted">正在加载…</p>
-        : files.isError && !files.data ? <button type="button" className="py-2 text-accent" onClick={() => void files.refetch()}>加载失败，点击重试</button>
+        : files.isError && !files.data ? <button type="button" className="ga-btn-link py-2" onClick={() => void files.refetch()}><RefreshIcon size={12} /><span>加载失败，点击重试</span></button>
         : !files.data?.length ? <p className="py-2 text-ink-muted">暂无放入中转箱的文件</p>
         : <div className="max-h-[min(24rem,55vh)] space-y-2.5 overflow-y-auto pr-0.5">
           {projectGroups.map(([projectName, groupFiles]) => (

@@ -30,7 +30,7 @@ import {
   Square,
 } from '@/components/ActionIcons'
 
-const button = 'inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-bg-soft disabled:opacity-40'
+const button = 'ga-btn-sm'
 const field = 'w-full rounded-lg border border-line bg-bg-soft p-2 text-sm'
 const activeStatuses = ['starting', 'running', 'aborting', 'recovering']
 const outcomes: Record<string, string> = { completed: '执行完成', failed: '执行失败', cancelled: '已取消', interrupted: '运行中断，结果未确认', waiting: '等待回复', waiting_user: '等待回复' }
@@ -231,9 +231,9 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
       </section>
       {adjust && <label className="mt-3 flex items-center gap-2 text-xs text-ink-faint"><input type="checkbox" checked={saveDefault} disabled={pending} onChange={e => setSaveDefault(e.target.checked)} />保存为默认指令</label>}
       {error && <p role="alert" className="mt-2 text-xs text-status-danger">{error}</p>}
-      <div className="mt-4 flex justify-end gap-2"><button className={button} disabled={pending} onClick={() => { setEditDraft(null); setAdjust(false); setRetryRunId(null) }}>取消</button>
-        {!retryRunId && <button className={button} disabled={pending} onClick={() => { setDraft((editDraft ?? draft).trim()); setEditDraft(null); setAdjust(false) }}>保存</button>}
-        {adjust && <button className={`${button} border-transparent ga-solid-primary`} disabled={disabled || !(editDraft ?? draft).trim()} onClick={() => void execute((editDraft ?? draft).trim(), true, true)}>{retryRunId ? '确认重试' : '确认执行'}</button>}
+      <div className="mt-4 flex justify-end gap-2"><button type="button" className="ga-btn" disabled={pending} onClick={() => { setEditDraft(null); setAdjust(false); setRetryRunId(null) }}>取消</button>
+        {!retryRunId && <button type="button" className="ga-btn" disabled={pending} onClick={() => { setDraft((editDraft ?? draft).trim()); setEditDraft(null); setAdjust(false) }}>保存</button>}
+        {adjust && <button type="button" className="ga-btn-primary" disabled={disabled || !(editDraft ?? draft).trim()} onClick={() => void execute((editDraft ?? draft).trim(), true, true)}>{retryRunId ? '确认重试' : '确认执行'}</button>}
       </div>
     </ModalOverlay>}
 
@@ -257,7 +257,7 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
         <div className="rounded-xl bg-bg-soft p-3">
           <p aria-label={`本次启动提示词：${title}`} className={`line-clamp-6 whitespace-pre-wrap break-words text-sm leading-7 ${draft.trim() ? '' : 'text-ink-faint'}`} title={draft}>{draft || '尚未填写提示词'}</p>
           <div className="mt-3 flex items-center justify-between gap-2 border-t border-line/60 pt-2">
-            <button className="text-xs text-ink-faint transition-colors hover:text-accent disabled:opacity-40" disabled={pending || active} title="调整提示词并立即运行" onClick={() => setAdjust(true)}>本次调整</button>
+            <button type="button" className="ga-btn-link" disabled={pending || active} title="调整提示词并立即运行" onClick={() => setAdjust(true)}>本次调整</button>
             <button type="button" aria-label={`编辑本次提示词：${title}`} title="编辑提示词" disabled={pending || active} className="flex h-6 w-6 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => setEditDraft(draft)}><Pencil className="h-3.5 w-3.5" aria-hidden="true" /></button>
           </div>
         </div>
@@ -316,7 +316,7 @@ export default function ThemeTasks() {
     })
     return () => { offRuntime(); offState() }
   }, [client])
-  return <PageShell title="主题任务" actions={<button className={`${button} border-transparent ga-solid-primary`} onClick={() => setPicking(true)}><Plus className="h-3.5 w-3.5" aria-hidden="true" /><span>从会话转入</span></button>}>
+  return <PageShell title="主题任务" actions={<button type="button" className="ga-btn-sm-primary" onClick={() => setPicking(true)}><Plus className="h-3.5 w-3.5" aria-hidden="true" /><span>从会话转入</span></button>}>
     <div className="mx-auto max-w-7xl p-4 sm:p-6">
       {sessionsQuery.isError && <p role="alert" className="text-status-danger">加载失败。<button className={button} onClick={() => void sessionsQuery.refetch()}><RefreshIcon size={12} /><span>重试</span></button></p>}
       {sessionsQuery.isLoading ? <p>正在加载…</p> : tasks.length === 0 ? <div className="rounded-xl border border-dashed border-line p-8 text-center"><p className="mb-4 text-sm text-ink-faint">暂无主题任务</p><button className={button} onClick={() => setPicking(true)}>选择已有会话</button></div> : <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{orderedTasks.map(s => <ThemeCard key={s.id} expanded={expandedId === s.id} onExpandedChange={setExpandedId} session={s} onSettings={() => setSetting(s)} refresh={refresh} autoOpen={openId === s.id} onAutoOpened={clearOpen} />)}</div>}

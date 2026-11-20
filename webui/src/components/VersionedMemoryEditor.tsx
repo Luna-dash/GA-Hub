@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MemoryWriteRequest, MemoryWriteResponse } from '@/api/types'
 import { MarkdownEditor } from './MarkdownEditor'
+import { RotateCcw, Save } from './ActionIcons'
 
 export interface MemorySnapshot {
   content: string
@@ -89,17 +90,25 @@ export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSav
             <>
               <span role="alert" className="text-xs text-status-warning">磁盘版本已变化，草稿未覆盖</span>
               <button
+                type="button"
                 disabled={reloading}
                 onClick={reload}
-                className="px-2.5 py-1.5 rounded-lg border border-status-warning-line bg-status-warning-soft text-status-warning text-xs hover:brightness-95 disabled:opacity-40"
-              >{reloading ? '重载中…' : '放弃草稿并重载'}</button>
+                className="ga-btn-warning-sm"
+              >
+                <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                <span>{reloading ? '重载中…' : '放弃草稿并重载'}</span>
+              </button>
             </>
           )}
           <button
+            type="button"
             disabled={!dirty || saving}
             onClick={save}
-            className="ga-solid-primary px-3 py-1.5 rounded-lg text-sm"
-          >{saving ? '保存中…' : dirty ? '保存' : '已保存'}</button>
+            className="ga-btn-primary"
+          >
+            <Save className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>{saving ? '保存中…' : dirty ? '保存' : '已保存'}</span>
+          </button>
         </div>
       </div>
       <div className="flex-1 min-h-0">

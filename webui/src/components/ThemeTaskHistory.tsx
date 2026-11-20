@@ -8,7 +8,7 @@ import { errorMessageFromError } from '@/utils/sessionUi'
 import { ThemeConversationHistory } from './ThemeConversationHistory'
 import { ArrowDown, ArrowRight, RefreshIcon, StatusIconBadge } from './ActionIcons'
 
-const action = 'inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-bg-soft disabled:opacity-40'
+const action = 'ga-btn-sm'
 
 /** Read-only session projection. Never activates or mutates the global chat store. */
 export type ThemeTaskTab = 'report' | 'current' | 'history'
@@ -172,7 +172,7 @@ function SessionTimeline({ sessionId, runId, current, enabled, active, onShowRep
         : null)}
     </div>
     {current && visible.length > 0 && !active && !visible.some(message => message.streaming) && <div className="border-t border-line px-4 py-3 text-sm">
-      <span className="mr-3 text-ink-faint">结果</span><button className="inline-flex items-center gap-1 text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={onShowReport}><span>查看结论</span><ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></button>
+      <span className="mr-3 text-ink-faint">结果</span><button type="button" className="ga-btn-link" onClick={onShowReport}><span>查看结论</span><ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></button>
     </div>}
     {unseen && <div className="border-t border-line p-2 text-center"><button className={action} onClick={() => {
       follow.current = true; setUnseen(false)

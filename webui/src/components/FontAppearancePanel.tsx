@@ -147,7 +147,7 @@ export function FontAppearancePanel() {
             type="button"
             disabled={importing || Boolean(downloading)}
             onClick={() => fileRef.current?.click()}
-            className="ga-btn px-3 py-1.5 text-xs"
+            className="ga-btn-sm"
           >
             <Upload className="h-3.5 w-3.5" aria-hidden="true" />
             <span>{importing ? '导入中…' : '导入本地字体…'}</span>
@@ -165,7 +165,7 @@ export function FontAppearancePanel() {
             type="button"
             disabled={busyId !== null}
             onClick={() => { void handleActivate('system') }}
-            className="ga-btn px-2.5 py-1 text-xs"
+            className="ga-btn-sm"
           >
             切回系统默认
           </button>
@@ -179,7 +179,7 @@ export function FontAppearancePanel() {
             克制模式避免系统雅黑直跳粗体时横向胀大；扩展字重包下正文以 600 SemiBold 呈现。
           </div>
         </div>
-        <div className="inline-flex rounded-lg border border-line bg-bg-soft p-0.5 text-xs" role="group" aria-label="加粗策略">
+        <div className="ga-segmented text-xs" role="group" aria-label="加粗策略">
           {([
             ['restrained', '克制防膨胀（推荐）'],
             ['standard', '原生标准粗体'],
@@ -190,10 +190,8 @@ export function FontAppearancePanel() {
               disabled={busyId !== null}
               aria-pressed={boldStyle === value}
               onClick={() => { void handleBoldStyle(value) }}
-              className={`rounded-md px-3 py-1.5 transition-colors ${
-                boldStyle === value
-                  ? 'ga-solid-primary'
-                  : 'text-ink-muted hover:text-ink'
+              className={`ga-segmented-btn ${
+                boldStyle === value ? 'ga-segmented-btn-active' : ''
               }`}
             >
               {label}
@@ -266,7 +264,7 @@ export function FontAppearancePanel() {
                       type="button"
                       disabled={anyDownloading || busyId !== null}
                       onClick={() => { void handleDownload(pack.id) }}
-                      className="ga-solid-primary inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs"
+                      className="ga-btn-sm-primary"
                     >
                       <Download className="h-3.5 w-3.5" aria-hidden="true" />
                       <span>{isDownloadingThis ? '下载中…' : '下载并启用'}</span>
@@ -278,7 +276,7 @@ export function FontAppearancePanel() {
                           type="button"
                           disabled={anyDownloading || busyId !== null}
                           onClick={() => { void handleActivate(pack.id) }}
-                          className="ga-solid-primary rounded-md px-3 py-1.5 text-xs"
+                          className="ga-btn-sm-primary"
                         >
                           启用
                         </button>
@@ -289,7 +287,7 @@ export function FontAppearancePanel() {
                           disabled={anyDownloading || busyId !== null}
                           onClick={() => { void handleDelete(pack) }}
                           title="删除已下载字体文件"
-                          className="ga-btn px-2.5 py-1.5 text-xs hover:border-status-danger-line hover:text-status-danger"
+                          className="ga-btn-sm-danger"
                         >
                           <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                           <span>移除</span>

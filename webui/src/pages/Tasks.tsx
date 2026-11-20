@@ -12,10 +12,10 @@ import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 import { CronExpressionParser } from 'cron-parser'
 import { CronCardLine, CronPreview } from '@/components/CronPreview'
-import { ChevronLeft, ChevronRight, Mail, Plus } from '@/components/ActionIcons'
+import { ChevronLeft, ChevronRight, Mail, Pencil, Play, Plus, Power, Save, SendHorizontal, Trash2 } from '@/components/ActionIcons'
 
 const RUNS_PER_PAGE = 10
-const pageButtonClass = 'inline-grid size-8 place-items-center rounded-md border border-line bg-bg-card text-ink hover:border-accent hover:text-accent focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 disabled:hover:border-line disabled:hover:text-ink'
+const pageButtonClass = 'ga-btn-icon'
 
 export default function Tasks() {
   const qc = useQueryClient()
@@ -197,10 +197,22 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
       <div className="text-xs text-ink-faint">邮件 {s.notify_email ? '开启' : '关闭'} · 已触发 {s.fire_count ?? 0} 次</div>
       <div className="text-xs text-ink-faint mt-1">上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
       <div className="flex gap-2 mt-3 flex-wrap">
-        <button onClick={onFire} disabled={busy} className="ga-solid-primary text-xs px-2.5 py-1 rounded">立即触发</button>
-        <button onClick={toggle} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5 disabled:opacity-40">{s.enabled ? '禁用' : '启用'}</button>
-        <button onClick={onEdit} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5 disabled:opacity-40">编辑</button>
-        <button onClick={remove} disabled={busy} className="text-xs px-2.5 py-1 rounded border border-status-danger-line text-status-danger hover:bg-status-danger-soft disabled:opacity-40">删除</button>
+        <button type="button" onClick={onFire} disabled={busy} className="ga-btn-sm-primary">
+          <Play className="h-3 w-3" aria-hidden="true" />
+          <span>立即触发</span>
+        </button>
+        <button type="button" onClick={toggle} disabled={busy} className="ga-btn-sm">
+          <Power className="h-3 w-3" aria-hidden="true" />
+          <span>{s.enabled ? '禁用' : '启用'}</span>
+        </button>
+        <button type="button" onClick={onEdit} disabled={busy} className="ga-btn-sm">
+          <Pencil className="h-3 w-3" aria-hidden="true" />
+          <span>编辑</span>
+        </button>
+        <button type="button" onClick={remove} disabled={busy} className="ga-btn-sm-danger">
+          <Trash2 className="h-3 w-3" aria-hidden="true" />
+          <span>删除</span>
+        </button>
       </div>
     </div>
   )
@@ -317,8 +329,11 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
         </label>
       </Field>
       <div className="flex justify-end gap-2 mt-4">
-        <button onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg border border-line text-ink disabled:opacity-50">取消</button>
-        <button onClick={save} disabled={saving} className="ga-solid-primary px-3 py-1.5 rounded-lg">{saving ? '保存中…' : '保存'}</button>
+        <button type="button" onClick={onClose} disabled={saving} className="ga-btn">取消</button>
+        <button type="button" onClick={save} disabled={saving} className="ga-btn-primary">
+          <Save className="h-3.5 w-3.5" aria-hidden="true" />
+          <span>{saving ? '保存中…' : '保存'}</span>
+        </button>
       </div>
     </ModalOverlay>
   )
@@ -401,7 +416,7 @@ function EmailSettings() {
     <section>
       <div className="flex items-center justify-between mb-3 gap-3">
         <h2 className="text-sm font-semibold text-ink">邮件设置</h2>
-        <button onClick={startEdit} className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded border border-line text-ink hover:bg-ink/5"><Mail className="h-3.5 w-3.5" aria-hidden="true" /><span>配置 SMTP</span></button>
+        <button type="button" onClick={startEdit} className="ga-btn-sm"><Mail className="h-3.5 w-3.5" aria-hidden="true" /><span>配置 SMTP</span></button>
       </div>
       <div className="rounded-xl border border-line bg-bg-card p-4 text-sm text-ink-muted">
         {data?.host
@@ -426,15 +441,20 @@ function EmailSettings() {
             <Field label="测试收件人（留空使用默认）"><input value={testTo} onChange={(e) => setTestTo(e.target.value)} className={inp} /></Field>
             <div className="flex justify-between gap-2 mt-4">
               <button
+                type="button"
                 onClick={test}
                 disabled={testing}
-                className="px-3 py-1.5 rounded-lg border border-line text-ink disabled:opacity-50 disabled:cursor-not-allowed"
+                className="ga-btn"
               >
-                {testing ? '发送中…' : '发送测试'}
+                <SendHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>{testing ? '发送中…' : '发送测试'}</span>
               </button>
               <div className="flex gap-2">
-                <button onClick={() => setEditing(false)} className="px-3 py-1.5 rounded-lg border border-line text-ink">取消</button>
-                <button onClick={save} disabled={savingCfg} className="ga-solid-primary px-3 py-1.5 rounded-lg">{savingCfg ? '保存中…' : '保存'}</button>
+                <button type="button" onClick={() => setEditing(false)} className="ga-btn">取消</button>
+                <button type="button" onClick={save} disabled={savingCfg} className="ga-btn-primary">
+                  <Save className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>{savingCfg ? '保存中…' : '保存'}</span>
+                </button>
               </div>
             </div>
           </div>

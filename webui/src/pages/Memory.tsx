@@ -85,13 +85,16 @@ export default function Memory() {
     <PageShell
       title="记忆体系"
       actions={
-        <div className="flex gap-1 text-sm">
+        <div className="ga-segmented text-sm" role="tablist" aria-label="记忆层级">
           {(['sop', 'skill', 'insight', 'global'] as Tab[]).map((t) => (
             <button
               key={t}
+              type="button"
+              role="tab"
+              aria-selected={tab === t}
               title={tabTitle(t)}
               onClick={() => changeSelection(t)}
-              className={`w-16 px-3 py-1.5 rounded-lg border text-sm transition ${tab === t ? 'border-transparent bg-accent text-white' : 'border-line text-ink hover:bg-ink/5'}`}
+              className={`ga-segmented-btn w-16 text-sm ${tab === t ? 'ga-segmented-btn-active' : ''}`}
             >
               {t === 'sop' ? 'SOP' : t === 'skill' ? 'SKILL' : t === 'insight' ? 'L1' : 'L2'}
             </button>

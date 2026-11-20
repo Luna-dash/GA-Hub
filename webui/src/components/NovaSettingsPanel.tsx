@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { novaApi, type NovaStatus } from '@/api/client'
+import { RefreshIcon, ShieldCheck, Unlink, X } from './ActionIcons'
 
 export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) {
   const [status, setStatus] = useState<NovaStatus | null>(null)
@@ -42,7 +43,6 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
   }
   const showAccount = status && (!status.paired || revoking)
   const inputClass = 'mt-1.5 w-full min-w-0 rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent disabled:opacity-50'
-  const secondaryButtonClass = 'rounded-lg border border-line px-3 py-2 text-sm text-ink hover:bg-ink/5 disabled:opacity-40'
   return <section className="rounded-xl border border-line bg-bg-card p-4 space-y-4" aria-label="Nova 远程连接">
     <header>
       <h2 className="font-medium">远程连接 <span className="ml-1 text-xs font-normal text-ink-faint">Nova</span></h2>
@@ -61,8 +61,14 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
       </div>
       {status.error && <p role="alert" className="break-words text-sm text-status-warning">连接器错误：{status.error}</p>}
       {status.paired && <div className="flex flex-wrap gap-2">
-        <button type="button" disabled={busy} onClick={() => void act('reconnect')} className={secondaryButtonClass}>重新连接</button>
-        <button type="button" disabled={busy} onClick={() => { setRevoking(!revoking); setConfirmed(false) }} className={secondaryButtonClass}>{revoking ? '取消撤销' : '撤销账号关联'}</button>
+        <button type="button" disabled={busy} onClick={() => void act('reconnect')} className="ga-btn">
+          <RefreshIcon spinning={busy} size={13} />
+          <span>重新连接</span>
+        </button>
+        <button type="button" disabled={busy} onClick={() => { setRevoking(!revoking); setConfirmed(false) }} className={revoking ? 'ga-btn' : 'ga-btn text-status-danger hover:border-status-danger/60 hover:bg-status-danger-soft'}>
+          {revoking ? <X className="h-3.5 w-3.5" aria-hidden="true" /> : <Unlink className="h-3.5 w-3.5" aria-hidden="true" />}
+          <span>{revoking ? '取消撤销' : '撤销账号关联'}</span>
+        </button>
       </div>}
       {showAccount && <form className="space-y-4 border-t border-line pt-4" onSubmit={e => { e.preventDefault(); void act(revoking ? 'revoke' : 'associate') }}>
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -78,7 +84,10 @@ export function NovaSettingsPanel({ active = true }: { active?: boolean } = {}) 
         </div>
         <label className="flex items-start gap-2 text-xs leading-relaxed text-ink"><input className="mt-0.5 shrink-0" type="checkbox" checked={confirmed} disabled={busy} onChange={e => setConfirmed(e.target.checked)} />{revoking ? '确认撤销授权并清除本机绑定，保留设备码' : '允许此账号通过 Nova 远程操作这台电脑'}</label>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-          <button type="submit" disabled={busy || !confirmed || !status.device} className={`shrink-0 rounded-lg px-4 py-2 text-sm ${revoking ? 'ga-solid-danger' : 'ga-solid-primary'}`}>{busy ? '处理中…' : revoking ? '确认撤销关联' : register ? '注册并关联本机' : '登录并关联本机'}</button>
+          <button type="submit" disabled={busy || !confirmed || !status.device} className={`shrink-0 px-4 ${revoking ? 'ga-btn-danger' : 'ga-btn-primary'}`}>
+            {revoking ? <Unlink className="h-3.5 w-3.5" aria-hidden="true" /> : <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />}
+            <span>{busy ? '处理中…' : revoking ? '确认撤销关联' : register ? '注册并关联本机' : '登录并关联本机'}</span>
+          </button>
           <p className="text-xs text-ink-faint">密码仅用于本次验证，不作保存。</p>
         </div>
       </form>}
