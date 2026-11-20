@@ -415,45 +415,40 @@ html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(st
 }
 .path-link:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
 .path-link:disabled { cursor: progress; opacity: 0.65; }
-/* KaTeX math (remark-math + rehype-katex) */
+/* KaTeX math (remark-math + KaTeX 0.18) */
+.prose-chat .md-math-inline {
+  display: inline;
+  vertical-align: baseline;
+}
+.prose-chat .md-math-block {
+  max-width: 100%;
+  min-width: 0;
+}
 .prose-chat .katex-display {
+  max-width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 0.35rem 0;
-  margin: 0.5rem 0;
+  padding: 0.4rem 0.15rem;
+  margin: 0.6rem 0;
+  -webkit-overflow-scrolling: touch;
 }
-/* Base ≈ body; do not inflate — inflated base makes scriptstyle look “full size”. */
+/* Base ≈ body (1.06em compensates Computer Modern's slightly smaller x-height
+   next to PingFang/YaHei/Segoe UI) without distorting KaTeX's internal sizing.
+   Reset restrained-bold -webkit-text-stroke & letter-spacing inherited from headings/strong. */
 .prose-chat .katex {
-  font-size: 1em;
+  font-size: 1.06em;
   color: var(--c-text);
   font-weight: normal;
   line-height: 1.2;
+  letter-spacing: normal;
+  -webkit-text-stroke: 0;
 }
-/*
- * KaTeX 0.18 emits `katex-sizing reset-sizeN sizeM` (not bare `.sizing`).
- * Built CSS already has font-size:.7em for script, but WebView2 / cascade
- * with chat bubble styles can make super/subscripts look same as base.
- * Reinforce script / scriptscript sizes explicitly.
- */
-.prose-chat .katex .mtight {
-  font-size: 0.72em;
-  letter-spacing: 0;
+.prose-chat .katex-display > .katex {
+  font-size: 1.08em;
 }
-.prose-chat .katex .katex-sizing.size3,
-.prose-chat .katex .fontsize-ensurer.size3 {
-  font-size: 0.7em !important;
-}
-.prose-chat .katex .katex-sizing.size1,
-.prose-chat .katex .fontsize-ensurer.size1 {
-  font-size: 0.5em !important;
-}
-.prose-chat .katex .katex-sizing.size2,
-.prose-chat .katex .fontsize-ensurer.size2 {
-  font-size: 0.6em !important;
-}
-.prose-chat .katex .katex-sizing.size4,
-.prose-chat .katex .fontsize-ensurer.size4 {
-  font-size: 0.85em !important;
+.prose-chat td .katex,
+.prose-chat th .katex {
+  font-size: 1em;
 }
 
 .turn-fold {

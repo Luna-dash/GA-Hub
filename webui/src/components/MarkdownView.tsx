@@ -15,12 +15,13 @@ import { CitationLink, PathLink, citationUrlTransform } from './FileCitation'
 //      keeps tool traces monochrome (GFM only, no highlight/math).
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
-import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
+import katex from 'katex'
 import { memo, ReactNode, useMemo } from 'react'
 import { useCopy } from '@/utils/clipboard'
 import { looksLikeToolTrace } from '@/utils/toolTrace'
 import { renderMarkdownTree } from '@/utils/markdownRenderCache'
+import { normalizeMathDelimiters } from '@/utils/mathMarkdown'
 import { CopyIcon } from './ActionIcons'
 // Light paper-ish theme; token colors further tuned under .prose-chat in CSS
 import 'highlight.js/styles/github.css'
@@ -28,12 +29,7 @@ import 'highlight.js/styles/github.css'
 /** chat = full prose; plain = tool-safe; auto = plain when looksLikeToolTrace. */
 export type MarkdownMode = 'chat' | 'plain' | 'auto'
 
-// Stable component map. Defined at module scope so React.memo's shallow
-// children-equality on <MarkdownView> isn't undermined by ReactMarkdown
-// internally seeing a fresh `components` prop on every render.
-const MD_COMPONENTS = {
-  // Attach lang chip + copy to fenced code blocks
-  pre: ({ children }: any) => <CodeBlock>{children}</CodeBlock>,
+const BASE_MD_COMPONENTS = {
   // Wide GFM tables: scroll container (styles in .md-table-wrap)
   table: ({ children, ...props }: any) => (
     <div className="md-table-wrap">
@@ -50,56 +46,92 @@ const MD_COMPONENTS = {
   th: ({ children }: any) => <th>{linkifyChildren(children)}</th>,
   em: ({ children }: any) => <em>{linkifyChildren(children)}</em>,
   strong: ({ children }: any) => <strong>{linkifyChildren(children)}</strong>,
+} as const
+
+function renderPlainCode({ children, node, className, ...props }: any) {
   // react-markdown v9 has no `inline` prop. Source positions reliably
   // distinguish one-line inline code from fenced blocks; only turn an inline
   // code span into a button when its complete content is a supported path.
   // Preserve className from rehype-highlight (hljs language-*).
-  code: ({ children, node, className, ...props }: any) => {
-    const text = extractText(children).trim()
-    const oneLine = node?.position?.start?.line === node?.position?.end?.line
-    const path = oneLine ? matchWholePath(text) : null
-    return path
-      ? <PathLink path={path} display={text} />
-      : <code className={className} {...props}>{children}</code>
+  const text = extractText(children).trim()
+  const oneLine = node?.position?.start?.line === node?.position?.end?.line
+  const path = oneLine ? matchWholePath(text) : null
+  return path
+    ? <PathLink path={path} display={text} />
+    : <code className={className} {...props}>{children}</code>
+}
+
+// Stable component maps. Defined at module scope so React.memo's shallow
+// children-equality on <MarkdownView> isn't undermined by ReactMarkdown
+// internally seeing a fresh `components` prop on every render.
+const MD_COMPONENTS_PLAIN = {
+  ...BASE_MD_COMPONENTS,
+  pre: ({ children }: any) => <CodeBlock>{children}</CodeBlock>,
+  code: renderPlainCode,
+} as const
+
+const MD_COMPONENTS_CHAT = {
+  ...BASE_MD_COMPONENTS,
+  pre: ({ children }: any) => {
+    if (hasMathClass(children, 'language-math')) {
+      return <MathBlock tex={extractText(children)} />
+    }
+    return <CodeBlock>{children}</CodeBlock>
+  },
+  code: (props: any) => {
+    const { children, className } = props
+    if (classNameContains(className, 'math-inline')) {
+      return <MathInline tex={extractText(children)} />
+    }
+    return renderPlainCode(props)
   },
 } as const
 
 // remark-math before gfm: math delimiters should win over GFM punctuation.
-// singleDollarTextMath:false — bare $var / PowerShell must not become KaTeX.
+// singleDollarTextMath:false — guarded single-$ spans are normalized beforehand
+// in normalizeMathDelimiters so shell $VAR / currency $5 stay literal.
 const MD_REMARK_CHAT: any[] = [[remarkMath, { singleDollarTextMath: false }], remarkGfm]
 const MD_REMARK_PLAIN: any[] = [remarkGfm]
 // detect:false (rehype-highlight default): only fenced ```lang blocks colorize.
-const MD_REHYPE_CHAT: any[] = [[rehypeHighlight, { detect: false }], rehypeKatex]
+// Exclude `math` so ```math fenced blocks pass clean TeX to KaTeX.
+const MD_REHYPE_CHAT: any[] = [[rehypeHighlight, { detect: false, plainText: ['math'] }]]
 const MD_REHYPE_PLAIN: any[] = []
 
-/**
- * Models often emit TeX delimiters `\\(...\\)` / `\\[...\\]` (and
- * `\\\\(...\\\\)` after JSON escaping) instead of `$$...$$`.
- * remark-math only understands dollar delimiters, so normalize first.
- * With single-$ disabled we always map to `$$` (display), never `$...$`,
- * so shell variables cannot be reintroduced as false inline math.
- * Skip fenced code blocks so shell/python snippets stay intact.
- */
-function normalizeMathDelimiters(src: string): string {
-  if (!src || !/[\\$]/.test(src)) return src
-  const parts = src.split(/(```[\s\S]*?```)/g)
-  return parts
-    .map((part) => {
-      if (part.startsWith('```')) return part
-      // Display: \[ ... \]  (allow optional whitespace)
-      let s = part.replace(/\\\[((?:.|\n)*?)\\\]/g, (_m, body: string) => {
-        const t = body.trim()
-        return t ? `\n$$\n${t}\n$$\n` : _m
-      })
-      // Inline-ish: \( ... \) → $$ (safe under singleDollarTextMath:false)
-      s = s.replace(/\\\(((?:.|\n)*?)\\\)/g, (_m, body: string) => {
-        const t = body.trim()
-        if (!t) return _m
-        return `\n$$\n${t}\n$$\n`
-      })
-      return s
+function renderKatexHtml(tex: string, displayMode: boolean): string | null {
+  try {
+    return katex.renderToString(tex, {
+      displayMode,
+      throwOnError: false,
+      strict: 'ignore',
+      errorColor: '#9A3412',
     })
-    .join('')
+  } catch {
+    return null
+  }
+}
+
+function MathInline({ tex }: { tex: string }) {
+  const html = renderKatexHtml(tex, false)
+  if (html === null) return <code>{tex}</code>
+  return <span className="md-math-inline" dangerouslySetInnerHTML={{ __html: html }} />
+}
+
+function MathBlock({ tex }: { tex: string }) {
+  const html = renderKatexHtml(tex, true)
+  if (html === null) return <pre><code>{tex}</code></pre>
+  return <div className="md-math-block" dangerouslySetInnerHTML={{ __html: html }} />
+}
+
+function classNameContains(cls: unknown, target: string): boolean {
+  if (!cls) return false
+  const parts = Array.isArray(cls) ? cls : String(cls).split(/\s+/)
+  return parts.includes(target)
+}
+
+function hasMathClass(node: any, target: string): boolean {
+  if (node == null) return false
+  if (Array.isArray(node)) return node.some((item) => hasMathClass(item, target))
+  return classNameContains(node?.props?.className, target)
 }
 
 // Memoized so historical (non-streaming) bubbles don't re-parse markdown
@@ -139,6 +171,7 @@ export const MarkdownView = memo(function MarkdownView({
 
   const remarkPlugins = resolved === 'chat' ? MD_REMARK_CHAT : MD_REMARK_PLAIN
   const rehypePlugins = resolved === 'chat' ? MD_REHYPE_CHAT : MD_REHYPE_PLAIN
+  const components = resolved === 'chat' ? MD_COMPONENTS_CHAT : MD_COMPONENTS_PLAIN
   // react-markdown's synchronous Markdown() function does not use hooks. Keep
   // its finished React tree in a bounded LRU so virtual rows can remount
   // without repeating remark/rehype parsing.
@@ -146,9 +179,9 @@ export const MarkdownView = memo(function MarkdownView({
     children: text,
     remarkPlugins,
     rehypePlugins,
-    components: MD_COMPONENTS,
+    components,
     urlTransform: citationUrlTransform,
-  }, cache), [cache, rehypePlugins, remarkPlugins, resolved, text])
+  }, cache), [cache, components, rehypePlugins, remarkPlugins, resolved, text])
 
   return (
     <div

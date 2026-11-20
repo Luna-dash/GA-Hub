@@ -322,4 +322,113 @@ describe('MarkdownView responsive wrapping', () => {
     expect(mocks.revealFile).toHaveBeenCalledWith('D:/docs/a.md', 'open')
   })
 
+  it('renders \\(...\\) inline inside paragraphs while keeping \\[...\\] as display math', () => {
+    const md = [
+      '\\[',
+      '\\text{敌人摘要} = \\phi(A) + \\phi(B)',
+      '\\]',
+      '',
+      '加法不看顺序，换成 \\(\\phi(B)+\\phi(A)\\)，得到上下文 \\(h\\)。',
+    ].join('\n')
+    act(() => root.render(<MarkdownView mode="chat">{md}</MarkdownView>))
+
+    const displays = host.querySelectorAll('.katex-display')
+    expect(displays).toHaveLength(1)
+    expect(displays[0].textContent).toContain('敌人摘要')
+
+    const paragraphs = [...host.querySelectorAll('p')]
+    const prosePara = paragraphs.find((p) => p.textContent?.includes('加法不看顺序'))
+    expect(prosePara).toBeDefined()
+    expect(prosePara?.querySelectorAll('.md-math-inline')).toHaveLength(2)
+    expect(prosePara?.querySelectorAll('.katex-display')).toHaveLength(0)
+  })
+
+  it('renders standalone single-line $$...$$ as display math and guarded $...$ as inline math', () => {
+    const md = [
+      '$$E = mc^2$$',
+      '',
+      '其中 $x_i$ 为输入特征，而价格 $5 到 $10 与 $PATH/$HOME 保持原文。',
+    ].join('\n')
+    act(() => root.render(<MarkdownView mode="chat">{md}</MarkdownView>))
+
+    expect(host.querySelectorAll('.katex-display')).toHaveLength(1)
+    const prosePara = [...host.querySelectorAll('p')].find((p) => p.textContent?.includes('其中'))
+    expect(prosePara?.querySelectorAll('.md-math-inline')).toHaveLength(1)
+    expect(prosePara?.textContent).toContain('$5 到 $10')
+    expect(prosePara?.textContent).toContain('$PATH/$HOME')
+  })
+
+  it('emits KaTeX 0.18 DOM classes matching katex.min.css for nested super/subscripts', () => {
+    act(() => root.render(<MarkdownView mode="chat">{'$$x_i + x^{y^z}$$'}</MarkdownView>))
+
+    expect(host.querySelector('.katex .katex-base')).not.toBeNull()
+    expect(host.querySelector('.katex .katex-sizing.reset-size6.size3')).not.toBeNull()
+    expect(host.querySelector('.katex .katex-sizing.reset-size3.size1')).not.toBeNull()
+  })
+
+  it('keeps math delimiters literal and fenced math blocks unrendered in plain mode', () => {
+    const md = '$$E = mc^2$$\n\n(h) and $x_i$\n\n```math\na + b\n```'
+    act(() => root.render(<MarkdownView mode="plain">{md}</MarkdownView>))
+
+    expect(host.querySelector('.katex')).toBeNull()
+    expect(host.textContent).toContain('$$E = mc^2$$')
+    expect(host.textContent).toContain('$x_i$')
+    expect(host.querySelector('pre code')?.textContent).toContain('a + b')
+  })
+
+  it('keeps dollar signs in inline and reference link destinations', () => {
+    const md = '[直接](https://example.test/$value$ "价格 $rate$")， [引用][ref]，公式 $x$。\n\n'
+      + '[ref]: https://example.test/$path$ "标题 $name$"'
+    act(() => root.render(<MarkdownView mode="chat">{md}</MarkdownView>))
+
+    const links = [...host.querySelectorAll('a')]
+    expect(links.map((link) => link.getAttribute('href'))).toEqual([
+      'https://example.test/$value$',
+      'https://example.test/$path$',
+    ])
+    expect(host.querySelectorAll('.md-math-inline')).toHaveLength(1)
+  })
+
+  it.each([
+    '    echo $x$ and \\(x\\)',
+    '> ~~~sh\n> echo $x$ and \\(x\\)\n> ~~~',
+    '>     echo $x$ and \\(x\\)',
+  ])('keeps code literals unchanged in %j', (md) => {
+    act(() => root.render(<MarkdownView mode="chat">{md}</MarkdownView>))
+
+    expect(host.querySelector('pre code')?.textContent).toBe('echo $x$ and \\(x\\)\n')
+  })
+
+  it.each([
+    ['名称 | 公式 | 含义\n--- | --- | ---\n样例 | \\(|x|\\) | 绝对值', '绝对值'],
+    ['| 名称 | 公式 | 含义 |\n| --- | --- | --- |\n| 样例 | \\(||x||\\) | 范数 |', '范数'],
+  ])('keeps formula pipes inside a single GFM cell in %j', (md, meaning) => {
+    act(() => root.render(<MarkdownView mode="chat">{md}</MarkdownView>))
+
+    const cells = host.querySelectorAll('tbody td')
+    expect(cells).toHaveLength(3)
+    expect(cells[1].querySelector('.katex')).not.toBeNull()
+    expect(cells[2].textContent).toBe(meaning)
+  })
+
+  it('keeps formula pipes inside a GFM header cell without leading pipes', () => {
+    const md = '> 名称 | \\(||x||\\) | 含义\n> --- | --- | ---\n> 样例 | 内容 | 范数'
+    act(() => root.render(<MarkdownView mode="chat">{md}</MarkdownView>))
+
+    const headers = host.querySelectorAll('blockquote thead th')
+    expect(headers).toHaveLength(3)
+    expect(headers[1].querySelector('.katex')).not.toBeNull()
+    expect(headers[2].textContent).toBe('含义')
+  })
+
+  it('renders inline math containing vertical bars inside GFM tables without splitting cells', () => {
+    const md = '| 符号 | 含义 |\n|---|---|\n| $|x|$ | 绝对值 |'
+    act(() => root.render(<MarkdownView mode="chat">{md}</MarkdownView>))
+
+    const cells = host.querySelectorAll('tbody td')
+    expect(cells).toHaveLength(2)
+    expect(cells[0].querySelector('.katex')).not.toBeNull()
+    expect(cells[1].textContent).toBe('绝对值')
+  })
+
 })
