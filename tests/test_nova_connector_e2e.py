@@ -8,6 +8,8 @@ import secrets
 import sys
 import tempfile
 import unittest
+import uuid
+from aiohttp import FormData
 from pathlib import Path
 from unittest.mock import patch
 from aiohttp import web
@@ -52,6 +54,41 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
             return web.json_response({'presentation_version':1,'session_id':'s1','items':[{'role':'assistant','compact':True,'progress':{'final_body':f'[report](<{report.as_posix()}:7>)'}}]})
         app = web.Application();app.router.add_get('/api/sessions',sessions);app.router.add_get('/ws/sessions/s1',live)
         app.router.add_get('/api/sessions/s1/messages', messages)
+        agy_session = {'id': 'a1', 'title': 'Agy', 'project': 'test'}
+        agy_runs = []
+
+        async def anti(r):
+            resource = r.match_info['resource']
+            if resource == 'models':
+                return web.json_response({'items': [{'id': 'model-1', 'display_name': 'Model 1'}]})
+            if resource == 'sessions':
+                return web.json_response([agy_session] if agy_session else [])
+            if resource == 'sessions/a1' and r.method == 'PATCH':
+                agy_session.update(await r.json())
+                return web.json_response(agy_session)
+            if resource == 'sessions/a1' and r.method == 'DELETE':
+                agy_session.clear()
+                return web.Response(status=204)
+            if resource == 'sessions/a1/runs' and r.method == 'POST':
+                body = await r.json()
+                self.assertEqual((body['model'], body['effort']), ('model-1', 'high'))
+                self.assertEqual(body['attachments'], [{'path': str(report), 'name': 'note.txt',
+                                                        'size': 4, 'source': 'managed_upload'}])
+                run = {'id': 'run-1', 'status': 'success', 'prompt': body['prompt'], 'answer': 'done'}
+                agy_runs.append(run)
+                return web.json_response(run)
+            if resource == 'sessions/a1/runs':
+                return web.json_response(agy_runs)
+            raise web.HTTPNotFound()
+
+        async def upload(r):
+            part = await (await r.multipart()).next()
+            self.assertEqual(part.filename, 'note.txt')
+            self.assertEqual(await part.read(), b'note')
+            return web.json_response({'path': str(report), 'name': part.filename, 'size': 4})
+
+        app.router.add_route('*', '/api/anti/{resource:.*}', anti)
+        app.router.add_post('/api/upload', upload)
         backend = TestServer(app);await backend.start_server()
         with tempfile.TemporaryDirectory() as tmp:
             report = Path(tmp) / '验收 report.txt'
@@ -93,6 +130,27 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                     msg=await ws.receive_json(timeout=10);self.assertEqual(msg['runtime']['status'],'running')
                     await ws.send_json({'type':'ping'});self.assertEqual((await ws.receive_json(timeout=5))['type'],'pong')
                     await ws.close()
+                    api = '/d/' + device + '/api'
+                    agy = api + '/agy'
+                    r = await client.get(agy + '/models', headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    self.assertEqual((await r.json())['items'][0]['id'], 'model-1')
+                    r = await client.patch(agy + '/sessions/a1', json={'title': 'Renamed'}, headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    form = FormData()
+                    form.add_field('file', b'note', filename='note.txt')
+                    r = await client.post(agy + '/sessions/a1/upload', data=form, headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    body = {'text': 'Summarize', 'request_id': str(uuid.uuid4()),
+                            'upload_ids': [(await r.json())['upload_id']], 'model': 'model-1', 'effort': 'high'}
+                    r = await client.post(agy + '/sessions/other/runs', json=body, headers=auth)
+                    self.assertEqual(r.status, 400, await r.text())
+                    r = await client.post(agy + '/sessions/a1/runs', json=body, headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    history = '/api/agy/sessions/a1/runs?view=compact&limit=40'
+                    for path in ('/api/agy/sessions', history):
+                        r = await client.get('/d/' + device + path, headers=auth)
+                        self.assertEqual(r.status, 200, await r.text())
                     task.cancel();await asyncio.gather(task,return_exceptions=True)
                     self.assertEqual(connection_states, [True, False])
                     for _ in range(30):
@@ -100,6 +158,10 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(.05)
                     r=await client.get('/v1/me',headers=auth)
                     self.assertFalse((await r.json())['devices'][0]['online'])
+                    r = await client.get(api + '/nova-snapshot', params={'path': history}, headers=auth)
+                    self.assertEqual((await r.json())['data']['items'][0]['answer'], 'done')
+                    r = await client.get(api + '/nova-snapshot', params={'path': '/api/agy/sessions'}, headers=auth)
+                    self.assertEqual((await r.json())['data'][0]['title'], 'Renamed')
             finally:
                 if task:task.cancel();await asyncio.gather(task,return_exceptions=True)
                 await client.close()

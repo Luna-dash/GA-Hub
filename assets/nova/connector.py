@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 import secrets
 import sys
+import time
 from urllib.parse import urlsplit
 
 import aiohttp
@@ -64,8 +65,14 @@ class LocalGateway(gateway.Gateway):
             async with self.http.request(method, base + '/api/anti' + path, json=payload,
                                          headers={'Origin': base}, allow_redirects=False,
                                          timeout=aiohttp.ClientTimeout(total=65)) as response:
+                if response.status == 204:
+                    return None
+                failure = {400:web.HTTPBadRequest, 404:web.HTTPNotFound, 409:web.HTTPConflict,
+                           422:web.HTTPBadRequest, 429:web.HTTPTooManyRequests}.get(response.status)
+                if failure:
+                    raise failure(text='本机 Agy 未接受此操作')
                 if not 200 <= response.status < 300:
-                    raise web.HTTPBadRequest(text='Agy 请求无效') if response.status == 422 else web.HTTPBadGateway(text='本机 Agy 请求未完成')
+                    raise web.HTTPBadGateway(text='本机 Agy 请求未完成')
                 return await response.json()
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             raise web.HTTPBadGateway(text='本机 Agy 请求未确认')
@@ -75,8 +82,13 @@ class LocalGateway(gateway.Gateway):
         method = request.method
         event_query = (method == 'GET' and re.fullmatch(r'/sessions/[A-Za-z0-9_-]{1,128}/runs/[A-Za-z0-9_-]{1,128}/events', path)
                        and re.fullmatch(r'after=[0-9]{1,15}', request.query_string))
-        if (request.query_string and not event_query) or request.headers.get('Upgrade'):
+        compact = (method == 'GET' and request.query_string == 'view=compact&limit=40'
+                   and re.fullmatch(r'/sessions/[A-Za-z0-9_-]{1,128}/runs', path))
+        if (request.query_string and not (event_query or compact)) or request.headers.get('Upgrade'):
             raise web.HTTPForbidden()
+        if method == 'GET' and path == '/models':
+            result = await self.anti_json('GET', path)
+            return web.json_response({'items': [{k: row[k] for k in ('id', 'display_name')} for row in result['items']]})
         if method == 'GET' and path == '/projects':
             try:
                 catalog = await self.project_catalog()
@@ -104,17 +116,54 @@ class LocalGateway(gateway.Gateway):
                 raise web.HTTPConflict(text='创建请求与原项目不一致')
             row = await asyncio.shield(task)
             return web.json_response({'id': row['id']})
+        session = re.fullmatch(r'/sessions/([A-Za-z0-9_-]{1,128})(/upload)?', path)
+        if session:
+            sid, upload = session.groups()
+            if upload and method == 'POST':
+                return await self.upload(request, scope=('agy', sid))
+            if not upload and method == 'PATCH':
+                body = await self.agy_body(request, {'title'})
+                title = body['title']
+                if not isinstance(title, str) or not 1 <= len(title.strip()) <= 160:
+                    raise web.HTTPBadRequest(text='请输入 1–160 字的会话名称')
+                await self.anti_json('PATCH', path, {'title': title.strip()})
+                return web.json_response({'title': title.strip()})
+            if not upload and method == 'DELETE':
+                await self.anti_json('DELETE', path)
+                return web.Response(status=204)
+            raise web.HTTPForbidden()
         match = re.fullmatch(r'/sessions/([A-Za-z0-9_-]{1,128})/runs(?:/([A-Za-z0-9_-]{1,128})(/events|/cancel)?)?', path)
         if not match:
             raise web.HTTPForbidden()
-        _, rid, action = match.groups()
+        sid, rid, action = match.groups()
         payload = None
         if method == 'POST' and not rid:
-            body = await self.agy_body(request, {'text', 'request_id'})
-            text = body['text']
-            if not isinstance(text, str) or not text.strip() or len(text) > 6000:
-                raise web.HTTPBadRequest(text='请输入 1–6000 字的指令')
+            body = await self.agy_body(request, {'text', 'request_id'}, {'upload_ids', 'model', 'effort'})
+            text, ids = body['text'], body.get('upload_ids', [])
+            if not isinstance(ids, list) or len(ids) > 8 or any(not isinstance(x, str) for x in ids) or len(set(ids)) != len(ids):
+                raise web.HTTPBadRequest(text='附件列表无效')
+            if not isinstance(text, str) or len(text) > 6000 or not (text.strip() or ids):
+                raise web.HTTPBadRequest(text='请输入指令（最多 6000 字）或添加附件')
             payload = {'prompt': text, 'operation': body['request_id']}
+            if 'model' in body:
+                model = body['model']
+                if not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,127}', model):
+                    raise web.HTTPBadRequest(text='模型无效')
+                payload['model'] = model
+            if 'effort' in body:
+                effort = body['effort']
+                if effort not in ('low', 'medium', 'high', 'xhigh', 'max'):
+                    raise web.HTTPBadRequest(text='推理强度无效')
+                payload['effort'] = effort
+            if ids:
+                now, owner = time.monotonic(), request.cookies.get(gateway.COOKIE)
+                refs = []
+                for uid in ids:
+                    entry = self.uploads.get((('agy', sid), uid))
+                    if not owner or not entry or now - entry[0] >= gateway.TTL or entry[1] != owner:
+                        raise web.HTTPBadRequest(text='附件已过期或不属于此会话，请重新上传')
+                    refs.append(entry[2])
+                payload['attachments'] = refs
         elif not (method == 'GET' and action != '/cancel' or method == 'POST' and action == '/cancel'):
             raise web.HTTPForbidden()
         upstream = path + '?' + request.query_string if event_query else path
@@ -122,14 +171,19 @@ class LocalGateway(gateway.Gateway):
         keys = (('seq', 'type', 'text') if action == '/events'
                 else ('id', 'status', 'prompt', 'answer', 'error', 'created_at'))
         public = lambda row: {k: row[k] for k in keys if k in row}
+        if compact:
+            offset = max(0, len(data) - 40)
+            return web.json_response({'items': [public(row) for row in data[offset:]], 'offset': offset})
         return web.json_response([public(row) for row in data] if isinstance(data, list) else public(data))
 
     @staticmethod
-    async def agy_body(request, keys):
+    async def agy_body(request, keys, optional=frozenset()):
         try:
             raw = await request.content.readexactly(request.content_length or 0) if 0 < (request.content_length or 0) <= 32768 else b''
             data = json.loads(raw)
-            if not isinstance(data, dict) or set(data) != keys or not isinstance(data.get('request_id'), str) or not re.fullmatch(r'[a-f0-9-]{36}', data['request_id']):
+            if request.content_type != 'application/json' or not isinstance(data, dict) or not keys <= data.keys() <= keys | optional:
+                raise ValueError()
+            if 'request_id' in keys and (not isinstance(data['request_id'], str) or not re.fullmatch(r'[a-f0-9-]{36}', data['request_id'])):
                 raise ValueError()
             return data
         except (ValueError, asyncio.IncompleteReadError):

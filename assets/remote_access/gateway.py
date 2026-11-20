@@ -118,7 +118,7 @@ class Gateway:
             async with self.http.post(base+r.path,headers={'Origin':base},allow_redirects=False) as up:
                 return web.Response(status=up.status,body=await up.read(),content_type='application/json')
         except (aiohttp.ClientError,asyncio.TimeoutError):raise web.HTTPBadGateway(text='Stop result uncertain; refresh runtime before retrying')
-    async def upload(self,r):
+    async def upload(self,r, *, scope=None):
         if r.headers.get('Origin')!='https://'+PUBLIC:raise web.HTTPForbidden(text='Origin required')
         if r.query_string or r.content_type!='multipart/form-data':raise web.HTTPBadRequest(text='Multipart file required')
         now=time.monotonic()
@@ -147,7 +147,7 @@ class Gateway:
                         data=await up.json()
                 ref={'path':data['path'],'name':data['name'],'size':data['size'],'source':'managed_upload'}
                 uid=secrets.token_urlsafe(24)
-                self.uploads[uid]=(time.monotonic(),r.cookies.get(COOKIE),ref)
+                self.uploads[(scope,uid) if scope is not None else uid]=(time.monotonic(),r.cookies.get(COOKIE),ref)
                 return web.json_response({'upload_id':uid,'name':ref['name'],'size':ref['size'],'expires_at':int(time.time()+TTL)})
             except (ValueError,KeyError,AssertionError):raise web.HTTPBadRequest(text='Invalid upload')
             except (aiohttp.ClientError,asyncio.TimeoutError):raise web.HTTPBadGateway(text='Upload failed; retry before sending')
