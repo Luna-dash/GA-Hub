@@ -79,6 +79,7 @@ export default function AntiChat() {
   const [project, setProject] = useState<string | null>(null)
   const [sid, setSid] = usePageState('antiChat.currentSession', '')
   const [creating, setCreating] = useState(false)
+  const [profilesOpen, setProfilesOpen] = useState(false)
   const [headerActions, setHeaderActions] = useState<HTMLDivElement | null>(null)
   const daemon = useAntiDaemonStatus()
   const profiles = useAgyProfiles()
@@ -132,7 +133,13 @@ export default function AntiChat() {
     titleExtra={<AntiDaemonControl {...daemon} />}
     actions={<>
       <div ref={setHeaderActions} className="empty:hidden flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2" />
-      <AntiAgyProfiles profiles={profiles} refresh={daemon.refresh} daemon={daemon} />
+      <AntiAgyProfiles
+        profiles={profiles}
+        refresh={daemon.refresh}
+        daemon={daemon}
+        open={profilesOpen}
+        onOpenChange={setProfilesOpen}
+      />
       <AntiAccountUsageButton
         key={profiles.data?.active}
         running={daemon.running}
@@ -158,11 +165,42 @@ export default function AntiChat() {
             </button>
           </div>
         )}
+        {daemon.state === 'unavailable' && !daemon.busy && (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-status-danger-line bg-status-danger-soft px-4 py-2 text-xs text-status-danger">
+            <span>{daemon.status.data?.detail || daemon.status.error?.message || 'Anti 网关当前不可用，请检查状态或重启网关。'}</span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {daemon.managed && (
+                <button type="button" className="ga-btn shrink-0" onClick={() => daemon.restart.mutate()}>
+                  重启网关
+                </button>
+              )}
+              <button type="button" className="ga-btn shrink-0" onClick={() => setProfilesOpen(true)}>
+                诊断 / 账号设置
+              </button>
+            </div>
+          </div>
+        )}
+        {daemon.running && daemon.status.data?.agy_available === false && (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-status-danger-line bg-status-danger-soft px-4 py-2 text-xs text-status-danger">
+            <span>AntiCLI 网关已启动，但未找到官方 agy CLI。请安装 agy 并确保位于 PATH 后重启网关。</span>
+            <button type="button" className="ga-btn shrink-0" onClick={() => setProfilesOpen(true)}>
+              查看网关详情
+            </button>
+          </div>
+        )}
+        {daemon.running && daemon.status.data?.agy_available && daemon.status.data?.auth_state === 'login_required' && (
+          <div role="status" className="flex flex-wrap items-center justify-between gap-2 border-b border-status-warning-line bg-status-warning-soft px-4 py-2 text-xs text-status-warning">
+            <span>当前 Agy 账号尚未登录或凭据已过期，请先完成官方登录后再发起对话。</span>
+            <button type="button" className="ga-btn shrink-0" onClick={() => setProfilesOpen(true)}>
+              去登录账号
+            </button>
+          </div>
+        )}
         <Errors items={[sessions.error, rename.error, remove.error]} />
         {selected ? <Conversation key={selected.id} session={selected} headerActions={headerActions}
           profileId={profiles.data?.active} profileName={selectedProfile?.name} /> :
           <div className="relative flex flex-1">
-            <ChatUtilityDock fileTransfer={{ canInsert: false, onInsert: () => {} }} />
+            <ChatUtilityDock fileTransfer={{ canInsert: false, onInsert: () => { } }} />
             <div className="m-auto flex max-w-sm flex-col items-center gap-3 px-5 text-center text-sm text-ink-muted">
               <AntiIcon className="h-11 w-11 text-accent" />
               <p>{sessions.isPending ? '正在加载 Anti 会话…' : '点击「新建会话」，选择该会话的项目。'}</p>
@@ -221,8 +259,10 @@ function Conversation({ session, headerActions, profileId, profileName }: {
     ?? effortOptions.find(option => option.key === DEFAULT_EFFORT)?.key ?? effortOptions[0]?.key ?? DEFAULT_EFFORT
   const model = family?.variants[effort] ?? family?.plain ?? DEFAULT_MODEL.id
   const key = ['anti-runs', sid]
-  const history = useQuery({ queryKey: key, queryFn: ({ signal }) => antiApi.runs(sid, signal),
-    refetchInterval: query => query.state.data?.some(active) || pending ? 1500 : false })
+  const history = useQuery({
+    queryKey: key, queryFn: ({ signal }) => antiApi.runs(sid, signal),
+    refetchInterval: query => query.state.data?.some(active) || pending ? 1500 : false
+  })
   const current = history.data?.find(active)
   const live = useQuery({
     queryKey: ['anti-live', sid, current?.id], enabled: Boolean(current), refetchInterval: 900,
@@ -271,7 +311,8 @@ function Conversation({ session, headerActions, profileId, profileName }: {
   const submit = () => {
     const trimmedPrompt = prompt.trim()
     if (current || send.isPending || !history.isSuccess || (!trimmedPrompt && !attachments.length && !references.length)) return
-    const body = pending ?? { prompt: trimmedPrompt, model, effort,
+    const body = pending ?? {
+      prompt: trimmedPrompt, model, effort,
       ...(references.length ? { references: references.map(({ id, path }) => ({ id, path })) } : {}),
       ...(attachments.length ? {
         attachments: attachments.map(({ path, name, source, size }) => ({
@@ -281,7 +322,8 @@ function Conversation({ session, headerActions, profileId, profileName }: {
           ...(size != null ? { size } : {}),
         })),
       } : {}),
-      operation: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}` }
+      operation: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    }
     followTranscript.current = true
     setPending(body)
     send.mutate(body)

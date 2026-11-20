@@ -213,6 +213,37 @@ def capture_default(name: str) -> Profile:
     return profile
 
 
+def clear_credentials(profile_id: str) -> dict[str, Any]:
+    if profile_id == DEFAULT:
+        raise AntiError(409, "系统默认账号凭据由系统 agy CLI 管理，不支持在 Hub 内清除")
+    if not re.fullmatch(PROFILE_ID, profile_id):
+        raise AntiError(404, "找不到 Agy 账号")
+    active, profiles, meta = _load_raw()
+    target_profile = next((p for p in profiles if p.id == profile_id), None)
+    if target_profile is None:
+        raise AntiError(404, "找不到 Agy 账号")
+    cli_dir = _root() / profile_id / "home" / ".gemini" / "antigravity-cli"
+    try:
+        if cli_dir.exists():
+            if cli_dir.resolve() != cli_dir:
+                raise AntiError(409, "Agy 账号目录不得重定向")
+            for fname in _CLI_CREDENTIAL_FILES:
+                candidate = cli_dir / fname
+                if candidate.is_symlink():
+                    raise AntiError(409, "Agy 账号凭据文件不得重定向")
+                if candidate.is_file():
+                    candidate.unlink(missing_ok=True)
+    except OSError as exc:
+        raise AntiError(503, "无法清除 Agy 账号凭据") from exc
+    meta.pop(profile_id, None)
+    _save(active, profiles, meta)
+    return {
+        "id": target_profile.id,
+        "name": target_profile.name,
+        "has_credentials": has_local_credentials(profile_id),
+    }
+
+
 def record_usage(profile_id: str, auth_state: str, rows: list[dict[str, Any]]) -> None:
     if not re.fullmatch(PROFILE_ID, profile_id):
         return

@@ -4,7 +4,7 @@ import { useMutation } from '@tanstack/react-query'
 import { Gauge, LoaderCircle } from 'lucide-react'
 import clsx from 'clsx'
 import type { components } from '@/api/generated/schema'
-import { antiApi, type AgyProfileUsageSnapshot } from '@/api/client'
+import { antiApi, type AgyProfileUsageSnapshot, type AntiQuotaPool } from '@/api/client'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 
 type Usage = components['schemas']['AntiAccountUsage']
@@ -35,6 +35,23 @@ function limitLabel(limit: string) {
   return limit
 }
 
+function poolStatusView(pool: AntiQuotaPool) {
+  if (pool.status === 'cooling_down' || (pool.cooldown_remaining_seconds ?? 0) > 0) {
+    return {
+      cooling: true,
+      label: `冷却 ${pool.cooldown_remaining_seconds ?? 0}s`,
+      tone: 'text-status-danger',
+    }
+  }
+  if (pool.status === 'HARD_LIMIT') {
+    return { cooling: true, label: '已达上限', tone: 'text-status-danger' }
+  }
+  if (pool.status === 'WARN') {
+    return { cooling: false, label: '接近上限', tone: 'text-status-warning' }
+  }
+  return { cooling: false, label: '正常', tone: 'text-ink' }
+}
+
 export function AntiAccountUsageButton({
   running,
   cachedUsage,
@@ -46,6 +63,7 @@ export function AntiAccountUsageButton({
 }) {
   const usage = useMutation({ mutationFn: checkUsage, onSettled: onChecked })
   const pools = useMutation({ mutationFn: () => antiApi.quota() })
+  const stats = useMutation({ mutationFn: () => antiApi.stats(24) })
   const resetBreaker = useMutation({
     mutationFn: (modelGroup?: string) => antiApi.resetBreaker(modelGroup),
     onSuccess: () => { pools.mutate() },
@@ -64,7 +82,7 @@ export function AntiAccountUsageButton({
     const update = () => {
       const anchor = button.current?.getBoundingClientRect()
       if (!anchor) return
-      const width = Math.min(288, window.innerWidth - 16)
+      const width = Math.min(312, window.innerWidth - 16)
       setPosition({ top: anchor.bottom, left: Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8)),
         maxHeight: Math.max(0, window.innerHeight - anchor.bottom - 16) })
     }
@@ -85,9 +103,9 @@ export function AntiAccountUsageButton({
   }, [open])
   const liveRows = usage.data?.rows
   const fallbackRows = !usage.data && !usage.isError ? cachedUsage?.rows : undefined
-  const rows = running ? (liveRows ?? fallbackRows) : undefined
+  const rows = running ? (liveRows ?? fallbackRows) : fallbackRows
   const poolRows = pools.data
-  const coolingPools = poolRows?.filter(p => p.status === 'cooling_down' || (p.cooldown_remaining_seconds ?? 0) > 0) ?? []
+  const coolingPools = poolRows?.filter(p => poolStatusView(p).cooling) ?? []
   const message = !running ? '请先启动 Anti 网关。'
     : usage.isPending ? '正在检测官方额度…'
     : usage.isError ? usage.error.message
@@ -123,13 +141,13 @@ export function AntiAccountUsageButton({
         <Icon size={16} aria-hidden="true" className={clsx(usage.isPending && 'motion-safe:animate-spin')} />
       </button>
       {open && position && createPortal(
-        <div ref={panel} className="fixed z-[60] w-[min(18rem,calc(100vw-16px))] pt-2" style={{ top: position.top, left: position.left }}>
+        <div ref={panel} className="fixed z-[60] w-[min(19.5rem,calc(100vw-16px))] pt-2" style={{ top: position.top, left: position.left }}>
           <div id={tooltipId} role="tooltip" className="overflow-y-auto overscroll-contain rounded-xl border border-line bg-bg-card p-3 text-xs text-ink shadow-lg" style={{ maxHeight: position.maxHeight }}>
             <div className="flex items-center justify-between gap-2">
               <span className="font-semibold">反重力剩余额度</span>
               {!liveRows && fallbackRows?.length && cachedUsage?.checked_at ? (
                 <span className="text-[11px] text-ink-muted tabular-nums">
-                  缓存 · {resetFormat.format(new Date(cachedUsage.checked_at))}
+                  {running ? '缓存' : '离线缓存'} · {resetFormat.format(new Date(cachedUsage.checked_at))}
                 </span>
               ) : null}
             </div>
@@ -145,6 +163,9 @@ export function AntiAccountUsageButton({
                 ))}
               </ul>
             ) : <p className="mt-1 text-ink-muted">{message}</p>}
+            {!running && rows?.length && (
+              <p className="mt-1 text-[11px] text-ink-muted">网关当前未运行；启动后点击图标即可刷新实时额度。</p>
+            )}
             {running && (
               <div className="mt-2 border-t border-line/70 pt-2 space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
@@ -152,7 +173,10 @@ export function AntiAccountUsageButton({
                     type="button"
                     className="text-accent hover:underline"
                     disabled={pools.isPending}
-                    onClick={() => { pools.mutate() }}
+                    onClick={() => {
+                      pools.mutate()
+                      stats.mutate()
+                    }}
                   >
                     {pools.isPending ? '正在查询网关配额池…' : '查看网关配额池 / 熔断'}
                   </button>
@@ -170,18 +194,46 @@ export function AntiAccountUsageButton({
                 {pools.isError && <p className="text-status-danger">{pools.error.message}</p>}
                 {resetBreaker.isError && <p className="text-status-danger">{resetBreaker.error.message}</p>}
                 {poolRows && poolRows.length > 0 && (
-                  <ul className="space-y-1 text-[11px] text-ink-muted">
-                    {poolRows.map(pool => (
-                      <li key={pool.model_group} className="flex items-center justify-between gap-2">
-                        <span className="truncate">{pool.display_name}</span>
-                        <span className={clsx('tabular-nums font-medium', pool.status === 'cooling_down' ? 'text-status-danger' : 'text-ink')}>
-                          {pool.status === 'cooling_down'
-                            ? `冷却 ${pool.cooldown_remaining_seconds ?? 0}s`
-                            : '正常'}
-                        </span>
-                      </li>
-                    ))}
+                  <ul className="space-y-1.5 text-[11px] text-ink-muted">
+                    {poolRows.map(pool => {
+                      const view = poolStatusView(pool)
+                      return (
+                        <li key={pool.model_group} className="space-y-0.5 rounded-md bg-bg-soft/70 px-2 py-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate font-medium text-ink">{pool.display_name}</span>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <span className={clsx('tabular-nums font-medium', view.tone)}>
+                                {view.label}
+                              </span>
+                              {view.cooling && (
+                                <button
+                                  type="button"
+                                  className="text-[10px] text-accent hover:underline disabled:opacity-40"
+                                  disabled={resetBreaker.isPending}
+                                  aria-label={`重置 ${pool.display_name} 熔断`}
+                                  onClick={() => resetBreaker.mutate(pool.model_group)}
+                                >
+                                  重置
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          {(pool.window_5h_pct != null || pool.window_7d_pct != null) && (
+                            <div className="flex items-center justify-between gap-2 text-[10px] tabular-nums">
+                              <span>5h 窗口 {pool.window_5h_pct != null ? `${pool.window_5h_pct.toFixed(0)}%` : '—'}</span>
+                              <span>7d 窗口 {pool.window_7d_pct != null ? `${pool.window_7d_pct.toFixed(0)}%` : '—'}</span>
+                            </div>
+                          )}
+                        </li>
+                      )
+                    })}
                   </ul>
+                )}
+                {stats.data && (
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-t border-line/50 pt-1.5 text-[10px] text-ink-muted tabular-nums">
+                    <span>24h {stats.data.total_runs} 次（成功 {stats.data.success_runs}）</span>
+                    <span>{stats.data.total_tokens.toLocaleString('en-US')} tok · 缓存 {(stats.data.cache_hit_ratio * 100).toFixed(0)}%</span>
+                  </div>
                 )}
               </div>
             )}

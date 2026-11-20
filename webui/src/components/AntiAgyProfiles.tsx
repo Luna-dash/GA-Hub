@@ -14,7 +14,7 @@ type Profile = components['schemas']['AgyProfile']
 type Action =
   | { kind: 'create'; name: string }
   | { kind: 'capture'; name: string }
-  | { kind: 'switch' | 'login' | 'delete'; profile: Profile }
+  | { kind: 'switch' | 'login' | 'logout' | 'delete'; profile: Profile }
   | { kind: 'rename'; profile: Profile; name: string }
   | { kind: 'check-usage' }
 const key = ['agy-profiles'] as const
@@ -69,16 +69,30 @@ export function useAgyProfiles() {
   })
 }
 
-export function AntiAgyProfiles({ profiles, refresh, daemon }: {
+export function AntiAgyProfiles({
+  profiles,
+  refresh,
+  daemon,
+  open: controlledOpen,
+  onOpenChange,
+}: {
   profiles: ReturnType<typeof useAgyProfiles>
   refresh: () => void
   daemon?: ReturnType<typeof useAntiDaemonStatus>
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }) {
   const cache = useQueryClient()
-  const [open, setOpen] = useState(false)
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
+  const open = controlledOpen ?? uncontrolledOpen
+  const setOpen = (next: boolean) => {
+    if (controlledOpen === undefined) setUncontrolledOpen(next)
+    onOpenChange?.(next)
+  }
   const [name, setName] = useState('')
   const [editing, setEditing] = useState<{ profile: Profile; name: string } | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [showLogs, setShowLogs] = useState(false)
   const [message, setMessage] = useState('')
   const prevLoginProfile = useRef<string | null | undefined>(undefined)
 
@@ -90,6 +104,13 @@ export function AntiAgyProfiles({ profiles, refresh, daemon }: {
     }
     prevLoginProfile.current = current
   }, [profiles.data?.login_profile, refresh])
+
+  const logs = useQuery({
+    queryKey: ['anti-daemon-logs'],
+    enabled: open && showLogs,
+    queryFn: ({ signal }) => antiApi.daemonLogs(80, signal),
+    retry: false,
+  })
 
   const action = useMutation({
     mutationFn: async (args: Action) => {
@@ -128,6 +149,13 @@ export function AntiAgyProfiles({ profiles, refresh, daemon }: {
         }))
         setConfirmDeleteId(null)
         setMessage(`已删除账号「${args.profile.name}」。`)
+      } else if (args.kind === 'logout') {
+        const updated = await antiApi.clearProfileCredentials(args.profile.id)
+        cache.setQueryData<Profiles>(key, old => old && ({
+          ...old,
+          profiles: old.profiles.map(p => p.id === updated.id ? updated : p),
+        }))
+        setMessage(`已清除「${args.profile.name}」的登录凭据与缓存额度，保留了多轮会话记录。`)
       } else if (args.kind === 'check-usage') {
         const usage = await antiApi.accountUsage()
         setMessage(usage.rows.length > 0 ? `已刷新额度（${usage.rows.length} 项模型）。` : '未读取到额度信息，请确认已登录并重试。')
@@ -156,6 +184,7 @@ export function AntiAgyProfiles({ profiles, refresh, daemon }: {
     setOpen(false)
     setEditing(null)
     setConfirmDeleteId(null)
+    setShowLogs(false)
     setMessage('')
     action.reset()
   }
@@ -166,12 +195,15 @@ export function AntiAgyProfiles({ profiles, refresh, daemon }: {
   }
   const pendingLabel = action.variables?.kind === 'switch' ? '正在切换账号…'
     : action.variables?.kind === 'login' ? '正在打开官方 CLI…'
+    : action.variables?.kind === 'logout' ? '正在清除账号凭据…'
     : action.variables?.kind === 'rename' ? '正在保存备注…'
     : action.variables?.kind === 'capture' ? '正在从当前系统登录另存…'
     : action.variables?.kind === 'delete' ? '正在删除账号…'
     : action.variables?.kind === 'check-usage' ? '正在刷新当前账号额度…'
     : '正在添加账号…'
   const secondary = 'ga-btn shrink-0'
+  const daemonError = daemon?.start.error ?? daemon?.stop.error ?? daemon?.restart.error
+  const nonWindows = typeof navigator !== 'undefined' && /mac|linux|x11/i.test(navigator.platform)
   const editButton = (profile: Profile) => profile.id !== 'default' && (
     <button type="button" className={secondary} disabled={disabled} aria-label={`修改备注：${profile.name}`}
       onClick={() => { action.reset(); setMessage(''); setConfirmDeleteId(null); setEditing({ profile, name: profile.name }) }}>修改备注</button>
@@ -231,27 +263,69 @@ export function AntiAgyProfiles({ profiles, refresh, daemon }: {
         <button type="button" className={secondary} onClick={close} disabled={action.isPending}>关闭</button>
       </div>
       {daemon && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line/70 bg-bg-soft px-3 py-2 text-xs">
-          <span className="text-ink-muted">
-            网关状态：<strong className="font-semibold text-ink">
-              {daemon.running ? '运行中' : daemon.busy ? '处理中' : daemon.state === 'stopped' ? '已停止' : '不可用'}
-            </strong>
-          </span>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {!daemon.running && daemon.state === 'stopped' && (
-              <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.start.mutate()}>启动网关</button>
-            )}
-            {(daemon.running || daemon.state === 'unavailable') && (
-              <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.restart.mutate()}>重启网关</button>
-            )}
-            {daemon.running && (
-              <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.stop.mutate()}>停止网关</button>
-            )}
+        <div className="space-y-1.5 rounded-lg border border-line/70 bg-bg-soft px-3 py-2 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0 space-y-0.5 text-ink-muted">
+              <div>
+                网关状态：<strong className="font-semibold text-ink">
+                  {daemon.external ? '外部网关运行中' : daemon.running ? '运行中' : daemon.busy ? '处理中' : daemon.state === 'stopped' ? '已停止' : '不可用'}
+                </strong>
+                {daemon.running && daemon.status.data?.port && (
+                  <span className="ml-1.5 tabular-nums">:{daemon.status.data.port}</span>
+                )}
+                {daemon.running && daemon.status.data?.version && (
+                  <span className="ml-1.5">v{daemon.status.data.version}</span>
+                )}
+              </div>
+              {daemon.external && (
+                <p className="text-[11px] text-ink-muted">当前网关由外部启动，GA-Hub 不会接管启停；如需切换隔离账号请先在外部停止网关。</p>
+              )}
+              {daemon.state === 'unavailable' && daemon.status.data?.detail && (
+                <p className="text-[11px] text-status-danger">{daemon.status.data.detail}</p>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {!daemon.running && daemon.state === 'stopped' && (
+                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.start.mutate()}>启动网关</button>
+              )}
+              {(daemon.running || daemon.state === 'unavailable') && daemon.managed && (
+                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.restart.mutate()}>重启网关</button>
+              )}
+              {daemon.running && daemon.managed && (
+                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.stop.mutate()}>停止网关</button>
+              )}
+              <button type="button" className={secondary} onClick={() => setShowLogs(v => !v)}>
+                {showLogs ? '隐藏日志' : '网关日志'}
+              </button>
+            </div>
           </div>
+          {showLogs && (
+            <div className="border-t border-line/60 pt-2">
+              <div className="mb-1 flex items-center justify-between text-[11px] text-ink-muted">
+                <span className="truncate" title={logs.data?.log_path}>最近 AntiCLI 网关日志</span>
+                <button type="button" className="text-accent hover:underline" disabled={logs.isFetching} onClick={() => void logs.refetch()}>
+                  {logs.isFetching ? '刷新中…' : '刷新'}
+                </button>
+              </div>
+              {logs.error ? (
+                <p className="text-[11px] text-status-danger">{logs.error.message}</p>
+              ) : logs.data?.lines.length ? (
+                <pre className="max-h-36 overflow-auto rounded bg-bg-card p-2 font-mono text-[11px] leading-4 text-ink whitespace-pre-wrap break-all">
+                  {logs.data.lines.join('\n')}
+                </pre>
+              ) : (
+                <p className="text-[11px] text-ink-muted">{logs.isPending ? '正在读取日志…' : '暂无托管网关启动日志。'}</p>
+              )}
+            </div>
+          )}
         </div>
       )}
       <div role="status" className="text-sm text-ink-muted empty:hidden">{action.isPending ? pendingLabel : message}</div>
-      {action.error && <p role="alert" className="rounded-lg border border-line p-2 text-sm">{action.error.message}</p>}
+      {(action.error || daemonError) && (
+        <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft p-2 text-sm text-status-danger">
+          {(action.error ?? daemonError)!.message}
+        </p>
+      )}
       {profiles.isError && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-2 text-sm">
         <p role="alert">{profiles.error.message}</p>
         <button type="button" className={secondary} onClick={() => void profiles.refetch()} disabled={profiles.isFetching}>重试加载账号</button>
@@ -271,10 +345,19 @@ export function AntiAgyProfiles({ profiles, refresh, daemon }: {
                   onClick={() => action.mutate({ kind: 'check-usage' })}>刷新额度</button>
               )}
               {editButton(selected)}
-              <button type="button" className={secondary} disabled={disabled}
+              {selected.id !== 'default' && (selected.has_credentials || selected.auth_state === 'authenticated') && (!daemon || daemon.state === 'stopped') && (
+                <button type="button" className={secondary} disabled={disabled}
+                  aria-label={`清除凭据：${selected.name}`}
+                  onClick={() => action.mutate({ kind: 'logout', profile: selected })}>清除凭据</button>
+              )}
+              <button type="button" className={secondary} disabled={disabled || nonWindows}
+                title={nonWindows ? '从 GA-Hub 直接唤起官方登录窗口仅支持 Windows，请在终端设置隔离 HOME 后运行 agy 登录' : undefined}
                 aria-label={`官方登录：${selected.name}`} onClick={() => action.mutate({ kind: 'login', profile: selected })}>官方登录</button>
             </div>
           </div>
+          {nonWindows && (
+            <p className="mt-2 text-[11px] text-ink-muted">当前非 Windows 系统：可在终端将隔离账号目录设为 `HOME` 后运行 `agy` 登录，或通过下方「从当前登录另存」导入凭据。</p>
+          )}
           {selected.usage?.rows?.length ? (
             <div className="mt-2 grid grid-cols-2 gap-1.5 border-t border-line/60 pt-2 text-xs sm:grid-cols-3">
               {selected.usage.rows.map(row => (
@@ -296,6 +379,11 @@ export function AntiAgyProfiles({ profiles, refresh, daemon }: {
                   {renderProfileMeta(profile)}
                 </div>
                 {editButton(profile)}
+                {profile.id !== 'default' && (profile.has_credentials || profile.auth_state === 'authenticated') && (
+                  <button type="button" className={secondary} disabled={disabled}
+                    aria-label={`清除凭据：${profile.name}`}
+                    onClick={() => action.mutate({ kind: 'logout', profile })}>清除凭据</button>
+                )}
                 {profile.id !== 'default' && (
                   confirmDeleteId === profile.id ? (
                     <div className="flex items-center gap-1">
@@ -309,7 +397,9 @@ export function AntiAgyProfiles({ profiles, refresh, daemon }: {
                       aria-label={`删除账号：${profile.name}`} onClick={() => setConfirmDeleteId(profile.id)}>删除</button>
                   )
                 )}
-                <button type="button" className={secondary} disabled={disabled} aria-label={`官方登录：${profile.name}`}
+                <button type="button" className={secondary} disabled={disabled || nonWindows}
+                  title={nonWindows ? '仅支持在 Windows 上直接唤起官方登录窗口' : undefined}
+                  aria-label={`官方登录：${profile.name}`}
                   onClick={() => action.mutate({ kind: 'login', profile })}>官方登录</button>
                 <button type="button" className="ga-btn-primary shrink-0" disabled={disabled} aria-label={`切换到${profile.name}`}
                   onClick={() => action.mutate({ kind: 'switch', profile })}>切换</button>

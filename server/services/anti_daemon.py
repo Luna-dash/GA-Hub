@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, get_args
 
+from .. import _paths
 from ..process_utils import hidden_process_kwargs
 from . import anti_component, anti_profiles, child_job
 from .anti_engine import AntiAdapter, AntiError, AntiTransportError, daemon_port
@@ -32,6 +33,10 @@ class AntiDaemonStatus:
     agy_available: bool | None = None
     active_count: int | None = None
     auth_state: AntiAuthState | None = None
+    managed: bool | None = None
+    port: int | None = None
+    version: str | None = None
+    max_concurrency: int | None = None
 
 
 class AntiDaemon:
@@ -66,9 +71,14 @@ class AntiDaemon:
                 and type(health.get("active_count")) is int):
             self._failure = None
             agy = bool(health["agy_binary"])
+            managed = self._process is not None and self._process.poll() is None
+            raw_concurrency = health.get("max_concurrency")
+            max_concurrency = raw_concurrency if type(raw_concurrency) is int else None
             return AntiDaemonStatus(state="ready", agy_available=agy, active_count=health["active_count"],
                                     detail=None if agy else "AntiCLI 已启动，但找不到官方 agy CLI",
-                                    auth_state=self._auth_status() if agy and verify_auth else None)
+                                    auth_state=self._auth_status() if agy and verify_auth else None,
+                                    managed=managed, port=port, version=health["version"],
+                                    max_concurrency=max_concurrency)
         if self._process is not None:
             code = self._process.poll()
             if code is None:
@@ -184,18 +194,53 @@ class AntiDaemon:
             options["env"] = env
         return executable, options
 
+    @staticmethod
+    def _log_path() -> Path:
+        return _paths.ADMIN_DATA / "logs" / "anticli-daemon.log"
+
+    def tail_logs(self, lines: int = 80) -> tuple[list[str], str]:
+        path = self._log_path()
+        try:
+            if not path.is_file():
+                return [], str(path)
+            content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            return content[-max(1, min(lines, 500)):], str(path)
+        except OSError:
+            return [], str(path)
+
     def _start(self, port: int, profile_id: str, prepared: tuple[str, dict] | None = None) -> AntiDaemonStatus:
         executable, options = prepared if prepared is not None else self._options(profile_id)
+        log_fp = None
+        try:
+            log_path = self._log_path()
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            if log_path.exists() and log_path.stat().st_size > 1024 * 1024:
+                backup = log_path.with_suffix(".log.1")
+                try:
+                    log_path.replace(backup)
+                except OSError:
+                    pass
+            log_fp = log_path.open("ab")
+        except OSError:
+            log_fp = None
         try:
             self._process = child_job.spawn(
                 [executable, "serve", "--host", "127.0.0.1", "--port", str(port)],
                 kind="anticli", marker=executable,
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                stdout=log_fp if log_fp is not None else subprocess.DEVNULL,
+                stderr=subprocess.STDOUT if log_fp is not None else subprocess.DEVNULL,
                 **hidden_process_kwargs(), **options,
             )
         except OSError as exc:
             log.warning("Failed to start AntiCLI", exc_info=True)
             raise AntiError(503, "无法启动 AntiCLI，请检查安装与执行权限") from exc
+        finally:
+            if log_fp is not None:
+                try:
+                    log_fp.close()
+                except OSError:
+                    pass
         self._profile_id = profile_id
         self._failure = None
         self._deadline = time.monotonic() + 15
@@ -298,6 +343,14 @@ class AntiDaemon:
         with self._lock:
             self._require_login_closed(profile_id)
             anti_profiles.delete(profile_id)
+
+    def clear_profile_credentials(self, profile_id: str) -> dict:
+        with self._lock:
+            self._require_login_closed(profile_id)
+            active, _ = anti_profiles.snapshot()
+            if active == profile_id and self._active_status(daemon_port()).state != "stopped":
+                raise AntiError(409, "请先停止 Anti 网关或切换到其他账号后再清除凭据")
+            return anti_profiles.clear_credentials(profile_id)
 
     def _await_ready(self, port: int) -> None:
         process = self._process

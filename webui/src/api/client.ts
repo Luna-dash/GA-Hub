@@ -639,6 +639,8 @@ export type AntiRun = ApiComponents['schemas']['AntiRunResp']
 export type AntiModels = ApiComponents['schemas']['AntiModelList']
 export type AntiAccountUsage = ApiComponents['schemas']['AntiAccountUsage']
 export type AntiQuotaPool = ApiComponents['schemas']['AntiQuotaPool']
+export type AntiUsageStats = ApiComponents['schemas']['AntiUsageStats']
+export type AntiDaemonLogs = ApiComponents['schemas']['AntiDaemonLogsResp']
 export type AgyProfile = ApiComponents['schemas']['AgyProfile']
 export type AgyProfileUsageSnapshot = ApiComponents['schemas']['AgyProfileUsageSnapshot']
 export type AgyProfiles = ApiComponents['schemas']['AgyProfiles']
@@ -684,6 +686,8 @@ export const antiApi = {
     antiHttp<AntiDaemonStatus>('POST', '/api/anti/restart', undefined, {
       headers: { 'X-GA-Hub-Action': 'restart-anti' },
     }),
+  daemonLogs: (lines = 80, signal?: AbortSignal) =>
+    antiHttp<AntiDaemonLogs>('GET', `/api/anti/logs?lines=${lines}`, undefined, { signal }),
   profiles: (signal?: AbortSignal) =>
     antiHttp<AgyProfiles>('GET', '/api/anti/profiles', undefined, { signal }),
   captureProfile: (name: string) =>
@@ -692,6 +696,10 @@ export const antiApi = {
     }),
   deleteProfile: (id: string) =>
     antiHttp<void>('DELETE', `/api/anti/profiles/${encodeURIComponent(id)}`, undefined, {
+      headers: { 'X-GA-Hub-Action': 'manage-agy-profiles' },
+    }),
+  clearProfileCredentials: (id: string) =>
+    antiHttp<AgyProfile>('POST', `/api/anti/profiles/${encodeURIComponent(id)}/logout`, undefined, {
       headers: { 'X-GA-Hub-Action': 'manage-agy-profiles' },
     }),
   accountUsage: () =>
@@ -704,6 +712,16 @@ export const antiApi = {
     antiHttp<void>('POST', '/api/anti/breaker/reset', { model_group: modelGroup ?? null }, {
       headers: { 'X-GA-Hub-Action': 'manage-anti-gateway' },
     }),
+  calibrateQuota: (modelGroup: string, remainingPct: number, note?: string) =>
+    antiHttp<AntiQuotaPool>('POST', '/api/anti/quota/calibrate', {
+      model_group: modelGroup,
+      remaining_pct: remainingPct,
+      note: note ?? null,
+    }, {
+      headers: { 'X-GA-Hub-Action': 'manage-anti-gateway' },
+    }),
+  stats: (windowHours = 24, signal?: AbortSignal) =>
+    antiHttp<AntiUsageStats>('GET', `/api/anti/stats?window_hours=${windowHours}`, undefined, { signal }),
   models: (signal?: AbortSignal) =>
     // Allow the gateway attempt (2s connect + 23s read) and the 24s CLI fallback.
     antiHttp<AntiModels>('GET', '/api/anti/models', undefined, { signal, timeoutMs: 60_000 }),

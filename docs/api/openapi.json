@@ -5216,6 +5216,51 @@
         }
       }
     },
+    "/api/anti/logs": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Daemon Logs",
+        "operationId": "daemon_logs_api_anti_logs_get",
+        "parameters": [
+          {
+            "name": "lines",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 80,
+              "title": "Lines"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiDaemonLogsResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/anti/profiles": {
       "get": {
         "tags": [
@@ -5479,6 +5524,48 @@
         }
       }
     },
+    "/api/anti/profiles/{profile_id}/logout": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Logout Agy Profile",
+        "operationId": "logout_agy_profile_api_anti_profiles__profile_id__logout_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyProfile"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/anti/account-usage": {
       "post": {
         "tags": [
@@ -5545,6 +5632,92 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/quota/calibrate": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Calibrate Gateway Quota",
+        "operationId": "calibrate_gateway_quota_api_anti_quota_calibrate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntiQuotaCalibrateReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiQuotaPool"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/stats": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Gateway Stats",
+        "operationId": "gateway_stats_api_anti_stats_get",
+        "parameters": [
+          {
+            "name": "window_hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 8760,
+              "minimum": 0,
+              "default": 24,
+              "title": "Window Hours"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiUsageStats"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -6617,6 +6790,27 @@
         "type": "object",
         "title": "AntiBreakerResetReq"
       },
+      "AntiDaemonLogsResp": {
+        "properties": {
+          "lines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lines"
+          },
+          "log_path": {
+            "type": "string",
+            "title": "Log Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lines",
+          "log_path"
+        ],
+        "title": "AntiDaemonLogsResp"
+      },
       "AntiDaemonStatus": {
         "properties": {
           "state": {
@@ -6678,6 +6872,50 @@
               }
             ],
             "title": "Auth State"
+          },
+          "managed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Managed"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "max_concurrency": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Concurrency"
           }
         },
         "type": "object",
@@ -6776,6 +7014,40 @@
         ],
         "title": "AntiModelList"
       },
+      "AntiQuotaCalibrateReq": {
+        "properties": {
+          "model_group": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Model Group"
+          },
+          "remaining_pct": {
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Remaining Pct"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_group",
+          "remaining_pct"
+        ],
+        "title": "AntiQuotaCalibrateReq"
+      },
       "AntiQuotaPool": {
         "properties": {
           "model_group": {
@@ -6816,6 +7088,28 @@
               }
             ],
             "title": "Window 7D Pct"
+          },
+          "calibrated_remaining_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibrated Remaining Pct"
+          },
+          "estimated_cost_7d_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Cost 7D Usd"
           }
         },
         "additionalProperties": true,
@@ -7136,6 +7430,54 @@
           "step"
         ],
         "title": "AntiStepUpdate"
+      },
+      "AntiUsageStats": {
+        "properties": {
+          "window_hours": {
+            "type": "integer",
+            "title": "Window Hours"
+          },
+          "total_runs": {
+            "type": "integer",
+            "title": "Total Runs",
+            "default": 0
+          },
+          "success_runs": {
+            "type": "integer",
+            "title": "Success Runs",
+            "default": 0
+          },
+          "failed_runs": {
+            "type": "integer",
+            "title": "Failed Runs",
+            "default": 0
+          },
+          "rate_limited_runs": {
+            "type": "integer",
+            "title": "Rate Limited Runs",
+            "default": 0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens",
+            "default": 0
+          },
+          "cache_hit_ratio": {
+            "type": "number",
+            "title": "Cache Hit Ratio",
+            "default": 0.0
+          },
+          "estimated_cost_usd": {
+            "type": "number",
+            "title": "Estimated Cost Usd",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "window_hours"
+        ],
+        "title": "AntiUsageStats"
       },
       "AppStatusResp": {
         "properties": {

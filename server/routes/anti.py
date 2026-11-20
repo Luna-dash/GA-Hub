@@ -29,6 +29,15 @@ class AntiDaemonStatus(BaseModel):
     agy_available: bool | None = None
     active_count: int | None = None
     auth_state: AntiAuthState | None = None
+    managed: bool | None = None
+    port: int | None = None
+    version: str | None = None
+    max_concurrency: int | None = None
+
+
+class AntiDaemonLogsResp(BaseModel):
+    lines: list[str]
+    log_path: str
 
 
 class AntiAccountQuotaRow(BaseModel):
@@ -138,6 +147,14 @@ def _call(method, *args):
         raise HTTPException(exc.status, str(exc)) from exc
 
 
+def _require_action(request: Request, action: str, missing_detail: str) -> None:
+    if not is_allowed_ui_origin(request.headers.get("origin")):
+        raise HTTPException(403, "Untrusted UI origin")
+    # Require a non-simple header so cross-origin forms cannot drive daemon actions.
+    if request.headers.get("x-ga-hub-action") != action:
+        raise HTTPException(403, missing_detail)
+
+
 @router.get("/status", response_model=AntiDaemonStatus)
 def daemon_status(request: Request):
     verify = (request.headers.get("x-ga-hub-action") == "verify-anti-auth"
@@ -150,11 +167,7 @@ def daemon_status(request: Request):
 
 @router.post("/start", response_model=AntiDaemonStatus)
 def start_daemon(request: Request):
-    if not is_allowed_ui_origin(request.headers.get("origin")):
-        raise HTTPException(403, "Untrusted UI origin")
-    # Require a non-simple header so cross-origin forms cannot launch a process.
-    if request.headers.get("x-ga-hub-action") != "start-anti":
-        raise HTTPException(403, "Missing Anti start action")
+    _require_action(request, "start-anti", "Missing Anti start action")
     try:
         return asdict(daemon.start())
     except AntiError as exc:
@@ -163,10 +176,7 @@ def start_daemon(request: Request):
 
 @router.post("/stop", response_model=AntiDaemonStatus)
 def stop_daemon(request: Request):
-    if not is_allowed_ui_origin(request.headers.get("origin")):
-        raise HTTPException(403, "Untrusted UI origin")
-    if request.headers.get("x-ga-hub-action") != "stop-anti":
-        raise HTTPException(403, "Missing Anti stop action")
+    _require_action(request, "stop-anti", "Missing Anti stop action")
     try:
         return asdict(daemon.stop())
     except AntiError as exc:
@@ -175,14 +185,17 @@ def stop_daemon(request: Request):
 
 @router.post("/restart", response_model=AntiDaemonStatus)
 def restart_daemon(request: Request):
-    if not is_allowed_ui_origin(request.headers.get("origin")):
-        raise HTTPException(403, "Untrusted UI origin")
-    if request.headers.get("x-ga-hub-action") != "restart-anti":
-        raise HTTPException(403, "Missing Anti restart action")
+    _require_action(request, "restart-anti", "Missing Anti restart action")
     try:
         return asdict(daemon.restart())
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.get("/logs", response_model=AntiDaemonLogsResp)
+def daemon_logs(lines: int = Query(default=80, ge=1, le=500)):
+    tail, log_path = daemon.tail_logs(lines)
+    return {"lines": tail, "log_path": log_path}
 
 
 class AgyProfileUsageSnapshot(BaseModel):
@@ -209,6 +222,17 @@ class AgyProfileCreate(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 
 
+class AntiUsageStats(BaseModel):
+    window_hours: int
+    total_runs: int = 0
+    success_runs: int = 0
+    failed_runs: int = 0
+    rate_limited_runs: int = 0
+    total_tokens: int = 0
+    cache_hit_ratio: float = 0.0
+    estimated_cost_usd: float = 0.0
+
+
 class AntiQuotaPool(BaseModel):
     model_config = {"extra": "allow"}
 
@@ -218,17 +242,39 @@ class AntiQuotaPool(BaseModel):
     cooldown_remaining_seconds: int = 0
     window_5h_pct: float | None = None
     window_7d_pct: float | None = None
+    calibrated_remaining_pct: float | None = None
+    estimated_cost_7d_usd: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_pool(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        if "model_group" not in normalized and "group" in normalized:
+            normalized["model_group"] = normalized["group"]
+        if "cooldown_remaining_seconds" not in normalized and "cooldown_remaining_sec" in normalized:
+            normalized["cooldown_remaining_seconds"] = normalized["cooldown_remaining_sec"]
+        raw_status = normalized.get("status")
+        if raw_status == "COOLDOWN":
+            normalized["status"] = "cooling_down"
+        elif raw_status == "OK":
+            normalized["status"] = "normal"
+        return normalized
 
 
 class AntiBreakerResetReq(BaseModel):
     model_group: str | None = Field(default=None, max_length=64)
 
 
+class AntiQuotaCalibrateReq(BaseModel):
+    model_group: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
+    remaining_pct: float = Field(ge=0, le=100)
+    note: str | None = Field(default=None, max_length=200)
+
+
 def _profile_action(request: Request) -> None:
-    if not is_allowed_ui_origin(request.headers.get("origin")):
-        raise HTTPException(403, "Untrusted UI origin")
-    if request.headers.get("x-ga-hub-action") != "manage-agy-profiles":
-        raise HTTPException(403, "Missing Agy profile action")
+    _require_action(request, "manage-agy-profiles", "Missing Agy profile action")
 
 
 @router.get("/profiles", response_model=AgyProfiles, response_model_exclude_none=True)
@@ -300,12 +346,18 @@ def login_agy_profile(profile_id: str, request: Request):
         raise HTTPException(exc.status, str(exc)) from exc
 
 
+@router.post("/profiles/{profile_id}/logout", response_model=AgyProfile, response_model_exclude_none=True)
+def logout_agy_profile(profile_id: str, request: Request):
+    _profile_action(request)
+    try:
+        return daemon.clear_profile_credentials(profile_id)
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
 @router.post("/account-usage", response_model=AntiAccountUsage)
 def check_account_usage(request: Request):
-    if not is_allowed_ui_origin(request.headers.get("origin")):
-        raise HTTPException(403, "Untrusted UI origin")
-    if request.headers.get("x-ga-hub-action") != "check-anti-usage":
-        raise HTTPException(403, "Missing Anti usage action")
+    _require_action(request, "check-anti-usage", "Missing Anti usage action")
     try:
         with daemon.submission() as profile_id:
             report = AntiAdapter().request("POST", "/v1/account-usage", read_timeout=30,
@@ -341,15 +393,46 @@ def gateway_quota():
 
 @router.post("/breaker/reset", status_code=204)
 def reset_gateway_breaker(body: AntiBreakerResetReq, request: Request):
-    if not is_allowed_ui_origin(request.headers.get("origin")):
-        raise HTTPException(403, "Untrusted UI origin")
-    if request.headers.get("x-ga-hub-action") != "manage-anti-gateway":
-        raise HTTPException(403, "Missing Anti gateway action")
+    _require_action(request, "manage-anti-gateway", "Missing Anti gateway action")
     try:
         with daemon.submission():
             AntiAdapter().request("POST", "/v1/breaker/reset", json={"model_group": body.model_group})
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.post("/quota/calibrate", response_model=AntiQuotaPool)
+def calibrate_gateway_quota(body: AntiQuotaCalibrateReq, request: Request):
+    _require_action(request, "manage-anti-gateway", "Missing Anti gateway action")
+    try:
+        with daemon.submission():
+            data = AntiAdapter().request(
+                "POST",
+                "/v1/quota/calibrate",
+                json={
+                    "model_group": body.model_group,
+                    "remaining_pct": body.remaining_pct,
+                    "note": body.note,
+                },
+            )
+        group = data.get("group") if isinstance(data, dict) else None
+        return AntiQuotaPool.model_validate(group if isinstance(group, dict) else data)
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(502, "AntiCLI 返回了无法识别的校准结果。") from exc
+
+
+@router.get("/stats", response_model=AntiUsageStats)
+def gateway_stats(window_hours: int = Query(default=24, ge=0, le=8760)):
+    try:
+        with daemon.submission():
+            data = AntiAdapter().request("GET", f"/v1/stats?window_hours={window_hours}")
+        return AntiUsageStats.model_validate(data)
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(502, "AntiCLI 返回了无法识别的统计信息。") from exc
 
 
 @router.get("/models", response_model=AntiModelList)

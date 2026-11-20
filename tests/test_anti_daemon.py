@@ -70,7 +70,15 @@ def test_manual_start_and_reuse(monkeypatch):
     assert starts == [['fake-anticli.exe', 'serve', '--host', '127.0.0.1', '--port', '18877']]
     health = {'status': 'ok', 'version': 'test', 'agy_binary': 'agy', 'active_count': 2}
     assert client.get('/api/anti/status').json() == {
-        'state': 'ready', 'detail': None, 'agy_available': True, 'active_count': 2, 'auth_state': None,
+        'state': 'ready',
+        'detail': None,
+        'agy_available': True,
+        'active_count': 2,
+        'auth_state': None,
+        'managed': True,
+        'port': 18877,
+        'version': 'test',
+        'max_concurrency': None,
     }
     health, process.code = None, 3
     assert '3' in client.get('/api/anti/status').json()['detail']
@@ -536,3 +544,111 @@ def test_quota_breaker_reset_and_usage_snapshot(tmp_path, monkeypatch):
     reset = client.post('/api/anti/breaker/reset', json={'model_group': 'gemini-4'},
                         headers={'X-GA-Hub-Action': 'manage-anti-gateway'})
     assert reset.status_code == 204
+
+
+def test_real_anticli_quota_normalization_calibrate_stats_logs_and_logout(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    monkeypatch.setattr(anti_profiles, '_root', lambda: tmp_path / 'profiles')
+    monkeypatch.setattr(svc._paths, 'ADMIN_DATA', tmp_path)
+    client = make_client(monkeypatch)
+
+    created = client.post(
+        '/api/anti/profiles',
+        json={'name': '工作'},
+        headers={'X-GA-Hub-Action': 'manage-agy-profiles'},
+    ).json()
+    pid = created['id']
+    cred_dir = tmp_path / 'profiles' / pid / 'home' / '.gemini' / 'antigravity-cli'
+    cred_dir.mkdir(parents=True)
+    (cred_dir / 'antigravity-oauth-token').write_text('tok', encoding='utf-8')
+    assert any(p['id'] == pid and p['has_credentials'] for p in client.get('/api/anti/profiles').json()['profiles'])
+
+    assert client.post(
+        '/api/anti/profiles/default/logout',
+        headers={'X-GA-Hub-Action': 'manage-agy-profiles'},
+    ).status_code == 409
+    cleared = client.post(
+        f'/api/anti/profiles/{pid}/logout',
+        headers={'X-GA-Hub-Action': 'manage-agy-profiles'},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()['has_credentials'] is False
+    assert not (cred_dir / 'antigravity-oauth-token').exists()
+
+    @contextmanager
+    def fake_submission():
+        yield 'default'
+
+    def fake_adapter_request(self, method, path, **kw):
+        if path == '/v1/quota':
+            return [{
+                'group': 'gemini-4',
+                'display_name': 'Gemini 4',
+                'status': 'COOLDOWN',
+                'cooldown_remaining_sec': 18,
+                'window_5h_pct': 74.5,
+                'window_7d_pct': 30.0,
+            }]
+        if path == '/v1/quota/calibrate':
+            return {
+                'status': 'ok',
+                'group': {
+                    'group': 'gemini-4',
+                    'display_name': 'Gemini 4',
+                    'status': 'OK',
+                    'cooldown_remaining_sec': 0,
+                    'window_5h_pct': 74.5,
+                    'window_7d_pct': 30.0,
+                    'calibrated_remaining_pct': kw['json']['remaining_pct'],
+                },
+            }
+        if path.startswith('/v1/stats'):
+            return {
+                'window_hours': 24,
+                'total_runs': 12,
+                'success_runs': 11,
+                'failed_runs': 1,
+                'rate_limited_runs': 0,
+                'total_tokens': 45000,
+                'cache_hit_ratio': 0.5,
+                'estimated_cost_usd': 0.42,
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(anti.daemon, 'submission', fake_submission)
+    monkeypatch.setattr(anti.AntiAdapter, 'request', fake_adapter_request)
+
+    pools = client.get('/api/anti/quota').json()
+    assert pools == [expect_pool := {
+        'model_group': 'gemini-4',
+        'display_name': 'Gemini 4',
+        'status': 'cooling_down',
+        'cooldown_remaining_seconds': 18,
+        'window_5h_pct': 74.5,
+        'window_7d_pct': 30.0,
+        'calibrated_remaining_pct': None,
+        'estimated_cost_7d_usd': None,
+        'group': 'gemini-4',
+        'cooldown_remaining_sec': 18,
+    }]
+    assert expect_pool['status'] == 'cooling_down'
+
+    cal = client.post(
+        '/api/anti/quota/calibrate',
+        json={'model_group': 'gemini-4', 'remaining_pct': 80},
+        headers={'X-GA-Hub-Action': 'manage-anti-gateway'},
+    )
+    assert cal.status_code == 200
+    assert cal.json()['status'] == 'normal'
+    assert cal.json()['calibrated_remaining_pct'] == 80
+
+    stats = client.get('/api/anti/stats?window_hours=24')
+    assert stats.status_code == 200
+    assert stats.json()['total_runs'] == 12
+
+    log_file = tmp_path / 'logs' / 'anticli-daemon.log'
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.write_text('line1\nline2\n', encoding='utf-8')
+    logs = client.get('/api/anti/logs?lines=1').json()
+    assert logs['lines'] == ['line2']

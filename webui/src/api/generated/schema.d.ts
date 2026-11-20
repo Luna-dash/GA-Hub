@@ -2339,6 +2339,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/anti/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Daemon Logs */
+        get: operations["daemon_logs_api_anti_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/anti/profiles": {
         parameters: {
             query?: never;
@@ -2426,6 +2443,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/anti/profiles/{profile_id}/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Logout Agy Profile */
+        post: operations["logout_agy_profile_api_anti_profiles__profile_id__logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/anti/account-usage": {
         parameters: {
             query?: never;
@@ -2471,6 +2505,40 @@ export interface paths {
         put?: never;
         /** Reset Gateway Breaker */
         post: operations["reset_gateway_breaker_api_anti_breaker_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/anti/quota/calibrate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Calibrate Gateway Quota */
+        post: operations["calibrate_gateway_quota_api_anti_quota_calibrate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/anti/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gateway Stats */
+        get: operations["gateway_stats_api_anti_stats_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2895,6 +2963,13 @@ export interface components {
             /** Model Group */
             model_group?: string | null;
         };
+        /** AntiDaemonLogsResp */
+        AntiDaemonLogsResp: {
+            /** Lines */
+            lines: string[];
+            /** Log Path */
+            log_path: string;
+        };
         /** AntiDaemonStatus */
         AntiDaemonStatus: {
             /**
@@ -2910,6 +2985,14 @@ export interface components {
             active_count?: number | null;
             /** Auth State */
             auth_state?: ("checking" | "authenticated" | "login_required" | "unverified") | null;
+            /** Managed */
+            managed?: boolean | null;
+            /** Port */
+            port?: number | null;
+            /** Version */
+            version?: string | null;
+            /** Max Concurrency */
+            max_concurrency?: number | null;
         };
         /** AntiFileReference */
         AntiFileReference: {
@@ -2943,6 +3026,15 @@ export interface components {
             /** Items */
             items: components["schemas"]["AntiModelItem"][];
         };
+        /** AntiQuotaCalibrateReq */
+        AntiQuotaCalibrateReq: {
+            /** Model Group */
+            model_group: string;
+            /** Remaining Pct */
+            remaining_pct: number;
+            /** Note */
+            note?: string | null;
+        };
         /** AntiQuotaPool */
         AntiQuotaPool: {
             /** Model Group */
@@ -2960,6 +3052,10 @@ export interface components {
             window_5h_pct?: number | null;
             /** Window 7D Pct */
             window_7d_pct?: number | null;
+            /** Calibrated Remaining Pct */
+            calibrated_remaining_pct?: number | null;
+            /** Estimated Cost 7D Usd */
+            estimated_cost_7d_usd?: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -3069,6 +3165,46 @@ export interface components {
              */
             type: "step.update";
             step: components["schemas"]["AntiStep"];
+        };
+        /** AntiUsageStats */
+        AntiUsageStats: {
+            /** Window Hours */
+            window_hours: number;
+            /**
+             * Total Runs
+             * @default 0
+             */
+            total_runs: number;
+            /**
+             * Success Runs
+             * @default 0
+             */
+            success_runs: number;
+            /**
+             * Failed Runs
+             * @default 0
+             */
+            failed_runs: number;
+            /**
+             * Rate Limited Runs
+             * @default 0
+             */
+            rate_limited_runs: number;
+            /**
+             * Total Tokens
+             * @default 0
+             */
+            total_tokens: number;
+            /**
+             * Cache Hit Ratio
+             * @default 0
+             */
+            cache_hit_ratio: number;
+            /**
+             * Estimated Cost Usd
+             * @default 0
+             */
+            estimated_cost_usd: number;
         };
         /**
          * AppStatusResp
@@ -9980,6 +10116,37 @@ export interface operations {
             };
         };
     };
+    daemon_logs_api_anti_logs_get: {
+        parameters: {
+            query?: {
+                lines?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiDaemonLogsResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     agy_profiles_api_anti_profiles_get: {
         parameters: {
             query?: never;
@@ -10190,6 +10357,37 @@ export interface operations {
             };
         };
     };
+    logout_agy_profile_api_anti_profiles__profile_id__logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyProfile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     check_account_usage_api_anti_account_usage_post: {
         parameters: {
             query?: never;
@@ -10249,6 +10447,70 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    calibrate_gateway_quota_api_anti_quota_calibrate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AntiQuotaCalibrateReq"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiQuotaPool"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    gateway_stats_api_anti_stats_get: {
+        parameters: {
+            query?: {
+                window_hours?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiUsageStats"];
+                };
             };
             /** @description Validation Error */
             422: {

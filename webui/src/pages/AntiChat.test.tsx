@@ -410,7 +410,14 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     },
     { id: 'work', name: '工作', has_credentials: false, auth_state: 'login_required' },
   ]
-  let pools = [{ model_group: 'gemini-4', display_name: 'Gemini 4', status: 'cooling_down', cooldown_remaining_seconds: 30 }]
+  let pools: Array<Record<string, unknown>> = [{
+    model_group: 'gemini-4',
+    display_name: 'Gemini 4',
+    status: 'cooling_down',
+    cooldown_remaining_seconds: 30,
+    window_5h_pct: 64,
+    window_7d_pct: 28,
+  }]
 
   const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
     const reply = (data: unknown, status = 200) => ({
@@ -448,9 +455,28 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     if (path === '/api/anti/quota') {
       return reply(pools)
     }
+    if (path === '/api/anti/stats?window_hours=24') {
+      return reply({
+        window_hours: 24,
+        total_runs: 5,
+        success_runs: 4,
+        failed_runs: 1,
+        rate_limited_runs: 0,
+        total_tokens: 12000,
+        cache_hit_ratio: 0.4,
+        estimated_cost_usd: 0.1,
+      })
+    }
+    if (path === '/api/anti/logs?lines=80') {
+      return reply({ lines: ['[INFO] AntiCLI ready'], log_path: 'C:/data/logs/anticli-daemon.log' })
+    }
+    if (path === '/api/anti/profiles/cloned/logout') {
+      profilesList = profilesList.map(p => p.id === 'cloned' ? { id: 'cloned', name: '克隆号', has_credentials: false } : p)
+      return reply({ id: 'cloned', name: '克隆号', has_credentials: false })
+    }
     if (path === '/api/anti/breaker/reset') {
       expect(new Headers(init?.headers).get('X-GA-Hub-Action')).toBe('manage-anti-gateway')
-      pools = [{ model_group: 'gemini-4', display_name: 'Gemini 4', status: 'normal', cooldown_remaining_seconds: 0 }]
+      pools = [{ model_group: 'gemini-4', display_name: 'Gemini 4', status: 'normal', cooldown_remaining_seconds: 0, window_5h_pct: 64, window_7d_pct: 28 }]
       return reply(undefined, 204)
     }
     if (path === '/api/anti/sessions') return reply([])
@@ -489,17 +515,25 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await act(async () => { checkPoolsBtn.click() })
     await flush()
     expect(document.body.textContent).toContain('冷却 30s')
+    expect(document.body.textContent).toContain('5h 窗口 64%')
+    expect(document.body.textContent).toContain('7d 窗口 28%')
+    expect(document.body.textContent).toContain('24h 5 次')
     const resetBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '重置熔断') as HTMLButtonElement
     await act(async () => { resetBtn.click() })
     await flush()
     expect(document.body.textContent).toContain('正常')
 
-    // Profile modal: capture current login as new profile & delete inactive profile with confirmation
+    // Profile modal: capture current login, inspect logs, clear credentials, & delete inactive profile
     const accountsBtn = [...host.querySelectorAll('button')].find(b => b.getAttribute('aria-label')?.startsWith('Agy 账号：')) as HTMLButtonElement
     await act(async () => { accountsBtn.click() })
     await flush()
     expect(document.body.textContent).toContain('已验证登录')
     expect(document.body.textContent).toContain('最低剩余 65%')
+
+    const logsBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '网关日志') as HTMLButtonElement
+    await act(async () => { logsBtn.click() })
+    await flush()
+    expect(document.body.textContent).toContain('[INFO] AntiCLI ready')
 
     const nameInput = document.body.querySelector('#agy-profile-name') as HTMLInputElement
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
@@ -512,6 +546,11 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await flush()
     expect(profilesList.some(p => p.name === '克隆号')).toBe(true)
 
+    const logoutBtn = document.body.querySelector('button[aria-label="清除凭据：克隆号"]') as HTMLButtonElement
+    await act(async () => { logoutBtn.click() })
+    await flush()
+    expect(profilesList.find(p => p.id === 'cloned')?.has_credentials).toBe(false)
+
     const delBtn = document.body.querySelector('button[aria-label="删除账号：工作"]') as HTMLButtonElement
     await act(async () => { delBtn.click() })
     const confirmDel = document.body.querySelector('button[aria-label="确认删除：工作"]') as HTMLButtonElement
@@ -519,11 +558,19 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await flush()
     expect(profilesList.some(p => p.id === 'work')).toBe(false)
 
-    // Gateway stop button
+    // Close profile modal and stop gateway; offline cached quota remains visible on hover
+    const closeModalBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '关闭') as HTMLButtonElement
+    await act(async () => { closeModalBtn.click() })
+    await flush()
+
     const stopBtn = host.querySelector('button[aria-label="停止 Anti 网关"]') as HTMLButtonElement
     await act(async () => { stopBtn.click() })
     await flush()
     expect(host.textContent).toContain('启动 Anti 网关')
+    await act(async () => { usageBtn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
+    await flush()
+    expect(document.body.textContent).toContain('离线缓存')
+    expect(document.body.textContent).toContain('65%')
   } finally {
     await act(async () => root.unmount())
     cache.clear()
@@ -666,6 +713,61 @@ it('uploads and submits attachments in AgyChat composer even without text', asyn
     host.remove()
     URL.createObjectURL = originalCreateObjectURL
     URL.revokeObjectURL = originalRevokeObjectURL
+    vi.unstubAllGlobals()
+  }
+})
+
+it('shows external gateway lock and login_required / unavailable banners clearly', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  let statusPayload: Record<string, unknown> = {
+    state: 'ready',
+    agy_available: true,
+    auth_state: 'login_required',
+    managed: false,
+    port: 8787,
+    version: '0.2.0',
+  }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    const reply = (data: unknown) => ({ ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(data)) })
+    if (path === '/api/anti/status') return reply(statusPayload)
+    if (path === '/api/anti/profiles') return reply({ active: 'default', profiles: [{ id: 'default', name: '系统默认' }] })
+    if (path === '/api/anti/models') return reply({ items: [{ id: 'gemini-4-hydrogen-high', display_name: 'Gemini 4 Hydrogen (High)' }] })
+    if (path === '/api/anti/sessions') return reply([])
+    throw new Error(`Unexpected request: ${path}`)
+  }))
+
+  const cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity, refetchOnWindowFocus: false } } })
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const flush = () => act(async () => { await Promise.resolve(); await new Promise(r => setTimeout(r, 0)) })
+
+  try {
+    await act(async () => root.render(<QueryClientProvider client={cache}><AntiChat /></QueryClientProvider>))
+    await flush()
+
+    expect(host.textContent).toContain('当前 Agy 账号尚未登录或凭据已过期')
+    const stopBtn = host.querySelector<HTMLButtonElement>('button[aria-label="停止 Anti 网关"]')!
+    const restartBtn = host.querySelector<HTMLButtonElement>('button[aria-label="重启 Anti 网关"]')!
+    expect(stopBtn.disabled).toBe(true)
+    expect(restartBtn.disabled).toBe(true)
+
+    const loginBtn = [...host.querySelectorAll('button')].find(b => b.textContent === '去登录账号') as HTMLButtonElement
+    await act(async () => { loginBtn.click() })
+    await flush()
+    expect(document.body.textContent).toContain('外部网关运行中')
+    const closeBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '关闭') as HTMLButtonElement
+    await act(async () => { closeBtn.click() })
+    await flush()
+
+    statusPayload = { state: 'unavailable', detail: '本机端口 8787 健康检查超时' }
+    await act(async () => { await cache.refetchQueries({ queryKey: ['anti-daemon-status'] }) })
+    await flush()
+    expect(host.textContent).toContain('本机端口 8787 健康检查超时')
+  } finally {
+    await act(async () => root.unmount())
+    cache.clear()
+    host.remove()
     vi.unstubAllGlobals()
   }
 })
