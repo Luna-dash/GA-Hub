@@ -175,9 +175,12 @@ def test_launch_command_allows_non_hub_external_job_and_logs_refusals(tmp_path, 
     assert cli.main(["--admin-data", str(tmp_path), "launch"]) == 0
 
     (tmp_path / "logs").mkdir()
-    monkeypatch.setattr(cli, "launch_current", lambda *a: (_ for _ in ()).throw(ValueError("test refusal")))
+    def fail_inspect():
+        raise OSError("Access denied")
+    monkeypatch.setattr(update_job, "desktop_job_memberships", fail_inspect)
     assert cli.main(["--admin-data", str(tmp_path), "launch"]) == 1
-    assert "Update refused: test refusal" in (tmp_path / "logs" / "update_helper.log").read_text(encoding="utf-8")
+    log_text = (tmp_path / "logs" / "update_helper.log").read_text(encoding="utf-8")
+    assert "Cannot verify Hub desktop Job exclusion: Access denied" in log_text
 
 
 def test_ensure_installed_without_handoff_file(tmp_path, monkeypatch):

@@ -77,19 +77,23 @@ def has_local_credentials(profile_id: str) -> bool:
         return False
 
 
-def snapshot_details() -> dict[str, dict[str, Any]]:
-    _, profiles, meta = _load_raw()
-    details: dict[str, dict[str, Any]] = {}
+def snapshot_details() -> tuple[str, list[dict[str, Any]]]:
+    active, profiles, meta = _load_raw()
+    items: list[dict[str, Any]] = []
     for p in profiles:
-        entry: dict[str, Any] = {"has_credentials": has_local_credentials(p.id)}
+        entry: dict[str, Any] = {
+            "id": p.id,
+            "name": p.name,
+            "has_credentials": has_local_credentials(p.id),
+        }
         p_meta = meta.get(p.id)
         if p_meta:
             if isinstance(p_meta.get("auth_state"), str):
                 entry["auth_state"] = p_meta["auth_state"]
             if isinstance(p_meta.get("usage"), dict):
                 entry["usage"] = p_meta["usage"]
-        details[p.id] = entry
-    return details
+        items.append(entry)
+    return active, items
 
 
 def _save(active: str, profiles: list[Profile], meta: dict[str, dict[str, Any]] | None = None) -> None:

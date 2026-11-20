@@ -2819,22 +2819,16 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /** Has Credentials */
+            has_credentials?: boolean | null;
+            /** Auth State */
+            auth_state?: string | null;
+            usage?: components["schemas"]["AgyProfileUsageSnapshot"] | null;
         };
         /** AgyProfileCreate */
         AgyProfileCreate: {
             /** Name */
             name: string;
-        };
-        /** AgyProfileDetail */
-        AgyProfileDetail: {
-            /**
-             * Has Credentials
-             * @default false
-             */
-            has_credentials: boolean;
-            /** Auth State */
-            auth_state?: string | null;
-            usage?: components["schemas"]["AgyProfileUsageSnapshot"] | null;
         };
         /** AgyProfileUsageSnapshot */
         AgyProfileUsageSnapshot: {
@@ -2853,10 +2847,6 @@ export interface components {
             profiles: components["schemas"]["AgyProfile"][];
             /** Login Profile */
             login_profile?: string | null;
-            /** Details */
-            details?: {
-                [key: string]: components["schemas"]["AgyProfileDetail"];
-            } | null;
         };
         /** AntiAccountQuotaRow */
         AntiAccountQuotaRow: {

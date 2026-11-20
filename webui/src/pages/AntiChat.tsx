@@ -115,7 +115,7 @@ export default function AntiChat() {
   }
   const closeCreate = () => { if (!create.isPending) setCreating(false) }
   const selectedProfile = profiles.data?.profiles.find(item => item.id === profiles.data?.active)
-  const cachedUsage = profiles.data?.active ? profiles.data?.details?.[profiles.data.active]?.usage : undefined
+  const cachedUsage = selectedProfile?.usage
   return <PageShell title="Agy 会话" wrapHeader
     titleExtra={<AntiDaemonControl {...daemon} />}
     actions={<>

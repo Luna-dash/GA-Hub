@@ -6359,36 +6359,17 @@
           "name": {
             "type": "string",
             "title": "Name"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "name"
-        ],
-        "title": "AgyProfile"
-      },
-      "AgyProfileCreate": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Name"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "title": "AgyProfileCreate"
-      },
-      "AgyProfileDetail": {
-        "properties": {
+          },
           "has_credentials": {
-            "type": "boolean",
-            "title": "Has Credentials",
-            "default": false
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Credentials"
           },
           "auth_state": {
             "anyOf": [
@@ -6413,7 +6394,26 @@
           }
         },
         "type": "object",
-        "title": "AgyProfileDetail"
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "AgyProfile"
+      },
+      "AgyProfileCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "AgyProfileCreate"
       },
       "AgyProfileUsageSnapshot": {
         "properties": {
@@ -6469,20 +6469,6 @@
               }
             ],
             "title": "Login Profile"
-          },
-          "details": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "$ref": "#/components/schemas/AgyProfileDetail"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Details"
           }
         },
         "type": "object",

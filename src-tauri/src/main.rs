@@ -1480,6 +1480,28 @@ fn reveal_main_window<R: Runtime>(window: &WebviewWindow<R>) {
     let _ = window.set_focus();
 }
 
+fn ensure_safe_update_fallback(updates_dir: &Path) -> Result<(), String> {
+    if updates_dir.join("maintenance.json").exists() {
+        return Err("Update maintenance is active".to_string());
+    }
+    let state_path = updates_dir.join("state.json");
+    if !state_path.exists() {
+        return Ok(());
+    }
+    let raw = std::fs::read(&state_path).map_err(|e| format!("Cannot inspect update state: {e}"))?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&raw).map_err(|e| format!("Invalid update state: {e}"))?;
+    let state = value["state"]
+        .as_str()
+        .ok_or_else(|| "Missing update state field".to_string())?;
+    if matches!(state, "armed" | "switching" | "verifying" | "failed") {
+        return Err(format!(
+            "Unresolved update ({state}); inspect/recover before launch"
+        ));
+    }
+    Ok(())
+}
+
 // Old shortcuts follow only a completed, hash-verified update. Candidate health
 // and rollback launches carry a nonce and must never be redirected.
 #[cfg(windows)]
@@ -1491,13 +1513,18 @@ fn follow_current_update() -> Result<bool, String> {
     let admin = std::env::var_os("GA_ADMIN_DATA").map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(|p| std::path::PathBuf::from(p).join(".genericagent-admin")))
         .ok_or("Cannot locate admin data")?;
-    let pointer = admin.join("updates/current.json");
-    if !pointer.exists() { return Ok(false); }
+    let updates_dir = admin.join("updates");
+    let pointer = updates_dir.join("current.json");
+    if !pointer.exists() {
+        ensure_safe_update_fallback(&updates_dir)?;
+        return Ok(false);
+    }
     let value: serde_json::Value = serde_json::from_slice(&std::fs::read(pointer).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     let target = value["executable"].as_str().ok_or("Invalid current update pointer")?;
     let target_path = Path::new(target);
     if !target_path.is_file() {
+        ensure_safe_update_fallback(&updates_dir)?;
         record_startup_diagnostic(&format!(
             "follow_current_update: pointer target missing ({target}), continuing with current executable"
         ));
@@ -1509,6 +1536,7 @@ fn follow_current_update() -> Result<bool, String> {
     }
     let helper = current.with_file_name("ga-hub-update.exe");
     if !helper.is_file() {
+        ensure_safe_update_fallback(&updates_dir)?;
         record_startup_diagnostic(&format!(
             "follow_current_update: helper missing ({}), continuing with current executable",
             helper.display()
@@ -2058,5 +2086,31 @@ mod tests {
         }
         assert!(terminated, "test job should accept tree termination");
         assert!(exited, "terminating the job must stop its root child");
+    }
+
+    #[test]
+    fn fallback_launch_blocks_maintenance_and_unresolved_updates() {
+        let dir = env::temp_dir().join(format!("gahub-fallback-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        assert!(ensure_safe_update_fallback(&dir).is_ok());
+
+        for safe_state in ["idle", "prepared", "succeeded", "cancelled", "rolled_back"] {
+            fs::write(dir.join("state.json"), format!(r#"{{"state":"{safe_state}"}}"#)).unwrap();
+            assert!(ensure_safe_update_fallback(&dir).is_ok(), "state {safe_state} should allow fallback");
+        }
+
+        for blocked_state in ["armed", "switching", "verifying", "failed"] {
+            fs::write(dir.join("state.json"), format!(r#"{{"state":"{blocked_state}"}}"#)).unwrap();
+            assert!(ensure_safe_update_fallback(&dir).is_err(), "state {blocked_state} must block fallback");
+        }
+
+        fs::write(dir.join("state.json"), "{not-json").unwrap();
+        assert!(ensure_safe_update_fallback(&dir).is_err());
+
+        fs::write(dir.join("state.json"), r#"{"state":"idle"}"#).unwrap();
+        fs::write(dir.join("maintenance.json"), "{}").unwrap();
+        assert!(ensure_safe_update_fallback(&dir).is_err());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -635,7 +635,6 @@ export type AntiModels = ApiComponents['schemas']['AntiModelList']
 export type AntiAccountUsage = ApiComponents['schemas']['AntiAccountUsage']
 export type AntiQuotaPool = ApiComponents['schemas']['AntiQuotaPool']
 export type AgyProfile = ApiComponents['schemas']['AgyProfile']
-export type AgyProfileDetail = ApiComponents['schemas']['AgyProfileDetail']
 export type AgyProfileUsageSnapshot = ApiComponents['schemas']['AgyProfileUsageSnapshot']
 export type AgyProfiles = ApiComponents['schemas']['AgyProfiles']
 export type AntiSubmission = {

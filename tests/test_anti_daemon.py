@@ -160,7 +160,8 @@ def test_agy_profile_rename_preserves_identity_and_selection(tmp_path, monkeypat
     assert renamed.json() == {'id': work['id'], 'name': 'Office'}
     settings = client.get(url).json()
     assert settings['active'] == work['id']
-    assert renamed.json() in settings['profiles']
+    matched = next(p for p in settings['profiles'] if p['id'] == work['id'])
+    assert matched['name'] == 'Office'
 
 
 @pytest.mark.parametrize("failure", [None, "spawn", "exit", "rollback"])
@@ -523,7 +524,7 @@ def test_quota_breaker_reset_and_usage_snapshot(tmp_path, monkeypatch):
 
     profiles = client.get('/api/anti/profiles')
     assert profiles.status_code == 200
-    detail = profiles.json()['details']['default']
+    detail = next(p for p in profiles.json()['profiles'] if p['id'] == 'default')
     assert detail['auth_state'] == 'authenticated'
     assert detail['usage']['min_remaining_pct'] == 65.0
 

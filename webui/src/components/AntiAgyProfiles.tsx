@@ -11,7 +11,6 @@ import type { useAntiDaemonStatus } from './AntiDaemonControl'
 
 type Profiles = components['schemas']['AgyProfiles']
 type Profile = components['schemas']['AgyProfile']
-type ProfileDetail = components['schemas']['AgyProfileDetail']
 type Action =
   | { kind: 'create'; name: string }
   | { kind: 'capture'; name: string }
@@ -39,17 +38,17 @@ async function request<T>(suffix = '', init?: RequestInit): Promise<T> {
 
 const write = { method: 'POST', headers: { 'X-GA-Hub-Action': 'manage-agy-profiles' } }
 
-function authBadge(detail?: ProfileDetail, loggingIn?: boolean) {
+function authBadge(profile?: Profile, loggingIn?: boolean) {
   if (loggingIn) {
     return { label: '登录窗口已打开', tone: 'border-accent/50 bg-accent/10 text-accent' }
   }
-  if (detail?.auth_state === 'authenticated') {
+  if (profile?.auth_state === 'authenticated') {
     return { label: '已验证登录', tone: 'border-status-success-line bg-status-success-soft text-status-success' }
   }
-  if (detail?.auth_state === 'login_required') {
+  if (profile?.auth_state === 'login_required') {
     return { label: '需要登录', tone: 'border-status-danger-line bg-status-danger-soft text-status-danger' }
   }
-  if (detail?.has_credentials) {
+  if (profile?.has_credentials) {
     return { label: '已有凭据', tone: 'border-line bg-bg-soft text-ink' }
   }
   return { label: '未登录', tone: 'border-line bg-bg-soft text-ink-muted' }
@@ -151,7 +150,6 @@ export function AntiAgyProfiles({ profiles, refresh, daemon }: {
 
   const selected = profiles.data?.profiles.find(item => item.id === profiles.data?.active)
   const others = profiles.data?.profiles.filter(item => item.id !== profiles.data?.active) ?? []
-  const details = profiles.data?.details
   const loginProfile = profiles.data?.login_profile
   const close = () => {
     if (action.isPending) return
@@ -180,9 +178,8 @@ export function AntiAgyProfiles({ profiles, refresh, daemon }: {
   )
 
   const renderProfileMeta = (profile: Profile) => {
-    const detail = details?.[profile.id]
-    const badge = authBadge(detail, loginProfile === profile.id)
-    const usage = detail?.usage
+    const badge = authBadge(profile, loginProfile === profile.id)
+    const usage = profile.usage
     const pct = usage?.min_remaining_pct
     return (
       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
@@ -278,9 +275,9 @@ export function AntiAgyProfiles({ profiles, refresh, daemon }: {
                 aria-label={`官方登录：${selected.name}`} onClick={() => action.mutate({ kind: 'login', profile: selected })}>官方登录</button>
             </div>
           </div>
-          {details?.[selected.id]?.usage?.rows?.length ? (
+          {selected.usage?.rows?.length ? (
             <div className="mt-2 grid grid-cols-2 gap-1.5 border-t border-line/60 pt-2 text-xs sm:grid-cols-3">
-              {details[selected.id].usage!.rows!.map(row => (
+              {selected.usage.rows.map(row => (
                 <div key={`${row.model}-${row.limit}`} className="rounded-md bg-bg-soft px-2 py-1">
                   <div className="truncate font-medium text-ink" title={row.model}>{row.model}</div>
                   <div className={clsx('tabular-nums font-semibold', quotaTone(row.remaining_pct))}>{row.remaining_pct}%</div>

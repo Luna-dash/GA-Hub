@@ -197,10 +197,10 @@ def main(argv: list[str] | None = None) -> int:
                 if os.name == "nt" and not outside_job():
                     from .services.update_job import desktop_job_memberships
                     try:
-                        in_desktop_job = any(desktop_job_memberships())
-                    except OSError:
-                        in_desktop_job = False
-                    if in_desktop_job:
+                        memberships = desktop_job_memberships()
+                    except OSError as exc:
+                        raise ValueError(f"Cannot verify Hub desktop Job exclusion: {exc}") from exc
+                    if any(memberships):
                         raise ValueError("Launch helper must run outside a live Hub desktop Job")
                 result = {"pid": launch_current(store, admin)}
             print(json.dumps(result, indent=2, ensure_ascii=False))

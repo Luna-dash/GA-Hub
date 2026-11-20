@@ -182,22 +182,18 @@ class AgyProfileUsageSnapshot(BaseModel):
     rows: list[AntiAccountQuotaRow] = Field(default_factory=list)
 
 
-class AgyProfileDetail(BaseModel):
-    has_credentials: bool = False
-    auth_state: str | None = None
-    usage: AgyProfileUsageSnapshot | None = None
-
-
 class AgyProfile(BaseModel):
     id: str
     name: str
+    has_credentials: bool | None = None
+    auth_state: str | None = None
+    usage: AgyProfileUsageSnapshot | None = None
 
 
 class AgyProfiles(BaseModel):
     active: str
     profiles: list[AgyProfile]
     login_profile: str | None = None
-    details: dict[str, AgyProfileDetail] | None = None
 
 
 class AgyProfileCreate(BaseModel):
@@ -229,12 +225,11 @@ def _profile_action(request: Request) -> None:
 @router.get("/profiles", response_model=AgyProfiles, response_model_exclude_none=True)
 def agy_profiles():
     try:
-        active, profiles = anti_profiles.snapshot()
+        active, profiles = anti_profiles.snapshot_details()
         return {
             "active": active,
-            "profiles": [asdict(profile) for profile in profiles],
+            "profiles": profiles,
             "login_profile": daemon.active_login_profile(),
-            "details": anti_profiles.snapshot_details(),
         }
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc

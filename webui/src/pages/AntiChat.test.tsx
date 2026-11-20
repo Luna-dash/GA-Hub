@@ -392,12 +392,10 @@ it('reloads the final trace even when the first live request is still pending', 
 it('supports profile capture/delete, gateway stop/restart, quota pool reset, and SSE streaming', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   let gatewayState = 'ready'
-  let profilesList = [
-    { id: 'default', name: '系统默认' },
-    { id: 'work', name: '工作' },
-  ]
-  const details: Record<string, unknown> = {
-    default: {
+  let profilesList: Array<Record<string, unknown>> = [
+    {
+      id: 'default',
+      name: '系统默认',
       has_credentials: true,
       auth_state: 'authenticated',
       usage: {
@@ -406,8 +404,8 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
         rows: [{ model: 'Gemini 4', limit: 'Weekly Limit Remaining', remaining_pct: 65, resets_at: '2026-11-20T08:00:00Z' }],
       },
     },
-    work: { has_credentials: false, auth_state: 'login_required' },
-  }
+    { id: 'work', name: '工作', has_credentials: false, auth_state: 'login_required' },
+  ]
   let pools = [{ model_group: 'gemini-4', display_name: 'Gemini 4', status: 'cooling_down', cooldown_remaining_seconds: 30 }]
 
   const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
@@ -430,14 +428,13 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
       return reply({ state: 'ready', agy_available: true, auth_state: 'authenticated' })
     }
     if (path === '/api/anti/profiles') {
-      return reply({ active: 'default', profiles: profilesList, details })
+      return reply({ active: 'default', profiles: profilesList })
     }
     if (path === '/api/anti/profiles/capture') {
       expect(new Headers(init?.headers).get('X-GA-Hub-Action')).toBe('manage-agy-profiles')
       const body = JSON.parse(String(init?.body))
-      const created = { id: 'cloned', name: body.name }
+      const created = { id: 'cloned', name: body.name, has_credentials: true, auth_state: 'authenticated' }
       profilesList = [...profilesList, created]
-      details.cloned = { has_credentials: true, auth_state: 'authenticated' }
       return reply(created)
     }
     if (path === '/api/anti/profiles/work' && init?.method === 'DELETE') {
