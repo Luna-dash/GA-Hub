@@ -5,6 +5,7 @@ import { NavLink } from 'react-router-dom'
 import { preloadRoute } from '@/routes/routeLoaders'
 import clsx from 'clsx'
 import { getNavPreferences, getVisibleNavItems } from '@/stores/navPreferenceStore'
+import { syncUiSetting, UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import {
   NAV_PREFERENCES_EVENT,
   type NavIconName,
@@ -137,18 +138,22 @@ export function SidebarNav() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(storageKeys.sidebarCollapsed) === '1')
   const openCommandPalette = () => window.dispatchEvent(new Event('gahub:command-palette'))
   const toggleCollapsed = () => {
-    setCollapsed((current) => {
-      localStorage.setItem(storageKeys.sidebarCollapsed, current ? '0' : '1')
-      return !current
-    })
+    const next = !collapsed
+    const serialized = next ? '1' : '0'
+    localStorage.setItem(storageKeys.sidebarCollapsed, serialized)
+    syncUiSetting(storageKeys.sidebarCollapsed, serialized)
+    setCollapsed(next)
   }
 
   useEffect(() => {
     const refresh = () => setItems(getVisibleNavItems(getNavPreferences()))
+    const refreshCollapsed = () => setCollapsed(localStorage.getItem(storageKeys.sidebarCollapsed) === '1')
     window.addEventListener(NAV_PREFERENCES_EVENT, refresh)
+    window.addEventListener(UI_SETTINGS_HYDRATED_EVENT, refreshCollapsed)
     window.addEventListener('storage', refresh)
     return () => {
       window.removeEventListener(NAV_PREFERENCES_EVENT, refresh)
+      window.removeEventListener(UI_SETTINGS_HYDRATED_EVENT, refreshCollapsed)
       window.removeEventListener('storage', refresh)
     }
   }, [])

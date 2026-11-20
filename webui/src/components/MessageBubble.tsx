@@ -24,6 +24,7 @@ import { foldTurns } from '@/utils/foldTurns'
 import { runningTurnTitle } from '@/utils/runningTranscript'
 import { ReplyActions } from './ReplyActions'
 import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
+import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import { FILE_HINT } from '@/utils/sessionPrompt'
 import { MessageContent } from './MessageContent'
 import { FileLinkContext, FileTransferConclusion } from './FileCitation'
@@ -155,8 +156,13 @@ export const MessageBubble = memo(function MessageBubble({ role, content, turnSe
 
   useEffect(() => {
     const sync = (event: Event) => setFontScale((event as CustomEvent<number>).detail || getChatFontScale())
+    const syncHydrated = () => setFontScale(getChatFontScale())
     window.addEventListener(CHAT_FONT_SCALE_EVENT, sync)
-    return () => window.removeEventListener(CHAT_FONT_SCALE_EVENT, sync)
+    window.addEventListener(UI_SETTINGS_HYDRATED_EVENT, syncHydrated)
+    return () => {
+      window.removeEventListener(CHAT_FONT_SCALE_EVENT, sync)
+      window.removeEventListener(UI_SETTINGS_HYDRATED_EVENT, syncHydrated)
+    }
   }, [])
 
   useEffect(() => {

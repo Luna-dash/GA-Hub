@@ -1,4 +1,5 @@
 import { storageKeys } from '@/config/storageKeys'
+import { syncUiSetting } from '@/stores/uiSettingsStore'
 import { readRelativeFontScale } from './relativeFontScale'
 
 export const RAIL_TITLE_SCALE_KEY = storageKeys.railTitleScaleRelative
@@ -25,6 +26,7 @@ export function getRailTitleScale(): number {
 export function setRailTitleScale(value: number): number {
   const scale = clampRailTitleScale(value)
   try { localStorage.setItem(RAIL_TITLE_SCALE_KEY, String(scale)) } catch {}
+  syncUiSetting(RAIL_TITLE_SCALE_KEY, String(scale))
   window.dispatchEvent(new CustomEvent<number>(RAIL_TITLE_SCALE_EVENT, { detail: scale }))
   return scale
 }

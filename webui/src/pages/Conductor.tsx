@@ -6,6 +6,7 @@ import { api, type ConductorSubagentModelPolicy } from '@/api/client'
 import type { ConductorSubagent } from '@/api/types'
 import { storageKeys } from '@/config/storageKeys'
 import { useConductorStore } from '@/stores/conductorStore'
+import { syncUiSetting } from '@/stores/uiSettingsStore'
 import { dialog } from '@/stores/dialogStore'
 import { PageShell } from '@/components/PageShell'
 import { MainModelSelect } from '@/components/ModelSelect'
@@ -64,9 +65,11 @@ function readSubagentModelLock(): boolean {
 }
 
 function writeSubagentModelLock(locked: boolean): void {
+  const serialized = String(locked)
   try {
-    localStorage.setItem(SUBAGENT_MODEL_LOCK_KEY, String(locked))
+    localStorage.setItem(SUBAGENT_MODEL_LOCK_KEY, serialized)
   } catch {}
+  syncUiSetting(SUBAGENT_MODEL_LOCK_KEY, serialized)
 }
 
 /**

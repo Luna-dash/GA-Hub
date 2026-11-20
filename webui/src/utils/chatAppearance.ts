@@ -1,4 +1,5 @@
 import { storageKeys } from '@/config/storageKeys'
+import { syncUiSetting } from '@/stores/uiSettingsStore'
 import { readRelativeFontScale } from './relativeFontScale'
 
 export const CHAT_FONT_SCALE_KEY = storageKeys.chatFontScaleRelative
@@ -24,6 +25,7 @@ export function getChatFontScale(): number {
 export function setChatFontScale(value: number): number {
   const scale = clampChatFontScale(value)
   try { localStorage.setItem(CHAT_FONT_SCALE_KEY, String(scale)) } catch {}
+  syncUiSetting(CHAT_FONT_SCALE_KEY, String(scale))
   window.dispatchEvent(new CustomEvent<number>(CHAT_FONT_SCALE_EVENT, { detail: scale }))
   return scale
 }

@@ -62,6 +62,7 @@ export function myKeySyncFailure(action: MyKeySyncAction, error: unknown) {
 }
 
 import { storageKeys } from '@/config/storageKeys'
+import { syncUiSetting } from '@/stores/uiSettingsStore'
 
 export const MYKEY_SHOW_UPLOAD_KEY = storageKeys.mykeyShowUpload
 export const MYKEY_SHOW_UPLOAD_EVENT = 'gahub:mykey-show-upload'
@@ -75,9 +76,11 @@ export function getMyKeyShowUpload(): boolean {
 }
 
 export function setMyKeyShowUpload(value: boolean): boolean {
+  const serialized = value ? '1' : '0'
   try {
-    localStorage.setItem(MYKEY_SHOW_UPLOAD_KEY, value ? '1' : '0')
+    localStorage.setItem(MYKEY_SHOW_UPLOAD_KEY, serialized)
   } catch { /* storage unavailable — keep in-memory only */ }
+  syncUiSetting(MYKEY_SHOW_UPLOAD_KEY, serialized)
   window.dispatchEvent(new CustomEvent<boolean>(MYKEY_SHOW_UPLOAD_EVENT, { detail: value }))
   return value
 }

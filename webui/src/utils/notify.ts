@@ -2,6 +2,7 @@
 import { create } from 'zustand'
 import { requestDialog } from '@/stores/dialogStore'
 import { storageKeys } from '@/config/storageKeys'
+import { syncUiSetting, UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 
 const LS_KEY = storageKeys.desktopNotifications
 function readOptIn(): boolean {
@@ -18,10 +19,17 @@ export const useNotifyStore = create<NotifyStore>((set) => ({
   backendName: '主题消息窗',
   refresh: async () => { set({ optedIn: readOptIn(), backendName: '主题消息窗' }) },
   setOptIn: (v) => {
-    try { localStorage.setItem(LS_KEY, v ? '1' : '0') } catch { /* storage unavailable */ }
+    const serialized = v ? '1' : '0'
+    try { localStorage.setItem(LS_KEY, serialized) } catch { /* storage unavailable */ }
+    syncUiSetting(LS_KEY, serialized)
     set({ optedIn: v })
   },
 }))
+if (typeof window !== 'undefined') {
+  window.addEventListener(UI_SETTINGS_HYDRATED_EVENT, () => {
+    useNotifyStore.setState({ optedIn: readOptIn() })
+  })
+}
 // Per-event throttling: simultaneous completions of different sessions are retained.
 const lastByTag = new Map<string, number>()
 export async function notify(

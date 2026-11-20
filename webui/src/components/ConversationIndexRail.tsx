@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { storageKeys } from '@/config/storageKeys'
+import { syncUiSetting, UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import { RailFoldGlyph } from './ActionIcons'
 
 const STORAGE_KEY = storageKeys.conversationIndexCollapsed
@@ -12,10 +13,18 @@ type ConversationIndexRailProps = {
 export function ConversationIndexRail({ children }: ConversationIndexRailProps) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(STORAGE_KEY) === 'true')
 
+  useEffect(() => {
+    const sync = () => setCollapsed(localStorage.getItem(STORAGE_KEY) === 'true')
+    window.addEventListener(UI_SETTINGS_HYDRATED_EVENT, sync)
+    return () => window.removeEventListener(UI_SETTINGS_HYDRATED_EVENT, sync)
+  }, [])
+
   const toggle = () => {
     setCollapsed((current) => {
       const next = !current
-      localStorage.setItem(STORAGE_KEY, String(next))
+      const serialized = String(next)
+      localStorage.setItem(STORAGE_KEY, serialized)
+      syncUiSetting(STORAGE_KEY, serialized)
       return next
     })
   }

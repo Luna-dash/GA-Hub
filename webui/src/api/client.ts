@@ -108,6 +108,7 @@ type HttpOptions = RequestInit & {
 export type ApiComponents = GeneratedApiComponents
 type GeneratedHubSession = ApiComponents['schemas']['HubSession'] & { theme_task?: import('./types').ThemeTaskConfig | null }
 type NavigationPreferences = ApiComponents['schemas']['NavPreferencesResp']
+type UiSettings = ApiComponents['schemas']['UiSettingsResp']
 type SessionList = Omit<ApiComponents['schemas']['SessionListResp'], 'items'> & { items: GeneratedHubSession[] }
 type AbortSource = 'timeout' | 'external' | null
 export type ConductorSubagentModelPolicy = 'follow_main' | 'default' | 'locked'
@@ -286,6 +287,10 @@ export const api = {
       '/api/preferences/navigation',
       { preferences },
     ),
+  uiPreferences: () =>
+    http<UiSettings>('GET', '/api/preferences/ui'),
+  saveUiPreferences: (settings: Record<string, string | null>) =>
+    http<UiSettings>('PUT', '/api/preferences/ui', { settings }),
 
   // ── agent ────────────────────────────────────────────
   agentStatus: (init?: Pick<RequestInit, 'signal'>) =>

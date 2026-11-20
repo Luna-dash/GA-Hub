@@ -13,6 +13,8 @@ NAV = [
     {"id": "tokens", "visible": True},
     {"id": "dashboard", "visible": True},
     {"id": "chat", "visible": False},
+    {"id": "anti", "visible": False},
+    {"id": "theme-tasks", "visible": True},
     {"id": "conversations", "visible": True},
     {"id": "memory", "visible": True},
     {"id": "conductor", "visible": True},
@@ -63,3 +65,35 @@ def test_navigation_preferences_reject_incomplete_or_duplicate_items(tmp_path, m
     assert incomplete.status_code == 422
     assert duplicate.status_code == 422
     assert not target.exists()
+
+
+def test_ui_settings_persist_merge_and_reject_unknown_keys(tmp_path, monkeypatch):
+    client, target = _client(tmp_path, monkeypatch)
+
+    empty = client.get("/api/preferences/ui")
+    assert empty.status_code == 200
+    assert empty.json() == {"configured": False, "settings": {}}
+
+    first = client.put(
+        "/api/preferences/ui",
+        json={"settings": {"gahub.chat-font-scale.relative.v2": "115", "gahub.sidebar.collapsed": "1"}},
+    )
+    assert first.status_code == 200
+    assert first.json() == {
+        "configured": True,
+        "settings": {"gahub.chat-font-scale.relative.v2": "115", "gahub.sidebar.collapsed": "1"},
+    }
+
+    patched = client.put(
+        "/api/preferences/ui",
+        json={"settings": {"gahub.sidebar.collapsed": None, "ga.desktopNotifications.v1": "0"}},
+    )
+    assert patched.status_code == 200
+    assert patched.json() == {
+        "configured": True,
+        "settings": {"gahub.chat-font-scale.relative.v2": "115", "ga.desktopNotifications.v1": "0"},
+    }
+    stored = json.loads(target.read_text("utf-8"))
+    assert stored["settings"] == {"gahub.chat-font-scale.relative.v2": "115", "ga.desktopNotifications.v1": "0"}
+
+    assert client.put("/api/preferences/ui", json={"settings": {"evil.key": "1"}}).status_code == 422

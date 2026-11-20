@@ -8,6 +8,7 @@ import { CommandPalette } from '@/components/CommandPalette'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useAgentStore } from '@/stores/agentStore'
 import { hydrateNavPreferences } from '@/stores/navPreferenceStore'
+import { hydrateUiSettings } from '@/stores/uiSettingsStore'
 import { api } from '@/api/client'
 import { APP_PAGES } from '@/config/pages'
 import { hubEventClient } from '@/runtime/hubEventClient'
@@ -51,6 +52,7 @@ export default function App() {
   useEffect(() => {
     if (setup?.configured) {
       void hydrateNavPreferences()
+      void hydrateUiSettings()
       start()
       hubEventClient.start()
       return () => {

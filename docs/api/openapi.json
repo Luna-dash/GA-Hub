@@ -4761,6 +4761,66 @@
         }
       }
     },
+    "/api/preferences/ui": {
+      "get": {
+        "tags": [
+          "preferences"
+        ],
+        "summary": "Get Ui Settings",
+        "operationId": "get_ui_settings_api_preferences_ui_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiSettingsResp"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "preferences"
+        ],
+        "summary": "Put Ui Settings",
+        "operationId": "put_ui_settings_api_preferences_ui_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UiSettingsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UiSettingsResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tasks/schedules": {
       "get": {
         "tags": [
@@ -13960,6 +14020,46 @@
           "size"
         ],
         "title": "TransferredFile"
+      },
+      "UiSettingsReq": {
+        "properties": {
+          "settings": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Settings"
+          }
+        },
+        "type": "object",
+        "title": "UiSettingsReq"
+      },
+      "UiSettingsResp": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Settings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "configured"
+        ],
+        "title": "UiSettingsResp"
       },
       "UpdateDownloadErrorResp": {
         "properties": {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { llmIndexForKey, resolveMainLlmKey, resolveSubagentLlmKey, type LlmIdentity } from '@/utils/llm'
 import { storageKeys } from '@/config/storageKeys'
+import { syncUiSetting, UI_SETTINGS_HYDRATED_EVENT, type DurableUiSettingKey } from '@/stores/uiSettingsStore'
 
 export const MAIN_LLM_PREFERENCE_KEY = storageKeys.modelSelectionMainLlm
 export const SUBAGENT_LLM_PREFERENCE_KEY = storageKeys.modelSelectionSubagentLlm
@@ -13,11 +14,12 @@ function readPreference(key: string): string | null {
   }
 }
 
-function writePreference(key: string, value: string | null): void {
+function writePreference(key: DurableUiSettingKey, value: string | null, syncRemote = true): void {
   try {
     if (value) localStorage.setItem(key, value)
     else localStorage.removeItem(key)
   } catch {}
+  if (syncRemote) syncUiSetting(key, value ?? null)
 }
 
 /** Shared non-session model preferences used by Conductor and Goal/Hive.
@@ -54,6 +56,15 @@ export function useSharedModelSelection(llms: ReadonlyArray<LlmIdentity>) {
   const selectSubagentLlm = useCallback((llmKey: string | null) => {
     setSavedSubagentLlmKey(llmKey)
     writePreference(SUBAGENT_LLM_PREFERENCE_KEY, llmKey)
+  }, [])
+
+  useEffect(() => {
+    const sync = () => {
+      setSavedMainLlmKey(readPreference(MAIN_LLM_PREFERENCE_KEY))
+      setSavedSubagentLlmKey(readPreference(SUBAGENT_LLM_PREFERENCE_KEY))
+    }
+    window.addEventListener(UI_SETTINGS_HYDRATED_EVENT, sync)
+    return () => window.removeEventListener(UI_SETTINGS_HYDRATED_EVENT, sync)
   }, [])
 
   const effectiveSubagentLlmKey = subagentLlmKey ?? mainLlmKey

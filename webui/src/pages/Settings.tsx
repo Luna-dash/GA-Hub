@@ -30,6 +30,7 @@ import {
   type NavPreference,
 } from '@/config/navigation'
 import { getNavPreferences, setNavPreferences } from '@/stores/navPreferenceStore'
+import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import { isTauriDesktop, restartDesktopBackend, selectDirectory } from '@/utils/desktop'
 import { waitForDesktopRestart } from '@/utils/backendRestart'
 import { getMyKeyShowUpload, setMyKeyShowUpload } from '@/utils/mykeySyncUi'
@@ -375,6 +376,12 @@ function NavManagementPanel() {
 function MyKeySyncPanel() {
   const [showUpload, setShowUpload] = useState(getMyKeyShowUpload)
 
+  useEffect(() => {
+    const sync = () => setShowUpload(getMyKeyShowUpload())
+    window.addEventListener(UI_SETTINGS_HYDRATED_EVENT, sync)
+    return () => window.removeEventListener(UI_SETTINGS_HYDRATED_EVENT, sync)
+  }, [])
+
   const toggle = async () => {
     if (showUpload) {
       setShowUpload(setMyKeyShowUpload(false))
@@ -416,6 +423,15 @@ function MyKeySyncPanel() {
 function ChatAppearancePanel() {
   const [scale, setScale] = useState(getChatFontScale)
   const [titleScale, setTitleScale] = useState(getRailTitleScale)
+
+  useEffect(() => {
+    const sync = () => {
+      setScale(getChatFontScale())
+      setTitleScale(getRailTitleScale())
+    }
+    window.addEventListener(UI_SETTINGS_HYDRATED_EVENT, sync)
+    return () => window.removeEventListener(UI_SETTINGS_HYDRATED_EVENT, sync)
+  }, [])
 
   const updateScale = (value: number) => setScale(setChatFontScale(value))
   const updateTitleScale = (value: number) => setTitleScale(setRailTitleScale(value))

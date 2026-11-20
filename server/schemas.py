@@ -1271,6 +1271,13 @@ class NavPreferencesResp(BaseModel):
     configured: bool
     preferences: list[NavPreference]
 
+class UiSettingsReq(BaseModel):
+    settings: dict[str, str | None] = Field(default_factory=dict)
+
+class UiSettingsResp(BaseModel):
+    configured: bool
+    settings: dict[str, str] = Field(default_factory=dict)
+
 class SetupReq(BaseModel):
     ga_root: str
     python_path: str | None = None

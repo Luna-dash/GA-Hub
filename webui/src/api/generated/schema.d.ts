@@ -2132,6 +2132,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/preferences/ui": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Ui Settings */
+        get: operations["get_ui_settings_api_preferences_ui_get"];
+        /** Put Ui Settings */
+        put: operations["put_ui_settings_api_preferences_ui_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks/schedules": {
         parameters: {
             query?: never;
@@ -5606,6 +5624,22 @@ export interface components {
             available: boolean;
             /** Size */
             size: number;
+        };
+        /** UiSettingsReq */
+        UiSettingsReq: {
+            /** Settings */
+            settings?: {
+                [key: string]: string | null;
+            };
+        };
+        /** UiSettingsResp */
+        UiSettingsResp: {
+            /** Configured */
+            configured: boolean;
+            /** Settings */
+            settings?: {
+                [key: string]: string;
+            };
         };
         /** UpdateDownloadErrorResp */
         UpdateDownloadErrorResp: {
@@ -9541,6 +9575,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NavPreferencesResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_ui_settings_api_preferences_ui_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UiSettingsResp"];
+                };
+            };
+        };
+    };
+    put_ui_settings_api_preferences_ui_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UiSettingsReq"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UiSettingsResp"];
                 };
             };
             /** @description Validation Error */
