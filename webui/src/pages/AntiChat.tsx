@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import type { TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
-import { Brain, ClipboardList } from 'lucide-react'
+import { Brain, ClipboardList, Pencil, ShieldAlert, Slash } from 'lucide-react'
 import { CloseIconButton, RotateCw } from '@/components/ActionIcons'
 import { ChatComposerFrame, ChatUtilityDock, chatTranscriptClass } from '@/components/ChatLayout'
 import { bubbleTone } from '@/components/bubbleTone'
@@ -25,7 +25,12 @@ import type { HubSession, PasteAttachment, SessionRuntime } from '@/api/types'
 import { usePageState } from '@/utils/pageState'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import { ThemedSelect } from '@/components/ThemedSelect'
-import { antiApi, api, HttpError, type AntiAttachmentRef, type AntiModels, type AntiRun, type AntiSession, type AntiSubmission } from '@/api/client'
+import {
+  antiApi, api, HttpError,
+  type AntiApprovalPrompt, type AntiAttachmentRef, type AntiMode,
+  type AntiModels, type AntiPermissionMode, type AntiRun,
+  type AntiSession, type AntiSubmission,
+} from '@/api/client'
 
 type Session = AntiSession
 type Run = AntiRun
@@ -55,6 +60,26 @@ function modelFamilies(items: Models['items']) {
   return [...families.values()]
 }
 type Submission = AntiSubmission
+
+const permissionLabels: Record<AntiPermissionMode, string> = {
+  'approval-required': '逐次审批',
+  'auto-accept-edits': '自动改文件',
+  auto: 'Auto',
+  'full-access': '全放行',
+}
+
+function formatRunUsage(usage?: Run['usage']): string | null {
+  if (!usage) return null
+  const totalIn = usage.input_tokens ?? 0
+  const totalOut = usage.output_tokens ?? 0
+  const cached = usage.cache_read_tokens ?? 0
+  const thinking = usage.thinking_tokens ?? 0
+  if (!totalIn && !totalOut && !thinking) return null
+  const parts = [`${totalIn.toLocaleString('en-US')} in`, `${totalOut.toLocaleString('en-US')} out`]
+  if (thinking > 0) parts.push(`${thinking.toLocaleString('en-US')} think`)
+  if (totalIn > 0 && cached > 0) parts.push(`缓存 ${Math.round((cached / totalIn) * 100)}%`)
+  return parts.join(' · ')
+}
 
 function Errors({ items }: { items: (Error | null)[] }) {
   return <>{items.filter(Boolean).map((error, index) =>
@@ -159,19 +184,19 @@ export default function AntiChat() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {daemon.state === 'stopped' && !daemon.busy && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-bg-soft px-4 py-2 text-xs text-ink-muted">
-            <span>Anti 网关当前已停止，需要启动网关后才能发送消息或检测额度。</span>
+            <span>Agy ACP 运行时当前已停止，需要启用后才能发送消息或检测额度。</span>
             <button type="button" className="ga-btn-primary shrink-0" onClick={() => daemon.start.mutate()}>
-              启动 Anti 网关
+              启用 Agy
             </button>
           </div>
         )}
         {daemon.state === 'unavailable' && !daemon.busy && (
           <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-status-danger-line bg-status-danger-soft px-4 py-2 text-xs text-status-danger">
-            <span>{daemon.status.data?.detail || daemon.status.error?.message || 'Anti 网关当前不可用，请检查状态或重启网关。'}</span>
+            <span>{daemon.status.data?.detail || daemon.status.error?.message || 'Agy ACP 运行时当前不可用，请检查官方 agy CLI 安装。'}</span>
             <div className="flex shrink-0 items-center gap-1.5">
               {daemon.managed && (
                 <button type="button" className="ga-btn shrink-0" onClick={() => daemon.restart.mutate()}>
-                  重启网关
+                  重置运行时
                 </button>
               )}
               <button type="button" className="ga-btn shrink-0" onClick={() => setProfilesOpen(true)}>
@@ -182,9 +207,9 @@ export default function AntiChat() {
         )}
         {daemon.running && daemon.status.data?.agy_available === false && (
           <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-status-danger-line bg-status-danger-soft px-4 py-2 text-xs text-status-danger">
-            <span>AntiCLI 网关已启动，但未找到官方 agy CLI。请安装 agy 并确保位于 PATH 后重启网关。</span>
+            <span>未找到官方 agy CLI。请安装 agy 并确保位于 PATH（或 ~/.gemini/bin）后重试。</span>
             <button type="button" className="ga-btn shrink-0" onClick={() => setProfilesOpen(true)}>
-              查看网关详情
+              查看运行详情
             </button>
           </div>
         )}
@@ -240,6 +265,9 @@ function Conversation({ session, headerActions, profileId, profileName }: {
   const [pending, setPending] = useState<Submission>()
   const [familyKey, setFamilyKey] = usePageState('antiChat.modelFamily', DEFAULT_FAMILY)
   const [preferredEffort, setEffort] = usePageState('antiChat.effort', DEFAULT_EFFORT)
+  const [mode, setMode] = usePageState<AntiMode>('antiChat.mode', 'plan')
+  const [permissionMode, setPermissionMode] = usePageState<AntiPermissionMode>('antiChat.permissionMode', 'approval-required')
+  const [commandsOpen, setCommandsOpen] = useState(false)
   const transcript = useRef<HTMLDivElement>(null)
   const followTranscript = useRef(true)
   const models = useQuery({
@@ -290,7 +318,9 @@ function Conversation({ session, headerActions, profileId, profileName }: {
       setPrompt(''); setPending(undefined); setAttachments([]); setReferences([])
     },
     onError: error => {
-      if (error instanceof HttpError && error.status === 422) setPending(undefined)
+      if (error instanceof HttpError && (error.status === 422 || error.status === 429 || error.status === 409 || error.status === 503)) {
+        setPending(undefined)
+      }
     },
     onSettled: () => {
       void cache.invalidateQueries({ queryKey: key })
@@ -304,6 +334,29 @@ function Conversation({ session, headerActions, profileId, profileName }: {
       void cache.invalidateQueries({ queryKey: sessionsKey, exact: true })
     },
   })
+  const approve = useMutation({
+    mutationFn: ({ rid, approval_id, decision, option_id }: {
+      rid: string; approval_id: string; decision: 'allow' | 'allow_always' | 'reject'; option_id?: string
+    }) => antiApi.approveRun(sid, rid, { approval_id, decision, ...(option_id ? { option_id } : {}) }),
+    onSuccess: run => {
+      cache.setQueryData<Run[]>(key, old => old?.map(row => row.id === run.id ? run : row))
+      void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] })
+    },
+  })
+  const resetAcp = useMutation({
+    mutationFn: () => antiApi.resetSession(sid),
+    onSuccess: updated => {
+      cache.setQueryData<Session[]>(sessionsKey, old => old?.map(row => row.id === updated.id ? { ...row, ...updated } : row))
+    },
+  })
+  const showSlashMenu = commandsOpen || /^\/\S*$/.test(prompt.trim())
+  const commands = useQuery({
+    queryKey: ['anti-commands', profileId],
+    enabled: showSlashMenu,
+    queryFn: ({ signal }) => antiApi.commands(signal),
+    staleTime: 60_000,
+    retry: false,
+  })
   const scrollToLatest = useCallback(() => {
     if (transcript.current && followTranscript.current) transcript.current.scrollTop = transcript.current.scrollHeight
   }, [])
@@ -312,7 +365,7 @@ function Conversation({ session, headerActions, profileId, profileName }: {
     const trimmedPrompt = prompt.trim()
     if (current || send.isPending || !history.isSuccess || (!trimmedPrompt && !attachments.length && !references.length)) return
     const body = pending ?? {
-      prompt: trimmedPrompt, model, effort,
+      prompt: trimmedPrompt, model, effort, mode, permission_mode: permissionMode,
       ...(references.length ? { references: references.map(({ id, path }) => ({ id, path })) } : {}),
       ...(attachments.length ? {
         attachments: attachments.map(({ path, name, source, size }) => ({
@@ -336,6 +389,18 @@ function Conversation({ session, headerActions, profileId, profileName }: {
         displayName={option => option.name} placeholder={DEFAULT_EFFORT}
         renderMark={() => <span className="model-select-mark"><Brain size={16} aria-hidden="true" /></span>}
         disabled={Boolean(current || pending)} />
+      {(session.acp_connected || session.has_conversation) && (
+        <button
+          type="button"
+          className="ga-btn-sm shrink-0"
+          disabled={Boolean(current || pending) || resetAcp.isPending}
+          aria-label="重连 ACP 会话"
+          title="重启本会话 ACP 进程并保留多轮上下文"
+          onClick={() => resetAcp.mutate()}
+        >
+          {resetAcp.isPending ? '重连中…' : '重连 ACP'}
+        </button>
+      )}
       {models.error && <button type="button" className="ga-btn-icon" title="重试加载模型" aria-label="重试加载模型" onClick={() => void models.refetch()}><RotateCw size={16} aria-hidden="true" /></button>}
     </>, headerActions)}
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -354,6 +419,8 @@ function Conversation({ session, headerActions, profileId, profileName }: {
         <div className="space-y-5">
           {history.data?.map(run => {
             const userAttachments = toUserAttachments(run.id, run.attachments)
+            const liveRun = current?.id === run.id ? live.data : undefined
+            const approval: AntiApprovalPrompt | null | undefined = liveRun?.approval ?? run.approval
             return <article className="space-y-3" key={run.id}>
               <div className="flex flex-col items-start gap-2">
                 {userAttachments.length > 0 && <UserAttachments atts={userAttachments} />}
@@ -372,12 +439,84 @@ function Conversation({ session, headerActions, profileId, profileName }: {
                   <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
                     <AntiTaskProgress active={active(run)} loadEvents={signal => antiApi.runEvents<AntiEvent[]>(sid, run.id, signal)}
                       streamUrl={active(run) ? resolveApiUrl(`/api/anti/sessions/${sid}/runs/${run.id}/events/stream`) : undefined}
-                      runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}>
+                      runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}
+                      onApprovalRequested={() => { void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] }) }}>
                       {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
                     </AntiTaskProgress>
-                    {run.status === 'success' && run.answer?.trim() && (
-                      <div className="pointer-events-none flex flex-wrap justify-end gap-2 opacity-0 transition-opacity group-hover/anti-reply:pointer-events-auto group-hover/anti-reply:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-                        <ReplyActions text={run.answer} engine="anti" project={project} canSave />
+                    {active(run) && approval && (
+                      <section aria-label="交互审批" className="mt-2 space-y-2 rounded-lg border border-accent/40 bg-bg-soft p-3 text-xs">
+                        <div className="flex items-start gap-2">
+                          <ShieldAlert size={15} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <div className="font-semibold text-ink">{approval.title}</div>
+                            {approval.details && <div className="break-all font-mono text-[11px] text-ink-muted">{approval.details}</div>}
+                            {approval.diff && (
+                              <pre className="max-h-40 overflow-auto rounded bg-bg-card p-2 font-mono text-[11px] text-ink whitespace-pre-wrap break-all">
+                                {approval.diff}
+                              </pre>
+                            )}
+                            {approval.security_warning && (
+                              <p className="text-[11px] text-status-warning">{approval.security_warning}</p>
+                            )}
+                          </div>
+                        </div>
+                        {approval.prompt_type === 'question' && approval.question?.options?.length ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {approval.question.options.map(opt => (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                className="ga-btn-sm-primary"
+                                disabled={approve.isPending}
+                                onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'allow', option_id: opt.id })}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              className="ga-btn-sm-primary"
+                              disabled={approve.isPending}
+                              onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'allow' })}
+                            >
+                              允许一次
+                            </button>
+                            {approval.allow_always && (
+                              <button
+                                type="button"
+                                className="ga-btn-sm"
+                                disabled={approve.isPending}
+                                onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'allow_always' })}
+                              >
+                                本会话始终允许
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="ga-btn-sm-danger"
+                              disabled={approve.isPending}
+                              onClick={() => approve.mutate({ rid: run.id, approval_id: approval.id, decision: 'reject' })}
+                            >
+                              拒绝
+                            </button>
+                          </div>
+                        )}
+                      </section>
+                    )}
+                    {run.status === 'success' && (
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5 text-[11px] text-ink-muted">
+                        <div className="flex flex-wrap items-center gap-2 tabular-nums">
+                          <span>{run.mode === 'accept-edits' ? `Edit · ${permissionLabels[run.permission_mode] ?? run.permission_mode}` : 'Plan'}</span>
+                          {formatRunUsage(run.usage) && <span>· {formatRunUsage(run.usage)}</span>}
+                        </div>
+                        {run.answer?.trim() && (
+                          <div className="pointer-events-none flex flex-wrap justify-end gap-2 opacity-0 transition-opacity group-hover/anti-reply:pointer-events-auto group-hover/anti-reply:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+                            <ReplyActions text={run.answer} engine="anti" project={project} canSave />
+                          </div>
+                        )}
                       </div>
                     )}
                   </FileTransferConclusion.Provider>
@@ -385,7 +524,7 @@ function Conversation({ session, headerActions, profileId, profileName }: {
               </div>
             </article>
           })}
-          <Errors items={[history.error, live.error, send.error, cancel.error]} />
+          <Errors items={[history.error, live.error, send.error, cancel.error, approve.error, resetAcp.error]} />
         </div>
       </div>
     </div>
@@ -408,20 +547,78 @@ function Conversation({ session, headerActions, profileId, profileName }: {
           />
         </li>)}
       </ul>}
+      {showSlashMenu && commands.data?.items?.length ? (
+        <div role="listbox" aria-label="Agy 原生命令" className="flex flex-wrap gap-1.5 border-b border-line/60 bg-bg-soft/70 px-3 py-2 text-xs">
+          {commands.data.items.map(cmd => (
+            <button
+              key={cmd.name}
+              type="button"
+              role="option"
+              aria-selected={false}
+              className="inline-flex items-center gap-1 rounded-lg border border-line bg-bg-card px-2 py-1 text-left hover:border-accent/60"
+              onClick={() => {
+                setPrompt(`/${cmd.name} `)
+                setCommandsOpen(false)
+              }}
+            >
+              <span className="font-mono font-semibold text-accent">/{cmd.name}</span>
+              {cmd.description && <span className="text-ink-muted">{cmd.description}</span>}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <ImagePasteInput
         text={prompt}
         onText={setPrompt}
         attachments={attachments}
         onAttachments={setAttachments}
         inputLabel="发给 Anti"
-        placeholder="发给 Anti，可粘贴/拖放图片或文件…"
+        placeholder="发给 Anti，输入 / 查看原生命令，可粘贴/拖放图片或文件…"
         readOnly={Boolean(pending)}
         maxLength={24000}
         onSubmit={submit}
         submitDisabled={Boolean(current) || send.isPending || !history.isSuccess}
-        submitAccessory={<span title="规划模式" className="mb-0.5 inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-line/80 bg-bg-soft px-2.5 text-xs font-medium leading-none text-ink-muted">
-          <ClipboardList size={14} className="shrink-0" aria-hidden="true" />Plan
-        </span>}
+        submitAccessory={
+          <div className="mb-0.5 flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              disabled={Boolean(current || pending)}
+              aria-label="插入原生命令"
+              title="查看并插入 Agy ACP 原生命令"
+              onClick={() => setCommandsOpen(v => !v)}
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-line/80 bg-bg-soft text-ink-muted hover:border-accent/50 hover:text-ink disabled:opacity-50"
+            >
+              <Slash size={14} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              disabled={Boolean(current || pending)}
+              aria-label={mode === 'plan' ? '当前为规划模式，点击切换到编辑模式' : '当前为编辑模式，点击切换到规划模式'}
+              title={mode === 'plan' ? 'Plan 规划模式（只读分析，点击切到 Edit）' : 'Edit 编辑模式（可执行修改，点击切到 Plan）'}
+              onClick={() => setMode(mode === 'plan' ? 'accept-edits' : 'plan')}
+              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-line/80 bg-bg-soft px-2.5 text-xs font-medium leading-none text-ink hover:border-accent/50 disabled:opacity-50"
+            >
+              {mode === 'plan'
+                ? <><ClipboardList size={14} className="shrink-0" aria-hidden="true" /><span>Plan</span></>
+                : <><Pencil size={14} className="shrink-0 text-accent" aria-hidden="true" /><span>Edit</span></>}
+            </button>
+            {mode === 'accept-edits' && (
+              <select
+                aria-label="权限策略"
+                title="工具审批策略（下轮立即生效）"
+                value={permissionMode}
+                disabled={Boolean(current || pending)}
+                onChange={e => setPermissionMode(e.target.value as AntiPermissionMode)}
+                className="h-10 rounded-xl border border-line/80 bg-bg-soft px-2 text-xs text-ink focus:border-accent focus:outline-none disabled:opacity-50"
+              >
+                <option value="approval-required">逐次审批</option>
+                <option value="auto-accept-edits">自动改文件</option>
+                <option value="auto">Auto</option>
+                <option value="full-access">全放行</option>
+              </select>
+            )}
+          </div>
+        }
         submitLabel={pending && send.isError ? '查询或重试同一请求' : '发送'}
         stopActive={Boolean(current)}
         stopDisabled={cancel.isPending}

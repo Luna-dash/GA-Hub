@@ -5,7 +5,7 @@ import { RefreshIcon, Trash2, X } from '@/components/ActionIcons'
 import { UserRound } from 'lucide-react'
 import clsx from 'clsx'
 import type { components } from '@/api/generated/schema'
-import { antiApi } from '@/api/client'
+import { antiApi, type AgyCodeLoginState } from '@/api/client'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import type { useAntiDaemonStatus } from './AntiDaemonControl'
@@ -95,6 +95,8 @@ export function AntiAgyProfiles({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [showLogs, setShowLogs] = useState(false)
   const [message, setMessage] = useState('')
+  const [codeLogin, setCodeLogin] = useState<AgyCodeLoginState | null>(null)
+  const [authCode, setAuthCode] = useState('')
   const prevLoginProfile = useRef<string | null | undefined>(undefined)
 
   useEffect(() => {
@@ -177,17 +179,71 @@ export function AntiAgyProfiles({
     },
   })
 
+  const codeLoginStart = useMutation({
+    mutationFn: (profileId: string) => antiApi.startCodeLogin(profileId),
+    onSuccess: state => {
+      setCodeLogin(state)
+      setAuthCode('')
+      if (state.phase === 'completed') {
+        void cache.invalidateQueries({ queryKey: key, exact: true })
+        refresh()
+      }
+    },
+  })
+  const codeLoginSubmit = useMutation({
+    mutationFn: ({ flowId, code }: { flowId: string; code: string }) => antiApi.submitCodeLogin(flowId, code),
+    onSuccess: state => {
+      setCodeLogin(state)
+      if (state.phase === 'completed') {
+        setMessage('Google 授权码登录成功，凭据已保存。')
+        setCodeLogin(null)
+        setAuthCode('')
+        void cache.invalidateQueries({ queryKey: key, exact: true })
+        refresh()
+      }
+    },
+  })
+  useEffect(() => {
+    const flow = codeLogin
+    if (!flow || (flow.phase !== 'starting' && flow.phase !== 'waiting_code')) return
+    let active = true
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await antiApi.codeLoginStatus(flow.flow_id)
+        if (!active) return
+        setCodeLogin(next)
+        if (next.phase === 'completed') {
+          setMessage('Google 授权码登录成功，凭据已保存。')
+          setCodeLogin(null)
+          setAuthCode('')
+          void cache.invalidateQueries({ queryKey: key, exact: true })
+          refresh()
+        }
+      } catch {
+        // Ignore transient poll errors while waiting for user input.
+      }
+    }, 2000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [codeLogin, cache, refresh])
+
   const selected = profiles.data?.profiles.find(item => item.id === profiles.data?.active)
   const others = profiles.data?.profiles.filter(item => item.id !== profiles.data?.active) ?? []
   const loginProfile = profiles.data?.login_profile
   const close = () => {
-    if (action.isPending) return
+    if (action.isPending || codeLoginStart.isPending || codeLoginSubmit.isPending) return
     setOpen(false)
     setEditing(null)
     setConfirmDeleteId(null)
     setShowLogs(false)
+    setCodeLogin(null)
+    setAuthCode('')
     setMessage('')
     action.reset()
+    codeLoginStart.reset()
+    codeLoginSubmit.reset()
   }
   const disabled = action.isPending || profiles.isError
   const add = (event: FormEvent) => {
@@ -268,18 +324,15 @@ export function AntiAgyProfiles({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0 space-y-0.5 text-ink-muted">
               <div>
-                网关状态：<strong className="font-semibold text-ink">
-                  {daemon.external ? '外部网关运行中' : daemon.running ? '运行中' : daemon.busy ? '处理中' : daemon.state === 'stopped' ? '已停止' : '不可用'}
+                运行时状态：<strong className="font-semibold text-ink">
+                  {daemon.external ? '外部运行中' : daemon.running ? 'ACP 就绪' : daemon.busy ? '处理中' : daemon.state === 'stopped' ? '已停止' : '不可用'}
                 </strong>
-                {daemon.running && daemon.status.data?.port && (
-                  <span className="ml-1.5 tabular-nums">:{daemon.status.data.port}</span>
-                )}
                 {daemon.running && daemon.status.data?.version && (
                   <span className="ml-1.5">v{daemon.status.data.version}</span>
                 )}
               </div>
-              {daemon.external && (
-                <p className="text-[11px] text-ink-muted">当前网关由外部启动，GA-Hub 不会接管启停；如需切换隔离账号请先在外部停止网关。</p>
+              {daemon.running && (
+                <p className="text-[11px] text-ink-muted">ACP 长会话复用 · 隔离账号强制 File Storage</p>
               )}
               {daemon.state === 'unavailable' && daemon.status.data?.detail && (
                 <p className="text-[11px] text-status-danger">{daemon.status.data.detail}</p>
@@ -287,23 +340,23 @@ export function AntiAgyProfiles({
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               {!daemon.running && daemon.state === 'stopped' && (
-                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.start.mutate()}>启动网关</button>
+                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.start.mutate()}>启用 Agy</button>
               )}
               {(daemon.running || daemon.state === 'unavailable') && daemon.managed && (
-                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.restart.mutate()}>重启网关</button>
+                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.restart.mutate()}>重置运行时</button>
               )}
               {daemon.running && daemon.managed && (
-                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.stop.mutate()}>停止网关</button>
+                <button type="button" className={secondary} disabled={daemon.busy} onClick={() => daemon.stop.mutate()}>停止运行时</button>
               )}
               <button type="button" className={secondary} onClick={() => setShowLogs(v => !v)}>
-                {showLogs ? '隐藏日志' : '网关日志'}
+                {showLogs ? '隐藏日志' : 'ACP 日志'}
               </button>
             </div>
           </div>
           {showLogs && (
             <div className="border-t border-line/60 pt-2">
               <div className="mb-1 flex items-center justify-between text-[11px] text-ink-muted">
-                <span className="truncate" title={logs.data?.log_path}>最近 AntiCLI 网关日志</span>
+                <span className="truncate" title={logs.data?.log_path}>最近 Agy ACP 运行日志</span>
                 <button type="button" className="ga-btn-link" disabled={logs.isFetching} onClick={() => void logs.refetch()}>
                   <RefreshIcon spinning={logs.isFetching} size={11} />
                   <span>{logs.isFetching ? '刷新中…' : '刷新'}</span>
@@ -316,17 +369,77 @@ export function AntiAgyProfiles({
                   {logs.data.lines.join('\n')}
                 </pre>
               ) : (
-                <p className="text-[11px] text-ink-muted">{logs.isPending ? '正在读取日志…' : '暂无托管网关启动日志。'}</p>
+                <p className="text-[11px] text-ink-muted">{logs.isPending ? '正在读取日志…' : '暂无 Agy ACP 运行日志。'}</p>
               )}
             </div>
           )}
         </div>
       )}
       <div role="status" className="text-sm text-ink-muted empty:hidden">{action.isPending ? pendingLabel : message}</div>
-      {(action.error || daemonError) && (
+      {(action.error || daemonError || codeLoginStart.error || codeLoginSubmit.error) && (
         <p role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft p-2 text-sm text-status-danger">
-          {(action.error ?? daemonError)!.message}
+          {(action.error ?? daemonError ?? codeLoginStart.error ?? codeLoginSubmit.error)!.message}
         </p>
+      )}
+      {codeLogin && (
+        <div className="space-y-2 rounded-lg border border-accent/40 bg-bg-soft p-3 text-xs">
+          <div className="font-semibold text-ink">应用内 Google 授权码登录（T3 Code `--login`）</div>
+          {codeLogin.authorization_url ? (
+            <>
+              <p className="text-ink-muted">1. 打开下方链接完成 Google 登录；2. 复制页面显示的授权码或完整回调链接粘贴到下方提交：</p>
+              <a
+                href={codeLogin.authorization_url}
+                target="_blank"
+                rel="noreferrer"
+                className="block break-all rounded bg-bg-card px-2 py-1.5 font-mono text-[11px] text-accent underline"
+              >
+                {codeLogin.authorization_url}
+              </a>
+              <form
+                className="flex flex-wrap gap-2"
+                onSubmit={e => {
+                  e.preventDefault()
+                  if (authCode.trim() && !codeLoginSubmit.isPending) {
+                    codeLoginSubmit.mutate({ flowId: codeLogin.flow_id, code: authCode.trim() })
+                  }
+                }}
+              >
+                <input
+                  value={authCode}
+                  onChange={e => setAuthCode(e.target.value)}
+                  placeholder="粘贴授权码或回调链接…"
+                  aria-label="Google 授权码"
+                  className="min-w-0 flex-1 rounded-lg border border-line bg-bg-card px-2 py-1 text-xs"
+                />
+                <button type="submit" className="ga-btn-sm-primary" disabled={!authCode.trim() || codeLoginSubmit.isPending}>
+                  {codeLoginSubmit.isPending ? '提交中…' : '提交授权码'}
+                </button>
+                <button
+                  type="button"
+                  className={secondary}
+                  onClick={() => {
+                    void antiApi.codeLoginStatus(codeLogin.flow_id).then(next => {
+                      setCodeLogin(next)
+                      if (next.phase === 'completed') {
+                        setMessage('Google 授权码登录成功，凭据已保存。')
+                        setCodeLogin(null)
+                        setAuthCode('')
+                        void cache.invalidateQueries({ queryKey: key, exact: true })
+                        refresh()
+                      }
+                    }).catch(() => undefined)
+                  }}
+                >
+                  刷新状态
+                </button>
+                <button type="button" className={secondary} onClick={() => setCodeLogin(null)}>取消</button>
+              </form>
+            </>
+          ) : (
+            <p className="text-ink-muted">正在生成 Google 授权链接…{codeLogin.error ? `（${codeLogin.error}）` : ''}</p>
+          )}
+          {codeLogin.error && <p className="text-status-danger">{codeLogin.error}</p>}
+        </div>
       )}
       {profiles.isError && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-2 text-sm">
         <p role="alert">{profiles.error.message}</p>
@@ -352,8 +465,12 @@ export function AntiAgyProfiles({
                   aria-label={`清除凭据：${selected.name}`}
                   onClick={() => action.mutate({ kind: 'logout', profile: selected })}>清除凭据</button>
               )}
+              <button type="button" className={secondary} disabled={disabled || codeLoginStart.isPending}
+                aria-label={`授权码登录：${selected.name}`} onClick={() => codeLoginStart.mutate(selected.id)}>
+                {codeLoginStart.isPending ? '生成链接…' : '授权码登录'}
+              </button>
               <button type="button" className={secondary} disabled={disabled || nonWindows}
-                title={nonWindows ? '从 GA-Hub 直接唤起官方登录窗口仅支持 Windows，请在终端设置隔离 HOME 后运行 agy 登录' : undefined}
+                title={nonWindows ? '从 GA-Hub 直接唤起官方登录窗口仅支持 Windows，请使用右侧「授权码登录」' : undefined}
                 aria-label={`官方登录：${selected.name}`} onClick={() => action.mutate({ kind: 'login', profile: selected })}>官方登录</button>
             </div>
           </div>
@@ -402,8 +519,11 @@ export function AntiAgyProfiles({
                     </button>
                   )
                 )}
+                <button type="button" className={secondary} disabled={disabled || codeLoginStart.isPending}
+                  aria-label={`授权码登录：${profile.name}`}
+                  onClick={() => codeLoginStart.mutate(profile.id)}>授权码登录</button>
                 <button type="button" className={secondary} disabled={disabled || nonWindows}
-                  title={nonWindows ? '仅支持在 Windows 上直接唤起官方登录窗口' : undefined}
+                  title={nonWindows ? '仅支持在 Windows 上直接唤起官方登录窗口，请使用「授权码登录」' : undefined}
                   aria-label={`官方登录：${profile.name}`}
                   onClick={() => action.mutate({ kind: 'login', profile })}>官方登录</button>
                 <button type="button" className="ga-btn-sm-primary shrink-0" disabled={disabled} aria-label={`切换到${profile.name}`}

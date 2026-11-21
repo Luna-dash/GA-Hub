@@ -636,7 +636,12 @@ export const fontApi = {
 export type AntiDaemonStatus = ApiComponents['schemas']['AntiDaemonStatus']
 export type AntiSession = ApiComponents['schemas']['AntiSessionResp']
 export type AntiRun = ApiComponents['schemas']['AntiRunResp']
+export type AntiApprovalPrompt = ApiComponents['schemas']['AntiApprovalPrompt']
+export type AntiStep = ApiComponents['schemas']['AntiStep']
 export type AntiModels = ApiComponents['schemas']['AntiModelList']
+export type AntiCommandItem = ApiComponents['schemas']['AntiCommandItem']
+export type AntiCommandList = ApiComponents['schemas']['AntiCommandList']
+export type AntiRunUsage = ApiComponents['schemas']['AntiRunUsage']
 export type AntiAccountUsage = ApiComponents['schemas']['AntiAccountUsage']
 export type AntiQuotaPool = ApiComponents['schemas']['AntiQuotaPool']
 export type AntiUsageStats = ApiComponents['schemas']['AntiUsageStats']
@@ -644,12 +649,17 @@ export type AntiDaemonLogs = ApiComponents['schemas']['AntiDaemonLogsResp']
 export type AgyProfile = ApiComponents['schemas']['AgyProfile']
 export type AgyProfileUsageSnapshot = ApiComponents['schemas']['AgyProfileUsageSnapshot']
 export type AgyProfiles = ApiComponents['schemas']['AgyProfiles']
+export type AgyCodeLoginState = ApiComponents['schemas']['AgyCodeLoginState']
 export type AntiAttachmentRef = ApiComponents['schemas']['AttachmentRef']
+export type AntiMode = 'plan' | 'accept-edits'
+export type AntiPermissionMode = 'approval-required' | 'auto-accept-edits' | 'auto' | 'full-access'
 export type AntiSubmission = {
   prompt: string
   operation: string
   model: string
   effort: string
+  mode?: AntiMode
+  permission_mode?: AntiPermissionMode
   references?: { id: number; path: string }[]
   attachments?: AntiAttachmentRef[]
 }
@@ -725,12 +735,16 @@ export const antiApi = {
   models: (signal?: AbortSignal) =>
     // Allow the gateway attempt (2s connect + 23s read) and the 24s CLI fallback.
     antiHttp<AntiModels>('GET', '/api/anti/models', undefined, { signal, timeoutMs: 60_000 }),
+  commands: (signal?: AbortSignal) =>
+    antiHttp<AntiCommandList>('GET', '/api/anti/commands', undefined, { signal }),
   sessions: (signal?: AbortSignal) =>
     antiHttp<AntiSession[]>('GET', '/api/anti/sessions', undefined, { signal }),
   createSession: (project: string) =>
     antiHttp<AntiSession>('POST', '/api/anti/sessions', { project }),
   renameSession: (id: string, title: string) =>
     antiHttp<AntiSession>('PATCH', `/api/anti/sessions/${id}`, { title }),
+  resetSession: (id: string) =>
+    antiHttp<AntiSession>('POST', `/api/anti/sessions/${id}/reset`, {}),
   deleteSession: (id: string) =>
     antiHttp<void>('DELETE', `/api/anti/sessions/${id}`),
   runs: (sessionId: string, signal?: AbortSignal) =>
@@ -743,4 +757,22 @@ export const antiApi = {
     antiHttp<AntiRun>('POST', `/api/anti/sessions/${sessionId}/runs`, body),
   cancelRun: (sessionId: string, runId: string) =>
     antiHttp<AntiRun>('POST', `/api/anti/sessions/${sessionId}/runs/${runId}/cancel`, {}),
+  approveRun: (
+    sessionId: string,
+    runId: string,
+    body: { approval_id: string; decision: 'allow' | 'allow_always' | 'reject'; option_id?: string },
+  ) =>
+    antiHttp<AntiRun>('POST', `/api/anti/sessions/${sessionId}/runs/${runId}/approval`, body, {
+      headers: { 'X-GA-Hub-Action': 'approve-agy' },
+    }),
+  startCodeLogin: (profileId: string) =>
+    antiHttp<AgyCodeLoginState>('POST', `/api/anti/profiles/${encodeURIComponent(profileId)}/login/start`, undefined, {
+      headers: { 'X-GA-Hub-Action': 'manage-agy-profiles' },
+    }),
+  codeLoginStatus: (flowId: string, signal?: AbortSignal) =>
+    antiHttp<AgyCodeLoginState>('GET', `/api/anti/profiles/login/status/${encodeURIComponent(flowId)}`, undefined, { signal }),
+  submitCodeLogin: (flowId: string, code: string) =>
+    antiHttp<AgyCodeLoginState>('POST', `/api/anti/profiles/login/submit/${encodeURIComponent(flowId)}`, { code }, {
+      headers: { 'X-GA-Hub-Action': 'manage-agy-profiles' },
+    }),
 }

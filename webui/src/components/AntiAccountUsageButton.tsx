@@ -68,6 +68,21 @@ export function AntiAccountUsageButton({
     mutationFn: (modelGroup?: string) => antiApi.resetBreaker(modelGroup),
     onSuccess: () => { pools.mutate() },
   })
+  const calibrate = useMutation({
+    mutationFn: ({ modelGroup, remainingPct, note }: { modelGroup: string; remainingPct: number; note?: string }) =>
+      antiApi.calibrateQuota(modelGroup, remainingPct, note),
+    onSuccess: updated => {
+      pools.reset()
+      pools.mutate()
+      setCalibrating(null)
+      if (updated) {
+        setCalibratePct(String(updated.calibrated_remaining_pct ?? ''))
+      }
+    },
+  })
+  const [calibrating, setCalibrating] = useState<string | null>(null)
+  const [calibratePct, setCalibratePct] = useState('100')
+  const [calibrateNote, setCalibrateNote] = useState('')
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const [dismissed, setDismissed] = useState(false)
@@ -106,7 +121,7 @@ export function AntiAccountUsageButton({
   const rows = running ? (liveRows ?? fallbackRows) : fallbackRows
   const poolRows = pools.data
   const coolingPools = poolRows?.filter(p => poolStatusView(p).cooling) ?? []
-  const message = !running ? '请先启动 Anti 网关。'
+  const message = !running ? '请先启用 Agy 运行时。'
     : usage.isPending ? '正在检测官方额度…'
     : usage.isError ? usage.error.message
     : usage.data?.state === 'login_required' ? '请先登录 agy，再重新检测。'
@@ -164,7 +179,7 @@ export function AntiAccountUsageButton({
               </ul>
             ) : <p className="mt-1 text-ink-muted">{message}</p>}
             {!running && rows?.length && (
-              <p className="mt-1 text-[11px] text-ink-muted">网关当前未运行；启动后点击图标即可刷新实时额度。</p>
+              <p className="mt-1 text-[11px] text-ink-muted">Agy 运行时已停止；启用后点击图标即可刷新实时额度。</p>
             )}
             {running && (
               <div className="mt-2 border-t border-line/70 pt-2 space-y-1.5">
@@ -178,7 +193,7 @@ export function AntiAccountUsageButton({
                       stats.mutate()
                     }}
                   >
-                    {pools.isPending ? '正在查询网关配额池…' : '查看网关配额池 / 熔断'}
+                    {pools.isPending ? '正在查询本地配额池…' : '查看本地配额池 / 熔断'}
                   </button>
                   {coolingPools.length > 0 && (
                     <button
@@ -193,18 +208,36 @@ export function AntiAccountUsageButton({
                 </div>
                 {pools.isError && <p className="text-status-danger">{pools.error.message}</p>}
                 {resetBreaker.isError && <p className="text-status-danger">{resetBreaker.error.message}</p>}
+                {calibrate.isError && <p className="text-status-danger">{calibrate.error.message}</p>}
                 {poolRows && poolRows.length > 0 && (
                   <ul className="space-y-1.5 text-[11px] text-ink-muted">
                     {poolRows.map(pool => {
                       const view = poolStatusView(pool)
+                      const isCalibrating = calibrating === pool.model_group
                       return (
-                        <li key={pool.model_group} className="space-y-0.5 rounded-md bg-bg-soft/70 px-2 py-1">
+                        <li key={pool.model_group} className="space-y-1 rounded-md bg-bg-soft/70 px-2 py-1">
                           <div className="flex items-center justify-between gap-2">
                             <span className="truncate font-medium text-ink">{pool.display_name}</span>
                             <div className="flex shrink-0 items-center gap-1.5">
                               <span className={clsx('tabular-nums font-medium', view.tone)}>
                                 {view.label}
                               </span>
+                              <button
+                                type="button"
+                                className="text-[10px] text-accent hover:underline"
+                                aria-label={`校准 ${pool.display_name}`}
+                                onClick={() => {
+                                  if (isCalibrating) {
+                                    setCalibrating(null)
+                                  } else {
+                                    setCalibrating(pool.model_group)
+                                    setCalibratePct(String(pool.calibrated_remaining_pct ?? 100))
+                                    setCalibrateNote('')
+                                  }
+                                }}
+                              >
+                                {isCalibrating ? '取消' : '校准'}
+                              </button>
                               {view.cooling && (
                                 <button
                                   type="button"
@@ -224,6 +257,50 @@ export function AntiAccountUsageButton({
                               <span>7d 窗口 {pool.window_7d_pct != null ? `${pool.window_7d_pct.toFixed(0)}%` : '—'}</span>
                             </div>
                           )}
+                          {(pool.calibrated_remaining_pct != null || (pool.estimated_cost_7d_usd ?? 0) > 0) && (
+                            <div className="flex items-center justify-between gap-2 text-[10px] tabular-nums">
+                              <span>{pool.calibrated_remaining_pct != null ? `已校准剩余 ${pool.calibrated_remaining_pct}%` : ''}</span>
+                              {(pool.estimated_cost_7d_usd ?? 0) > 0 && <span>7d ~${pool.estimated_cost_7d_usd!.toFixed(2)}</span>}
+                            </div>
+                          )}
+                          {isCalibrating && (
+                            <form
+                              className="flex flex-wrap items-center gap-1 pt-1"
+                              onSubmit={e => {
+                                e.preventDefault()
+                                const pct = Number(calibratePct)
+                                if (!Number.isFinite(pct) || pct < 0 || pct > 100) return
+                                calibrate.mutate({ modelGroup: pool.model_group, remainingPct: pct, note: calibrateNote.trim() || undefined })
+                              }}
+                            >
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                step="1"
+                                value={calibratePct}
+                                onChange={e => setCalibratePct(e.target.value)}
+                                aria-label={`${pool.display_name} 剩余百分比`}
+                                className="w-14 rounded border border-line bg-bg-card px-1.5 py-0.5 text-[11px] text-ink"
+                              />
+                              <span className="text-[10px]">%</span>
+                              <input
+                                type="text"
+                                value={calibrateNote}
+                                onChange={e => setCalibrateNote(e.target.value)}
+                                placeholder="备注"
+                                aria-label="校准备注"
+                                className="min-w-0 flex-1 rounded border border-line bg-bg-card px-1.5 py-0.5 text-[11px] text-ink"
+                              />
+                              <button
+                                type="submit"
+                                className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium text-white disabled:opacity-50"
+                                disabled={calibrate.isPending}
+                              >
+                                {calibrate.isPending ? '保存中' : '保存'}
+                              </button>
+                            </form>
+                          )}
                         </li>
                       )
                     })}
@@ -232,7 +309,10 @@ export function AntiAccountUsageButton({
                 {stats.data && (
                   <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-t border-line/50 pt-1.5 text-[10px] text-ink-muted tabular-nums">
                     <span>24h {stats.data.total_runs} 次（成功 {stats.data.success_runs}）</span>
-                    <span>{stats.data.total_tokens.toLocaleString('en-US')} tok · 缓存 {(stats.data.cache_hit_ratio * 100).toFixed(0)}%</span>
+                    <span>
+                      {stats.data.total_tokens.toLocaleString('en-US')} tok · 缓存 {(stats.data.cache_hit_ratio * 100).toFixed(0)}%
+                      {stats.data.estimated_cost_usd > 0 ? ` · ~$${stats.data.estimated_cost_usd.toFixed(2)}` : ''}
+                    </span>
                   </div>
                 )}
               </div>

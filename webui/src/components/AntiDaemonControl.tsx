@@ -66,8 +66,8 @@ export function AntiDaemonControl({
 }: ReturnType<typeof useAntiDaemonStatus>) {
   const canStart = !busy && state === 'stopped'
   const canControl = !busy && (running || state === 'unavailable')
-  const label = busy ? 'Anti 启动中' : external ? '外部 Anti 网关运行中' : running ? 'Anti 网关运行中'
-    : canStart ? '启动 Anti' : state === 'unavailable' ? 'Anti 网关不可用' : '正在检查 Anti'
+  const label = busy ? 'Agy 启动中' : external ? '外部 Agy 运行中' : running ? 'Agy ACP 运行中'
+    : canStart ? '启用 Agy' : state === 'unavailable' ? 'Agy 不可用' : '正在检查 Agy'
   const auth = running && status.data?.agy_available ? status.data.auth_state ?? 'unverified' : null
   const authLabel = auth === 'authenticated' ? 'agy 已验证登录' : auth === 'login_required' ? 'agy 需要登录'
     : auth === 'checking' ? '正在验证 agy 登录' : auth === 'unverified' ? '无法验证 agy 登录' : 'agy 登录状态未知'
@@ -78,7 +78,6 @@ export function AntiDaemonControl({
     ?? status.data?.detail
   const runtimeMeta = running
     ? [
-        status.data?.port ? `:${status.data.port}` : undefined,
         status.data?.version ? `v${status.data.version}` : undefined,
         typeof status.data?.active_count === 'number' && status.data.active_count > 0
           ? `${status.data.active_count} 个运行中任务`
@@ -96,7 +95,7 @@ export function AntiDaemonControl({
   const AuthIcon = auth === 'checking' ? LoaderCircle : auth === 'authenticated' ? ShieldCheck
     : auth === 'login_required' ? ShieldX : ShieldMinus
   const gatewayTitle = [label, runtimeMeta, detail].filter(Boolean).join(' · ')
-  const externalDisabledReason = '当前为外部启动的 AntiCLI 网关，请在外部终端停止或重启'
+  const externalDisabledReason = '当前运行时由外部管理'
 
   return (
     <div className="flex shrink-0 items-center gap-1.5" aria-label="Anti 状态" role="group">
@@ -130,8 +129,8 @@ export function AntiDaemonControl({
             'ga-badge border-line bg-bg-card text-ink-muted transition-colors',
             managed ? 'cursor-pointer hover:border-accent/50 hover:text-ink' : 'cursor-not-allowed opacity-45',
           )}
-          aria-label="重启 Anti 网关"
-          title={managed ? '重启 Anti 网关' : externalDisabledReason}
+          aria-label="重置 Agy 运行时"
+          title={managed ? '重置 Agy 运行时' : externalDisabledReason}
           onClick={() => { if (managed) restart.mutate() }}
         >
           <RotateCw className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden="true" />
@@ -143,8 +142,8 @@ export function AntiDaemonControl({
             'ga-badge border-line bg-bg-card text-ink-muted transition-colors',
             managed ? 'cursor-pointer hover:border-status-danger hover:text-status-danger' : 'cursor-not-allowed opacity-45',
           )}
-          aria-label="停止 Anti 网关"
-          title={managed ? '停止 Anti 网关' : externalDisabledReason}
+          aria-label="停止 Agy 运行时"
+          title={managed ? '停止 Agy 运行时' : externalDisabledReason}
           onClick={() => { if (managed) stop.mutate() }}
         >
           <Square className="h-3.5 w-3.5" strokeWidth={1.85} aria-hidden="true" />

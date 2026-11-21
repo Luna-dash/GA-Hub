@@ -5524,6 +5524,142 @@
         }
       }
     },
+    "/api/anti/profiles/{profile_id}/login/start": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Start Code Login",
+        "operationId": "start_code_login_api_anti_profiles__profile_id__login_start_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyCodeLoginState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/profiles/login/status/{flow_id}": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Code Login Status",
+        "operationId": "code_login_status_api_anti_profiles_login_status__flow_id__get",
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Flow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyCodeLoginState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/profiles/login/submit/{flow_id}": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Submit Code Login",
+        "operationId": "submit_code_login_api_anti_profiles_login_submit__flow_id__post",
+        "parameters": [
+          {
+            "name": "flow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Flow Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgyCodeLoginSubmit"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgyCodeLoginState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/anti/profiles/{profile_id}/logout": {
       "post": {
         "tags": [
@@ -5753,6 +5889,27 @@
         }
       }
     },
+    "/api/anti/commands": {
+      "get": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Commands",
+        "operationId": "commands_api_anti_commands_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiCommandList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/anti/sessions": {
       "get": {
         "tags": [
@@ -5888,6 +6045,48 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/reset": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Reset Session",
+        "operationId": "reset_session_api_anti_sessions__sid__reset_post",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiSessionResp"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -6205,6 +6404,67 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AntiRunResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anti/sessions/{sid}/runs/{rid}/approval": {
+      "post": {
+        "tags": [
+          "anti"
+        ],
+        "summary": "Approve",
+        "operationId": "approve_api_anti_sessions__sid__runs__rid__approval_post",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          },
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Rid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AntiApprovalDecision"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -6583,6 +6843,66 @@
         "type": "object",
         "title": "AgentTitleReq"
       },
+      "AgyCodeLoginState": {
+        "properties": {
+          "flow_id": {
+            "type": "string",
+            "title": "Flow Id"
+          },
+          "profile_id": {
+            "type": "string",
+            "title": "Profile Id"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "authorization_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorization Url"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "flow_id",
+          "profile_id",
+          "phase"
+        ],
+        "title": "AgyCodeLoginState"
+      },
+      "AgyCodeLoginSubmit": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "AgyCodeLoginSubmit"
+      },
       "AgyProfile": {
         "properties": {
           "id": {
@@ -6772,6 +7092,150 @@
         ],
         "title": "AntiAccountUsage"
       },
+      "AntiApprovalDecision": {
+        "properties": {
+          "approval_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Approval Id"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "allow",
+              "allow_always",
+              "reject"
+            ],
+            "title": "Decision"
+          },
+          "option_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Option Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "approval_id",
+          "decision"
+        ],
+        "title": "AntiApprovalDecision"
+      },
+      "AntiApprovalPrompt": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "details": {
+            "type": "string",
+            "title": "Details"
+          },
+          "prompt_type": {
+            "type": "string",
+            "enum": [
+              "approval",
+              "question"
+            ],
+            "title": "Prompt Type",
+            "default": "approval"
+          },
+          "tool_kind": {
+            "type": "string",
+            "title": "Tool Kind",
+            "default": "other"
+          },
+          "allow_always": {
+            "type": "boolean",
+            "title": "Allow Always",
+            "default": false
+          },
+          "security_warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Security Warning"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AntiApprovalQuestion"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "details"
+        ],
+        "title": "AntiApprovalPrompt"
+      },
+      "AntiApprovalQuestion": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "title": "Question"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/AntiQuestionOption"
+            },
+            "type": "array",
+            "title": "Options"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "title": "AntiApprovalQuestion"
+      },
       "AntiBreakerResetReq": {
         "properties": {
           "model_group": {
@@ -6789,6 +7253,57 @@
         },
         "type": "object",
         "title": "AntiBreakerResetReq"
+      },
+      "AntiCommandItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "AntiCommandItem"
+      },
+      "AntiCommandList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AntiCommandItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "AntiCommandList"
       },
       "AntiDaemonLogsResp": {
         "properties": {
@@ -7014,6 +7529,24 @@
         ],
         "title": "AntiModelList"
       },
+      "AntiQuestionOption": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "AntiQuestionOption"
+      },
       "AntiQuotaCalibrateReq": {
         "properties": {
           "model_group": {
@@ -7169,6 +7702,32 @@
             "type": "array",
             "maxItems": 256,
             "title": "Attachments"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "accept-edits"
+            ],
+            "title": "Mode",
+            "default": "plan"
+          },
+          "permission_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "approval-required",
+                  "auto-accept-edits",
+                  "auto",
+                  "full-access"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permission Mode"
           }
         },
         "type": "object",
@@ -7228,6 +7787,46 @@
             ],
             "title": "Error Detail"
           },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "accept-edits"
+            ],
+            "title": "Mode",
+            "default": "plan"
+          },
+          "permission_mode": {
+            "type": "string",
+            "enum": [
+              "approval-required",
+              "auto-accept-edits",
+              "auto",
+              "full-access"
+            ],
+            "title": "Permission Mode",
+            "default": "approval-required"
+          },
+          "approval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AntiApprovalPrompt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AntiRunUsage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "attachments": {
             "items": {
               "$ref": "#/components/schemas/AttachmentRef"
@@ -7245,6 +7844,32 @@
           "prompt"
         ],
         "title": "AntiRunResp"
+      },
+      "AntiRunUsage": {
+        "properties": {
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens",
+            "default": 0
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "title": "Cache Read Tokens",
+            "default": 0
+          },
+          "thinking_tokens": {
+            "type": "integer",
+            "title": "Thinking Tokens",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "AntiRunUsage"
       },
       "AntiSessionCreate": {
         "properties": {
@@ -7329,6 +7954,28 @@
             ],
             "title": "Active Run Id"
           },
+          "has_conversation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Conversation"
+          },
+          "acp_connected": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acp Connected"
+          },
           "engine": {
             "type": "string",
             "const": "anti",
@@ -7399,6 +8046,72 @@
               }
             ],
             "title": "Text Delta"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "cwd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cwd"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff"
           }
         },
         "type": "object",

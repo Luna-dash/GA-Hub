@@ -2443,6 +2443,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/anti/profiles/{profile_id}/login/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Code Login */
+        post: operations["start_code_login_api_anti_profiles__profile_id__login_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/anti/profiles/login/status/{flow_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Code Login Status */
+        get: operations["code_login_status_api_anti_profiles_login_status__flow_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/anti/profiles/login/submit/{flow_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Code Login */
+        post: operations["submit_code_login_api_anti_profiles_login_submit__flow_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/anti/profiles/{profile_id}/logout": {
         parameters: {
             query?: never;
@@ -2562,6 +2613,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/anti/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Commands */
+        get: operations["commands_api_anti_commands_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/anti/sessions": {
         parameters: {
             query?: never;
@@ -2596,6 +2664,23 @@ export interface paths {
         head?: never;
         /** Rename Session */
         patch: operations["rename_session_api_anti_sessions__sid__patch"];
+        trace?: never;
+    };
+    "/api/anti/sessions/{sid}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset Session */
+        post: operations["reset_session_api_anti_sessions__sid__reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/anti/sessions/{sid}/runs": {
@@ -2678,6 +2763,23 @@ export interface paths {
         put?: never;
         /** Cancel */
         post: operations["cancel_api_anti_sessions__sid__runs__rid__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/anti/sessions/{sid}/runs/{rid}/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve */
+        post: operations["approve_api_anti_sessions__sid__runs__rid__approval_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2899,6 +3001,24 @@ export interface components {
              */
             title: string;
         };
+        /** AgyCodeLoginState */
+        AgyCodeLoginState: {
+            /** Flow Id */
+            flow_id: string;
+            /** Profile Id */
+            profile_id: string;
+            /** Phase */
+            phase: string;
+            /** Authorization Url */
+            authorization_url?: string | null;
+            /** Error */
+            error?: string | null;
+        };
+        /** AgyCodeLoginSubmit */
+        AgyCodeLoginSubmit: {
+            /** Code */
+            code: string;
+        };
         /** AgyProfile */
         AgyProfile: {
             /** Id */
@@ -2958,10 +3078,77 @@ export interface components {
             /** Rows */
             rows: components["schemas"]["AntiAccountQuotaRow"][];
         };
+        /** AntiApprovalDecision */
+        AntiApprovalDecision: {
+            /** Approval Id */
+            approval_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "allow" | "allow_always" | "reject";
+            /** Option Id */
+            option_id?: string | null;
+        };
+        /** AntiApprovalPrompt */
+        AntiApprovalPrompt: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Details */
+            details: string;
+            /**
+             * Prompt Type
+             * @default approval
+             * @enum {string}
+             */
+            prompt_type: "approval" | "question";
+            /**
+             * Tool Kind
+             * @default other
+             */
+            tool_kind: string;
+            /**
+             * Allow Always
+             * @default false
+             */
+            allow_always: boolean;
+            /** Security Warning */
+            security_warning?: string | null;
+            /** Command */
+            command?: string | null;
+            /** Diff */
+            diff?: string | null;
+            question?: components["schemas"]["AntiApprovalQuestion"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** AntiApprovalQuestion */
+        AntiApprovalQuestion: {
+            /** Question */
+            question: string;
+            /** Options */
+            options?: components["schemas"]["AntiQuestionOption"][];
+        };
         /** AntiBreakerResetReq */
         AntiBreakerResetReq: {
             /** Model Group */
             model_group?: string | null;
+        };
+        /** AntiCommandItem */
+        AntiCommandItem: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Hint */
+            hint?: string | null;
+        };
+        /** AntiCommandList */
+        AntiCommandList: {
+            /** Items */
+            items: components["schemas"]["AntiCommandItem"][];
         };
         /** AntiDaemonLogsResp */
         AntiDaemonLogsResp: {
@@ -3026,6 +3213,13 @@ export interface components {
             /** Items */
             items: components["schemas"]["AntiModelItem"][];
         };
+        /** AntiQuestionOption */
+        AntiQuestionOption: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+        };
         /** AntiQuotaCalibrateReq */
         AntiQuotaCalibrateReq: {
             /** Model Group */
@@ -3083,6 +3277,14 @@ export interface components {
             references?: components["schemas"]["AntiFileReference"][];
             /** Attachments */
             attachments?: components["schemas"]["AttachmentRef"][];
+            /**
+             * Mode
+             * @default plan
+             * @enum {string}
+             */
+            mode: "plan" | "accept-edits";
+            /** Permission Mode */
+            permission_mode?: ("approval-required" | "auto-accept-edits" | "auto" | "full-access") | null;
         };
         /** AntiRunResp */
         AntiRunResp: {
@@ -3100,10 +3302,47 @@ export interface components {
             error?: string | null;
             /** Error Detail */
             error_detail?: string | null;
+            /**
+             * Mode
+             * @default plan
+             * @enum {string}
+             */
+            mode: "plan" | "accept-edits";
+            /**
+             * Permission Mode
+             * @default approval-required
+             * @enum {string}
+             */
+            permission_mode: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
+            approval?: components["schemas"]["AntiApprovalPrompt"] | null;
+            usage?: components["schemas"]["AntiRunUsage"] | null;
             /** Attachments */
             attachments?: components["schemas"]["AttachmentRef"][];
         } & {
             [key: string]: unknown;
+        };
+        /** AntiRunUsage */
+        AntiRunUsage: {
+            /**
+             * Input Tokens
+             * @default 0
+             */
+            input_tokens: number;
+            /**
+             * Output Tokens
+             * @default 0
+             */
+            output_tokens: number;
+            /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
+            /**
+             * Thinking Tokens
+             * @default 0
+             */
+            thinking_tokens: number;
         };
         /** AntiSessionCreate */
         AntiSessionCreate: {
@@ -3131,6 +3370,10 @@ export interface components {
             updated_at?: string | null;
             /** Active Run Id */
             active_run_id?: string | null;
+            /** Has Conversation */
+            has_conversation?: boolean | null;
+            /** Acp Connected */
+            acp_connected?: boolean | null;
             /**
              * Engine
              * @default anti
@@ -3154,6 +3397,18 @@ export interface components {
             duration_seconds?: number | null;
             /** Text Delta */
             text_delta?: string | null;
+            /** Detail */
+            detail?: string | null;
+            /** Command */
+            command?: string | null;
+            /** Cwd */
+            cwd?: string | null;
+            /** Output */
+            output?: string | null;
+            /** Exit Code */
+            exit_code?: number | null;
+            /** Diff */
+            diff?: string | null;
         };
         /** AntiStepUpdate */
         AntiStepUpdate: {
@@ -10357,6 +10612,103 @@ export interface operations {
             };
         };
     };
+    start_code_login_api_anti_profiles__profile_id__login_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyCodeLoginState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    code_login_status_api_anti_profiles_login_status__flow_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyCodeLoginState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_code_login_api_anti_profiles_login_submit__flow_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgyCodeLoginSubmit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgyCodeLoginState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     logout_agy_profile_api_anti_profiles__profile_id__logout_post: {
         parameters: {
             query?: never;
@@ -10543,6 +10895,26 @@ export interface operations {
             };
         };
     };
+    commands_api_anti_commands_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiCommandList"];
+                };
+            };
+        };
+    };
     sessions_api_anti_sessions_get: {
         parameters: {
             query?: never;
@@ -10639,6 +11011,37 @@ export interface operations {
                 "application/json": components["schemas"]["AntiSessionRename"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiSessionResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_session_api_anti_sessions__sid__reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -10835,6 +11238,42 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AntiRunResp"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_api_anti_sessions__sid__runs__rid__approval_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+                rid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AntiApprovalDecision"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
