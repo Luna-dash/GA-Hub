@@ -269,52 +269,53 @@ class ServiceRegistry:
     @staticmethod
     def _anti() -> ServicePanelItem:
         from .anti_daemon import daemon
-        from .anti_engine import AntiError, daemon_port
+        from .anti_engine import AntiError
 
         try:
-            port = daemon_port()
             status = daemon.panel_status()
         except AntiError as exc:
             return ServicePanelItem(
-                "anti", "AntiCLI 网关", "error", str(exc), "/anti",
+                "anti", "Agy ACP", "error", str(exc), "/anti",
                 error=str(exc), health="attention",
             )
 
         if status.state == "ready":
             if status.agy_available is False:
-                msg = status.detail or "AntiCLI 已启动，但找不到官方 agy CLI"
+                msg = status.detail or "找不到官方 agy CLI"
                 return ServicePanelItem(
-                    "anti", "AntiCLI 网关", "error", msg, "/anti",
-                    {"端口": port}, error=msg, health="attention",
+                    "anti", "Agy ACP", "error", msg, "/anti",
+                    error=msg, health="attention",
                 )
             active = status.active_count or 0
-            summary = f"网关运行中（{active} 个任务）" if active > 0 else "网关运行中，等待任务"
+            summary = f"ACP 就绪（{active} 个运行中任务）" if active > 0 else "ACP 就绪，按需拉起会话"
+            metrics = {"运行任务": active}
+            if status.version:
+                metrics["版本"] = status.version
             return ServicePanelItem(
-                "anti", "AntiCLI 网关", "running", summary, "/anti",
-                {"端口": port, "运行任务": active},
+                "anti", "Agy ACP", "running", summary, "/anti",
+                metrics,
             )
 
         if status.state == "starting":
             return ServicePanelItem(
-                "anti", "AntiCLI 网关", "ready",
-                status.detail or "正在启动 AntiCLI 网关…", "/anti",
+                "anti", "Agy ACP", "ready",
+                status.detail or "正在初始化 Agy ACP…", "/anti",
             )
 
         if status.state == "unavailable":
-            msg = status.detail or "AntiCLI 网关不可用"
+            msg = status.detail or "Agy ACP 不可用"
             return ServicePanelItem(
-                "anti", "AntiCLI 网关", "error", msg, "/anti",
+                "anti", "Agy ACP", "error", msg, "/anti",
                 error=msg, health="attention",
             )
 
         if status.detail:
             return ServicePanelItem(
-                "anti", "AntiCLI 网关", "error", status.detail, "/anti",
-                error=status.detail, health="attention",
+                "anti", "Agy ACP", "stopped", status.detail, "/anti",
             )
 
         return ServicePanelItem(
-            "anti", "AntiCLI 网关", "stopped", "按需启动，当前未运行", "/anti",
+            "anti", "Agy ACP", "stopped", "按需启动，当前未运行", "/anti",
         )
 
     def _scheduler_service(self, domain: str) -> "SchedulerDomainBase | None":

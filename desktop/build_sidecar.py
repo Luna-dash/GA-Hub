@@ -12,7 +12,6 @@ ROOT = Path(__file__).resolve().parents[1]
 BIN = ROOT / "src-tauri" / "binaries"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from desktop.anticli_component import build_anticli
 from desktop.runtime_dependencies import (
     hidden_import_args, conda_runtime_binary_args, runtime_binary_args,
 )
@@ -57,11 +56,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", required=True, help="Rust target triple used by Tauri")
     parser.add_argument("--pyinstaller", default=sys.executable)
-    parser.add_argument("--anticli-source", type=Path, help="Include the locked AntiCLI source checkout")
-    parser.add_argument("--anticli-python", help="Interpreter for freezing AntiCLI")
     args = parser.parse_args()
-    if args.anticli_python and not args.anticli_source:
-        parser.error("--anticli-python requires --anticli-source")
     suffix = ".exe" if "windows" in args.target else ""
     destination = BIN / f"ga-hub-sidecar-{args.target}{suffix}"
     # PyInstaller's workpath/distpath/specpath churn ~150MB per build; keep
@@ -83,10 +78,6 @@ def main() -> int:
                "--add-data", f"{workspace / 'node-stage' / 'runtime.json'};runtime/node",
                "--noconsole",
                "--add-data", f"{ROOT / 'webui' / 'dist'};webui/dist"]
-    if args.anticli_source:
-        anticli = build_anticli(args.anticli_source.resolve(), workspace / "anticli",
-                                python=args.anticli_python or args.pyinstaller, windows=bool(suffix))
-        command.extend(["--add-data", f"{anticli};runtime/anticli"])
     if suffix:
         command.extend(runtime_binary_args(Path(sys.prefix)))
     command.append(str(ROOT / "server" / "desktop_sidecar.py"))

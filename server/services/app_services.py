@@ -99,6 +99,11 @@ class AppServices:
                     log.warning("agent shutdown missed its graceful deadline")
             except Exception:
                 log.exception("agent shutdown failed")
+        if "server.services.agy_runtime" in sys.modules:
+            try:
+                sys.modules["server.services.agy_runtime"].runtime.shutdown()
+            except Exception:
+                log.exception("agy runtime shutdown failed")
         # Last: no service owns these children any more. Each service above
         # already stops the one it started; this is the catch-all for a child
         # the services never tracked (the external GA worker has no owner

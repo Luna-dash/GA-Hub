@@ -511,16 +511,8 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="先跑后端 pytest（tests/）与前端 vitest，再进入构建阶段",
     )
-    parser.add_argument("--anticli-source", type=Path, help="打包锁定版本的 AntiCLI 源码目录")
-    parser.add_argument("--anticli-python", type=Path, help="AntiCLI 的独立打包解释器（默认与 sidecar 相同）")
     args = parser.parse_args(argv)
-    if args.anticli_python and not args.anticli_source:
-        parser.error("--anticli-python 需要同时传入 --anticli-source")
     sidecar_options: list[str] = []
-    if args.anticli_source:
-        sidecar_options.extend(["--anticli-source", str(args.anticli_source.resolve())])
-    if args.anticli_python:
-        sidecar_options.extend(["--anticli-python", str(args.anticli_python.resolve())])
     started = time.monotonic()
 
     handle, lock_desc = acquire_build_lock()

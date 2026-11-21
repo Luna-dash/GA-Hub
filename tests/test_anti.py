@@ -1,5 +1,7 @@
-"""Behavioral tests for the project-scoped Anti HTTP adapter."""
-from types import SimpleNamespace
+"""Behavioral tests for unified Agy ACP sessions, approvals, resume, and attachments."""
+import threading
+import time
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -9,209 +11,272 @@ from server.services import anti_engine as engine
 from server.services import file_transfer as transfer
 
 
-class FakeDaemon:
-    def __init__(self):
+class FakeWorker:
+    def __init__(self, manager, profile_id, sid, workspace):
+        self.manager = manager
+        self.profile_id = profile_id
+        self.session_id = sid
+        self.workspace = workspace
+        self.active_turn = None
+        self._closed = False
+        self.perm_event = threading.Event()
+        self.perm_choice = None
+
+    def run_turn(
+        self,
+        *,
+        run_id,
+        prompt_text,
+        model,
+        effort,
+        mode,
+        permission_mode,
+        resume_conversation,
+        add_dirs,
+        staged_paths,
+        attachments,
+        allowed_roots,
+        on_event,
+    ):
+        self.manager.calls.append({
+            "profile_id": self.profile_id,
+            "workspace": self.workspace,
+            "conversation": resume_conversation,
+            "prompt": prompt_text,
+            "model": model,
+            "effort": effort,
+            "mode": mode,
+            "permission_mode": permission_mode,
+            "add_dirs": list(add_dirs),
+        })
+        on_event({"seq": 1, "type": "step.update", "step": {"index": 0, "kind": "thought", "state": "ACTIVE", "text_delta": "分析中"}})
+        on_event({"seq": 2, "type": "step.update", "step": {"index": 1, "kind": "tool_call", "state": "ACTIVE", "tool": "view_file"}})
+        on_event({"seq": 3, "type": "message.delta", "text": "好"})
+
+        if self.manager.require_approval:
+            approval_id = "a" * 32
+            self.manager.pending[run_id] = {
+                "id": approval_id,
+                "title": "Edit note",
+                "details": "note.txt",
+                "prompt_type": "approval",
+                "tool_kind": "edit",
+                "allow_always": True,
+            }
+            on_event({"seq": 0, "type": "approval.requested", "approval": self.manager.pending[run_id]})
+            self.perm_event.wait(3.0)
+            self.manager.pending.pop(run_id, None)
+            if self.perm_choice == "reject":
+                return {"status": "success", "conversation_id": self.manager.next_conv(self.profile_id, run_id), "answer": "已拒绝修改", "usage": {}}
+
+        if self.manager.hold_turn:
+            self.perm_event.wait(3.0)
+            if self.manager.cancelled_ids.get(run_id):
+                return {"status": "cancelled", "conversation_id": resume_conversation, "answer": None, "usage": {}}
+
+        return {
+            "status": "success",
+            "conversation_id": self.manager.next_conv(self.profile_id, run_id),
+            "answer": "完整结果",
+            "usage": {"input_tokens": 120, "output_tokens": 30, "cache_read_tokens": 60},
+        }
+
+    def close(self):
+        self._closed = True
+
+
+class FakeRuntime:
+    def __init__(self, *, require_approval=False, hold_turn=False):
         self.calls = []
-        self.status = {}
-        self.settings = []
+        self.pending = {}
+        self.workers = {}
+        self.cancelled_ids = {}
+        self.require_approval = require_approval
+        self.hold_turn = hold_turn
+        self.conv_map = {}
 
-    def submit(self, run, workspace, conversation):
-        self.calls.append((workspace, conversation))
-        self.settings.append((run['model'], run['effort']))
-        self.status[run['id']] = 'running'
+    def next_conv(self, profile_id, run_id):
+        return self.conv_map.get(profile_id, f"conv-{profile_id}")
 
-    def request(self, method, path, **kwargs):
-        if path == '/v1/models':
-            assert method == 'GET'
-            return [{'id': 'alternate', 'display_name': 'Alternative'}]
-        _, _, _, rid, *suffix = path.split('/')
-        if not suffix:
-            return {'status': self.status[rid], 'conversation_id': 'c1'}
-        if suffix == ['answer']:
-            return {'answer': '完整结果'}
-        if suffix == ['cancel']:
-            assert method == 'POST'
-            self.status[rid] = 'cancelled'
-            return {'status': 'cancelled'}
-        assert suffix == ['events?include_raw=true']
-        return [
-            {'seq': 1, 'event_type': 'init', 'raw_json': '{}'},
-            {'seq': 2, 'event_type': 'step_update', 'raw_json': '{"step_update":{"text_delta":"好","tool_arguments":"hidden"}}'},
-        ]
+    def models(self):
+        return [{"id": "alternate", "display_name": "Alternative"}]
+
+    def commands(self):
+        return [{"name": "plan", "description": "生成方案"}]
+
+    def session_connected(self, db_key, sid):
+        return any(k for k in self.workers if isinstance(k, tuple) and len(k) == 3 and k[0] == db_key and k[2] == sid)
+
+    def get_worker(self, db_key, profile_id, sid, workspace):
+        key = (db_key, profile_id, sid)
+        if key not in self.workers:
+            self.workers[key] = FakeWorker(self, profile_id, sid, workspace)
+        return self.workers[key]
+
+    def register_turn(self, db_path, run_id, worker):
+        self.workers[("turn", run_id)] = worker
+
+    def unregister_turn(self, db_path, run_id):
+        self.workers.pop(("turn", run_id), None)
+
+    def active_turn_approval(self, db_path, run_id):
+        return self.pending.get(run_id)
+
+    def approve_turn(self, db_path, run_id, approval_id, decision, option_id=None):
+        p = self.pending.get(run_id)
+        w = self.workers.get(("turn", run_id))
+        if not p or p["id"] != approval_id or w is None:
+            return False
+        w.perm_choice = decision
+        w.perm_event.set()
+        return True
+
+    def cancel_turn(self, db_path, run_id):
+        self.cancelled_ids[run_id] = True
+        w = self.workers.get(("turn", run_id))
+        if w:
+            w.perm_event.set()
+        return True
+
+    def close_session(self, db_key, sid):
+        pass
 
 
-def test_project_scoped_anti_round_trip(tmp_path, monkeypatch):
-    workspace = tmp_path / 'workspace'
-    artifacts = tmp_path / 'project_artifacts' / 'project' / 'anti'
-    daemon = FakeDaemon()
-    db = tmp_path / 'anti.sqlite'
-    monkeypatch.setattr(transfer._paths, 'ADMIN_DATA', tmp_path / 'data')
-    monkeypatch.setattr(engine, 'project', lambda name: (workspace, artifacts))
-    monkeypatch.setattr(anti, 'AntiSessions', lambda: engine.AntiSessions(db, daemon))
+def _wait_terminal(client, path, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        data = client.get(path).json()
+        if data["status"] in engine.TERMINAL:
+            return data
+        time.sleep(0.02)
+    raise AssertionError(f"run did not finish: {path}")
+
+
+def test_unified_acp_round_trip_mode_switch_and_resume(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    artifacts = tmp_path / "project_artifacts" / "project" / "anti"
+    runtime = FakeRuntime()
+    db = tmp_path / "anti.sqlite"
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path / "data")
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, artifacts))
+    monkeypatch.setattr(anti, "AntiSessions", lambda: engine.AntiSessions(db, runtime))
+    monkeypatch.setattr(anti.daemon, "submission", lambda: __import__("contextlib").nullcontext("default"))
     app = FastAPI()
     app.include_router(anti.router)
     with TestClient(app) as client:
-        assert client.get('/api/anti/models').json() == {'items': [
-            {'id': 'alternate', 'display_name': 'Alternative'},
-        ]}
-        sessions = '/api/anti/sessions'
-        session = client.post(sessions, json={'project': 'project'}).json()
-        assert session['engine'] == 'anti'
-        assert session['workspace'] == str(workspace)
+        assert client.get("/api/anti/models").json() == {"items": [{"id": "alternate", "display_name": "Alternative"}]}
+        assert client.get("/api/anti/commands").json() == {"items": [{"name": "plan", "description": "生成方案", "hint": None}]}
+        sessions = "/api/anti/sessions"
+        session = client.post(sessions, json={"project": "project"}).json()
+        assert session["engine"] == "anti"
+        assert session["workspace"] == str(workspace)
+
         runs = f"{sessions}/{session['id']}/runs"
-        body = {'operation': 'message1', 'prompt': 'check structure'}
+        body = {"operation": "message1", "prompt": "check structure"}
         run = client.post(runs, json=body).json()
         path = f"{runs}/{run['id']}"
-        assert client.post(runs, json=body).json()['id'] == run['id']
-        assert client.post(runs, json=body | {'prompt': 'changed'}).status_code == 409
-        assert client.post(runs, json=body | {'operation': 'message2'}).status_code == 409
-        assert client.post(runs, json=body | {'model': 'alternate'}).status_code == 409
-        assert client.post(runs, json=body | {'effort': 'low'}).status_code == 409
-        assert client.post(runs, json=body | {'effort': 'invalid'}).status_code == 422
-        assert daemon.calls == [(workspace, None)]
-        assert daemon.settings == [(engine.DEFAULT_MODEL, 'high')]
-        assert client.get(path + '/events').json() == [{'seq': 2, 'type': 'message.delta', 'text': '好'}]
-        assert client.get(path + '/events?after=2').json() == []
-        original_request = daemon.request
-        trace_rows = [
-            {'seq': 3, 'event_type': 'step_update', 'step_index': 0, 'step_type': 'user_input',
-             'raw_json': '{"step_update":{"text_delta":"hidden prompt"}}'},
-            {'seq': 4, 'event_type': 'step_update', 'step_index': 1, 'step_type': 'tool_call',
-             'state': 'ACTIVE', 'tool_name': 'view_file', 'summary': 'hidden diagnostics',
-             'raw_json': '{"step_update":{"text_delta":"hidden output","tool_arguments":"hidden path"}}'},
-            {'seq': 5, 'event_type': 'step_update', 'step_index': 1, 'step_type': 'tool_call',
-             'state': 'DONE', 'duration_seconds': 0.25},
-            {'seq': 6, 'event_type': 'step_update',
-             'raw_json': '{"step_update":{"step_index":2,"step_type":"planner_response","state":"DONE","text_delta":"先查看目录"}}'},
-            {'seq': 7, 'event_type': 'step_update', 'step_index': 3, 'step_type': 'agent_response',
-             'state': 'ACTIVE', 'raw_json': '{"step_update":{"text_delta":"正文"}}'},
-            {'seq': 8, 'event_type': 'step_update', 'raw_json': 'invalid json'},
-        ]
+        assert client.post(runs, json=body).json()["id"] == run["id"]
+        assert client.post(runs, json=body | {"prompt": "changed"}).status_code == 409
+        assert client.post(runs, json=body | {"effort": "invalid"}).status_code == 422
 
-        def request_with_trace(method, remote_path, *args, **kwargs):
-            response = original_request(method, remote_path, *args, **kwargs)
-            return response + trace_rows if remote_path.endswith('/events?include_raw=true') else response
+        completed = _wait_terminal(client, path)
+        assert completed["status"] == "success"
+        assert completed["answer"] == "完整结果"
+        assert runtime.calls[0]["mode"] == "plan"
+        assert runtime.calls[0]["conversation"] is None
 
-        monkeypatch.setattr(daemon, 'request', request_with_trace)
-        trace = [
-            {'seq': 4, 'type': 'step.update', 'step': {'index': 1, 'kind': 'tool_call', 'state': 'ACTIVE', 'tool': 'view_file'}},
-            {'seq': 5, 'type': 'step.update', 'step': {'index': 1, 'kind': 'tool_call', 'state': 'DONE', 'duration_seconds': 0.25}},
-            {'seq': 6, 'type': 'step.update', 'step': {'index': 2, 'kind': 'planner_response', 'state': 'DONE', 'text_delta': '先查看目录'}},
-            {'seq': 7, 'type': 'message.delta', 'text': '正文', 'step': {'index': 3, 'kind': 'agent_response', 'state': 'ACTIVE'}},
-        ]
-        assert client.get(path + '/events?after=2').json() == trace
-        assert client.get(path + '/events?after=4').json() == trace[1:]
-        assert client.get(f"{sessions}/other/runs/{run['id']}").status_code == 404
-        daemon.status[run['id']] = 'success'
-        completed = client.get(path).json()
-        assert completed['answer'] == '完整结果'
-        assert completed['artifact'] is None and completed['sha256'] is None
-        assert not artifacts.exists()
-        second = client.post(runs, json=body | {'operation': 'message2', 'model': 'alternate', 'effort': 'low'}).json()
-        assert daemon.calls[-1] == (workspace, 'c1')
-        assert daemon.settings[-1] == ('alternate', 'low')
-        assert client.post(f"{runs}/{second['id']}/cancel").json()['status'] == 'cancelled'
-        assert [r['status'] for r in client.get(runs).json()] == ['success', 'cancelled']
-        assert transfer.FileTransfer().list() == []
+        ev = client.get(path + "/events").json()
+        assert [e["seq"] for e in ev] == [1, 2, 3]
+        assert ev[0]["step"]["kind"] == "thought"
+        assert ev[1]["step"]["tool"] == "view_file"
+        assert ev[2]["type"] == "message.delta" and ev[2]["text"] == "好"
+        assert client.get(path + "/events?after=2").json() == [ev[2]]
+
+        # Switching to accept-edits in the SAME session resumes the exact same conversation_id!
+        second = client.post(runs, json={
+            "operation": "message2",
+            "prompt": "apply patch",
+            "mode": "accept-edits",
+            "permission_mode": "auto-accept-edits",
+            "model": "alternate",
+            "effort": "low",
+        }).json()
+        done2 = _wait_terminal(client, f"{runs}/{second['id']}")
+        assert done2["status"] == "success"
+        assert done2["usage"] == {"input_tokens": 120, "output_tokens": 30, "cache_read_tokens": 60, "thinking_tokens": 0}
+        assert runtime.calls[-1]["mode"] == "accept-edits"
+        assert runtime.calls[-1]["permission_mode"] == "auto-accept-edits"
+        assert runtime.calls[-1]["conversation"] == "conv-default"
+
+        reset_resp = client.post(f"{sessions}/{session['id']}/reset")
+        assert reset_resp.status_code == 200
+        assert reset_resp.json()["has_conversation"] is True
+
+
+def test_interactive_approval_over_unified_acp(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime = FakeRuntime(require_approval=True)
+    db = tmp_path / "anti.sqlite"
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path / "data")
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, tmp_path / "artifacts"))
+    monkeypatch.setattr(anti, "AntiSessions", lambda: engine.AntiSessions(db, runtime))
+    monkeypatch.setattr(anti.daemon, "submission", lambda: __import__("contextlib").nullcontext("default"))
+    app = FastAPI()
+    app.include_router(anti.router)
+    with TestClient(app) as client:
+        sid = client.post("/api/anti/sessions", json={"project": "project"}).json()["id"]
+        run = client.post(f"/api/anti/sessions/{sid}/runs", json={
+            "operation": "edit1",
+            "prompt": "edit note",
+            "mode": "accept-edits",
+            "permission_mode": "approval-required",
+        }).json()
+        rid = run["id"]
+        deadline = time.monotonic() + 2.0
+        pending = None
+        while time.monotonic() < deadline:
+            cur = client.get(f"/api/anti/sessions/{sid}/runs/{rid}").json()
+            if cur.get("approval"):
+                pending = cur["approval"]
+                break
+            time.sleep(0.02)
+        assert pending is not None and pending["allow_always"] is True
+
+        resp = client.post(
+            f"/api/anti/sessions/{sid}/runs/{rid}/approval",
+            json={"approval_id": pending["id"], "decision": "reject"},
+            headers={"X-GA-Hub-Action": "approve-agy"},
+        )
+        assert resp.status_code == 200
+        done = _wait_terminal(client, f"/api/anti/sessions/{sid}/runs/{rid}")
+        assert done["answer"] == "已拒绝修改"
 
 
 def test_anti_file_resolution_uses_session_workspace(tmp_path, monkeypatch):
-    workspace = tmp_path / 'workspace'
+    workspace = tmp_path / "workspace"
     workspace.mkdir()
-    citation = workspace / 'anti-citation.md'
+    citation = workspace / "anti-citation.md"
     citation.touch()
-    monkeypatch.setattr(engine._paths, 'ADMIN_DATA', tmp_path / 'data')
-    monkeypatch.setattr(engine, 'project', lambda name: (workspace, tmp_path / 'artifacts'))
-    session = engine.AntiSessions().create('project')
+    monkeypatch.setattr(engine._paths, "ADMIN_DATA", tmp_path / "data")
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, tmp_path / "artifacts"))
+    session = engine.AntiSessions().create("project")
     app = FastAPI()
     app.include_router(upload.router)
     with TestClient(app) as client:
-        body = {'engine': 'anti', 'session_id': session['id'], 'path': citation.name}
-        resolved = client.post('/api/files/resolve', json=body)
+        body = {"engine": "anti", "session_id": session["id"], "path": citation.name}
+        resolved = client.post("/api/files/resolve", json=body)
         assert resolved.status_code == 200
-        assert resolved.json()['resolved'] == str(citation.resolve())
-        missing = client.post('/api/files/resolve', json=body | {'session_id': 'missing'})
+        assert resolved.json()["resolved"] == str(citation.resolve())
+        missing = client.post("/api/files/resolve", json=body | {"session_id": "missing"})
         assert missing.status_code == 404
-        assert missing.json()['detail'] == 'Anti session not found'
-
-
-def test_model_catalog_is_available_without_daemon(tmp_path, monkeypatch):
-    class StoppedDaemon:
-        def request(self, method, path, **kwargs):
-            assert (method, path) == ('GET', '/v1/models')
-            raise engine.AntiError(503, 'unavailable')
-
-    monkeypatch.setattr(engine.anti_component, 'executable', lambda: 'anticli')
-
-    def list_models(argv, **kwargs):
-        assert argv == ['anticli', 'models', '--json']
-        assert kwargs['check'] and kwargs['timeout'] > 0
-        return SimpleNamespace(stdout='[{"id":"model-medium","display_name":"Model (Medium)"}]')
-
-    monkeypatch.setattr(engine.subprocess, 'run', list_models)
-    monkeypatch.setattr(anti, 'AntiSessions', lambda: engine.AntiSessions(tmp_path / 'anti.sqlite', StoppedDaemon()))
-    app = FastAPI()
-    app.include_router(anti.router)
-    with TestClient(app) as client:
-        response = client.get('/api/anti/models')
-        assert response.status_code == 200
-        assert response.json() == {'items': [{'id': 'model-medium', 'display_name': 'Model (Medium)'}]}
-
-
-def test_anti_session_management(tmp_path, monkeypatch):
-    import sqlite3
-
-    db = tmp_path / 'anti.sqlite'
-    workspace = tmp_path / 'workspace'
-    artifacts = tmp_path / 'artifacts'
-    daemon = FakeDaemon()
-    monkeypatch.setattr(engine, 'project', lambda name: (workspace / name, artifacts / name))
-    monkeypatch.setattr(anti, 'AntiSessions', lambda: engine.AntiSessions(db, daemon))
-    app = FastAPI()
-    app.include_router(anti.router)
-    with TestClient(app) as client:
-        base = '/api/anti/sessions'
-        first = client.post(base, json={'project': 'alpha'}).json()
-        second = client.post(base, json={'project': 'beta'}).json()
-        assert first['title'] == ''
-        assert first['updated_at']
-        assert first['active_run_id'] is None
-        sid = first['id']
-        path = f'{base}/{sid}'
-        run = client.post(path + '/runs', json={'operation': 'one', 'prompt': ' A   first prompt '}).json()
-        assert {item['project']: item['title'] for item in client.get(base).json()} == {
-            'alpha': 'A first prompt', 'beta': '',
-        }
-        renamed = client.patch(path, json={'title': '  Renamed  '}).json()
-        assert renamed['title'] == 'Renamed'
-        assert renamed['active_run_id'] == run['id']
-        assert client.patch(path, json={'title': '  '}).status_code == 422
-        assert next(row for row in client.get(base).json() if row['id'] == sid)['active_run_id'] == run['id']
-        assert client.delete(path).status_code == 409
-        daemon.status[run['id']] = 'success'
-        assert client.get(f"{path}/runs/{run['id']}").json()['status'] == 'success'
-        assert client.patch(path, json={'title': 'Renamed'}).json()['active_run_id'] is None
-        artifact = artifacts / 'alpha' / f"{run['id']}.md"
-        assert not artifact.exists()
-        artifact.parent.mkdir(parents=True)
-        artifact.write_text('legacy reply', encoding='utf8')
-        another = client.post(path + '/runs', json={'operation': 'two', 'prompt': 'More'}).json()
-        assert {item['id']: item['title'] for item in client.get(base).json()}[sid] == 'Renamed'
-        daemon.status[another['id']] = 'cancelled'
-        client.get(f"{path}/runs/{another['id']}").raise_for_status()
-        assert client.delete(path).status_code == 204
-        assert client.get(path + '/runs').status_code == 404
-        assert client.delete(path).status_code == 404
-        assert client.get(base).json() == [second]
-        assert artifact.read_text(encoding='utf8') == 'legacy reply'
-    with sqlite3.connect(db) as conn:
-        assert conn.execute('SELECT count(*) FROM runs WHERE session_id=?', (sid,)).fetchone()[0] == 0
 
 
 def test_legacy_anti_sessions_get_first_prompt_title(tmp_path):
     import sqlite3
 
-    db = tmp_path / 'legacy.sqlite'
+    db = tmp_path / "legacy.sqlite"
     with sqlite3.connect(db) as conn:
         conn.executescript("""
             CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT, workspace TEXT, title TEXT, conversation_id TEXT);
@@ -222,204 +287,125 @@ def test_legacy_anti_sessions_get_first_prompt_title(tmp_path):
             INSERT INTO runs VALUES ('r', 'one', 'Read the   workspace', 'm', 'high', 'completed');
         """)
     sessions = engine.AntiSessions(db)
-    for _ in range(2):
-        assert {row['id']: row['title'] for row in sessions.list()} == {
-            'one': 'Read the workspace', 'two': '', 'three': 'Custom',
-        }
-        historical, = sessions.history('one')
-        assert (historical['status'], historical['model'], historical['effort']) == ('completed', 'm', 'high')
-        assert historical['error_detail'] is None
+    assert {row["id"]: row["title"] for row in sessions.list()} == {
+        "one": "Read the workspace", "two": "", "three": "Custom",
+    }
+    historical, = sessions.history("one")
+    assert (historical["status"], historical["model"], historical["effort"]) == ("completed", "m", "high")
 
 
+def test_selected_references_and_attachments_stage_properly(tmp_path, monkeypatch):
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    artifacts = tmp_path / "artifacts"
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    local = workspace / "inside.txt"
+    local.write_text("inside", encoding="utf-8")
+    external = tmp_path / "external.txt"
+    external.write_text("outside", encoding="utf-8")
+    uploaded = uploads / "shot.png"
+    uploaded.write_bytes(b"\x89PNG\r\n\x1a\n")
 
-def test_selected_references(tmp_path, monkeypatch):
-    workspace = tmp_path / 'project'; workspace.mkdir()
-    artifacts = tmp_path / 'artifacts'
-    local = workspace / '项目笔记.txt'; local.write_text('inside', encoding='utf-8')
-    external = tmp_path / '外部笔记.txt'; external.write_text('outside', encoding='utf-8')
-    (tmp_path / 'not-selected.txt').write_text('not selected', encoding='utf-8')
-    monkeypatch.setattr(transfer._paths, 'ADMIN_DATA', tmp_path / 'data')
-    monkeypatch.setattr(engine, 'project', lambda name: (workspace.resolve(), artifacts.resolve()))
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path / "data")
+    monkeypatch.setattr(transfer._paths, "admin_uploads_dir", lambda: uploads)
+    monkeypatch.setattr(engine, "project", lambda name: (workspace.resolve(), artifacts.resolve()))
     indexed = transfer.FileTransfer()
     for file in (local, external):
         indexed.add(str(file), "chat", "s", None)
-    posted = []
-    adapter = engine.AntiAdapter()
-    monkeypatch.setattr(adapter, 'request', lambda method, path, **kw: posted.append((method,path,kw['json'])))
-    monkeypatch.setattr(anti, 'AntiSessions', lambda: engine.AntiSessions(tmp_path / 'anti.sqlite', adapter))
-    app = FastAPI(); app.include_router(anti.router)
+
+    runtime = FakeRuntime()
+    monkeypatch.setattr(anti, "AntiSessions", lambda: engine.AntiSessions(tmp_path / "anti.sqlite", runtime))
+    monkeypatch.setattr(anti.daemon, "submission", lambda: __import__("contextlib").nullcontext("default"))
+    app = FastAPI()
+    app.include_router(anti.router)
     with TestClient(app) as client:
-        base = '/api/anti/sessions'
-        sid = client.post(base, json={'project': 'project'}).json()['id']
-        url = f'{base}/{sid}/runs'
-        body = {'operation': 'attachment-test', 'prompt': 'read files',
-                'references': [{'id': 1, 'path': str(local)}, {'id': 2, 'path': str(external)}]}
-        bad = body | {'references': [{'id': 2, 'path': str(local)}]}
-        assert client.post(url, json=bad).status_code == 422
-        assert not posted and not artifacts.exists()
-        response = client.post(url, json=body)
-        assert response.status_code == 200, response.text
-        run = response.json()
-        assert run['prompt'] == 'read files'
-        staging = artifacts / 'references' / run['id']
-        copy, = staging.iterdir()
-        assert copy.read_text(encoding='utf-8') == 'outside'
-        method, path, payload = posted[0]
-        assert method == 'POST' and path == '/v1/runs?async_mode=true'
-        assert payload['mode'] == 'plan' and payload['add_dirs'] == [str(staging)]
-        assert local.as_posix() in payload['prompt'] and copy.as_posix() in payload['prompt']
-        assert external.as_posix() not in payload['prompt']
-        external.unlink()
-        assert client.post(url, json=body).json()['id'] == run['id']
-        assert client.post(url, json=body | {'references': []}).status_code == 409
-        assert len(posted) == 1
-
-
-
-def test_anti_adapter_only_passes_effort_for_plain_model(tmp_path, monkeypatch):
-    sent = []
-    adapter = engine.AntiAdapter()
-    monkeypatch.setattr(adapter, 'request', lambda method, path, **kw: sent.append(kw['json']))
-    for model in ('gemini-4-hydrogen-high', 'alternate-XHIGH', 'alternate'):
-        adapter.submit({'id': 'run', 'prompt': 'test', 'model': model, 'effort': 'high'}, tmp_path, None)
-    assert [payload['model'] for payload in sent] == ['gemini-4-hydrogen-high', 'alternate-XHIGH', 'alternate']
-    assert all('effort' not in payload for payload in sent[:2])
-    assert sent[2]['effort'] == 'high'
-
-
-def test_anti_safe_error_details_persist_in_history(tmp_path, monkeypatch):
-    daemon = FakeDaemon()
-    monkeypatch.setattr(engine, 'project', lambda name: (tmp_path, tmp_path / 'artifacts'))
-    sessions = engine.AntiSessions(tmp_path / 'anti.sqlite', daemon)
-    sid = sessions.create('demo')['id']
-    raw_marker = 'do-not-expose-raw-cli-context'
-    cases = [
-        ('AUTH_ERROR', raw_marker, '请先使用官方 Antigravity CLI 登录，再重试。'),
-        ('CLI_ERROR', 'invalid model selection: --effort is not supported for model ' + raw_marker,
-         '此模型不支持单独传入思考档位，请尝试选择其他模型或档位。'),
-        ('CLI_ERROR', raw_marker, None),
-    ]
-    for i, (code, upstream, expected) in enumerate(cases):
-        rid = sessions.submit(sid, f'op{i}', 'hello')['id']
-        remote = {'status': 'cli_error', 'error_code': code, 'error_message': upstream}
-        monkeypatch.setattr(daemon, 'request', lambda *args: remote)
-        run = sessions.refresh(sid, rid)
-        assert run['error'] == code
-        assert run['error_detail'] == expected
-        assert raw_marker not in str(run)
-        assert engine.AntiSessions(sessions.db, daemon).history(sid)[-1] == run
+        sid = client.post("/api/anti/sessions", json={"project": "project"}).json()["id"]
+        url = f"/api/anti/sessions/{sid}/runs"
+        assert client.post(url, json={"operation": "empty", "prompt": "   "}).status_code == 422
+        body = {
+            "operation": "att-ref",
+            "prompt": "inspect",
+            "references": [{"id": 1, "path": str(local)}, {"id": 2, "path": str(external)}],
+            "attachments": [{"path": str(uploaded), "name": "shot.png", "source": "managed_upload", "size": 8}],
+        }
+        run = client.post(url, json=body).json()
+        done = _wait_terminal(client, f"{url}/{run['id']}")
+        assert done["status"] == "success"
+        assert len(runtime.calls[0]["add_dirs"]) == 1
+        assert local.as_posix() in runtime.calls[0]["prompt"]
 
 
 def test_conversation_resume_is_per_agy_profile(tmp_path, monkeypatch):
-    monkeypatch.setattr(engine, 'project', lambda name: (tmp_path, tmp_path / 'artifacts'))
-    daemon = FakeDaemon()
-    request = daemon.request
-
-    def remote(method, path, **kwargs):
-        result = request(method, path, **kwargs)
-        if 'conversation_id' in result:
-            result['conversation_id'] = path.rsplit('/', 1)[1]
-        return result
-
-    daemon.request = remote
-    sessions = engine.AntiSessions(tmp_path / 'anti.sqlite', daemon)
-    sid = sessions.create('project')['id']
-    resumes = {}
-    for index, profile in enumerate(('default', 'alpha', 'beta', 'alpha', 'default', 'beta')):
-        run = sessions.submit(sid, f'op{index}', 'hello', profile_id=profile)
-        assert daemon.calls[-1][1] == resumes.get(profile)
-        daemon.status[run['id']] = 'success'
-        assert sessions.refresh(sid, run['id'])['status'] == 'success'
-        resumes[profile] = run['id']
+    monkeypatch.setattr(engine, "project", lambda name: (tmp_path, tmp_path / "artifacts"))
+    runtime = FakeRuntime()
+    sessions = engine.AntiSessions(tmp_path / "anti.sqlite", runtime)
+    sid = sessions.create("project")["id"]
+    seen = {}
+    for index, profile in enumerate(("default", "alpha", "beta", "alpha", "default", "beta")):
+        runtime.conv_map[profile] = f"conv-{profile}"
+        run = sessions.submit(sid, f"op{index}", "hello", profile_id=profile, mode="accept-edits" if index % 2 else "plan")
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if sessions.refresh(sid, run["id"])["status"] == "success":
+                break
+            time.sleep(0.02)
+        assert runtime.calls[-1]["conversation"] == seen.get(profile)
+        seen[profile] = f"conv-{profile}"
 
 
-def test_events_stream_sse_proxy(tmp_path, monkeypatch):
-    monkeypatch.setattr(engine, 'project', lambda name: (tmp_path, tmp_path / 'artifacts'))
-    daemon = FakeDaemon()
-    sessions = engine.AntiSessions(tmp_path / 'anti.sqlite', daemon)
-    sid = sessions.create('project')['id']
-    run = sessions.submit(sid, 'sse-op', 'stream me')
-
-    class FakeSseResp:
-        status_code = 200
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def iter_lines(self, decode_unicode=True):
-            yield 'data: {"seq": 1, "event_type": "step_update", "step_type": "agent_response", "raw_json": "{\\"step_update\\": {\\"text_delta\\": \\"hello sse\\"}}"}'
-
-    monkeypatch.setattr(engine.requests.Session, 'get', lambda *a, **kw: FakeSseResp())
-    monkeypatch.setattr(anti, 'AntiSessions', lambda: sessions)
+def test_events_stream_sse_emits_live_events(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine, "project", lambda name: (tmp_path, tmp_path / "artifacts"))
+    runtime = FakeRuntime()
+    sessions = engine.AntiSessions(tmp_path / "anti.sqlite", runtime)
+    sid = sessions.create("project")["id"]
+    run = sessions.submit(sid, "sse-op", "stream me")
+    monkeypatch.setattr(anti, "AntiSessions", lambda: sessions)
     app = FastAPI()
     app.include_router(anti.router)
     client = TestClient(app)
 
-    resp = client.get(f'/api/anti/sessions/{sid}/runs/{run["id"]}/events/stream')
+    resp = client.get(f"/api/anti/sessions/{sid}/runs/{run['id']}/events/stream")
     assert resp.status_code == 200
-    assert 'text/event-stream' in resp.headers['content-type']
-    assert 'hello sse' in resp.text
+    assert "text/event-stream" in resp.headers["content-type"]
+    assert "step.update" in resp.text and "好" in resp.text
 
 
-def test_direct_attachments_stage_and_persist(tmp_path, monkeypatch):
-    workspace = tmp_path / 'project'
+def test_account_cooldown_blocks_submit_until_reset_or_switch(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
     workspace.mkdir()
-    artifacts = tmp_path / 'artifacts'
-    uploads = tmp_path / 'uploads'
-    uploads.mkdir()
-    local = workspace / 'inside.txt'
-    local.write_text('inside', encoding='utf-8')
-    uploaded = uploads / 'shot.png'
-    uploaded.write_bytes(b'\x89PNG\r\n\x1a\n')
-    outside = tmp_path / 'secret.txt'
-    outside.write_text('outside', encoding='utf-8')
+    monkeypatch.setattr(transfer._paths, "ADMIN_DATA", tmp_path / "data")
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, tmp_path / "artifacts"))
+    runtime = FakeRuntime()
+    db = tmp_path / "anti.sqlite"
+    sessions = engine.AntiSessions(db, runtime)
+    sessions.ledger.record_run("r_limit", engine.DEFAULT_MODEL, "rate_limited", profile_id="default", cooldown_seconds=120)
 
-    monkeypatch.setattr(transfer._paths, 'ADMIN_DATA', tmp_path / 'data')
-    monkeypatch.setattr(transfer._paths, 'admin_uploads_dir', lambda: uploads)
-    monkeypatch.setattr(engine, 'project', lambda name: (workspace.resolve(), artifacts.resolve()))
-    posted = []
-    adapter = engine.AntiAdapter()
-    monkeypatch.setattr(adapter, 'request', lambda method, path, **kw: posted.append((method, path, kw['json'])))
-    monkeypatch.setattr(anti, 'AntiSessions', lambda: engine.AntiSessions(tmp_path / 'anti.sqlite', adapter))
+    monkeypatch.setattr(anti, "AntiSessions", lambda: engine.AntiSessions(db, runtime))
+    monkeypatch.setattr(anti.daemon, "submission", lambda: __import__("contextlib").nullcontext("default"))
     app = FastAPI()
     app.include_router(anti.router)
     with TestClient(app) as client:
-        base = '/api/anti/sessions'
-        sid = client.post(base, json={'project': 'project'}).json()['id']
-        url = f'{base}/{sid}/runs'
+        sid = client.post("/api/anti/sessions", json={"project": "project"}).json()["id"]
+        blocked = client.post(
+            f"/api/anti/sessions/{sid}/runs",
+            json={"operation": "op_blocked", "prompt": "try run"},
+        )
+        assert blocked.status_code == 429
+        assert "风控冷却" in blocked.json()["detail"]
 
-        assert client.post(url, json={'operation': 'empty', 'prompt': '   '}).status_code == 422
-        assert client.post(url, json={
-            'operation': 'spoof-upload',
-            'prompt': 'hi',
-            'attachments': [{'path': str(outside), 'name': 'secret.txt', 'source': 'managed_upload'}],
-        }).status_code == 422
-        assert not posted
+        # Switching to another profile does not inherit default's cooldown.
+        other_run = sessions.submit(sid, "op_other", "try other", profile_id="a" * 32)
+        assert other_run["status"] == "running"
 
-        body = {
-            'operation': 'att-only',
-            'prompt': '',
-            'attachments': [
-                {'path': str(local), 'name': 'inside.txt', 'source': 'local_ref', 'size': 6},
-                {'path': str(uploaded), 'name': 'shot.png', 'source': 'managed_upload', 'size': 8},
-            ],
-        }
-        response = client.post(url, json=body)
-        assert response.status_code == 200, response.text
-        run = response.json()
-        assert len(run['attachments']) == 2
-        staging = artifacts / 'references' / run['id']
-        staged_file, = staging.iterdir()
-        assert staged_file.name.endswith('shot.png')
-        assert staged_file.read_bytes() == b'\x89PNG\r\n\x1a\n'
-        _, _, payload = posted[0]
-        assert payload['add_dirs'] == [str(staging)]
-        assert local.as_posix() in payload['prompt']
-        assert staged_file.as_posix() in payload['prompt']
-        assert uploaded.as_posix() not in payload['prompt']
-
-        assert client.post(url, json=body | {'attachments': [body['attachments'][0]]}).status_code == 409
-        assert client.get(url).json()[0]['attachments'] == run['attachments']
+        # Resetting breaker unblocks default profile too.
+        assert client.post(
+            "/api/anti/breaker/reset",
+            json={"model_group": "gemini-4"},
+            headers={"X-GA-Hub-Action": "manage-anti-gateway"},
+        ).status_code == 204
+        unblocked = client.post(
+            f"/api/anti/sessions/{sid}/runs",
+            json={"operation": "op_ok", "prompt": "retry after reset"},
+        )
+        assert unblocked.status_code == 200

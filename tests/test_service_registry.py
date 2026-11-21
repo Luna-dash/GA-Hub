@@ -521,10 +521,7 @@ def test_anti_daemon_panel_states_surface_in_registry_and_panel() -> None:
     from server.services.anti_daemon import AntiDaemonStatus
 
     fake_daemon = mock.Mock()
-    with (
-        mock.patch.object(anti_daemon, "daemon", fake_daemon),
-        mock.patch("server.services.anti_engine.daemon_port", return_value=8787),
-    ):
+    with mock.patch.object(anti_daemon, "daemon", fake_daemon):
         fake_daemon.panel_status.return_value = AntiDaemonStatus(state="stopped")
         item = ServiceRegistry()._anti()
         assert (item.id, item.state, item.health, item.href, item.expected_running) == (
@@ -537,29 +534,29 @@ def test_anti_daemon_panel_states_surface_in_registry_and_panel() -> None:
         assert (item.state, item.activity, item.health) == ("ready", "standby", "healthy")
 
         fake_daemon.panel_status.return_value = AntiDaemonStatus(
-            state="ready", agy_available=True, active_count=2,
+            state="ready", agy_available=True, active_count=2, version="1.5.14",
         )
         item = ServiceRegistry()._anti()
         assert (item.state, item.activity, item.health, item.metrics) == (
-            "running", "active", "healthy", {"端口": 8787, "运行任务": 2},
+            "running", "active", "healthy", {"运行任务": 2, "版本": "1.5.14"},
         )
-        assert item.summary == "网关运行中（2 个任务）"
+        assert item.summary == "ACP 就绪（2 个运行中任务）"
 
         fake_daemon.panel_status.return_value = AntiDaemonStatus(
             state="ready", agy_available=False, active_count=0,
-            detail="AntiCLI 已启动，但找不到官方 agy CLI",
+            detail="找不到官方 agy CLI",
         )
         item = ServiceRegistry()._anti()
         assert (item.state, item.health, item.error) == (
-            "error", "attention", "AntiCLI 已启动，但找不到官方 agy CLI",
+            "error", "attention", "找不到官方 agy CLI",
         )
 
         fake_daemon.panel_status.return_value = AntiDaemonStatus(
-            state="stopped", detail="AntiCLI 已退出（退出码 1）",
+            state="unavailable", detail="Agy ACP 不可用",
         )
         item = ServiceRegistry()._anti()
         assert (item.state, item.health, item.error) == (
-            "error", "attention", "AntiCLI 已退出（退出码 1）",
+            "error", "attention", "Agy ACP 不可用",
         )
 
         registry = ServiceRegistry()

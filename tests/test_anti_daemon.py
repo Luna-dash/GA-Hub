@@ -1,445 +1,118 @@
-"""Local daemon lifecycle without launching the production CLI."""
-import json
-import socket
+"""Standalone Agy runtime, profile isolation, login, and CloudCode usage ledger tests."""
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
-import requests
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.constants import ENV_ANTICLI_PORT
 from server.routes import anti
-from server.services import anti_daemon as svc
+from server.services import agy_profile, agy_runtime, agy_usage, anti_daemon as svc
 from server.services import anti_engine, anti_profiles
-from server.services.service_registry import ServiceRegistry
-
-
-class Process:
-    pid = 321
-    code = None
-
-    def poll(self):
-        return self.code
 
 
 def make_client(monkeypatch):
-    monkeypatch.setenv('GA_HUB_ANTICLI_PORT', '18877')
-    monkeypatch.setattr(anti, 'daemon', svc.AntiDaemon())
+    monkeypatch.setattr(anti, "daemon", agy_runtime.AgyRuntimeManager())
     app = FastAPI()
     app.include_router(anti.router)
     return TestClient(app)
 
 
-def test_manual_start_and_reuse(monkeypatch):
+def test_runtime_status_start_stop_restart_without_external_daemon(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
+    monkeypatch.setattr(agy_profile, "has_local_credentials", lambda pid: pid == "default")
+    monkeypatch.setattr(agy_runtime.AgyRuntimeManager, "_probe_version_once", lambda self, exe: "1.5.14")
     client = make_client(monkeypatch)
-    health = None
-    starts, freed = [], []
-    process = Process()
 
-    def probe(self, method, path, **kwargs):
-        assert (method, path) == ('GET', '/health')
-        return health
+    st = client.get("/api/anti/status", headers={"X-GA-Hub-Action": "verify-anti-auth"}).json()
+    assert st["state"] == "ready"
+    assert st["agy_available"] is True
+    assert st["auth_state"] == "authenticated"
+    assert st["version"] == "1.5.14"
 
-    def closed(address, timeout):
-        assert address == ('127.0.0.1', 18877)
-        raise ConnectionRefusedError()
+    assert client.post("/api/anti/stop").status_code == 403
+    stopped = client.post("/api/anti/stop", headers={"X-GA-Hub-Action": "stop-anti"}).json()
+    assert stopped["state"] == "stopped"
 
-    def spawn(command, **kwargs):
-        starts.append(command)
-        assert kwargs['stdin'] == svc.subprocess.DEVNULL
-        return process
+    started = client.post("/api/anti/start", headers={"X-GA-Hub-Action": "start-anti"}).json()
+    assert started["state"] == "ready" and started["auth_state"] == "authenticated"
 
-    monkeypatch.setattr(svc.AntiAdapter, 'request', probe)
-    monkeypatch.setattr(svc.socket, 'create_connection', closed)
-    monkeypatch.setattr(svc.anti_component, 'executable', lambda: 'fake-anticli.exe')
-    monkeypatch.setattr(svc.child_job, 'spawn', spawn)
-    monkeypatch.setattr(svc.child_job, 'forget', freed.append)
-    headers = {'X-GA-Hub-Action': 'start-anti'}
-    assert client.get('/api/anti/status').json()['state'] == 'stopped'
-    assert client.post('/api/anti/start').status_code == 403
-    assert client.post('/api/anti/start', headers={**headers, 'Origin': 'https://outside.example'}).status_code == 403
-    assert not starts
-    health = {'status': 'ok', 'version': 'test', 'agy_binary': None, 'active_count': 0}
-    assert client.post('/api/anti/start', headers=headers).json()['agy_available'] is False
-    assert not starts
-    health = None
-    for _ in range(2):
-        assert client.post('/api/anti/start', headers=headers).json()['state'] == 'starting'
-    assert starts == [['fake-anticli.exe', 'serve', '--host', '127.0.0.1', '--port', '18877']]
-    health = {'status': 'ok', 'version': 'test', 'agy_binary': 'agy', 'active_count': 2}
-    assert client.get('/api/anti/status').json() == {
-        'state': 'ready',
-        'detail': None,
-        'agy_available': True,
-        'active_count': 2,
-        'auth_state': None,
-        'managed': True,
-        'port': 18877,
-        'version': 'test',
-        'max_concurrency': None,
+    restarted = client.post("/api/anti/restart", headers={"X-GA-Hub-Action": "restart-anti"}).json()
+    assert restarted["state"] == "ready"
+
+
+def test_missing_agy_binary_surfaces_unavailable(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: None)
+    client = make_client(monkeypatch)
+
+    st = client.get("/api/anti/status").json()
+    assert st["state"] == "unavailable"
+    assert st["agy_available"] is False
+    assert client.post("/api/anti/start", headers={"X-GA-Hub-Action": "start-anti"}).status_code == 503
+
+
+def test_t3_profile_env_isolation_strips_keys_and_forces_file_storage(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
+    pid = "a" * 32
+    base = {
+        "PATH": "C:/bin",
+        "GEMINI_API_KEY": "leaked",
+        "GOOGLE_API_KEY": "leaked2",
+        "ELECTRON_RUN_AS_NODE": "1",
     }
-    health, process.code = None, 3
-    assert '3' in client.get('/api/anti/status').json()['detail']
-    assert freed == [process.pid]
+    env = agy_profile.clean_agy_env(pid, base, temp_dir=tmp_path / "run-tmp")
+    assert "GEMINI_API_KEY" not in env
+    assert "GOOGLE_API_KEY" not in env
+    assert "ELECTRON_RUN_AS_NODE" not in env
+    assert env["AGY_ACP_FORCE_FILE_STORAGE"] == "1"
+    assert env["AGY_CLI_DISABLE_AUTO_UPDATE"] == "1"
+    assert env["SSH_CONNECTION"] == "127.0.0.1 0 127.0.0.1 0"
+    assert env["GEMINI_HOME"] == str(tmp_path / "agy-profiles" / pid / "home" / ".gemini")
+
+    cmd = agy_profile.acp_spawn_command("C:/fake/agy.exe", pid, login=True)
+    assert cmd == [
+        "C:/fake/agy.exe",
+        "acp",
+        "--gemini-dir",
+        str(tmp_path / "agy-profiles" / pid / "home" / ".gemini"),
+        "--app-data-dir",
+        "antigravity-cli",
+        "--login",
+    ]
 
 
-def test_windows_port_probe_allows_time_for_connection_refusal(monkeypatch):
-    monkeypatch.setattr(svc, 'sys', SimpleNamespace(platform='win32'))
-    monkeypatch.setattr(svc.AntiAdapter, 'request', lambda *args, **kwargs: None)
+def test_profile_rename_switch_capture_and_delete(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(agy_profile.Path, "home", staticmethod(lambda: fake_home))
+    monkeypatch.setattr(anti_engine, "project", lambda name: (tmp_path, tmp_path / "artifacts"))
 
-    def closed(address, timeout):
-        assert address == ('127.0.0.1', 18877)
-        assert timeout == 3.0
-        raise ConnectionRefusedError()
-
-    monkeypatch.setattr(svc.socket, 'create_connection', closed)
-    assert svc.AntiDaemon()._status(18877).state == 'stopped'
-
-
-def test_missing_cli_and_occupied_port(monkeypatch):
     client = make_client(monkeypatch)
-    monkeypatch.setattr(svc.AntiAdapter, 'request', lambda *args, **kwargs: {'status': 'ok'})
-    monkeypatch.setattr(svc.anti_component, 'executable', lambda: None)
-    headers = {'X-GA-Hub-Action': 'start-anti'}
+    headers = {"X-GA-Hub-Action": "manage-agy-profiles"}
 
-    def closed(*args, **kwargs):
-        raise ConnectionRefusedError()
+    work = client.post("/api/anti/profiles", headers=headers, json={"name": "Work"}).json()
+    renamed = client.patch(f"/api/anti/profiles/{work['id']}", headers=headers, json={"name": "Office"})
+    assert renamed.status_code == 200 and renamed.json()["name"] == "Office"
 
-    monkeypatch.setattr(svc.socket, 'create_connection', closed)
-    response = client.post('/api/anti/start', headers=headers)
-    assert response.status_code == 503
-    assert 'PATH' in response.json()['detail']
+    switched = client.post(f"/api/anti/profiles/{work['id']}/switch", headers=headers)
+    assert switched.status_code == 200 and switched.json()["active"] == work["id"]
+    assert client.post("/api/anti/profiles/default/switch", headers=headers).json()["active"] == "default"
 
-    from contextlib import nullcontext
-    monkeypatch.setattr(svc.socket, 'create_connection', lambda *args, **kwargs: nullcontext())
-    response = client.post('/api/anti/start', headers=headers)
-    assert response.json()['state'] == 'unavailable'
-    assert '18877' in response.json()['detail']
+    # Capture host credentials into isolated profile
+    src_cli = fake_home / ".gemini" / "antigravity-cli"
+    src_cli.mkdir(parents=True)
+    (src_cli / "antigravity-oauth-token").write_text('{"token":{"access_token":"tok"}}', encoding="utf-8")
+    captured = client.post("/api/anti/profiles/capture", headers=headers, json={"name": "Cloned"})
+    assert captured.status_code == 200
+    assert (tmp_path / "agy-profiles" / captured.json()["id"] / "home" / ".gemini" / "antigravity-cli" / "antigravity-oauth-token").is_file()
 
-
-def test_auth_status_requested_only_by_ui_and_unavailable_on_legacy_daemon(monkeypatch):
-    client = make_client(monkeypatch)
-    calls = []
-    auth_state = "checking"
-
-    def probe(self, method, path, **kwargs):
-        calls.append((method, path))
-        if path == "/health":
-            return {"status": "ok", "version": "test", "agy_binary": "agy", "active_count": 0}
-        assert kwargs["headers"] == {"X-AntiCLI-Action": "verify-auth"}
-        if auth_state is None:
-            raise svc.AntiError(404, "Not Found")
-        return {"state": auth_state}
-
-    monkeypatch.setattr(svc.AntiAdapter, "request", probe)
-    headers = {"X-GA-Hub-Action": "verify-anti-auth"}
-    for h in ({}, {**headers, "Origin": "https://outside.example"}):
-        assert client.get("/api/anti/status", headers=h).json()["auth_state"] is None
-    assert calls == [("GET", "/health")] * 2
-    for reported, expected in (("checking", "checking"), ("authenticated", "authenticated"),
-                               ("login_required", "login_required"), ("surprise", "unverified"),
-                               (None, "unverified")):
-        auth_state = reported
-        data = client.get("/api/anti/status", headers=headers).json()
-        assert data["state"] == "ready"
-        assert data["auth_state"] == expected
+    assert client.delete(f"/api/anti/profiles/{captured.json()['id']}", headers=headers).status_code == 204
 
 
-def test_agy_profile_rename_preserves_identity_and_selection(tmp_path, monkeypatch):
-    client = make_client(monkeypatch)
-    monkeypatch.setattr(svc.anti_profiles._paths, 'ADMIN_DATA', tmp_path)
-    url = '/api/anti/profiles'
-    headers = {'X-GA-Hub-Action': 'manage-agy-profiles'}
-    work = client.post(url, headers=headers, json={'name': 'Work'}).json()
-    assert client.post(url, headers=headers, json={'name': 'Personal'}).status_code == 200
-    svc.anti_profiles.select(work['id'])
-    target = f"{url}/{work['id']}"
-    body = {'name': '  Office  '}
-    assert client.patch(target, json=body).status_code == 403
-    assert client.patch(target, json=body, headers=headers | {'Origin': 'https://outside.example'}).status_code == 403
-    assert client.patch(target, json={'name': 'personal'}, headers=headers).status_code == 409
-    assert client.patch(f'{url}/default', json=body, headers=headers).status_code == 409
-    assert client.patch(f'{url}/missing', json=body, headers=headers).status_code == 404
-    assert client.patch(target, json={'name': ' '}, headers=headers).status_code == 422
-    renamed = client.patch(target, json=body, headers=headers)
-    assert renamed.status_code == 200
-    assert renamed.json() == {'id': work['id'], 'name': 'Office'}
-    settings = client.get(url).json()
-    assert settings['active'] == work['id']
-    matched = next(p for p in settings['profiles'] if p['id'] == work['id'])
-    assert matched['name'] == 'Office'
-
-
-@pytest.mark.parametrize("failure", [None, "spawn", "exit", "rollback"])
-def test_agy_profiles_switch_idle_managed_gateway(tmp_path, monkeypatch, failure):
-    client = make_client(monkeypatch)
-    daemon = anti.daemon
-    monkeypatch.setattr(svc.anti_profiles._paths, 'ADMIN_DATA', tmp_path)
-    monkeypatch.setattr(svc.anti_profiles, 'agy_executable', lambda: 'official-agy.exe')
-    monkeypatch.setattr(svc.anti_component, 'executable', lambda: 'fake-anticli.exe')
-    monkeypatch.setattr(svc.anti_component, 'child_options', lambda exe: {'env': {'HOME': 'original'}})
-    status = svc.AntiDaemonStatus(state='ready', active_count=0)
-    spawned = []
-    stopped = []
-
-    def spawn(command, **kwargs):
-        nonlocal status
-        spawned.append((command, kwargs))
-        process = Process()
-        if command[1:2] == ['serve']:
-            if kwargs['env']['HOME'] != 'original' and failure == 'spawn':
-                raise OSError('spawn failure')
-            if kwargs['env']['HOME'] != 'original' and failure == 'exit':
-                process.code = 1
-            else:
-                status = svc.AntiDaemonStatus(state='ready', active_count=0)
-        return process
-
-    def stop(pid):
-        nonlocal status
-        stopped.append(pid)
-        if failure == 'rollback' and len(stopped) == 2:
-            return False
-        status = svc.AntiDaemonStatus(state='stopped')
-        return True
-
-    monkeypatch.setattr(daemon, '_status', lambda *args, **kwargs: status)
-    monkeypatch.setattr(svc.child_job, 'spawn', spawn)
-    monkeypatch.setattr(svc.child_job, 'terminate_tree', stop)
-    monkeypatch.setattr(svc.child_job, 'forget', lambda pid: None)
-    url = '/api/anti/profiles'
-    headers = {'X-GA-Hub-Action': 'manage-agy-profiles'}
-    assert client.post(url, json={'name': 'Work'}).status_code == 403
-    assert client.post(url, json={'name': 'Work'}, headers=headers | {'Origin': 'https://outside.example'}).status_code == 403
-    assert client.get(url).json()['active'] == 'default'
-    profile = client.post(url, json={'name': ' Work '}, headers=headers).json()
-    assert profile['name'] == 'Work'
-    switch = f"{url}/{profile['id']}/switch"
-    assert client.post(switch, headers=headers).status_code == 409  # external gateway
-    daemon._process = Process()
-    status = svc.AntiDaemonStatus(state='ready', active_count=1)
-    assert client.post(switch, headers=headers).status_code == 409
-    assert not stopped and not spawned
-    if svc.os.name == 'nt':
-        login = f"{url}/{profile['id']}/login"
-        assert client.post(login, headers=headers).status_code == 204
-        command, options = spawned.pop()
-        assert command == ['official-agy.exe']
-        assert options['env']['HOME'] == options['env']['USERPROFILE']
-        assert client.post(switch, headers=headers).status_code == 409
-        daemon._login.code = 0
-    status = svc.AntiDaemonStatus(state='ready', active_count=0)
-    if failure == 'rollback':
-        def fail_save(*args):
-            raise svc.AntiError(503, '无法保存 Agy 账号设置')
-
-        monkeypatch.setattr(svc.anti_profiles, '_save', fail_save)
-    response = client.post(switch, headers=headers)
-    if failure == 'rollback':
-        assert response.status_code == 503
-        assert '原网关未能恢复' in response.json()['detail']
-        assert client.get(url).json()['active'] == 'default'
-        assert len(spawned) == 1 and len(stopped) == 2
-        assert client.get('/api/anti/status').json()['state'] == 'unavailable'
-        assert client.get('/api/anti/models').status_code == 503
-        start = {'X-GA-Hub-Action': 'start-anti'}
-        assert client.post('/api/anti/start', headers=start).json()['state'] == 'unavailable'
-
-        # A healthy response from an orphaned listener must not lift the block.
-        daemon._process.code = 0
-        assert client.get('/api/anti/status').json()['state'] == 'unavailable'
-        assert client.get('/api/anti/models').status_code == 503
-
-        status = svc.AntiDaemonStatus(state='stopped')
-        assert client.post('/api/anti/start', headers=start).json()['state'] == 'starting'
-        assert spawned[-1][1]['env']['HOME'] == 'original'
-        with daemon.submission() as current:
-            assert current == 'default'
-        return
-    if failure:
-        assert response.status_code == 503
-        assert '已恢复原网关' in response.json()['detail']
-        assert client.get(url).json()['active'] == 'default'
-        assert client.get('/api/anti/status').json()['state'] == 'ready'
-        assert stopped == [Process.pid]
-        assert len(spawned) == 2
-        assert spawned[-1][1]['env']['HOME'] == 'original'
-        with daemon.submission() as current:
-            assert current == 'default'
-        return
-    assert response.json()['active'] == profile['id']
-    assert stopped == [Process.pid]
-    command, options = spawned[-1]
-    assert command[1:4] == ['serve', '--host', '127.0.0.1']
-    assert options['env']['HOME'] == str(tmp_path / 'agy-profiles' / profile['id'] / 'home')
-    assert options['env']['ANTICLI_AGY_PATH'] == 'official-agy.exe'
-    with daemon.submission() as current:
-        assert current == profile['id']
-    status = svc.AntiDaemonStatus(state='ready', active_count=0)
-    assert client.post(f'{url}/default/switch', headers=headers).json()['active'] == 'default'
-    assert spawned[-1][1]['env']['HOME'] == 'original'
-
-
-def test_panel_status_is_read_only_nonblocking_and_respects_switch_recovery(monkeypatch):
-    daemon = svc.AntiDaemon()
-    calls = []
-
-    class FakeAdapter:
-        def request(self, method, path, **kwargs):
-            calls.append((method, path, kwargs))
-            try:
-                raise ConnectionRefusedError()
-            except ConnectionRefusedError as exc:
-                raise svc.AntiTransportError(503, 'offline') from exc
-
-    monkeypatch.setattr(svc, 'sys', SimpleNamespace(platform='linux'))
-    monkeypatch.setattr(svc, 'AntiAdapter', FakeAdapter)
-    monkeypatch.setattr(svc.anti_component, 'executable', lambda: (_ for _ in ()).throw(AssertionError('must not probe executable')))
-
-    assert daemon.panel_status() == svc.AntiDaemonStatus(state='stopped', detail=None)
-    assert calls == [('GET', '/health', {'connect_timeout': 0.15, 'read_timeout': 0.3})]
-
-    # Contended lock (e.g. during account switch) degrades immediately instead of blocking.
-    assert daemon._lock.acquire(timeout=1)
-    try:
-        assert daemon.panel_status().state == 'starting'
-    finally:
-        daemon._lock.release()
-
-    # Healthy gateway without agy binary surfaces detail, and never hits /v1/auth.
-    class ReadyNoAgyAdapter:
-        def request(self, method, path, **kwargs):
-            assert path == '/health'
-            return {'status': 'ok', 'version': '1.0', 'agy_binary': None, 'active_count': 2}
-
-    monkeypatch.setattr(svc, 'AntiAdapter', ReadyNoAgyAdapter)
-    daemon._failure = 'previous failure'
-    assert daemon.panel_status() == svc.AntiDaemonStatus(
-        state='ready', agy_available=False, active_count=2, detail='AntiCLI 已启动，但找不到官方 agy CLI',
-    )
-    assert daemon._failure == 'previous failure'
-    assert daemon.status().state == 'ready'
-    assert daemon._failure is None
-
-    # Switch-recovery lock keeps lingering listener marked unavailable.
-    daemon._switch_recovery_required = True
-    assert daemon.panel_status() == svc.AntiDaemonStatus(state='unavailable', detail=svc._SWITCH_RECOVERY)
-
-
-@pytest.mark.parametrize(('http_status', 'body'), [(503, b'{}'), (200, b'not json'), (200, b'{"status":"ok"}')])
-@pytest.mark.parametrize('switch_recovery', [False, True])
-def test_panel_unhealthy_listener_needs_attention(monkeypatch, http_status, body, switch_recovery):
-    daemon = svc.AntiDaemon()
-    daemon._switch_recovery_required = switch_recovery
-    monkeypatch.setattr(svc, 'daemon', daemon)
-    response = requests.Response()
-    response.status_code = http_status
-    response._content = body
-    monkeypatch.setattr(requests.Session, 'request', lambda *a, **kw: response)
-
-    status = daemon.panel_status()
-    assert status.state == 'unavailable'
-    if switch_recovery:
-        assert status.detail == svc._SWITCH_RECOVERY
-    else:
-        assert '健康检查未通过' in status.detail
-    item = ServiceRegistry._anti()
-    assert (item.state, item.health) == ('error', 'attention')
-
-
-@pytest.mark.parametrize('error', [requests.ConnectTimeout(), requests.ReadTimeout()])
-def test_panel_does_not_treat_timeout_as_connection_refused(monkeypatch, error):
-    def timeout(*args, **kwargs):
-        raise error
-
-    monkeypatch.setattr(requests.Session, 'request', timeout)
-    status = svc.AntiDaemon().panel_status()
-    assert status.state == 'unavailable'
-    assert '无法确认' in status.detail
-
-
-def test_panel_reports_closed_loopback_port_as_stopped(monkeypatch):
-    with socket.socket() as bound:
-        bound.bind(('127.0.0.1', 0))  # Keep the port reserved without listening.
-        monkeypatch.setenv(ENV_ANTICLI_PORT, str(bound.getsockname()[1]))
-        assert svc.AntiDaemon().panel_status() == svc.AntiDaemonStatus(state='stopped')
-
-
-def test_panel_reports_managed_exit_without_cleaning_registration(monkeypatch):
-    daemon = svc.AntiDaemon()
-    process = Process()
-    process.code = 17
-    daemon._process = process
-    daemon._failure = 'previous failure'
-    forget = MagicMock()
-    monkeypatch.setattr(svc.child_job, 'forget', forget)
-
-    def closed_connection(*args, **kwargs):
-        raise ConnectionRefusedError()
-
-    monkeypatch.setattr(requests.Session, 'request', closed_connection)
-    monkeypatch.setattr(svc.socket, 'create_connection', closed_connection)
-    status = daemon.panel_status()
-    assert status == svc.AntiDaemonStatus(state='stopped', detail='AntiCLI 已退出（退出码 17）')
-    assert daemon._process is process
-    assert daemon._failure == 'previous failure'
-    forget.assert_not_called()
-    assert daemon.status() == status
-    assert daemon._process is None
-    forget.assert_called_once_with(process.pid)
-
-
-def test_stop_and_restart_gateway(monkeypatch):
-    client = make_client(monkeypatch)
-    daemon = anti.daemon
-    daemon._process = Process()
-    running_state = {'stopped': False}
-    terminated = []
-
-    def fake_active_status(port):
-        if running_state['stopped']:
-            return svc.AntiDaemonStatus(state='stopped')
-        return svc.AntiDaemonStatus(state='ready', agy_available=True, auth_state='authenticated')
-
-    def fake_terminate(pid):
-        terminated.append(pid)
-        running_state['stopped'] = True
-        return True
-
-    monkeypatch.setattr(daemon, '_active_status', fake_active_status)
-    monkeypatch.setattr(daemon, '_status', lambda port: fake_active_status(port))
-    monkeypatch.setattr(svc.child_job, 'terminate_tree', fake_terminate)
-    monkeypatch.setattr(svc.child_job, 'forget', lambda pid: None)
-
-    assert client.post('/api/anti/stop').status_code == 403
-    stopped = client.post('/api/anti/stop', headers={'X-GA-Hub-Action': 'stop-anti'})
-    assert stopped.status_code == 200
-    assert stopped.json()['state'] == 'stopped'
-    assert terminated == [321]
-
-    daemon._process = Process()
-    running_state['stopped'] = False
-    monkeypatch.setattr(daemon, '_start', lambda port, pid: svc.AntiDaemonStatus(state='starting'))
-    restarted = client.post('/api/anti/restart', headers={'X-GA-Hub-Action': 'restart-anti'})
-    assert restarted.status_code == 200
-    assert restarted.json()['state'] == 'starting'
-    assert terminated == [321, 321]
-
-
-def test_profile_data_dir_isolation_and_proxy_env(tmp_path, monkeypatch):
-    monkeypatch.setattr(anti_profiles, '_root', lambda: tmp_path / 'profiles')
-    monkeypatch.setattr(svc.anti_component, 'executable', lambda: 'C:/fake/anticli.exe')
-    monkeypatch.setattr(svc.anti_component, 'child_options', lambda exe: {'env': {'PATH': ''}})
-    monkeypatch.setattr(anti_profiles, 'agy_executable', lambda: 'C:/fake/agy.exe')
-
-    daemon = svc.AntiDaemon()
-    pid = 'a' * 32
-    assert 'ANTICLI_DATA_DIR' not in daemon._options('default')[1]['env']
-    work_env = daemon._options(pid)[1]['env']
-    assert work_env['ANTICLI_DATA_DIR'] == str(anti_profiles.profile_data_dir(pid))
-
+def test_windows_proxy_env_injection(monkeypatch):
     import winreg
 
     class FakeKey:
@@ -449,206 +122,159 @@ def test_profile_data_dir_isolation_and_proxy_env(tmp_path, monkeypatch):
         def __exit__(self, *args):
             return False
 
-    reg_values = {'AutoConfigURL': None, 'ProxyEnable': 1, 'ProxyServer': '127.0.0.1:7890'}
-    monkeypatch.setattr(winreg, 'OpenKey', lambda *a: FakeKey())
-    monkeypatch.setattr(winreg, 'QueryValueEx', lambda key, name: (reg_values[name], 1))
-    monkeypatch.setattr(anti_profiles.os, 'name', 'nt')
+    reg_values = {"AutoConfigURL": None, "ProxyEnable": 1, "ProxyServer": "127.0.0.1:7890"}
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a: FakeKey())
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: (reg_values[name], 1))
+    monkeypatch.setattr(agy_profile.os, "name", "nt")
 
-    env = anti_profiles.system_proxy_env({'PATH': ''})
-    assert env['HTTP_PROXY'] == 'http://127.0.0.1:7890'
-    assert env['HTTPS_PROXY'] == 'http://127.0.0.1:7890'
-    assert '127.0.0.1' in env['NO_PROXY']
-
-    reg_values['ProxyEnable'] = 0
-    assert 'HTTP_PROXY' not in anti_profiles.system_proxy_env({'PATH': ''})
+    env = agy_profile.system_proxy_env({"PATH": ""})
+    assert env["HTTP_PROXY"] == "http://127.0.0.1:7890"
+    assert env["HTTPS_PROXY"] == "http://127.0.0.1:7890"
 
 
-def test_capture_default_and_delete_profile(tmp_path, monkeypatch):
-    monkeypatch.setattr(anti_profiles, '_root', lambda: tmp_path / 'profiles')
-    fake_home = tmp_path / 'home'
-    monkeypatch.setattr(anti_profiles.Path, 'home', staticmethod(lambda: fake_home))
-    monkeypatch.setattr(anti_engine, 'project', lambda name: (tmp_path, tmp_path / 'artifacts'))
-
-    client = make_client(monkeypatch)
-    monkeypatch.setattr(anti, 'AntiSessions', lambda: anti_engine.AntiSessions(tmp_path / 'anti.sqlite', anti.daemon))
-
-    # Cannot capture when no credentials exist on host
-    empty = client.post('/api/anti/profiles/capture', json={'name': 'Cloned'},
-                        headers={'X-GA-Hub-Action': 'manage-agy-profiles'})
-    assert empty.status_code == 409
-
-    fake_cli = fake_home / '.gemini' / 'antigravity-cli'
-    fake_cli.mkdir(parents=True)
-    (fake_cli / 'antigravity-oauth-token').write_text('tok-123', encoding='utf-8')
-    (fake_cli / 'settings.json').write_text('{"mode":"pro"}', encoding='utf-8')
-
-    captured = client.post('/api/anti/profiles/capture', json={'name': 'Cloned'},
-                           headers={'X-GA-Hub-Action': 'manage-agy-profiles'})
-    assert captured.status_code == 200
-    pid = captured.json()['id']
-    target_tok = tmp_path / 'profiles' / pid / 'home' / '.gemini' / 'antigravity-cli' / 'antigravity-oauth-token'
-    assert target_tok.read_text(encoding='utf-8') == 'tok-123'
-
-    sessions = anti_engine.AntiSessions(tmp_path / 'anti.sqlite', anti.daemon)
-    sid = sessions.create('demo')['id']
-    with sessions.connect() as db:
-        db.execute('INSERT INTO profile_conversations VALUES (?,?,?)', (sid, pid, 'conv-cloned'))
-        row = db.execute('SELECT conversation FROM profile_conversations WHERE session_id=? AND profile_id=?', (sid, pid)).fetchone()
-        assert row and row[0] == 'conv-cloned'
-
-    assert client.delete('/api/anti/profiles/default', headers={'X-GA-Hub-Action': 'manage-agy-profiles'}).status_code == 409
-    deleted = client.delete(f'/api/anti/profiles/{pid}', headers={'X-GA-Hub-Action': 'manage-agy-profiles'})
-    assert deleted.status_code == 204
-    assert not (tmp_path / 'profiles' / pid).exists()
-    with sessions.connect() as db:
-        row = db.execute('SELECT conversation FROM profile_conversations WHERE session_id=? AND profile_id=?', (sid, pid)).fetchone()
-        assert row is None
-
-
-def test_quota_breaker_reset_and_usage_snapshot(tmp_path, monkeypatch):
-    from contextlib import contextmanager
-
-    monkeypatch.setattr(anti_profiles, '_root', lambda: tmp_path / 'profiles')
+def test_direct_usage_probe_and_builtin_sqlite_ledger(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
     client = make_client(monkeypatch)
 
-    @contextmanager
-    def fake_submission():
-        yield 'default'
-
-    def fake_adapter_request(self, method, path, **kw):
-        if path == '/v1/account-usage':
-            return {'state': 'authenticated', 'rows': [
-                {'model': 'G4', 'limit': 'Weekly Limit Remaining', 'remaining_pct': 65.0, 'resets_at': '2026-11-20T08:00:00Z'}
-            ]}
-        if path == '/v1/quota':
-            return [{'model_group': 'gemini-4', 'display_name': 'G4', 'status': 'cooling_down', 'cooldown_remaining_seconds': 42}]
-        return {'ok': True}
-
-    monkeypatch.setattr(anti.daemon, 'submission', fake_submission)
-    monkeypatch.setattr(anti.AntiAdapter, 'request', fake_adapter_request)
-
-    usage = client.post('/api/anti/account-usage', headers={'X-GA-Hub-Action': 'check-anti-usage'})
-    assert usage.status_code == 200
-
-    profiles = client.get('/api/anti/profiles')
-    assert profiles.status_code == 200
-    detail = next(p for p in profiles.json()['profiles'] if p['id'] == 'default')
-    assert detail['auth_state'] == 'authenticated'
-    assert detail['usage']['min_remaining_pct'] == 65.0
-
-    quota = client.get('/api/anti/quota')
-    assert quota.status_code == 200
-    assert quota.json()[0]['cooldown_remaining_seconds'] == 42
-
-    assert client.post('/api/anti/breaker/reset', json={}).status_code == 403
-    reset = client.post('/api/anti/breaker/reset', json={'model_group': 'gemini-4'},
-                        headers={'X-GA-Hub-Action': 'manage-anti-gateway'})
-    assert reset.status_code == 204
-
-
-def test_real_anticli_quota_normalization_calibrate_stats_logs_and_logout(tmp_path, monkeypatch):
-    from contextlib import contextmanager
-
-    monkeypatch.setattr(anti_profiles, '_root', lambda: tmp_path / 'profiles')
-    monkeypatch.setattr(svc._paths, 'ADMIN_DATA', tmp_path)
-    client = make_client(monkeypatch)
-
-    created = client.post(
-        '/api/anti/profiles',
-        json={'name': '工作'},
-        headers={'X-GA-Hub-Action': 'manage-agy-profiles'},
-    ).json()
-    pid = created['id']
-    cred_dir = tmp_path / 'profiles' / pid / 'home' / '.gemini' / 'antigravity-cli'
-    cred_dir.mkdir(parents=True)
-    (cred_dir / 'antigravity-oauth-token').write_text('tok', encoding='utf-8')
-    assert any(p['id'] == pid and p['has_credentials'] for p in client.get('/api/anti/profiles').json()['profiles'])
-
-    assert client.post(
-        '/api/anti/profiles/default/logout',
-        headers={'X-GA-Hub-Action': 'manage-agy-profiles'},
-    ).status_code == 409
-    cleared = client.post(
-        f'/api/anti/profiles/{pid}/logout',
-        headers={'X-GA-Hub-Action': 'manage-agy-profiles'},
+    # Mock CloudCode probe directly without external AntiCLI
+    monkeypatch.setattr(
+        agy_usage,
+        "probe_account_usage",
+        lambda pid: {
+            "state": "authenticated",
+            "rows": [
+                {"model": "Gemini", "limit": "Weekly Limit Remaining", "remaining_pct": 72.0, "resets_at": "2026-11-25T08:00:00Z"}
+            ],
+        },
     )
-    assert cleared.status_code == 200
-    assert cleared.json()['has_credentials'] is False
-    assert not (cred_dir / 'antigravity-oauth-token').exists()
+    usage = client.post("/api/anti/account-usage", headers={"X-GA-Hub-Action": "check-anti-usage"})
+    assert usage.status_code == 200 and usage.json()["rows"][0]["remaining_pct"] == 72.0
 
-    @contextmanager
-    def fake_submission():
-        yield 'default'
-
-    def fake_adapter_request(self, method, path, **kw):
-        if path == '/v1/quota':
-            return [{
-                'group': 'gemini-4',
-                'display_name': 'Gemini 4',
-                'status': 'COOLDOWN',
-                'cooldown_remaining_sec': 18,
-                'window_5h_pct': 74.5,
-                'window_7d_pct': 30.0,
-            }]
-        if path == '/v1/quota/calibrate':
-            return {
-                'status': 'ok',
-                'group': {
-                    'group': 'gemini-4',
-                    'display_name': 'Gemini 4',
-                    'status': 'OK',
-                    'cooldown_remaining_sec': 0,
-                    'window_5h_pct': 74.5,
-                    'window_7d_pct': 30.0,
-                    'calibrated_remaining_pct': kw['json']['remaining_pct'],
-                },
-            }
-        if path.startswith('/v1/stats'):
-            return {
-                'window_hours': 24,
-                'total_runs': 12,
-                'success_runs': 11,
-                'failed_runs': 1,
-                'rate_limited_runs': 0,
-                'total_tokens': 45000,
-                'cache_hit_ratio': 0.5,
-                'estimated_cost_usd': 0.42,
-            }
-        raise AssertionError(path)
-
-    monkeypatch.setattr(anti.daemon, 'submission', fake_submission)
-    monkeypatch.setattr(anti.AntiAdapter, 'request', fake_adapter_request)
-
-    pools = client.get('/api/anti/quota').json()
-    assert pools == [expect_pool := {
-        'model_group': 'gemini-4',
-        'display_name': 'Gemini 4',
-        'status': 'cooling_down',
-        'cooldown_remaining_seconds': 18,
-        'window_5h_pct': 74.5,
-        'window_7d_pct': 30.0,
-        'calibrated_remaining_pct': None,
-        'estimated_cost_7d_usd': None,
-        'group': 'gemini-4',
-        'cooldown_remaining_sec': 18,
-    }]
-    assert expect_pool['status'] == 'cooling_down'
+    ledger = agy_usage.AgyLedger()
+    ledger.record_run("r1", "gemini-4-hydrogen-high", "rate_limited", input_tokens=1000, output_tokens=500, cache_read_tokens=200, cooldown_seconds=30)
+    pools = client.get("/api/anti/quota").json()
+    g4 = next(p for p in pools if p["model_group"] == "gemini-4")
+    assert g4["status"] == "cooling_down" and g4["cooldown_remaining_seconds"] > 0
 
     cal = client.post(
-        '/api/anti/quota/calibrate',
-        json={'model_group': 'gemini-4', 'remaining_pct': 80},
-        headers={'X-GA-Hub-Action': 'manage-anti-gateway'},
+        "/api/anti/quota/calibrate",
+        json={"model_group": "gemini-4", "remaining_pct": 85},
+        headers={"X-GA-Hub-Action": "manage-anti-gateway"},
     )
-    assert cal.status_code == 200
-    assert cal.json()['status'] == 'normal'
-    assert cal.json()['calibrated_remaining_pct'] == 80
+    assert cal.status_code == 200 and cal.json()["calibrated_remaining_pct"] == 85
 
-    stats = client.get('/api/anti/stats?window_hours=24')
-    assert stats.status_code == 200
-    assert stats.json()['total_runs'] == 12
+    assert client.post("/api/anti/breaker/reset", json={"model_group": "gemini-4"}, headers={"X-GA-Hub-Action": "manage-anti-gateway"}).status_code == 204
+    stats = client.get("/api/anti/stats?window_hours=24").json()
+    assert stats["total_runs"] == 1 and stats["total_tokens"] == 1500
 
-    log_file = tmp_path / 'logs' / 'anticli-daemon.log'
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    log_file.write_text('line1\nline2\n', encoding='utf-8')
-    logs = client.get('/api/anti/logs?lines=1').json()
-    assert logs['lines'] == ['line2']
+
+def test_ledger_profile_isolation_migration_and_safety_guard(tmp_path, monkeypatch):
+    import sqlite3
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_usage._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
+    monkeypatch.setattr(anti_engine, "project", lambda name: (tmp_path, tmp_path / "artifacts"))
+
+    # Legacy DB without profile_id columns must migrate cleanly under 'default'.
+    db = tmp_path / "anti_sessions.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
+            CREATE TABLE usage_ledger (
+                run_id TEXT PRIMARY KEY, model TEXT NOT NULL, model_group TEXT NOT NULL,
+                status TEXT NOT NULL, input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0, cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                thinking_tokens INTEGER NOT NULL DEFAULT 0, estimated_cost_usd REAL NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE quota_state (
+                model_group TEXT PRIMARY KEY, cooldown_until TEXT,
+                calibrated_remaining_pct REAL, calibrated_at TEXT, calibrated_note TEXT
+            );
+            INSERT INTO usage_ledger VALUES ('old', 'gemini-4-hydrogen-high', 'gemini-4', 'success', 400, 100, 0, 0, 0.01, '2026-11-21T00:00:00+00:00');
+            INSERT INTO quota_state VALUES ('gemini-4', NULL, 77.0, '2026-11-21T00:00:00+00:00', 'legacy');
+        """)
+
+    ledger = agy_usage.AgyLedger(db)
+    migrated = next(p for p in ledger.quota_pools(profile_id="default") if p["model_group"] == "gemini-4")
+    assert migrated["calibrated_remaining_pct"] == 77.0
+
+    # Cooling down default profile isolates and does NOT leak to work profile.
+    work = agy_profile.add("Work")
+    ledger.record_run("r_def", "gemini-4-hydrogen-high", "rate_limited", profile_id="default", input_tokens=500, cooldown_seconds=120)
+    ok_def, reason_def = ledger.check_run_allowed("gemini-4-hydrogen-high", profile_id="default")
+    ok_work, _ = ledger.check_run_allowed("gemini-4-hydrogen-high", profile_id=work.id)
+    assert ok_def is False and "冷却期" in (reason_def or "")
+    assert ok_work is True
+
+    # Manual 0% calibration also blocks runs on that account until re-calibrated.
+    ledger.calibrate_quota("gemini-4", 0.0, "empty", profile_id=work.id)
+    ok_work2, reason_work2 = ledger.check_run_allowed("gemini-4-hydrogen-high", profile_id=work.id)
+    assert ok_work2 is False and "0%" in (reason_work2 or "")
+
+    client = make_client(monkeypatch)
+    headers = {"X-GA-Hub-Action": "manage-agy-profiles"}
+    client.post(f"/api/anti/profiles/{work.id}/switch", headers=headers)
+    work_stats = client.get("/api/anti/stats?window_hours=24").json()
+    assert work_stats["total_runs"] == 0
+
+
+def test_sync_user_customizations_preserves_isolated_overrides(tmp_path, monkeypatch):
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path / "admin")
+    fake_home = tmp_path / "host_home"
+    (fake_home / ".gemini").mkdir(parents=True)
+    (fake_home / ".gemini" / "AGENTS.md").write_text("host rules", encoding="utf-8")
+    monkeypatch.setattr(agy_profile.Path, "home", staticmethod(lambda: fake_home))
+
+    prof = agy_profile.add("Isolated")
+    agy_profile.prepare_profile(prof.id)
+    dst = agy_profile.profile_gemini_dir(prof.id) / "AGENTS.md"
+    assert dst.read_text(encoding="utf-8") == "host rules"
+
+    dst.write_text("custom isolated rules", encoding="utf-8")
+    agy_profile.prepare_profile(prof.id)
+    assert dst.read_text(encoding="utf-8") == "custom isolated rules"
+
+
+def test_idle_session_reaper_closes_stale_workers(tmp_path, monkeypatch):
+    import time as pytime
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
+
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0.05, reaper_interval=0.02)
+    try:
+        worker = mgr.get_worker("db", "default", "s1", tmp_path)
+        worker.last_used = pytime.monotonic() - 1.0
+        assert mgr.reap_idle_workers() == 1
+        assert worker._closed is True
+        assert mgr.session_connected("db", "s1") is False
+    finally:
+        mgr.shutdown()
+
+
+def test_models_endpoint_works_even_when_runtime_manually_stopped(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
+    monkeypatch.setattr(
+        agy_runtime.subprocess,
+        "run",
+        lambda *a, **kw: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps([{"id": "gemini-4-hydrogen-high", "display_name": "Gemini 4 Hydrogen (High)"}]),
+        ),
+    )
+    mgr = agy_runtime.AgyRuntimeManager()
+    monkeypatch.setattr(anti, "daemon", mgr)
+    monkeypatch.setattr(anti, "AntiSessions", lambda: anti_engine.AntiSessions(tmp_path / "anti.sqlite", mgr))
+    app = FastAPI()
+    app.include_router(anti.router)
+    client = TestClient(app)
+    assert client.post("/api/anti/stop", headers={"X-GA-Hub-Action": "stop-anti"}).json()["state"] == "stopped"
+    res = client.get("/api/anti/models")
+    assert res.status_code == 200
+    assert res.json()["items"][0]["id"] == "gemini-4-hydrogen-high"

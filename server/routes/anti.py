@@ -1,7 +1,8 @@
-"""Direct Anti conversations, independent of the GA session engine.
+"""Direct Antigravity (agy) ACP conversations, independent of the GA session engine.
 
-Project workspaces and artifact directories intentionally reuse GA's
-registered workspace table rather than duplicating project management.
+Project workspaces and artifact directories reuse GA's registered workspace
+table, while all Agy ACP sessions, approvals, profiles, and quota tracking run
+directly inside GA-Hub without an external AntiCLI daemon.
 """
 from dataclasses import asdict
 import json
@@ -13,9 +14,10 @@ from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, Validat
 
 from ..origin_policy import is_allowed_ui_origin
 from ..schemas import AttachmentRef
-from ..services import anti_profiles
+from ..services import agy_usage, anti_profiles
 from ..services.anti_daemon import AntiAuthState, AntiDaemonState, daemon
-from ..services.anti_engine import DEFAULT_EFFORT, DEFAULT_MODEL, AntiAdapter, AntiError, AntiSessions
+from ..services.anti_engine import DEFAULT_EFFORT, DEFAULT_MODEL, AntiError, AntiSessions
+from ..services.agy_usage import AgyLedger
 
 router = APIRouter(prefix="/api/anti", tags=["anti"])
 
@@ -61,6 +63,16 @@ class AntiModelList(BaseModel):
     items: list[AntiModelItem]
 
 
+class AntiCommandItem(BaseModel):
+    name: str
+    description: str | None = None
+    hint: str | None = None
+
+
+class AntiCommandList(BaseModel):
+    items: list[AntiCommandItem]
+
+
 class AntiSessionResp(BaseModel):
     model_config = {"extra": "allow"}
 
@@ -70,7 +82,41 @@ class AntiSessionResp(BaseModel):
     workspace: str
     updated_at: str | None = None
     active_run_id: str | None = None
+    has_conversation: bool | None = None
+    acp_connected: bool | None = None
     engine: Literal["anti"] = "anti"
+
+
+class AntiQuestionOption(BaseModel):
+    id: str
+    label: str
+
+
+class AntiApprovalQuestion(BaseModel):
+    question: str
+    options: list[AntiQuestionOption] = Field(default_factory=list)
+
+
+class AntiApprovalPrompt(BaseModel):
+    model_config = {"extra": "allow"}
+
+    id: str
+    title: str
+    details: str
+    prompt_type: Literal["approval", "question"] = "approval"
+    tool_kind: str = "other"
+    allow_always: bool = False
+    security_warning: str | None = None
+    command: str | None = None
+    diff: str | None = None
+    question: AntiApprovalQuestion | None = None
+
+
+class AntiRunUsage(BaseModel):
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    thinking_tokens: int = 0
 
 
 class AntiRunResp(BaseModel):
@@ -83,6 +129,10 @@ class AntiRunResp(BaseModel):
     answer: str | None = None
     error: str | None = None
     error_detail: str | None = None
+    mode: Literal["plan", "accept-edits"] = "plan"
+    permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] = "approval-required"
+    approval: AntiApprovalPrompt | None = None
+    usage: AntiRunUsage | None = None
     attachments: list[AttachmentRef] = Field(default_factory=list)
 
 
@@ -107,6 +157,8 @@ class AntiRunCreate(BaseModel):
     effort: Literal["low", "medium", "high", "xhigh", "max"] = DEFAULT_EFFORT
     references: list[AntiFileReference] = Field(default_factory=list, max_length=8)
     attachments: list[AttachmentRef] = Field(default_factory=list, max_length=256)
+    mode: Literal["plan", "accept-edits"] = "plan"
+    permission_mode: Literal["approval-required", "auto-accept-edits", "auto", "full-access"] | None = None
 
     @model_validator(mode="after")
     def _require_input(self) -> "AntiRunCreate":
@@ -122,6 +174,12 @@ class AntiStep(BaseModel):
     tool: str | None = None
     duration_seconds: float | None = None
     text_delta: str | None = None
+    detail: str | None = None
+    command: str | None = None
+    cwd: str | None = None
+    output: str | None = None
+    exit_code: int | None = None
+    diff: str | None = None
 
 
 class AntiMessageDelta(BaseModel):
@@ -150,15 +208,16 @@ def _call(method, *args):
 def _require_action(request: Request, action: str, missing_detail: str) -> None:
     if not is_allowed_ui_origin(request.headers.get("origin")):
         raise HTTPException(403, "Untrusted UI origin")
-    # Require a non-simple header so cross-origin forms cannot drive daemon actions.
     if request.headers.get("x-ga-hub-action") != action:
         raise HTTPException(403, missing_detail)
 
 
 @router.get("/status", response_model=AntiDaemonStatus)
 def daemon_status(request: Request):
-    verify = (request.headers.get("x-ga-hub-action") == "verify-anti-auth"
-              and is_allowed_ui_origin(request.headers.get("origin")))
+    verify = (
+        request.headers.get("x-ga-hub-action") == "verify-anti-auth"
+        and is_allowed_ui_origin(request.headers.get("origin"))
+    )
     try:
         return asdict(daemon.status(verify_auth=verify))
     except AntiError as exc:
@@ -220,6 +279,18 @@ class AgyProfiles(BaseModel):
 
 class AgyProfileCreate(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
+
+
+class AgyCodeLoginState(BaseModel):
+    flow_id: str
+    profile_id: str
+    phase: str
+    authorization_url: str | None = None
+    error: str | None = None
+
+
+class AgyCodeLoginSubmit(BaseModel):
+    code: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=16384)]
 
 
 class AntiUsageStats(BaseModel):
@@ -332,7 +403,9 @@ def delete_agy_profile(profile_id: str, request: Request):
     _profile_action(request)
     try:
         daemon.delete_profile(profile_id)
-        AntiSessions().delete_profile_conversations(profile_id)
+        sessions_svc = AntiSessions()
+        sessions_svc.delete_profile_conversations(profile_id)
+        sessions_svc.ledger.delete_profile(profile_id)
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 
@@ -346,11 +419,39 @@ def login_agy_profile(profile_id: str, request: Request):
         raise HTTPException(exc.status, str(exc)) from exc
 
 
+@router.post("/profiles/{profile_id}/login/start", response_model=AgyCodeLoginState)
+def start_code_login(profile_id: str, request: Request):
+    _profile_action(request)
+    try:
+        return daemon.start_code_login(profile_id)
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.get("/profiles/login/status/{flow_id}", response_model=AgyCodeLoginState)
+def code_login_status(flow_id: str):
+    try:
+        return daemon.code_login_status(flow_id)
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.post("/profiles/login/submit/{flow_id}", response_model=AgyCodeLoginState)
+def submit_code_login(flow_id: str, body: AgyCodeLoginSubmit, request: Request):
+    _profile_action(request)
+    try:
+        return daemon.submit_code_login(flow_id, body.code)
+    except AntiError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
 @router.post("/profiles/{profile_id}/logout", response_model=AgyProfile, response_model_exclude_none=True)
 def logout_agy_profile(profile_id: str, request: Request):
     _profile_action(request)
     try:
-        return daemon.clear_profile_credentials(profile_id)
+        res = daemon.clear_profile_credentials(profile_id)
+        AntiSessions().ledger.clear_quota_state(profile_id)
+        return res
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 
@@ -359,9 +460,8 @@ def logout_agy_profile(profile_id: str, request: Request):
 def check_account_usage(request: Request):
     _require_action(request, "check-anti-usage", "Missing Anti usage action")
     try:
-        with daemon.submission() as profile_id:
-            report = AntiAdapter().request("POST", "/v1/account-usage", read_timeout=30,
-                                           headers={"X-AntiCLI-Action": "check-account-usage"})
+        profile_id = anti_profiles.snapshot()[0]
+        report = agy_usage.probe_account_usage(profile_id)
         parsed = AntiAccountUsage.model_validate(report)
         anti_profiles.record_usage(
             profile_id,
@@ -370,33 +470,29 @@ def check_account_usage(request: Request):
         )
         return parsed
     except AntiError as exc:
-        if exc.status == 404:
-            raise HTTPException(503, "当前 AntiCLI 网关版本不支持额度检测，请更新网关。") from exc
-        raise HTTPException(503, "无法连接 AntiCLI 网关，请检查网关状态后重试。") from exc
+        raise HTTPException(exc.status, str(exc)) from exc
     except ValidationError as exc:
-        raise HTTPException(502, "AntiCLI 返回了无法识别的额度报告。") from exc
+        raise HTTPException(502, "返回了无法识别的额度报告。") from exc
 
 
 @router.get("/quota", response_model=list[AntiQuotaPool])
 def gateway_quota():
     try:
-        with daemon.submission():
-            data = AntiAdapter().request("GET", "/v1/quota")
-        if not isinstance(data, list):
-            return []
+        profile_id = anti_profiles.snapshot()[0]
+        data = AntiSessions().ledger.quota_pools(profile_id=profile_id)
         return [AntiQuotaPool.model_validate(item) for item in data]
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
     except ValidationError as exc:
-        raise HTTPException(502, "AntiCLI 返回了无法识别的配额状态。") from exc
+        raise HTTPException(502, "返回了无法识别的配额状态。") from exc
 
 
 @router.post("/breaker/reset", status_code=204)
 def reset_gateway_breaker(body: AntiBreakerResetReq, request: Request):
     _require_action(request, "manage-anti-gateway", "Missing Anti gateway action")
     try:
-        with daemon.submission():
-            AntiAdapter().request("POST", "/v1/breaker/reset", json={"model_group": body.model_group})
+        profile_id = anti_profiles.snapshot()[0]
+        AntiSessions().ledger.reset_breaker(body.model_group, profile_id=profile_id)
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 
@@ -405,43 +501,35 @@ def reset_gateway_breaker(body: AntiBreakerResetReq, request: Request):
 def calibrate_gateway_quota(body: AntiQuotaCalibrateReq, request: Request):
     _require_action(request, "manage-anti-gateway", "Missing Anti gateway action")
     try:
-        with daemon.submission():
-            data = AntiAdapter().request(
-                "POST",
-                "/v1/quota/calibrate",
-                json={
-                    "model_group": body.model_group,
-                    "remaining_pct": body.remaining_pct,
-                    "note": body.note,
-                },
-            )
-        group = data.get("group") if isinstance(data, dict) else None
-        return AntiQuotaPool.model_validate(group if isinstance(group, dict) else data)
+        profile_id = anti_profiles.snapshot()[0]
+        data = AntiSessions().ledger.calibrate_quota(body.model_group, body.remaining_pct, body.note, profile_id=profile_id)
+        return AntiQuotaPool.model_validate(data)
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
     except ValidationError as exc:
-        raise HTTPException(502, "AntiCLI 返回了无法识别的校准结果。") from exc
+        raise HTTPException(502, "返回了无法识别的校准结果。") from exc
 
 
 @router.get("/stats", response_model=AntiUsageStats)
 def gateway_stats(window_hours: int = Query(default=24, ge=0, le=8760)):
     try:
-        with daemon.submission():
-            data = AntiAdapter().request("GET", f"/v1/stats?window_hours={window_hours}")
+        profile_id = anti_profiles.snapshot()[0]
+        data = AntiSessions().ledger.stats(window_hours, profile_id=profile_id)
         return AntiUsageStats.model_validate(data)
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
     except ValidationError as exc:
-        raise HTTPException(502, "AntiCLI 返回了无法识别的统计信息。") from exc
+        raise HTTPException(502, "返回了无法识别的统计信息。") from exc
 
 
 @router.get("/models", response_model=AntiModelList)
 def models():
-    try:
-        with daemon.submission() as profile_id:
-            return _call("models", profile_id == anti_profiles.DEFAULT)
-    except AntiError as exc:
-        raise HTTPException(exc.status, str(exc)) from exc
+    return _call("models")
+
+
+@router.get("/commands", response_model=AntiCommandList)
+def commands():
+    return _call("commands")
 
 
 @router.get("/sessions", response_model=list[AntiSessionResp])
@@ -457,6 +545,11 @@ def create_session(body: AntiSessionCreate):
 @router.patch("/sessions/{sid}", response_model=AntiSessionResp)
 def rename_session(sid: str, body: AntiSessionRename):
     return _call("rename", sid, body.title)
+
+
+@router.post("/sessions/{sid}/reset", response_model=AntiSessionResp)
+def reset_session(sid: str):
+    return _call("reset_runtime", sid)
 
 
 @router.delete("/sessions/{sid}", status_code=204)
@@ -483,6 +576,8 @@ def submit_run(sid: str, body: AntiRunCreate):
                 [(ref.id, ref.path) for ref in body.references],
                 profile_id,
                 [att.model_dump() for att in body.attachments],
+                body.mode,
+                body.permission_mode,
             )
     except AntiError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
@@ -520,3 +615,16 @@ def events_stream(sid: str, rid: str):
 @router.post("/sessions/{sid}/runs/{rid}/cancel", response_model=AntiRunResp)
 def cancel(sid: str, rid: str):
     return _call("cancel", sid, rid)
+
+
+class AntiApprovalDecision(BaseModel):
+    model_config = {"extra": "forbid"}
+    approval_id: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{32}$")]
+    decision: Literal["allow", "allow_always", "reject"]
+    option_id: Annotated[str, StringConstraints(min_length=1, max_length=256)] | None = None
+
+
+@router.post("/sessions/{sid}/runs/{rid}/approval", response_model=AntiRunResp)
+def approve(sid: str, rid: str, body: AntiApprovalDecision, request: Request):
+    _require_action(request, "approve-agy", "Approval action header required")
+    return _call("approve", sid, rid, body.approval_id, body.decision, body.option_id)
