@@ -59,11 +59,14 @@ class LocalGateway(gateway.Gateway):
             return await self.handle_agy(request)
         return await super().handle(request)
 
-    async def anti_json(self, method, path, payload=None):
+    async def anti_json(self, method, path, payload=None, *, action=None):
         base = await self.backend()
+        headers = {'Origin': base}
+        if action:
+            headers['X-GA-Hub-Action'] = action
         try:
             async with self.http.request(method, base + '/api/anti' + path, json=payload,
-                                         headers={'Origin': base}, allow_redirects=False,
+                                         headers=headers, allow_redirects=False,
                                          timeout=aiohttp.ClientTimeout(total=65)) as response:
                 if response.status == 204:
                     return None
@@ -86,6 +89,16 @@ class LocalGateway(gateway.Gateway):
                    and re.fullmatch(r'/sessions/[A-Za-z0-9_-]{1,128}/runs', path))
         if (request.query_string and not (event_query or compact)) or request.headers.get('Upgrade'):
             raise web.HTTPForbidden()
+        if (method, path) in {('GET', '/daemon'), ('POST', '/daemon/start'), ('POST', '/daemon/stop')}:
+            if request.can_read_body:
+                raise web.HTTPBadRequest(text='Agy 启停接口不接受请求正文')
+            target, action = {
+                '/daemon': ('/status', None),
+                '/daemon/start': ('/start', 'start-anti'),
+                '/daemon/stop': ('/stop', 'stop-anti'),
+            }[path]
+            result = await self.anti_json(method, target, action=action)
+            return web.json_response({key: result.get(key) for key in ('state', 'managed', 'active_count')})
         if method == 'GET' and path == '/models':
             result = await self.anti_json('GET', path)
             return web.json_response({'items': [{k: row[k] for k in ('id', 'display_name')} for row in result['items']]})

@@ -56,9 +56,28 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
         app.router.add_get('/api/sessions/s1/messages', messages)
         agy_session = {'id': 'a1', 'title': 'Agy', 'project': 'test'}
         agy_runs = []
+        daemon = {'state': 'stopped', 'managed': None, 'active_count': None}
+        daemon_calls = []
 
         async def anti(r):
             resource = r.match_info['resource']
+            if resource in {'status', 'start', 'stop'}:
+                daemon_calls.append(resource)
+                self.assertEqual(r.headers['Origin'], str(backend.make_url('/')).rstrip('/'))
+                if resource == 'status':
+                    self.assertEqual(r.method, 'GET')
+                    self.assertNotIn('X-GA-Hub-Action', r.headers)
+                else:
+                    self.assertEqual(r.method, 'POST')
+                    self.assertEqual(r.headers['X-GA-Hub-Action'], resource + '-anti')
+                    self.assertFalse(await r.read())
+                if resource == 'start':
+                    daemon.update(state='ready', managed=True, active_count=0)
+                if resource == 'stop':
+                    if not daemon['managed'] or daemon['active_count']:
+                        return web.json_response({'detail': 'local-only diagnostic'}, status=409)
+                    daemon.update(state='stopped', managed=None, active_count=None)
+                return web.json_response({**daemon, 'port': 54321, 'detail': 'local-only diagnostic'})
             if resource == 'models':
                 return web.json_response({'items': [{'id': 'model-1', 'display_name': 'Model 1'}]})
             if resource == 'sessions':
@@ -132,6 +151,28 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                     await ws.close()
                     api = '/d/' + device + '/api'
                     agy = api + '/agy'
+                    lifecycle = agy + '/daemon'
+                    r = await client.get(lifecycle, headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    self.assertEqual(await r.json(), daemon)
+                    r = await client.post(lifecycle + '/start', headers={**auth, 'Origin': 'https://example.invalid'})
+                    self.assertEqual(r.status, 403)
+                    r = await client.post(lifecycle + '/start', headers=auth, json={'profile': 'other'})
+                    self.assertEqual(r.status, 400)
+                    self.assertEqual(daemon_calls, ['status'])
+                    r = await client.post(lifecycle + '/start', headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    self.assertEqual(await r.json(), {'state':'ready', 'managed':True, 'active_count':0})
+                    for managed, count in [(False, 0), (True, 1)]:
+                        daemon.update(managed=managed, active_count=count)
+                        r = await client.post(lifecycle + '/stop', headers=auth)
+                        self.assertEqual(r.status, 409, await r.text())
+                        self.assertNotIn('local-only diagnostic', await r.text())
+                    daemon.update(managed=True, active_count=0)
+                    r = await client.post(lifecycle + '/stop', headers=auth)
+                    self.assertEqual(r.status, 200, await r.text())
+                    self.assertEqual((await r.json())['state'], 'stopped')
+                    self.assertEqual(daemon_calls, ['status', 'start', 'stop', 'stop', 'stop'])
                     r = await client.get(agy + '/models', headers=auth)
                     self.assertEqual(r.status, 200, await r.text())
                     self.assertEqual((await r.json())['items'][0]['id'], 'model-1')
