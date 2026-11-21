@@ -118,7 +118,7 @@ export function FontAppearancePanel() {
   const boldStyle = data?.bold_style === 'standard' ? 'standard' : 'restrained'
   const activePackName =
     activePack === 'system'
-      ? '系统默认（Microsoft YaHei UI + 温润防膨胀策略）'
+      ? '系统默认（雅黑 UI）'
       : (data?.packs.find((p) => p.id === activePack)?.name ?? activePack)
 
   const dlPercent =
@@ -127,15 +127,23 @@ export function FontAppearancePanel() {
       : null
 
   return (
-    <div className="bg-bg-card border border-line rounded-xl p-4 space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="font-medium">字体方案与字重策略</div>
-          <div className="mt-1 text-xs text-ink-faint leading-relaxed">
-            安装包零内置字体体积；可选下载并持久化保存在 Admin 数据目录中，升级程序无需重下。
-          </div>
+    <div className="ga-paper-card p-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-ink">字体方案与字重</div>
+          <div className="text-[11px] text-ink-faint">当前：{activePackName}</div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {activePack !== 'system' && (
+            <button
+              type="button"
+              disabled={busyId !== null}
+              onClick={() => { void handleActivate('system') }}
+              className="ga-btn-sm"
+            >
+              切回系统默认
+            </button>
+          )}
           <input
             ref={fileRef}
             type="file"
@@ -155,30 +163,8 @@ export function FontAppearancePanel() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-line/80 bg-bg-soft/70 px-3 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div>
-          <span className="text-ink-muted">当前生效：</span>
-          <span className="font-medium text-ink">{activePackName}</span>
-        </div>
-        {activePack !== 'system' && (
-          <button
-            type="button"
-            disabled={busyId !== null}
-            onClick={() => { void handleActivate('system') }}
-            className="ga-btn-sm"
-          >
-            切回系统默认
-          </button>
-        )}
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line/60 pt-3">
-        <div>
-          <div className="text-sm font-medium text-ink">加粗表现策略</div>
-          <div className="text-xs text-ink-faint">
-            克制模式避免系统雅黑直跳粗体时横向胀大；扩展字重包下正文以 600 SemiBold 呈现。
-          </div>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line/60 pt-2.5">
+        <span className="text-xs font-medium text-ink">加粗表现</span>
         <div className="ga-segmented text-xs" role="group" aria-label="加粗策略">
           {([
             ['restrained', '克制防膨胀（推荐）'],
@@ -240,22 +226,21 @@ export function FontAppearancePanel() {
                   pack.active ? 'border-accent bg-accent-soft/25' : 'border-line bg-bg-soft/45'
                 }`}
               >
-                <div className="min-w-0 flex-1 space-y-0.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium text-ink">{pack.name}</span>
-                    <span className="rounded border border-line bg-bg-card px-1.5 py-0.5 text-[11px] text-ink-muted">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs font-medium text-ink">{pack.name}</span>
+                    <span className="rounded border border-line bg-bg-card px-1.5 py-0.5 text-[10px] text-ink-muted">
                       {pack.license}
                     </span>
-                    <span className="text-[11px] font-mono tabular-nums text-ink-faint">
-                      {pack.installed ? `已下载 ${formatMegabytes(pack.installed_bytes)}` : `约 ${formatMegabytes(pack.approx_bytes)}`}
+                    <span className="text-[10px] font-mono tabular-nums text-ink-faint">
+                      {pack.installed ? `${formatMegabytes(pack.installed_bytes)}` : `约 ${formatMegabytes(pack.approx_bytes)}`}
                     </span>
                     {pack.active && (
-                      <span className="rounded bg-status-success-soft border border-status-success-line px-1.5 py-0.5 text-[11px] text-status-success">
-                        当前使用
+                      <span className="rounded bg-status-success-soft border border-status-success-line px-1.5 py-0.5 text-[10px] text-status-success">
+                        使用中
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-ink-muted leading-relaxed">{pack.summary}</p>
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2">
@@ -302,13 +287,10 @@ export function FontAppearancePanel() {
         </div>
       )}
 
-      <div className="rounded-lg border border-line bg-bg-soft px-3 py-2.5 text-sm leading-7 text-ink">
-        <div className="text-xs text-ink-faint mb-1">排版与加粗预览</div>
-        <div>
-          常规正文与中英混排 GA-Hub 2026，
-          <span className="font-medium">Medium 中等强调</span>、
-          <strong>Bold 正文加粗不再膨胀</strong>，
-          行内代码 <code className="font-mono text-xs px-1 py-0.5 rounded bg-bg-card border border-line">npm run build</code> 与数字 <span className="tabular-nums">123,456.78</span>。
+      <div className="rounded-lg border border-line/70 bg-bg-soft/65 px-3 py-1.5 text-xs text-ink flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[11px] text-ink-faint">效果预览</span>
+        <div className="truncate">
+          正文 GA-Hub · <span className="font-medium">Medium</span> · <strong>Bold 粗体</strong> · <code className="font-mono text-[11px] px-1 rounded bg-bg-card border border-line/70">123.45</code>
         </div>
       </div>
     </div>

@@ -1,14 +1,16 @@
 // Memory: tabs for global_mem.txt, insight, SOPs (markdown).
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { VersionedMemoryEditor } from '@/components/VersionedMemoryEditor'
+import { BookOpen, CopyIcon, FileCode2, FileText, Layers, Search, Sparkles, X } from '@/components/ActionIcons'
 import { dialog } from '@/stores/dialogStore'
 import { toast } from '@/stores/toastStore'
 import { PageShell } from '@/components/PageShell'
 import { queryKeys } from '@/queries/queryKeys'
 import { usePageState } from '@/utils/pageState'
+import { writeClipboard } from '@/utils/clipboard'
 import { errorMessageFromError } from '@/utils/sessionUi'
 
 type Tab = 'sop' | 'skill' | 'insight' | 'global'
@@ -80,6 +82,14 @@ export default function Memory() {
   }, [location.key, searchParams, tab, changeSelection, setSopQuery, setSearchParams])
 
   const tabTitle = (t: Tab) => t === 'sop' ? 'SOP 文档' : t === 'skill' ? 'Skill 脚本' : t === 'insight' ? 'L1：洞察记忆 (global_mem_insight.txt)' : 'L2：全局记忆 (global_mem.txt)'
+  const tabMeta: Record<Tab, { label: string; desc: string; icon: typeof BookOpen }> = {
+    sop: { label: 'SOP 标准流程', desc: '按任务场景沉淀可执行 Markdown 操作规程，供 Agent 检索遵循。', icon: BookOpen },
+    skill: { label: 'Skill 工具脚本', desc: '只读检视 memory/skill 下的技能定义与脚本实现。', icon: FileCode2 },
+    insight: { label: 'L1 洞察记忆', desc: '高优经验与近期关键洞察（memory/global_mem_insight.txt），对话中自动注入。', icon: Sparkles },
+    global: { label: 'L2 全局记忆', desc: '长期事实、偏好与项目约束底座（memory/global_mem.txt）。', icon: Layers },
+  }
+  const activeMeta = tabMeta[tab]
+  const LayerIcon = activeMeta.icon
 
   return (
     <PageShell
@@ -102,11 +112,21 @@ export default function Memory() {
         </div>
       }
     >
-      <div className="h-full overflow-hidden">
-        {tab === 'sop' && <SopList active={activeSop} q={sopQuery} setQ={setSopQuery} selectSop={(name) => changeSelection('sop', name)} onDirtyChange={handleDirtyChange} />}
-        {tab === 'skill' && <SkillList />}
-        {tab === 'insight' && <Insight onDirtyChange={handleDirtyChange} />}
-        {tab === 'global' && <GlobalMem onDirtyChange={handleDirtyChange} />}
+      <div className="h-full flex flex-col overflow-hidden">
+        <div className="shrink-0 border-b border-line/65 bg-bg-card/55 px-6 py-2.5 flex items-center gap-2.5 text-xs">
+          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-line/75 bg-bg-card text-accent">
+            <LayerIcon className="h-3.5 w-3.5" aria-hidden="true" />
+          </span>
+          <span className="font-medium text-ink">{activeMeta.label}</span>
+          <span className="text-ink-faint">·</span>
+          <span className="text-ink-muted truncate">{activeMeta.desc}</span>
+        </div>
+        <div className="flex-1 min-h-0 overflow-hidden">
+          {tab === 'sop' && <SopList active={activeSop} q={sopQuery} setQ={setSopQuery} selectSop={(name) => changeSelection('sop', name)} onDirtyChange={handleDirtyChange} />}
+          {tab === 'skill' && <SkillList />}
+          {tab === 'insight' && <Insight onDirtyChange={handleDirtyChange} />}
+          {tab === 'global' && <GlobalMem onDirtyChange={handleDirtyChange} />}
+        </div>
       </div>
     </PageShell>
   )
@@ -120,51 +140,65 @@ function memoryWriteError(error: unknown): void {
   toast.error('保存失败：' + errorMessageFromError(error))
 }
 
+function MemoryLoadingCard({ label }: { label: string }) {
+  return (
+    <div className="p-6 h-full">
+      <div className="ga-paper-card h-full grid place-items-center text-sm text-ink-faint" role="status">
+        正在载入 {label}…
+      </div>
+    </div>
+  )
+}
+
 function GlobalMem({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.global, queryFn: api.globalMem })
-  if (isLoading || !data) return <div className="text-ink-faint text-sm">载入中…</div>
+  if (isLoading || !data) return <MemoryLoadingCard label="global_mem.txt" />
   return (
-    <VersionedMemoryEditor
-      label="memory/global_mem.txt"
-      snapshot={data}
-      onSave={api.setGlobalMem}
-      onDirtyChange={onDirtyChange}
-      onReload={async () => {
-        const latest = await api.globalMem()
-        qc.setQueryData(queryKeys.memory.global, latest)
-        return latest
-      }}
-      onSaved={() => {
-        void qc.invalidateQueries({ queryKey: queryKeys.memory.global })
-        toast.success('已保存 global_mem.txt')
-      }}
-      onError={memoryWriteError}
-    />
+    <div className="p-6 h-full min-h-0">
+      <VersionedMemoryEditor
+        label="memory/global_mem.txt"
+        snapshot={data}
+        onSave={api.setGlobalMem}
+        onDirtyChange={onDirtyChange}
+        onReload={async () => {
+          const latest = await api.globalMem()
+          qc.setQueryData(queryKeys.memory.global, latest)
+          return latest
+        }}
+        onSaved={() => {
+          void qc.invalidateQueries({ queryKey: queryKeys.memory.global })
+          toast.success('已保存 global_mem.txt')
+        }}
+        onError={memoryWriteError}
+      />
+    </div>
   )
 }
 
 function Insight({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.insight, queryFn: api.insight })
-  if (isLoading || !data) return <div className="text-ink-faint text-sm">载入中…</div>
+  if (isLoading || !data) return <MemoryLoadingCard label="global_mem_insight.txt" />
   return (
-    <VersionedMemoryEditor
-      label="memory/global_mem_insight.txt"
-      snapshot={data}
-      onSave={api.setInsight}
-      onDirtyChange={onDirtyChange}
-      onReload={async () => {
-        const latest = await api.insight()
-        qc.setQueryData(queryKeys.memory.insight, latest)
-        return latest
-      }}
-      onSaved={() => {
-        void qc.invalidateQueries({ queryKey: queryKeys.memory.insight })
-        toast.success('已保存 insight')
-      }}
-      onError={memoryWriteError}
-    />
+    <div className="p-6 h-full min-h-0">
+      <VersionedMemoryEditor
+        label="memory/global_mem_insight.txt"
+        snapshot={data}
+        onSave={api.setInsight}
+        onDirtyChange={onDirtyChange}
+        onReload={async () => {
+          const latest = await api.insight()
+          qc.setQueryData(queryKeys.memory.insight, latest)
+          return latest
+        }}
+        onSaved={() => {
+          void qc.invalidateQueries({ queryKey: queryKeys.memory.insight })
+          toast.success('已保存 insight')
+        }}
+        onError={memoryWriteError}
+      />
+    </div>
   )
 }
 
@@ -182,36 +216,76 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
   const { data: cur } = useQuery({ queryKey: queryKeys.memory.sop(active), queryFn: () => api.sop(active!), enabled: !!active })
 
   return (
-    <div className="h-full grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] gap-4 p-6">
-      <div className="rounded-lg border border-line bg-bg-card overflow-hidden flex flex-col h-full">
-        <div className="px-3 py-2 border-b border-line">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="键入首几个字母过滤…"
-            className="w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-accent"
-          />
+    <div className="h-full grid grid-cols-1 lg:grid-cols-[19rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] gap-4 p-6">
+      <div className="ga-paper-card overflow-hidden flex flex-col h-full">
+        <div className="px-3.5 py-2.5 border-b border-line/70 bg-bg-soft/65 flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-ink">SOP 列表</span>
+          <span className="rounded-full border border-line/70 bg-bg-card px-2 py-0.5 text-[11px] tabular-nums text-ink-muted">
+            {q ? `${visible.length} / ${sops.length}` : sops.length}
+          </span>
         </div>
-        <ul className="flex-1 min-h-0 overflow-y-auto">
-          {visible.map((s) => (
-            <li key={s.name}>
+        <div className="px-3 py-2.5 border-b border-line/70 bg-bg-card/60">
+          <div className="relative flex items-center">
+            <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-ink-faint" aria-hidden="true" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="按前缀过滤 SOP…"
+              aria-label="过滤 SOP 文档"
+              className="w-full bg-bg-soft/75 border border-line rounded-lg pl-8 pr-7 py-1.5 text-sm outline-none focus:border-accent focus:bg-bg-card transition-colors"
+            />
+            {q && (
               <button
-                onClick={() => selectSop(s.name)}
-                className={`w-full text-left px-3 py-2 text-sm border-b border-line/50 ${active === s.name ? 'bg-accent-soft text-accent' : 'text-ink hover:bg-ink/5'}`}
+                type="button"
+                onClick={() => setQ('')}
+                aria-label="清空过滤词"
+                className="absolute right-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full text-ink-faint hover:bg-bg-soft hover:text-ink"
               >
-                <div className="truncate">{s.name}</div>
-                <div className="text-[11px] text-ink-faint">{(s.size / 1024).toFixed(1)} KB</div>
+                <X className="h-3 w-3" aria-hidden="true" />
               </button>
-            </li>
-          ))}
+            )}
+          </div>
+        </div>
+        <ul className="flex-1 min-h-0 overflow-y-auto divide-y divide-line/50">
+          {visible.map((s) => {
+            const selected = active === s.name
+            return (
+              <li key={s.name}>
+                <button
+                  type="button"
+                  onClick={() => selectSop(s.name)}
+                  className={`w-full text-left px-3.5 py-2.5 text-sm transition-colors border-l-[3px] ${
+                    selected
+                      ? 'border-l-accent bg-accent-soft/65 text-accent font-medium'
+                      : 'border-l-transparent text-ink hover:bg-bg-soft/70'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate">{s.name}</span>
+                    <span className="shrink-0 text-[11px] tabular-nums text-ink-faint">{(s.size / 1024).toFixed(1)} KB</span>
+                  </div>
+                </button>
+              </li>
+            )
+          })}
           {visible.length === 0 && (
-            <li className="p-3 text-ink-faint text-sm">{sops.length === 0 ? '无' : '无匹配 SOP'}</li>
+            <li className="p-6 text-center text-ink-faint text-sm">{sops.length === 0 ? '无' : '无匹配 SOP'}</li>
           )}
         </ul>
       </div>
 
       <div className="h-full min-h-0">
-        {!active && <div className="grid h-full place-items-center rounded-lg border border-dashed border-line bg-bg-card/40 text-ink-faint text-sm">选择左侧文档以查看或编辑</div>}
+        {!active && (
+          <div className="ga-paper-card h-full grid place-items-center border-dashed bg-bg-card/45 p-8 text-center">
+            <div className="flex flex-col items-center gap-2.5 max-w-xs">
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line/80 bg-bg-soft text-accent">
+                <FileText className="h-5 w-5" aria-hidden="true" />
+              </span>
+              <p className="text-sm font-medium text-ink">选择左侧文档以查看或编辑</p>
+              <p className="text-xs text-ink-faint">支持版本冲突检测与本地草稿保护。</p>
+            </div>
+          </div>
+        )}
         {active && cur && (
           <VersionedMemoryEditor
             key={active}
@@ -241,33 +315,76 @@ function SkillList() {
   const skills = data?.skills ?? []
   const [active, setActive] = usePageState<string | null>('memory.skillActive', null)
   const { data: cur } = useQuery({ queryKey: queryKeys.skills.detail(active), queryFn: () => api.skill(active!), enabled: !!active })
+  const [copied, setCopied] = useState(false)
+
+  const copySkill = async () => {
+    if (!cur?.content) return
+    await writeClipboard(cur.content)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
 
   return (
-    <div className="h-full grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] gap-4 p-6">
-      <div className="rounded-lg border border-line bg-bg-card overflow-hidden flex flex-col h-full">
-        <div className="px-3 py-2 border-b border-line text-xs text-ink-muted">Skill 脚本</div>
-        <ul className="flex-1 min-h-0 overflow-y-auto">
-          {skills.map((s) => (
-            <li key={s.path}>
-              <button
-                onClick={() => setActive(s.path)}
-                className={`w-full text-left px-3 py-2 text-sm border-b border-line/50 ${active === s.path ? 'bg-accent-soft text-accent' : 'text-ink hover:bg-ink/5'}`}
-              >
-                <div className="truncate">{s.path}</div>
-                <div className="text-[11px] text-ink-faint">{(s.size / 1024).toFixed(1)} KB</div>
-              </button>
-            </li>
-          ))}
-          {skills.length === 0 && <li className="p-3 text-ink-faint text-sm">无</li>}
+    <div className="h-full grid grid-cols-1 lg:grid-cols-[19rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] gap-4 p-6">
+      <div className="ga-paper-card overflow-hidden flex flex-col h-full">
+        <div className="px-3.5 py-2.5 border-b border-line/70 bg-bg-soft/65 flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-ink">Skill 脚本</span>
+          <span className="rounded-full border border-line/70 bg-bg-card px-2 py-0.5 text-[11px] tabular-nums text-ink-muted">
+            {skills.length}
+          </span>
+        </div>
+        <ul className="flex-1 min-h-0 overflow-y-auto divide-y divide-line/50">
+          {skills.map((s) => {
+            const selected = active === s.path
+            return (
+              <li key={s.path}>
+                <button
+                  type="button"
+                  onClick={() => { setActive(s.path); setCopied(false) }}
+                  className={`w-full text-left px-3.5 py-2.5 text-sm transition-colors border-l-[3px] ${
+                    selected
+                      ? 'border-l-accent bg-accent-soft/65 text-accent font-medium'
+                      : 'border-l-transparent text-ink hover:bg-bg-soft/70'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-mono text-xs">{s.path}</span>
+                    <span className="shrink-0 text-[11px] tabular-nums text-ink-faint">{(s.size / 1024).toFixed(1)} KB</span>
+                  </div>
+                </button>
+              </li>
+            )
+          })}
+          {skills.length === 0 && <li className="p-6 text-center text-ink-faint text-sm">无</li>}
         </ul>
       </div>
 
-      <div className="h-full flex flex-col">
-        {!active && <div className="grid h-full place-items-center rounded-lg border border-dashed border-line bg-bg-card/40 text-ink-faint text-sm">选择左侧脚本以查看内容</div>}
+      <div className="h-full min-h-0 flex flex-col">
+        {!active && (
+          <div className="ga-paper-card h-full grid place-items-center border-dashed bg-bg-card/45 p-8 text-center">
+            <div className="flex flex-col items-center gap-2.5 max-w-xs">
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line/80 bg-bg-soft text-accent">
+                <FileCode2 className="h-5 w-5" aria-hidden="true" />
+              </span>
+              <p className="text-sm font-medium text-ink">选择左侧脚本以查看内容</p>
+              <p className="text-xs text-ink-faint">支持只读源码预览与一键复制。</p>
+            </div>
+          </div>
+        )}
         {active && cur && (
-          <div className="flex flex-col h-full space-y-2">
-            <div className="text-xs text-ink-faint font-mono">memory/skill/{active} (只读)</div>
-            <pre className="flex-1 rounded-lg border border-line bg-bg-card p-4 text-sm text-ink font-mono overflow-auto">
+          <div className="ga-paper-card flex flex-col h-full overflow-hidden">
+            <div className="flex items-center justify-between gap-3 border-b border-line/70 bg-bg-soft/65 px-4 py-2.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <FileCode2 className="h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
+                <span className="truncate text-xs text-ink font-mono">memory/skill/{active}</span>
+                <span className="shrink-0 rounded-full border border-line/75 bg-bg-card px-2 py-0.5 text-[10px] text-ink-muted">只读</span>
+              </div>
+              <button type="button" onClick={() => { void copySkill() }} className="ga-btn-sm shrink-0">
+                <CopyIcon copied={copied} size={12} />
+                <span>{copied ? '已复制' : '复制内容'}</span>
+              </button>
+            </div>
+            <pre className="flex-1 bg-bg-card/60 p-4 text-xs leading-relaxed text-ink font-mono overflow-auto">
               {cur.content}
             </pre>
           </div>

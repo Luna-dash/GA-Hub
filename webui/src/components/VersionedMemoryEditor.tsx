@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MemoryWriteRequest, MemoryWriteResponse } from '@/api/types'
 import { MarkdownEditor } from './MarkdownEditor'
-import { RotateCcw, Save } from './ActionIcons'
+import { FileText, RotateCcw, Save } from './ActionIcons'
 
 export interface MemorySnapshot {
   content: string
@@ -81,11 +81,32 @@ export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSav
     }
   }
 
+  const lineCount = value ? value.split('\n').length : 0
+
   return (
-    <div className="h-full flex flex-col space-y-2">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0 text-xs text-ink-faint font-mono truncate">{label}</div>
-        <div className="flex items-center gap-2 shrink-0">
+    <div className="ga-paper-card h-full flex flex-col overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/70 bg-bg-soft/65 px-4 py-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-line/75 bg-bg-card text-accent">
+            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="truncate font-mono text-xs font-medium text-ink" title={label}>{label}</span>
+              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium border ${
+                dirty
+                  ? 'border-status-warning-line bg-status-warning-soft text-status-warning'
+                  : 'border-line/70 bg-bg-card text-ink-faint'
+              }`}>
+                {dirty ? '未保存更改' : '已同步'}
+              </span>
+            </div>
+            <div className="mt-0.5 text-[11px] tabular-nums text-ink-faint">
+              {lineCount} 行 · {value.length} 字符
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
           {remoteChanged && (
             <>
               <span role="alert" className="text-xs text-status-warning">磁盘版本已变化，草稿未覆盖</span>
@@ -111,7 +132,7 @@ export function VersionedMemoryEditor({ label, snapshot, onSave, onReload, onSav
           </button>
         </div>
       </div>
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 p-3 bg-bg-card/45">
         <MarkdownEditor value={value} onChange={setValue} />
       </div>
     </div>

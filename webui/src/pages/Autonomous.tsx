@@ -14,7 +14,8 @@ import { errorMessageFromError } from '@/utils/sessionUi'
 import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 import { CronCardLine, CronPreview } from '@/components/CronPreview'
-import { CloseIconButton, FileText, Pencil, Play, Plus, Power, RefreshIcon, Save, Trash2 } from '@/components/ActionIcons'
+import { writeClipboard } from '@/utils/clipboard'
+import { Calendar, Clock, CloseIconButton, CopyIcon, FileText, History, Pencil, Play, Plus, Power, RefreshIcon, Save, Sparkles, Trash2 } from '@/components/ActionIcons'
 
 export default function Autonomous() {
   const qc = useQueryClient()
@@ -58,6 +59,8 @@ export default function Autonomous() {
   const schedules = schData?.schedules ?? []
   const runs = runData?.runs ?? []
   const reports = rep?.reports ?? []
+  const enabledCount = schedules.filter((s) => s.enabled).length
+  const totalFires = schedules.reduce((sum, s) => sum + (s.fire_count ?? 0), 0)
 
   const triggerNow = async (id: string) => {
     const ok = await dialog.confirm(
@@ -88,64 +91,138 @@ export default function Autonomous() {
       }
     >
       <div className="p-6 space-y-6 max-w-6xl mx-auto">
+        {/* overview */}
+        <section aria-label="运行概览" className="ga-paper-card px-5 py-3.5 grid grid-cols-1 sm:grid-cols-3 gap-4 divide-y sm:divide-y-0 sm:divide-x divide-line/65">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line/75 bg-bg-soft text-accent">
+              <Sparkles className="h-4 w-4" aria-hidden="true" />
+            </span>
+            <div>
+              <div className="text-[11px] text-ink-faint">调度计划（已启用 / 总计）</div>
+              <div className="mt-0.5 text-lg font-semibold tabular-nums text-ink">{enabledCount} <span className="text-xs font-normal text-ink-faint">/ {schedules.length}</span></div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 pt-3 sm:pt-0 sm:pl-4">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line/75 bg-bg-soft text-accent">
+              <History className="h-4 w-4" aria-hidden="true" />
+            </span>
+            <div>
+              <div className="text-[11px] text-ink-faint">累计触发执行</div>
+              <div className="mt-0.5 text-lg font-semibold tabular-nums text-ink">{totalFires} <span className="text-xs font-normal text-ink-faint">次</span></div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 pt-3 sm:pt-0 sm:pl-4">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line/75 bg-bg-soft text-accent">
+              <FileText className="h-4 w-4" aria-hidden="true" />
+            </span>
+            <div>
+              <div className="text-[11px] text-ink-faint">已归档进化报告</div>
+              <div className="mt-0.5 text-lg font-semibold tabular-nums text-ink">{reports.length} <span className="text-xs font-normal text-ink-faint">份</span></div>
+            </div>
+          </div>
+        </section>
+
         {/* schedules */}
         <section>
-          <h2 className="text-sm font-semibold text-ink mb-3">调度计划</h2>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {schedules.map((s) => <ScheduleCard key={s.id} s={s} onEdit={() => setEditor(s)} onFire={() => triggerNow(s.id)} />)}
-            {schedules.length === 0 && <div className="text-ink-faint text-sm">尚无计划</div>}
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <h2 className="text-sm font-semibold text-ink">调度计划</h2>
+            <span className="text-xs text-ink-faint tabular-nums">{schedules.length} 项配置</span>
           </div>
+          {schedules.length > 0 ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {schedules.map((s) => <ScheduleCard key={s.id} s={s} onEdit={() => setEditor(s)} onFire={() => triggerNow(s.id)} />)}
+            </div>
+          ) : (
+            <div className="ga-paper-card border-dashed bg-bg-card/50 p-8 text-center">
+              <div className="mx-auto flex max-w-sm flex-col items-center gap-2.5">
+                <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line/80 bg-bg-soft text-accent">
+                  <Sparkles className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <div className="text-sm font-medium text-ink">尚无自主进化计划</div>
+                <p className="text-xs text-ink-faint">可按系统空闲时间、Cron 定时或固定间隔周期触发 Agent 执行反思与知识整理。</p>
+                <button
+                  type="button"
+                  onClick={() => setEditor({ type: 'idle', enabled: true, name: '' })}
+                  className="ga-btn-sm-primary mt-1"
+                >
+                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>创建自主计划</span>
+                </button>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* runs */}
         <section>
-          <h2 className="text-sm font-semibold text-ink mb-3">触发历史</h2>
-          <div className="rounded-xl border border-line bg-bg-card overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-bg-soft text-xs text-ink-muted">
-                <tr><th className="text-left p-2.5">时间</th><th className="text-left p-2.5">计划</th><th className="text-left p-2.5">提示</th><th className="text-left p-2.5">报告</th></tr>
-              </thead>
-              <tbody>
-                {runs.map((r) => (
-                  <tr key={r.id} className="border-t border-line/60">
-                    <td className="p-2.5 text-ink-muted whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
-                    <td className="p-2.5 text-ink">{r.schedule_id}</td>
-                    <td className="p-2.5 text-ink-muted truncate max-w-md">{r.prompt_preview}</td>
-                    <td className="p-2.5">
-                      {r.report_paths?.length
-                        ? r.report_paths.map((p) => p.split('/').pop()).map((n) => (
-                          <button key={n} type="button" onClick={() => setActiveReport(n!)} className="ga-btn-link mr-2">
-                            <FileText className="h-3 w-3 shrink-0" aria-hidden="true" />
-                            <span>{n}</span>
-                          </button>
-                        ))
-                        : <span className="text-ink-faint text-xs">—</span>}
-                    </td>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <h2 className="text-sm font-semibold text-ink">触发历史</h2>
+            <span className="text-xs text-ink-faint tabular-nums">最近 {runs.length} 条</span>
+          </div>
+          <div className="ga-paper-card overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="border-b border-line/80 bg-bg-soft/80 text-xs font-medium text-ink-muted">
+                  <tr>
+                    <th className="text-left px-3.5 py-2.5">时间</th>
+                    <th className="text-left px-3.5 py-2.5">计划</th>
+                    <th className="text-left px-3.5 py-2.5">提示</th>
+                    <th className="text-left px-3.5 py-2.5">报告</th>
                   </tr>
-                ))}
-                {runs.length === 0 && <tr><td colSpan={4} className="p-6 text-center text-ink-faint text-sm">尚未触发过自主任务</td></tr>}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-line/60">
+                  {runs.map((r) => (
+                    <tr key={r.id} className="hover:bg-bg-soft/55 transition-colors">
+                      <td className="px-3.5 py-2.5 text-xs tabular-nums text-ink-muted whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
+                      <td className="px-3.5 py-2.5">
+                        <span className="inline-flex items-center rounded-md border border-line/70 bg-bg-soft/80 px-2 py-0.5 font-mono text-xs text-ink">{r.schedule_id}</span>
+                      </td>
+                      <td className="px-3.5 py-2.5 text-ink-muted truncate max-w-md" title={r.prompt_preview}>{r.prompt_preview || '—'}</td>
+                      <td className="px-3.5 py-2.5">
+                        {r.report_paths?.length
+                          ? <div className="flex flex-wrap gap-1.5">
+                              {r.report_paths.map((p) => p.split('/').pop()).map((n) => (
+                                <button key={n} type="button" onClick={() => setActiveReport(n!)} className="ga-btn-link">
+                                  <FileText className="h-3 w-3 shrink-0" aria-hidden="true" />
+                                  <span>{n}</span>
+                                </button>
+                              ))}
+                            </div>
+                          : <span className="text-ink-faint text-xs">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                  {runs.length === 0 && <tr><td colSpan={4} className="p-6 text-center text-ink-faint text-sm">尚未触发过自主任务</td></tr>}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
 
         {/* reports browser */}
         <section>
-          <h2 className="text-sm font-semibold text-ink mb-3">所有报告 ({reports.length})</h2>
-          <div className="flex flex-wrap gap-2">
-            {reports.map((r) => (
-              <button
-                key={r.name}
-                type="button"
-                onClick={() => setActiveReport(r.name)}
-                className={activeReport === r.name ? 'ga-btn-sm-primary' : 'ga-btn-sm'}
-              >
-                <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                <span>{r.name}</span>
-              </button>
-            ))}
-            {reports.length === 0 && <div className="rounded-xl border border-dashed border-line bg-bg-card/50 p-6 text-center text-ink-faint text-sm">尚无自主进化报告，任务触发保存后会显示在此。</div>}
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <h2 className="text-sm font-semibold text-ink">所有报告 ({reports.length})</h2>
+            {reports.length > 0 && <span className="text-xs text-ink-faint">点击报告在右侧抽屉预览</span>}
           </div>
+          {reports.length > 0 ? (
+            <div className="ga-paper-card p-4 flex flex-wrap gap-2">
+              {reports.map((r) => (
+                <button
+                  key={r.name}
+                  type="button"
+                  onClick={() => setActiveReport(r.name)}
+                  title={`${r.name}${r.size ? ` (${(r.size / 1024).toFixed(1)} KB)` : ''}`}
+                  className={activeReport === r.name ? 'ga-btn-sm-primary' : 'ga-btn-sm'}
+                >
+                  <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span>{r.name}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="ga-paper-card border-dashed bg-bg-card/50 p-6 text-center text-ink-faint text-sm">尚无自主进化报告，任务触发保存后会显示在此。</div>
+          )}
         </section>
       </div>
 
@@ -188,38 +265,67 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
       await dialog.alert('删除失败', errorMessageFromError(e))
     }
   }
+  const typeMeta = s.type === 'idle'
+    ? { label: '空闲触发', icon: Sparkles }
+    : s.type === 'cron'
+      ? { label: 'Cron 定时', icon: Calendar }
+      : { label: '周期循环', icon: Clock }
+  const TypeIcon = typeMeta.icon
   return (
-    <div className={`rounded-xl border p-4 ${s.enabled ? 'border-accent/60 bg-accent-soft/20' : 'border-line bg-bg-card'}`}>
-      <div className="flex items-baseline justify-between mb-2">
-        <div className="text-sm font-semibold text-ink">{s.name || s.id}</div>
-        <span className={`text-[11px] px-1.5 py-0.5 rounded ${s.enabled ? 'bg-status-success-soft text-status-success' : 'border border-line bg-bg-soft text-ink-muted'}`}>
-          {s.enabled ? '启用' : '禁用'}
-        </span>
+    <div className={`ga-paper-card p-4 flex flex-col justify-between gap-3 ${s.enabled ? 'border-l-[3px] border-l-accent' : ''}`}>
+      <div className="space-y-2.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap mb-1">
+              <span className="inline-flex items-center gap-1 rounded-md border border-line/75 bg-bg-soft px-1.5 py-0.5 text-[10px] font-medium text-ink-muted">
+                <TypeIcon className="h-2.5 w-2.5 text-accent" aria-hidden="true" />
+                {typeMeta.label}
+              </span>
+              <span className="font-mono text-[11px] text-ink-faint truncate">{s.id}</span>
+            </div>
+            <div className="text-sm font-semibold text-ink truncate" title={s.name || s.id}>{s.name || s.id}</div>
+          </div>
+          <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${s.enabled ? 'bg-status-success-soft border border-status-success-line text-status-success' : 'border border-line bg-bg-soft text-ink-muted'}`}>
+            {s.enabled ? '启用' : '禁用'}
+          </span>
+        </div>
+
+        <div className="rounded-lg border border-line/65 bg-bg-soft/75 px-3 py-2 text-sm text-ink">
+          {s.type === 'idle' && `离线 ${s.idle_minutes} 分钟后触发`}
+          {s.type === 'cron' && <CronCardLine expr={s.cron} />}
+          {s.type === 'interval' && `每 ${s.interval_minutes} 分钟`}
+        </div>
+
+        {s.prompt?.trim() && (
+          <p className="text-xs text-ink-muted line-clamp-2 break-words" title={s.prompt}>
+            {s.prompt}
+          </p>
+        )}
       </div>
-      <div className="text-xs text-ink-faint mb-1">{s.id}</div>
-      <div className="text-sm text-ink mb-2">
-        {s.type === 'idle' && `离线 ${s.idle_minutes} 分钟后触发`}
-        {s.type === 'cron' && <CronCardLine expr={s.cron} />}
-        {s.type === 'interval' && `每 ${s.interval_minutes} 分钟`}
-      </div>
-      <div className="text-xs text-ink-faint">已触发 {s.fire_count} 次 · 上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</div>
-      <div className="flex gap-2 mt-3 flex-wrap">
-        <button type="button" onClick={onFire} className="ga-btn-sm-primary">
-          <Play className="h-3 w-3" aria-hidden="true" />
-          <span>立即触发</span>
-        </button>
-        <button type="button" onClick={toggle} className="ga-btn-sm">
-          <Power className="h-3 w-3" aria-hidden="true" />
-          <span>{s.enabled ? '禁用' : '启用'}</span>
-        </button>
-        <button type="button" onClick={onEdit} className="ga-btn-sm">
-          <Pencil className="h-3 w-3" aria-hidden="true" />
-          <span>编辑</span>
-        </button>
-        <button type="button" onClick={remove} className="ga-btn-sm-danger">
-          <Trash2 className="h-3 w-3" aria-hidden="true" />
-          <span>删除</span>
-        </button>
+
+      <div className="space-y-2.5 pt-2 border-t border-line/60">
+        <div className="flex items-center justify-between text-xs tabular-nums text-ink-faint">
+          <span>已触发 {s.fire_count} 次</span>
+          <span>上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</span>
+        </div>
+        <div className="flex gap-1.5 flex-wrap">
+          <button type="button" onClick={onFire} className="ga-btn-sm-primary">
+            <Play className="h-3 w-3" aria-hidden="true" />
+            <span>立即触发</span>
+          </button>
+          <button type="button" onClick={toggle} className="ga-btn-sm">
+            <Power className="h-3 w-3" aria-hidden="true" />
+            <span>{s.enabled ? '禁用' : '启用'}</span>
+          </button>
+          <button type="button" onClick={onEdit} className="ga-btn-sm">
+            <Pencil className="h-3 w-3" aria-hidden="true" />
+            <span>编辑</span>
+          </button>
+          <button type="button" onClick={remove} className="ga-btn-sm-danger">
+            <Trash2 className="h-3 w-3" aria-hidden="true" />
+            <span>删除</span>
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -273,8 +379,11 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
     }
   }
   return (
-    <ModalOverlay onClose={() => { if (!saving) onClose() }} closeOnBackdrop={!saving} labelledBy="autonomous-schedule-title" panelClassName="p-6 w-[34rem] max-w-[90vw]">
-        <h3 id="autonomous-schedule-title" className="text-base font-semibold mb-4">{initial.id ? '编辑计划' : '新建自主进化计划'}</h3>
+    <ModalOverlay onClose={() => { if (!saving) onClose() }} closeOnBackdrop={!saving} labelledBy="autonomous-schedule-title" panelClassName="p-6 w-[34rem] max-w-[92vw]">
+        <div className="flex items-center justify-between gap-3 border-b border-line/70 pb-3 mb-4">
+          <h3 id="autonomous-schedule-title" className="text-base font-semibold text-ink">{initial.id ? '编辑计划' : '新建自主进化计划'}</h3>
+          <CloseIconButton label="关闭弹窗" variant="ghost" iconSize={16} disabled={saving} onClick={onClose} />
+        </div>
         <Field label="名称">
           <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="人类可读的备注" />
         </Field>
@@ -346,22 +455,44 @@ function ReportDrawer({
   onRetry: () => void
   onClose: () => void
 }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    if (!content) return
+    await writeClipboard(content)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
   return (
-    <ModalOverlay onClose={onClose} align="right" panelClassName="w-[42rem] max-w-[94vw] h-full border-l p-6 overflow-y-auto">
-        <div className="flex items-baseline justify-between mb-3">
-          <h3 className="text-sm font-mono text-ink">{name}</h3>
-          <CloseIconButton label="关闭报告" variant="ghost" iconSize={16} onClick={onClose} className="text-ink-muted hover:text-ink" />
-        </div>
-        {isLoading ? (
-          <div role="status" className="py-12 text-center text-sm text-ink-muted">正在读取报告…</div>
-        ) : isError ? (
-          <div role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft p-4 text-sm text-status-danger space-y-3">
-            <p>报告加载失败：{errorMessage || '未知错误'}</p>
-            <button type="button" onClick={onRetry} className="ga-btn"><RefreshIcon size={13} /><span>重试</span></button>
+    <ModalOverlay onClose={onClose} align="right" panelClassName="w-[44rem] max-w-[94vw] h-full border-l flex flex-col overflow-hidden p-0">
+        <div className="flex items-center justify-between gap-3 border-b border-line/70 bg-bg-card/85 px-6 py-3.5 shrink-0">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-line/75 bg-bg-soft text-accent">
+              <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+            </span>
+            <h3 className="truncate text-sm font-mono font-medium text-ink">{name}</h3>
           </div>
-        ) : (
-          <MessageContent content={content ?? ''} format="markdown" />
-        )}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {!isLoading && !isError && content && (
+              <button type="button" onClick={() => { void copy() }} className="ga-btn-sm">
+                <CopyIcon copied={copied} size={12} />
+                <span>{copied ? '已复制' : '复制'}</span>
+              </button>
+            )}
+            <CloseIconButton label="关闭报告" variant="ghost" iconSize={16} onClick={onClose} className="text-ink-muted hover:text-ink" />
+          </div>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5">
+          {isLoading ? (
+            <div role="status" className="py-12 text-center text-sm text-ink-muted">正在读取报告…</div>
+          ) : isError ? (
+            <div role="alert" className="rounded-lg border border-status-danger-line bg-status-danger-soft p-4 text-sm text-status-danger space-y-3">
+              <p>报告加载失败：{errorMessage || '未知错误'}</p>
+              <button type="button" onClick={onRetry} className="ga-btn"><RefreshIcon size={13} /><span>重试</span></button>
+            </div>
+          ) : (
+            <MessageContent content={content ?? ''} format="markdown" />
+          )}
+        </div>
     </ModalOverlay>
   )
 }

@@ -37,13 +37,13 @@ import { getMyKeyShowUpload, setMyKeyShowUpload } from '@/utils/mykeySyncUi'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { queryKeys } from '@/queries/queryKeys'
 const SETTINGS_TABS = [
-  { id: 'general', label: '常规', description: '配置 GenericAgent 目录与 Python 执行环境。', icon: Settings2 },
-  { id: 'appearance', label: '外观与导航', description: '调整界面字号，以及侧栏入口的顺序与显示。', icon: Palette },
-  { id: 'chat', label: '对话与重试', description: '管理实时聊天与无人值守任务的自动重试策略。', icon: MessagesSquare },
-  { id: 'remote', label: '远程连接', description: '关联 Nova 账号，管理当前设备的远程连接。', icon: Globe },
-  { id: 'updates', label: '更新', description: '检查正式版本、下载更新并安全重启应用。', icon: Download },
-  { id: 'sync', label: '密钥同步', description: '管理 mykey 同步相关的界面选项。', icon: KeyRound },
-  { id: 'notifications', label: '通知', description: '管理桌面通知的开关与测试提醒。', icon: Bell },
+  { id: 'general', label: '常规', description: 'GenericAgent 目录与 Python 环境', icon: Settings2 },
+  { id: 'appearance', label: '外观与导航', description: '字号、字体与侧栏入口', icon: Palette },
+  { id: 'chat', label: '对话与重试', description: '实时会话与定时任务退避策略', icon: MessagesSquare },
+  { id: 'remote', label: '远程连接', description: 'Nova 账号与本机绑定', icon: Globe },
+  { id: 'updates', label: '更新', description: '版本检查与升级切换', icon: Download },
+  { id: 'sync', label: '密钥同步', description: 'mykey 云端上传入口开关', icon: KeyRound },
+  { id: 'notifications', label: '通知', description: '桌面消息窗提醒', icon: Bell },
 ] as const
 
 type SettingsTab = typeof SETTINGS_TABS[number]['id']
@@ -154,9 +154,9 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
     <PageShell
       title={inSetup ? '初始设置' : '设置'}
     >
-      <div className={inSetup ? 'p-4 sm:p-6 max-w-3xl mx-auto' : 'grid grid-cols-[5.5rem_minmax(0,1fr)] sm:grid-cols-[11rem_minmax(0,1fr)] items-start gap-3 sm:gap-6 p-3 sm:p-6 max-w-6xl mx-auto'}>
+      <div className={inSetup ? 'p-4 sm:p-5 max-w-3xl mx-auto' : 'grid grid-cols-[5.25rem_minmax(0,1fr)] sm:grid-cols-[10.5rem_minmax(0,1fr)] items-start gap-3 sm:gap-5 p-3 sm:p-5 max-w-6xl mx-auto'}>
         {!inSetup && (
-          <div role="tablist" aria-label="设置分类" aria-orientation="vertical" className="sticky top-3 sm:top-6 flex flex-col gap-1 rounded-xl border border-line bg-bg-card p-1.5">
+          <div role="tablist" aria-label="设置分类" aria-orientation="vertical" className="ga-paper-card sticky top-3 sm:top-5 flex flex-col gap-0.5 p-1.5">
             {SETTINGS_TABS.map(({ id, label, icon: Icon }, index) => (
               <button
                 key={id}
@@ -176,129 +176,129 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
                   setActiveTab(SETTINGS_TABS[next].id)
                   event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
                 }}
-                className={`flex flex-col sm:flex-row items-center gap-1.5 sm:gap-2.5 rounded-lg px-2 sm:px-3 py-3 text-xs sm:text-sm text-center sm:text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${activeTab === id ? 'bg-accent/10 text-accent font-medium' : 'text-ink-muted hover:bg-ink/5 hover:text-ink'}`}
+                className={`flex flex-col sm:flex-row items-center gap-1 sm:gap-2 rounded-lg px-2 sm:px-3 py-2 text-xs sm:text-sm text-center sm:text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${activeTab === id ? 'bg-accent/12 text-accent font-medium' : 'text-ink-muted hover:bg-bg-soft hover:text-ink'}`}
               >
-                <Icon size={17} className="shrink-0" aria-hidden="true" />
-                <span>{label}</span>
+                <Icon size={16} className="shrink-0" aria-hidden="true" />
+                <span className="truncate">{label}</span>
               </button>
             ))}
           </div>
         )}
-        <div className="min-w-0 space-y-5">
+        <div className="min-w-0 space-y-4">
           {!inSetup && (
-            <div>
+            <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 border-b border-line/65 pb-2.5">
               <h2 className="text-base font-semibold text-ink">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.label}</h2>
-              <p className="mt-1 text-xs leading-relaxed text-ink-faint">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.description}</p>
+              <p className="text-xs text-ink-faint">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.description}</p>
             </div>
           )}
-          <div id="settings-panel-general" role={inSetup ? undefined : 'tabpanel'} aria-labelledby={inSetup ? undefined : 'settings-tab-general'} tabIndex={inSetup ? undefined : 0} hidden={!inSetup && activeTab !== 'general'} className="space-y-5">
-        {/* current */}
-        <div className="rounded-xl border border-line bg-bg-card p-4">
-          <div className="text-xs text-ink-faint mb-1">当前 GenericAgent 路径</div>
-          <div className="font-mono text-sm break-all">
-            {setup?.ga_root
-              ? <span className="text-status-success">{setup.ga_root}</span>
-              : <span className="text-status-danger">尚未配置</span>}
-          </div>
-          <div className="text-xs text-ink-faint mt-2">
-            Admin 数据目录：<span className="font-mono break-all">{setup?.admin_data}</span>
-          </div>
-          <div className="text-xs text-ink-faint mt-2">
-            Python 执行环境：
-            <span className="font-mono text-ink break-all">
-              {setup?.resolved_python || '未找到，将回退当前进程'}
-            </span>
-            {setup?.resolved_python_source && (
-              <span className="ml-1 text-ink-faint">({setup.resolved_python_source})</span>
-            )}
-          </div>
-        </div>
-
-        {/* picker */}
-        <div className="rounded-xl border border-line bg-bg-card p-4">
-          <div className="text-sm font-semibold mb-3">选择目录与执行环境</div>
-          <div className="text-xs text-ink-faint mb-3">
-            必须包含 <code>agentmain.py</code> 与 <code>memory/</code>。
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <input
-              value={input}
-              onChange={(e) => { gaRootDirtyRef.current = true; setInput(e.target.value); setValidResult(null) }}
-              onBlur={(e) => validate(e.target.value)}
-              placeholder="/path/to/GenericAgent"
-              className="min-w-0 w-full sm:w-auto flex-auto bg-bg-soft border border-line rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"
-            />
-            {isTauriDesktop() && (
-              <button
-                type="button"
-                onClick={pickGaRoot}
-                disabled={picking || validating}
-                className="ga-btn"
-              ><FolderOpen className="h-3.5 w-3.5" aria-hidden="true" /><span>{picking ? '选择中…' : '浏览…'}</span></button>
-            )}
-            <button
-              type="button"
-              onClick={() => validate(input)}
-              disabled={validating}
-              className="ga-btn"
-            ><RefreshIcon spinning={validating} size={13} /><span>{validating ? '检测中…' : '检测'}</span></button>
-          </div>
-
-          {validResult && (
-            <div className={`mt-2 text-sm ${validResult.valid ? 'text-status-success' : 'text-status-danger'}`}>
-              {validResult.valid
-                ? `✓ 这是一个有效的 GenericAgent 目录（解析为 ${validResult.resolved}）`
-                : '✗ 该目录不是 GenericAgent 项目（缺少 agentmain.py 或 memory/）'}
+          <div id="settings-panel-general" role={inSetup ? undefined : 'tabpanel'} aria-labelledby={inSetup ? undefined : 'settings-tab-general'} tabIndex={inSetup ? undefined : 0} hidden={!inSetup && activeTab !== 'general'} className="space-y-4">
+            {/* current summary */}
+            <div className="ga-paper-card px-4 py-3 grid grid-cols-1 md:grid-cols-3 gap-3 divide-y md:divide-y-0 md:divide-x divide-line/60">
+              <div className="min-w-0">
+                <div className="text-[11px] text-ink-faint">GenericAgent 路径</div>
+                <div className="mt-0.5 font-mono text-xs truncate" title={setup?.ga_root || '尚未配置'}>
+                  {setup?.ga_root
+                    ? <span className="text-status-success font-medium">{setup.ga_root}</span>
+                    : <span className="text-status-danger font-medium">尚未配置</span>}
+                </div>
+              </div>
+              <div className="min-w-0 pt-2 md:pt-0 md:pl-3">
+                <div className="text-[11px] text-ink-faint">Admin 数据目录</div>
+                <div className="mt-0.5 font-mono text-xs text-ink truncate" title={setup?.admin_data || '—'}>{setup?.admin_data || '—'}</div>
+              </div>
+              <div className="min-w-0 pt-2 md:pt-0 md:pl-3">
+                <div className="text-[11px] text-ink-faint">当前 Python {setup?.resolved_python_source ? `(${setup.resolved_python_source})` : ''}</div>
+                <div className="mt-0.5 font-mono text-xs text-ink truncate" title={setup?.resolved_python || '回退当前进程'}>
+                  {setup?.resolved_python || '回退当前进程'}
+                </div>
+              </div>
             </div>
-          )}
 
-          <div className="mt-4">
-            <div className="text-xs text-ink-faint mb-1">Python 解释器（可选）</div>
-            <input
-              value={pythonInput}
-              onChange={(e) => { pythonDirtyRef.current = true; setPythonInput(e.target.value) }}
-              placeholder="/path/to/python；留空则自动使用 GA 虚拟环境或本机 Python"
-              className="w-full bg-bg-soft border border-line rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-accent"
-            />
-            <div className="text-xs text-ink-faint mt-1">
-              指定执行脚本所用的 Python 路径（留空则自动检测）。
+            {/* picker */}
+            <div className="ga-paper-card p-4 space-y-3.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="text-sm font-semibold text-ink">选择目录与执行环境</div>
+                <span className="text-[11px] text-ink-faint">需含 <code className="font-mono">agentmain.py</code> 与 <code className="font-mono">memory/</code></span>
+              </div>
+
+              <div>
+                <div className="text-xs text-ink-faint mb-1">GenericAgent 项目目录</div>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    value={input}
+                    onChange={(e) => { gaRootDirtyRef.current = true; setInput(e.target.value); setValidResult(null) }}
+                    onBlur={(e) => validate(e.target.value)}
+                    placeholder="/path/to/GenericAgent"
+                    className="min-w-0 w-full sm:w-auto flex-auto bg-bg-soft border border-line rounded-lg px-3 py-1.5 text-sm font-mono outline-none focus:border-accent"
+                  />
+                  {isTauriDesktop() && (
+                    <button
+                      type="button"
+                      onClick={pickGaRoot}
+                      disabled={picking || validating}
+                      className="ga-btn"
+                    ><FolderOpen className="h-3.5 w-3.5" aria-hidden="true" /><span>{picking ? '选择中…' : '浏览…'}</span></button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => validate(input)}
+                    disabled={validating}
+                    className="ga-btn"
+                  ><RefreshIcon spinning={validating} size={13} /><span>{validating ? '检测中…' : '检测'}</span></button>
+                </div>
+                {validResult && (
+                  <div className={`mt-1.5 text-xs ${validResult.valid ? 'text-status-success' : 'text-status-danger'}`}>
+                    {validResult.valid
+                      ? `✓ 有效目录（${validResult.resolved}）`
+                      : '✗ 缺少 agentmain.py 或 memory/'}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="text-xs text-ink-faint mb-1">Python 解释器（可选，留空自动检测）</div>
+                <input
+                  value={pythonInput}
+                  onChange={(e) => { pythonDirtyRef.current = true; setPythonInput(e.target.value) }}
+                  placeholder="/path/to/python"
+                  className="w-full bg-bg-soft border border-line rounded-lg px-3 py-1.5 text-sm font-mono outline-none focus:border-accent"
+                />
+              </div>
+
+              <div className="pt-1 flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={save}
+                  disabled={saving || !input.trim()}
+                  className="ga-btn-primary px-4"
+                ><Save className="h-3.5 w-3.5" aria-hidden="true" /><span>{saving ? '保存中…' : '保存配置'}</span></button>
+                {isTauriDesktop() && saveMsg && !saving && (
+                  <button
+                    type="button"
+                    onClick={restartBackend}
+                    disabled={restarting}
+                    className="ga-btn border-accent/70 text-accent hover:bg-accent/10 hover:text-accent"
+                  ><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /><span>{restarting ? '重启中…' : '重启后端'}</span></button>
+                )}
+                {saveMsg && <span className="text-xs text-status-success whitespace-pre-line">{saveMsg}</span>}
+                {saveErr && <span className="text-xs text-status-danger whitespace-pre-line">{saveErr}</span>}
+              </div>
             </div>
-          </div>
 
-          <div className="mt-4 flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={save}
-              disabled={saving || !input.trim()}
-              className="ga-btn-primary px-4"
-            ><Save className="h-3.5 w-3.5" aria-hidden="true" /><span>{saving ? '保存中…' : '保存配置'}</span></button>
-            {isTauriDesktop() && saveMsg && !saving && (
-              <button
-                type="button"
-                onClick={restartBackend}
-                disabled={restarting}
-                className="ga-btn border-accent/70 text-accent hover:bg-accent/10 hover:text-accent"
-              ><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /><span>{restarting ? '重启中…' : '重启后端'}</span></button>
+            {inSetup && setup?.configured && (
+              <div className="rounded-xl border border-status-warning-line bg-status-warning-soft px-4 py-3 text-xs text-status-warning">
+                {isTauriDesktop()
+                  ? '✓ 配置已保存，点击上方「重启后端」即可进入。'
+                  : '✓ 配置已保存，请重启后端以进入正常模式。'}
+              </div>
             )}
-            {saveMsg && <span className="text-sm text-status-success whitespace-pre-line">{saveMsg}</span>}
-            {saveErr && <span className="text-sm text-status-danger whitespace-pre-line">{saveErr}</span>}
-          </div>
-        </div>
-
-        {inSetup && setup?.configured && (
-          <div className="rounded-xl border border-status-warning-line bg-status-warning-soft p-4 text-sm text-status-warning">
-            {isTauriDesktop()
-              ? '✓ 配置已保存。点击上方「重启后端」即可进入正常模式。'
-              : '✓ 配置已保存。请重启后端（Ctrl+C 后重新执行 python -m server.run）以进入正常模式。'}
-          </div>
-        )}
-
           </div>
           {!inSetup && <>
-            <div id="settings-panel-appearance" role="tabpanel" aria-labelledby="settings-tab-appearance" tabIndex={0} hidden={activeTab !== 'appearance'} className="space-y-5">
-              <ChatAppearancePanel />
-              <FontAppearancePanel />
+            <div id="settings-panel-appearance" role="tabpanel" aria-labelledby="settings-tab-appearance" tabIndex={0} hidden={activeTab !== 'appearance'} className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(18.5rem,0.85fr)] gap-4 items-start">
+              <div className="space-y-4 min-w-0">
+                <ChatAppearancePanel />
+                <FontAppearancePanel />
+              </div>
               <NavManagementPanel />
             </div>
             <div id="settings-panel-chat" role="tabpanel" aria-labelledby="settings-tab-chat" tabIndex={0} hidden={activeTab !== 'chat'}>
@@ -341,31 +341,33 @@ function NavManagementPanel() {
   }
 
   return (
-    <div className="bg-bg-card border border-line rounded-xl p-4">
-      <div className="flex items-center justify-between gap-3 mb-1">
-        <div className="font-medium">导航栏</div>
+    <div className="ga-paper-card p-4">
+      <div className="flex items-center justify-between gap-2 mb-2.5">
+        <div>
+          <div className="text-sm font-semibold text-ink">导航栏</div>
+          <div className="text-[11px] text-ink-faint">勾选显示与排序（设置入口常驻）</div>
+        </div>
         <button
           type="button"
           onClick={() => update(defaultNavPreferences())}
-          className="ga-btn-sm"
+          className="ga-btn-sm shrink-0"
         ><RotateCcw className="h-3 w-3" aria-hidden="true" /><span>恢复默认</span></button>
       </div>
-      <div className="text-xs text-ink-faint mb-3">勾选要显示的条目，并用上下按钮调整顺序；设置入口始终保留。</div>
-      <div className="space-y-1">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-1.5">
         {preferences.map((preference, index) => {
           const item = NAV_ITEMS.find((candidate) => candidate.id === preference.id)
           if (!item) return null
           return (
-            <div key={item.id} className="flex items-center gap-2 rounded-lg border border-line/60 px-2.5 py-2">
+            <div key={item.id} className="flex items-center gap-2 rounded-lg border border-line/65 bg-bg-soft/45 px-2.5 py-1.5">
               <input
                 type="checkbox"
                 checked={preference.visible}
                 onChange={(event) => update(preferences.map((entry, i) => i === index ? { ...entry, visible: event.target.checked } : entry))}
                 aria-label={`显示${item.label}`}
               />
-              <span className="flex-1 text-sm text-ink">{item.label}</span>
-              <button type="button" disabled={index === 0} onClick={() => move(index, -1)} className="ga-btn-icon-sm" aria-label={`上移${item.label}`} title={`上移${item.label}`}><ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /></button>
-              <button type="button" disabled={index === preferences.length - 1} onClick={() => move(index, 1)} className="ga-btn-icon-sm" aria-label={`下移${item.label}`} title={`下移${item.label}`}><ArrowDown className="h-3.5 w-3.5" aria-hidden="true" /></button>
+              <span className="flex-1 text-xs font-medium text-ink truncate">{item.label}</span>
+              <button type="button" disabled={index === 0} onClick={() => move(index, -1)} className="ga-btn-icon-sm" aria-label={`上移${item.label}`} title={`上移${item.label}`}><ArrowUp className="h-3 w-3" aria-hidden="true" /></button>
+              <button type="button" disabled={index === preferences.length - 1} onClick={() => move(index, 1)} className="ga-btn-icon-sm" aria-label={`下移${item.label}`} title={`下移${item.label}`}><ArrowDown className="h-3 w-3" aria-hidden="true" /></button>
             </div>
           )
         })}
@@ -402,17 +404,23 @@ function MyKeySyncPanel() {
   }
 
   return (
-    <div className="bg-bg-card border border-line rounded-xl p-4">
-      <div className="font-medium mb-1">mykey 同步</div>
-      <div className="text-xs text-ink-faint mb-3">
-        LLM 管理页默认只提供「下载 mykey」。「上传 mykey」会用本机内容覆盖同步服务器版本、
-        影响其他设备，默认隐藏；在此手动确认后才显示。
+    <div className="ga-paper-card p-4 flex flex-wrap items-center justify-between gap-4">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <div className="text-sm font-semibold text-ink">mykey 同步</div>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium border ${showUpload ? 'border-status-warning-line bg-status-warning-soft text-status-warning' : 'border-line/75 bg-bg-soft text-ink-faint'}`}>
+            {showUpload ? '已显示上传入口' : '默认仅下载'}
+          </span>
+        </div>
+        <div className="text-xs text-ink-faint mt-1">
+          上传会以本机配置覆盖云端并影响其他设备，按需手动开启。
+        </div>
       </div>
       <button
         type="button"
         onClick={toggle}
         aria-pressed={showUpload}
-        className={showUpload ? 'ga-btn-primary' : 'ga-btn'}
+        className={showUpload ? 'ga-btn-primary shrink-0' : 'ga-btn shrink-0'}
       >
         {showUpload ? <Eye className="h-3.5 w-3.5" aria-hidden="true" /> : <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />}
         <span>{showUpload ? '上传按钮已显示 · 点击隐藏' : '显示上传按钮…'}</span>
@@ -439,61 +447,72 @@ function ChatAppearancePanel() {
   const updateTitleScale = (value: number) => setTitleScale(setRailTitleScale(value))
 
   return (
-    <div className="bg-bg-card border border-line rounded-xl p-4">
-      <div className="font-medium mb-1">会话显示</div>
-      <div className="text-xs text-ink-faint mb-3">以桌面当前字号为默认基准（100%），按百分比缩小或放大，仅影响当前设备。</div>
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-sm text-ink-faint">会话字体</span>
-        <input
-          type="range"
-          min={CHAT_FONT_SCALE_MIN}
-          max={CHAT_FONT_SCALE_MAX}
-          step={CHAT_FONT_SCALE_STEP}
-          value={scale}
-          onChange={(e) => updateScale(Number(e.target.value))}
-          aria-label="会话字体缩放"
-          className="w-52 accent-accent"
-        />
-        <output className="w-12 text-sm font-medium tabular-nums text-center">{Math.round(scale)}%</output>
-        <button
-          type="button"
-          onClick={() => updateScale(CHAT_FONT_SCALE_DEFAULT)}
-          disabled={scale === CHAT_FONT_SCALE_DEFAULT}
-          className="ga-btn-sm"
-        >
-          <RotateCcw className="h-3 w-3" aria-hidden="true" />
-          <span>恢复默认</span>
-        </button>
+    <div className="ga-paper-card p-4 space-y-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="text-sm font-semibold text-ink">会话显示</div>
+        <span className="text-[11px] text-ink-faint">仅作用于当前设备</span>
       </div>
-      <div className="mt-3 rounded-lg border border-line bg-bg-soft px-3 py-2 text-ink" style={{ fontSize: `${chatFontPercent(scale)}%` }}>
-        字体大小预览：GA 会话输出示例
-      </div>
-      <div className="mt-4 flex items-center gap-3 flex-wrap">
-        <span className="text-sm text-ink-faint">栏目标题</span>
-        <input
-          type="range"
-          min={RAIL_TITLE_SCALE_MIN}
-          max={RAIL_TITLE_SCALE_MAX}
-          step={RAIL_TITLE_SCALE_STEP}
-          value={titleScale}
-          onChange={(e) => updateTitleScale(Number(e.target.value))}
-          aria-label="会话管理栏标题字号缩放"
-          className="w-52 accent-accent"
-        />
-        <output className="w-12 text-sm font-medium tabular-nums text-center">{Math.round(titleScale)}%</output>
-        <button
-          type="button"
-          onClick={() => updateTitleScale(RAIL_TITLE_SCALE_DEFAULT)}
-          disabled={titleScale === RAIL_TITLE_SCALE_DEFAULT}
-          className="ga-btn-sm"
-        >
-          <RotateCcw className="h-3 w-3" aria-hidden="true" />
-          <span>恢复默认</span>
-        </button>
-      </div>
-      <div className="mt-3 rounded-lg border border-line bg-bg-soft px-3 py-2">
-        <div className="truncate font-medium text-ink" style={{ fontSize: `${railTitlePercent(titleScale)}%` }}>
-          标题字号预览：会话管理栏条目标题
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="rounded-lg border border-line/65 bg-bg-soft/55 p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-ink">会话字体</span>
+            <div className="flex items-center gap-1.5">
+              <output className="text-xs font-mono font-medium tabular-nums text-accent">{Math.round(scale)}%</output>
+              <button
+                type="button"
+                onClick={() => updateScale(CHAT_FONT_SCALE_DEFAULT)}
+                disabled={scale === CHAT_FONT_SCALE_DEFAULT}
+                className="ga-btn-sm"
+              >
+                <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                <span>恢复默认</span>
+              </button>
+            </div>
+          </div>
+          <input
+            type="range"
+            min={CHAT_FONT_SCALE_MIN}
+            max={CHAT_FONT_SCALE_MAX}
+            step={CHAT_FONT_SCALE_STEP}
+            value={scale}
+            onChange={(e) => updateScale(Number(e.target.value))}
+            aria-label="会话字体缩放"
+            className="w-full accent-accent"
+          />
+          <div className="truncate text-ink/90" style={{ fontSize: `${chatFontPercent(scale)}%` }}>
+            预览：GA 会话输出示例
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-line/65 bg-bg-soft/55 p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-ink">栏目标题</span>
+            <div className="flex items-center gap-1.5">
+              <output className="text-xs font-mono font-medium tabular-nums text-accent">{Math.round(titleScale)}%</output>
+              <button
+                type="button"
+                onClick={() => updateTitleScale(RAIL_TITLE_SCALE_DEFAULT)}
+                disabled={titleScale === RAIL_TITLE_SCALE_DEFAULT}
+                className="ga-btn-sm"
+              >
+                <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                <span>恢复默认</span>
+              </button>
+            </div>
+          </div>
+          <input
+            type="range"
+            min={RAIL_TITLE_SCALE_MIN}
+            max={RAIL_TITLE_SCALE_MAX}
+            step={RAIL_TITLE_SCALE_STEP}
+            value={titleScale}
+            onChange={(e) => updateTitleScale(Number(e.target.value))}
+            aria-label="会话管理栏标题字号缩放"
+            className="w-full accent-accent"
+          />
+          <div className="truncate font-medium text-ink/90" style={{ fontSize: `${railTitlePercent(titleScale)}%` }}>
+            预览：会话管理栏标题
+          </div>
         </div>
       </div>
     </div>
@@ -544,88 +563,90 @@ function ChatRetryPanel() {
   }
 
   return (
-    <div className="rounded-xl border border-line bg-bg-card p-4">
-      <div className="text-sm font-semibold mb-1">实时聊天自动重试</div>
-      <div className="text-xs text-ink-faint mb-3">
-        遇到临时网络异常时自动重试当前请求。
+    <div className="ga-paper-card overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/70 bg-bg-soft/65 px-4 py-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="text-sm font-semibold text-ink">实时聊天自动重试</div>
+          <label className="inline-flex items-center gap-1.5 rounded-full border border-line/80 bg-bg-card px-2.5 py-0.5 text-xs font-medium text-ink cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!cfg.enabled}
+              onChange={(e) => updateCfg({ enabled: e.target.checked })}
+              disabled={isLoading || saving}
+            />
+            <span>{cfg.enabled ? '已开启' : '已关闭'}</span>
+          </label>
+        </div>
+        <div className="flex items-center gap-2">
+          {msg && <span className={`text-xs ${msg.startsWith('保存失败') ? 'text-status-danger' : 'text-status-success'}`}>{msg}</span>}
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving || isLoading}
+            className="ga-btn-primary"
+          >
+            <Save className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>{saving ? '保存中…' : '保存'}</span>
+          </button>
+        </div>
       </div>
 
-      <div className="flex items-center gap-4 flex-wrap">
-        <label className="inline-flex items-center gap-2 text-sm text-ink">
-          <input
-            type="checkbox"
-            checked={!!cfg.enabled}
-            onChange={(e) => updateCfg({ enabled: e.target.checked })}
-            disabled={isLoading || saving}
-          />
-          <span>{cfg.enabled ? '已开启' : '已关闭'}</span>
-        </label>
+      <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="rounded-lg border border-line/65 bg-bg-soft/45 p-3.5 space-y-2.5">
+          <div className="text-xs font-semibold text-ink">实时会话</div>
+          <div className="grid grid-cols-2 gap-2.5">
+            <label className="block text-xs text-ink-faint" title="普通对话的最大自动重试次数">
+              <span>最大次数</span>
+              <input
+                type="number"
+                min={0}
+                max={5}
+                value={cfg.max_attempts}
+                onChange={(e) => updateCfg({ max_attempts: Number(e.target.value) })}
+                disabled={isLoading || saving || !cfg.enabled}
+                className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50"
+              />
+            </label>
+            <label className="block text-xs text-ink-faint">
+              <span>基础间隔（秒）</span>
+              <input type="number" min={0} max={600} step="1" value={cfg.backoff_base_seconds ?? 2} onChange={(e) => updateCfg({ backoff_base_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+            </label>
+            <label className="block text-xs text-ink-faint">
+              <span>退避倍率</span>
+              <input type="number" min={1} max={10} step="0.5" value={cfg.backoff_factor ?? 2} onChange={(e) => updateCfg({ backoff_factor: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+            </label>
+            <label className="block text-xs text-ink-faint">
+              <span>最长等待（秒）</span>
+              <input type="number" min={0} max={600} step="1" value={cfg.backoff_max_seconds ?? 60} onChange={(e) => updateCfg({ backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+            </label>
+          </div>
+        </div>
 
-        <label className="inline-flex items-center gap-2 text-sm text-ink" title="普通对话的最大自动重试次数">
-          <span className="text-ink-faint">最大重试次数</span>
-          <input
-            type="number"
-            min={0}
-            max={5}
-            value={cfg.max_attempts}
-            onChange={(e) => updateCfg({ max_attempts: Number(e.target.value) })}
-            disabled={isLoading || saving || !cfg.enabled}
-            className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50"
-          />
-        </label>
-
-        <label className="inline-flex items-center gap-2 text-sm text-ink" title="普通对话的最大自动重试次数">
-          <span className="text-ink-faint">定时任务最大重试次数</span>
-          <input
-            type="number"
-            min={0}
-            max={10}
-            value={cfg.scheduled_max_attempts ?? 6}
-            onChange={(e) => updateCfg({ scheduled_max_attempts: Number(e.target.value) })}
-            disabled={isLoading || saving || !cfg.enabled}
-            className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50"
-          />
-        </label>
-
-        <label className="inline-flex items-center gap-2 text-sm text-ink">
-          重试基础间隔（秒）
-          <input type="number" min={0} max={600} step="1" value={cfg.backoff_base_seconds ?? 2} onChange={(e) => updateCfg({ backoff_base_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
-        </label>
-
-        <label className="inline-flex items-center gap-2 text-sm text-ink">
-          退避倍率
-          <input type="number" min={1} max={10} step="0.5" value={cfg.backoff_factor ?? 2} onChange={(e) => updateCfg({ backoff_factor: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
-        </label>
-
-        <label className="inline-flex items-center gap-2 text-sm text-ink">
-          单次最长等待（秒）
-          <input type="number" min={0} max={600} step="1" value={cfg.backoff_max_seconds ?? 60} onChange={(e) => updateCfg({ backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
-        </label>
-
-        <label className="inline-flex items-center gap-2 text-sm text-ink" title="无人值守任务的起始重试间隔">
-          定时基础间隔（秒）
-          <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_base_seconds ?? 5} onChange={(e) => updateCfg({ scheduled_backoff_base_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
-        </label>
-
-        <label className="inline-flex items-center gap-2 text-sm text-ink" title="无人值守任务的单次最长等待，默认 10 分钟">
-          定时单次最长等待（秒）
-          <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_max_seconds ?? 600} onChange={(e) => updateCfg({ scheduled_backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="w-20 bg-bg-soft border border-line rounded-lg px-2 py-1 text-sm outline-none focus:border-accent disabled:opacity-50" />
-        </label>
-
-        <button
-          type="button"
-          onClick={save}
-          disabled={saving || isLoading}
-          className="ga-btn-primary"
-        >
-          <Save className="h-3.5 w-3.5" aria-hidden="true" />
-          <span>{saving ? '保存中…' : '保存'}</span>
-        </button>
-
-        {msg && <span className={`text-xs ${msg.startsWith('保存失败') ? 'text-status-danger' : 'text-status-success'}`}>{msg}</span>}
-      </div>
-      <div className="text-[11px] text-ink-faint mt-2">
-        达到重试上限后停止并保留提示。
+        <div className="rounded-lg border border-line/65 bg-bg-soft/45 p-3.5 space-y-2.5">
+          <div className="text-xs font-semibold text-ink">定时 / 无人值守任务</div>
+          <div className="grid grid-cols-2 gap-2.5">
+            <label className="block text-xs text-ink-faint" title="无人值守任务的最大自动重试次数">
+              <span>最大次数</span>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                value={cfg.scheduled_max_attempts ?? 6}
+                onChange={(e) => updateCfg({ scheduled_max_attempts: Number(e.target.value) })}
+                disabled={isLoading || saving || !cfg.enabled}
+                className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50"
+              />
+            </label>
+            <label className="block text-xs text-ink-faint" title="无人值守任务的起始重试间隔">
+              <span>基础间隔（秒）</span>
+              <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_base_seconds ?? 5} onChange={(e) => updateCfg({ scheduled_backoff_base_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+            </label>
+            <label className="block text-xs text-ink-faint col-span-2 sm:col-span-1" title="无人值守任务的单次最长等待，默认 10 分钟">
+              <span>最长等待（秒）</span>
+              <input type="number" min={0} max={600} step="1" value={cfg.scheduled_backoff_max_seconds ?? 600} onChange={(e) => updateCfg({ scheduled_backoff_max_seconds: Number(e.target.value) })} disabled={isLoading || saving || !cfg.enabled} className="mt-1 w-full bg-bg-card border border-line rounded-lg px-2.5 py-1.5 text-sm text-ink outline-none focus:border-accent disabled:opacity-50" />
+            </label>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -664,39 +685,43 @@ function NotifyPanel() {
   const unsupported = backendName.startsWith('unsupported')
 
   return (
-    <div className="rounded-xl border border-line bg-bg-card p-4">
-      <div className="text-sm font-semibold mb-1">桌面通知</div>
-      <div className="text-xs text-ink-faint mb-3">
-        会话完成、有结果或需要互动时显示主题提醒，不展示具体输出。仅在窗口失焦/最小化时触发，不锁住主窗口。
-      </div>
+    <div className="ga-paper-card p-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-ink">桌面通知</div>
+            {backendName && <span className="rounded-full border border-line/75 bg-bg-soft px-2 py-0.5 text-[10px] text-ink-faint">{backendName}</span>}
+          </div>
+          <div className="text-xs text-ink-faint mt-0.5">
+            窗口失焦或最小化时以主题消息窗提醒，不展示输出细节。
+          </div>
+        </div>
 
-      <div className="flex items-center gap-3 flex-wrap">
-        <button
-          type="button"
-          onClick={toggle}
-          disabled={unsupported}
-          aria-pressed={optedIn}
-          className={optedIn ? 'ga-btn-primary' : 'ga-btn'}
-        >
-          {optedIn ? <Bell className="h-3.5 w-3.5" aria-hidden="true" /> : <BellOff className="h-3.5 w-3.5" aria-hidden="true" />}
-          <span>{optedIn ? '已开启 · 点击关闭' : '开启桌面通知'}</span>
-        </button>
-        {optedIn && !unsupported && (
-          <button type="button" onClick={test} className="ga-btn-sm">
-            <SendHorizontal className="h-3 w-3" aria-hidden="true" />
-            <span>发一条测试</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={toggle}
+            disabled={unsupported}
+            aria-pressed={optedIn}
+            className={optedIn ? 'ga-btn-primary' : 'ga-btn'}
+          >
+            {optedIn ? <Bell className="h-3.5 w-3.5" aria-hidden="true" /> : <BellOff className="h-3.5 w-3.5" aria-hidden="true" />}
+            <span>{optedIn ? '已开启 · 点击关闭' : '开启桌面通知'}</span>
           </button>
-        )}
-        {backendName && (
-          <span className="text-xs text-ink-faint">通道：{backendName}</span>
-        )}
+          {optedIn && !unsupported && (
+            <button type="button" onClick={test} className="ga-btn-sm">
+              <SendHorizontal className="h-3 w-3" aria-hidden="true" />
+              <span>发一条测试</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      {testing && <div className="mt-2 text-xs text-ink-muted">{testing}</div>}
+      {testing && <div className="text-xs text-ink-muted">{testing}</div>}
 
       {unsupported && (
-        <div className="mt-2 text-xs text-status-warning">
-          当前系统暂不支持（{backendName}）。仅 macOS / Windows / Linux 已实现。
+        <div className="text-xs text-status-warning">
+          当前系统暂不支持（{backendName}）。仅支持 macOS / Windows / Linux。
         </div>
       )}
     </div>
