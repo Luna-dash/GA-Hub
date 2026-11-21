@@ -56,6 +56,7 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
         app.router.add_get('/api/sessions/s1/messages', messages)
         agy_session = {'id': 'a1', 'title': 'Agy', 'project': 'test'}
         agy_runs = []
+        approval = {"id": "a" * 32, "title": "Edit note", "details": "note.txt"}
         daemon = {'state': 'stopped', 'managed': None, 'active_count': None}
         daemon_calls = []
 
@@ -93,8 +94,22 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((body['model'], body['effort']), ('model-1', 'high'))
                 self.assertEqual(body['attachments'], [{'path': str(report), 'name': 'note.txt',
                                                         'size': 4, 'source': 'managed_upload'}])
-                run = {'id': 'run-1', 'status': 'success', 'prompt': body['prompt'], 'answer': 'done'}
+                self.assertEqual(body['mode'], 'accept-edits')
+                run = {'id': 'run-1', 'status': 'running', 'prompt': body['prompt'],
+                       'mode': body['mode'], 'approval': approval}
                 agy_runs.append(run)
+                return web.json_response(run)
+            if resource == 'sessions/a1/runs/run-1':
+                return web.json_response(agy_runs[0])
+            if resource == 'sessions/a1/runs/run-1/approval':
+                self.assertEqual(r.method, 'POST')
+                self.assertEqual(r.headers['Origin'], str(backend.make_url('/')).rstrip('/'))
+                self.assertEqual(r.headers['X-GA-Hub-Action'], 'approve-agy')
+                self.assertEqual(await r.json(), {'approval_id': approval['id'], 'decision': 'reject'})
+                run = agy_runs[0]
+                if run.pop('approval', None) is None:
+                    return web.json_response({'detail': 'stale'}, status=409)
+                run.update(status='success', answer='done')
                 return web.json_response(run)
             if resource == 'sessions/a1/runs':
                 return web.json_response(agy_runs)
@@ -183,11 +198,24 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                     r = await client.post(agy + '/sessions/a1/upload', data=form, headers=auth)
                     self.assertEqual(r.status, 200, await r.text())
                     body = {'text': 'Summarize', 'request_id': str(uuid.uuid4()),
-                            'upload_ids': [(await r.json())['upload_id']], 'model': 'model-1', 'effort': 'high'}
+                            'upload_ids': [(await r.json())['upload_id']], 'model': 'model-1', 'effort': 'high',
+                            'mode': 'accept-edits'}
                     r = await client.post(agy + '/sessions/other/runs', json=body, headers=auth)
                     self.assertEqual(r.status, 400, await r.text())
                     r = await client.post(agy + '/sessions/a1/runs', json=body, headers=auth)
                     self.assertEqual(r.status, 200, await r.text())
+                    run_path = agy + '/sessions/a1/runs/run-1'
+                    r = await client.get(run_path, headers=auth)
+                    self.assertEqual((await r.json())['approval'], approval)
+                    r = await client.get(agy + '/sessions/a1/runs', headers=auth)
+                    self.assertNotIn('approval', (await r.json())[0])
+                    decision = {'approval_id': approval['id'], 'decision': 'reject'}
+                    r = await client.post(run_path + '/approval', json={**decision, 'decision': 'allow_always'}, headers=auth)
+                    self.assertEqual(r.status, 400, await r.text())
+                    r = await client.post(run_path + '/approval', json=decision, headers=auth)
+                    self.assertEqual((await r.json())['status'], 'success')
+                    r = await client.post(run_path + '/approval', json=decision, headers=auth)
+                    self.assertEqual(r.status, 409, await r.text())
                     history = '/api/agy/sessions/a1/runs?view=compact&limit=40'
                     for path in ('/api/agy/sessions', history):
                         r = await client.get('/d/' + device + path, headers=auth)

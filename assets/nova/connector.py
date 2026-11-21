@@ -145,19 +145,23 @@ class LocalGateway(gateway.Gateway):
                 await self.anti_json('DELETE', path)
                 return web.Response(status=204)
             raise web.HTTPForbidden()
-        match = re.fullmatch(r'/sessions/([A-Za-z0-9_-]{1,128})/runs(?:/([A-Za-z0-9_-]{1,128})(/events|/cancel)?)?', path)
+        match = re.fullmatch(r'/sessions/([A-Za-z0-9_-]{1,128})/runs(?:/([A-Za-z0-9_-]{1,128})(/events|/cancel|/approval)?)?', path)
         if not match:
             raise web.HTTPForbidden()
         sid, rid, action = match.groups()
         payload = None
         if method == 'POST' and not rid:
-            body = await self.agy_body(request, {'text', 'request_id'}, {'upload_ids', 'model', 'effort'})
+            body = await self.agy_body(request, {'text', 'request_id'}, {'upload_ids', 'model', 'effort', 'mode'})
             text, ids = body['text'], body.get('upload_ids', [])
             if not isinstance(ids, list) or len(ids) > 8 or any(not isinstance(x, str) for x in ids) or len(set(ids)) != len(ids):
                 raise web.HTTPBadRequest(text='附件列表无效')
             if not isinstance(text, str) or len(text) > 6000 or not (text.strip() or ids):
                 raise web.HTTPBadRequest(text='请输入指令（最多 6000 字）或添加附件')
             payload = {'prompt': text, 'operation': body['request_id']}
+            if 'mode' in body:
+                if body['mode'] not in ('plan', 'accept-edits'):
+                    raise web.HTTPBadRequest(text='Agy 模式无效')
+                payload['mode'] = body['mode']
             if 'model' in body:
                 model = body['model']
                 if not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,127}', model):
@@ -177,12 +181,17 @@ class LocalGateway(gateway.Gateway):
                         raise web.HTTPBadRequest(text='附件已过期或不属于此会话，请重新上传')
                     refs.append(entry[2])
                 payload['attachments'] = refs
-        elif not (method == 'GET' and action != '/cancel' or method == 'POST' and action == '/cancel'):
+        elif method == 'POST' and action == '/approval':
+            payload = await self.agy_body(request, {'approval_id', 'decision'})
+            if (not isinstance(payload['approval_id'], str) or not re.fullmatch(r'[a-f0-9]{32}', payload['approval_id'])
+                    or payload['decision'] not in ('allow', 'reject')):
+                raise web.HTTPBadRequest(text='审批参数无效')
+        elif not (method == 'GET' and action not in ('/cancel', '/approval') or method == 'POST' and action == '/cancel'):
             raise web.HTTPForbidden()
         upstream = path + '?' + request.query_string if event_query else path
-        data = await self.anti_json(method, upstream, payload)
+        data = await self.anti_json(method, upstream, payload, **({"action": "approve-agy"} if action == "/approval" else {}))
         keys = (('seq', 'type', 'text') if action == '/events'
-                else ('id', 'status', 'prompt', 'answer', 'error', 'created_at'))
+                else ('id', 'status', 'prompt', 'answer', 'error', 'created_at', 'mode') + (('approval',) if rid else ()))
         public = lambda row: {k: row[k] for k in keys if k in row}
         if compact:
             offset = max(0, len(data) - 40)
