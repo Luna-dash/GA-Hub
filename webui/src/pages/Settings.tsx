@@ -4,7 +4,7 @@
 // In normal mode, it's reachable at /settings via the sidebar.
 
 import { useEffect, useRef, useState } from 'react'
-import { Bell, Download, Globe, KeyRound, MessagesSquare, Palette, Settings2 } from 'lucide-react'
+import { ALargeSmall, Bell, Download, Globe, KeyRound, MessagesSquare, PanelLeft, Settings2, Type } from 'lucide-react'
 import { ArrowDown, ArrowUp, BellOff, Eye, EyeOff, FolderOpen, RefreshIcon, RotateCcw, Save, SendHorizontal } from '@/components/ActionIcons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
@@ -37,13 +37,15 @@ import { getMyKeyShowUpload, setMyKeyShowUpload } from '@/utils/mykeySyncUi'
 import { errorMessageFromError } from '@/utils/sessionUi'
 import { queryKeys } from '@/queries/queryKeys'
 const SETTINGS_TABS = [
-  { id: 'general', label: '常规', description: 'GenericAgent 目录与 Python 环境', icon: Settings2 },
-  { id: 'appearance', label: '外观与导航', description: '字号、字体与侧栏入口', icon: Palette },
-  { id: 'chat', label: '对话与重试', description: '实时会话与定时任务退避策略', icon: MessagesSquare },
-  { id: 'remote', label: '远程连接', description: 'Nova 账号与本机绑定', icon: Globe },
-  { id: 'updates', label: '更新', description: '版本检查与升级切换', icon: Download },
-  { id: 'sync', label: '密钥同步', description: 'mykey 云端上传入口开关', icon: KeyRound },
-  { id: 'notifications', label: '通知', description: '桌面消息窗提醒', icon: Bell },
+  { id: 'general', label: '目录与环境', description: 'GenericAgent 项目目录与 Python 执行环境', icon: Settings2 },
+  { id: 'display', label: '字号缩放', description: '调整会话正文与侧栏标题的显示比例', icon: ALargeSmall },
+  { id: 'fonts', label: '字体方案', description: '管理字体包、本地字体导入与加粗表现', icon: Type },
+  { id: 'navigation', label: '侧栏导航', description: '勾选要显示的页面入口并调整排序', icon: PanelLeft },
+  { id: 'chat', label: '自动重试', description: '配置实时会话与定时任务的网络异常重试策略', icon: MessagesSquare },
+  { id: 'remote', label: '远程连接', description: '关联 Nova 账号与查看本机设备码', icon: Globe },
+  { id: 'updates', label: '程序更新', description: '检查版本、校验安装包并安全切换升级', icon: Download },
+  { id: 'sync', label: '密钥同步', description: '控制 LLM 管理页中上传 mykey 的显示开关', icon: KeyRound },
+  { id: 'notifications', label: '桌面通知', description: '管理后台完成或需要互动时的桌面消息提醒', icon: Bell },
 ] as const
 
 type SettingsTab = typeof SETTINGS_TABS[number]['id']
@@ -154,9 +156,9 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
     <PageShell
       title={inSetup ? '初始设置' : '设置'}
     >
-      <div className={inSetup ? 'p-4 sm:p-5 max-w-3xl mx-auto' : 'grid grid-cols-[5.25rem_minmax(0,1fr)] sm:grid-cols-[10.5rem_minmax(0,1fr)] items-start gap-3 sm:gap-5 p-3 sm:p-5 max-w-6xl mx-auto'}>
+      <div className={inSetup ? 'p-4 sm:p-5 max-w-3xl mx-auto' : 'grid grid-cols-[5.5rem_minmax(0,1fr)] sm:grid-cols-[11rem_minmax(0,1fr)] items-start gap-4 sm:gap-6 p-4 sm:p-5 max-w-5xl mx-auto'}>
         {!inSetup && (
-          <div role="tablist" aria-label="设置分类" aria-orientation="vertical" className="ga-paper-card sticky top-3 sm:top-5 flex flex-col gap-0.5 p-1.5">
+          <div role="tablist" aria-label="设置分类" aria-orientation="vertical" className="ga-paper-card sticky top-4 flex flex-col gap-0.5 p-1.5">
             {SETTINGS_TABS.map(({ id, label, icon: Icon }, index) => (
               <button
                 key={id}
@@ -176,7 +178,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
                   setActiveTab(SETTINGS_TABS[next].id)
                   event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
                 }}
-                className={`flex flex-col sm:flex-row items-center gap-1 sm:gap-2 rounded-lg px-2 sm:px-3 py-2 text-xs sm:text-sm text-center sm:text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${activeTab === id ? 'bg-accent/12 text-accent font-medium' : 'text-ink-muted hover:bg-bg-soft hover:text-ink'}`}
+                className={`flex flex-col sm:flex-row items-center gap-1 sm:gap-2.5 rounded-lg px-2 sm:px-3 py-2 text-xs sm:text-sm text-center sm:text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${activeTab === id ? 'bg-accent/12 text-accent font-medium' : 'text-ink-muted hover:bg-bg-soft hover:text-ink'}`}
               >
                 <Icon size={16} className="shrink-0" aria-hidden="true" />
                 <span className="truncate">{label}</span>
@@ -186,7 +188,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
         )}
         <div className="min-w-0 space-y-4">
           {!inSetup && (
-            <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 border-b border-line/65 pb-2.5">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-line/65 pb-2.5">
               <h2 className="text-base font-semibold text-ink">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.label}</h2>
               <p className="text-xs text-ink-faint">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.description}</p>
             </div>
@@ -196,7 +198,7 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
             <div className="ga-paper-card px-4 py-3 grid grid-cols-1 md:grid-cols-3 gap-3 divide-y md:divide-y-0 md:divide-x divide-line/60">
               <div className="min-w-0">
                 <div className="text-[11px] text-ink-faint">GenericAgent 路径</div>
-                <div className="mt-0.5 font-mono text-xs truncate" title={setup?.ga_root || '尚未配置'}>
+                <div className="mt-0.5 font-mono text-xs break-all">
                   {setup?.ga_root
                     ? <span className="text-status-success font-medium">{setup.ga_root}</span>
                     : <span className="text-status-danger font-medium">尚未配置</span>}
@@ -204,11 +206,11 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
               </div>
               <div className="min-w-0 pt-2 md:pt-0 md:pl-3">
                 <div className="text-[11px] text-ink-faint">Admin 数据目录</div>
-                <div className="mt-0.5 font-mono text-xs text-ink truncate" title={setup?.admin_data || '—'}>{setup?.admin_data || '—'}</div>
+                <div className="mt-0.5 font-mono text-xs text-ink break-all">{setup?.admin_data || '—'}</div>
               </div>
               <div className="min-w-0 pt-2 md:pt-0 md:pl-3">
                 <div className="text-[11px] text-ink-faint">当前 Python {setup?.resolved_python_source ? `(${setup.resolved_python_source})` : ''}</div>
-                <div className="mt-0.5 font-mono text-xs text-ink truncate" title={setup?.resolved_python || '回退当前进程'}>
+                <div className="mt-0.5 font-mono text-xs text-ink break-all">
                   {setup?.resolved_python || '回退当前进程'}
                 </div>
               </div>
@@ -294,11 +296,13 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
             )}
           </div>
           {!inSetup && <>
-            <div id="settings-panel-appearance" role="tabpanel" aria-labelledby="settings-tab-appearance" tabIndex={0} hidden={activeTab !== 'appearance'} className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(18.5rem,0.85fr)] gap-4 items-start">
-              <div className="space-y-4 min-w-0">
-                <ChatAppearancePanel />
-                <FontAppearancePanel />
-              </div>
+            <div id="settings-panel-display" role="tabpanel" aria-labelledby="settings-tab-display" tabIndex={0} hidden={activeTab !== 'display'}>
+              <ChatAppearancePanel />
+            </div>
+            <div id="settings-panel-fonts" role="tabpanel" aria-labelledby="settings-tab-fonts" tabIndex={0} hidden={activeTab !== 'fonts'}>
+              <FontAppearancePanel />
+            </div>
+            <div id="settings-panel-navigation" role="tabpanel" aria-labelledby="settings-tab-navigation" tabIndex={0} hidden={activeTab !== 'navigation'}>
               <NavManagementPanel />
             </div>
             <div id="settings-panel-chat" role="tabpanel" aria-labelledby="settings-tab-chat" tabIndex={0} hidden={activeTab !== 'chat'}>
@@ -353,7 +357,7 @@ function NavManagementPanel() {
           className="ga-btn-sm shrink-0"
         ><RotateCcw className="h-3 w-3" aria-hidden="true" /><span>恢复默认</span></button>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-1.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {preferences.map((preference, index) => {
           const item = NAV_ITEMS.find((candidate) => candidate.id === preference.id)
           if (!item) return null
@@ -447,71 +451,71 @@ function ChatAppearancePanel() {
   const updateTitleScale = (value: number) => setTitleScale(setRailTitleScale(value))
 
   return (
-    <div className="ga-paper-card p-4 space-y-3">
+    <div className="ga-paper-card p-5 space-y-4">
       <div className="flex items-baseline justify-between gap-2">
         <div className="text-sm font-semibold text-ink">会话显示</div>
-        <span className="text-[11px] text-ink-faint">仅作用于当前设备</span>
+        <span className="text-[11px] text-ink-faint">按本机桌面基准百分比调整</span>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="rounded-lg border border-line/65 bg-bg-soft/55 p-3 space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-ink">会话字体</span>
-            <div className="flex items-center gap-1.5">
-              <output className="text-xs font-mono font-medium tabular-nums text-accent">{Math.round(scale)}%</output>
-              <button
-                type="button"
-                onClick={() => updateScale(CHAT_FONT_SCALE_DEFAULT)}
-                disabled={scale === CHAT_FONT_SCALE_DEFAULT}
-                className="ga-btn-sm"
-              >
-                <RotateCcw className="h-3 w-3" aria-hidden="true" />
-                <span>恢复默认</span>
-              </button>
+      <div className="space-y-4">
+        <div className="rounded-xl border border-line/70 bg-bg-soft/55 p-4 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+            <span className="text-sm font-medium text-ink">会话字体</span>
+            <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:max-w-md sm:flex-1">
+              <input
+                type="range"
+                min={CHAT_FONT_SCALE_MIN}
+                max={CHAT_FONT_SCALE_MAX}
+                step={CHAT_FONT_SCALE_STEP}
+                value={scale}
+                onChange={(e) => updateScale(Number(e.target.value))}
+                aria-label="会话字体缩放"
+                className="w-0 min-w-0 flex-1 accent-accent"
+              />
+              <output className="w-12 shrink-0 text-right text-sm font-mono font-medium tabular-nums text-accent">{Math.round(scale)}%</output>
             </div>
+            <button
+              type="button"
+              onClick={() => updateScale(CHAT_FONT_SCALE_DEFAULT)}
+              disabled={scale === CHAT_FONT_SCALE_DEFAULT}
+              className="ga-btn-sm shrink-0"
+            >
+              <RotateCcw className="h-3 w-3" aria-hidden="true" />
+              <span>恢复默认</span>
+            </button>
           </div>
-          <input
-            type="range"
-            min={CHAT_FONT_SCALE_MIN}
-            max={CHAT_FONT_SCALE_MAX}
-            step={CHAT_FONT_SCALE_STEP}
-            value={scale}
-            onChange={(e) => updateScale(Number(e.target.value))}
-            aria-label="会话字体缩放"
-            className="w-full accent-accent"
-          />
-          <div className="truncate text-ink/90" style={{ fontSize: `${chatFontPercent(scale)}%` }}>
+          <div className="rounded-lg border border-line/65 bg-bg-card px-3 py-2 text-ink truncate" style={{ fontSize: `${chatFontPercent(scale)}%` }}>
             预览：GA 会话输出示例
           </div>
         </div>
 
-        <div className="rounded-lg border border-line/65 bg-bg-soft/55 p-3 space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-ink">栏目标题</span>
-            <div className="flex items-center gap-1.5">
-              <output className="text-xs font-mono font-medium tabular-nums text-accent">{Math.round(titleScale)}%</output>
-              <button
-                type="button"
-                onClick={() => updateTitleScale(RAIL_TITLE_SCALE_DEFAULT)}
-                disabled={titleScale === RAIL_TITLE_SCALE_DEFAULT}
-                className="ga-btn-sm"
-              >
-                <RotateCcw className="h-3 w-3" aria-hidden="true" />
-                <span>恢复默认</span>
-              </button>
+        <div className="rounded-xl border border-line/70 bg-bg-soft/55 p-4 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+            <span className="text-sm font-medium text-ink">栏目标题</span>
+            <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:max-w-md sm:flex-1">
+              <input
+                type="range"
+                min={RAIL_TITLE_SCALE_MIN}
+                max={RAIL_TITLE_SCALE_MAX}
+                step={RAIL_TITLE_SCALE_STEP}
+                value={titleScale}
+                onChange={(e) => updateTitleScale(Number(e.target.value))}
+                aria-label="会话管理栏标题字号缩放"
+                className="w-0 min-w-0 flex-1 accent-accent"
+              />
+              <output className="w-12 shrink-0 text-right text-sm font-mono font-medium tabular-nums text-accent">{Math.round(titleScale)}%</output>
             </div>
+            <button
+              type="button"
+              onClick={() => updateTitleScale(RAIL_TITLE_SCALE_DEFAULT)}
+              disabled={titleScale === RAIL_TITLE_SCALE_DEFAULT}
+              className="ga-btn-sm shrink-0"
+            >
+              <RotateCcw className="h-3 w-3" aria-hidden="true" />
+              <span>恢复默认</span>
+            </button>
           </div>
-          <input
-            type="range"
-            min={RAIL_TITLE_SCALE_MIN}
-            max={RAIL_TITLE_SCALE_MAX}
-            step={RAIL_TITLE_SCALE_STEP}
-            value={titleScale}
-            onChange={(e) => updateTitleScale(Number(e.target.value))}
-            aria-label="会话管理栏标题字号缩放"
-            className="w-full accent-accent"
-          />
-          <div className="truncate font-medium text-ink/90" style={{ fontSize: `${railTitlePercent(titleScale)}%` }}>
-            预览：会话管理栏标题
+          <div className="rounded-lg border border-line/65 bg-bg-card px-3 py-2 font-medium text-ink truncate" style={{ fontSize: `${railTitlePercent(titleScale)}%` }}>
+            预览：会话管理栏条目标题
           </div>
         </div>
       </div>

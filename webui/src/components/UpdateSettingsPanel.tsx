@@ -86,16 +86,20 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
   const total = task?.total_bytes ?? 0
   const percent = total > 0 ? Math.min(100, Math.floor(received / total * 100)) : undefined
   const inputClass = 'w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-sm text-ink'
-  return <section className="rounded-xl border border-line bg-bg-card p-4 space-y-3" aria-label="桌面程序更新">
-    <h2 className="font-medium">桌面程序更新</h2>
+  return <section className="ga-paper-card p-4 space-y-3" aria-label="桌面程序更新">
+    <div className="flex flex-wrap items-baseline justify-between gap-2">
+      <h2 className="text-sm font-semibold text-ink">桌面程序更新</h2>
+      <span className="text-[11px] text-ink-faint">仅限可信 Windows 安装包</span>
+    </div>
     <p className="text-sm text-ink">先在线准备更新包，就绪后确认升级；倒计时 60 秒后将自动重启切换。</p>
-    <p className="text-sm text-ink-muted">仅支持可信来源的 Windows 更新包；准备过程不影响当前运行。</p>
-    <div className="space-y-2 rounded-lg border border-line p-3">
-      <p className="text-sm">更新源：Luna-dash/GA-Hub · GitHub 正式稳定版（不含预发布）</p>
-      <button type="button" className="ga-btn-primary" disabled={locked || !status} onClick={() => void online()}>
-        <Search className="h-3.5 w-3.5" aria-hidden="true" />
-        <span>检查正式版本</span>
-      </button>
+    <div className="space-y-2.5 rounded-lg border border-line/75 bg-bg-soft/45 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-ink-muted">更新源：Luna-dash/GA-Hub · GitHub 正式版</p>
+        <button type="button" className="ga-btn-primary" disabled={locked || !status} onClick={() => void online()}>
+          <Search className="h-3.5 w-3.5" aria-hidden="true" />
+          <span>检查正式版本</span>
+        </button>
+      </div>
       {release && <div className="text-sm" role="status">
         当前 {release.current_version} · 最新 {release.version} · {release.available ? '有可用更新' : '已是最新版本'}
         {release.notes && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-sans">{release.notes}</pre>}
@@ -119,22 +123,23 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
         <span>重新下载并校验</span>
       </button>}
     </div>}
-    <details><summary className="cursor-pointer text-sm text-ink-muted">高级：导入本机可信发布包</summary>
+    <details className="rounded-lg border border-line/75 bg-bg-soft/40 px-3 py-2.5"><summary className="cursor-pointer text-xs font-medium text-ink-muted hover:text-ink">高级：导入本机可信发布包</summary>
+    <div className="mt-2.5 space-y-2.5">
     <label className="block text-sm">本机 ZIP 完整路径
-      <input className={inputClass} value={archive} onChange={e => setArchive(e.target.value)} placeholder="D:\\Downloads\\GA-Hub-version-windows-x64.zip" disabled={locked} />
+      <input className={`${inputClass} mt-1`} value={archive} onChange={e => setArchive(e.target.value)} placeholder="D:\\Downloads\\GA-Hub-version-windows-x64.zip" disabled={locked} />
     </label>
     <label className="block text-sm">SHA-256（选填）
-      <input className={inputClass} value={sha256} onChange={e => setSha256(e.target.value)} placeholder="可留空；填写时需为可信渠道提供的64位校验和" spellCheck={false} disabled={locked} />
+      <input className={`${inputClass} mt-1 font-mono`} value={sha256} onChange={e => setSha256(e.target.value)} placeholder="64 位校验和，可留空" spellCheck={false} disabled={locked} />
     </label>
-    <p className="text-xs text-ink-muted">可选填 SHA-256 用于校验安装包完整性。</p>
-    <label className="flex items-start gap-2 text-sm text-ink">
+    <label className="flex items-start gap-2 text-xs text-ink">
       <input type="checkbox" checked={trusted} onChange={e => setTrusted(e.target.checked)} disabled={locked} />
-      我已核实安装包来源可信（如填写校验和，也已核实其来源）
+      <span>我已核实安装包来源可信</span>
     </label>
-    <button type="button" className="ga-btn-primary mt-2" disabled={locked || !status || !trusted || !archive.trim() || (!!sha256.trim() && !/^[a-fA-F0-9]{64}$/.test(sha256.trim()))} onClick={() => void act()}>
+    <button type="button" className="ga-btn-primary" disabled={locked || !status || !trusted || !archive.trim() || (!!sha256.trim() && !/^[a-fA-F0-9]{64}$/.test(sha256.trim()))} onClick={() => void act()}>
       <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
       <span>校验并准备</span>
     </button>
+    </div>
     </details>
     {status?.plan && <div className="text-sm text-ink" role="status">状态：{stateLabels[status.plan.state] ?? '正在处理'}{status.plan.version && ` · ${status.plan.version}`}
       {status.plan.commit && <span className="block break-all text-xs text-ink-muted">源码提交：{status.plan.commit}</span>}

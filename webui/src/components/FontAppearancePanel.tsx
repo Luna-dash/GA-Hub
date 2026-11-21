@@ -226,14 +226,14 @@ export function FontAppearancePanel() {
                   pack.active ? 'border-accent bg-accent-soft/25' : 'border-line bg-bg-soft/45'
                 }`}
               >
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-xs font-medium text-ink">{pack.name}</span>
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium text-ink">{pack.name}</span>
                     <span className="rounded border border-line bg-bg-card px-1.5 py-0.5 text-[10px] text-ink-muted">
                       {pack.license}
                     </span>
-                    <span className="text-[10px] font-mono tabular-nums text-ink-faint">
-                      {pack.installed ? `${formatMegabytes(pack.installed_bytes)}` : `约 ${formatMegabytes(pack.approx_bytes)}`}
+                    <span className="text-[11px] font-mono tabular-nums text-ink-faint">
+                      {pack.installed ? `已下载 ${formatMegabytes(pack.installed_bytes)}` : `约 ${formatMegabytes(pack.approx_bytes)}`}
                     </span>
                     {pack.active && (
                       <span className="rounded bg-status-success-soft border border-status-success-line px-1.5 py-0.5 text-[10px] text-status-success">
@@ -241,6 +241,7 @@ export function FontAppearancePanel() {
                       </span>
                     )}
                   </div>
+                  {pack.summary && <p className="text-xs text-ink-muted">{pack.summary}</p>}
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2">
