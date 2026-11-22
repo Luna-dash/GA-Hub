@@ -195,9 +195,9 @@ export function FontAppearancePanel() {
               {downloading.total_bytes ? ` / ${formatMegabytes(downloading.total_bytes)}${dlPercent !== null ? ` (${dlPercent}%)` : ''}` : ''}
             </span>
           </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-card border border-status-info-line">
+          <div className="ga-progress-track">
             <div
-              className="h-full bg-status-info transition-[width] duration-200"
+              className="ga-progress-fill"
               style={{ width: `${dlPercent ?? 30}%` }}
             />
           </div>
@@ -222,21 +222,21 @@ export function FontAppearancePanel() {
             return (
               <div
                 key={pack.id}
-                className={`rounded-lg border p-3 flex flex-wrap items-center justify-between gap-3 ${
-                  pack.active ? 'border-accent bg-accent-soft/25' : 'border-line bg-bg-soft/45'
+                className={`rounded-xl border p-3 flex flex-wrap items-center justify-between gap-3 ${
+                  pack.active ? 'border-accent/65 bg-accent-soft/25' : 'border-line/45 bg-bg-soft/55'
                 }`}
               >
                 <div className="min-w-0 flex-1 space-y-0.5">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium text-ink">{pack.name}</span>
-                    <span className="rounded border border-line bg-bg-card px-1.5 py-0.5 text-[10px] text-ink-muted">
+                    <span className="rounded-md bg-bg-card px-1.5 py-0.5 text-[11px] text-ink-muted ring-1 ring-line/45">
                       {pack.license}
                     </span>
                     <span className="text-[11px] font-mono tabular-nums text-ink-faint">
                       {pack.installed ? `已下载 ${formatMegabytes(pack.installed_bytes)}` : `约 ${formatMegabytes(pack.approx_bytes)}`}
                     </span>
                     {pack.active && (
-                      <span className="rounded bg-status-success-soft border border-status-success-line px-1.5 py-0.5 text-[10px] text-status-success">
+                      <span className="rounded-md bg-status-success-soft border border-status-success-line px-1.5 py-0.5 text-[11px] font-medium text-status-success">
                         使用中
                       </span>
                     )}

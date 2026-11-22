@@ -40,7 +40,7 @@ export function ConversationIndexRail({ children }: ConversationIndexRailProps) 
       <aside
         aria-label="历史对话索引"
         className={clsx(
-          'absolute inset-y-0 left-0 overflow-y-auto border-r border-line bg-bg-soft',
+          'absolute inset-y-0 left-0 overflow-y-auto border-r border-line/55 bg-bg-soft',
           'transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
           collapsed ? 'w-14' : 'w-96 max-w-[calc(100vw-3rem)]',
         )}
@@ -53,9 +53,9 @@ export function ConversationIndexRail({ children }: ConversationIndexRailProps) 
         aria-expanded={!collapsed}
         onClick={toggle}
         title={collapsed ? '展开历史对话索引' : '折叠历史对话索引'}
-        className="absolute left-full top-1/2 z-20 flex h-12 w-6 -translate-y-1/2 items-center justify-center rounded-r-lg border border-l-0 border-line bg-bg-card/95 text-ink-muted shadow-md backdrop-blur-sm transition-colors hover:bg-white hover:text-ink"
+        className="absolute left-full top-1/2 z-20 flex h-14 w-5 -translate-y-1/2 items-center justify-center rounded-r-full border border-l-0 border-[#54432B]/70 bg-[#6B583D] bg-gradient-to-b from-bg-card/15 to-transparent text-[#FAF4E6] shadow-[inset_0_1px_0_rgb(255_255_255_/_0.25),0_2px_5px_rgb(0_0_0_/_0.18)] transition-[background-color,box-shadow] duration-200 hover:bg-[#5A4932] hover:shadow-[inset_0_1px_0_rgb(255_255_255_/_0.3),0_3px_7px_rgb(0_0_0_/_0.22)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       >
-        <RailFoldGlyph direction={collapsed ? 'right' : 'left'} className="h-4 w-4" />
+        <RailFoldGlyph direction={collapsed ? 'right' : 'left'} className="h-3.5 w-3.5 shrink-0" />
       </button>
     </div>
   )

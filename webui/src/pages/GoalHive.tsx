@@ -213,40 +213,44 @@ export default function GoalHive() {
         </div>
       }
     >
-      <div className="grid h-full min-h-0 grid-cols-1 gap-3 p-3 md:grid-cols-[minmax(19rem,24rem)_minmax(0,1fr)] lg:gap-4 lg:p-4">
-        <section className="flex flex-col min-h-0 overflow-hidden rounded-2xl border border-line bg-bg-card shadow-sm">
+      <div className="grid h-full min-h-0 grid-cols-1 gap-3 p-3 md:grid-cols-[minmax(19rem,23.5rem)_minmax(0,1fr)] lg:gap-4 lg:p-4">
+        <section className="ga-paper-card flex flex-col min-h-0 overflow-hidden">
           <form onSubmit={submit} className="flex flex-1 min-h-0 flex-col">
-            <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
-              <div className="ga-segmented" role="group" aria-label="Goal Hive 模式">
-                {(['goal', 'hive'] as GoalMode[]).map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    onClick={() => setMode(item)}
-                    aria-pressed={mode === item}
-                    className={clsx(
-                      'ga-segmented-btn px-4 text-sm',
-                      mode === item && 'ga-segmented-btn-active',
-                    )}
-                  >
-                    {item.toUpperCase()}
-                  </button>
-                ))}
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="ga-segmented" role="group" aria-label="Goal Hive 模式">
+                  {(['goal', 'hive'] as GoalMode[]).map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => setMode(item)}
+                      aria-pressed={mode === item}
+                      className={clsx(
+                        'ga-segmented-btn px-4 text-sm',
+                        mode === item && 'ga-segmented-btn-active',
+                      )}
+                    >
+                      {item.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-[11px] font-medium text-accent">{config.title}</span>
               </div>
 
-              <div className="space-y-1.5">
-                <div className="text-xs text-accent font-semibold tracking-wide uppercase">{config.title}</div>
-                <h2 className="text-base font-semibold text-ink leading-snug">{config.subtitle}</h2>
-                <p className="text-xs text-ink-muted leading-5">启动输出会留在本页面的独立日志区，不跳转、不混入普通聊天页。</p>
+              <div className="space-y-1">
+                <h2 className="text-sm font-semibold text-ink leading-snug">{config.subtitle}</h2>
+                <p className="text-xs text-ink-muted leading-5">{config.helper}</p>
               </div>
 
               <div className="flex flex-wrap gap-1.5">
                 {config.chips.map((chip) => (
-                  <span key={chip} className="text-[11px] px-2 py-0.5 rounded-full border border-line bg-bg-soft text-ink-muted">
+                  <span key={chip} className="rounded-full bg-bg-soft/85 px-2.5 py-0.5 text-[11px] text-ink-muted">
                     {chip}
                   </span>
                 ))}
               </div>
+
+              <hr className="ga-hairline" />
 
               <label className="block space-y-1.5">
                 <span className="text-xs font-medium text-ink">目标</span>
@@ -257,7 +261,7 @@ export default function GoalHive() {
                   onChange={(event) => setTarget(event.target.value)}
                   placeholder={config.placeholder}
                   wrap="soft"
-                  className="w-full min-w-0 max-h-[220px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line bg-bg-soft px-3.5 py-2.5 text-sm leading-6 text-ink placeholder:text-ink-faint outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+                  className="w-full min-w-0 max-h-[220px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line/75 bg-bg-soft/75 px-3.5 py-2.5 text-sm leading-6 text-ink placeholder:text-ink-faint outline-none focus:border-accent focus:bg-bg-card focus:ring-2 focus:ring-accent/15 whitespace-pre-wrap break-words [overflow-wrap:anywhere] transition-colors"
                 />
               </label>
 
@@ -270,18 +274,20 @@ export default function GoalHive() {
                   onChange={(event) => setCondition(event.target.value)}
                   placeholder="例如：先汇报计划；不得修改记忆；预算到期后总结验证结果。"
                   wrap="soft"
-                  className="w-full min-w-0 max-h-[180px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line bg-bg-soft px-3.5 py-2.5 text-sm leading-6 text-ink placeholder:text-ink-faint outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+                  className="w-full min-w-0 max-h-[180px] resize-none overflow-y-auto overflow-x-hidden rounded-xl border border-line/75 bg-bg-soft/75 px-3.5 py-2.5 text-sm leading-6 text-ink placeholder:text-ink-faint outline-none focus:border-accent focus:bg-bg-card focus:ring-2 focus:ring-accent/15 whitespace-pre-wrap break-words [overflow-wrap:anywhere] transition-colors"
                 />
               </label>
 
-              <div className="rounded-xl border border-line bg-bg-soft/70 p-3 space-y-1">
-                <div className="text-[11px] uppercase tracking-[0.14em] text-ink-faint">发送预览</div>
+              <div className="ga-paper-subcard p-3 space-y-1">
+                <div className="text-[11px] font-medium text-ink-faint">指令预览</div>
                 <pre className="whitespace-pre-wrap break-words text-xs text-ink font-mono">{preview || `${config.command} ...`}</pre>
               </div>
             </div>
 
-            <div className="shrink-0 border-t border-line/70 bg-bg-card px-4 py-3 flex items-center justify-between gap-3">
-              <p className="min-w-0 text-xs text-ink-muted line-clamp-2">{streaming ? '当前任务输出中，完成后可启动下一项。' : config.helper}</p>
+            <div className="shrink-0 bg-bg-soft/45 px-4 py-3 flex items-center justify-between gap-3 border-t border-line/40">
+              <p className="min-w-0 text-xs text-ink-muted truncate" title={streaming ? '当前任务输出中，完成后可启动下一项。' : '输出保留在本页面日志区，不混入普通聊天。'}>
+                {streaming ? '任务输出中，完成后可继续发起' : '独立工作台输出，不混入普通聊天'}
+              </p>
               <button
                 type="submit"
                 disabled={!canSubmit}
@@ -294,11 +300,11 @@ export default function GoalHive() {
           </form>
         </section>
 
-        <section className="rounded-2xl border border-line bg-bg-card shadow-sm flex flex-col min-h-0 overflow-hidden">
-          <div className="px-5 py-4 border-b border-line flex items-center justify-between">
-            <div>
-              <div className="text-sm font-medium text-ink">执行输出</div>
-              <div className="text-xs text-ink-faint">实时输出</div>
+        <section className="ga-paper-card flex flex-col min-h-0 overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-line/45 bg-bg-soft/35 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-ink">执行输出</h2>
+              <span className="text-xs text-ink-faint">· 实时日志</span>
             </div>
             <button type="button" onClick={() => { void reset() }} className="ga-btn-sm">
               <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -310,10 +316,15 @@ export default function GoalHive() {
               <div className="h-full min-h-64 grid place-items-center text-sm text-ink-faint">尚无 Goal / Hive 输出。</div>
             ) : (
               msgs.map((msg) => (
-                <article key={msg.id} className={clsx('rounded-xl border p-4', bubbleTone(msg.role, 'card').surfaceClass)}>
-                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-ink-faint">
-                    {msg.role === 'user' ? 'YOU' : mode === 'hive' ? 'HIVE MASTER' : 'GOAL AGENT'}
-                    {msg.streaming && <span className="text-accent normal-case tracking-normal">streaming</span>}
+                <article key={msg.id} className={clsx('rounded-xl px-4 py-3', bubbleTone(msg.role, 'card').surfaceClass)}>
+                  <div className="mb-1.5 flex items-center gap-2 text-xs font-medium text-ink-muted">
+                    <span>{msg.role === 'user' ? '你' : mode === 'hive' ? 'Hive 主控' : 'Goal Agent'}</span>
+                    {msg.streaming && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-normal text-accent">
+                        <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse motion-reduce:animate-none" aria-hidden="true" />
+                        <span>输出中</span>
+                      </span>
+                    )}
                   </div>
                   <MessageContent content={msg.content} format="pre" className="text-sm leading-6 text-ink font-sans" />
                 </article>

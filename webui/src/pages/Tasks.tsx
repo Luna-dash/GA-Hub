@@ -81,22 +81,22 @@ export default function Tasks() {
       }
     >
       <div className="p-6 space-y-6 max-w-6xl mx-auto">
-        <section aria-label="任务概览" className="ga-paper-card px-5 py-3.5 grid grid-cols-1 sm:grid-cols-3 gap-4 divide-y sm:divide-y-0 sm:divide-x divide-line/65">
+        <section aria-label="任务概览" className="ga-paper-card px-5 py-3.5 grid grid-cols-1 sm:grid-cols-3 gap-4 divide-y sm:divide-y-0 sm:divide-x divide-line/35">
           <div className="flex items-center gap-3">
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line/75 bg-bg-soft text-accent">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-bg-soft text-accent ring-1 ring-line/45">
               <Calendar className="h-4 w-4" aria-hidden="true" />
             </span>
             <div>
-              <div className="text-[11px] text-ink-faint">定时计划（已启用 / 总计）</div>
-              <div className="mt-0.5 text-lg font-semibold tabular-nums text-ink">{enabledCount} <span className="text-xs font-normal text-ink-faint">/ {schedules.length}</span></div>
+              <div className="text-xs text-ink-faint">定时计划（已启用 / 总计）</div>
+              <div className="mt-0.5 text-base font-semibold tabular-nums text-ink">{enabledCount} <span className="text-xs font-normal text-ink-faint">/ {schedules.length}</span></div>
             </div>
           </div>
           <div className="flex items-center gap-3 pt-3 sm:pt-0 sm:pl-4">
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line/75 bg-bg-soft text-accent">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-bg-soft text-accent ring-1 ring-line/45">
               <Mail className="h-4 w-4" aria-hidden="true" />
             </span>
             <div className="min-w-0">
-              <div className="text-[11px] text-ink-faint">SMTP 邮件通知</div>
+              <div className="text-xs text-ink-faint">SMTP 邮件通知</div>
               <div className="mt-0.5 flex items-center gap-1.5 text-sm font-medium text-ink truncate">
                 <span className={`h-2 w-2 rounded-full shrink-0 ${emailCfg.data?.host ? 'bg-status-success' : 'bg-status-warning'}`} />
                 <span className="truncate">{emailCfg.data?.host ? `${emailCfg.data.host}:${emailCfg.data.port}` : '未配置'}</span>
@@ -104,12 +104,12 @@ export default function Tasks() {
             </div>
           </div>
           <div className="flex items-center gap-3 pt-3 sm:pt-0 sm:pl-4">
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line/75 bg-bg-soft text-accent">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-bg-soft text-accent ring-1 ring-line/45">
               <History className="h-4 w-4" aria-hidden="true" />
             </span>
             <div>
-              <div className="text-[11px] text-ink-faint">历史运行记录</div>
-              <div className="mt-0.5 text-lg font-semibold tabular-nums text-ink">{runs.length} <span className="text-xs font-normal text-ink-faint">条</span></div>
+              <div className="text-xs text-ink-faint">历史运行记录</div>
+              <div className="mt-0.5 text-base font-semibold tabular-nums text-ink">{runs.length} <span className="text-xs font-normal text-ink-faint">条</span></div>
             </div>
           </div>
         </section>
@@ -168,7 +168,7 @@ export default function Tasks() {
           <div className="ga-paper-card overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="border-b border-line/80 bg-bg-soft/80 text-xs font-medium text-ink-muted">
+                <thead className="border-b border-line/45 bg-bg-soft/65 text-xs font-medium text-ink-muted">
                   <tr>
                     <th className="text-left px-3.5 py-2.5">时间</th>
                     <th className="text-left px-3.5 py-2.5">任务</th>
@@ -177,7 +177,7 @@ export default function Tasks() {
                     <th className="text-left px-3.5 py-2.5">邮件</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-line/60">
+                <tbody className="divide-y divide-line/35">
                   {pageRuns.map((r: TaskRun) => (
                     <tr key={r.id} className="align-top hover:bg-bg-soft/55 transition-colors">
                       <td className="px-3.5 py-2.5 text-xs tabular-nums text-ink-muted whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
@@ -185,7 +185,7 @@ export default function Tasks() {
                       <td className="px-3.5 py-2.5"><StatusBadge status={r.status} /></td>
                       <td className="px-3.5 py-2.5 text-ink-muted max-w-lg">
                         <div className="line-clamp-2 break-words">{r.result_preview || r.prompt_preview || '—'}</div>
-                        {r.stream_id && <div className="text-[10px] text-ink-faint font-mono mt-1">{r.stream_id}</div>}
+                        {r.stream_id && <div className="text-[11px] text-ink-faint font-mono mt-1">{r.stream_id}</div>}
                       </td>
                       <td className="px-3.5 py-2.5 text-xs whitespace-nowrap">
                         {r.email_sent && <span className="inline-flex items-center rounded-full border border-status-success-line bg-status-success-soft px-2 py-0.5 text-[11px] text-status-success">已发送</span>}
@@ -246,21 +246,20 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
       <div className="space-y-2.5">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap mb-1">
-              <span className="inline-flex items-center gap-1 rounded-md border border-line/75 bg-bg-soft px-1.5 py-0.5 text-[10px] font-medium text-ink-muted">
-                <TypeIcon className="h-2.5 w-2.5 text-accent" aria-hidden="true" />
+            <div className="flex items-center gap-1.5 flex-wrap mb-1" title={`ID: ${s.id}`}>
+              <span className="inline-flex items-center gap-1 rounded-md bg-bg-soft px-1.5 py-0.5 text-[11px] font-medium text-ink-muted">
+                <TypeIcon className="h-3 w-3 text-accent" aria-hidden="true" />
                 {s.type === 'cron' ? 'Cron 定时' : '周期循环'}
               </span>
-              <span className="font-mono text-[11px] text-ink-faint truncate">{s.id}</span>
             </div>
-            <div className="text-sm font-semibold text-ink truncate" title={s.name || s.id}>{s.name || s.id}</div>
+            <div className="text-sm font-semibold text-ink truncate" title={`${s.name || s.id} (${s.id})`}>{s.name || s.id}</div>
           </div>
-          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${s.enabled ? 'border border-status-success-line bg-status-success-soft text-status-success' : 'border border-line bg-bg-soft text-ink-muted'}`}>
+          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${s.enabled ? 'border border-status-success-line bg-status-success-soft text-status-success' : 'bg-bg-soft text-ink-muted'}`}>
             {s.enabled ? '启用' : '禁用'}
           </span>
         </div>
 
-        <div className="rounded-lg border border-line/65 bg-bg-soft/75 px-3 py-2 text-sm text-ink">
+        <div className="ga-paper-subcard px-3 py-2 text-sm text-ink">
           {s.type === 'cron' && <CronCardLine expr={s.cron} />}
           {s.type === 'interval' && `每 ${s.interval_minutes} 分钟`}
         </div>
@@ -270,28 +269,29 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
         )}
       </div>
 
-      <div className="space-y-2.5 pt-2 border-t border-line/60">
+      <div className="space-y-2.5 pt-1">
+        <hr className="ga-hairline" />
         <div className="flex items-center justify-between gap-2 text-xs text-ink-faint flex-wrap">
-          <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] ${s.notify_email ? 'border border-accent/35 bg-accent/10 text-accent' : 'bg-bg-soft text-ink-faint'}`}>
+          <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] ${s.notify_email ? 'bg-accent/10 text-accent font-medium' : 'bg-bg-soft text-ink-faint'}`}>
             <Mail className="h-3 w-3" aria-hidden="true" />
             {s.notify_email ? '邮件已开' : '未开邮件'}
           </span>
           <span className="tabular-nums">触发 {s.fire_count ?? 0} 次 · {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</span>
         </div>
         <div className="flex gap-1.5 flex-wrap">
-          <button type="button" onClick={onFire} disabled={busy} className="ga-btn-sm-primary">
+          <button type="button" onClick={onFire} disabled={busy} className="ga-btn-sm-primary px-2.5">
             <Play className="h-3 w-3" aria-hidden="true" />
             <span>立即触发</span>
           </button>
-          <button type="button" onClick={toggle} disabled={busy} className="ga-btn-sm">
+          <button type="button" onClick={toggle} disabled={busy} className="ga-btn-sm px-2.5">
             <Power className="h-3 w-3" aria-hidden="true" />
             <span>{s.enabled ? '禁用' : '启用'}</span>
           </button>
-          <button type="button" onClick={onEdit} disabled={busy} className="ga-btn-sm">
+          <button type="button" onClick={onEdit} disabled={busy} className="ga-btn-sm px-2.5">
             <Pencil className="h-3 w-3" aria-hidden="true" />
             <span>编辑</span>
           </button>
-          <button type="button" onClick={remove} disabled={busy} className="ga-btn-sm-danger">
+          <button type="button" onClick={remove} disabled={busy} className="ga-btn-sm-danger px-2.5">
             <Trash2 className="h-3 w-3" aria-hidden="true" />
             <span>删除</span>
           </button>
@@ -366,7 +366,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
         <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="每日早报" />
       </Field>
       <Field label="类型">
-        <select value={s.type} onChange={(e) => setS({ ...s, type: e.target.value as TaskScheduleType })} className={inp}>
+        <select value={s.type} onChange={(e) => setS({ ...s, type: e.target.value as TaskScheduleType })} className={`${inp} ga-select`}>
           <option value="cron">定时 (Cron)</option>
           <option value="interval">周期 (Interval)</option>
         </select>
@@ -501,15 +501,15 @@ function EmailSettings() {
   return (
     <section>
       <div className="ga-paper-card overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/70 bg-bg-soft/65 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/45 bg-bg-soft/45 px-4 py-3">
           <div className="flex items-center gap-2.5">
-            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line/75 bg-bg-card text-accent">
+            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-bg-card text-accent ring-1 ring-line/45">
               <Server className="h-4 w-4" aria-hidden="true" />
             </span>
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-semibold text-ink">邮件设置</h2>
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium border ${
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium border ${
                   data?.host
                     ? 'border-status-success-line bg-status-success-soft text-status-success'
                     : 'border-status-warning-line bg-status-warning-soft text-status-warning'
@@ -525,19 +525,19 @@ function EmailSettings() {
         <div className="p-4 text-sm">
           {data?.host ? (
             <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <div className="rounded-lg border border-line/60 bg-bg-soft/50 px-3 py-2">
+              <div className="ga-paper-subcard px-3 py-2">
                 <dt className="text-[11px] text-ink-faint">SMTP 服务器</dt>
                 <dd className="mt-0.5 font-mono text-xs text-ink truncate" title={`${data.host}:${data.port}`}>{data.host}:{data.port}</dd>
               </div>
-              <div className="rounded-lg border border-line/60 bg-bg-soft/50 px-3 py-2">
+              <div className="ga-paper-subcard px-3 py-2">
                 <dt className="text-[11px] text-ink-faint">发信账号</dt>
                 <dd className="mt-0.5 text-xs text-ink truncate" title={data.username || '无需登录'}>{data.username || '无需登录'}</dd>
               </div>
-              <div className="rounded-lg border border-line/60 bg-bg-soft/50 px-3 py-2">
+              <div className="ga-paper-subcard px-3 py-2">
                 <dt className="text-[11px] text-ink-faint">默认收件人</dt>
                 <dd className="mt-0.5 text-xs text-ink truncate" title={data.default_to || '未设置'}>{data.default_to || '未设置'}</dd>
               </div>
-              <div className="rounded-lg border border-line/60 bg-bg-soft/50 px-3 py-2">
+              <div className="ga-paper-subcard px-3 py-2">
                 <dt className="text-[11px] text-ink-faint">认证凭据</dt>
                 <dd className="mt-0.5 text-xs text-ink">{data.password_set ? '已安全保存' : '未设置密码'}</dd>
               </div>
@@ -612,7 +612,7 @@ function StatusBadge({ status }: { status: string }) {
     : status === 'running'
       ? 'bg-status-warning-soft text-status-warning'
       : 'bg-status-danger-soft text-status-danger'
-  return <span className={`text-[10px] px-1.5 py-0.5 rounded ${cls}`}>{TASK_RUN_STATUS_LABELS[status] ?? status}</span>
+  return <span className={`text-[11px] px-2 py-0.5 rounded-md font-medium ${cls}`}>{TASK_RUN_STATUS_LABELS[status] ?? status}</span>
 }
 
 const inp = 'w-full bg-bg-card border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent text-ink'

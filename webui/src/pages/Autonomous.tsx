@@ -92,32 +92,32 @@ export default function Autonomous() {
     >
       <div className="p-6 space-y-6 max-w-6xl mx-auto">
         {/* overview */}
-        <section aria-label="运行概览" className="ga-paper-card px-5 py-3.5 grid grid-cols-1 sm:grid-cols-3 gap-4 divide-y sm:divide-y-0 sm:divide-x divide-line/65">
+        <section aria-label="运行概览" className="ga-paper-card px-5 py-3.5 grid grid-cols-1 sm:grid-cols-3 gap-4 divide-y sm:divide-y-0 sm:divide-x divide-line/35">
           <div className="flex items-center gap-3">
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line/75 bg-bg-soft text-accent">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-bg-soft text-accent ring-1 ring-line/45">
               <Sparkles className="h-4 w-4" aria-hidden="true" />
             </span>
             <div>
-              <div className="text-[11px] text-ink-faint">调度计划（已启用 / 总计）</div>
-              <div className="mt-0.5 text-lg font-semibold tabular-nums text-ink">{enabledCount} <span className="text-xs font-normal text-ink-faint">/ {schedules.length}</span></div>
+              <div className="text-xs text-ink-faint">调度计划（已启用 / 总计）</div>
+              <div className="mt-0.5 text-base font-semibold tabular-nums text-ink">{enabledCount} <span className="text-xs font-normal text-ink-faint">/ {schedules.length}</span></div>
             </div>
           </div>
           <div className="flex items-center gap-3 pt-3 sm:pt-0 sm:pl-4">
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line/75 bg-bg-soft text-accent">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-bg-soft text-accent ring-1 ring-line/45">
               <History className="h-4 w-4" aria-hidden="true" />
             </span>
             <div>
-              <div className="text-[11px] text-ink-faint">累计触发执行</div>
-              <div className="mt-0.5 text-lg font-semibold tabular-nums text-ink">{totalFires} <span className="text-xs font-normal text-ink-faint">次</span></div>
+              <div className="text-xs text-ink-faint">累计触发执行</div>
+              <div className="mt-0.5 text-base font-semibold tabular-nums text-ink">{totalFires} <span className="text-xs font-normal text-ink-faint">次</span></div>
             </div>
           </div>
           <div className="flex items-center gap-3 pt-3 sm:pt-0 sm:pl-4">
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line/75 bg-bg-soft text-accent">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-bg-soft text-accent ring-1 ring-line/45">
               <FileText className="h-4 w-4" aria-hidden="true" />
             </span>
             <div>
-              <div className="text-[11px] text-ink-faint">已归档进化报告</div>
-              <div className="mt-0.5 text-lg font-semibold tabular-nums text-ink">{reports.length} <span className="text-xs font-normal text-ink-faint">份</span></div>
+              <div className="text-xs text-ink-faint">已归档进化报告</div>
+              <div className="mt-0.5 text-base font-semibold tabular-nums text-ink">{reports.length} <span className="text-xs font-normal text-ink-faint">份</span></div>
             </div>
           </div>
         </section>
@@ -162,7 +162,7 @@ export default function Autonomous() {
           <div className="ga-paper-card overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="border-b border-line/80 bg-bg-soft/80 text-xs font-medium text-ink-muted">
+                <thead className="border-b border-line/45 bg-bg-soft/65 text-xs font-medium text-ink-muted">
                   <tr>
                     <th className="text-left px-3.5 py-2.5">时间</th>
                     <th className="text-left px-3.5 py-2.5">计划</th>
@@ -170,7 +170,7 @@ export default function Autonomous() {
                     <th className="text-left px-3.5 py-2.5">报告</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-line/60">
+                <tbody className="divide-y divide-line/35">
                   {runs.map((r) => (
                     <tr key={r.id} className="hover:bg-bg-soft/55 transition-colors">
                       <td className="px-3.5 py-2.5 text-xs tabular-nums text-ink-muted whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
@@ -276,21 +276,20 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
       <div className="space-y-2.5">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap mb-1">
-              <span className="inline-flex items-center gap-1 rounded-md border border-line/75 bg-bg-soft px-1.5 py-0.5 text-[10px] font-medium text-ink-muted">
-                <TypeIcon className="h-2.5 w-2.5 text-accent" aria-hidden="true" />
+            <div className="flex items-center gap-1.5 flex-wrap mb-1" title={`ID: ${s.id}`}>
+              <span className="inline-flex items-center gap-1 rounded-md bg-bg-soft px-1.5 py-0.5 text-[11px] font-medium text-ink-muted">
+                <TypeIcon className="h-3 w-3 text-accent" aria-hidden="true" />
                 {typeMeta.label}
               </span>
-              <span className="font-mono text-[11px] text-ink-faint truncate">{s.id}</span>
             </div>
-            <div className="text-sm font-semibold text-ink truncate" title={s.name || s.id}>{s.name || s.id}</div>
+            <div className="text-sm font-semibold text-ink truncate" title={`${s.name || s.id} (${s.id})`}>{s.name || s.id}</div>
           </div>
-          <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${s.enabled ? 'bg-status-success-soft border border-status-success-line text-status-success' : 'border border-line bg-bg-soft text-ink-muted'}`}>
+          <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${s.enabled ? 'bg-status-success-soft border border-status-success-line text-status-success' : 'bg-bg-soft text-ink-muted'}`}>
             {s.enabled ? '启用' : '禁用'}
           </span>
         </div>
 
-        <div className="rounded-lg border border-line/65 bg-bg-soft/75 px-3 py-2 text-sm text-ink">
+        <div className="ga-paper-subcard px-3 py-2 text-sm text-ink">
           {s.type === 'idle' && `离线 ${s.idle_minutes} 分钟后触发`}
           {s.type === 'cron' && <CronCardLine expr={s.cron} />}
           {s.type === 'interval' && `每 ${s.interval_minutes} 分钟`}
@@ -303,25 +302,26 @@ function ScheduleCard({ s, onEdit, onFire }: { s: Schedule; onEdit: () => void; 
         )}
       </div>
 
-      <div className="space-y-2.5 pt-2 border-t border-line/60">
+      <div className="space-y-2.5 pt-1">
+        <hr className="ga-hairline" />
         <div className="flex items-center justify-between text-xs tabular-nums text-ink-faint">
           <span>已触发 {s.fire_count} 次</span>
           <span>上次 {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</span>
         </div>
         <div className="flex gap-1.5 flex-wrap">
-          <button type="button" onClick={onFire} className="ga-btn-sm-primary">
+          <button type="button" onClick={onFire} className="ga-btn-sm-primary px-2.5">
             <Play className="h-3 w-3" aria-hidden="true" />
             <span>立即触发</span>
           </button>
-          <button type="button" onClick={toggle} className="ga-btn-sm">
+          <button type="button" onClick={toggle} className="ga-btn-sm px-2.5">
             <Power className="h-3 w-3" aria-hidden="true" />
             <span>{s.enabled ? '禁用' : '启用'}</span>
           </button>
-          <button type="button" onClick={onEdit} className="ga-btn-sm">
+          <button type="button" onClick={onEdit} className="ga-btn-sm px-2.5">
             <Pencil className="h-3 w-3" aria-hidden="true" />
             <span>编辑</span>
           </button>
-          <button type="button" onClick={remove} className="ga-btn-sm-danger">
+          <button type="button" onClick={remove} className="ga-btn-sm-danger px-2.5">
             <Trash2 className="h-3 w-3" aria-hidden="true" />
             <span>删除</span>
           </button>
@@ -388,7 +388,7 @@ function ScheduleDialog({ initial, onClose }: { initial: Partial<Schedule>; onCl
           <input value={s.name || ''} onChange={(e) => setS({ ...s, name: e.target.value })} className={inp} placeholder="人类可读的备注" />
         </Field>
         <Field label="类型">
-          <select value={s.type} onChange={(e) => setS({ ...s, type: e.target.value as ScheduleType })} className={inp}>
+          <select value={s.type} onChange={(e) => setS({ ...s, type: e.target.value as ScheduleType })} className={`${inp} ga-select`}>
             <option value="idle">空闲 (Idle)</option>
             <option value="cron">定时 (Cron)</option>
             <option value="interval">周期 (Interval)</option>

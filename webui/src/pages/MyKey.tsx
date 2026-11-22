@@ -220,16 +220,16 @@ export default function MyKey() {
       }
     >
       <div className="p-6 max-w-5xl mx-auto h-full flex flex-col">
-        <section aria-label="云端自动同步" className="mb-4 rounded-xl border border-line bg-bg-card p-4 text-sm">
+        <section aria-label="云端自动同步" className="ga-paper-card mb-4 p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="font-semibold">云端自动同步</h2>
-              <p className="mt-1 text-xs text-ink-faint">每天 12:00 自动检查并同步云端配置。</p>
+              <h2 className="text-sm font-semibold text-ink">云端自动同步</h2>
+              <p className="mt-0.5 text-xs text-ink-faint">每天 12:00 自动检查并同步云端配置。</p>
             </div>
-            <label className="flex items-center gap-2">
+            <label className="inline-flex items-center gap-2 rounded-lg bg-bg-soft/75 px-3 py-1.5 text-xs font-medium text-ink ring-1 ring-line/45 cursor-pointer">
               <input type="checkbox" aria-label="启用每日自动同步" checked={autoSync.data?.enabled ?? false}
                 disabled={!autoSync.data || autoSyncBusy} onChange={(e) => void toggleAutoSync(e.target.checked)} />
-              每日同步
+              <span>每日同步</span>
             </label>
           </div>
           <p role="status" className="mt-2 text-xs text-ink-faint">
@@ -419,12 +419,12 @@ function SessionCard({ s, expanded, onToggle, onEdit, onDuplicate, onDelete }: {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="mykey-card__badge"><ChannelLabel type={s.type} /></span>
-              <span className="min-w-0 truncate text-[15px] leading-5 font-semibold tracking-[0.01em] text-ink">{title}</span>
+              <span className="min-w-0 truncate text-sm leading-5 font-semibold text-ink">{title}</span>
             </div>
             {!expanded && (
               <div className="mt-1.5 flex items-center gap-2 min-w-0">
                 <div className="mykey-card__dot" aria-hidden="true" />
-                <div className="min-w-0 truncate text-[13px] leading-5 text-ink-faint font-medium tracking-[0.01em]" title={String(summary)}>
+                <div className="min-w-0 truncate text-xs leading-5 text-ink-faint font-medium" title={String(summary)}>
                   {String(summary)}
                 </div>
               </div>

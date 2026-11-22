@@ -139,17 +139,17 @@ export function AntiTaskProgress({ active, runKey, loadEvents, streamUrl, onEven
   const latest = steps.at(-1)
 
   return <>
-    <details className="group rounded-lg border border-line/60 text-xs text-ink-muted" onToggle={event => setOpen(event.currentTarget.open)}>
-      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 px-2.5 py-2 [&::-webkit-details-marker]:hidden">
-        <ChevronRight size={14} className="shrink-0 group-open:rotate-90" aria-hidden="true" />
+    <details className="group rounded-xl bg-bg-soft/60 text-xs text-ink-muted ring-1 ring-line/45" onToggle={event => setOpen(event.currentTarget.open)}>
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 [&::-webkit-details-marker]:hidden">
+        <ChevronRight size={14} className="shrink-0 text-ink-faint transition-transform duration-150 group-open:rotate-90" aria-hidden="true" />
         <span className="font-medium text-ink">任务过程</span>
-        {steps.length > 0 && <span>{steps.length} 个步骤</span>}
+        {steps.length > 0 && <span className="rounded-full bg-bg-card/80 px-1.5 py-0.5 text-[11px] tabular-nums">{steps.length} 步</span>}
         {active && <span className="[overflow-wrap:anywhere]">{latest ? stepLabel(latest) : '等待步骤事件…'}</span>}
       </summary>
-      <div className="space-y-2 border-t border-line/60 px-2.5 py-2">
-        {isError && <p role="alert">过程记录加载失败。<button type="button" className="ml-2 text-accent underline" onClick={() => void refetch()}>重试</button></p>}
-        {steps.length > 0 ? <ol className="space-y-2" aria-label="任务步骤">
-          {steps.map(step => <li key={step.index} className="border-l border-line pl-2 [overflow-wrap:anywhere]">
+      <div className="space-y-2.5 border-t border-line/40 px-3 py-2.5">
+        {isError && <p role="alert">过程记录加载失败。<button type="button" className="ga-btn-link ml-2" onClick={() => void refetch()}>重试</button></p>}
+        {steps.length > 0 ? <ol className="space-y-2.5" aria-label="任务步骤">
+          {steps.map(step => <li key={step.index} className="border-l-2 border-accent/25 pl-2.5 [overflow-wrap:anywhere]">
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <span className="font-medium text-ink" title={step.tool ?? undefined}>{stepLabel(step)}</span>
               {step.state && <span>{stepStatus(step.state)}</span>}

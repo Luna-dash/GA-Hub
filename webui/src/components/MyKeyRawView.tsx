@@ -118,7 +118,7 @@ export function RawView({ data, onWrite, onDirtyChange }: {
       )}
 
       <div className="rounded-lg border border-line bg-bg-card overflow-hidden flex max-h-[70vh]">
-        <div aria-hidden="true" className="select-none shrink-0 overflow-hidden bg-bg-soft border-r border-line">
+        <div aria-hidden="true" className="select-none shrink-0 overflow-hidden bg-bg-soft border-r border-line/45">
           <pre ref={lineNumbersRef} className="text-right pr-2 pl-3 py-3 text-xs font-mono leading-6 text-ink-faint">
             {lines.map((_, i) => <div key={i} style={{ minWidth: `${pad}ch` }}>{i + 1}</div>)}
           </pre>
@@ -176,7 +176,7 @@ function BackupDrawer({ onClose, onRestored }: {
 
   return (
     <ModalOverlay onClose={onClose} align="right" panelClassName="w-[28rem] h-full border-l flex flex-col">
-        <header className="px-5 py-3 border-b border-line flex items-baseline justify-between">
+        <header className="px-5 py-3 border-b border-line/45 flex items-baseline justify-between">
           <div>
             <h3 className="text-base font-semibold">备份历史</h3>
             <p className="text-xs text-ink-faint mt-0.5">保留最近 10 份本地备份</p>
@@ -189,11 +189,11 @@ function BackupDrawer({ onClose, onRestored }: {
             <div className="text-ink-faint text-sm p-6 text-center">尚无备份</div>
           )}
           {backups.map((b) => (
-            <div key={b.name} className="rounded-lg border border-line bg-bg-card p-3">
+            <div key={b.name} className="ga-paper-subcard p-3">
               <div className="flex items-baseline justify-between gap-2 mb-1">
                 <div className="text-xs text-ink-muted font-mono truncate" title={b.name}>{b.name}</div>
                 <button onClick={() => restore(b.name)} disabled={busy !== null}
-                  className="ga-solid-primary inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded">
+                  className="ga-btn-sm-primary">
                   <RewindIcon size={12} />
                   <span>{busy === b.name ? '回滚中…' : '回滚'}</span>
                 </button>
@@ -204,8 +204,8 @@ function BackupDrawer({ onClose, onRestored }: {
             </div>
           ))}
         </div>
-        <footer className="border-t border-line px-4 py-2 text-xs text-ink-faint flex items-center justify-end">
-          <button onClick={() => refetch()} className="inline-flex items-center gap-1 text-accent hover:underline"><RefreshIcon size={12} /><span>刷新</span></button>
+        <footer className="border-t border-line/45 px-4 py-2.5 text-xs text-ink-faint flex items-center justify-end">
+          <button onClick={() => refetch()} className="ga-btn-link"><RefreshIcon size={12} /><span>刷新</span></button>
         </footer>
     </ModalOverlay>
   )

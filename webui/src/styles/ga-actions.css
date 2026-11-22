@@ -164,12 +164,20 @@
   }
 
   .ga-paper-card {
-    @apply rounded-xl border border-line bg-bg-card transition-[border-color,box-shadow,transform] duration-150;
-    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.68), 0 2px 6px rgba(45, 34, 22, 0.08);
+    @apply rounded-xl bg-bg-card transition-[border-color,box-shadow,transform] duration-150;
+    border: 1px solid rgb(var(--c-line-rgb) / 0.72);
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.68), 0 2px 6px rgba(45, 34, 22, 0.06);
   }
 
   .ga-paper-card:hover {
-    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.78), 0 4px 12px rgba(45, 34, 22, 0.12);
+    border-color: rgb(var(--c-line-rgb) / 0.92);
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.78), 0 4px 12px rgba(45, 34, 22, 0.1);
+  }
+
+  .ga-paper-subcard {
+    @apply rounded-xl bg-bg-soft/65;
+    border: 1px solid rgb(var(--c-line-rgb) / 0.45);
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.45);
   }
 
   .ga-paper-popover {
@@ -178,7 +186,41 @@
   }
 
   .ga-kbd {
-    @apply inline-flex items-center rounded border border-line/80 bg-bg-card px-1.5 py-0.5 font-mono text-[10px] leading-none text-ink-muted;
+    @apply inline-flex items-center rounded border border-line/80 bg-bg-card px-1.5 py-0.5 font-mono text-[11px] leading-none text-ink-muted;
     box-shadow: 0 1px 0 rgba(45, 34, 22, 0.12);
+  }
+
+  .ga-progress-track {
+    @apply relative h-2 w-full overflow-hidden rounded-full bg-bg-soft;
+    border: 1px solid rgb(var(--c-line-rgb) / 0.55);
+    box-shadow: inset 0 1px 2px rgba(45, 34, 22, 0.08);
+  }
+
+  .ga-progress-fill {
+    @apply h-full rounded-full bg-accent transition-[width] duration-200;
+    box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.28);
+  }
+
+  .ga-progress {
+    @apply block h-2 w-full overflow-hidden rounded-full bg-bg-soft;
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid rgb(var(--c-line-rgb) / 0.55);
+  }
+
+  .ga-progress::-webkit-progress-bar {
+    background: var(--c-bg-soft);
+    border-radius: 9999px;
+  }
+
+  .ga-progress::-webkit-progress-value {
+    background: var(--c-accent);
+    border-radius: 9999px;
+    transition: width 0.2s ease;
+  }
+
+  .ga-progress::-moz-progress-bar {
+    background: var(--c-accent);
+    border-radius: 9999px;
   }
 }

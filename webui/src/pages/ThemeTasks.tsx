@@ -199,20 +199,20 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
     } catch (e) { setError(errorMessageFromError(e)) }
     finally { lock.current = false; setPending(false) }
   }
-  return <article ref={cardRef} className={`scroll-mt-4 min-w-0 rounded-xl border border-line bg-bg shadow-sm ${expanded ? 'col-span-full overflow-hidden rounded-2xl ring-1 ring-accent/15' : ''}`} aria-label={`主题任务卡片：${title}`}>
-    <div className={expanded ? 'border-b border-line' : 'p-4'}>
+  return <article ref={cardRef} className={`ga-paper-card scroll-mt-4 min-w-0 ${expanded ? 'col-span-full overflow-hidden rounded-2xl ring-1 ring-accent/15' : ''}`} aria-label={`主题任务卡片：${title}`}>
+    <div className={expanded ? 'border-b border-line/45' : 'p-4'}>
       <header className={expanded ? 'grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 px-4 py-2 lg:grid-cols-[188px_minmax(0,1fr)_auto] lg:gap-x-4' : 'flex items-start justify-between gap-3'}>
         <h2 className="min-w-0 truncate text-sm font-semibold" title={title}>{title}</h2>
         {expanded && <div className="order-3 col-span-2 min-w-0 pt-1 lg:order-none lg:col-span-1 lg:pt-0"><ThemeTaskTabs tab={tab} onChange={setTab} /></div>}
         <div className="flex shrink-0 items-center gap-2">{!expanded && <button type="button" aria-label={`${active ? '停止' : '运行'}主题任务：${title}`} title={active ? runtime?.status === 'aborting' ? '正在停止' : '停止任务' : retryRunId ? '请展开并确认重试' : '按本次提示词运行'} disabled={active ? pending || uncertain || runtime?.status === 'aborting' : disabled || !draft.trim() || Boolean(retryRunId)} className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${active ? 'bg-status-danger/10 text-status-danger hover:bg-status-danger/20 disabled:cursor-not-allowed disabled:opacity-45' : 'ga-solid-primary'}`} onClick={() => void (active ? stop() : execute(draft.trim(), true))}>
           {active ? <Square className="h-3 w-3 fill-current" aria-hidden="true" /> : <Play className="h-3 w-3 fill-current" aria-hidden="true" />}
-        </button>}{expanded && tab === 'report' && <button type="button" aria-label="复制结论" title="复制结论" disabled={!frozen || !report} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line text-ink-faint transition-colors hover:border-accent/40 hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => void copyReport()}><CopyIcon size={14} /></button>}<button type="button" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line text-ink-faint transition-colors hover:border-accent/40 hover:bg-accent/10 hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" aria-label={expanded ? '收起任务卡片' : `打开主题任务：${title}`} title={expanded ? '收起详情' : '展开详情'} aria-expanded={expanded} aria-controls={`theme-detail-${session.id}`} onClick={() => onExpandedChange(expanded ? null : session.id)}>
+        </button>}{expanded && tab === 'report' && <button type="button" aria-label="复制结论" title="复制结论" disabled={!frozen || !report} className="ga-btn-icon-sm h-7 w-7 shrink-0 rounded-full border-line/65 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => void copyReport()}><CopyIcon size={14} /></button>}<button type="button" className="ga-btn-icon-sm h-7 w-7 shrink-0 rounded-full border-line/65" aria-label={expanded ? '收起任务卡片' : `打开主题任务：${title}`} title={expanded ? '收起详情' : '展开详情'} aria-expanded={expanded} aria-controls={`theme-detail-${session.id}`} onClick={() => onExpandedChange(expanded ? null : session.id)}>
             {expanded ? <Minimize2 className="h-3.5 w-3.5" aria-hidden="true" /> : <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />}
           </button></div>
       </header>
       {!expanded && <div className="mt-2 truncate text-xs text-ink-faint">执行模型：{model?.name ?? (session.llm_key ? '需重新关联模型' : '未设置模型')}</div>}
       {!expanded && <>
-        <div className="relative mt-3 flex min-h-16 items-center rounded-lg border border-line bg-bg-soft p-2.5 pr-10">
+        <div className="ga-paper-subcard relative mt-3 flex min-h-16 items-center p-2.5 pr-10">
           <p aria-label={`本次启动提示词：${title}`} className={`min-w-0 flex-1 whitespace-pre-wrap break-words text-sm line-clamp-3 ${draft.trim() ? '' : 'text-ink-faint'}`} title={draft}>{draft || '尚未填写提示词'}</p>
           <button type="button" aria-label={`编辑本次提示词：${title}`} title="编辑提示词" disabled={pending || active} className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => setEditDraft(draft)}><Pencil className="h-3.5 w-3.5" aria-hidden="true" /></button>
         </div>
@@ -238,25 +238,26 @@ function ThemeCard({ session, onSettings, refresh, expanded, onExpandedChange, a
     </ModalOverlay>}
 
     {expanded && <section id={`theme-detail-${session.id}`} className="grid min-w-0 lg:grid-cols-[220px_minmax(0,1fr)]" aria-label={`主题任务详情：${title}`}>
-      <aside className="min-w-0 border-b border-line bg-bg-soft/30 px-4 py-5 lg:border-b-0 lg:border-r">
+      <aside className="min-w-0 border-b border-line/45 bg-bg-soft/35 px-4 py-5 lg:border-b-0 lg:border-r">
         <div role="group" aria-label="任务操作" className="flex items-center gap-2"><button type="button" aria-label={`${active ? '停止' : '运行'}主题任务：${title}`} title={active ? runtime?.status === 'aborting' ? '正在停止' : '停止任务' : retryRunId ? '请展开并确认重试' : '按本次提示词运行'} disabled={active ? pending || uncertain || runtime?.status === 'aborting' : disabled || !draft.trim() || Boolean(retryRunId)} className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${active ? 'bg-status-danger/10 text-status-danger hover:bg-status-danger/20 disabled:cursor-not-allowed disabled:opacity-45' : 'ga-solid-primary'}`} onClick={() => void (active ? stop() : execute(draft.trim(), true))}>
           {active ? <Square className="h-3 w-3 fill-current" aria-hidden="true" /> : <Play className="h-3 w-3 fill-current" aria-hidden="true" />}
-        </button><button type="button" aria-label={`任务设置：${title}`} title="任务设置" disabled={pending || active} className="flex h-7 w-7 items-center justify-center rounded-full border border-line text-ink-faint transition-colors hover:border-accent/40 hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40" onClick={onSettings}><Settings2 className="h-3.5 w-3.5" aria-hidden="true" /></button><button type="button" aria-label={`移回聊天：${title}`} title="移回聊天" disabled={active || pending} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line text-ink-faint transition-colors hover:border-accent/40 hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => void moveBack()}><MoveOutIcon size={14} /></button></div>
-        <div className="mt-6 space-y-4" aria-label="执行概况">
+        </button><button type="button" aria-label={`任务设置：${title}`} title="任务设置" disabled={pending || active} className="ga-btn-icon-sm h-7 w-7 rounded-full border-line/65 disabled:cursor-not-allowed disabled:opacity-40" onClick={onSettings}><Settings2 className="h-3.5 w-3.5" aria-hidden="true" /></button><button type="button" aria-label={`移回聊天：${title}`} title="移回聊天" disabled={active || pending} className="ga-btn-icon-sm h-7 w-7 shrink-0 rounded-full border-line/65 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => void moveBack()}><MoveOutIcon size={14} /></button></div>
+        <div className="mt-5 space-y-3.5" aria-label="执行概况">
           <p className="flex items-start gap-2 text-sm font-medium leading-6">{active ? <span aria-hidden="true" className="mt-1.5 h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-accent/20 border-t-accent motion-reduce:animate-none" /> : <span className={`mt-2 h-1.5 w-1.5 shrink-0 rounded-full ${dotTone}`} />}<span>{status}</span></p>
-          <dl className="grid grid-cols-2 gap-4">
-            <div><dt className="text-xs text-ink-faint">{active ? '已运行' : '运行用时'}</dt><dd aria-label="已运行" className="mt-1.5 text-xl font-medium tabular-nums tracking-tight">{run ? elapsed(run, now) : '—'}</dd></div>
-            <div className="border-l border-line pl-4"><dt className="text-xs text-ink-faint">执行轮次</dt><dd aria-label="执行轮次" className="mt-1.5 text-xl font-medium tabular-nums tracking-tight">{run?.turns ?? '—'}<span className="ml-1 text-xs font-normal text-ink-faint">turn</span></dd></div>
+          <dl className="grid grid-cols-2 gap-2.5">
+            <div className="ga-paper-subcard px-2.5 py-2"><dt className="text-[11px] text-ink-faint">{active ? '已运行' : '运行用时'}</dt><dd aria-label="已运行" className="mt-1 text-base font-semibold tabular-nums tracking-tight text-ink">{run ? elapsed(run, now) : '—'}</dd></div>
+            <div className="ga-paper-subcard px-2.5 py-2"><dt className="text-[11px] text-ink-faint">执行轮次</dt><dd aria-label="执行轮次" className="mt-1 text-base font-semibold tabular-nums tracking-tight text-ink">{run?.turns ?? '—'}<span className="ml-1 text-xs font-normal text-ink-faint">turn</span></dd></div>
           </dl>
           {run && <p title="最近运行时间" className="text-xs leading-5 text-ink-faint">{new Date(run.started_at * 1000).toLocaleString()}</p>}
         </div>
-        <dl className="my-5 space-y-4 border-y border-line py-5">
-          <div><dt className="text-xs text-ink-faint">执行模型</dt><dd className="mt-1.5 break-words text-sm leading-6 [overflow-wrap:anywhere]" title={frozen && run?.model_name && run.model_name !== model?.name ? `本次：${run.model_name}；下次：${model?.name ?? '未设置'}` : model?.name}>{(frozen && run?.model_name) || model?.name || '未设置模型'}</dd></div>
-          {session.project_name && <div><dt className="text-xs text-ink-faint">所属项目</dt><dd className="mt-1.5 break-words text-sm leading-6 [overflow-wrap:anywhere]">{session.project_name}</dd></div>}
+        <hr className="ga-hairline my-4" />
+        <dl className="mb-4 space-y-3">
+          <div><dt className="text-xs text-ink-faint">执行模型</dt><dd className="mt-1 break-words text-sm leading-6 [overflow-wrap:anywhere]" title={frozen && run?.model_name && run.model_name !== model?.name ? `本次：${run.model_name}；下次：${model?.name ?? '未设置'}` : model?.name}>{(frozen && run?.model_name) || model?.name || '未设置模型'}</dd></div>
+          {session.project_name && <div><dt className="text-xs text-ink-faint">所属项目</dt><dd className="mt-1 break-words text-sm leading-6 [overflow-wrap:anywhere]">{session.project_name}</dd></div>}
         </dl>
-        <div className="rounded-xl bg-bg-soft p-3">
-          <p aria-label={`本次启动提示词：${title}`} className={`line-clamp-6 whitespace-pre-wrap break-words text-sm leading-7 ${draft.trim() ? '' : 'text-ink-faint'}`} title={draft}>{draft || '尚未填写提示词'}</p>
-          <div className="mt-3 flex items-center justify-between gap-2 border-t border-line/60 pt-2">
+        <div className="ga-paper-subcard p-3">
+          <p aria-label={`本次启动提示词：${title}`} className={`line-clamp-6 whitespace-pre-wrap break-words text-sm leading-6 ${draft.trim() ? '' : 'text-ink-faint'}`} title={draft}>{draft || '尚未填写提示词'}</p>
+          <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line/35 pt-2">
             <button type="button" className="ga-btn-link" disabled={pending || active} title="调整提示词并立即运行" onClick={() => setAdjust(true)}>本次调整</button>
             <button type="button" aria-label={`编辑本次提示词：${title}`} title="编辑提示词" disabled={pending || active} className="flex h-6 w-6 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => setEditDraft(draft)}><Pencil className="h-3.5 w-3.5" aria-hidden="true" /></button>
           </div>

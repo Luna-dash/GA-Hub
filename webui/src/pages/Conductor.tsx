@@ -817,7 +817,7 @@ export default function Conductor() {
                   <select
                     value={antiProject}
                     onChange={event => setAntiProject(event.target.value)}
-                    className="rounded-md border border-line bg-bg-card px-2 py-1 text-xs text-ink outline-none focus:border-accent"
+                    className="ga-select rounded-lg px-2.5 py-1 text-xs text-ink"
                   >
                     <option value="">不启用 Anti 委派</option>
                     {antiProjects.items.filter(item => !item.dangling).map(item => (

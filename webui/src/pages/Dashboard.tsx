@@ -117,7 +117,7 @@ export default function Dashboard() {
         {tokens.data?.available && totals && (
           <section>
             <SectionTitle title="Token 用量" hint="统计周期内累计" link="/tokens" />
-            <div className="ga-paper-card px-4 py-3 grid grid-cols-2 sm:grid-cols-5 gap-3 divide-y sm:divide-y-0 sm:divide-x divide-line/55">
+            <div className="ga-paper-card px-4 py-3 grid grid-cols-2 sm:grid-cols-5 gap-3 divide-y sm:divide-y-0 sm:divide-x divide-line/35">
               <TokenFact label="请求累计" value={totals.requests} />
               <TokenFact label="输入" value={totals.input} indented />
               <TokenFact label="输出" value={totals.output} indented />
@@ -151,7 +151,7 @@ function SectionTitle({ title, hint, link }: { title: string; hint: string; link
 
 function ActionRow({ service }: { service: ServicePanelItem }) {
   const statusOnly = service.href === '/dashboard'
-  return <ServiceSurface service={service} className="ga-paper-card flex items-center justify-between gap-4 border-status-warning-line bg-status-warning-soft/85 px-4 py-3"><div className="min-w-0"><div className="text-sm font-medium text-status-warning">{service.name}</div><p className="text-xs text-status-warning/90 truncate">{service.error || service.summary}</p></div>{!statusOnly && <span className="inline-flex items-center gap-1 text-xs font-medium text-status-warning shrink-0">前往查看<ArrowRight className="h-3 w-3" aria-hidden="true" /></span>}</ServiceSurface>
+  return <ServiceSurface service={service} className="ga-paper-card flex items-center justify-between gap-4 border-status-warning-line bg-status-warning-soft/85 px-4 py-3"><div className="min-w-0"><div className="text-sm font-medium text-status-warning">{service.name}</div><p className="text-xs text-status-warning/90 truncate">{service.error || service.summary}</p></div>{!statusOnly && <span className="inline-flex items-center gap-1 text-xs font-medium text-status-warning shrink-0" title="前往处理"><ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></span>}</ServiceSurface>
 }
 
 function ServiceRow({ service }: { service: ServicePanelItem }) {
@@ -159,19 +159,19 @@ function ServiceRow({ service }: { service: ServicePanelItem }) {
   const needsAttention = service.health !== 'healthy'
   const dot = needsAttention ? 'bg-status-warning' : service.activity === 'active' ? 'bg-status-info' : service.activity === 'standby' ? 'bg-status-success' : 'bg-ink-faint'
   return (
-    <ServiceSurface service={service} className={`ga-paper-card px-3.5 py-3 min-w-0 flex flex-col justify-between gap-2 ${needsAttention ? 'border-status-warning-line border-l-[3px] border-l-status-warning' : ''}`}>
+    <ServiceSurface service={service} className={`ga-paper-card px-3.5 py-3 min-w-0 flex flex-col justify-between gap-2.5 ${needsAttention ? 'border-status-warning-line border-l-[3px] border-l-status-warning' : ''}`}>
       <div>
         <div className="flex items-center justify-between gap-3">
           <span className="flex items-center min-w-0">
             <span className={`h-2 w-2 rounded-full shrink-0 mr-2 ${dot}`} />
             <b className="text-sm font-medium text-ink truncate">{service.name}</b>
           </span>
-          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0 border ${
+          <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium shrink-0 border ${
             needsAttention
               ? 'border-status-warning-line bg-status-warning-soft text-status-warning'
               : service.activity === 'active'
                 ? 'border-status-info-line bg-status-info-soft text-status-info'
-                : 'border-line/70 bg-bg-soft text-ink-faint'
+                : 'border-line/50 bg-bg-soft text-ink-faint'
           }`}>
             {serviceActivityLabel(service)}
           </span>
@@ -179,9 +179,9 @@ function ServiceRow({ service }: { service: ServicePanelItem }) {
         <p className="mt-1 text-xs text-ink-faint truncate" title={service.error || service.summary}>{service.error || service.summary}</p>
       </div>
       {metrics.length > 0 && (
-        <div className="pt-2 border-t border-line/55 flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1.5 pt-0.5">
           {metrics.map(([key, value]) => (
-            <span key={key} className="inline-flex items-center gap-1 rounded-md border border-line/65 bg-bg-soft/75 px-1.5 py-0.5 text-[11px] text-ink-faint">
+            <span key={key} className="inline-flex items-center gap-1 rounded-md bg-bg-soft/80 px-2 py-0.5 text-[11px] text-ink-faint">
               <span>{key}</span>
               <b className="font-mono font-normal text-ink-muted">{value === true ? '是' : String(value)}</b>
             </span>

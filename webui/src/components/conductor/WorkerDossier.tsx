@@ -215,14 +215,14 @@ export function WorkerDossier({
                       <span className={clsx('break-words', reached ? 'text-ink' : missed ? 'text-status-danger' : 'text-ink-muted')}>
                         {ms.desc}
                       </span>
-                      <span className="ml-1.5 whitespace-nowrap text-[10px] text-ink-faint">
+                      <span className="ml-1.5 whitespace-nowrap text-[11px] text-ink-faint">
                         {reached && ms.reached_at
                           ? `已达成 ${formatClock(ms.reached_at)}`
                           : missed
                             ? '已超时，等待指挥处理'
                             : '进行中'}
                       </span>
-                      <span className="block text-[10px] leading-4 text-ink-faint">
+                      <span className="block text-[11px] leading-4 text-ink-faint">
                         {milestoneCheckSummary(ms.check)}
                       </span>
                     </span>

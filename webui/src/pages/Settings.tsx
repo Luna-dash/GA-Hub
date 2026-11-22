@@ -188,14 +188,17 @@ export default function Settings({ initialMode = 'settings' }: { initialMode?: '
         )}
         <div className="min-w-0 space-y-4">
           {!inSetup && (
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-line/65 pb-2.5">
-              <h2 className="text-base font-semibold text-ink">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.label}</h2>
-              <p className="text-xs text-ink-faint">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.description}</p>
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                <h2 className="text-base font-semibold text-ink">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.label}</h2>
+                <p className="text-xs text-ink-faint">{SETTINGS_TABS.find(tab => tab.id === activeTab)!.description}</p>
+              </div>
+              <hr className="ga-hairline" />
             </div>
           )}
           <div id="settings-panel-general" role={inSetup ? undefined : 'tabpanel'} aria-labelledby={inSetup ? undefined : 'settings-tab-general'} tabIndex={inSetup ? undefined : 0} hidden={!inSetup && activeTab !== 'general'} className="space-y-4">
             {/* current summary */}
-            <div className="ga-paper-card px-4 py-3 grid grid-cols-1 md:grid-cols-3 gap-3 divide-y md:divide-y-0 md:divide-x divide-line/60">
+            <div className="ga-paper-card px-4 py-3 grid grid-cols-1 md:grid-cols-3 gap-3 divide-y md:divide-y-0 md:divide-x divide-line/35">
               <div className="min-w-0">
                 <div className="text-[11px] text-ink-faint">GenericAgent 路径</div>
                 <div className="mt-0.5 font-mono text-xs break-all">
@@ -362,7 +365,7 @@ function NavManagementPanel() {
           const item = NAV_ITEMS.find((candidate) => candidate.id === preference.id)
           if (!item) return null
           return (
-            <div key={item.id} className="flex items-center gap-2 rounded-lg border border-line/65 bg-bg-soft/45 px-2.5 py-1.5">
+            <div key={item.id} className="ga-paper-subcard flex items-center gap-2 px-2.5 py-1.5">
               <input
                 type="checkbox"
                 checked={preference.visible}
@@ -412,7 +415,7 @@ function MyKeySyncPanel() {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <div className="text-sm font-semibold text-ink">mykey 同步</div>
-          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium border ${showUpload ? 'border-status-warning-line bg-status-warning-soft text-status-warning' : 'border-line/75 bg-bg-soft text-ink-faint'}`}>
+          <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium border ${showUpload ? 'border-status-warning-line bg-status-warning-soft text-status-warning' : 'border-line/50 bg-bg-soft text-ink-faint'}`}>
             {showUpload ? '已显示上传入口' : '默认仅下载'}
           </span>
         </div>
@@ -568,7 +571,7 @@ function ChatRetryPanel() {
 
   return (
     <div className="ga-paper-card overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/70 bg-bg-soft/65 px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/45 bg-bg-soft/45 px-4 py-3">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="text-sm font-semibold text-ink">实时聊天自动重试</div>
           <label className="inline-flex items-center gap-1.5 rounded-full border border-line/80 bg-bg-card px-2.5 py-0.5 text-xs font-medium text-ink cursor-pointer">
@@ -596,7 +599,7 @@ function ChatRetryPanel() {
       </div>
 
       <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="rounded-lg border border-line/65 bg-bg-soft/45 p-3.5 space-y-2.5">
+        <div className="ga-paper-subcard p-3.5 space-y-2.5">
           <div className="text-xs font-semibold text-ink">实时会话</div>
           <div className="grid grid-cols-2 gap-2.5">
             <label className="block text-xs text-ink-faint" title="普通对话的最大自动重试次数">
@@ -626,7 +629,7 @@ function ChatRetryPanel() {
           </div>
         </div>
 
-        <div className="rounded-lg border border-line/65 bg-bg-soft/45 p-3.5 space-y-2.5">
+        <div className="ga-paper-subcard p-3.5 space-y-2.5">
           <div className="text-xs font-semibold text-ink">定时 / 无人值守任务</div>
           <div className="grid grid-cols-2 gap-2.5">
             <label className="block text-xs text-ink-faint" title="无人值守任务的最大自动重试次数">
@@ -694,7 +697,7 @@ function NotifyPanel() {
         <div>
           <div className="flex items-center gap-2">
             <div className="text-sm font-semibold text-ink">桌面通知</div>
-            {backendName && <span className="rounded-full border border-line/75 bg-bg-soft px-2 py-0.5 text-[10px] text-ink-faint">{backendName}</span>}
+            {backendName && <span className="rounded-full bg-bg-soft px-2 py-0.5 text-[11px] text-ink-faint ring-1 ring-line/45">{backendName}</span>}
           </div>
           <div className="text-xs text-ink-faint mt-0.5">
             窗口失焦或最小化时以主题消息窗提醒，不展示输出细节。

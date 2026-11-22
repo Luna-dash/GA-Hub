@@ -6,13 +6,16 @@ import { readPageState, usePageState, writePageState } from '@/utils/pageState'
 import type { ConversationMessage, ConversationSource, ConversationSummary, HubSession } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { MessageContent } from '@/components/MessageContent'
+import { ReplyActions } from '@/components/ReplyActions'
 import { bubbleTone } from '@/components/bubbleTone'
 import { ConversationIndexRail } from '@/components/ConversationIndexRail'
 import { VirtualMessageList } from '@/components/VirtualMessageList'
 import { parseAssistantTranscript, stripAssistantTranscriptTags } from '@/utils/assistantTranscript'
 import { previewText } from '@/utils/foldTurns'
 import { formatRelativeTime } from '@/utils/timeFormat'
+import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
 import { RAIL_TITLE_SCALE_EVENT, railTitlePercent, getRailTitleScale } from '@/utils/railAppearance'
+import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import { saveTextExport } from '@/utils/desktop'
 import { errorMessageFromError, openSessionChat, structuredErrorDetailFromError } from '@/utils/sessionUi'
 import { dialog } from '@/stores/dialogStore'
@@ -25,18 +28,28 @@ import {
 import { queryKeys } from '@/queries/queryKeys'
 import { conversationCountsText, CONVERSATION_COUNTS_HELP } from '@/utils/conversationCounts'
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowLeft,
-  ArrowRight,
   ArrowUp,
   ChevronDisclosureIcon,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
   ExternalLink,
   FileJson,
   FileText,
   FolderDown,
+  History,
+  Inbox,
+  Layers,
   Pencil,
+  RotateCw,
+  Search,
   Trash2,
+  X,
 } from '@/components/ActionIcons'
+import { LoaderCircle, MessageSquare } from 'lucide-react'
 
 type ViewMode = 'round' | 'flat'
 type Msg = ConversationMessage
@@ -63,10 +76,10 @@ type Round = {
 const SOURCE_META: Record<ConversationSource, { label: string; chipClass: string }> = {
   session: {
     label: '本机会话',
-    chipClass: 'border-status-info-line bg-status-info-soft text-status-info',
+    chipClass: 'border-status-info-line/80 bg-status-info-soft text-status-info',
   },
-  im: { label: '外部接入', chipClass: 'border-line bg-bg-card text-ink-muted' },
-  local: { label: '本地', chipClass: 'border-line bg-bg-card text-ink-faint' },
+  im: { label: '外部接入', chipClass: 'border-line/70 bg-bg-soft/90 text-ink-muted' },
+  local: { label: '本地', chipClass: 'border-line/65 bg-bg-soft/80 text-ink-faint' },
 }
 
 const SOURCE_FILTERS: { value: SourceFilter; label: string }[] = [
@@ -99,21 +112,37 @@ export default function Conversations() {
   const detailScrollRef = useRef<HTMLDivElement>(null)
   const limit = 50
 
-  // 会话管理栏标题字号（设置页可调，仅当前设备）
+  // 会话管理栏标题字号与正文缩放（设置页可调，仅当前设备）
   const [titleScale, setTitleScale] = useState(getRailTitleScale)
+  const [fontScale, setFontScale] = useState(getChatFontScale)
   useEffect(() => {
-    const sync = (event: Event) => setTitleScale((event as CustomEvent<number>).detail || getRailTitleScale())
-    window.addEventListener(RAIL_TITLE_SCALE_EVENT, sync)
-    return () => window.removeEventListener(RAIL_TITLE_SCALE_EVENT, sync)
+    const syncTitle = (event: Event) => setTitleScale((event as CustomEvent<number>).detail || getRailTitleScale())
+    const syncFont = (event: Event) => setFontScale((event as CustomEvent<number>).detail || getChatFontScale())
+    const syncHydrated = () => {
+      setTitleScale(getRailTitleScale())
+      setFontScale(getChatFontScale())
+    }
+    window.addEventListener(RAIL_TITLE_SCALE_EVENT, syncTitle)
+    window.addEventListener(CHAT_FONT_SCALE_EVENT, syncFont)
+    window.addEventListener(UI_SETTINGS_HYDRATED_EVENT, syncHydrated)
+    return () => {
+      window.removeEventListener(RAIL_TITLE_SCALE_EVENT, syncTitle)
+      window.removeEventListener(CHAT_FONT_SCALE_EVENT, syncFont)
+      window.removeEventListener(UI_SETTINGS_HYDRATED_EVENT, syncHydrated)
+    }
   }, [])
   const titleStyle: CSSProperties = { fontSize: `${railTitlePercent(titleScale)}%` }
+  const messageFontStyle = useMemo<CSSProperties>(() => ({
+    fontSize: `${chatFontPercent(fontScale)}%`,
+    '--chat-scale': chatFontPercent(fontScale) / 100,
+  } as CSSProperties), [fontScale])
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQ(q), 300)
     return () => window.clearTimeout(t)
   }, [q])
 
-  const { data } = useQuery({
+  const { data, isLoading: listLoading } = useQuery({
     queryKey: conversationKeys.list(debouncedQ, page * limit, limit),
     queryFn: () => api.conversations(debouncedQ || undefined, page * limit, limit),
   })
@@ -313,7 +342,7 @@ export default function Conversations() {
     <PageShell
       title="历史对话"
       actions={
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
           <div className="ga-segmented text-xs" role="group" aria-label="视图模式">
             {(['round', 'flat'] as ViewMode[]).map((m) => (
               <button
@@ -321,18 +350,41 @@ export default function Conversations() {
                 type="button"
                 aria-pressed={viewMode === m}
                 onClick={() => setViewMode(m)}
-                className={`ga-segmented-btn ${viewMode === m ? 'ga-segmented-btn-active' : ''}`}
+                className={`ga-segmented-btn inline-flex items-center gap-1.5 ${viewMode === m ? 'ga-segmented-btn-active' : ''}`}
               >
-                {m === 'round' ? '轮次摘要' : '对话视图'}
+                {m === 'round'
+                  ? <Layers size={13} strokeWidth={1.85} aria-hidden="true" />
+                  : <MessageSquare size={13} strokeWidth={1.85} aria-hidden="true" />}
+                <span>{m === 'round' ? '轮次摘要' : '对话视图'}</span>
               </button>
             ))}
           </div>
-          <input
-            value={q}
-            onChange={(e) => { setQ(e.target.value); setPage(0) }}
-            placeholder="搜索标题或内容…"
-            className="bg-bg-card border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent w-72"
-          />
+          <div className="relative flex items-center">
+            <Search
+              size={14}
+              strokeWidth={1.85}
+              aria-hidden="true"
+              className="pointer-events-none absolute left-2.5 text-ink-faint"
+            />
+            <input
+              value={q}
+              onChange={(e) => { setQ(e.target.value); setPage(0) }}
+              placeholder="搜索标题或内容…"
+              aria-label="搜索历史对话"
+              className="w-56 sm:w-64 lg:w-72 rounded-lg border border-line bg-bg-card pl-8 pr-7 py-1.5 text-sm text-ink placeholder:text-ink-faint outline-none transition-colors focus:border-accent/60 focus:ring-2 focus:ring-accent/15"
+            />
+            {q && (
+              <button
+                type="button"
+                onClick={() => { setQ(''); setPage(0) }}
+                aria-label="清空搜索"
+                title="清空搜索"
+                className="absolute right-1.5 flex h-5 w-5 items-center justify-center rounded text-ink-faint transition-colors hover:bg-ink/8 hover:text-ink"
+              >
+                <X size={12} strokeWidth={2} aria-hidden="true" />
+              </button>
+            )}
+          </div>
         </div>
       }
     >
@@ -341,44 +393,76 @@ export default function Conversations() {
           {(collapsed) => (
             <>
               {!collapsed && (
-                <div className="sticky top-0 z-10 flex items-center gap-1.5 border-b border-line/60 bg-bg-soft px-3 py-2">
-                  {SOURCE_FILTERS.map((f) => (
-                    <button
-                      key={f.value}
-                      type="button"
-                      aria-pressed={sourceFilter === f.value}
-                      onClick={() => setSourceFilter(f.value)}
-                      className={`rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
-                        sourceFilter === f.value
-                          ? 'border-accent bg-accent text-white'
-                          : 'border-line text-ink-muted hover:bg-ink/5'
-                      }`}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
+                <div className="sticky top-0 z-10 border-b border-line/50 bg-bg-soft/95 px-2.5 py-2 backdrop-blur-[2px]">
+                  <div className="flex flex-wrap items-center gap-1">
+                    {SOURCE_FILTERS.map((f) => {
+                      const activeFilter = sourceFilter === f.value
+                      return (
+                        <button
+                          key={f.value}
+                          type="button"
+                          aria-pressed={activeFilter}
+                          onClick={() => setSourceFilter(f.value)}
+                          className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+                            activeFilter
+                              ? 'bg-accent-soft text-accent-deep ring-1 ring-accent/35'
+                              : 'text-ink-muted hover:bg-ink/[0.04] hover:text-ink'
+                          }`}
+                        >
+                          {f.label}
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
               )}
-              {visibleItems.map((c, index) => (
-                <ConvRow
-                  key={c.id}
-                  c={c}
-                  index={page * limit + index + 1}
-                  collapsed={collapsed}
-                  active={active === c.id}
-                  titleStyle={titleStyle}
-                  onClick={() => nav(`/conversations/${encodeURIComponent(c.id)}`)}
-                />
-              ))}
-              {visibleItems.length === 0 && items.length > 0 && (
-                <div className="px-3 py-6 text-center text-xs text-ink-faint">
-                  本页没有「{filterLabel}」会话
-                </div>
-              )}
+              <div className={collapsed ? 'space-y-1 py-1' : 'space-y-1 p-1.5'}>
+                {listLoading && items.length === 0 && !collapsed && (
+                  Array.from({ length: 4 }, (_, idx) => (
+                    <div key={`skeleton-${idx}`} className="rounded-lg bg-bg-card/60 px-2.5 py-2.5 animate-pulse space-y-2">
+                      <div className="h-3.5 w-3/4 rounded bg-ink/8" />
+                      <div className="h-2.5 w-full rounded bg-ink/6" />
+                      <div className="h-2.5 w-1/2 rounded bg-ink/6" />
+                    </div>
+                  ))
+                )}
+                {visibleItems.map((c, index) => (
+                  <ConvRow
+                    key={c.id}
+                    c={c}
+                    index={page * limit + index + 1}
+                    collapsed={collapsed}
+                    active={active === c.id}
+                    titleStyle={titleStyle}
+                    onClick={() => nav(`/conversations/${encodeURIComponent(c.id)}`)}
+                  />
+                ))}
+                {!listLoading && visibleItems.length === 0 && !collapsed && (
+                  <div className="px-3 py-8 text-center">
+                    <Inbox size={18} strokeWidth={1.75} aria-hidden="true" className="mx-auto mb-2 text-ink-faint/70" />
+                    <div className="text-xs text-ink-muted">
+                      {items.length > 0
+                        ? `本页没有「${filterLabel}」会话`
+                        : debouncedQ
+                          ? '未找到匹配的归档会话'
+                          : '暂无历史对话归档'}
+                    </div>
+                    {items.length > 0 && sourceFilter !== 'all' && (
+                      <button
+                        type="button"
+                        onClick={() => setSourceFilter('all')}
+                        className="mt-2 text-[11px] font-medium text-accent hover:underline"
+                      >
+                        查看全部来源
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
               {total > limit && (
                 <div className={collapsed
-                  ? 'sticky bottom-0 z-10 flex flex-col items-center gap-1 border-t border-line/60 bg-bg-soft py-2 text-xs text-ink-muted'
-                  : 'sticky bottom-0 z-10 p-3 flex items-center justify-between border-t border-line/60 bg-bg-soft text-xs text-ink-muted'}
+                  ? 'sticky bottom-0 z-10 flex flex-col items-center gap-1 border-t border-line/50 bg-bg-soft/95 py-2 text-xs text-ink-muted'
+                  : 'sticky bottom-0 z-10 flex items-center justify-between gap-2 border-t border-line/50 bg-bg-soft/95 px-2.5 py-2 text-xs text-ink-muted'}
                 >
                   <button
                     type="button"
@@ -386,32 +470,37 @@ export default function Conversations() {
                     title="上一页"
                     disabled={page === 0}
                     onClick={() => setPage(page - 1)}
-                    className={collapsed ? 'ga-btn-icon-sm' : 'ga-btn-ghost px-2'}
+                    className={collapsed ? 'ga-btn-icon-sm' : 'ga-btn h-7 px-2 text-[11px]'}
                   >
                     {collapsed ? (
                       <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
                     ) : (
                       <>
-                        <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                        <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
                         <span>上页</span>
                       </>
                     )}
                   </button>
-                  <span title={`第 ${page + 1} 页`}>{collapsed ? page + 1 : `第 ${page + 1} 页`}</span>
+                  <span
+                    className="tabular-nums text-[11px]"
+                    title={`共 ${total} 条归档，当前第 ${page + 1} / ${Math.max(1, Math.ceil(total / limit))} 页`}
+                  >
+                    {collapsed ? page + 1 : `第 ${page + 1} / ${Math.max(1, Math.ceil(total / limit))} 页`}
+                  </span>
                   <button
                     type="button"
                     aria-label="下一页"
                     title="下一页"
                     disabled={(page + 1) * limit >= total}
                     onClick={() => setPage(page + 1)}
-                    className={collapsed ? 'ga-btn-icon-sm' : 'ga-btn-ghost px-2'}
+                    className={collapsed ? 'ga-btn-icon-sm' : 'ga-btn h-7 px-2 text-[11px]'}
                   >
                     {collapsed ? (
                       <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
                     ) : (
                       <>
                         <span>下页</span>
-                        <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                        <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
                       </>
                     )}
                   </button>
@@ -422,128 +511,185 @@ export default function Conversations() {
         </ConversationIndexRail>
 
         <div ref={detailScrollRef} className="min-w-0 flex-1 overflow-y-auto [overflow-anchor:none]">
-          {!active && <div className="h-full flex items-center justify-center text-ink-faint text-sm">选择左侧会话查看详情</div>}
+          {!active && (
+            <div className="flex h-full items-center justify-center p-6">
+              <div className="max-w-sm rounded-2xl border border-line/65 bg-bg-card/80 px-7 py-8 text-center shadow-[0_2px_10px_rgba(45,34,22,0.05)]">
+                <div className="mx-auto mb-3.5 flex h-11 w-11 items-center justify-center rounded-xl bg-accent-soft/80 text-accent-deep ring-1 ring-accent/20">
+                  <History size={20} strokeWidth={1.85} aria-hidden="true" />
+                </div>
+                <p className="text-sm font-medium text-ink">选择左侧会话查看详情</p>
+                <p className="mt-1.5 text-xs leading-relaxed text-ink-muted">
+                  支持按轮次梳理过程摘要与结论，或切换完整对话流；也可一键恢复到实时对话继续协作。
+                </p>
+              </div>
+            </div>
+          )}
           {active && detailLoading && !detail && (
-            <div role="status" className="h-full flex items-center justify-center text-ink-muted text-sm">正在读取会话详情…</div>
+            <div role="status" className="flex h-full items-center justify-center p-6">
+              <div className="flex items-center gap-2.5 rounded-xl border border-line/65 bg-bg-card/85 px-4 py-3 text-sm text-ink-muted shadow-sm">
+                <LoaderCircle size={16} strokeWidth={1.85} aria-hidden="true" className="animate-spin text-accent" />
+                <span>正在读取会话详情…</span>
+              </div>
+            </div>
           )}
           {active && detailError && !detail && (
-            <div role="alert" className="h-full flex flex-col items-center justify-center gap-3 px-6 text-center">
-              <div className="text-sm text-status-danger">读取会话详情失败：{errorMessageFromError(detailErr)}</div>
-              <div className="flex items-center gap-2">
-                <button type="button" onClick={() => { void refetchDetail() }} className="ga-btn">重试</button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    lastActiveRef.current = null
-                    writePageState('conversations.lastActive', null)
-                    nav('/conversations', { replace: true })
-                  }}
-                  className="ga-btn"
-                >
-                  返回列表
-                </button>
+            <div role="alert" className="flex h-full items-center justify-center p-6">
+              <div className="max-w-md rounded-2xl border border-status-danger-line bg-status-danger-soft/75 px-6 py-6 text-center shadow-sm">
+                <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-status-danger-soft text-status-danger ring-1 ring-status-danger-line">
+                  <AlertTriangle size={18} strokeWidth={1.85} aria-hidden="true" />
+                </div>
+                <div className="text-sm font-medium text-status-danger">读取会话详情失败：{errorMessageFromError(detailErr)}</div>
+                <div className="mt-4 flex items-center justify-center gap-2">
+                  <button type="button" onClick={() => { void refetchDetail() }} className="ga-btn h-8 px-3 text-xs">
+                    <RotateCw className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>重试</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      lastActiveRef.current = null
+                      writePageState('conversations.lastActive', null)
+                      nav('/conversations', { replace: true })
+                    }}
+                    className="ga-btn h-8 px-3 text-xs"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>返回列表</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
-          {active && detail && (
-            <div className="p-6 max-w-5xl mx-auto">
-              <div className="mb-5">
-                <div className="flex min-w-0 items-baseline gap-2">
-                  <h2 className="min-w-0 truncate text-lg font-semibold" title={conversationDisplayTitle(detail)}>
-                    {conversationDisplayTitle(detail)}
-                  </h2>
-                  <span className="shrink-0 text-xs text-ink-faint">
-                    {detail.messages?.length || 0} 条消息 · {rounds.length} 轮
-                  </span>
-                </div>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line/60 pt-3">
-                  {boundSessionId ? (
-                    <button
-                      type="button"
-                      onClick={() => { void openSession(boundSessionId) }}
-                      className="ga-btn-primary shrink-0"
-                      title="打开对应会话继续对话"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>打开该会话</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => { void handleImport(detail.id) }}
-                      disabled={importing === detail.id}
-                      className="ga-btn-primary shrink-0"
-                      title="导入为新会话继续对话"
-                    >
-                      <FolderDown className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>{importing === detail.id ? '导入中…' : '导入为会话'}</span>
-                    </button>
-                  )}
-                  <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-                    <div className="ga-btn-group">
-                      <button
-                        type="button"
-                        onClick={() => handleRename(detail.id, detail.title || '')}
-                        className="ga-btn-group-item"
-                      >
-                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                        <span>重命名</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(detail.id, detail.title || '')}
-                        className="ga-btn-group-item-danger"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                        <span>删除</span>
-                      </button>
-                    </div>
-                    <div className="ga-btn-group">
-                      <button
-                        type="button"
-                        onClick={() => handleExport(detail.id, 'md')}
-                        className="ga-btn-group-item"
-                      >
-                        <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-                        <span>导出 MD</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleExport(detail.id, 'json')}
-                        className="ga-btn-group-item"
-                      >
-                        <FileJson className="h-3.5 w-3.5" aria-hidden="true" />
-                        <span>JSON</span>
-                      </button>
+          {active && detail && (() => {
+            const detailMeta = sourceMeta(detail.source)
+            const matchedSummary = items.find((item) => item.id === detail.id)
+            const lastActivityText = matchedSummary ? formatRelativeTime(matchedSummary.mtime) : ''
+            return (
+              <div className="mx-auto max-w-5xl p-5 sm:p-6">
+                <header className="ga-paper-card mb-6 px-5 py-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-base font-semibold leading-snug text-ink break-words" title={conversationDisplayTitle(detail)}>
+                        {conversationDisplayTitle(detail)}
+                      </h2>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+                        <span className={`rounded-md border px-2 py-0.5 font-medium leading-4 ${detailMeta.chipClass}`}>
+                          {detailMeta.label}
+                        </span>
+                        <span className="rounded-md border border-line/55 bg-bg-soft/85 px-2 py-0.5 tabular-nums text-ink-muted">
+                          {detail.messages?.length || 0} 条消息 · {rounds.length} 轮
+                        </span>
+                        {lastActivityText && (
+                          <span className="inline-flex items-center gap-1 rounded-md border border-line/55 bg-bg-soft/85 px-2 py-0.5 tabular-nums text-ink-faint">
+                            <Clock size={11} strokeWidth={1.85} aria-hidden="true" />
+                            <span>{lastActivityText}</span>
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
+                  <div className="my-3.5 h-px bg-line/55" />
+                  <div className="flex flex-wrap items-center justify-between gap-2.5">
+                    {boundSessionId ? (
+                      <button
+                        type="button"
+                        onClick={() => { void openSession(boundSessionId) }}
+                        className="ga-btn-primary shrink-0"
+                        title="打开对应会话继续对话"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>打开该会话</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { void handleImport(detail.id) }}
+                        disabled={importing === detail.id}
+                        className="ga-btn-primary shrink-0"
+                        title="导入为新会话继续对话"
+                      >
+                        <FolderDown className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>{importing === detail.id ? '导入中…' : '导入为会话'}</span>
+                      </button>
+                    )}
+                    <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                      <div className="ga-btn-group">
+                        <button
+                          type="button"
+                          onClick={() => handleRename(detail.id, detail.title || '')}
+                          className="ga-btn-group-item"
+                        >
+                          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>重命名</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(detail.id, detail.title || '')}
+                          className="ga-btn-group-item-danger"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>删除</span>
+                        </button>
+                      </div>
+                      <div className="ga-btn-group">
+                        <button
+                          type="button"
+                          onClick={() => handleExport(detail.id, 'md')}
+                          className="ga-btn-group-item"
+                        >
+                          <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>导出 MD</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleExport(detail.id, 'json')}
+                          className="ga-btn-group-item"
+                        >
+                          <FileJson className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>JSON</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </header>
 
-              {viewMode === 'round'
-                ? (
-                  <RoundView
-                    key={`round:${detail.id}`}
-                    convId={detail.id}
-                    rounds={rounds}
-                    scrollRef={detailScrollRef}
-                    openConclusion={openConclusion}
-                    setOpenConclusion={setOpenConclusion}
-                  />
-                )
-                : (
-                  <FlatView
-                    key={`flat:${detail.id}`}
-                    messages={detail.messages || []}
-                    scrollRef={detailScrollRef}
-                  />
-                )}
-            </div>
-          )}
+                {viewMode === 'round'
+                  ? (
+                    <RoundView
+                      key={`round:${detail.id}`}
+                      convId={detail.id}
+                      rounds={rounds}
+                      scrollRef={detailScrollRef}
+                      openConclusion={openConclusion}
+                      setOpenConclusion={setOpenConclusion}
+                      messageFontStyle={messageFontStyle}
+                    />
+                  )
+                  : (
+                    <FlatView
+                      key={`flat:${detail.id}`}
+                      messages={detail.messages || []}
+                      scrollRef={detailScrollRef}
+                      messageFontStyle={messageFontStyle}
+                    />
+                  )}
+              </div>
+            )
+          })()}
         </div>
       </div>
     </PageShell>
   )
+}
+
+function cleanArchiveUserText(raw: string): string {
+  if (!raw) return ''
+  const cleaned = raw
+    .replace(/^\[?用户发送文件:[^\]\n]*\]?\s*$/gm, '')
+    .replace(/\[FILE:[^\]\n]+\]/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return cleaned || raw
 }
 
 function RoundView({
@@ -552,15 +698,21 @@ function RoundView({
   scrollRef,
   openConclusion,
   setOpenConclusion,
+  messageFontStyle,
 }: {
   convId: string
   rounds: Round[]
   scrollRef: RefObject<HTMLDivElement>
   openConclusion: Record<string, boolean>
   setOpenConclusion: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
+  messageFontStyle?: CSSProperties
 }) {
   if (rounds.length === 0) {
-    return <div className="text-ink-faint text-sm py-8 text-center border border-dashed border-line rounded-xl">该会话暂无消息</div>
+    return (
+      <div className="rounded-2xl border border-dashed border-line/75 bg-bg-card/55 py-10 text-center text-sm text-ink-faint">
+        该会话暂无消息
+      </div>
+    )
   }
 
   return (
@@ -579,61 +731,98 @@ function RoundView({
         const hasTurnSummaries = r.turnSummaries.length > 0
 
         return (
-          <div className="pb-3">
-            <div className="rounded-2xl border border-line bg-bg-soft/40 p-4 shadow-sm md:p-5">
-              <div className="space-y-3.5">
-                {r.user && (
-                  <div className="flex justify-end">
-                    <div className={`w-[70%] rounded-[18px] px-4 py-3 shadow-sm ${bubbleTone('user').surfaceClass}`}>
-                      <MessageContent content={r.user.content || ''} format="text" className="text-sm leading-6" />
+          <div className="pb-6">
+            <div className="mb-3.5 flex items-center gap-3">
+              <div className="h-px flex-1 bg-line/55" />
+              <span className="inline-flex items-center rounded-full border border-line/70 bg-bg-card/90 px-2.5 py-0.5 text-[11px] font-medium tabular-nums text-ink-muted shadow-[0_1px_2px_rgba(45,34,22,0.04)]">
+                第 {r.index} 轮
+              </span>
+              <div className="h-px flex-1 bg-line/55" />
+            </div>
+
+            <div className="space-y-3.5">
+              {r.user && (
+                <div className="flex justify-end">
+                  <div
+                    className={`group/msg relative max-w-[82%] rounded-lg px-3.5 py-2.5 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.16)] ${bubbleTone('user').surfaceClass}`}
+                    style={messageFontStyle}
+                  >
+                    <MessageContent content={cleanArchiveUserText(r.user.content || '')} format="text" />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-start">
+                <div
+                  className={`group/msg relative min-w-0 max-w-[90%] rounded-lg px-4 py-3 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.12)] ${bubbleTone('assistant').surfaceClass}`}
+                  style={messageFontStyle}
+                >
+                  <div className="mb-2 flex min-h-6 items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
+                    <span className="inline-flex shrink-0 items-center gap-2">
+                      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
+                      GA Agent
+                    </span>
+                    <div className="pointer-events-none flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+                      <ReplyActions text={detailText} engine="chat" canSave={false} />
                     </div>
                   </div>
-                )}
 
-                <div className="flex justify-start">
-                  <div className="w-[86%] rounded-[18px] border border-line bg-bg-card px-4 py-3 shadow-sm">
-                    <div className="mb-2 flex items-center gap-3">
-                      {hasTurnSummaries && (
-                        <button
-                          type="button"
-                          onClick={() => setOpenConclusion((s) => ({ ...s, [roundKey]: !isProcessOpen }))}
-                          className="inline-flex shrink-0 items-center gap-1 text-xs text-accent hover:underline"
-                        >
-                          <ChevronDisclosureIcon open={isProcessOpen} size={12} />
-                          <span>{isProcessOpen ? '收起过程' : '展开过程'}</span>
-                        </button>
-                      )}
+                  {hasTurnSummaries && (
+                    <div className="mb-2.5 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setOpenConclusion((s) => ({ ...s, [roundKey]: !isProcessOpen }))}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line/70 bg-bg-soft/85 px-2 py-0.5 text-xs font-medium text-accent transition-colors hover:border-accent/45 hover:bg-accent-soft/50"
+                      >
+                        <ChevronDisclosureIcon open={isProcessOpen} size={12} />
+                        <span>{isProcessOpen ? '收起过程' : '展开过程'}</span>
+                      </button>
+                      <span className="text-[11px] tabular-nums text-ink-faint">
+                        {r.turnSummaries.length} 步
+                      </span>
                     </div>
+                  )}
 
-                    {isProcessOpen && hasTurnSummaries && (
-                      <div className="mb-4 space-y-1.5">
-                        <div className="text-[11px] tracking-wider text-ink-faint">过程摘要</div>
+                  {isProcessOpen && hasTurnSummaries && (
+                    <div className="mb-3.5 rounded-lg border border-line/60 bg-bg-soft/75 px-3 py-2.5">
+                      <div className="mb-2 text-xs font-medium text-ink-faint">过程摘要</div>
+                      <div className="space-y-2 border-l-2 border-accent/25 pl-3">
                         {r.turnSummaries.map((ts, idx) => (
-                          <div key={`${roundKey}-ts-${idx}`} className="rounded-lg border border-line/70 bg-bg-soft/50 px-3 py-2 text-sm leading-5 text-ink">
-                            <span className="mr-2 text-[11px] uppercase tracking-wider text-ink-faint">Turn {ts.turn}</span>
+                          <div key={`${roundKey}-ts-${idx}`} className="text-sm leading-relaxed text-ink">
+                            <span className="mr-2 inline-block rounded bg-bg-card px-1.5 py-0.5 font-mono text-[11px] font-medium text-ink-muted ring-1 ring-line/60">
+                              Turn {ts.turn}
+                            </span>
                             <span className="whitespace-pre-wrap">{ts.summary}</span>
                           </div>
                         ))}
                       </div>
-                    )}
+                    </div>
+                  )}
 
-                    {detailText && (
-                      <div className={isProcessOpen && hasTurnSummaries ? 'border-t border-line/70 pt-3' : ''}>
-                        <div className="mb-2 text-[11px] tracking-wider text-ink-faint">最终回答</div>
-                        <MessageContent content={detailText} format="markdown" />
-                      </div>
-                    )}
-                  </div>
+                  {detailText && (
+                    <div className={isProcessOpen && hasTurnSummaries ? 'border-t border-line/45 pt-3' : ''}>
+                      {isProcessOpen && hasTurnSummaries && (
+                        <div className="mb-2 text-xs font-medium text-ink-faint">最终回答</div>
+                      )}
+                      <MessageContent content={detailText} format="markdown" />
+                    </div>
+                  )}
                 </div>
-
-                {r.others.length > 0 && (
-                  <div className="space-y-2">
-                    {r.others.map((m, idx) => (
-                      <MessageBlock key={`o-${idx}`} m={m} label={m.role || `message ${idx + 1}`} tone="other" />
-                    ))}
-                  </div>
-                )}
               </div>
+
+              {r.others.length > 0 && (
+                <div className="space-y-2">
+                  {r.others.map((m, idx) => (
+                    <MessageBlock
+                      key={`o-${idx}`}
+                      m={m}
+                      label={m.role || `message ${idx + 1}`}
+                      tone="other"
+                      messageFontStyle={messageFontStyle}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )
@@ -642,7 +831,23 @@ function RoundView({
   )
 }
 
-function FlatView({ messages, scrollRef }: { messages: Msg[]; scrollRef: RefObject<HTMLDivElement> }) {
+function FlatView({
+  messages,
+  scrollRef,
+  messageFontStyle,
+}: {
+  messages: Msg[]
+  scrollRef: RefObject<HTMLDivElement>
+  messageFontStyle?: CSSProperties
+}) {
+  if (messages.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-line/75 bg-bg-card/55 py-10 text-center text-sm text-ink-faint">
+        该会话暂无消息
+      </div>
+    )
+  }
+
   return (
     <VirtualMessageList
       items={messages}
@@ -654,15 +859,16 @@ function FlatView({ messages, scrollRef }: { messages: Msg[]; scrollRef: RefObje
       renderItem={(m, i) => {
         const isUser = m.role === 'user'
         const isAssistant = m.role === 'assistant'
-        const label = isUser ? '你' : isAssistant ? '助手' : (m.role || `消息 ${i + 1}`)
+        const label = isUser ? '你' : isAssistant ? 'GA Agent' : (m.role || `消息 ${i + 1}`)
         return (
-          <div className="pb-2">
+          <div className="pb-3">
             <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
               <div className={`w-fit max-w-[85%] ${isUser ? 'ml-12' : 'mr-12'}`}>
                 <MessageBlock
                   m={m}
                   label={label}
                   tone={isUser ? 'user' : isAssistant ? 'assistant' : 'other'}
+                  messageFontStyle={messageFontStyle}
                 />
               </div>
             </div>
@@ -673,16 +879,44 @@ function FlatView({ messages, scrollRef }: { messages: Msg[]; scrollRef: RefObje
   )
 }
 
-function MessageBlock({ m, label, tone }: { m: Msg; label: string; tone: 'user' | 'assistant' | 'other' }) {
+function MessageBlock({
+  m,
+  label,
+  tone,
+  messageFontStyle,
+}: {
+  m: Msg
+  label: string
+  tone: 'user' | 'assistant' | 'other'
+  messageFontStyle?: CSSProperties
+}) {
+  const isUser = tone === 'user'
+  const isAssistant = tone === 'assistant'
+  const displayText = isUser ? cleanArchiveUserText(m.content || '') : (m.content || '')
   return (
-    <div className={`rounded-xl border ${bubbleTone(tone, 'card').surfaceClass} p-3`}>
-      <div className="text-xs uppercase tracking-wider text-ink-faint mb-1">{label}</div>
+    <div
+      className={`group/msg rounded-lg px-3.5 py-2.5 leading-7 shadow-[0_2px_6px_rgba(45,34,22,0.13)] ${bubbleTone(tone).surfaceClass}`}
+      style={messageFontStyle}
+    >
+      {isAssistant && (
+        <div className="mb-1.5 flex min-h-6 items-center justify-between gap-3 text-[11px] font-medium text-ink-muted">
+          <span className="inline-flex shrink-0 items-center gap-2">
+            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[#54735D]" />
+            {label}
+          </span>
+          <div className="pointer-events-none flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+            <ReplyActions text={displayText} engine="chat" canSave={false} />
+          </div>
+        </div>
+      )}
+      {tone === 'other' && (
+        <div className="mb-1 text-[11px] font-medium text-ink-faint">{label}</div>
+      )}
       {/* User prompts are literal input everywhere (live chat, round view);
           the flat view previously markdown-rendered them — converge on text. */}
       <MessageContent
-        content={m.content || ''}
-        format={tone === 'user' ? 'text' : 'markdown'}
-        className="text-sm leading-6"
+        content={displayText}
+        format={isUser ? 'text' : 'markdown'}
       />
     </div>
   )
@@ -831,14 +1065,21 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
   const title = summaryDisplayTitle(c)
   const meta = sourceMeta(c.source)
   const lastActive = formatRelativeTime(c.mtime)
+  const excerpt = previewText(cleanArchiveUserText(c.last_user_preview || ''))
+
   if (collapsed) {
     return (
       <button
         type="button"
         onClick={onClick}
         aria-label={`第 ${index} 条：${title}`}
-        title={`${index}. ${title}\n${previewText(c.last_user_preview || '')}\n来源：${meta.label}${lastActive ? `\n最后活动：${lastActive}` : ''}`}
-        className={`flex h-11 w-full items-center justify-center border-b border-line/60 text-xs font-medium transition-colors ${active ? 'bg-accent-soft text-accent' : 'text-ink-muted hover:bg-ink/5 hover:text-ink'}`}
+        aria-current={active ? 'page' : undefined}
+        title={`${index}. ${title}${excerpt ? `\n${excerpt}` : ''}\n来源：${meta.label}${lastActive ? `\n最后活动：${lastActive}` : ''}`}
+        className={`mx-auto flex h-8 w-8 items-center justify-center rounded-lg text-[11px] font-medium tabular-nums transition-colors ${
+          active
+            ? 'bg-bg-card font-semibold text-accent-deep shadow-sm ring-1 ring-accent/40'
+            : 'text-ink-muted hover:bg-bg-card/70 hover:text-ink'
+        }`}
       >
         {index}
       </button>
@@ -849,21 +1090,47 @@ function ConvRow({ c, index, collapsed, active, titleStyle, onClick }: {
     <button
       type="button"
       onClick={onClick}
-      className={`block w-full px-3 py-2.5 text-left border-b border-line/60 group ${active ? 'bg-accent-soft' : 'hover:bg-ink/5'}`}
+      aria-current={active ? 'page' : undefined}
+      className={`group/row relative block w-full rounded-lg px-2.5 py-2 text-left transition-colors ${
+        active
+          ? 'bg-bg-card shadow-[0_1px_3px_rgba(45,34,22,0.08)] ring-1 ring-accent/35'
+          : 'hover:bg-bg-card/65'
+      }`}
     >
-      <div className="flex items-baseline justify-between gap-2">
-        <div className="text-sm text-ink truncate font-medium" style={titleStyle} title={title}>
+      {active && (
+        <span aria-hidden="true" className="absolute top-2 bottom-2 left-0 w-[3px] rounded-r-full bg-accent" />
+      )}
+      <div className="flex items-start justify-between gap-2">
+        <div
+          className={`min-w-0 flex-1 truncate text-sm leading-snug ${active ? 'font-semibold text-ink' : 'font-medium text-ink/90'}`}
+          style={titleStyle}
+          title={title}
+        >
           {title}
         </div>
         <span
-          className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] leading-4 ${meta.chipClass}`}
+          className={`mt-0.5 shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium leading-none ${meta.chipClass}`}
           title={`来源：${meta.label}`}
         >
           {meta.label}
         </span>
       </div>
-      <div className="text-xs text-ink-faint truncate mt-0.5">{previewText(c.last_user_preview || '')}</div>
-      <div className="text-[10px] text-ink-faint mt-0.5" title={CONVERSATION_COUNTS_HELP}>{conversationCountsText(c)}{lastActive ? ` · 最后活动 ${lastActive}` : ''}</div>
+      {excerpt && (
+        <div className="mt-1 truncate text-[11px] leading-4 text-ink-muted">
+          {excerpt}
+        </div>
+      )}
+      <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] tabular-nums text-ink-faint">
+        <span className="truncate" title={CONVERSATION_COUNTS_HELP}>
+          {conversationCountsText(c)}
+        </span>
+        {lastActive && (
+          <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap">
+            <Clock size={10} strokeWidth={1.85} aria-hidden="true" className="opacity-75" />
+            <span>{lastActive}</span>
+          </span>
+        )}
+      </div>
     </button>
   )
 }

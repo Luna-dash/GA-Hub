@@ -52,17 +52,17 @@
 
 html {
   font-synthesis-weight: none;
-  --ga-font-sans: 'PingFang SC', 'Microsoft YaHei UI', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --ga-font-sans: 'PingFang SC', 'Segoe UI', 'Microsoft YaHei UI', system-ui, -apple-system, sans-serif;
   --ga-font-mono: 'Cascadia Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
 }
 
 html[data-font-pack="latin-enhanced"] {
-  --ga-font-sans: 'GA Latin Sans', 'PingFang SC', 'Microsoft YaHei UI', system-ui, -apple-system, sans-serif;
+  --ga-font-sans: 'GA Latin Sans', 'PingFang SC', 'Segoe UI', 'Microsoft YaHei UI', system-ui, -apple-system, sans-serif;
   --ga-font-mono: 'GA Mono', 'Cascadia Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
 }
 
 html[data-font-pack="enhanced"] {
-  --ga-font-sans: 'GA Latin Sans', 'GA CJK Sans', 'PingFang SC', 'Microsoft YaHei UI', system-ui, -apple-system, sans-serif;
+  --ga-font-sans: 'GA Latin Sans', 'GA CJK Sans', 'PingFang SC', 'Segoe UI', 'Microsoft YaHei UI', system-ui, -apple-system, sans-serif;
   --ga-font-mono: 'GA Mono', 'Cascadia Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
 }
 
@@ -86,19 +86,24 @@ code, pre, .font-mono {
 
 /* 科学字体字重策略：
    1) system / latin-enhanced 下中文字体仍依赖微软雅黑（仅 400/700 两档），
-      克制模式下保持 400 字形尺寸不跳 msyhbd.ttc，用微描边+深墨色实现不膨胀的加粗；
+      克制模式下保持正文 400 字形尺寸不跳 msyhbd.ttc，用轻量描边实现不膨胀的层次；
+      同时豁免等宽/代码/侧栏/数学公式，避免小字数字、等宽列与代码出现糊边和字距偏移；
    2) enhanced 下已具备原生 500/600 中粗体，正文 strong 收敛在 600 以保持页面平衡。 */
-html:not([data-font-pack="enhanced"])[data-bold-style="restrained"] body :is(strong, b, .font-medium, .font-semibold) {
+html:not([data-font-pack="enhanced"])[data-bold-style="restrained"] body .font-medium:not(.font-mono, code, pre, kbd, .ga-kbd, .ga-sidebar *, .prose-chat pre *, .katex, .katex *) {
+  font-weight: 400;
+  -webkit-text-stroke: 0.14px currentColor;
+}
+html:not([data-font-pack="enhanced"])[data-bold-style="restrained"] body :is(strong, b, .font-semibold, h3):not(.font-mono, code, pre, kbd, .ga-kbd, .ga-sidebar *, .prose-chat pre *, .katex, .katex *) {
+  font-weight: 400;
+  -webkit-text-stroke: 0.22px currentColor;
+  letter-spacing: 0.01em;
+}
+html:not([data-font-pack="enhanced"])[data-bold-style="restrained"] body :is(.font-bold, h1, h2):not(.font-mono, code, pre, kbd, .ga-kbd, .ga-sidebar *, .prose-chat pre *, .katex, .katex *) {
   font-weight: 400;
   -webkit-text-stroke: 0.28px currentColor;
   letter-spacing: 0.01em;
 }
-html:not([data-font-pack="enhanced"])[data-bold-style="restrained"] body :is(.font-bold, h1, h2) {
-  font-weight: 400;
-  -webkit-text-stroke: 0.36px currentColor;
-  letter-spacing: 0.01em;
-}
-html:not([data-font-pack="enhanced"])[data-bold-style="restrained"] .prose-chat :is(strong, b) {
+html:not([data-font-pack="enhanced"])[data-bold-style="restrained"] .prose-chat :is(strong, b):not(code, pre *, .font-mono) {
   color: #1E170E;
 }
 html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(strong, b) {
@@ -190,7 +195,7 @@ html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(st
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--c-text-muted);
-  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-family: var(--ga-font-mono);
 }
 .prose-chat .md-code-copy {
   padding: 0.15rem 0.45rem;
@@ -226,7 +231,7 @@ html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(st
 .prose-chat--plain,
 .prose-chat--plain p,
 .prose-chat--plain li {
-  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  font-family: var(--ga-font-mono);
   font-size: 0.88em;
   line-height: 1.55;
 }
@@ -541,11 +546,11 @@ html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(st
   margin: 0.18rem 0.25rem;
   padding: 0 0.35rem;
   border-radius: 10px;
-  font-family: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', Georgia, serif;
-  font-size: 1.02rem;
-  line-height: 1.15;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-family: var(--ga-font-sans);
+  font-size: 0.9375rem;
+  line-height: 1.25;
+  font-weight: 500;
+  letter-spacing: 0.015em;
   color: rgba(232, 223, 201, 0.84);
   background: linear-gradient(180deg, rgba(255, 244, 215, 0.018), rgba(255, 244, 215, 0.006));
   border: 1px solid transparent;
@@ -654,20 +659,14 @@ html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(st
   text-overflow: clip;
   translate: 0.5rem 0;
 }
-/* 宽度按四个汉字及其字距计算，空余宽度留在 Agy 与「会话」之间。 */
-.ga-sidebar .ga-nav-label-four-ideographs {
-  display: inline-flex;
-  min-width: calc(4ic + 4 * 0.02em);
-  justify-content: space-between;
-}
 /* 右端 chevron — 绝对定位，避免不可见时仍挤占标签宽度 */
 .ga-sidebar .ga-nav-chev {
   position: absolute;
   right: 0.38rem;
   top: 50%;
   flex-shrink: 0;
-  font-family: 'Cormorant Garamond', Georgia, serif;
-  font-size: 1.05rem;
+  font-family: inherit;
+  font-size: 1rem;
   line-height: 1;
   color: rgba(255, 244, 215, 0.55);
   opacity: 0;
@@ -774,7 +773,7 @@ html[data-font-pack="enhanced"][data-bold-style="restrained"] .prose-chat :is(st
   border: 1px solid rgba(255, 255, 255, 0.10);
   background: rgba(255, 255, 255, 0.05);
   color: rgba(239, 229, 202, 0.88);
-  font-size: 0.78rem;
+  font-size: 0.8125rem;
   overflow: hidden;
   white-space: nowrap;
   padding: 0 0.6rem;
@@ -898,4 +897,45 @@ textarea:focus-visible {
 .ask-option--picked:hover {
   border-color: var(--c-accent);
   background-color: color-mix(in srgb, var(--c-accent-soft) 60%, transparent);
+}
+
+/* 优雅纸面渐变分割线：弱化硬边框，两端渐隐 */
+.ga-hairline {
+  height: 1px;
+  border: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(var(--c-line-rgb) / 0.6) 12%,
+    rgb(var(--c-line-rgb) / 0.6) 88%,
+    transparent
+  );
+}
+
+/* 统一原生 <select> 视觉：保持原生语义的同时匹配 ThemedSelect 的纸面质感 */
+.ga-select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgb(var(--c-line-rgb) / 0.82);
+  border-radius: 9px;
+  background-color: var(--c-bg-card);
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236B5E4E' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"),
+    linear-gradient(160deg, var(--c-bg-soft), var(--c-bg-card));
+  background-repeat: no-repeat, no-repeat;
+  background-position: right 0.6rem center, 0 0;
+  background-size: 14px 14px, 100% 100%;
+  padding-right: 1.85rem !important;
+  box-shadow: inset 0 1px 0 rgba(255, 250, 232, 0.7), 0 1px 2px rgba(58, 42, 28, 0.06);
+  color: var(--c-text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ga-select:hover:not(:disabled) {
+  border-color: rgb(var(--c-accent-rgb) / 0.55);
+}
+
+.ga-select:focus {
+  border-color: var(--c-accent);
+  outline: none;
 }

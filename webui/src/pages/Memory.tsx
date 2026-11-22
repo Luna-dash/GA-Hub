@@ -113,13 +113,13 @@ export default function Memory() {
       }
     >
       <div className="h-full flex flex-col overflow-hidden">
-        <div className="shrink-0 border-b border-line/65 bg-bg-card/55 px-6 py-2.5 flex items-center gap-2.5 text-xs">
-          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-line/75 bg-bg-card text-accent">
+        <div className="shrink-0 px-6 pt-3.5 pb-0 flex items-center gap-2 text-xs text-ink-muted">
+          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-bg-card text-accent shadow-xs ring-1 ring-line/45">
             <LayerIcon className="h-3.5 w-3.5" aria-hidden="true" />
           </span>
           <span className="font-medium text-ink">{activeMeta.label}</span>
           <span className="text-ink-faint">·</span>
-          <span className="text-ink-muted truncate">{activeMeta.desc}</span>
+          <span className="truncate">{activeMeta.desc}</span>
         </div>
         <div className="flex-1 min-h-0 overflow-hidden">
           {tab === 'sop' && <SopList active={activeSop} q={sopQuery} setQ={setSopQuery} selectSop={(name) => changeSelection('sop', name)} onDirtyChange={handleDirtyChange} />}
@@ -218,13 +218,13 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
   return (
     <div className="h-full grid grid-cols-1 lg:grid-cols-[19rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] gap-4 p-6">
       <div className="ga-paper-card overflow-hidden flex flex-col h-full">
-        <div className="px-3.5 py-2.5 border-b border-line/70 bg-bg-soft/65 flex items-center justify-between gap-2">
+        <div className="px-3.5 py-2.5 bg-bg-soft/45 flex items-center justify-between gap-2">
           <span className="text-xs font-semibold text-ink">SOP 列表</span>
-          <span className="rounded-full border border-line/70 bg-bg-card px-2 py-0.5 text-[11px] tabular-nums text-ink-muted">
+          <span className="rounded-full bg-bg-card px-2 py-0.5 text-[11px] tabular-nums text-ink-muted ring-1 ring-line/45">
             {q ? `${visible.length} / ${sops.length}` : sops.length}
           </span>
         </div>
-        <div className="px-3 py-2.5 border-b border-line/70 bg-bg-card/60">
+        <div className="px-3 pb-2.5 pt-2 bg-bg-soft/45 border-b border-line/40">
           <div className="relative flex items-center">
             <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-ink-faint" aria-hidden="true" />
             <input
@@ -232,7 +232,7 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
               onChange={(e) => setQ(e.target.value)}
               placeholder="按前缀过滤 SOP…"
               aria-label="过滤 SOP 文档"
-              className="w-full bg-bg-soft/75 border border-line rounded-lg pl-8 pr-7 py-1.5 text-sm outline-none focus:border-accent focus:bg-bg-card transition-colors"
+              className="w-full bg-bg-card/85 border border-line/70 rounded-lg pl-8 pr-7 py-1.5 text-sm outline-none focus:border-accent focus:bg-bg-card transition-colors"
             />
             {q && (
               <button
@@ -246,7 +246,7 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
             )}
           </div>
         </div>
-        <ul className="flex-1 min-h-0 overflow-y-auto divide-y divide-line/50">
+        <ul className="flex-1 min-h-0 overflow-y-auto divide-y divide-line/30">
           {visible.map((s) => {
             const selected = active === s.name
             return (
@@ -327,13 +327,13 @@ function SkillList() {
   return (
     <div className="h-full grid grid-cols-1 lg:grid-cols-[19rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] gap-4 p-6">
       <div className="ga-paper-card overflow-hidden flex flex-col h-full">
-        <div className="px-3.5 py-2.5 border-b border-line/70 bg-bg-soft/65 flex items-center justify-between gap-2">
+        <div className="px-3.5 py-2.5 border-b border-line/40 bg-bg-soft/45 flex items-center justify-between gap-2">
           <span className="text-xs font-semibold text-ink">Skill 脚本</span>
-          <span className="rounded-full border border-line/70 bg-bg-card px-2 py-0.5 text-[11px] tabular-nums text-ink-muted">
+          <span className="rounded-full bg-bg-card px-2 py-0.5 text-[11px] tabular-nums text-ink-muted ring-1 ring-line/45">
             {skills.length}
           </span>
         </div>
-        <ul className="flex-1 min-h-0 overflow-y-auto divide-y divide-line/50">
+        <ul className="flex-1 min-h-0 overflow-y-auto divide-y divide-line/30">
           {skills.map((s) => {
             const selected = active === s.path
             return (

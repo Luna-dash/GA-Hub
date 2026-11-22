@@ -92,7 +92,7 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
       <span className="text-[11px] text-ink-faint">仅限可信 Windows 安装包</span>
     </div>
     <p className="text-sm text-ink">先在线准备更新包，就绪后确认升级；倒计时 60 秒后将自动重启切换。</p>
-    <div className="space-y-2.5 rounded-lg border border-line/75 bg-bg-soft/45 p-3">
+    <div className="ga-paper-subcard space-y-2.5 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-ink-muted">更新源：Luna-dash/GA-Hub · GitHub 正式版</p>
         <button type="button" className="ga-btn-primary" disabled={locked || !status} onClick={() => void online()}>
@@ -102,7 +102,7 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
       </div>
       {release && <div className="text-sm" role="status">
         当前 {release.current_version} · 最新 {release.version} · {release.available ? '有可用更新' : '已是最新版本'}
-        {release.notes && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-sans">{release.notes}</pre>}
+        {release.notes && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-sans text-xs leading-5 text-ink-muted">{release.notes}</pre>}
         {release.available && <button type="button" className="ga-btn mt-2" disabled={locked || status?.plan?.state === 'prepared'} onClick={() => void online(true)}>
           <Download className="h-3.5 w-3.5" aria-hidden="true" />
           <span>{onlinePrepared ? '此版本已准备完成' : downloading ? '正在后台下载并准备…' : '下载、校验并准备更新'}</span>
@@ -110,10 +110,10 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
       </div>}
       {busy && <p className="text-sm" role="status">正在处理，请勿重复操作。下载及预检可能需要数分钟。</p>}
     </div>
-    {task && <div className="space-y-2 rounded-lg border border-line p-3 text-sm text-ink" role="status" aria-live="polite">
+    {task && <div className="ga-paper-subcard space-y-2 p-3 text-sm text-ink" role="status" aria-live="polite">
       <p>{phaseLabels[task.phase] ?? '正在处理更新'}{task.release && ` · v${task.release.version}`}</p>
       {task.phase === 'downloading' && <>
-        <progress className="block h-2 w-full accent-sky-600" aria-label="安装包下载进度" max={100} value={percent} />
+        <progress className="ga-progress" aria-label="安装包下载进度" max={100} value={percent} />
         <p className="text-xs text-ink-muted">{megabytes(received)}{total > 0 && ` / ${megabytes(total)} · ${percent}%`}</p>
       </>}
       {downloading && <p className="text-xs text-ink-muted">后台下载中，可切换其他页面。</p>}
@@ -123,7 +123,7 @@ export function UpdateSettingsPanel({ active = true }: { active?: boolean } = {}
         <span>重新下载并校验</span>
       </button>}
     </div>}
-    <details className="rounded-lg border border-line/75 bg-bg-soft/40 px-3 py-2.5"><summary className="cursor-pointer text-xs font-medium text-ink-muted hover:text-ink">高级：导入本机可信发布包</summary>
+    <details className="ga-paper-subcard px-3 py-2.5"><summary className="cursor-pointer text-xs font-medium text-ink-muted hover:text-ink">高级：导入本机可信发布包</summary>
     <div className="mt-2.5 space-y-2.5">
     <label className="block text-sm">本机 ZIP 完整路径
       <input className={`${inputClass} mt-1`} value={archive} onChange={e => setArchive(e.target.value)} placeholder="D:\\Downloads\\GA-Hub-version-windows-x64.zip" disabled={locked} />

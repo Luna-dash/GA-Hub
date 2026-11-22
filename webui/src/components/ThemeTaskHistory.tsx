@@ -147,8 +147,8 @@ function SessionTimeline({ sessionId, runId, current, enabled, active, onShowRep
     } else { el.scrollTop = position.current; setUnseen(true) }
     position.current = el.scrollTop
   }, [visible, enabled, runId])
-  return <section className="overflow-hidden rounded-2xl border border-line">
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-bg-soft/30 px-4 py-3 text-xs text-ink-faint">
+  return <section className="ga-paper-card overflow-hidden">
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/45 bg-bg-soft/45 px-4 py-2.5 text-xs text-ink-faint">
       <span>{current ? (active ? '本次执行 · 实时过程' : '最近一次执行') : '原会话历史 · 只读'}</span>
       <span className="inline-flex items-center gap-2">
         <StatusIconBadge

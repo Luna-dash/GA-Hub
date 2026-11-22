@@ -60,8 +60,8 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['var(--ga-font-sans, "PingFang SC")', '"Microsoft YaHei UI"', '"Segoe UI"', 'system-ui', 'sans-serif'],
-        mono: ['var(--ga-font-mono, "Cascadia Mono")', 'Consolas', 'ui-monospace', 'monospace'],
+        sans: ['var(--ga-font-sans, "PingFang SC")', '"Segoe UI"', '"Microsoft YaHei UI"', 'system-ui', 'sans-serif'],
+        mono: ['var(--ga-font-mono, "Cascadia Mono")', '"Cascadia Code"', 'Consolas', 'ui-monospace', 'monospace'],
       },
     },
   },

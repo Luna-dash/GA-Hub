@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import type { TransferredFile } from '@/components/FileTransferBox'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AntiTaskProgress, type AntiEvent } from './AntiTaskProgress'
-import { Brain, ClipboardList, Pencil, ShieldAlert, Slash } from 'lucide-react'
+import { Brain, ClipboardList, Pencil, RefreshCw, ShieldAlert, ShieldCheck, Slash, UserCheck } from 'lucide-react'
 import { CloseIconButton, RotateCw } from '@/components/ActionIcons'
 import { ChatComposerFrame, ChatUtilityDock, chatTranscriptClass } from '@/components/ChatLayout'
 import { bubbleTone } from '@/components/bubbleTone'
@@ -23,6 +23,8 @@ import { SessionRail } from '@/components/SessionRail'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import type { HubSession, PasteAttachment, SessionRuntime } from '@/api/types'
 import { usePageState } from '@/utils/pageState'
+import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
+import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
 import { ThemedSelect } from '@/components/ThemedSelect'
 import {
@@ -228,7 +230,17 @@ export default function AntiChat() {
             <ChatUtilityDock fileTransfer={{ canInsert: false, onInsert: () => { } }} />
             <div className="m-auto flex max-w-sm flex-col items-center gap-3 px-5 text-center text-sm text-ink-muted">
               <AntiIcon className="h-11 w-11 text-accent" />
-              <p>{sessions.isPending ? '正在加载 Anti 会话…' : '点击「新建会话」，选择该会话的项目。'}</p>
+              {sessions.isError ? (
+                <>
+                  <p>会话列表读取失败，请确认服务正常后重试。</p>
+                  <button type="button" className="ga-btn-sm" onClick={() => void sessions.refetch()}>
+                    <RefreshCw size={13} aria-hidden="true" />
+                    <span>重新加载</span>
+                  </button>
+                </>
+              ) : (
+                <p>{sessions.isPending ? '正在加载 Anti 会话…' : '点击「新建会话」，选择该会话的项目。'}</p>
+              )}
             </div>
           </div>}
       </div>
@@ -268,6 +280,21 @@ function Conversation({ session, headerActions, profileId, profileName }: {
   const [mode, setMode] = usePageState<AntiMode>('antiChat.mode', 'plan')
   const [permissionMode, setPermissionMode] = usePageState<AntiPermissionMode>('antiChat.permissionMode', 'approval-required')
   const [commandsOpen, setCommandsOpen] = useState(false)
+  const [fontScale, setFontScale] = useState(getChatFontScale)
+  useEffect(() => {
+    const sync = (event: Event) => setFontScale((event as CustomEvent<number>).detail || getChatFontScale())
+    const syncHydrated = () => setFontScale(getChatFontScale())
+    window.addEventListener(CHAT_FONT_SCALE_EVENT, sync)
+    window.addEventListener(UI_SETTINGS_HYDRATED_EVENT, syncHydrated)
+    return () => {
+      window.removeEventListener(CHAT_FONT_SCALE_EVENT, sync)
+      window.removeEventListener(UI_SETTINGS_HYDRATED_EVENT, syncHydrated)
+    }
+  }, [])
+  const messageFontStyle = {
+    fontSize: `${chatFontPercent(fontScale)}%`,
+    '--chat-scale': chatFontPercent(fontScale) / 100,
+  } as CSSProperties
   const transcript = useRef<HTMLDivElement>(null)
   const followTranscript = useRef(true)
   const models = useQuery({
@@ -398,7 +425,8 @@ function Conversation({ session, headerActions, profileId, profileName }: {
           title="重启本会话 ACP 进程并保留多轮上下文"
           onClick={() => resetAcp.mutate()}
         >
-          {resetAcp.isPending ? '重连中…' : '重连 ACP'}
+          <RefreshCw size={13} className={resetAcp.isPending ? 'animate-spin motion-reduce:animate-none' : undefined} aria-hidden="true" />
+          <span>{resetAcp.isPending ? '重连中…' : '重连 ACP'}</span>
         </button>
       )}
       {models.error && <button type="button" className="ga-btn-icon" title="重试加载模型" aria-label="重试加载模型" onClick={() => void models.refetch()}><RotateCw size={16} aria-hidden="true" /></button>}
@@ -425,24 +453,26 @@ function Conversation({ session, headerActions, profileId, profileName }: {
               <div className="flex flex-col items-start gap-2">
                 {userAttachments.length > 0 && <UserAttachments atts={userAttachments} />}
                 {run.prompt && (
-                  <div className={`w-fit max-w-full rounded-lg px-3.5 py-3 text-sm ${bubbleTone('user').surfaceClass}`}>
+                  <div className={`w-fit max-w-full rounded-lg px-3.5 py-2.5 leading-7 ${bubbleTone('user').surfaceClass}`} style={messageFontStyle}>
                     <MessageContent format="text" content={run.prompt} />
                   </div>
                 )}
               </div>
-              <div className={`group/anti-reply w-fit min-w-0 max-w-full space-y-2 rounded-lg px-3.5 py-3 text-sm ${bubbleTone('assistant').surfaceClass}`}>
+              <div className={`group/anti-reply w-fit min-w-0 max-w-full space-y-2 rounded-lg px-3.5 py-3 ${bubbleTone('assistant').surfaceClass}`}>
                 {run.status !== 'success' && <p role="status" className="text-xs text-ink-muted">
                   {run.status}{run.error ? ` · ${run.error}` : ''}
                   {run.error_detail && <span className="mt-1 block text-sm text-ink">{run.error_detail}</span>}
                 </p>}
                 <FileLinkContext.Provider value={{ sessionId: sid, projectPath: workspace, project, engine: 'anti' }}>
                   <FileTransferConclusion.Provider value={run.status === 'success' ? { engine: 'anti', project } : null}>
-                    <AntiTaskProgress active={active(run)} loadEvents={signal => antiApi.runEvents<AntiEvent[]>(sid, run.id, signal)}
-                      streamUrl={active(run) ? resolveApiUrl(`/api/anti/sessions/${sid}/runs/${run.id}/events/stream`) : undefined}
-                      runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}
-                      onApprovalRequested={() => { void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] }) }}>
-                      {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
-                    </AntiTaskProgress>
+                    <div style={messageFontStyle}>
+                      <AntiTaskProgress active={active(run)} loadEvents={signal => antiApi.runEvents<AntiEvent[]>(sid, run.id, signal)}
+                        streamUrl={active(run) ? resolveApiUrl(`/api/anti/sessions/${sid}/runs/${run.id}/events/stream`) : undefined}
+                        runKey={`${sid}/${run.id}`} onEventsChanged={scrollToLatest}
+                        onApprovalRequested={() => { void cache.invalidateQueries({ queryKey: ['anti-live', sid, run.id] }) }}>
+                        {partial => <MessageContent format="markdown" content={run.answer ?? partial} />}
+                      </AntiTaskProgress>
+                    </div>
                     {active(run) && approval && (
                       <section aria-label="交互审批" className="mt-2 space-y-2 rounded-lg border border-accent/40 bg-bg-soft p-3 text-xs">
                         <div className="flex items-start gap-2">
@@ -530,8 +560,9 @@ function Conversation({ session, headerActions, profileId, profileName }: {
     </div>
     <ChatComposerFrame>
       {profileId && profileId !== 'default' && (
-        <div className="border-b border-line/50 px-3 py-1 text-[11px] text-ink-muted">
-          当前隔离账号：{profileName ?? profileId}（多轮上下文按账号独立续接）
+        <div className="flex items-center gap-1.5 px-3.5 pt-2 text-[11px] text-ink-muted">
+          <UserCheck size={12} className="shrink-0 text-accent" aria-hidden="true" />
+          <span>当前隔离账号：<span className="font-medium text-ink">{profileName ?? profileId}</span>（多轮上下文按账号独立续接）</span>
         </div>
       )}
       {references.length > 0 && <ul aria-label="引用文件" className="flex flex-wrap gap-1 pl-[3.25rem] pr-3 pt-2 text-xs">
@@ -586,7 +617,7 @@ function Conversation({ session, headerActions, profileId, profileName }: {
               aria-label="插入原生命令"
               title="查看并插入 Agy ACP 原生命令"
               onClick={() => setCommandsOpen(v => !v)}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-line/80 bg-bg-soft text-ink-muted hover:border-accent/50 hover:text-ink disabled:opacity-50"
+              className="ga-btn inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl p-0 text-ink-muted"
             >
               <Slash size={14} aria-hidden="true" />
             </button>
@@ -596,26 +627,29 @@ function Conversation({ session, headerActions, profileId, profileName }: {
               aria-label={mode === 'plan' ? '当前为规划模式，点击切换到编辑模式' : '当前为编辑模式，点击切换到规划模式'}
               title={mode === 'plan' ? 'Plan 规划模式（只读分析，点击切到 Edit）' : 'Edit 编辑模式（可执行修改，点击切到 Plan）'}
               onClick={() => setMode(mode === 'plan' ? 'accept-edits' : 'plan')}
-              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-line/80 bg-bg-soft px-2.5 text-xs font-medium leading-none text-ink hover:border-accent/50 disabled:opacity-50"
+              className="ga-btn inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-2.5 text-xs font-medium leading-none text-ink"
             >
               {mode === 'plan'
                 ? <><ClipboardList size={14} className="shrink-0" aria-hidden="true" /><span>Plan</span></>
                 : <><Pencil size={14} className="shrink-0 text-accent" aria-hidden="true" /><span>Edit</span></>}
             </button>
             {mode === 'accept-edits' && (
-              <select
-                aria-label="权限策略"
-                title="工具审批策略（下轮立即生效）"
-                value={permissionMode}
-                disabled={Boolean(current || pending)}
-                onChange={e => setPermissionMode(e.target.value as AntiPermissionMode)}
-                className="h-10 rounded-xl border border-line/80 bg-bg-soft px-2 text-xs text-ink focus:border-accent focus:outline-none disabled:opacity-50"
-              >
-                <option value="approval-required">逐次审批</option>
-                <option value="auto-accept-edits">自动改文件</option>
-                <option value="auto">Auto</option>
-                <option value="full-access">全放行</option>
-              </select>
+              <div className="relative inline-flex h-10 shrink-0 items-center">
+                <ShieldCheck size={13} className="pointer-events-none absolute left-2.5 text-accent" aria-hidden="true" />
+                <select
+                  aria-label="权限策略"
+                  title="工具审批策略（下轮立即生效）"
+                  value={permissionMode}
+                  disabled={Boolean(current || pending)}
+                  onChange={e => setPermissionMode(e.target.value as AntiPermissionMode)}
+                  className="ga-select h-10 rounded-xl pl-7 pr-6 text-xs font-medium text-ink disabled:opacity-50"
+                >
+                  <option value="approval-required">逐次审批</option>
+                  <option value="auto-accept-edits">自动改文件</option>
+                  <option value="auto">Auto</option>
+                  <option value="full-access">全放行</option>
+                </select>
+              </div>
             )}
           </div>
         }
