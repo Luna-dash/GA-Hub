@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
-import type { EmailConfig, TaskRun, TaskSchedule, TaskScheduleType } from '@/api/types'
+import type { TaskRun, TaskSchedule, TaskScheduleType } from '@/api/types'
 import { PageShell } from '@/components/PageShell'
 import { ModalOverlay } from '@/components/ModalOverlay'
 import { formatRelativeTime } from '@/utils/timeFormat'
@@ -12,7 +12,7 @@ import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 import { CronExpressionParser } from 'cron-parser'
 import { CronCardLine, CronPreview } from '@/components/CronPreview'
-import { Calendar, ChevronLeft, ChevronRight, Clock, CloseIconButton, History, Mail, Pencil, Play, Plus, Power, Save, SendHorizontal, Server, Trash2 } from '@/components/ActionIcons'
+import { Calendar, ChevronLeft, ChevronRight, Clock, CloseIconButton, History, Pencil, Play, Plus, Power, Save, Trash2 } from '@/components/ActionIcons'
 
 const RUNS_PER_PAGE = 10
 const pageButtonClass = 'ga-btn-icon'
@@ -41,8 +41,8 @@ export default function Tasks() {
 
   const schedules = schData?.schedules ?? []
   const runs = runData?.runs ?? []
-  const emailCfg = useQuery({ queryKey: queryKeys.tasks.emailConfig, queryFn: api.taskEmailConfig })
   const enabledCount = schedules.filter((s) => s.enabled).length
+  const runningCount = runs.filter((r) => r.status === 'running').length
   const pageCount = Math.max(1, Math.ceil(runs.length / RUNS_PER_PAGE))
   const page = Math.min(runPage, pageCount - 1)
   useEffect(() => {
@@ -54,7 +54,7 @@ export default function Tasks() {
   const triggerNow = async (id: string) => {
     const ok = await dialog.confirm(
       '立即触发一次定时任务？',
-      '这会让 Agent 立刻执行该任务 Prompt，完成后按任务设置发送邮件。',
+      '这会让 Agent 立刻执行该任务 Prompt，可在运行历史中查看执行结果。',
       { confirmText: '触发' },
     )
     if (!ok) return
@@ -70,6 +70,27 @@ export default function Tasks() {
   return (
     <PageShell
       title="定时任务"
+      titleExtra={
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium" aria-label="任务状态概览">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-line/65 bg-bg-soft/90 px-2.5 py-0.5 tabular-nums text-ink-muted">
+            <span
+              aria-hidden="true"
+              className={`h-1.5 w-1.5 rounded-full ${enabledCount > 0 ? 'bg-status-success' : 'bg-ink-faint/55'}`}
+            />
+            <span>已启用 {enabledCount}/{schedules.length}</span>
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-full border border-line/65 bg-bg-soft/90 px-2.5 py-0.5 tabular-nums text-ink-faint">
+            <History className="h-3 w-3" aria-hidden="true" />
+            <span>记录 {runs.length} 条</span>
+          </span>
+          {runningCount > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-status-warning-line bg-status-warning-soft px-2 py-0.5 tabular-nums text-status-warning">
+              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-status-warning animate-pulse" />
+              <span>运行中 {runningCount}</span>
+            </span>
+          )}
+        </div>
+      }
       actions={
         <button
           onClick={() => setEditor({ type: 'cron', enabled: true, cron: '0 8 * * *', name: '', notify_email: false })}
@@ -80,57 +101,24 @@ export default function Tasks() {
         </button>
       }
     >
-      <div className="p-6 space-y-6 max-w-6xl mx-auto">
-        <section aria-label="任务概览" className="ga-paper-card px-5 py-3.5 grid grid-cols-1 sm:grid-cols-3 gap-4 divide-y sm:divide-y-0 sm:divide-x divide-line/35">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-bg-soft text-accent ring-1 ring-line/45">
-              <Calendar className="h-4 w-4" aria-hidden="true" />
-            </span>
-            <div>
-              <div className="text-xs text-ink-faint">定时计划（已启用 / 总计）</div>
-              <div className="mt-0.5 text-base font-semibold tabular-nums text-ink">{enabledCount} <span className="text-xs font-normal text-ink-faint">/ {schedules.length}</span></div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 pt-3 sm:pt-0 sm:pl-4">
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-bg-soft text-accent ring-1 ring-line/45">
-              <Mail className="h-4 w-4" aria-hidden="true" />
-            </span>
-            <div className="min-w-0">
-              <div className="text-xs text-ink-faint">SMTP 邮件通知</div>
-              <div className="mt-0.5 flex items-center gap-1.5 text-sm font-medium text-ink truncate">
-                <span className={`h-2 w-2 rounded-full shrink-0 ${emailCfg.data?.host ? 'bg-status-success' : 'bg-status-warning'}`} />
-                <span className="truncate">{emailCfg.data?.host ? `${emailCfg.data.host}:${emailCfg.data.port}` : '未配置'}</span>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 pt-3 sm:pt-0 sm:pl-4">
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-bg-soft text-accent ring-1 ring-line/45">
-              <History className="h-4 w-4" aria-hidden="true" />
-            </span>
-            <div>
-              <div className="text-xs text-ink-faint">历史运行记录</div>
-              <div className="mt-0.5 text-base font-semibold tabular-nums text-ink">{runs.length} <span className="text-xs font-normal text-ink-faint">条</span></div>
-            </div>
-          </div>
-        </section>
-
+      <div className="mx-auto max-w-6xl space-y-5 p-5">
         <section>
-          <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="mb-2.5 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-ink">任务计划</h2>
-            <span className="text-xs text-ink-faint tabular-nums">{schedules.length} 项任务</span>
+            <span className="text-xs tabular-nums text-ink-faint">{schedules.length} 项任务</span>
           </div>
           {schedules.length > 0 ? (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {schedules.map((s) => <TaskCard key={s.id} s={s} onEdit={() => setEditor(s)} onFire={() => triggerNow(s.id)} />)}
             </div>
           ) : (
-            <div className="ga-paper-card border-dashed bg-bg-card/50 p-8 text-center">
+            <div className="ga-paper-card border-dashed bg-bg-card/55 p-8 text-center">
               <div className="mx-auto flex max-w-sm flex-col items-center gap-2.5">
                 <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line/80 bg-bg-soft text-accent">
                   <Calendar className="h-5 w-5" aria-hidden="true" />
                 </span>
                 <div className="text-sm font-medium text-ink">尚无定时任务</div>
-                <p className="text-xs text-ink-faint">可配置按 Cron 时间点或间隔周期自动执行任务，并支持结果邮件推送。</p>
+                <p className="text-xs text-ink-faint">可配置按 Cron 时间点或间隔周期自动执行任务，结果将在运行历史中记录。</p>
                 <button
                   type="button"
                   onClick={() => setEditor({ type: 'cron', enabled: true, cron: '0 8 * * *', name: '', notify_email: false })}
@@ -144,57 +132,60 @@ export default function Tasks() {
           )}
         </section>
 
-        <EmailSettings />
-
         <section>
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-ink">运行历史</h2>
+          <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-baseline gap-2">
+              <h2 className="text-sm font-semibold text-ink">运行历史</h2>
+              {runs.length > 0 && <span className="text-[11px] tabular-nums text-ink-faint">共 {runs.length} 条</span>}
+            </div>
             {pageCount > 1 && (
-              <nav aria-label="运行历史分页" className="flex items-center gap-2 text-xs text-ink-faint">
+              <nav aria-label="运行历史分页" className="flex items-center gap-1.5 text-xs text-ink-faint">
                 <button type="button" aria-label="上一页" title="上一页" className={pageButtonClass}
                   disabled={page === 0} onClick={() => setRunPage(page - 1)}>
-                  <ChevronLeft size={16} aria-hidden="true" />
+                  <ChevronLeft size={15} aria-hidden="true" />
                 </button>
-                <span role="status" className="min-w-28 text-center tabular-nums whitespace-nowrap">
+                <span role="status" className="min-w-28 text-center tabular-nums whitespace-nowrap text-[11px]">
                   第 {page + 1} / {pageCount} 页 · {runs.length} 条
                 </span>
                 <button type="button" aria-label="下一页" title="下一页" className={pageButtonClass}
                   disabled={page === pageCount - 1} onClick={() => setRunPage(page + 1)}>
-                  <ChevronRight size={16} aria-hidden="true" />
+                  <ChevronRight size={15} aria-hidden="true" />
                 </button>
               </nav>
             )}
           </div>
           <div className="ga-paper-card overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b border-line/45 bg-bg-soft/65 text-xs font-medium text-ink-muted">
+              <table className="w-full text-xs">
+                <thead className="border-b border-line/45 bg-bg-soft/65 text-[11px] font-medium text-ink-faint">
                   <tr>
-                    <th className="text-left px-3.5 py-2.5">时间</th>
-                    <th className="text-left px-3.5 py-2.5">任务</th>
-                    <th className="text-left px-3.5 py-2.5">状态</th>
-                    <th className="text-left px-3.5 py-2.5">结果</th>
-                    <th className="text-left px-3.5 py-2.5">邮件</th>
+                    <th className="px-3 py-2 text-left whitespace-nowrap">时间</th>
+                    <th className="px-3 py-2 text-left whitespace-nowrap">任务</th>
+                    <th className="px-3 py-2 text-left whitespace-nowrap">状态</th>
+                    <th className="px-3 py-2 text-left">结果摘要</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line/35">
                   {pageRuns.map((r: TaskRun) => (
-                    <tr key={r.id} className="align-top hover:bg-bg-soft/55 transition-colors">
-                      <td className="px-3.5 py-2.5 text-xs tabular-nums text-ink-muted whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
-                      <td className="px-3.5 py-2.5 text-ink font-medium">{r.task_name || r.task_id}</td>
-                      <td className="px-3.5 py-2.5"><StatusBadge status={r.status} /></td>
-                      <td className="px-3.5 py-2.5 text-ink-muted max-w-lg">
-                        <div className="line-clamp-2 break-words">{r.result_preview || r.prompt_preview || '—'}</div>
-                        {r.stream_id && <div className="text-[11px] text-ink-faint font-mono mt-1">{r.stream_id}</div>}
-                      </td>
-                      <td className="px-3.5 py-2.5 text-xs whitespace-nowrap">
-                        {r.email_sent && <span className="inline-flex items-center rounded-full border border-status-success-line bg-status-success-soft px-2 py-0.5 text-[11px] text-status-success">已发送</span>}
-                        {!r.email_sent && r.email_error && <span className="inline-flex items-center rounded-full border border-status-danger-line bg-status-danger-soft px-2 py-0.5 text-[11px] text-status-danger" title={r.email_error}>失败</span>}
-                        {!r.email_sent && !r.email_error && <span className="text-ink-faint">—</span>}
+                    <tr key={r.id} className="align-middle transition-colors hover:bg-bg-soft/55">
+                      <td className="px-3 py-1.5 text-[11px] tabular-nums text-ink-muted whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
+                      <td className="px-3 py-1.5 font-medium text-ink whitespace-nowrap max-w-[12rem] truncate" title={r.task_name || r.task_id}>{r.task_name || r.task_id}</td>
+                      <td className="px-3 py-1.5 whitespace-nowrap"><StatusBadge status={r.status} /></td>
+                      <td className="px-3 py-1.5 text-ink-muted max-w-xl">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="truncate" title={r.result_preview || r.prompt_preview || undefined}>
+                            {r.result_preview || r.prompt_preview || '—'}
+                          </span>
+                          {r.stream_id && (
+                            <span className="shrink-0 rounded bg-bg-soft px-1.5 py-0.5 font-mono text-[10px] leading-none text-ink-faint">
+                              {r.stream_id}
+                            </span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
-                  {runs.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-ink-faint text-sm">尚无运行历史</td></tr>}
+                  {runs.length === 0 && <tr><td colSpan={4} className="px-3 py-5 text-center text-xs text-ink-faint">尚无运行历史</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -242,59 +233,94 @@ function TaskCard({ s, onEdit, onFire }: { s: TaskSchedule; onEdit: () => void; 
   }
   const TypeIcon = s.type === 'cron' ? Calendar : Clock
   return (
-    <div className={`ga-paper-card p-4 flex flex-col justify-between gap-3 ${s.enabled ? 'border-l-[3px] border-l-accent' : ''}`}>
+    <div className={`ga-paper-card flex flex-col justify-between gap-3 p-4 ${s.enabled ? 'ring-1 ring-accent/20' : 'opacity-90'}`}>
       <div className="space-y-2.5">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap mb-1" title={`ID: ${s.id}`}>
-              <span className="inline-flex items-center gap-1 rounded-md bg-bg-soft px-1.5 py-0.5 text-[11px] font-medium text-ink-muted">
-                <TypeIcon className="h-3 w-3 text-accent" aria-hidden="true" />
+        <div className="flex items-center justify-between gap-2.5">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span
+              className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ${
+                s.enabled
+                  ? 'bg-accent-soft/80 text-accent ring-accent/25'
+                  : 'bg-bg-soft text-ink-faint ring-line/50'
+              }`}
+              title={s.type === 'cron' ? 'Cron 定时' : '周期循环'}
+            >
+              <TypeIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold leading-snug text-ink" title={`${s.name || s.id} (${s.id})`}>
+                {s.name || s.id}
+              </div>
+              <div className="text-[11px] leading-tight text-ink-faint">
                 {s.type === 'cron' ? 'Cron 定时' : '周期循环'}
-              </span>
+              </div>
             </div>
-            <div className="text-sm font-semibold text-ink truncate" title={`${s.name || s.id} (${s.id})`}>{s.name || s.id}</div>
           </div>
-          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${s.enabled ? 'border border-status-success-line bg-status-success-soft text-status-success' : 'bg-bg-soft text-ink-muted'}`}>
+          <span
+            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+              s.enabled
+                ? 'border border-status-success-line bg-status-success-soft text-status-success'
+                : 'bg-bg-soft text-ink-muted'
+            }`}
+          >
             {s.enabled ? '启用' : '禁用'}
           </span>
         </div>
 
-        <div className="ga-paper-subcard px-3 py-2 text-sm text-ink">
-          {s.type === 'cron' && <CronCardLine expr={s.cron} />}
-          {s.type === 'interval' && `每 ${s.interval_minutes} 分钟`}
+        <div className="rounded-lg border border-line/45 bg-bg-soft/80 px-2.5 py-1.5 text-xs text-ink">
+          {s.type === 'cron' ? <CronCardLine expr={s.cron} /> : `每 ${s.interval_minutes} 分钟`}
         </div>
 
-        {s.prompt?.trim() && (
-          <p className="text-xs text-ink-muted line-clamp-2 break-words" title={s.prompt}>{s.prompt}</p>
-        )}
+        <p
+          className={`min-h-[2rem] text-xs leading-relaxed line-clamp-2 break-words ${s.prompt?.trim() ? 'text-ink-muted' : 'italic text-ink-faint'}`}
+          title={s.prompt || undefined}
+        >
+          {s.prompt?.trim() || '未设置 Prompt'}
+        </p>
       </div>
 
-      <div className="space-y-2.5 pt-1">
-        <hr className="ga-hairline" />
-        <div className="flex items-center justify-between gap-2 text-xs text-ink-faint flex-wrap">
-          <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] ${s.notify_email ? 'bg-accent/10 text-accent font-medium' : 'bg-bg-soft text-ink-faint'}`}>
-            <Mail className="h-3 w-3" aria-hidden="true" />
-            {s.notify_email ? '邮件已开' : '未开邮件'}
-          </span>
-          <span className="tabular-nums">触发 {s.fire_count ?? 0} 次 · {s.last_fired_at ? formatRelativeTime(s.last_fired_at) : '—'}</span>
+      <div className="space-y-2 border-t border-line/45 pt-2.5">
+        <div className="flex items-center justify-between gap-2 text-[11px] tabular-nums text-ink-faint">
+          <span>触发 {s.fire_count ?? 0} 次</span>
+          <span>{s.last_fired_at ? `最近 ${formatRelativeTime(s.last_fired_at)}` : '尚未触发'}</span>
         </div>
-        <div className="flex gap-1.5 flex-wrap">
+        <div className="flex items-center justify-between gap-2">
           <button type="button" onClick={onFire} disabled={busy} className="ga-btn-sm-primary px-2.5">
             <Play className="h-3 w-3" aria-hidden="true" />
             <span>立即触发</span>
           </button>
-          <button type="button" onClick={toggle} disabled={busy} className="ga-btn-sm px-2.5">
-            <Power className="h-3 w-3" aria-hidden="true" />
-            <span>{s.enabled ? '禁用' : '启用'}</span>
-          </button>
-          <button type="button" onClick={onEdit} disabled={busy} className="ga-btn-sm px-2.5">
-            <Pencil className="h-3 w-3" aria-hidden="true" />
-            <span>编辑</span>
-          </button>
-          <button type="button" onClick={remove} disabled={busy} className="ga-btn-sm-danger px-2.5">
-            <Trash2 className="h-3 w-3" aria-hidden="true" />
-            <span>删除</span>
-          </button>
+          <div className="ga-btn-group">
+            <button
+              type="button"
+              onClick={toggle}
+              disabled={busy}
+              className="ga-btn-group-item"
+              title={s.enabled ? '暂停任务' : '启用任务'}
+            >
+              <Power className="h-3 w-3" aria-hidden="true" />
+              <span>{s.enabled ? '禁用' : '启用'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onEdit}
+              disabled={busy}
+              aria-label="编辑任务"
+              title="编辑"
+              className="ga-btn-group-item px-2"
+            >
+              <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={remove}
+              disabled={busy}
+              aria-label="删除任务"
+              title="删除"
+              className="ga-btn-group-item-danger px-2"
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -311,8 +337,6 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
     cron: '0 8 * * *',
     interval_minutes: 60,
     notify_email: false,
-    email_to: '',
-    email_subject: 'GenericAgent 定时任务结果: {name}',
     ...initial,
   })
   const [saving, setSaving] = useState(false)
@@ -341,13 +365,9 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
         return
       }
     }
-    if (s.notify_email && !(s.email_to || '').trim()) {
-      await dialog.alert('请填写收件人', '已开启邮件通知，但收件人为空。')
-      return
-    }
     setSaving(true)
     try {
-      await api.upsertTaskSchedule({ ...s, type })
+      await api.upsertTaskSchedule({ ...s, type, notify_email: false })
       qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
       onClose()
     } catch (e: any) {
@@ -392,22 +412,6 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
           placeholder="每天抓取 XXX 信息，总结成 5 条要点；如果有重要变化，请在结论里标出。"
         />
       </Field>
-      <Field label="邮件通知">
-        <label className="inline-flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={!!s.notify_email} onChange={(e) => setS({ ...s, notify_email: e.target.checked })} />
-          <span className="text-ink">任务完成后发送邮件</span>
-        </label>
-      </Field>
-      {s.notify_email && (
-        <>
-          <Field label="收件人（留空使用默认收件人）">
-            <input value={s.email_to || ''} onChange={(e) => setS({ ...s, email_to: e.target.value })} className={inp} placeholder="you@example.com" />
-          </Field>
-          <Field label="邮件标题">
-            <input value={s.email_subject || ''} onChange={(e) => setS({ ...s, email_subject: e.target.value })} className={inp} placeholder="GenericAgent 定时任务结果: {name}" />
-          </Field>
-        </>
-      )}
       <Field label="启用">
         <label className="inline-flex items-center gap-2 text-sm">
           <input type="checkbox" checked={!!s.enabled} onChange={(e) => setS({ ...s, enabled: e.target.checked })} />
@@ -425,180 +429,6 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
   )
 }
 
-function EmailSettings() {
-  const qc = useQueryClient()
-  const { data } = useQuery({ queryKey: queryKeys.tasks.emailConfig, queryFn: api.taskEmailConfig })
-  const [editing, setEditing] = useState(false)
-  const [cfg, setCfg] = useState<Partial<EmailConfig> & { password?: string }>({})
-  const [testTo, setTestTo] = useState('')
-  const [result, setResult] = useState('')
-  const [testing, setTesting] = useState(false)
-
-  const startEdit = () => {
-    setCfg({
-      host: data?.host || '',
-      port: data?.port || 587,
-      username: data?.username || '',
-      password: '',
-      from_addr: data?.from_addr || '',
-      default_to: data?.default_to || '',
-      use_tls: data?.use_tls ?? true,
-      use_ssl: data?.use_ssl ?? false,
-    })
-    setEditing(true)
-    setResult('')
-  }
-  const [savingCfg, setSavingCfg] = useState(false)
-  const save = async () => {
-    if (savingCfg) return
-    setSavingCfg(true)
-    try {
-      await api.saveTaskEmailConfig(cfg)
-      await qc.invalidateQueries({ queryKey: queryKeys.tasks.emailConfig })
-      setEditing(false)
-      setResult('已保存')
-    } catch (e: any) {
-      const msg = errorMessageFromError(e)
-      setResult(`保存失败: ${msg}`)
-      await dialog.alert('保存失败', msg)
-    } finally {
-      setSavingCfg(false)
-    }
-  }
-  const test = async () => {
-    if (testing) return
-    const testRecipient = testTo.trim()
-    const recipient = testRecipient || (cfg.default_to || '').trim()
-    const ok = await dialog.confirm(
-      '发送测试邮件？',
-      `将先保存当前 SMTP 配置，然后发送一封测试邮件到：\n${recipient || '默认收件人（当前未填写，可能发送失败）'}`,
-      { confirmText: '发送测试' },
-    )
-    if (!ok) return
-
-    setTesting(true)
-    setResult('')
-    try {
-      await api.saveTaskEmailConfig(cfg)
-      await qc.invalidateQueries({ queryKey: queryKeys.tasks.emailConfig })
-      const r = await api.testTaskEmail(testRecipient, 'GenericAgent 邮件测试', '这是一封来自 GA-Hub 的测试邮件。')
-      const msg = r.ok ? `测试邮件已发送到 ${r.to}` : `发送失败: ${r.error || 'unknown'}`
-      setResult(msg)
-      if (r.ok) {
-        await dialog.alert('测试邮件已发送', `收件人：${r.to}`)
-      } else {
-        await dialog.alert('测试邮件发送失败', r.error || 'unknown')
-      }
-    } catch (e: any) {
-      const msg = errorMessageFromError(e)
-      setResult(`发送失败: ${msg}`)
-      await dialog.alert('测试邮件发送失败', msg)
-    } finally {
-      setTesting(false)
-    }
-  }
-
-  return (
-    <section>
-      <div className="ga-paper-card overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/45 bg-bg-soft/45 px-4 py-3">
-          <div className="flex items-center gap-2.5">
-            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-bg-card text-accent ring-1 ring-line/45">
-              <Server className="h-4 w-4" aria-hidden="true" />
-            </span>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-semibold text-ink">邮件设置</h2>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium border ${
-                  data?.host
-                    ? 'border-status-success-line bg-status-success-soft text-status-success'
-                    : 'border-status-warning-line bg-status-warning-soft text-status-warning'
-                }`}>
-                  {data?.host ? '已配置' : '未配置'}
-                </span>
-              </div>
-              <p className="text-[11px] text-ink-faint">定时任务完成后用于发送结论邮件的全局 SMTP 通道</p>
-            </div>
-          </div>
-          <button type="button" onClick={startEdit} className="ga-btn-sm"><Mail className="h-3.5 w-3.5" aria-hidden="true" /><span>配置 SMTP</span></button>
-        </div>
-        <div className="p-4 text-sm">
-          {data?.host ? (
-            <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <div className="ga-paper-subcard px-3 py-2">
-                <dt className="text-[11px] text-ink-faint">SMTP 服务器</dt>
-                <dd className="mt-0.5 font-mono text-xs text-ink truncate" title={`${data.host}:${data.port}`}>{data.host}:{data.port}</dd>
-              </div>
-              <div className="ga-paper-subcard px-3 py-2">
-                <dt className="text-[11px] text-ink-faint">发信账号</dt>
-                <dd className="mt-0.5 text-xs text-ink truncate" title={data.username || '无需登录'}>{data.username || '无需登录'}</dd>
-              </div>
-              <div className="ga-paper-subcard px-3 py-2">
-                <dt className="text-[11px] text-ink-faint">默认收件人</dt>
-                <dd className="mt-0.5 text-xs text-ink truncate" title={data.default_to || '未设置'}>{data.default_to || '未设置'}</dd>
-              </div>
-              <div className="ga-paper-subcard px-3 py-2">
-                <dt className="text-[11px] text-ink-faint">认证凭据</dt>
-                <dd className="mt-0.5 text-xs text-ink">{data.password_set ? '已安全保存' : '未设置密码'}</dd>
-              </div>
-            </dl>
-          ) : (
-            <div className="rounded-lg border border-dashed border-line/80 bg-bg-soft/45 px-3.5 py-2.5 text-xs text-ink-muted">
-              尚未配置 SMTP 服务器。任务本身仍会正常执行，但开启邮件通知时会发送失败。
-            </div>
-          )}
-          {result && <div className="mt-2.5 text-xs text-accent">{result}</div>}
-        </div>
-      </div>
-      {editing && (
-        <ModalOverlay onClose={() => setEditing(false)} labelledBy="smtp-dialog-title" panelClassName="p-6 w-[34rem] max-w-[92vw]">
-          <div>
-            <div className="flex items-center justify-between gap-3 border-b border-line/70 pb-3 mb-4">
-              <h3 id="smtp-dialog-title" className="text-base font-semibold text-ink">SMTP 邮件配置</h3>
-              <CloseIconButton label="关闭弹窗" variant="ghost" iconSize={16} onClick={() => setEditing(false)} />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_8rem] gap-x-3">
-              <Field label="SMTP Host"><input value={cfg.host || ''} onChange={(e) => setCfg({ ...cfg, host: e.target.value })} className={inp} placeholder="smtp.example.com" /></Field>
-              <Field label="端口"><input type="number" value={cfg.port ?? 587} onChange={(e) => setCfg({ ...cfg, port: +e.target.value })} className={inp} /></Field>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
-              <Field label="用户名"><input value={cfg.username || ''} onChange={(e) => setCfg({ ...cfg, username: e.target.value })} className={inp} /></Field>
-              <Field label="密码 / 授权码（留空保留旧密码）"><input type="password" value={cfg.password || ''} onChange={(e) => setCfg({ ...cfg, password: e.target.value })} className={inp} /></Field>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
-              <Field label="发件人"><input value={cfg.from_addr || ''} onChange={(e) => setCfg({ ...cfg, from_addr: e.target.value })} className={inp} placeholder="bot@example.com" /></Field>
-              <Field label="默认收件人"><input value={cfg.default_to || ''} onChange={(e) => setCfg({ ...cfg, default_to: e.target.value })} className={inp} placeholder="you@example.com" /></Field>
-            </div>
-            <div className="flex gap-4 mb-3 text-sm text-ink">
-              <label className="inline-flex items-center gap-2"><input type="checkbox" checked={!!cfg.use_tls} onChange={(e) => setCfg({ ...cfg, use_tls: e.target.checked })} />STARTTLS</label>
-              <label className="inline-flex items-center gap-2"><input type="checkbox" checked={!!cfg.use_ssl} onChange={(e) => setCfg({ ...cfg, use_ssl: e.target.checked })} />SSL</label>
-            </div>
-            <Field label="测试收件人（留空使用默认）"><input value={testTo} onChange={(e) => setTestTo(e.target.value)} className={inp} /></Field>
-            <div className="flex justify-between gap-2 mt-4">
-              <button
-                type="button"
-                onClick={test}
-                disabled={testing}
-                className="ga-btn"
-              >
-                <SendHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>{testing ? '发送中…' : '发送测试'}</span>
-              </button>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setEditing(false)} className="ga-btn">取消</button>
-                <button type="button" onClick={save} disabled={savingCfg} className="ga-btn-primary">
-                  <Save className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>{savingCfg ? '保存中…' : '保存'}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </ModalOverlay>
-      )}
-    </section>
-  )
-}
-
 const TASK_RUN_STATUS_LABELS: Record<string, string> = {
   done: '完成',
   running: '运行中',
@@ -612,7 +442,7 @@ function StatusBadge({ status }: { status: string }) {
     : status === 'running'
       ? 'bg-status-warning-soft text-status-warning'
       : 'bg-status-danger-soft text-status-danger'
-  return <span className={`text-[11px] px-2 py-0.5 rounded-md font-medium ${cls}`}>{TASK_RUN_STATUS_LABELS[status] ?? status}</span>
+  return <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium leading-none ${cls}`}>{TASK_RUN_STATUS_LABELS[status] ?? status}</span>
 }
 
 const inp = 'w-full bg-bg-card border border-line rounded-lg px-3 py-1.5 text-sm outline-none focus:border-accent text-ink'

@@ -12,7 +12,6 @@ vi.mock('@/hooks/useHubEvent', () => ({ useHubEvent: vi.fn() }))
 vi.mock('@/api/client', () => ({ api: {
   taskSchedules: vi.fn(),
   taskRuns: vi.fn(),
-  taskEmailConfig: vi.fn(),
   triggerTaskSchedule: vi.fn(),
   upsertTaskSchedule: vi.fn(),
   deleteTaskSchedule: vi.fn(),
@@ -30,7 +29,6 @@ beforeEach(() => {
   root = createRoot(host)
   client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
   client.setQueryData(queryKeys.tasks.schedules, { schedules: [] })
-  client.setQueryData(queryKeys.tasks.emailConfig, {})
 })
 
 afterEach(() => {
@@ -122,6 +120,11 @@ it('renders Chinese status labels and surfaces errors when schedule actions fail
 
   const badges = Array.from(host.querySelectorAll('tbody tr')).map((tr) => tr.children[2]?.textContent?.trim())
   expect(badges).toEqual(['完成', '运行中', '失败'])
+  expect(host.querySelector('header')?.textContent).toContain('已启用 0/1')
+  expect(host.querySelector('header')?.textContent).toContain('记录 3 条')
+  expect(host.querySelector('header')?.textContent).toContain('运行中 1')
+  expect(host.textContent).not.toContain('邮件设置')
+  expect(host.querySelectorAll('thead th')).toHaveLength(4)
 
   const disabledPill = Array.from(host.querySelectorAll('span')).find((el) => el.textContent === '禁用')!
   expect(disabledPill.className).not.toContain('bg-slate-700')
