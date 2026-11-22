@@ -41,7 +41,7 @@ export function stripFinalResponseMarker(text: string): string {
 }
 
 function extractSummary(text: string): string {
-  const node = scanTranscript(text).find(node => node.kind === 'summary' && node.complete)
+  const node = scanTranscript(text).filter(node => node.kind === 'summary' && node.complete).at(-1)
   return (node?.raw.replace(/^<summary>\s*|\s*<\/summary>$/gi, '') || '')
     .split(/\r?\n/).map(line => line.trim()).filter(Boolean).join(' · ')
 }

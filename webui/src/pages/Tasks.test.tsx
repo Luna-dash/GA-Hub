@@ -9,15 +9,17 @@ import { dialog } from '@/stores/dialogStore'
 import Tasks from './Tasks'
 
 vi.mock('@/hooks/useHubEvent', () => ({ useHubEvent: vi.fn() }))
-vi.mock('@/api/client', () => ({ api: {
-  taskSchedules: vi.fn(),
-  taskRuns: vi.fn(),
-  triggerTaskSchedule: vi.fn(),
-  upsertTaskSchedule: vi.fn(),
-  deleteTaskSchedule: vi.fn(),
-} }))
+vi.mock('@/api/client', () => ({
+  api: {
+    taskSchedules: vi.fn(),
+    taskRuns: vi.fn(),
+    triggerTaskSchedule: vi.fn(),
+    upsertTaskSchedule: vi.fn(),
+    deleteTaskSchedule: vi.fn(),
+  }
+}))
 
-;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+  ; (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 let host: HTMLDivElement
 let root: Root
@@ -144,4 +146,30 @@ it('renders Chinese status labels and surfaces errors when schedule actions fail
   expect(alertSpy).toHaveBeenCalledWith('触发失败', 'trigger denied')
 
   alertSpy.mockRestore()
+})
+
+it('strips legacy Turn-1 protocol tags while preserving clean conclusion previews', () => {
+  client.setQueryData(queryKeys.tasks.runs, {
+    runs: [
+      {
+        id: 'legacy-1', task_id: 'task-1', task_name: '归档任务', fired_at: 1700000000,
+        finished_at: 0, stream_id: 's1', status: 'done', prompt_preview: '',
+        result_preview: '**LLM Running (Turn 1) ...**\n\n<summary>开始读取配置并跑 dry-run。</summary>\n\n🛠️ Tool: `code_run`  📥 args:\n````text\n{"script": "x"}\n',
+        note: '',
+      },
+      {
+        id: 'clean-2', task_id: 'task-1', task_name: '归档任务', fired_at: 1700000100,
+        finished_at: 0, stream_id: 's2', status: 'done', prompt_preview: '',
+        result_preview: '归档完成：已压缩 3 个归档包，0 项错误。',
+        note: '',
+      },
+    ],
+  })
+  act(() => root.render(<QueryClientProvider client={client}><Tasks /></QueryClientProvider>))
+  const resultCells = Array.from(host.querySelectorAll('tbody tr')).map((tr) => tr.children[3]?.textContent?.trim())
+  expect(resultCells[0]).toContain('开始读取配置并跑 dry-run。')
+  expect(resultCells[0]).not.toContain('LLM Running')
+  expect(resultCells[0]).not.toContain('<summary>')
+  expect(resultCells[0]).not.toContain('code_run')
+  expect(resultCells[1]).toContain('归档完成：已压缩 3 个归档包，0 项错误。')
 })

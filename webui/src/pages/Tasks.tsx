@@ -12,6 +12,7 @@ import { useHubEvent } from '@/hooks/useHubEvent'
 import { queryKeys } from '@/queries/queryKeys'
 import { CronExpressionParser } from 'cron-parser'
 import { CronCardLine, CronPreview } from '@/components/CronPreview'
+import { parseAssistantTranscript, stripAssistantTranscriptTags } from '@/utils/assistantTranscript'
 import { Calendar, ChevronLeft, ChevronRight, Clock, CloseIconButton, History, Pencil, Play, Plus, Power, Save, Trash2 } from '@/components/ActionIcons'
 
 const RUNS_PER_PAGE = 10
@@ -166,15 +167,18 @@ export default function Tasks() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line/35">
-                  {pageRuns.map((r: TaskRun) => (
+                  {pageRuns.map((r: TaskRun) => {
+                    const preview = formatTaskResultPreview(r.result_preview, r.prompt_preview)
+                    const inlinePreview = preview.replace(/^[#>*\-\s]+/gm, '').replace(/\s+/g, ' ').trim()
+                    return (
                     <tr key={r.id} className="align-middle transition-colors hover:bg-bg-soft/55">
                       <td className="px-3 py-1.5 text-[11px] tabular-nums text-ink-muted whitespace-nowrap">{formatRelativeTime(r.fired_at)}</td>
                       <td className="px-3 py-1.5 font-medium text-ink whitespace-nowrap max-w-[12rem] truncate" title={r.task_name || r.task_id}>{r.task_name || r.task_id}</td>
                       <td className="px-3 py-1.5 whitespace-nowrap"><StatusBadge status={r.status} /></td>
                       <td className="px-3 py-1.5 text-ink-muted max-w-xl">
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className="truncate" title={r.result_preview || r.prompt_preview || undefined}>
-                            {r.result_preview || r.prompt_preview || '—'}
+                          <span className="truncate" title={preview || undefined}>
+                            {inlinePreview || preview || '—'}
                           </span>
                           {r.stream_id && (
                             <span className="shrink-0 rounded bg-bg-soft px-1.5 py-0.5 font-mono text-[10px] leading-none text-ink-faint">
@@ -184,7 +188,8 @@ export default function Tasks() {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                   {runs.length === 0 && <tr><td colSpan={4} className="px-3 py-5 text-center text-xs text-ink-faint">尚无运行历史</td></tr>}
                 </tbody>
               </table>
@@ -426,6 +431,19 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
       </div>
     </ModalOverlay>
   )
+}
+
+function formatTaskResultPreview(raw?: string, fallbackPrompt?: string): string {
+  const source = (raw || '').trim()
+  if (!source) return (fallbackPrompt || '').trim()
+  const hasProtocol = /LLM Running \(Turn \d+\)|<\/?(?:summary|thinking|think|analysis)>|🛠️/i.test(source)
+  if (!hasProtocol) return source
+  const transcript = parseAssistantTranscript(source)
+  const finalBody = stripAssistantTranscriptTags(transcript.finalBody || '')
+  if (finalBody && !/^🛠️/.test(finalBody)) return finalBody
+  const lastSummary = [...transcript.turns].reverse().find((turn) => turn.summary)?.summary
+  if (lastSummary) return lastSummary
+  return stripAssistantTranscriptTags(source) || source
 }
 
 const TASK_RUN_STATUS_LABELS: Record<string, string> = {

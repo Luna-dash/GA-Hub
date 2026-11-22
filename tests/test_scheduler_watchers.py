@@ -313,3 +313,51 @@ def test_upsert_rejects_invalid_cron_before_persisting(tmp_path):
         sched.upsert({"name": "bad", "type": "cron", "cron": "not-a-cron", "prompt": "x"})
     # Seeded defaults exist; the rejected schedule must not be among them.
     assert all(row["name"] != "bad" for row in sched.list())
+
+
+def test_task_finalize_run_extracts_final_conclusion_over_opening_summary() -> None:
+    from server.services.task_scheduler import extract_task_result_preview
+
+    raw = (
+        "\n**LLM Running (Turn 1) ...**\n\n"
+        "<summary>开头步骤：读取配置并运行 dry-run。</summary>\n\n"
+        "🛠️ Tool: `code_run`  📥 args:\n````text\n{\"script\": \"print(1)\"}\n````\n"
+        "````text\n[stdout] 1\n````\n\n"
+        "**LLM Running (Turn 2) ...**\n\n"
+        "<summary>任务完成：所有检查均已通过。</summary>\n\n"
+        "### 最终结论\n归档已核验完成，释放 12 MB。\n"
+        "````\n[Info] Final response to user.\n````\n"
+    )
+    preview = extract_task_result_preview(raw)
+    assert "开头步骤" not in preview
+    assert "LLM Running" not in preview
+    assert "### 最终结论" in preview
+    assert "归档已核验完成，释放 12 MB。" in preview
+
+    dangling_raw = (
+        "**LLM Running (Turn 1) ...**\n"
+        "<summary>第 1 步：开始检查。</summary>\n"
+        "🛠️ Tool: `code_run`  📥 args:\n````text\n{}\n````\n"
+        "**LLM Running (Turn 2) ...**\n"
+        "<summary>第 2 步：已找出异常并准备重试。</summary>\n"
+        "🛠️ Tool: `update_plan`  📥 args:\n````text\n{}\n````\n"
+    )
+    assert extract_task_result_preview(dangling_raw) == "第 2 步：已找出异常并准备重试。"
+
+    handle = _Handle(finished=True)
+    handle.final_text = "**LLM Running (Turn 1) ...**\n<summary>中间截断</summary>\n[!!! Response truncated: max_tokens"
+    handle.run_final_text = raw
+    service = _task_scheduler(handle)
+    recorded = []
+    with (
+        mock.patch.object(service, "_persist"),
+        mock.patch.object(service, "_record_run", side_effect=recorded.append),
+        mock.patch("server.services.task_scheduler.bus.publish"),
+    ):
+        service.trigger_now("task-1")
+        deadline = time.monotonic() + 1
+        while not recorded and time.monotonic() < deadline:
+            time.sleep(0.01)
+    assert len(recorded) == 1
+    assert "归档已核验完成，释放 12 MB。" in recorded[0].result_preview
+    assert "开头步骤" not in recorded[0].result_preview
