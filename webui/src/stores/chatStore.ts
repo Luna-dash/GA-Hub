@@ -76,9 +76,9 @@ interface ChatState {
 
   start: (sessionId: string, options?: { forceHistory?: boolean }) => void
   retryHistory: () => void
-  loadOlderHistory: () => Promise<void>
+  loadOlderHistory: (beforePrepend?: () => void) => Promise<void>
   /** Page back from the newest edge until the whole archive is loaded. */
-  loadAllHistory: () => Promise<void>
+  loadAllHistory: (beforePrepend?: () => void) => Promise<void>
   dropSessionView: (sessionId: string) => void
   /**
    * Tear down the live connection and local projection state (session
@@ -537,7 +537,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     }
   },
 
-  loadOlderHistory: async () => {
+  loadOlderHistory: async (beforePrepend) => {
     const current = get()
     if (
       !current.sessionId
@@ -576,8 +576,11 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       const older = historyToMessages(history.items)
       set((state) => {
         if (state.sessionId !== sessionId) return state
+        const msgs = prependUniqueHistory(older, state.msgs)
+        // The reader may have moved while the network request was in flight.
+        beforePrepend?.()
         return {
-          msgs: prependUniqueHistory(older, state.msgs),
+          msgs,
           historyHasMore: history.has_more ?? false,
           historyBefore: history.next_before ?? null,
           olderHistoryStatus: 'idle',
@@ -601,7 +604,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
    * long session needs one click instead of dozens. Stops on session switch,
    * fatal errors, or when the cursor reaches the beginning.
    */
-  loadAllHistory: async () => {
+  loadAllHistory: async (beforePrepend) => {
     const current = get()
     if (
       !current.sessionId
@@ -631,7 +634,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
 
         const beforeCount = state.msgs.length
         const revisionBefore = state.historyRevision
-        await get().loadOlderHistory()
+        await get().loadOlderHistory(beforePrepend)
 
         const after = get()
         if (after.sessionId !== sessionId) return

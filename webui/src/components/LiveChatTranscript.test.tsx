@@ -16,6 +16,9 @@ vi.mock('./ConversationCollapse', () => ({
 vi.mock('./VirtualMessageList', () => ({
   VirtualMessageList: forwardRef(function List(_props, ref) {
     useImperativeHandle(ref, () => ({
+      prepareForPrepend: () => false,
+      hasPrependAnchor: () => false,
+      releasePrependAnchor: () => {},
       scrollToIndex: layout.scrollToIndex,
       getFirstVisibleIndex: () => layout.first,
     }))

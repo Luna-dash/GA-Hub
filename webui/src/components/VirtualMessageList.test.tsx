@@ -32,16 +32,16 @@ describe('VirtualMessageList', () => {
     vi.unstubAllGlobals()
   })
 
-  function Harness() {
+  function Harness({ rows = items, threshold = 5, overscan = 0 }: { rows?: string[]; threshold?: number; overscan?: number } = {}) {
     const scrollRef = useRef<HTMLDivElement>(null)
     return (
       <div ref={scrollRef}>
         <VirtualMessageList
           ref={(value) => { handle = value }}
-          items={items}
+          items={rows}
           scrollRef={scrollRef}
-          virtualizationThreshold={5}
-          overscanPx={0}
+          virtualizationThreshold={threshold}
+          overscanPx={overscan}
           itemKey={(item) => item}
           estimateSize={() => 100}
           renderItem={(item) => <div>{item}</div>}
@@ -49,6 +49,68 @@ describe('VirtualMessageList', () => {
       </div>
     )
   }
+
+  it('retains the visible key and offset when a large prepend turns on virtualization', () => {
+    const prior = items.slice(60, 65)
+    const resized = items.slice(0, 65)
+    // jsdom doesn't lay out rows: model both normal-flow and absolute positions.
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height }) as DOMRect
+    const getRect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.dataset.chatKey) {
+        const top = this.style.position === 'absolute' ? Number.parseFloat(this.style.top) : Number(this.dataset.virtualIndex) * 100
+        return rect(top - (host.firstElementChild as HTMLElement).scrollTop, this.dataset.chatKey === items[59] ? 140 : 100)
+      }
+      return rect(0, 640)
+    })
+    try {
+      act(() => root.render(<Harness rows={prior} threshold={80} />))
+      const scroller = host.firstElementChild as HTMLElement
+      Object.defineProperty(scroller, 'clientHeight', { value: 640 })
+      scroller.scrollTop = 35
+      expect(handle?.prepareForPrepend()).toBe(true)
+      act(() => root.render(<Harness rows={resized} threshold={80} overscan={120} />))
+      const list = host.querySelector<HTMLElement>('[data-chat-virtual-list]')!
+      const oldRow = list.querySelector<HTMLElement>(`[data-chat-key="${prior[0]}"]`)
+      expect(list.dataset.virtualized).toBe('true')
+      expect(Number(list.dataset.renderedCount)).toBeLessThan(15)
+      expect(oldRow?.getBoundingClientRect().top).toBe(-35)
+      expect(scroller.scrollTop).toBe(6075)
+    } finally {
+      getRect.mockRestore()
+    }
+  })
+
+  it('reserves scroll space when a short prepend would otherwise clamp the anchor', () => {
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height }) as DOMRect
+    act(() => root.render(<Harness rows={items.slice(1, 3)} threshold={80} />))
+    const scroller = host.firstElementChild as HTMLElement
+    const spacer = scroller.lastElementChild as HTMLElement
+    const naturalHeight = () => scroller.querySelectorAll('[data-chat-message]').length * 100
+    let scrollTop = 0
+    Object.defineProperties(scroller, {
+      clientHeight: { value: 640 },
+      scrollTop: {
+        get: () => scrollTop,
+        set: (top: number) => {
+          scrollTop = Math.max(0, Math.min(top, naturalHeight() + (parseFloat(spacer.style.height) || 0) - 640))
+        },
+      },
+    })
+    const getRect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this === spacer) return rect(naturalHeight() - scrollTop, parseFloat(spacer.style.height) || 0)
+      if (this.dataset.chatKey) return rect(Number(this.dataset.virtualIndex) * 100 - scrollTop, 100)
+      return rect(0, 640)
+    })
+    try {
+      expect(handle?.prepareForPrepend()).toBe(true)
+      act(() => root.render(<Harness rows={items.slice(0, 3)} threshold={80} />))
+      expect(scroller.scrollTop).toBe(100)
+      expect(spacer.style.height).toBe('440px')
+      expect(scroller.querySelector('[data-virtual-index="1"]')?.getBoundingClientRect().top).toBe(0)
+    } finally {
+      getRect.mockRestore()
+    }
+  })
 
   it('keeps the logical transcript while mounting only the visible window', () => {
     act(() => root.render(<Harness />))

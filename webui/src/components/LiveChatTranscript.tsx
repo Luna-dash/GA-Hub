@@ -147,6 +147,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
     const commitNavigation = useCallback((index: number, stuck: boolean) => {
       if (!sessionId || useChatStore.getState().sessionId !== sessionId) return
       viewportIntentVersionRef.current += 1
+      virtualListRef.current?.releasePrependAnchor()
       lastUserGestureAtRef.current = 0
       restoredSessionsRef.current.add(sessionId)
       freshLaunchPending = false
@@ -246,6 +247,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       // Real input only: programmatic scrolls never fire these events, so
       // they are the trusted signal that re-arms position capturing.
       const onUserGesture = () => {
+        virtualListRef.current?.releasePrependAnchor()
         navigationTargetRef.current = null
         viewportIntentVersionRef.current += 1
         lastUserGestureAtRef.current = performance.now()
@@ -257,6 +259,10 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       el.addEventListener('wheel', onUserGesture, { passive: true })
       el.addEventListener('touchstart', onUserGesture, { passive: true })
       el.addEventListener('pointerdown', onUserGesture, { passive: true })
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.target === el && ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) onUserGesture()
+      }
+      el.addEventListener('keydown', onKeyDown)
       return () => {
         scrollScheduler.cancel()
         utilityRail?.removeEventListener('wheel', onWheel, { capture: true })
@@ -264,18 +270,22 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
         el.removeEventListener('wheel', onUserGesture)
         el.removeEventListener('touchstart', onUserGesture)
         el.removeEventListener('pointerdown', onUserGesture)
+        el.removeEventListener('keydown', onKeyDown)
       }
     }, [msgs.length, sessionId, turnCount, scheduledChats.length])
 
-    // Keep the existing prepend anchor and pinned-tail semantics synchronous
-    // with layout so the user never sees a one-frame scroll jump.
+    // The list owns history anchoring; only ordinary updates follow the tail.
     const lastLenRef = useRef(0)
     useLayoutEffect(() => {
       const el = scrollRef.current
       if (!el) return
       const grew = msgs.length > lastLenRef.current
       lastLenRef.current = msgs.length
-      if (prependingHistoryRef.current) return
+      if (prependingHistoryRef.current) {
+        prependingHistoryRef.current = false
+        return
+      }
+      if (virtualListRef.current?.hasPrependAnchor()) return
       if (stuckBottom) {
         markProgrammaticScroll()
         el.scrollTop = el.scrollHeight
@@ -407,53 +417,16 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
       }
     }, [sessionId, historyStatus, projectionReady, projectionFailed, resumePolicy, msgs, aimAtAnchor])
 
-    const handleLoadOlderHistory = useCallback(async () => {
-      const el = scrollRef.current
-      if (!el || olderHistoryStatus === 'loading') return
-      const oldHeight = el.scrollHeight
-      const oldTop = el.scrollTop
+    const captureHistoryAnchor = useCallback(() => {
       prependingHistoryRef.current = true
-      try {
-        await loadOlderHistory()
-      } finally {
-        requestAnimationFrame(() => {
-          const current = scrollRef.current
-          if (current) {
-            markProgrammaticScroll()
-            current.scrollTop = oldTop + (current.scrollHeight - oldHeight)
-          }
-          prependingHistoryRef.current = false
-        })
+      if (virtualListRef.current?.prepareForPrepend()) {
+        // Do not let a pending initial landing override the reader’s anchor.
+        viewportIntentVersionRef.current += 1
       }
-    }, [loadOlderHistory, olderHistoryStatus])
+    }, [])
 
-    const handleLoadAllHistory = useCallback(async () => {
-      const el = scrollRef.current
-      if (!el || olderHistoryStatus === 'loading' || loadingAllHistory) return
-      prependingHistoryRef.current = true
-      // Pages keep prepending for the whole sweep; compensate the scrollTop
-      // each frame by exactly how much the content grew, so the reader stays
-      // anchored to the same message instead of chasing the new content.
-      let lastHeight = el.scrollHeight
-      let frame = requestAnimationFrame(function keepAnchor() {
-        const current = scrollRef.current
-        if (current) {
-          const height = current.scrollHeight
-          if (height > lastHeight) {
-            markProgrammaticScroll()
-            current.scrollTop += height - lastHeight
-          }
-          lastHeight = height
-        }
-        frame = requestAnimationFrame(keepAnchor)
-      })
-      try {
-        await loadAllHistory()
-      } finally {
-        cancelAnimationFrame(frame)
-        prependingHistoryRef.current = false
-      }
-    }, [loadAllHistory, olderHistoryStatus, loadingAllHistory])
+    const handleLoadOlderHistory = () => loadOlderHistory(captureHistoryAnchor)
+    const handleLoadAllHistory = () => loadAllHistory(captureHistoryAnchor)
 
     const jumpToBottom = () => {
       const el = scrollRef.current
@@ -593,6 +566,7 @@ export const LiveChatTranscript = forwardRef<LiveChatTranscriptHandle, LiveChatT
             </div>
           )}
           <VirtualMessageList
+            key={sessionId}
             ref={virtualListRef}
             items={msgs}
             scrollRef={scrollRef}
