@@ -26,7 +26,6 @@ table — keep the two lists in sync):
     session_metadata/           → session sidecar labels/preferences (no messages)
     conversation_metadata/      → derived conversation titles (titles.json)
     gahub_journal/journal.jsonl → conductor engine durable journal
-    email_config.json           → email notification settings
     ui_preferences.json         → sidebar navigation visibility
     logs/                       → backend.log (run.py logging setup)
     mykey-backups/              → mykey.py backup rotation
@@ -639,10 +638,6 @@ def gahub_journal_file() -> Path:
     state (never inside the GA repo).
     """
     return ADMIN_DATA / "gahub_journal" / "journal.jsonl"
-
-
-def email_config_file() -> Path:
-    return ADMIN_DATA / "email_config.json"
 
 
 def child_processes_file() -> Path:

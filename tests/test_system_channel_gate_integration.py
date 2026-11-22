@@ -89,7 +89,7 @@ def test_task_fire_refusal_does_not_consume_the_trigger(gate) -> None:
         service = TaskScheduler(channel, scheduler_runtime=SimpleNamespace(running=True))
     service.schedules["task-1"] = SimpleNamespace(
         id="task-1", name="demo", prompt="run", enabled=True,
-        last_fired_at=None, fire_count=0, notify_email=None,
+        last_fired_at=None, fire_count=0,
     )
     gate.coordinator.submit("occupy", session_id="other-session")
     channel.submit = _busy(AgentBusyError.REASON_CAPACITY_FULL)
@@ -146,7 +146,7 @@ def test_fire_succeeds_and_counts_once_the_gate_frees(gate) -> None:
         service = TaskScheduler(channel, scheduler_runtime=SimpleNamespace(running=True))
     service.schedules["task-1"] = SimpleNamespace(
         id="task-1", name="demo", prompt="run", enabled=True,
-        last_fired_at=None, fire_count=0, notify_email=None,
+        last_fired_at=None, fire_count=0,
     )
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(type(service), "_persist", lambda self: None)

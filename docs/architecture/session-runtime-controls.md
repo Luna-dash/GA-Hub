@@ -186,15 +186,15 @@ token usage 领域新增 `TokenUsageStore` 作为唯一 file owner：
 - `routes/tokens.py` 只保留领域聚合、周/日归因和 API 语义，不再直接调用 `json`/临时文件写入。
 - `AgentService` 继续通过 route 暴露的 `record_session_usage` 网关写入，避免 runtime adapter 反向依赖 HTTP 层的长期债务在本次行为改动中扩大。
 
-后续按同样模式逐类收敛 UI preferences、email config 与 legacy chat history；目标是每类文件一个 repository/single writer，而不是一次性建立万能存储层。
+后续按同样模式逐类收敛 UI preferences 与 legacy chat history；目标是每类文件一个 repository/single writer，而不是一次性建立万能存储层。
 
 ### 12.1 UI preferences owner
 
 UI preferences 领域新增 `UiPreferencesStore` 作为 `ui_preferences.json` 的唯一 file owner。它负责格式校验、线程锁、原子替换和默认文档；preferences route 只保留导航项校验与 HTTP 语义。迁移策略与 token usage 相同：先收敛文件所有权，保持 API 响应和既有 JSON 内容兼容。
 
-### 12.2 Email config owner
+### 12.2 Scheduled-task email removal
 
-Email notification 配置新增 EmailConfigStore 作为 email_config.json 的唯一 file owner。它负责默认文档、键过滤、端口与 TLS 归一化、空密码保留既有密码、公开视图脱敏、线程锁和原子替换；SMTP service 只读取配置并发信，task route 只负责 HTTP 错误映射。损坏或非法配置不会被静默重写为默认值。
+定时任务不再读取邮件配置或发送邮件。旧任务计划中的邮件字段会在加载时忽略，不影响计划继续运行。
 
 ### 12.3 Legacy chat history adapter
 

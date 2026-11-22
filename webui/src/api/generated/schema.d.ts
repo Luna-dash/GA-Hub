@@ -2219,41 +2219,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/tasks/email-config": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Email Config */
-        get: operations["get_email_config_api_tasks_email_config_get"];
-        /** Put Email Config */
-        put: operations["put_email_config_api_tasks_email_config_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/tasks/email-test": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Test Email */
-        post: operations["test_email_api_tasks_email_test_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/tokens/stats": {
         parameters: {
             query?: never;
@@ -4346,95 +4311,6 @@ export interface components {
             /** Title */
             title: string;
         };
-        /** EmailConfigReq */
-        EmailConfigReq: {
-            /**
-             * Host
-             * @default
-             */
-            host: string;
-            /**
-             * Port
-             * @default 587
-             */
-            port: number;
-            /**
-             * Username
-             * @default
-             */
-            username: string;
-            /**
-             * Password
-             * @default
-             */
-            password: string;
-            /**
-             * From Addr
-             * @default
-             */
-            from_addr: string;
-            /**
-             * Default To
-             * @default
-             */
-            default_to: string;
-            /**
-             * Use Tls
-             * @default true
-             */
-            use_tls: boolean;
-            /**
-             * Use Ssl
-             * @default false
-             */
-            use_ssl: boolean;
-        };
-        /** EmailConfigResp */
-        EmailConfigResp: {
-            /** Host */
-            host: string;
-            /** Port */
-            port: number;
-            /** Username */
-            username: string;
-            /** From Addr */
-            from_addr: string;
-            /** Default To */
-            default_to: string;
-            /** Use Tls */
-            use_tls: boolean;
-            /** Use Ssl */
-            use_ssl: boolean;
-            /** Password Set */
-            password_set: boolean;
-        };
-        /** EmailTestReq */
-        EmailTestReq: {
-            /**
-             * To
-             * @default
-             */
-            to: string;
-            /**
-             * Subject
-             * @default GenericAgent 邮件测试
-             */
-            subject: string;
-            /**
-             * Body
-             * @default 这是一封来自 GA-Hub 的测试邮件。
-             */
-            body: string;
-        };
-        /** EmailTestResp */
-        EmailTestResp: {
-            /** Ok */
-            ok: boolean;
-            /** To */
-            to: string;
-            /** Error */
-            error?: string | null;
-        };
         /** EventBusEnvelope */
         EventBusEnvelope: {
             /** Topic */
@@ -5677,10 +5553,6 @@ export interface components {
             prompt_preview: string;
             /** Result Preview */
             result_preview: string;
-            /** Email Sent */
-            email_sent: boolean;
-            /** Email Error */
-            email_error: string;
             /** Note */
             note: string;
         };
@@ -5703,12 +5575,6 @@ export interface components {
             cron: string;
             /** Interval Minutes */
             interval_minutes: number;
-            /** Notify Email */
-            notify_email: boolean;
-            /** Email To */
-            email_to: string;
-            /** Email Subject */
-            email_subject: string;
             /** Last Fired At */
             last_fired_at: number;
             /** Fire Count */
@@ -5745,21 +5611,6 @@ export interface components {
             cron?: string | null;
             /** Interval Minutes */
             interval_minutes?: number | null;
-            /**
-             * Notify Email
-             * @default false
-             */
-            notify_email: boolean;
-            /**
-             * Email To
-             * @default
-             */
-            email_to: string;
-            /**
-             * Email Subject
-             * @default
-             */
-            email_subject: string;
         };
         /** TaskTriggerResp */
         TaskTriggerResp: {
@@ -10172,92 +10023,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskRunListResp"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_email_config_api_tasks_email_config_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EmailConfigResp"];
-                };
-            };
-        };
-    };
-    put_email_config_api_tasks_email_config_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EmailConfigReq"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EmailConfigResp"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    test_email_api_tasks_email_test_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EmailTestReq"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EmailTestResp"];
                 };
             };
             /** @description Validation Error */

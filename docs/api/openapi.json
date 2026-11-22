@@ -5010,107 +5010,6 @@
         }
       }
     },
-    "/api/tasks/email-config": {
-      "get": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "Get Email Config",
-        "operationId": "get_email_config_api_tasks_email_config_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EmailConfigResp"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "Put Email Config",
-        "operationId": "put_email_config_api_tasks_email_config_put",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EmailConfigReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EmailConfigResp"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/tasks/email-test": {
-      "post": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "Test Email",
-        "operationId": "test_email_api_tasks_email_test_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EmailTestReq"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EmailTestResp"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/tokens/stats": {
       "get": {
         "tags": [
@@ -10660,150 +10559,6 @@
         ],
         "title": "ConversationUpdateResp"
       },
-      "EmailConfigReq": {
-        "properties": {
-          "host": {
-            "type": "string",
-            "title": "Host",
-            "default": ""
-          },
-          "port": {
-            "type": "integer",
-            "title": "Port",
-            "default": 587
-          },
-          "username": {
-            "type": "string",
-            "title": "Username",
-            "default": ""
-          },
-          "password": {
-            "type": "string",
-            "title": "Password",
-            "default": ""
-          },
-          "from_addr": {
-            "type": "string",
-            "title": "From Addr",
-            "default": ""
-          },
-          "default_to": {
-            "type": "string",
-            "title": "Default To",
-            "default": ""
-          },
-          "use_tls": {
-            "type": "boolean",
-            "title": "Use Tls",
-            "default": true
-          },
-          "use_ssl": {
-            "type": "boolean",
-            "title": "Use Ssl",
-            "default": false
-          }
-        },
-        "type": "object",
-        "title": "EmailConfigReq"
-      },
-      "EmailConfigResp": {
-        "properties": {
-          "host": {
-            "type": "string",
-            "title": "Host"
-          },
-          "port": {
-            "type": "integer",
-            "title": "Port"
-          },
-          "username": {
-            "type": "string",
-            "title": "Username"
-          },
-          "from_addr": {
-            "type": "string",
-            "title": "From Addr"
-          },
-          "default_to": {
-            "type": "string",
-            "title": "Default To"
-          },
-          "use_tls": {
-            "type": "boolean",
-            "title": "Use Tls"
-          },
-          "use_ssl": {
-            "type": "boolean",
-            "title": "Use Ssl"
-          },
-          "password_set": {
-            "type": "boolean",
-            "title": "Password Set"
-          }
-        },
-        "type": "object",
-        "required": [
-          "host",
-          "port",
-          "username",
-          "from_addr",
-          "default_to",
-          "use_tls",
-          "use_ssl",
-          "password_set"
-        ],
-        "title": "EmailConfigResp"
-      },
-      "EmailTestReq": {
-        "properties": {
-          "to": {
-            "type": "string",
-            "title": "To",
-            "default": ""
-          },
-          "subject": {
-            "type": "string",
-            "title": "Subject",
-            "default": "GenericAgent 邮件测试"
-          },
-          "body": {
-            "type": "string",
-            "title": "Body",
-            "default": "这是一封来自 GA-Hub 的测试邮件。"
-          }
-        },
-        "type": "object",
-        "title": "EmailTestReq"
-      },
-      "EmailTestResp": {
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "title": "Ok"
-          },
-          "to": {
-            "type": "string",
-            "title": "To"
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error"
-          }
-        },
-        "type": "object",
-        "required": [
-          "ok",
-          "to"
-        ],
-        "title": "EmailTestResp"
-      },
       "EventBusEnvelope": {
         "properties": {
           "topic": {
@@ -14436,14 +14191,6 @@
             "type": "string",
             "title": "Result Preview"
           },
-          "email_sent": {
-            "type": "boolean",
-            "title": "Email Sent"
-          },
-          "email_error": {
-            "type": "string",
-            "title": "Email Error"
-          },
           "note": {
             "type": "string",
             "title": "Note"
@@ -14460,8 +14207,6 @@
           "status",
           "prompt_preview",
           "result_preview",
-          "email_sent",
-          "email_error",
           "note"
         ],
         "title": "TaskRunResp"
@@ -14508,18 +14253,6 @@
             "type": "integer",
             "title": "Interval Minutes"
           },
-          "notify_email": {
-            "type": "boolean",
-            "title": "Notify Email"
-          },
-          "email_to": {
-            "type": "string",
-            "title": "Email To"
-          },
-          "email_subject": {
-            "type": "string",
-            "title": "Email Subject"
-          },
           "last_fired_at": {
             "type": "integer",
             "title": "Last Fired At"
@@ -14541,9 +14274,6 @@
           "prompt",
           "cron",
           "interval_minutes",
-          "notify_email",
-          "email_to",
-          "email_subject",
           "last_fired_at",
           "fire_count",
           "name"
@@ -14608,21 +14338,6 @@
               }
             ],
             "title": "Interval Minutes"
-          },
-          "notify_email": {
-            "type": "boolean",
-            "title": "Notify Email",
-            "default": false
-          },
-          "email_to": {
-            "type": "string",
-            "title": "Email To",
-            "default": ""
-          },
-          "email_subject": {
-            "type": "string",
-            "title": "Email Subject",
-            "default": ""
           }
         },
         "type": "object",

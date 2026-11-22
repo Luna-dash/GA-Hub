@@ -59,18 +59,6 @@ def _domain(store=None, coordinator=None):
     return domain
 
 
-def test_email_probe_runs_in_worker_thread() -> None:
-    request = tasks.EmailTestReq(to="user@example.com")
-    with mock.patch.object(
-        tasks.email_service,
-        "test_email",
-        side_effect=lambda *_args: _slow_result({"ok": True, "to": request.to}),
-    ):
-        result = asyncio.run(_run_with_probe(tasks.test_email(request)))
-
-    assert result == {"ok": True, "to": request.to}
-
-
 def test_autonomous_schedule_list_runs_in_worker_thread() -> None:
     service = SimpleNamespace(list=lambda: _slow_result([{"id": "s1"}]))
     with mock.patch.object(autonomous, "svc", return_value=service):

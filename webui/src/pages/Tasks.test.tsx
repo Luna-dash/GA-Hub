@@ -41,7 +41,7 @@ function setRuns(count: number) {
   const runs: TaskRun[] = Array.from({ length: count }, (_, i) => ({
     id: `run-${i + 1}`, task_id: 'task-1', task_name: `Run ${i + 1}`,
     fired_at: 1700000000 - i * 60, finished_at: 0, stream_id: '', status: 'done',
-    prompt_preview: '', result_preview: '', email_sent: false, email_error: '', note: '',
+    prompt_preview: '', result_preview: '', note: '',
   }))
   client.setQueryData(queryKeys.tasks.runs, { runs })
 }
@@ -106,14 +106,14 @@ it('renders Chinese status labels and surfaces errors when schedule actions fail
   client.setQueryData(queryKeys.tasks.schedules, {
     schedules: [{
       id: 't-1', name: '早报', type: 'interval', interval_minutes: 60, cron: '',
-      prompt: 'test', enabled: false, notify_email: false, fire_count: 0, last_fired_at: 0,
+      prompt: 'test', enabled: false, fire_count: 0, last_fired_at: 0,
     }],
   })
   client.setQueryData(queryKeys.tasks.runs, {
     runs: [
-      { id: 'r1', task_id: 't-1', task_name: '早报', fired_at: 1700000000, finished_at: 0, stream_id: '', status: 'done', prompt_preview: '', result_preview: '', email_sent: false, email_error: '', note: '' },
-      { id: 'r2', task_id: 't-1', task_name: '早报', fired_at: 1700000000, finished_at: 0, stream_id: '', status: 'running', prompt_preview: '', result_preview: '', email_sent: false, email_error: '', note: '' },
-      { id: 'r3', task_id: 't-1', task_name: '早报', fired_at: 1700000000, finished_at: 0, stream_id: '', status: 'error', prompt_preview: '', result_preview: '', email_sent: false, email_error: '', note: '' },
+      { id: 'r1', task_id: 't-1', task_name: '早报', fired_at: 1700000000, finished_at: 0, stream_id: '', status: 'done', prompt_preview: '', result_preview: '', note: '' },
+      { id: 'r2', task_id: 't-1', task_name: '早报', fired_at: 1700000000, finished_at: 0, stream_id: '', status: 'running', prompt_preview: '', result_preview: '', note: '' },
+      { id: 'r3', task_id: 't-1', task_name: '早报', fired_at: 1700000000, finished_at: 0, stream_id: '', status: 'error', prompt_preview: '', result_preview: '', note: '' },
     ],
   })
   act(() => root.render(<QueryClientProvider client={client}><Tasks /></QueryClientProvider>))

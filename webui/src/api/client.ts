@@ -24,8 +24,6 @@ import type {
   ConversationImportResponse,
   ConversationListResponse,
   ConversationUpdateResponse,
-  EmailConfig,
-  EmailTestResponse,
   LLMInfo,
   MemoryTextResponse,
   MemoryWriteRequest,
@@ -375,11 +373,6 @@ export const api = {
   deleteTaskSchedule: (id: string) => http<TaskMutationResponse>('DELETE', `/api/tasks/schedules/${id}`),
   triggerTaskSchedule: (id: string) => http<TaskTriggerResponse>('POST', `/api/tasks/schedules/${id}/trigger`),
   taskRuns: (limit = 100) => http<TaskRunListResponse>('GET', `/api/tasks/runs?limit=${limit}`),
-  taskEmailConfig: () => http<EmailConfig>('GET', '/api/tasks/email-config'),
-  saveTaskEmailConfig: (cfg: Partial<EmailConfig> & { password?: string }) =>
-    http<EmailConfig>('PUT', '/api/tasks/email-config', cfg),
-  testTaskEmail: (to: string, subject: string, body: string) =>
-    http<EmailTestResponse>('POST', '/api/tasks/email-test', { to, subject, body }),
 
   // ── upload ───────────────────────────────────────────
   upload: async (file: File, init?: Pick<HttpOptions, 'signal' | 'timeoutMs'>): Promise<UploadResult> => {

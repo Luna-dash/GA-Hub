@@ -7,10 +7,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ..schemas import (
-    EmailConfigReq,
-    EmailConfigResp,
-    EmailTestReq,
-    EmailTestResp,
     TaskMutationResp,
     TaskRunListResp,
     TaskScheduleListResp,
@@ -18,8 +14,6 @@ from ..schemas import (
     TaskScheduleUpsert,
     TaskTriggerResp,
 )
-from ..services import email_service
-from ..services.email_config_store import EmailConfigFormatError
 from ..services.session_lifecycle import SessionLifecycle, session_lifecycle_of
 from ..services.task_scheduler import TaskScheduler
 
@@ -81,25 +75,3 @@ async def list_runs(
 ):
     runs = await asyncio.to_thread(lambda: svc(lifecycle).list_runs(limit))
     return {"runs": runs}
-
-
-@router.get("/email-config", response_model=EmailConfigResp)
-async def get_email_config():
-    try:
-        return await asyncio.to_thread(lambda: email_service.load_config(public=True))
-    except EmailConfigFormatError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@router.put("/email-config", response_model=EmailConfigResp)
-async def put_email_config(req: EmailConfigReq):
-    try:
-        payload = req.model_dump()
-        return await asyncio.to_thread(lambda: email_service.save_config(payload))
-    except EmailConfigFormatError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/email-test", response_model=EmailTestResp)
-async def test_email(req: EmailTestReq):
-    return await asyncio.to_thread(email_service.test_email, req.to, req.subject, req.body)

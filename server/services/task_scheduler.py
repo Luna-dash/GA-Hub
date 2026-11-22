@@ -2,7 +2,7 @@
 
 The shared singleton/lifecycle/persistence/CRUD skeleton lives in
 ``scheduler_domain_base.SchedulerDomainBase``; this module only carries the
-task-specific schedule/run models, email notification and the error-commit
+task-specific schedule/run models and the error-commit
 watcher semantics.
 """
 from __future__ import annotations
@@ -17,7 +17,6 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from .. import _paths
-from . import email_service
 from .event_bus import bus
 from .scheduler_domain_base import (  # noqa: F401 — MISFIRE_GRACE_SECONDS re-exported for test seams
     MISFIRE_GRACE_SECONDS,
@@ -43,9 +42,6 @@ class TaskSchedule:
     prompt: str = ""
     cron: str = "0 8 * * *"
     interval_minutes: int = 60
-    notify_email: bool = False
-    email_to: str = ""
-    email_subject: str = "GenericAgent 定时任务结果: {name}"
     last_fired_at: int = 0
     fire_count: int = 0
     name: str = ""
@@ -65,8 +61,6 @@ class TaskRun:
     status: str = "running"         # running | done | error | timeout
     prompt_preview: str = ""
     result_preview: str = ""
-    email_sent: bool = False
-    email_error: str = ""
     note: str = ""
 
     def to_dict(self) -> dict:
@@ -140,10 +134,6 @@ class TaskScheduler(SchedulerDomainBase):
         else:
             run.finished_at = int(time.time())
             run.result_preview = (handle.last_chunk or "")[:500]
-        if s.notify_email:
-            result = self._send_run_email(s, run, handle.final_text or handle.last_chunk or "")
-            run.email_sent = bool(result.get("ok"))
-            run.email_error = str(result.get("error") or "")[:400]
 
         def commit_done() -> None:
             self._record_run(run)
@@ -169,18 +159,3 @@ class TaskScheduler(SchedulerDomainBase):
     def _apply_upsert_defaults(self, base: dict) -> None:
         if not base.get("cron"):
             base["cron"] = "0 8 * * *"
-        if not base.get("email_subject"):
-            base["email_subject"] = "GenericAgent 定时任务结果: {name}"
-
-    def _send_run_email(self, s: TaskSchedule, run: TaskRun, final_text: str) -> dict[str, Any]:
-        subject = s.email_subject or "GenericAgent 定时任务结果: {name}"
-        subject = subject.format(name=s.name or s.id, id=s.id, run_id=run.id)
-        body = (
-            f"任务: {s.name or s.id}\n"
-            f"时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(run.fired_at))}\n"
-            f"状态: {run.status}\n"
-            f"Stream: {run.stream_id}\n\n"
-            f"Prompt:\n{s.prompt}\n\n"
-            f"结果:\n{final_text or run.result_preview or '(无结果内容)'}\n"
-        )
-        return email_service.send_email(s.email_to, subject, body)

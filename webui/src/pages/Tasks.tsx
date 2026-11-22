@@ -93,7 +93,7 @@ export default function Tasks() {
       }
       actions={
         <button
-          onClick={() => setEditor({ type: 'cron', enabled: true, cron: '0 8 * * *', name: '', notify_email: false })}
+          onClick={() => setEditor({ type: 'cron', enabled: true, cron: '0 8 * * *', name: '' })}
           className="ga-btn-primary"
         >
           <Plus className="h-3.5 w-3.5" aria-hidden="true" />
@@ -121,7 +121,7 @@ export default function Tasks() {
                 <p className="text-xs text-ink-faint">可配置按 Cron 时间点或间隔周期自动执行任务，结果将在运行历史中记录。</p>
                 <button
                   type="button"
-                  onClick={() => setEditor({ type: 'cron', enabled: true, cron: '0 8 * * *', name: '', notify_email: false })}
+                  onClick={() => setEditor({ type: 'cron', enabled: true, cron: '0 8 * * *', name: '' })}
                   className="ga-btn-sm-primary mt-1"
                 >
                   <Plus className="h-3.5 w-3.5" aria-hidden="true" />
@@ -336,7 +336,6 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
     prompt: '',
     cron: '0 8 * * *',
     interval_minutes: 60,
-    notify_email: false,
     ...initial,
   })
   const [saving, setSaving] = useState(false)
@@ -367,7 +366,7 @@ function TaskDialog({ initial, onClose }: { initial: Partial<TaskSchedule>; onCl
     }
     setSaving(true)
     try {
-      await api.upsertTaskSchedule({ ...s, type, notify_email: false })
+      await api.upsertTaskSchedule({ ...s, type })
       qc.invalidateQueries({ queryKey: queryKeys.tasks.schedules })
       onClose()
     } catch (e: any) {

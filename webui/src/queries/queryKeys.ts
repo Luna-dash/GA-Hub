@@ -34,7 +34,6 @@ export const queryKeys = {
   tasks: {
     schedules: ['tasks.schedules'] as const,
     runs: ['tasks.runs'] as const,
-    emailConfig: ['tasks.emailConfig'] as const,
   },
   agent: {
     chatRetryConfig: ['agent.chatRetryConfig'] as const,
