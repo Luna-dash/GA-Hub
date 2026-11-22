@@ -17,7 +17,7 @@ type CreatedSession = Awaited<ReturnType<typeof api.createSession>>
 
 vi.mock('@/api/client', () => ({ api: {
   sessions: vi.fn(), llms: vi.fn(), projects: vi.fn(), sessionRuntimes: vi.fn(), sessionRuntime: vi.fn(),
-  scheduledChats: vi.fn(), createSession: vi.fn(), sessionRun: vi.fn(),
+  scheduledChats: vi.fn(), createSession: vi.fn(), sessionRun: vi.fn(), abortSession: vi.fn(),
 } }))
 vi.mock('@/hooks/useHubEvent', () => ({ useHubEvent: vi.fn() }))
 vi.mock('@/components/PageShell', () => ({ PageShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }))
@@ -25,12 +25,16 @@ vi.mock('@/components/SessionRail', () => ({ SessionRail: ({ onCreate }: { onCre
 vi.mock('@/components/ModelSelect', () => ({ MainModelSelect: () => null }))
 vi.mock('@/components/LiveChatTranscript', () => ({ LiveChatTranscript: forwardRef(() => null) }))
 vi.mock('@/components/LiveChatComposer', () => ({
-  LiveChatComposer: ({ draftKey, onSubmit, onSlashCommand }: {
+  LiveChatComposer: ({ draftKey, onSubmit, onStop, stopActive, stopDisabled, onSlashCommand }: {
     draftKey: string
     onSubmit: (draft: { draftKey: string; text: string; attachments: [] }) => void
+    onStop?: () => void
+    stopActive?: boolean
+    stopDisabled?: boolean
     onSlashCommand: (command: '/new', draft: { draftKey: string; text: string; attachments: [] }) => void
   }) => <>
     <button data-submit onClick={() => onSubmit({ draftKey, text: 'hello', attachments: [] })}>Send</button>
+    <button data-stop data-active={String(Boolean(stopActive))} disabled={Boolean(stopDisabled)} onClick={onStop}>Stop</button>
     <button data-slash onClick={() => onSlashCommand('/new', { draftKey, text: '/new', attachments: [] })}>New</button>
   </>,
   readLiveChatDraftSnapshot: vi.fn(),
@@ -72,6 +76,7 @@ describe('LiveChat draft submissions', () => {
     vi.mocked(api.projects).mockResolvedValue({ total: 0, items: [] })
     vi.mocked(api.sessionRuntimes).mockResolvedValue({})
     vi.mocked(api.sessionRuntime).mockResolvedValue({} as Awaited<ReturnType<typeof api.sessionRuntime>>)
+    vi.mocked(api.abortSession).mockResolvedValue({ session_id: 'old', status: 'aborting', run_id: 'run-1', stream_id: 's1', error: null })
     vi.mocked(api.scheduledChats).mockResolvedValue({ total: 0, items: [] })
     vi.mocked(api.createSession).mockImplementation(() => new Promise((resolve) => { finish = resolve }))
     client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
@@ -182,6 +187,23 @@ describe('LiveChat draft submissions', () => {
     await act(async () => finish(row('new')))
     expect(useDraftStore.getState().texts['liveChat:pending']).toBe('next')
     expect(useDraftStore.getState().texts['liveChat:new']).toBe('hello')
+  })
+
+  it('activates stop while submitting or streaming even before runtime polling catches up, and aborts cleanly', async () => {
+    let resolveRun!: (result: Awaited<ReturnType<typeof api.sessionRun>>) => void
+    vi.mocked(api.sessionRun).mockImplementation(() => new Promise((resolve) => { resolveRun = resolve }))
+    await sendExisting()
+
+    const stopBtn = host.querySelector<HTMLButtonElement>('[data-stop]')!
+    expect(stopBtn.getAttribute('data-active')).toBe('true')
+    expect(stopBtn.disabled).toBe(false)
+
+    await click('[data-stop]')
+    expect(api.abortSession).toHaveBeenCalledWith('old')
+
+    await act(async () => resolveRun({} as Awaited<ReturnType<typeof api.sessionRun>>))
+    act(() => useChatStore.setState({ streaming: true }))
+    expect(host.querySelector('[data-stop]')?.getAttribute('data-active')).toBe('true')
   })
 
 })

@@ -34,6 +34,7 @@ interface Props {
   onStop?: () => void
   stopActive?: boolean
   stopDisabled?: boolean
+  stopTitle?: string
   submitLabel?: string
   submitAccessory?: ReactNode
   /** Session runtime used by /btw. Omit on non-session chat surfaces. */
@@ -62,7 +63,7 @@ interface PendingUpload {
 }
 
 export function ImagePasteInput({
-  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, stopDisabled, submitLabel, submitAccessory, btwSessionId, onSlashCommand,
+  text, onText, attachments, onAttachments, onSubmit, onSchedule, onStop, stopActive = false, stopDisabled, stopTitle, submitLabel, submitAccessory, btwSessionId, onSlashCommand,
   placeholder = '输入消息，可粘贴/拖放图片或文件…',
   inputLabel, readOnly, maxLength, disabled, submitDisabled, scheduleDisabled = submitDisabled, acceptFiles = true, autoFocus = true,
 }: Props) {
@@ -578,7 +579,7 @@ export function ImagePasteInput({
               : 'ga-solid-primary',
           )}
           aria-label={stopActive ? '停止' : (submitLabel ?? '发送')}
-          title={stopActive ? '停止当前会话任务' : attachmentHint ?? submitLabel ?? '发送消息'}
+          title={stopActive ? (stopTitle ?? (stopDisabled ? '正在停止当前任务…' : '停止当前会话任务')) : attachmentHint ?? submitLabel ?? '发送消息'}
         >{stopActive ? (
           <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] transition-transform group-hover:scale-105 group-disabled:scale-100" aria-hidden="true">
             <circle cx="12" cy="12" r="9" fill="currentColor" />

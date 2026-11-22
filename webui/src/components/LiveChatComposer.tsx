@@ -21,6 +21,8 @@ interface LiveChatComposerProps {
   onSchedule?: () => void
   onStop?: () => void
   stopActive?: boolean
+  stopDisabled?: boolean
+  stopTitle?: string
   onSlashCommand?: (
     command: Exclude<SlashCommand['name'], '/btw'>,
     draft: LiveChatDraftSnapshot,
@@ -53,6 +55,8 @@ export function LiveChatComposer({
   onSchedule,
   onStop,
   stopActive,
+  stopDisabled,
+  stopTitle,
   onSlashCommand,
   placeholder,
   disabled,
@@ -87,6 +91,8 @@ export function LiveChatComposer({
         onSchedule={onSchedule}
         onStop={onStop}
         stopActive={stopActive}
+        stopDisabled={stopDisabled}
+        stopTitle={stopTitle}
         onSlashCommand={onSlashCommand
           ? (command) => onSlashCommand(command, readLiveChatDraftSnapshot(draftKey))
           : undefined}

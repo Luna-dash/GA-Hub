@@ -590,16 +590,49 @@ class AgentService:
             log.warning("failed to restore preferred llm: %s", e)
 
     def abort(self) -> None:
-        # Cancel any error retry still backing off so a stopped session does
-        # not spring back to life after this abort.  agent.abort() itself is a
-        # no-op when the agent is idle, so this stays safe on the retry path.
-        self.cancel_pending_error_retry()
+        # Cancel any error retry still backing off and mark every in-flight
+        # stream snapshot aborted so neither retries nor un-annotated exits
+        # report completion.  Then emit scoped chat:aborted frames carrying
+        # session/run/stream identity so /ws/sessions/{sid} delivers them
+        # instead of dropping bare global chat:aborted events.
+        cancelled_snaps = self._cancel_pending_error_retry_snapshots()
+        active_targets: dict[str, tuple[str, str]] = {}
+        with self._lock:
+            for sid, h in list(self._streams.items()):
+                if getattr(h, "finished", False):
+                    continue
+                snap = self._snapshots.get(sid)
+                if snap is not None:
+                    snap.aborted = True
+                if sid and h.session_id and h.run_id:
+                    active_targets[sid] = (h.session_id, h.run_id)
+            for snap in cancelled_snaps:
+                if snap.stream_id and snap.session_id and snap.run_id:
+                    active_targets.setdefault(snap.stream_id, (snap.session_id, snap.run_id))
         self.agent.abort()
-        bus.publish(AGENT_ABORT, {"ts": time.time()})
+        now = time.time()
+        bus.publish(AGENT_ABORT, {"ts": now})
         # Immediately publish chat:aborted to unblock the UI.
         # The agent's run loop may still emit a final {'done': ...} if it
         # manages to break out, but when LLM is stuck we can't wait for that.
-        bus.publish(CHAT_ABORTED, {"ts": time.time()})
+        if active_targets:
+            for sid, (session_id, run_id) in active_targets.items():
+                bus.publish(CHAT_ABORTED, {
+                    "ts": now,
+                    "stream_id": sid,
+                    "session_id": session_id,
+                    "run_id": run_id,
+                })
+        else:
+            bus.publish(CHAT_ABORTED, {"ts": now})
+
+    def _cancel_pending_error_retry_snapshots(self) -> list[ChatSnapshot]:
+        with self._lock:
+            pending = list(self._pending_error_retry.values())
+            self._pending_error_retry.clear()
+            for snap in pending:
+                snap.aborted = True
+        return pending
 
     def cancel_pending_error_retry(self) -> int:
         """Mark every error retry still backing off as aborted.
@@ -610,12 +643,7 @@ class AgentService:
         recheck in ``_maybe_retry_recoverable_error``.  Returns the number
         of retries cancelled.
         """
-        with self._lock:
-            pending = list(self._pending_error_retry.values())
-            self._pending_error_retry.clear()
-            for snap in pending:
-                snap.aborted = True
-        return len(pending)
+        return len(self._cancel_pending_error_retry_snapshots())
 
     def _discard_pending_error_retry(self, stream_id: str) -> None:
         with self._lock:

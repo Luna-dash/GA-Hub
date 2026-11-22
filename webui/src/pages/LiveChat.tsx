@@ -84,6 +84,8 @@ export default function LiveChat() {
   const sessionSwitchSeqRef = useRef(0)
   const creatingSessionRef = useRef(false)
   const [creatingSession, setCreatingSession] = useState(false)
+  const [submittingSid, setSubmittingSid] = useState<string | null>(null)
+  const [abortPendingSid, setAbortPendingSid] = useState<string | null>(null)
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [scheduleAt, setScheduleAt] = useState('')
   const [scheduleSaving, setScheduleSaving] = useState(false)
@@ -209,14 +211,21 @@ export default function LiveChat() {
     const sid = sessionId ?? sessionIdRef.current
     if (!sid || sessionIdRef.current !== sid) return
     const state = await api.sessionRuntime(sid)
-    if (sessionIdRef.current !== sid) return
+    if (!state || typeof state !== 'object' || sessionIdRef.current !== sid) return
     queryClient.setQueryData<Record<string, SessionRuntime>>(['session.runtimes'], (cached) => ({
       ...(cached ?? {}),
       [sid]: state,
     }))
     return state
   }, [queryClient])
-  const sessionRunning = runtime?.status === 'starting' || runtime?.status === 'running'
+  useEffect(() => {
+    if (!session?.id) return
+    void refreshRuntime(session.id).catch(() => undefined)
+  }, [session?.id, refreshRuntime])
+  const sessionAborting = runtime?.status === 'aborting'
+  const sessionRunning = runtime?.status === 'starting' || runtime?.status === 'running' || submittingSid === session?.id
+  const abortPending = Boolean(session?.id && abortPendingSid === session.id)
+  const canStop = sessionRunning || sessionAborting || retryPending || streaming
   const activeProjectPath = session?.project_path
     ?? (session?.project_name ? projects.find((project) => project.name === session.project_name)?.path : undefined)
     ?? ''
@@ -368,10 +377,11 @@ export default function LiveChat() {
       // HTTP response until the runtime is admitted, so waiting for the
       // response left the rail showing the old order for seconds.
       markSessionUsed(queryClient, sid)
+      setSubmittingSid(sid)
       try {
         await api.sessionRun(sid, promptText, [], sourceAtts.map(({ path, name, source, size }) => ({ path, name, source, size })))
         useDraftStore.getState().finishSubmission(transaction.id)
-        if (sessionIdRef.current === sid) refreshRuntime(sid)
+        if (sessionIdRef.current === sid) void refreshRuntime(sid).catch(() => undefined)
       } catch (e: any) {
         if (!useDraftStore.getState().submissions[transaction.id]) return // WS receipt outranks a lost HTTP response.
         const conflict = capacityConflictFromError(e)
@@ -403,6 +413,7 @@ export default function LiveChat() {
           pushSystem(`_发送失败：${errorMessageFromError(e)}。${recoveryHint}_`, noticeKeys.sendBlocked)
         }
       } finally {
+        setSubmittingSid((currentSid) => (currentSid === sid ? null : currentSid))
         // The optimistic bump above is only a guess: the sidecar stamps its own
         // `updated_at` on submit, and a refused submit never stamps at all.
         // Revalidate so the rail converges on the sidecar's order either way.
@@ -849,14 +860,28 @@ export default function LiveChat() {
               onSchedule={openSchedule}
               onStop={() => {
                 const sid = session?.id
-                if (!sid || sessionIdRef.current !== sid || (!sessionRunning && !retryPending)) return
+                if (!sid || sessionIdRef.current !== sid || !canStop || abortPending) return
+                setAbortPendingSid(sid)
                 void api.abortSession(sid)
-                  .then(() => refreshRuntime(sid))
+                  .then((nextState) => {
+                    if (sessionIdRef.current === sid && nextState && typeof nextState === 'object') {
+                      queryClient.setQueryData<Record<string, SessionRuntime>>(['session.runtimes'], (cached) => ({
+                        ...(cached ?? {}),
+                        [sid]: nextState,
+                      }))
+                    }
+                    return refreshRuntime(sid).catch(() => undefined)
+                  })
                   .catch((e: unknown) => {
                     pushSystem(`_停止任务失败：${errorMessageFromError(e)}_`)
                   })
+                  .finally(() => {
+                    setAbortPendingSid((currentSid) => (currentSid === sid ? null : currentSid))
+                  })
               }}
-              stopActive={sessionRunning || retryPending}
+              stopActive={canStop}
+              stopDisabled={abortPending || (sessionAborting && !streaming && !retryPending)}
+              stopTitle={sessionAborting ? '正在停止当前任务…' : '停止当前会话任务'}
               onSlashCommand={handleSlashCommand}
               placeholder="输入消息，或输入 / 查看命令"
               disabled={creatingSession}

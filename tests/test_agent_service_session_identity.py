@@ -337,3 +337,63 @@ def test_chat_file_citations_do_not_auto_add_to_transfer_box(tmp_path, monkeypat
     final_frames = [args[1] for args, _ in publish.call_args_list if args[0] == "chat:done"]
     assert [frame["turn_segs"] for frame in final_frames] == [[first, final]]
     assert transfer.FileTransfer().list() == []
+
+
+def test_abort_emits_scoped_chat_aborted_for_active_and_retry_streams() -> None:
+    from server.services.chat_stream_projection import ChatSnapshot
+
+    gate = threading.Event()
+
+    class BlockingAgent(FakeAgent):
+        def __init__(self) -> None:
+            super().__init__()
+            self.abort_calls = 0
+
+        def put_task(self, query, *, source, images):
+            q = queue.Queue()
+            q.put({"next": "working"})
+            return q
+
+        def abort(self) -> None:
+            self.abort_calls += 1
+            gate.set()
+
+    agent = BlockingAgent()
+    with mock.patch.object(svc_mod.bus, "publish") as publish:
+        service = svc_mod.AgentService(
+            agent=agent,
+            session_id="session-stop",
+            manage_global_preference=False,
+        )
+        handle = service.submit(
+            "run long task",
+            source="webui",
+            session_id="session-stop",
+            run_id="run-stop",
+        )
+        pending_snap = ChatSnapshot(
+            stream_id="stream-retry",
+            source="chat_error_retry",
+            query="retry",
+            started_at=time.time(),
+            session_id="session-stop",
+            run_id="run-retry",
+        )
+        with service._lock:
+            service._pending_error_retry[pending_snap.stream_id] = pending_snap
+
+        service.abort()
+        assert gate.is_set()
+        assert pending_snap.aborted is True
+        active_snap = service._snapshots.get(handle.stream_id)
+        assert active_snap is not None and active_snap.aborted is True
+
+    aborted_frames = [
+        payload
+        for (topic, payload), _kwargs in publish.call_args_list
+        if topic == svc_mod.CHAT_ABORTED
+    ]
+    assert {frame["stream_id"] for frame in aborted_frames} == {handle.stream_id, "stream-retry"}
+    for frame in aborted_frames:
+        assert frame["session_id"] == "session-stop"
+        assert frame["run_id"] in {"run-stop", "run-retry"}
