@@ -63,6 +63,21 @@ _REMOVED_ENV_KEYS = frozenset({
     "PYTHONUNBUFFERED",
     "ELECTRON_RUN_AS_NODE",
     "CHROME_CRASHPAD_PIPE_NAME",
+    "WSL_INTEROP",
+    "WSLENV",
+    "WSL_DISTRO_NAME",
+    "ANTIGRAVITY_AGENT",
+    "ANTIGRAVITY_AGENTAPI_EXE",
+    "ANTIGRAVITY_APP_DATA_DIR",
+    "ANTIGRAVITY_AUTH_SUCCESS_APP",
+    "ANTIGRAVITY_CONVERSATION_ID",
+    "ANTIGRAVITY_CSRF_TOKEN",
+    "ANTIGRAVITY_LS_ADDRESS",
+    "ANTIGRAVITY_LS_VERSION",
+    "ANTIGRAVITY_PROJECT_ID",
+    "ANTIGRAVITY_SOURCE_METADATA",
+    "ANTIGRAVITY_TRAJECTORY_ID",
+    "ANTIGRAVITY_VSCODE_HOST",
 })
 
 _USER_SKILL_DIRS = (
@@ -572,10 +587,13 @@ def clean_agy_env(
     gemini_dir = profile_gemini_dir(profile_id)
     env.update({
         "GEMINI_HOME": str(gemini_dir),
-        "AGY_ACP_FORCE_FILE_STORAGE": "1",
         "AGY_CLI_DISABLE_AUTO_UPDATE": "1",
         "PYTHONUNBUFFERED": "1",
     })
+    if profile_id != DEFAULT or headless_login:
+        # Default profile reads OS keyring (Windows Credential Manager on agy 1.5+);
+        # isolated profiles and headless code-login must force isolated file storage.
+        env["AGY_ACP_FORCE_FILE_STORAGE"] = "1"
     if profile_id != DEFAULT:
         home = profile_home(profile_id)
         env["HOME"] = str(home)

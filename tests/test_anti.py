@@ -395,7 +395,8 @@ def test_account_cooldown_blocks_submit_until_reset_or_switch(tmp_path, monkeypa
         assert "风控冷却" in blocked.json()["detail"]
 
         # Switching to another profile does not inherit default's cooldown.
-        other_run = sessions.submit(sid, "op_other", "try other", profile_id="a" * 32)
+        sid_other = client.post("/api/anti/sessions", json={"project": "project"}).json()["id"]
+        other_run = sessions.submit(sid_other, "op_other", "try other", profile_id="a" * 32)
         assert other_run["status"] == "running"
 
         # Resetting breaker unblocks default profile too.

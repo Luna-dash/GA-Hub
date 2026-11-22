@@ -1065,6 +1065,43 @@ class AgyRuntimeManager:
             for key in [k for k in self._workers if k[0] == db_key and k[2] == session_id]:
                 self._workers.pop(key).close()
 
+    @staticmethod
+    def _parse_models_output(stdout: str) -> list[dict[str, str]]:
+        stripped = (stdout or "").strip()
+        if not stripped:
+            return []
+        if stripped.startswith("["):
+            upstream = json.loads(stripped)
+            if not isinstance(upstream, list):
+                raise AgyProfileError(502, "Agy 返回了无效的模型目录")
+            rows: list[tuple[str, str]] = []
+            for row in upstream:
+                if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]:
+                    rows.append((row["id"], str(row.get("display_name") or row["id"])))
+        else:
+            rows = []
+            for raw_line in stripped.splitlines():
+                line = raw_line.strip()
+                if not line or line.lower().startswith("fetching available models"):
+                    continue
+                if "\t" in line:
+                    mid, _, label = line.partition("\t")
+                else:
+                    parts = line.split(None, 1)
+                    mid = parts[0]
+                    label = parts[1] if len(parts) > 1 else mid
+                mid = mid.strip()
+                label = label.strip() or mid
+                if mid:
+                    rows.append((mid, label))
+        items: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for mid, label in rows:
+            if mid not in seen:
+                seen.add(mid)
+                items.append({"id": mid, "display_name": label})
+        return items
+
     def models(self, profile_id: str | None = None) -> list[dict[str, str]]:
         pid = profile_id or agy_profile.snapshot()[0]
         with self._lock:
@@ -1077,34 +1114,29 @@ class AgyRuntimeManager:
         try:
             env = agy_profile.clean_agy_env(pid, temp_dir=temp_dir)
             result = subprocess.run(
-                [executable, "models", "--json"],
+                [executable, "models"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
                 timeout=24,
-                check=True,
+                check=False,
                 **hidden_process_kwargs(),
                 env=env,
             )
-            upstream = json.loads(result.stdout)
+            if result.returncode != 0:
+                combined = f"{result.stdout or ''}\n{getattr(result, 'stderr', '') or ''}"
+                if re.search(r"please sign in|not logged in|login required|authentication required", combined, re.I):
+                    raise AgyProfileError(409, "Agy 账号尚未登录，请先完成官方登录后重试")
+                raise AgyProfileError(503, "读取 Agy 模型目录失败，请检查 agy 安装和登录状态")
+            items = self._parse_models_output(result.stdout)
+        except AgyProfileError:
+            raise
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
             raise AgyProfileError(503, "读取 Agy 模型目录失败，请检查 agy 安装和登录状态") from exc
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-        if not isinstance(upstream, list):
-            raise AgyProfileError(502, "Agy 返回了无效的模型目录")
-        items: list[dict[str, str]] = []
-        seen: set[str] = set()
-        for row in upstream:
-            if not isinstance(row, dict):
-                continue
-            mid = row.get("id")
-            label = row.get("display_name") or mid
-            if isinstance(mid, str) and mid and mid not in seen:
-                seen.add(mid)
-                items.append({"id": mid, "display_name": str(label)})
         if not items:
             raise AgyProfileError(502, "Agy 返回了空的模型目录")
         self._record_models(pid, items)

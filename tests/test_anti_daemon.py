@@ -278,3 +278,34 @@ def test_models_endpoint_works_even_when_runtime_manually_stopped(tmp_path, monk
     res = client.get("/api/anti/models")
     assert res.status_code == 200
     assert res.json()["items"][0]["id"] == "gemini-4-hydrogen-high"
+
+
+def test_models_parses_agy_tsv_without_json_flag_and_default_env_preserves_keyring(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "C:/fake/agy.exe")
+
+    default_env = agy_profile.clean_agy_env("default", {"PATH": "C:/bin", "WSL_INTEROP": "1", "ANTIGRAVITY_AGENT": "1"})
+    assert "AGY_ACP_FORCE_FILE_STORAGE" not in default_env
+    assert "WSL_INTEROP" not in default_env
+    assert "ANTIGRAVITY_AGENT" not in default_env
+
+    captured_cmd = []
+
+    def fake_run(cmd, *a, **kw):
+        captured_cmd.append(cmd)
+        return SimpleNamespace(
+            returncode=0,
+            stdout="gemini-4-neon-high\tGemini 4 Neon (High)\nclaude-opus-5-5-high\tClaude Opus 5.5 (High)\n",
+            stderr="Fetching available models...\n",
+        )
+
+    monkeypatch.setattr(agy_runtime.subprocess, "run", fake_run)
+    mgr = agy_runtime.AgyRuntimeManager()
+    items = mgr.models("default")
+    assert captured_cmd == [["C:/fake/agy.exe", "models"]]
+    assert items == [
+        {"id": "gemini-4-neon-high", "display_name": "Gemini 4 Neon (High)"},
+        {"id": "claude-opus-5-5-high", "display_name": "Claude Opus 5.5 (High)"},
+    ]
