@@ -67,6 +67,7 @@ import { resolveApiUrl } from '@/runtime/runtimeConfig'
 export { ChatSocket } from '@/runtime/chatSocket'
 
 export interface SessionMessagePageOptions {
+  view?: 'desktop'
   before?: number
   limit?: number
   maxChars?: number
@@ -512,6 +513,7 @@ export const api = {
     http<Record<string, SessionRuntime>>('GET', '/api/session-runtimes'),
   getSessionMessages: (id: string, options: SessionMessagePageOptions = {}) => {
     const query = new URLSearchParams()
+    if (options.view !== undefined) query.set('view', options.view)
     if (options.before !== undefined) query.set('before', String(options.before))
     if (options.limit !== undefined) query.set('limit', String(options.limit))
     if (options.maxChars !== undefined) query.set('max_chars', String(options.maxChars))

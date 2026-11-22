@@ -488,6 +488,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     set({ sock, sessionId, conn: 'connecting' })
 
     if (!resumeCachedView) void api.getSessionMessages(sessionId, {
+      view: 'desktop',
       limit: HISTORY_PAGE_LIMIT,
       maxChars: HISTORY_PAGE_MAX_CHARS,
       signal: abort.signal,
@@ -556,6 +557,8 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     try {
       const history = await api.getSessionMessages(sessionId, {
         before,
+        view: 'desktop',
+        maxChars: HISTORY_PAGE_MAX_CHARS,
         turns: HISTORY_PAGE_TURNS,
         signal: abort.signal,
       })
@@ -594,7 +597,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
 
   /**
    * Walk the turn-based pages back to the very start of the archive.
-   * Pages keep their day-snapped boundaries; this loop only chains them so a
+   * Pages keep their bounded turn groups; this loop only chains them so a
    * long session needs one click instead of dozens. Stops on session switch,
    * fatal errors, or when the cursor reaches the beginning.
    */

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from unittest import mock
 
+from server.services import archive_messages
 from server.services.archive_messages import (
     _build_archive_index,
     _project_indexed_groups,
@@ -21,6 +22,37 @@ def _round(index: int) -> str:
         f"=== Response === 2026-08-05 09:11:{index:02d}\n"
         f"[{{'type': 'text', 'text': 'answer {index}'}}]\n"
     )
+
+
+def test_desktop_pages_bound_source_reads_and_preserve_full_history(tmp_path: Path) -> None:
+    archive = tmp_path / "desktop.txt"
+    payload = "字" * 400_000
+    archive.write_text("".join(
+        _round(i).replace(f"answer {i}", payload if i == 1 else "x" * 20_000)
+        for i in range(4)
+    ), encoding="utf-8")
+    full = read_archive_messages(archive)
+    with mock.patch("server.services.archive_messages._items_from_text",
+                    wraps=archive_messages._items_from_text) as project:
+        newest = read_archive_messages(archive, desktop=True)
+        assert [item["ordinal"] for item in newest["items"]] == [4, 5, 6, 7]
+        assert project.call_count == 2  # The oversized older turn was not parsed.
+        older = read_archive_messages(archive, desktop=True, before=newest["next_before"], turns=20)
+        assert [item["ordinal"] for item in older["items"]] == [2, 3]
+        assert len(older["items"][-1]["content"]) >= len(payload)
+        oldest = read_archive_messages(archive, desktop=True, before=older["next_before"], turns=20)
+        assert oldest["has_more"] is False
+        assert oldest["next_before"] is None
+    assert oldest["items"] + older["items"] + newest["items"] == full["items"]
+
+
+def test_desktop_content_budget_never_splits_a_turn(tmp_path: Path) -> None:
+    archive = tmp_path / "chars.txt"
+    archive.write_text("".join(_round(i).replace(f"answer {i}", "x" * 7_000)
+                               for i in range(3)), encoding="utf-8")
+    page = read_archive_messages(archive, desktop=True, turns=20, max_chars=10_000)
+    assert [item["ordinal"] for item in page["items"]] == [4, 5]
+    assert page["next_before"] == 4
 
 
 def test_indexed_pages_match_full_projection_without_read_bytes(tmp_path: Path) -> None:

@@ -508,6 +508,7 @@ describe('chatStore lifecycle', () => {
     await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
 
     expect(getHistory).toHaveBeenCalledWith('session-a', expect.objectContaining({
+      view: 'desktop',
       limit: 32,
       maxChars: 400_000,
       signal: expect.any(AbortSignal),
@@ -537,7 +538,9 @@ describe('chatStore lifecycle', () => {
     await vi.waitFor(() => expect(useChatStore.getState().historyBefore).toBe(2))
     await useChatStore.getState().loadOlderHistory()
 
-    expect(getHistory).toHaveBeenLastCalledWith('session-a', expect.objectContaining({ before: 2 }))
+    expect(getHistory).toHaveBeenLastCalledWith('session-a', expect.objectContaining({
+      view: 'desktop', before: 2, turns: 20, maxChars: 400_000,
+    }))
     expect(useChatStore.getState().msgs.map((message) => message.content)).toEqual([
       'older question', 'older answer', 'newer question', 'newer answer',
     ])

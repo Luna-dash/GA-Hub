@@ -281,7 +281,7 @@ async def get_session_messages(
     lifecycle: SessionDomain,
     session_id: str,
     request: Request,
-    view: str = Query(default="full", pattern="^(full|compact)$"),
+    view: str = Query(default="full", pattern="^(full|compact|desktop)$"),
     before: int | None = Query(default=None, ge=0),
     limit: int | None = Query(default=None, ge=1, le=200),
     max_chars: int | None = Query(default=None, ge=10_000, le=8_000_000),
@@ -303,6 +303,7 @@ async def get_session_messages(
             limit=limit,
             max_chars=max_chars,
             turns=turns,
+            **({"desktop": True} if view == "desktop" else {}),
         )
     except HistoryUnavailableError:
         log.warning(

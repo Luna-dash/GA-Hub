@@ -4089,7 +4089,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "pattern": "^(full|compact)$",
+              "pattern": "^(full|compact|desktop)$",
               "default": "full",
               "title": "View"
             }

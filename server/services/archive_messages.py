@@ -519,6 +519,64 @@ def _read_indexed_window(
     return deepcopy(window), has_more, int(window[0]["ordinal"]) if has_more else None
 
 
+# This raw-byte cap is a work guard, not a prediction of rendered size:
+# archived tool output can be much bigger than its visible projection.
+_DESKTOP_PAGE_SOURCE_BYTES = 1024 * 1024
+_DESKTOP_PAGE_MAX_CHARS = 400_000
+
+
+def _read_desktop_window(
+    index: _ArchiveIndex,
+    *,
+    before: int | None,
+    limit: int | None,
+    max_chars: int,
+    turns: int | None,
+) -> tuple[list[dict[str, Any]], bool, int | None] | None:
+    """Walk the indexed tail one display group at a time, with soft budgets.
+
+    An individual group may exceed either budget. Return it intact if it is
+    the first one so the exclusive ordinal cursor can always move backward.
+    """
+    end = index.total if before is None else min(before, index.total)
+    if end <= 0:
+        return [], False, None
+    chunks: list[list[dict[str, Any]]] = []
+    source_bytes = selected_chars = selected_items = real_turns = 0
+    for group in reversed(index.groups):
+        if group.item_start >= end:
+            continue
+        visible_count = min(group.item_count, end - group.item_start)
+        group_bytes = group.end - group.start
+        if chunks and (
+            source_bytes + group_bytes > _DESKTOP_PAGE_SOURCE_BYTES
+            or (turns is not None and real_turns >= turns)
+            or (turns is None and limit is not None and selected_items + visible_count > limit)
+        ):
+            break
+        project = (_project_indexed_groups if group_bytes <= _DESKTOP_PAGE_SOURCE_BYTES
+                   else _project_indexed_groups.__wrapped__)
+        items = project(index.path, index.revision, group, group)
+        if items is None:
+            return None  # Fall back to the canonical projection on unindexable input.
+        items = items[:visible_count]
+        chars = sum(len(str(item.get("content", ""))) for item in items)
+        if chunks and selected_chars + chars > max_chars:
+            break
+        chunks.append(items)
+        source_bytes += group_bytes
+        selected_chars += chars
+        selected_items += visible_count
+        real_turns += sum(_is_real_user_item(item) for item in items)
+        if selected_chars >= max_chars:
+            break
+    if not chunks:
+        return None
+    window = [item for chunk in reversed(chunks) for item in chunk]
+    cursor = int(window[0]["ordinal"])
+    return deepcopy(window), cursor > 0, cursor or None
+
+
 @lru_cache(maxsize=16)
 def _project_indexed_groups(path: Path, revision: str, first: _ArchiveGroup,
                             last: _ArchiveGroup) -> list[dict[str, Any]] | None:
@@ -690,12 +748,13 @@ def _read_archive_messages(
     limit: int | None = None,
     max_chars: int | None = None,
     turns: int | None = None,
+    desktop: bool = False,
 ) -> dict[str, Any]:
     """Apply the same failure contract to full and indexed archive reads."""
     try:
         return _read_archive_messages_impl(
             archive_path, before=before, limit=limit,
-            max_chars=max_chars, turns=turns,
+            max_chars=max_chars, turns=turns, desktop=desktop,
         )
     except HistoryUnavailableError:
         raise
@@ -711,6 +770,7 @@ def _read_archive_messages_impl(
     limit: int | None = None,
     max_chars: int | None = None,
     turns: int | None = None,
+    desktop: bool = False,
 ) -> dict[str, Any]:
     """Return UI messages from one bound GA archive, never persisting content."""
     if not archive_path:
@@ -723,15 +783,21 @@ def _read_archive_messages_impl(
             "next_before": None,
         }
     path = Path(archive_path).resolve()
+    if desktop:
+        max_chars = max_chars if max_chars is not None else _DESKTOP_PAGE_MAX_CHARS
+        if limit is None and turns is None:
+            limit = 32
     if limit is not None or turns is not None:
         index = _archive_index(path)
-        indexed = _read_indexed_window(
-            index,
-            before=before,
-            limit=limit,
-            max_chars=max_chars,
-            turns=turns,
-        )
+        if desktop:
+            assert max_chars is not None
+            indexed = _read_desktop_window(
+                index, before=before, limit=limit, max_chars=max_chars, turns=turns,
+            )
+        else:
+            indexed = _read_indexed_window(
+                index, before=before, limit=limit, max_chars=max_chars, turns=turns,
+            )
         if indexed is not None:
             window, has_more, next_before = indexed
             return {

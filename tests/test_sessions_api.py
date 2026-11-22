@@ -286,6 +286,13 @@ def test_archive_messages_support_bounded_backwards_paging(
         assert older["has_more"] is True
         assert older["next_before"] == 2
 
+        desktop = client.get(
+            f"/api/sessions/{created['id']}/messages",
+            params={"view": "desktop", "before": newest["next_before"], "limit": 2},
+        )
+        assert desktop.status_code == 200
+        assert desktop.json() == older
+
 
 def test_cancel_scheduled_chat_maps_service_exceptions(tmp_path, monkeypatch) -> None:
     """The service signals by exception; the route must translate, not 500."""
