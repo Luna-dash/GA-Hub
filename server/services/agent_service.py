@@ -714,12 +714,12 @@ class AgentService:
         # Record the archive boundary before GA may append the new prompt.
         if run_id and not retry_of:
             try:
-                from .archive_messages import read_archive_messages
+                from .archive_messages import read_archive_total
                 from .archive_identity import begin_run
                 archive_path = self.agent.log_path
                 begin_run(archive_path, session_id=effective_session_id,
                           run_id=run_id, logical_id=logical_id, stream_id=sid,
-                          ordinal=read_archive_messages(archive_path)["total"])
+                          ordinal=read_archive_total(archive_path))
             except Exception:
                 log.warning("identity_begin_failed session=%s run=%s", effective_session_id, run_id, exc_info=True)
         from . import theme_task_runs

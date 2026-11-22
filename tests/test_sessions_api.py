@@ -713,3 +713,39 @@ def test_compact_messages_uses_hub_presentation(tmp_path, monkeypatch):
             assert "Public answer" in answer["content"]
         finally:
             client.portal.call(client.app.state.message_presentation.close)
+
+def test_compact_history_validator_skips_projection_and_changes_on_append(tmp_path, monkeypatch):
+    from server.routes import sessions
+
+    turn = ('=== Prompt === 2026-08-05 09:10:11\n'
+            '{"content":[{"type":"text","text":"question"}]}\n'
+            '=== Response === 2026-08-05 09:10:12\n'
+            "[{'type': 'text', 'text': 'answer'}]\n")
+    archive = tmp_path / 'history.txt'
+    archive.write_text(turn * 3, encoding='utf-8')
+    with _client(tmp_path, monkeypatch) as client:
+        sid = client.post('/api/sessions', json={'title': 'History'}).json()['id']
+        _store_of(client).bind_archive(sid, archive)
+        path = f'/api/sessions/{sid}/messages?view=compact&limit=4'
+        try:
+            first = client.get(path)
+            assert first.status_code == 200
+            page = first.json()
+            assert len(page['items']) == 4 and page['has_more']
+            validator = {'If-None-Match': first.headers['etag']}
+            def must_not_project(*args, **kwargs):
+                raise AssertionError('not-modified response read the archive')
+            with monkeypatch.context() as bypass:
+                bypass.setattr(sessions, 'read_archive_messages', must_not_project)
+                unchanged = client.get(path, headers=validator)
+            assert unchanged.status_code == 304 and not unchanged.content
+            older = client.get(path + '&before=' + str(page['next_before']), headers=validator)
+            assert older.status_code == 200
+            assert [item['ordinal'] for item in older.json()['items'] + page['items']] == list(range(6))
+            with archive.open('a', encoding='utf-8') as stream:
+                stream.write(turn)
+            changed = client.get(path, headers=validator)
+            assert changed.status_code == 200 and changed.json()['total'] == 8
+            assert changed.headers['etag'] != first.headers['etag']
+        finally:
+            client.portal.call(client.app.state.message_presentation.close)

@@ -290,6 +290,8 @@ async def connect_once(server, device, token, backend=None, *, on_connection=Non
                 source = data.get('headers', {})
                 if source.get('Content-Type'): headers['Content-Type'] = source['Content-Type']
                 if source.get('Range'): headers['Range'] = source['Range']
+                if data.get('method') == 'GET' and source.get('If-None-Match'):
+                    headers['If-None-Match'] = source['If-None-Match']
                 # Stable, opaque per-browser owner; don't forward cloud session credential.
                 owner = str(source.get('X-Nova-Owner', ''))
                 if len(owner) != 64 or any(c not in '0123456789abcdef' for c in owner): raise ValueError('Invalid owner')
@@ -309,7 +311,7 @@ async def connect_once(server, device, token, backend=None, *, on_connection=Non
                 if len(body) > 26 * 1024 * 1024: raise ValueError('Body too large')
                 async with http.request(data['method'], f'http://127.0.0.1:{port}' + path, data=body, headers=headers, allow_redirects=False) as response:
                     await ws.send_json({'kind': 'headers', 'id': rid, 'status': response.status,
-                                        'headers': {k: v for k, v in response.headers.items() if k.lower() in {'content-type', 'content-disposition', 'content-range', 'accept-ranges'}}})
+                                        'headers': {k: v for k, v in response.headers.items() if k.lower() in {'content-type', 'content-disposition', 'content-range', 'accept-ranges', 'etag'}}})
                     async for chunk in response.content.iter_chunked(64 * 1024):
                         await ws.send_json({'kind': 'chunk', 'id': rid, 'data': base64.b64encode(chunk).decode()})
                     await ws.send_json({'kind': 'end', 'id': rid})

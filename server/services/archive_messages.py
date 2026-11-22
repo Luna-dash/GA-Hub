@@ -10,6 +10,7 @@ Two layers share this module's GA-native boundary:
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
@@ -380,10 +381,11 @@ def _build_archive_index(
     device: int,
     inode: int,
     mtime_ns: int,
+    ctime_ns: int,
     size: int,
 ) -> _ArchiveIndex:
     """Build a compact group-offset index; signature fields form the cache key."""
-    del device, inode, mtime_ns, size
+    del device, inode, mtime_ns, ctime_ns, size
     path = Path(path_text)
     try:
         with path.open("rb") as handle:
@@ -448,6 +450,7 @@ def _archive_index(path: Path) -> _ArchiveIndex:
         int(getattr(stat, "st_dev", 0)),
         int(getattr(stat, "st_ino", 0)),
         int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
+        int(stat.st_ctime_ns),
         int(stat.st_size),
     )
 
@@ -460,6 +463,11 @@ def read_archive_counts(archive_path: str | Path) -> tuple[int, int]:
     """
     index = _archive_index(Path(archive_path).resolve())
     return index.dialogue_count, index.turn_count
+
+
+def read_archive_total(archive_path: str | Path | None) -> int:
+    """The next visible-message ordinal, without rendering response bodies."""
+    return _archive_index(Path(archive_path).resolve()).total if archive_path else 0
 
 
 def _read_indexed_window(
@@ -489,15 +497,41 @@ def _read_indexed_window(
     ]
     if not groups:
         return None
+    first, last = groups[0], groups[-1]
+    # Bound retained transcript content (at most 2 MiB of source per cache key).
+    # Large windows still render, but aren't held in memory across requests.
+    project = (_project_indexed_groups if last.end - first.start <= 2 * 1024 * 1024
+               else _project_indexed_groups.__wrapped__)
+    items = project(index.path, index.revision, first, last)
+    if items is None:
+        return None
+    candidates = [
+        item for item in items if candidate_start <= int(item["ordinal"]) < end
+    ]
+    window, _local_has_more, _local_before = _window_items(
+        candidates,
+        before=None,
+        limit=limit,
+        max_chars=max_chars,
+        turns=turns,
+    )
+    has_more = bool(window and int(window[0]["ordinal"]) > 0)
+    return deepcopy(window), has_more, int(window[0]["ordinal"]) if has_more else None
+
+
+@lru_cache(maxsize=16)
+def _project_indexed_groups(path: Path, revision: str, first: _ArchiveGroup,
+                            last: _ArchiveGroup) -> list[dict[str, Any]] | None:
+    del revision  # Included in the cache key.
     try:
-        with index.path.open("rb") as handle:
-            handle.seek(groups[0].start)
-            raw = handle.read(groups[-1].end - groups[0].start)
+        with path.open("rb") as handle:
+            handle.seek(first.start)
+            raw = handle.read(last.end - first.start)
             tool_tail = ""
             # Results for the final call live in the next Prompt. Read only that
             # prompt through mmap; never load the next group's response body.
             with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data:
-                headers = _NATIVE_HEADER_BYTES_RE.finditer(data, groups[-1].end)
+                headers = _NATIVE_HEADER_BYTES_RE.finditer(data, last.end)
                 prompt_header = next(headers, None)
                 response_header = next(headers, None)
                 if (prompt_header and response_header
@@ -516,22 +550,9 @@ def _read_indexed_window(
     except OSError as exc:
         raise HistoryUnavailableError from exc
 
-    items = _items_from_text(raw.decode("utf-8", errors="replace"), groups[0].item_start, tool_tail)
-    expected_count = groups[-1].item_start + groups[-1].item_count - groups[0].item_start
-    if len(items) != expected_count:
-        return None
-    candidates = [
-        item for item in items if candidate_start <= int(item["ordinal"]) < end
-    ]
-    window, _local_has_more, _local_before = _window_items(
-        candidates,
-        before=None,
-        limit=limit,
-        max_chars=max_chars,
-        turns=turns,
-    )
-    has_more = bool(window and int(window[0]["ordinal"]) > 0)
-    return window, has_more, int(window[0]["ordinal"]) if has_more else None
+    items = _items_from_text(raw.decode("utf-8", errors="replace"), first.item_start, tool_tail)
+    expected_count = last.item_start + last.item_count - first.item_start
+    return items if len(items) == expected_count else None
 
 
 # ── Real-turn paging (hub history v2) ─────────────────────────────

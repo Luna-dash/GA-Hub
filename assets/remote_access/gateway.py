@@ -8,7 +8,7 @@ from remote_progress import ProgressHub
 import aiohttp
 from aiohttp import web
 import psutil, win32cred
-from artifacts import ArtifactStore, allowed_file, MAX_FILE, TTL
+from artifacts import ArtifactStore, allowed_file, file_references, MAX_FILE, TTL
 PUBLIC='gahub.lunadash.me'
 PORT,ADMIN_PORT=47831,47832
 CRED='GA-Hub/remote-access/password'
@@ -346,15 +346,31 @@ class Gateway:
         if not (SAFE.fullmatch(r.path) or re.fullmatch(r'/ws/sessions/[A-Za-z0-9_-]+',r.path)):raise web.HTTPNotFound()
         base=await self.backend()
         if r.path.endswith('/messages') and r.query.get('view')=='compact':
+            upstream_headers = {'Origin': base}
+            validator = r.headers.get('If-None-Match', '')
+            if r.method == 'GET' and re.fullmatch(r'W/"hub-history-[0-9a-f]{64}"', validator):
+                upstream_headers['If-None-Match'] = validator
             try:
-                async with self.http.get(base+r.path,params=r.query,headers={'Origin':base}) as up:
+                async with self.http.get(base+r.path,params=r.query,headers=upstream_headers) as up:
+                    etag = up.headers.get('ETag', '')
+                    if up.status == 304:
+                        if not validator or etag != upstream_headers.get('If-None-Match'):
+                            raise web.HTTPBadGateway(text='Invalid Hub history validator')
+                        return web.Response(status=304, headers={'ETag': etag, 'Cache-Control': 'private, no-cache'})
                     if up.status!=200:
                         return web.Response(status=up.status,body=await up.read(),content_type=up.content_type)
                     projected=await up.json()
                 if projected.get('presentation_version') != 1 or projected.get('session_id') != r.path.split('/')[3]:
                     raise web.HTTPBadGateway(text='Hub message presentation unavailable; update GA-Hub.')
                 self.artifacts.decorate(projected,r.path.split('/')[3],r.cookies.get(COOKIE))
-                out=web.json_response(projected)
+                # File references depend on the local filesystem and can yield expiring capabilities.
+                # Validate only pages whose representation is independent of those capabilities.
+                out = web.json_response(projected, headers={'Cache-Control': 'private, no-cache'})
+                if re.fullmatch(r'W/"hub-history-[0-9a-f]{64}"', etag) and not any(
+                    next(file_references((m.get('progress') or {}).get('final_body') or ''), None) is not None
+                    for m in projected.get('items', []) if m.get('role') == 'assistant' and m.get('compact')
+                ):
+                    out.headers['ETag'] = etag
                 out.enable_compression()
                 return out
             except (aiohttp.ClientError,asyncio.TimeoutError):

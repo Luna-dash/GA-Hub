@@ -1036,11 +1036,11 @@ class SessionCoordinator:
                 if active.status == STATUS_ABORTING:
                     outcome = "cancelled"
                 try:
-                    from .archive_messages import read_archive_messages
+                    from .archive_messages import read_archive_total
                     from .archive_identity import finish_run
                     archive_path = runtime.agent.log_path
                     finish_run(archive_path, run_id,
-                               ordinal=read_archive_messages(archive_path)["total"],
+                               ordinal=read_archive_total(archive_path),
                                outcome=outcome or "completed")
                 except Exception:
                     log.warning("identity_finish_failed session=%s run=%s", session_id, run_id, exc_info=True)

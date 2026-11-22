@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+from pathlib import Path
 import time
 import uuid
 from typing import Annotated
 
 from server.services.message_presentation import presentation_of
 
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 
 # _paths must be imported before `frontends`: its module-level bootstrap
@@ -247,6 +249,33 @@ async def get_session(lifecycle: SessionDomain, session_id: str) -> HubSession:
         raise _not_found()
 
 
+_HISTORY_VALIDATOR_EPOCH = uuid.uuid4().hex
+
+
+def _compact_history_etag(session_id: str, archive_path: str | None, page_key: tuple) -> str | None:
+    """Version the archive and its run-identity sidecar without reading either body."""
+    def signature(path: Path) -> tuple:
+        info = path.stat()
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+    version: tuple = ()
+    if archive_path:
+        path = Path(archive_path).resolve()
+        try:
+            archive = signature(path)
+        except OSError:
+            return None  # Never validate an unavailable archive.
+        try:
+            identity = signature(path.with_name(path.name + ".hub-identity.json"))
+        except FileNotFoundError:
+            identity = ()
+        except OSError:
+            return None
+        version = (str(path), archive, identity)
+    token = hashlib.sha256(repr((_HISTORY_VALIDATOR_EPOCH, session_id, page_key, version)).encode()).hexdigest()
+    return f'W/"hub-history-{token}"'
+
+
 @router.get("/api/sessions/{session_id}/messages")
 async def get_session_messages(
     lifecycle: SessionDomain,
@@ -259,6 +288,13 @@ async def get_session_messages(
     turns: int | None = Query(default=None, ge=1, le=500),
 ) -> SessionMessagesResp:
     row = await asyncio.to_thread(_session, lifecycle, session_id)
+    archive_path = row.get("archive_path")
+    validator_args = (session_id, archive_path, (before, limit, max_chars, turns))
+    etag = None
+    if view == "compact":
+        etag = await asyncio.to_thread(_compact_history_etag, *validator_args)
+        if etag is not None and request.headers.get("If-None-Match") == etag:
+            return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "private, no-cache"})
     try:
         projection = await asyncio.to_thread(
             read_archive_messages,
@@ -283,7 +319,11 @@ async def get_session_messages(
         data = page.model_dump(mode="json")
         for item in data["items"]:
             item["session_id"] = session_id
-        return JSONResponse(await presentation_of(request.app).page(data))
+        result = await presentation_of(request.app).page(data)
+        headers = {"Cache-Control": "private, no-cache"}
+        if etag is not None and etag == await asyncio.to_thread(_compact_history_etag, *validator_args):
+            headers["ETag"] = etag
+        return JSONResponse(result, headers=headers)
     return page
 
 

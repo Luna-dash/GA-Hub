@@ -49,9 +49,20 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                                 'items':[], 'runtime':{'status':'running'}})
             async for _ in ws: pass
             return ws
+        history_etag = 'W/"hub-history-' + 'a' * 64 + '"'
+        history_validators = []
+
         async def messages(r):
             self.assertEqual(r.query.get('view'), 'compact')
-            return web.json_response({'presentation_version':1,'session_id':'s1','items':[{'role':'assistant','compact':True,'progress':{'final_body':f'[report](<{report.as_posix()}:7>)'}}]})
+            validator = r.headers.get('If-None-Match')
+            plain = r.query.get('limit') == '4'
+            if plain:
+                history_validators.append(validator)
+                if validator == history_etag:
+                    return web.Response(status=304, headers={'ETag': history_etag})
+            body = 'Plain history' if plain else f'[report](<{report.as_posix()}:7>)'
+            etag = history_etag if plain else 'W/"hub-history-' + 'b' * 64 + '"'
+            return web.json_response({'presentation_version':1,'session_id':'s1','items':[{'role':'assistant','compact':True,'progress':{'final_body':body}}]}, headers={'ETag': etag})
         app = web.Application();app.router.add_get('/api/sessions',sessions);app.router.add_get('/ws/sessions/s1',live)
         app.router.add_get('/api/sessions/s1/messages', messages)
         agy_session = {'id': 'a1', 'title': 'Agy', 'project': 'test'}
@@ -152,8 +163,19 @@ class ConnectorE2E(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(connection_states, [True])
                     r=await client.get('/d/'+device+'/api/sessions',headers=auth)
                     self.assertEqual(r.status,200);self.assertEqual((await r.json())['items'][0]['title'],'E2E')
-                    r = await client.get('/d/'+device+'/api/sessions/s1/messages?view=compact', headers=auth)
+                    history = '/d/'+device+'/api/sessions/s1/messages?view=compact&limit=4'
+                    r = await client.get(history, headers=auth)
                     self.assertEqual(r.status, 200)
+                    self.assertEqual(r.headers.get('ETag'), history_etag)
+                    self.assertEqual((await r.json())['items'][0]['progress']['final_body'], 'Plain history')
+                    r = await client.get(history, headers={**auth, 'If-None-Match': history_etag})
+                    self.assertEqual(r.status, 304, await r.text())
+                    self.assertEqual(r.headers.get('ETag'), history_etag)
+                    self.assertEqual(await r.read(), b'')
+                    self.assertEqual(history_validators, [None, history_etag])
+                    r = await client.get(history[:-1] + '40', headers=auth)
+                    self.assertEqual(r.status, 200)
+                    self.assertFalse(r.headers.get('ETag', '').startswith('W/"hub-history-'))
                     files = (await r.json())['items'][0]['artifacts']
                     self.assertEqual(files[0]['name'], report.name)
                     r = await client.get('/d/'+device+files[0]['url'], headers=auth)

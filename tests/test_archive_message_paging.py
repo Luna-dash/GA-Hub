@@ -7,8 +7,10 @@ from unittest import mock
 
 from server.services.archive_messages import (
     _build_archive_index,
+    _project_indexed_groups,
     _window_items,
     read_archive_messages,
+    read_archive_total,
 )
 
 
@@ -78,6 +80,37 @@ def test_index_cache_is_reused_for_unchanged_archive(tmp_path: Path) -> None:
 
     assert after.hits == before.hits + 1
     assert after.misses == before.misses
+
+
+def test_total_matches_full_projection_without_rendering_responses(tmp_path: Path) -> None:
+    archive = tmp_path / "archive.txt"
+    archive.write_text(_round(0) + _round(1) + _round(2).split("=== Response ===")[0],
+                       encoding="utf-8")
+    expected = read_archive_messages(archive)["total"]
+    assert expected == 4
+    _build_archive_index.cache_clear()
+
+    with mock.patch.object(Path, "read_bytes", side_effect=AssertionError("full read")), \
+         mock.patch("server.services.archive_messages._items_from_text",
+                    side_effect=AssertionError("rendered archive")):
+        assert read_archive_total(archive) == expected
+        assert read_archive_total(None) == 0
+
+
+def test_cached_projection_is_isolated_and_invalidated(tmp_path: Path) -> None:
+    archive = tmp_path / "archive.txt"
+    archive.write_text(_round(0), encoding="utf-8")
+    _project_indexed_groups.cache_clear()
+
+    first = read_archive_messages(archive, limit=2)
+    original = first["items"][0]["content"]
+    first["items"][0]["content"] = "caller mutation"
+    assert read_archive_messages(archive, limit=2)["items"][0]["content"] == original
+    assert _project_indexed_groups.cache_info().hits == 1
+
+    archive.write_text(_round(0) + _round(1), encoding="utf-8")
+    assert read_archive_messages(archive, limit=2)["items"][0]["content"] == "question 1"
+    assert _project_indexed_groups.cache_info().misses == 2
 
 
 def _entry(role: str, text: str, stamp: str) -> str:
