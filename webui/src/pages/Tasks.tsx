@@ -1,3 +1,4 @@
+import { QueryLoadState } from '@/components/QueryLoadState'
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
@@ -20,14 +21,16 @@ const pageButtonClass = 'ga-btn-icon'
 
 export default function Tasks() {
   const qc = useQueryClient()
-  const { data: schData } = useQuery({
+  const schedulesQuery = useQuery({
     queryKey: queryKeys.tasks.schedules,
     queryFn: api.taskSchedules,
   })
-  const { data: runData } = useQuery({
+  const schData = schedulesQuery.data
+  const runsQuery = useQuery({
     queryKey: queryKeys.tasks.runs,
     queryFn: () => api.taskRuns(80),
   })
+  const runData = runsQuery.data
 
   useHubEvent('task:', (event) => {
     if (event.topic === 'task:upsert' || event.topic === 'task:delete') {
@@ -109,7 +112,9 @@ export default function Tasks() {
             <h2 className="text-sm font-semibold text-ink">任务计划</h2>
             <span className="text-xs tabular-nums text-ink-faint">{schedules.length} 项任务</span>
           </div>
-          {schedules.length > 0 ? (
+          {!schedulesQuery.data && (schedulesQuery.isLoading || schedulesQuery.isError) ? (
+            <QueryLoadState query={schedulesQuery} label="计划" />
+          ) : schedules.length > 0 ? (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {schedules.map((s) => <TaskCard key={s.id} s={s} onEdit={() => setEditor(s)} onFire={() => triggerNow(s.id)} />)}
             </div>
@@ -196,7 +201,7 @@ export default function Tasks() {
                     </tr>
                     )
                   })}
-                  {runs.length === 0 && <tr><td colSpan={4} className="px-3 py-5 text-center text-xs text-ink-faint">尚无运行历史</td></tr>}
+                  {runs.length === 0 && <tr><td colSpan={4} className="px-3 py-5 text-center text-xs text-ink-faint"><QueryLoadState query={runsQuery} label="运行历史">尚无运行历史</QueryLoadState></td></tr>}
                 </tbody>
               </table>
             </div>

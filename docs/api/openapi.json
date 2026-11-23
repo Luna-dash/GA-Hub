@@ -2071,7 +2071,7 @@
     "/api/memory/skills/search": {
       "get": {
         "summary": "Search Skills",
-        "description": "Full-text grep over memory/skill_search/*.\n\nWalks the skill tree, scans every text file (.md/.json/.py/.txt/no-ext)\nline by line, returns matches with surrounding line numbers. Case\ninsensitive substring match — keeps the implementation portable across\nOSes (no system grep dependency) and predictable.\n\nResponse shape::\n\n    {\"hits\": [{\"path\": \"...\", \"matches\": [{\"line\": 42, \"text\": \"...\"}, ...]}, ...],\n     \"scanned\": <int>, \"truncated\": <bool>}",
+        "description": "Full-text grep over memory/skill_search/*.\n\nWalks the skill tree, scans every text file (.md/.json/.py/.txt/no-ext)\nline by line, returns matches with surrounding line numbers. Case\ninsensitive substring match — keeps the implementation portable across\nOSes (no system grep dependency) and predictable.\n\nResponse shape::\n\n    {\"query\": \"...\", \"hits\": [{\"path\": \"...\", \"matches\": [{\"line\": 42, \"text\": \"...\"}, ...]}],\n     \"scanned\": <int>, \"truncated\": <bool>}",
         "operationId": "search_skills_api_memory_skills_search_get",
         "parameters": [
           {

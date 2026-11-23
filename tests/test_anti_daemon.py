@@ -293,6 +293,59 @@ def test_idle_session_reaper_closes_stale_workers(tmp_path, monkeypatch):
         mgr.shutdown()
 
 
+@pytest.mark.parametrize("operation", ["stop", "restart"])
+def test_worker_drain_allows_manager_reads_but_rejects_new_work(tmp_path, monkeypatch, operation):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setattr(agy_profile._paths, "ADMIN_DATA", tmp_path)
+    monkeypatch.setattr(agy_profile, "agy_executable_or_none", lambda: "fake-agy")
+    monkeypatch.setattr(agy_runtime.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=0, stdout="1.2.3", stderr="",
+    ))
+    mgr = agy_runtime.AgyRuntimeManager(idle_ttl=0)
+    monkeypatch.setattr(mgr, "status", lambda **kw: None)
+    db = tmp_path / "sessions.db"
+    worker = mgr.get_worker(str(db), "default", "session", tmp_path)
+    mgr.register_turn(db, "queued", worker)
+    with pytest.raises(agy_profile.AgyProfileError) as busy:
+        getattr(mgr, operation)()
+    assert busy.value.status == 409
+    mgr.unregister_turn(db, "queued")
+
+    entered = threading.Event()
+    release = threading.Event()
+    original_close = worker.close
+
+    def slow_close():
+        entered.set()
+        assert release.wait(5)
+        original_close()
+
+    def check_concurrent_calls():
+        assert not mgr.session_connected(str(db), "session")
+        with pytest.raises(agy_profile.AgyProfileError) as blocked:
+            mgr.get_worker(str(db), "default", "session", tmp_path)
+        assert blocked.value.status == 409
+
+    monkeypatch.setattr(worker, "close", slow_close)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        draining = pool.submit(getattr(mgr, operation))
+        try:
+            assert entered.wait(2)
+            pool.submit(check_concurrent_calls).result(timeout=2)
+        finally:
+            release.set()
+        draining.result(timeout=5)
+    if operation == "restart":
+        replacement = mgr.get_worker(str(db), "default", "session", tmp_path)
+        assert replacement is not worker
+        with pytest.raises(agy_profile.AgyProfileError) as detached:
+            mgr.register_turn(db, "old", worker)
+        assert detached.value.status == 409
+    mgr.shutdown()
+
+
 def test_models_endpoint_works_even_when_runtime_manually_stopped(tmp_path, monkeypatch):
     import json
     from types import SimpleNamespace

@@ -765,6 +765,7 @@ export default function LiveChat() {
   return (
     <FileLinkContext.Provider value={{ sessionId: session?.id, projectPath: activeProjectPath, ...(activeProjectLabel ? { project: activeProjectLabel } : {}) }}>
       <PageShell
+        wrapHeader
         title="实时聊天"
         titleExtra={
           <StatusIconBadge

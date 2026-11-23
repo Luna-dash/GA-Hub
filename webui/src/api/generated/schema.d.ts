@@ -1025,7 +1025,7 @@ export interface paths {
          *
          *     Response shape::
          *
-         *         {"hits": [{"path": "...", "matches": [{"line": 42, "text": "..."}, ...]}, ...],
+         *         {"query": "...", "hits": [{"path": "...", "matches": [{"line": 42, "text": "..."}, ...]}],
          *          "scanned": <int>, "truncated": <bool>}
          */
         get: operations["search_skills_api_memory_skills_search_get"];

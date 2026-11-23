@@ -175,6 +175,7 @@ export default function GoalHive() {
 
   return (
     <PageShell
+      wrapHeader
       title="Goal Hive"
       titleExtra={
         <StatusIconBadge

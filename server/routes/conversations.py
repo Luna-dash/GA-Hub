@@ -567,14 +567,18 @@ def _list_zip_entries_sync(path: str) -> dict:
         ]}
 
 
+def _archive_zip_path(name: str) -> str:
+    if any(ch in name for ch in ("/", "\\", ":", "\x00")) or ".." in name or not name.endswith(".zip"):
+        raise HTTPException(400, "bad name")
+    return os.path.join(_archive_dir(), name)
+
+
 @router.get(
     "/api/archive/zips/{name}/entries",
     response_model=ArchiveZipEntryListResp,
 )
 async def list_zip_entries(name: str):
-    if "/" in name or ".." in name or not name.endswith(".zip"):
-        raise HTTPException(400, "bad name")
-    p = os.path.join(_archive_dir(), name)
+    p = _archive_zip_path(name)
     if not os.path.isfile(p):
         raise HTTPException(404, "zip not found")
     try:
@@ -595,11 +599,9 @@ def _read_zip_entry_sync(path: str, entry: str) -> bytes:
 
 @router.get("/api/archive/zips/{name}/read")
 async def read_zip_entry(name: str, entry: str):
-    if "/" in name or ".." in name or not name.endswith(".zip"):
-        raise HTTPException(400, "bad name")
-    if ".." in entry:
+    p = _archive_zip_path(name)
+    if ".." in entry or any(ch in entry for ch in ("\\", ":", "\x00")) or entry.startswith("/"):
         raise HTTPException(400, "bad entry")
-    p = os.path.join(_archive_dir(), name)
     if not os.path.isfile(p):
         raise HTTPException(404, "zip not found")
     try:

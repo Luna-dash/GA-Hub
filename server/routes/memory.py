@@ -88,7 +88,7 @@ def _snapshot(path: str) -> _MemorySnapshot:
         opened_id = (opened.st_dev, opened.st_ino, opened.st_mtime_ns, opened.st_size)
         current_id = (current.st_dev, current.st_ino, current.st_mtime_ns, current.st_size)
         if opened_id == current_id:
-            content = data.decode("utf-8-sig")
+            content = data.decode("utf-8-sig", errors="replace")
             return _MemorySnapshot(
                 True,
                 data,
@@ -455,7 +455,7 @@ def _search_skills(q: str, limit: int) -> dict:
     needle = q.lower()
     sd = _skill_dir()
     if not os.path.isdir(sd):
-        return {"hits": [], "scanned": 0, "truncated": False}
+        return {"hits": [], "scanned": 0, "truncated": False, "query": q}
 
     root = _skill_root()
     MAX_FILE_BYTES = 512 * 1024     # skip pathological files (a scan cost, not a
@@ -520,10 +520,10 @@ async def search_skills(q: str, limit: int = Query(default=60, ge=1, le=200)):
 
     Response shape::
 
-        {"hits": [{"path": "...", "matches": [{"line": 42, "text": "..."}, ...]}, ...],
+        {"query": "...", "hits": [{"path": "...", "matches": [{"line": 42, "text": "..."}, ...]}],
          "scanned": <int>, "truncated": <bool>}
     """
     q = (q or "").strip()
     if not q:
-        return {"hits": [], "scanned": 0, "truncated": False}
+        return {"hits": [], "scanned": 0, "truncated": False, "query": q}
     return await asyncio.to_thread(_search_skills, q, limit)

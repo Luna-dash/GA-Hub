@@ -193,6 +193,7 @@ export default function MyKey() {
 
   return (
     <PageShell
+      wrapHeader
       title="LLM管理"
       actions={
         <div className="flex items-center gap-2 text-sm">

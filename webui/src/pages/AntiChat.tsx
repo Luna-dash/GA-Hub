@@ -666,6 +666,14 @@ function Conversation({ session, headerActions, profileId, profileName, onOpenPr
             </article>
           })}
           <Errors items={[history.error, live.error, send.error, cancel.error, approve.error, resetAcp.error]} />
+          {pending && send.isError && !current && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+              <span>无法确认请求是否已送达。重试会沿用同一请求；放弃重试不会撤回已送达的请求。</span>
+              <button type="button" onClick={() => { setPending(undefined); send.reset() }}>
+                放弃重试并继续编辑
+              </button>
+            </div>
+          )}
           {send.error instanceof HttpError && send.error.status === 429 && (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-status-warning-line bg-status-warning-soft px-3 py-2 text-xs text-status-warning">
               <span>当前账号处于风控冷却或配额保护中，可切换至其他可用账号继续对话。</span>

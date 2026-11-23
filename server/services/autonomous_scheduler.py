@@ -263,7 +263,7 @@ class AutonomousScheduler(SchedulerDomainBase):
 
     def read_report(self, name: str) -> str:
         # Prevent path traversal
-        if "/" in name or ".." in name:
+        if not name or "/" in name or "\\" in name or ":" in name or ".." in name or "\x00" in name:
             raise ValueError("invalid name")
         p = os.path.join(self._reports_dir(), name)
         if not os.path.isfile(p):

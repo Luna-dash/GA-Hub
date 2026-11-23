@@ -757,8 +757,11 @@ class AgyRuntimeManager:
         self._workers: dict[tuple[str, str, str], AgySessionWorker] = {}
         self._active_turns: dict[tuple[Path, str], AgySessionWorker] = {}
         self._stopped_manually = False
+        self._draining_workers = False
+        self._lifecycle_lock = threading.Lock()
         self._cached_version: str | None = None
         self._version_checked = False
+        self._version_epoch = 0
         self._cached_models: dict[str, list[dict[str, str]]] = {}
         self._cached_commands: dict[str, list[dict[str, Any]]] = {}
         self._login: subprocess.Popen | None = None
@@ -774,9 +777,12 @@ class AgyRuntimeManager:
         self._reaper_thread: threading.Thread | None = None
 
     def _probe_version_once(self, executable: str) -> str | None:
-        if self._version_checked:
-            return self._cached_version
-        self._version_checked = True
+        with self._lock:
+            if self._version_checked:
+                return self._cached_version
+            self._version_checked = True
+            epoch = self._version_epoch
+        version = None
         try:
             res = subprocess.run(
                 [executable, "--version"],
@@ -790,10 +796,13 @@ class AgyRuntimeManager:
             if res.returncode == 0:
                 m = re.search(r"(\d+\.\d+\.\d+)", res.stdout or res.stderr or "")
                 if m:
-                    self._cached_version = m.group(1)
+                    version = m.group(1)
         except (OSError, subprocess.SubprocessError):
             pass
-        return self._cached_version
+        with self._lock:
+            if epoch == self._version_epoch:
+                self._cached_version = version
+            return self._cached_version
 
     def _active_turn_count(self) -> int:
         with self._lock:
@@ -804,18 +813,22 @@ class AgyRuntimeManager:
 
     def status(self, *, verify_auth: bool = False) -> AntiDaemonStatus:
         """Fast, non-spawning runtime snapshot (T3 Code health-check discipline)."""
+        executable = agy_profile.agy_executable_or_none()
+        if executable is None:
+            return AntiDaemonStatus(
+                state="unavailable",
+                detail="找不到官方 agy CLI，请先安装 agy 并加入 PATH",
+                agy_available=False,
+                active_count=0,
+                auth_state="unverified" if verify_auth else None,
+                managed=True,
+            )
         with self._lock:
-            executable = agy_profile.agy_executable_or_none()
-            if executable is None:
-                return AntiDaemonStatus(
-                    state="unavailable",
-                    detail="找不到官方 agy CLI，请先安装 agy 并加入 PATH",
-                    agy_available=False,
-                    active_count=0,
-                    auth_state="unverified" if verify_auth else None,
-                    managed=True,
-                )
-            version = self._cached_version or self._probe_version_once(executable)
+            stopped = self._stopped_manually
+            version = self._cached_version
+        if not stopped and version is None:
+            version = self._probe_version_once(executable)
+        with self._lock:
             if self._stopped_manually:
                 return AntiDaemonStatus(
                     state="stopped",
@@ -842,34 +855,52 @@ class AgyRuntimeManager:
 
     def start(self) -> AntiDaemonStatus:
         with self._lock:
+            self._require_workers_available_locked()
             executable = agy_profile.agy_executable_or_none()
             if executable is None:
                 raise AgyProfileError(503, "找不到官方 agy CLI，请先安装 agy 并加入 PATH")
             self._shutdown_event.clear()
             self._stopped_manually = False
+            self._cached_version = None
             self._version_checked = False
+            self._version_epoch += 1
             _append_log("Agy ACP runtime enabled")
-            return self.status(verify_auth=True)
+        return self.status(verify_auth=True)
+
+    def _require_workers_available_locked(self) -> None:
+        if self._draining_workers:
+            raise AgyProfileError(409, "Agy 正在关闭旧会话，请稍后重试")
 
     def stop(self) -> AntiDaemonStatus:
-        with self._lock:
-            if self._active_turn_count() > 0:
-                raise AgyProfileError(409, "当前有正在运行的 Anti 任务，请先停止或等待任务结束")
-            self._close_all_workers_locked()
-            self._stopped_manually = True
-            _append_log("Agy ACP runtime stopped")
-            return self.status(verify_auth=False)
+        return self._stop_or_restart(restart=False)
 
     def restart(self) -> AntiDaemonStatus:
-        with self._lock:
-            if self._active_turn_count() > 0:
-                raise AgyProfileError(409, "当前有正在运行的 Anti 任务，请先停止或等待任务结束")
-            self._close_all_workers_locked()
-            self._stopped_manually = False
-            self._cached_models.clear()
-            self._version_checked = False
-            _append_log("Agy ACP runtime restarted")
-            return self.status(verify_auth=True)
+        return self._stop_or_restart(restart=True)
+
+    def _stop_or_restart(self, *, restart: bool) -> AntiDaemonStatus:
+        with self._lifecycle_lock:
+            with self._lock:
+                # Include registered runs that have not entered worker.run yet.
+                if self._active_turns:
+                    raise AgyProfileError(409, "当前有正在运行的 Anti 任务，请先停止或等待任务结束")
+                self._draining_workers = True
+                workers = list(self._workers.values())
+                self._workers.clear()
+            try:
+                for worker in workers:
+                    worker.close()
+            finally:
+                with self._lock:
+                    self._stopped_manually = not restart
+                    if restart:
+                        self._cached_models.clear()
+                        self._cached_commands.clear()
+                        self._cached_version = None
+                        self._version_checked = False
+                        self._version_epoch += 1
+                    self._draining_workers = False
+            _append_log("Agy ACP runtime restarted" if restart else "Agy ACP runtime stopped")
+        return self.status(verify_auth=restart)
 
     def _close_all_workers_locked(self) -> None:
         for worker in list(self._workers.values()):
@@ -884,8 +915,9 @@ class AgyRuntimeManager:
         current = time.monotonic() if now is None else now
         stale: list[AgySessionWorker] = []
         with self._lock:
+            registered = set(self._active_turns.values())
             for key, worker in list(self._workers.items()):
-                if worker.active_turn is not None:
+                if worker in registered or worker.active_turn is not None:
                     continue
                 if worker._closed or (current - worker.last_used) >= self._idle_ttl:
                     self._workers.pop(key, None)
@@ -920,6 +952,10 @@ class AgyRuntimeManager:
         self._reaper_thread.start()
 
     def shutdown(self) -> None:
+        with self._lifecycle_lock:
+            self._shutdown()
+
+    def _shutdown(self) -> None:
         self._shutdown_event.set()
         with self._lock:
             self._close_all_workers_locked()
@@ -951,18 +987,20 @@ class AgyRuntimeManager:
             return [], str(path)
 
     def _require_login_closed(self, *profiles: str) -> None:
+        self._require_workers_available_locked()
+        # No profile filter when starting a new login: only one flow is tracked.
         if self._login is not None:
             if self._login.poll() is None:
-                if self._login_profile in profiles:
+                if not profiles or self._login_profile in profiles:
                     raise AgyProfileError(409, "请完成官方 agy 登录并关闭登录窗口后再操作")
-                return
-            child_job.forget(self._login.pid)
-            self._login = None
-            self._login_profile = None
+            else:
+                child_job.forget(self._login.pid)
+                self._login = None
+                self._login_profile = None
         if self._code_login is not None:
             st = self._code_login.public_state()
-            if st["phase"] in ("starting", "waiting_code") and st["profile_id"] in profiles:
-                raise AgyProfileError(409, "请先完成或取消当前 Agy 授权码登录")
+            if st["phase"] in ("starting", "waiting_code") and (not profiles or st["profile_id"] in profiles):
+                raise AgyProfileError(409, "请先完成当前 Agy 授权码登录")
 
     def active_login_profile(self) -> str | None:
         with self._lock:
@@ -989,15 +1027,23 @@ class AgyRuntimeManager:
             yield profile_id
 
     def get_worker(self, db_key: str, profile_id: str, session_id: str, workspace: Path) -> AgySessionWorker:
+        key = (db_key, profile_id, session_id)
         with self._lock:
-            key = (db_key, profile_id, session_id)
+            self._require_workers_available_locked()
+            worker = self._workers.get(key)
+            if worker is not None and worker.workspace == workspace and not worker._closed:
+                return worker
+        executable = agy_profile.agy_executable()
+        version = self._probe_version_once(executable)
+        with self._lock:
+            self._require_workers_available_locked()
+            if self._stopped_manually:
+                raise AgyProfileError(409, "Agy 运行时已停止，请先在顶部状态栏重新启用")
             worker = self._workers.get(key)
             if worker is not None and worker.workspace == workspace and not worker._closed:
                 return worker
             if worker is not None:
                 worker.close()
-            executable = agy_profile.agy_executable()
-            version = self._probe_version_once(executable)
             worker = AgySessionWorker(
                 profile_id=profile_id,
                 session_id=session_id,
@@ -1058,6 +1104,9 @@ class AgyRuntimeManager:
 
     def register_turn(self, db_path: Path, run_id: str, worker: AgySessionWorker) -> None:
         with self._lock:
+            self._require_workers_available_locked()
+            if self._workers.get((str(db_path), worker.profile_id, worker.session_id)) is not worker:
+                raise AgyProfileError(409, "Agy 会话已关闭，请重试")
             self._active_turns[(db_path, run_id)] = worker
 
     def unregister_turn(self, db_path: Path, run_id: str) -> None:
@@ -1265,12 +1314,7 @@ class AgyRuntimeManager:
             _, profiles = agy_profile.snapshot()
             if not any(p.id == profile_id for p in profiles):
                 raise AgyProfileError(404, "找不到 Agy 账号")
-            self._require_login_closed(*(p.id for p in profiles))
-            if self._login is not None:
-                if self._login.poll() is None:
-                    raise AgyProfileError(409, "请先关闭上一个 agy 登录窗口")
-                child_job.forget(self._login.pid)
-                self._login = None
+            self._require_login_closed()
             if self._active_turn_count() > 0:
                 raise AgyProfileError(409, "请等当前任务结束后再打开官方登录窗口")
             executable = agy_profile.agy_executable()
@@ -1304,10 +1348,7 @@ class AgyRuntimeManager:
                 raise AgyProfileError(404, "找不到 Agy 账号")
             if active == profile_id and self._active_turn_count() > 0:
                 raise AgyProfileError(409, "请先等待当前任务结束后再重新登录当前账号")
-            if self._code_login is not None:
-                self._code_login.cancel()
-                self._code_login = None
-            self._require_login_closed(*(p.id for p in profiles))
+            self._require_login_closed()
             executable = agy_profile.agy_executable()
             agy_profile.claim_profile_lock(profile_id)
             temp_dir = None

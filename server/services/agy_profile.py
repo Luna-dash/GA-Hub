@@ -137,6 +137,10 @@ def snapshot() -> tuple[str, list[Profile]]:
     return active, profiles
 
 
+# Serialize in-process profiles.json read/modify/write transactions.
+_profile_metadata_lock = threading.Lock()
+
+
 def _save(active: str, profiles: list[Profile], meta: dict[str, dict[str, Any]] | None = None) -> None:
     path = _root() / "profiles.json"
     stage = None
@@ -238,33 +242,39 @@ def snapshot_details() -> tuple[str, list[dict[str, Any]]]:
 
 
 def add(name: str) -> Profile:
-    active, profiles, meta = _load_raw()
-    if any(p.name.casefold() == name.casefold() for p in profiles):
-        raise AgyProfileError(409, "已有同名 Agy 账号")
-    profile = Profile(uuid4().hex, name)
-    _save(active, [*profiles, profile], meta)
-    return profile
+    with _profile_metadata_lock:
+        active, profiles, meta = _load_raw()
+        if any(p.name.casefold() == name.casefold() for p in profiles):
+            raise AgyProfileError(409, "已有同名 Agy 账号")
+        profile = Profile(uuid4().hex, name)
+        _save(active, [*profiles, profile], meta)
+        return profile
+
 
 
 def rename(profile_id: str, name: str) -> Profile:
-    active, profiles, meta = _load_raw()
-    if not any(p.id == profile_id for p in profiles):
-        raise AgyProfileError(404, "找不到 Agy 账号")
-    if profile_id == DEFAULT:
-        raise AgyProfileError(409, "系统默认账号不能修改备注")
-    if any(p.id != profile_id and p.name.casefold() == name.casefold() for p in profiles):
-        raise AgyProfileError(409, "已有同名 Agy 账号")
-    renamed = Profile(profile_id, name)
-    _save(active, [renamed if p.id == profile_id else p for p in profiles], meta)
-    return renamed
+    with _profile_metadata_lock:
+        active, profiles, meta = _load_raw()
+        if not any(p.id == profile_id for p in profiles):
+            raise AgyProfileError(404, "找不到 Agy 账号")
+        if profile_id == DEFAULT:
+            raise AgyProfileError(409, "系统默认账号不能修改备注")
+        if any(p.id != profile_id and p.name.casefold() == name.casefold() for p in profiles):
+            raise AgyProfileError(409, "已有同名 Agy 账号")
+        renamed = Profile(profile_id, name)
+        _save(active, [renamed if p.id == profile_id else p for p in profiles], meta)
+        return renamed
+
 
 
 def select(profile_id: str) -> None:
-    active, profiles, meta = _load_raw()
-    if not any(p.id == profile_id for p in profiles):
-        raise AgyProfileError(404, "找不到 Agy 账号")
-    if active != profile_id:
-        _save(profile_id, profiles, meta)
+    with _profile_metadata_lock:
+        active, profiles, meta = _load_raw()
+        if not any(p.id == profile_id for p in profiles):
+            raise AgyProfileError(404, "找不到 Agy 账号")
+        if active != profile_id:
+            _save(profile_id, profiles, meta)
+
 
 
 def delete(profile_id: str) -> None:
@@ -272,15 +282,16 @@ def delete(profile_id: str) -> None:
         raise AgyProfileError(409, "系统默认账号不能删除")
     if not re.fullmatch(PROFILE_ID, profile_id):
         raise AgyProfileError(404, "找不到 Agy 账号")
-    active, profiles, meta = _load_raw()
-    if not any(p.id == profile_id for p in profiles):
-        raise AgyProfileError(404, "找不到 Agy 账号")
-    if active == profile_id:
-        raise AgyProfileError(409, "请先切换到其他账号后再删除当前账号")
-    next_profiles = [p for p in profiles if p.id != profile_id]
-    meta.pop(profile_id, None)
     with profile_lock(profile_id):
-        _save(active, next_profiles, meta)
+        with _profile_metadata_lock:
+            active, profiles, meta = _load_raw()
+            if not any(p.id == profile_id for p in profiles):
+                raise AgyProfileError(404, "找不到 Agy 账号")
+            if active == profile_id:
+                raise AgyProfileError(409, "请先切换到其他账号后再删除当前账号")
+            next_profiles = [p for p in profiles if p.id != profile_id]
+            meta.pop(profile_id, None)
+            _save(active, next_profiles, meta)
         target = _root() / profile_id
         if target.exists():
             try:
@@ -293,9 +304,6 @@ def delete(profile_id: str) -> None:
 
 def capture_default(name: str) -> Profile:
     """Clone the host default CLI/ACP credentials into a new isolated profile."""
-    active, profiles, meta = _load_raw()
-    if any(p.name.casefold() == name.casefold() for p in profiles):
-        raise AgyProfileError(409, "已有同名 Agy 账号")
     src_cli = Path.home() / ".gemini" / APP_DATA_DIR_NAME
     token_file = find_credential_file(DEFAULT, "antigravity-oauth-token") or find_credential_file(
         DEFAULT, "acp_token.json"
@@ -340,9 +348,17 @@ def capture_default(name: str) -> Profile:
         shutil.rmtree(_root() / profile.id, ignore_errors=True)
         raise AgyProfileError(503, "无法复制系统默认 agy 凭据") from exc
 
-    if DEFAULT in meta and isinstance(meta[DEFAULT], dict):
-        meta[profile.id] = dict(meta[DEFAULT])
-    _save(active, [*profiles, profile], meta)
+    try:
+        with _profile_metadata_lock:
+            active, profiles, meta = _load_raw()
+            if any(p.name.casefold() == name.casefold() for p in profiles):
+                raise AgyProfileError(409, "已有同名 Agy 账号")
+            if DEFAULT in meta:
+                meta[profile.id] = dict(meta[DEFAULT])
+            _save(active, [*profiles, profile], meta)
+    except AgyProfileError:
+        shutil.rmtree(_root() / profile.id, ignore_errors=True)
+        raise
     return profile
 
 
@@ -351,11 +367,11 @@ def clear_credentials(profile_id: str) -> dict[str, Any]:
         raise AgyProfileError(409, "系统默认账号凭据由系统 agy CLI 管理，不支持在 Hub 内清除")
     if not re.fullmatch(PROFILE_ID, profile_id):
         raise AgyProfileError(404, "找不到 Agy 账号")
-    active, profiles, meta = _load_raw()
-    target_profile = next((p for p in profiles if p.id == profile_id), None)
-    if target_profile is None:
-        raise AgyProfileError(404, "找不到 Agy 账号")
-    with profile_lock(profile_id):
+    with profile_lock(profile_id), _profile_metadata_lock:
+        active, profiles, meta = _load_raw()
+        target_profile = next((p for p in profiles if p.id == profile_id), None)
+        if target_profile is None:
+            raise AgyProfileError(404, "找不到 Agy 账号")
         gemini_dir = profile_gemini_dir(profile_id)
         try:
             for sub in (APP_DATA_DIR_NAME, "antigravity-acp"):
@@ -385,25 +401,27 @@ def clear_credentials(profile_id: str) -> dict[str, Any]:
 def record_usage(profile_id: str, auth_state: str, rows: list[dict[str, Any]]) -> None:
     if not re.fullmatch(PROFILE_ID, profile_id):
         return
-    try:
-        active, profiles, meta = _load_raw()
-    except AgyProfileError:
-        return
-    if not any(p.id == profile_id for p in profiles):
-        return
-    pcts = [float(r["remaining_pct"]) for r in rows if isinstance(r.get("remaining_pct"), (int, float))]
-    entry = dict(meta.get(profile_id) or {})
-    entry["auth_state"] = auth_state
-    entry["usage"] = {
-        "checked_at": datetime.now(timezone.utc).isoformat(),
-        "min_remaining_pct": min(pcts) if pcts else None,
-        "rows": rows,
-    }
-    meta[profile_id] = entry
-    try:
-        _save(active, profiles, meta)
-    except AgyProfileError:
-        pass
+    with _profile_metadata_lock:
+        try:
+            active, profiles, meta = _load_raw()
+        except AgyProfileError:
+            return
+        if not any(p.id == profile_id for p in profiles):
+            return
+        pcts = [float(r["remaining_pct"]) for r in rows if isinstance(r.get("remaining_pct"), (int, float))]
+        entry = dict(meta.get(profile_id) or {})
+        entry["auth_state"] = auth_state
+        entry["usage"] = {
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "min_remaining_pct": min(pcts) if pcts else None,
+            "rows": rows,
+        }
+        meta[profile_id] = entry
+        try:
+            _save(active, profiles, meta)
+        except AgyProfileError:
+            pass
+
 
 
 def agy_executable_or_none() -> str | None:

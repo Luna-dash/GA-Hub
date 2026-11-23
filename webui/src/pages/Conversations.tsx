@@ -1,3 +1,4 @@
+import { QueryLoadState } from '@/components/QueryLoadState'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -142,10 +143,12 @@ export default function Conversations() {
     return () => window.clearTimeout(t)
   }, [q])
 
-  const { data, isLoading: listLoading } = useQuery({
+  const listQuery = useQuery({
     queryKey: conversationKeys.list(debouncedQ, page * limit, limit),
     queryFn: () => api.conversations(debouncedQ || undefined, page * limit, limit),
   })
+
+  const { data, isLoading: listLoading } = listQuery
 
   const {
     data: detail,
@@ -345,6 +348,7 @@ export default function Conversations() {
 
   return (
     <PageShell
+      wrapHeader
       title="历史对话"
       actions={
         <div className="flex flex-wrap items-center gap-2.5">
@@ -442,7 +446,8 @@ export default function Conversations() {
                     onClick={() => nav(`/conversations/${encodeURIComponent(c.id)}`)}
                   />
                 ))}
-                {!listLoading && visibleItems.length === 0 && !collapsed && (
+                {listQuery.isError && !data && !collapsed && <QueryLoadState query={listQuery} label="历史对话" />}
+                {!listLoading && (!listQuery.isError || data) && visibleItems.length === 0 && !collapsed && (
                   <div className="px-3 py-8 text-center">
                     <Inbox size={18} strokeWidth={1.75} aria-hidden="true" className="mx-auto mb-2 text-ink-faint/70" />
                     <div className="text-xs text-ink-muted">
@@ -776,6 +781,7 @@ function RoundView({
                     <div className="mb-2.5 flex items-center gap-2">
                       <button
                         type="button"
+                        aria-expanded={isProcessOpen}
                         onClick={() => setOpenConclusion((s) => ({ ...s, [roundKey]: !isProcessOpen }))}
                         className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line/70 bg-bg-soft/85 px-2 py-0.5 text-xs font-medium text-accent transition-colors hover:border-accent/45 hover:bg-accent-soft/50"
                       >

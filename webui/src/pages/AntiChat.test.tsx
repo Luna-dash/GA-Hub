@@ -98,9 +98,11 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     expect(fetchMock.mock.calls.filter(([path]) => path === '/api/anti/start')).toHaveLength(0)
     const usageButton = button('检测反重力额度')!
     const usageRequests = () => fetchMock.mock.calls.filter(([path]) => path === '/api/anti/account-usage')
-    expect(usageButton.getAttribute('aria-disabled')).toBe('true')
+    const quotaDialog = () => document.body.querySelector('[role=dialog][aria-label="反重力剩余额度"]')
     await act(async () => usageButton.click())
+    expect(quotaDialog()?.textContent).toContain('请先启用 Agy 运行时。')
     expect(usageRequests()).toHaveLength(0)
+    await act(async () => usageButton.click())
     await act(async () => button('启用 Agy')!.click())
     await wait(() => expect(button('Agy 启动中')?.disabled).toBe(true))
     expect(fetchMock.mock.calls.filter(([path]) => path === '/api/anti/start')).toHaveLength(1)
@@ -110,21 +112,22 @@ it('starts Anti on demand from the page header without leaving the chat', async 
     expect(usageRequests()).toHaveLength(0)
     expect(usageButton.closest('header')).not.toBeNull()
     expect(host.querySelector('[role=group][aria-label="Anti 状态"]')?.contains(usageButton)).toBe(false)
-    const tooltip = () => document.body.querySelector('[role=tooltip]')
     await act(async () => usageButton.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
-    expect(tooltip()?.textContent).toContain('点击检测官方剩余额度。')
-    expect(tooltip()?.closest('header')).toBeNull()
+    expect(quotaDialog()).toBeNull()
     expect(usageRequests()).toHaveLength(0)
+    usageButton.focus()
     await act(async () => usageButton.click())
-    await wait(() => expect(tooltip()?.textContent).toContain('42.5%'))
+    await wait(() => expect(quotaDialog()?.textContent).toContain('42.5%'))
+    expect(usageButton.getAttribute('aria-expanded')).toBe('true')
+    expect(quotaDialog()?.closest('header')).toBeNull()
     expect(usageRequests()).toHaveLength(1)
-    expect(tooltip()?.textContent).toContain('Example Model')
-    expect(tooltip()?.textContent).toContain('每周额度')
-    expect(tooltip()?.querySelector('time')?.dateTime).toBe('2026-11-20T08:00:00Z')
-    await act(async () => usageButton.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })))
-    expect(tooltip()).toBeNull()
-    await act(async () => usageButton.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
-    expect(tooltip()?.textContent).toContain('42.5%')
+    expect(quotaDialog()?.textContent).toContain('Example Model')
+    expect(quotaDialog()?.textContent).toContain('每周额度')
+    expect(quotaDialog()?.querySelector('time')?.dateTime).toBe('2026-11-20T08:00:00Z')
+    expect(document.activeElement).toBe(quotaDialog())
+    await act(async () => quotaDialog()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
+    expect(quotaDialog()).toBeNull()
+    expect(document.activeElement).toBe(usageButton)
     expect(usageRequests()).toHaveLength(1)
     expect(host.querySelector('output')?.dataset.page).toBe('/anti')
     const accountButton = () => [...host.querySelectorAll('header button')]
@@ -440,6 +443,7 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
       gatewayState = 'ready'
       return reply({ state: 'ready', agy_available: true, auth_state: 'authenticated' })
     }
+    if (path === '/api/anti/account-usage') return reply(profilesList[0].usage)
     if (path === '/api/anti/profiles') {
       return reply({ active: 'default', profiles: profilesList })
     }
@@ -508,9 +512,9 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await act(async () => { restartBtn.click() })
     await flush()
 
-    // Quota button displays cached percentage immediately on hover & allows pool/breaker inspection
+    // Quota button displays cached percentage when opened & allows pool/breaker inspection
     const usageBtn = host.querySelector('button[aria-label="检测反重力额度"]') as HTMLButtonElement
-    await act(async () => { usageBtn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
+    await act(async () => { usageBtn.click() })
     await flush()
     expect(document.body.textContent).toContain('65%')
     const checkPoolsBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '查看本地配额池 / 熔断') as HTMLButtonElement
@@ -524,6 +528,8 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await act(async () => { resetBtn.click() })
     await flush()
     expect(document.body.textContent).toContain('正常')
+
+    await act(async () => { usageBtn.click() })
 
     // Profile modal: capture current login, inspect logs, clear credentials, & delete inactive profile
     const accountsBtn = [...host.querySelectorAll('button')].find(b => b.getAttribute('aria-label')?.startsWith('Agy 账号：')) as HTMLButtonElement
@@ -560,7 +566,7 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await flush()
     expect(profilesList.some(p => p.id === 'work')).toBe(false)
 
-    // Close profile modal and stop gateway; offline cached quota remains visible on hover
+    // Close profile modal and stop gateway; offline cached quota remains available when opened
     const closeModalBtn = [...document.body.querySelectorAll('button')].find(b => b.textContent === '关闭') as HTMLButtonElement
     await act(async () => { closeModalBtn.click() })
     await flush()
@@ -569,7 +575,7 @@ it('supports profile capture/delete, gateway stop/restart, quota pool reset, and
     await act(async () => { stopBtn.click() })
     await flush()
     expect(host.textContent).toContain('启用 Agy')
-    await act(async () => { usageBtn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
+    await act(async () => { usageBtn.click() })
     await flush()
     expect(document.body.textContent).toContain('离线缓存')
     expect(document.body.textContent).toContain('65%')
@@ -1014,7 +1020,7 @@ it('wires slash commands, ACP session reset, run usage footer, quota calibration
 
     // 3. Quota pool inline calibration
     const usageBtn = host.querySelector<HTMLButtonElement>('button[aria-label="检测反重力额度"]')!
-    await act(async () => { usageBtn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
+    await act(async () => { usageBtn.click() })
     await flush()
     const checkPools = [...document.body.querySelectorAll('button')].find(b => b.textContent === '查看本地配额池 / 熔断') as HTMLButtonElement
     await act(async () => { checkPools.click() })

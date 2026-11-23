@@ -1,3 +1,4 @@
+import { QueryLoadState } from '@/components/QueryLoadState'
 // Autonomous evolution: schedule CRUD + run history + report viewer.
 
 import { useEffect, useState } from 'react'
@@ -21,18 +22,21 @@ const RUNS_PER_PAGE = 10
 
 export default function Autonomous() {
   const qc = useQueryClient()
-  const { data: schData } = useQuery({
+  const schedulesQuery = useQuery({
     queryKey: queryKeys.schedules,
     queryFn: api.schedules,
   })
-  const { data: runData } = useQuery({
+  const schData = schedulesQuery.data
+  const runsQuery = useQuery({
     queryKey: queryKeys.autonomous.runs,
     queryFn: () => api.runs(50),
   })
-  const { data: rep } = useQuery({
+  const runData = runsQuery.data
+  const reportsQuery = useQuery({
     queryKey: queryKeys.autonomous.reports,
     queryFn: api.reports,
   })
+  const rep = reportsQuery.data
 
   useHubEvent('autonomous:', (event) => {
     if (event.topic === 'autonomous:upsert' || event.topic === 'autonomous:delete' || event.topic === 'autonomous:fired') {
@@ -126,7 +130,9 @@ export default function Autonomous() {
             <h2 className="text-sm font-semibold text-ink">调度计划</h2>
             <span className="text-xs text-ink-faint tabular-nums">{schedules.length} 项配置</span>
           </div>
-          {schedules.length > 0 ? (
+          {!schedulesQuery.data && (schedulesQuery.isLoading || schedulesQuery.isError) ? (
+            <QueryLoadState query={schedulesQuery} label="计划" />
+          ) : schedules.length > 0 ? (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {schedules.map((s) => <ScheduleCard key={s.id} s={s} onEdit={() => setEditor(s)} onFire={() => triggerNow(s.id)} />)}
             </div>
@@ -207,7 +213,7 @@ export default function Autonomous() {
                       </td>
                     </tr>
                   ))}
-                  {runs.length === 0 && <tr><td colSpan={4} className="px-3 py-5 text-center text-ink-faint text-xs">尚未触发过自主任务</td></tr>}
+                  {runs.length === 0 && <tr><td colSpan={4} className="px-3 py-5 text-center text-ink-faint text-xs"><QueryLoadState query={runsQuery} label="运行历史">尚未触发过自主任务</QueryLoadState></td></tr>}
                 </tbody>
               </table>
             </div>
@@ -223,7 +229,9 @@ export default function Autonomous() {
             </div>
             {reports.length > 0 && <span className="text-[11px] text-ink-faint">点击报告在右侧抽屉预览</span>}
           </div>
-          {reports.length > 0 ? (
+          {!reportsQuery.data && (reportsQuery.isLoading || reportsQuery.isError) ? (
+            <QueryLoadState query={reportsQuery} label="进化报告" />
+          ) : reports.length > 0 ? (
             <div className="ga-paper-card p-3.5 flex flex-wrap gap-2">
               {reports.map((r) => (
                 <button

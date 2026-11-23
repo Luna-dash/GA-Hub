@@ -1,3 +1,4 @@
+import { QueryLoadState } from '@/components/QueryLoadState'
 // Memory: tabs for global_mem.txt, insight, SOPs (markdown).
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
@@ -146,11 +147,11 @@ function memoryWriteError(error: unknown): void {
   toast.error('保存失败：' + errorMessageFromError(error))
 }
 
-function MemoryLoadingCard({ label }: { label: string }) {
+function MemoryLoadingCard({ label, query }: { label: string; query: React.ComponentProps<typeof QueryLoadState>['query'] }) {
   return (
     <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6 sm:pb-6 sm:pt-4 h-full">
-      <div className="ga-paper-card h-full grid place-items-center text-sm text-ink-faint" role="status">
-        正在载入 {label}…
+      <div className="ga-paper-card h-full grid place-items-center text-sm text-ink-faint">
+        <QueryLoadState label={label} query={query} />
       </div>
     </div>
   )
@@ -158,8 +159,9 @@ function MemoryLoadingCard({ label }: { label: string }) {
 
 function GlobalMem({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
   const qc = useQueryClient()
-  const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.global, queryFn: api.globalMem })
-  if (isLoading || !data) return <MemoryLoadingCard label="global_mem.txt" />
+  const query = useQuery({ queryKey: queryKeys.memory.global, queryFn: api.globalMem })
+  const { data } = query
+  if (!data) return <MemoryLoadingCard label="global_mem.txt" query={query} />
   return (
     <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6 sm:pb-6 sm:pt-4 h-full min-h-0">
       <VersionedMemoryEditor
@@ -184,8 +186,9 @@ function GlobalMem({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void 
 
 function Insight({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
   const qc = useQueryClient()
-  const { data, isLoading } = useQuery({ queryKey: queryKeys.memory.insight, queryFn: api.insight })
-  if (isLoading || !data) return <MemoryLoadingCard label="global_mem_insight.txt" />
+  const query = useQuery({ queryKey: queryKeys.memory.insight, queryFn: api.insight })
+  const { data } = query
+  if (!data) return <MemoryLoadingCard label="global_mem_insight.txt" query={query} />
   return (
     <div className="mx-auto w-full max-w-5xl px-4 pb-4 pt-3 sm:px-6 sm:pb-6 sm:pt-4 h-full min-h-0">
       <VersionedMemoryEditor
@@ -216,10 +219,12 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
   onDirtyChange: (dirty: boolean) => void
 }) {
   const qc = useQueryClient()
-  const { data } = useQuery({ queryKey: queryKeys.memory.sops, queryFn: api.sops })
+  const listQuery = useQuery({ queryKey: queryKeys.memory.sops, queryFn: api.sops })
+  const { data } = listQuery
   const sops = data?.sops ?? []
   const visible = filterSops(sops, q)
-  const { data: cur } = useQuery({ queryKey: queryKeys.memory.sop(active), queryFn: () => api.sop(active!), enabled: !!active })
+  const detailQuery = useQuery({ queryKey: queryKeys.memory.sop(active), queryFn: () => api.sop(active!), enabled: !!active })
+  const { data: cur } = detailQuery
 
   return (
     <div className="ga-archive-split">
@@ -275,7 +280,7 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
             )
           })}
           {visible.length === 0 && (
-            <li className="p-6 text-center text-ink-faint text-sm">{sops.length === 0 ? '无' : '无匹配 SOP'}</li>
+            <li className="p-6 text-center text-ink-faint text-sm"><QueryLoadState query={listQuery} label="SOP 列表">{sops.length === 0 ? '无' : '无匹配 SOP'}</QueryLoadState></li>
           )}
         </ul>
       </div>
@@ -292,7 +297,8 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
             </div>
           </div>
         )}
-        {active && cur && (
+        {active && !cur && <QueryLoadState query={detailQuery} label="SOP文件" />}
+         {active && cur && (
           <VersionedMemoryEditor
             key={active}
             label={`memory/${active}`}
@@ -317,10 +323,12 @@ function SopList({ active, q, setQ, selectSop, onDirtyChange }: {
 }
 
 function SkillList() {
-  const { data } = useQuery({ queryKey: queryKeys.skills.list(), queryFn: () => api.skills() })
+  const listQuery = useQuery({ queryKey: queryKeys.skills.list(), queryFn: () => api.skills() })
+  const { data } = listQuery
   const skills = data?.skills ?? []
   const [active, setActive] = usePageState<string | null>('memory.skillActive', null)
-  const { data: cur } = useQuery({ queryKey: queryKeys.skills.detail(active), queryFn: () => api.skill(active!), enabled: !!active })
+  const detailQuery = useQuery({ queryKey: queryKeys.skills.detail(active), queryFn: () => api.skill(active!), enabled: !!active })
+  const { data: cur } = detailQuery
   const [copied, setCopied] = useState(false)
 
   const copySkill = async () => {
@@ -361,7 +369,7 @@ function SkillList() {
               </li>
             )
           })}
-          {skills.length === 0 && <li className="p-6 text-center text-ink-faint text-sm">无</li>}
+          {skills.length === 0 && <li className="p-6 text-center text-ink-faint text-sm"><QueryLoadState query={listQuery} label="技能列表">无</QueryLoadState></li>}
         </ul>
       </div>
 
@@ -377,7 +385,8 @@ function SkillList() {
             </div>
           </div>
         )}
-        {active && cur && (
+        {active && !cur && <QueryLoadState query={detailQuery} label="技能文件" />}
+         {active && cur && (
           <div className="ga-paper-card flex flex-col h-full overflow-hidden">
             <div className="flex items-center justify-between gap-3 border-b border-line/70 bg-bg-soft/65 px-4 py-2.5">
               <div className="flex min-w-0 items-center gap-2">

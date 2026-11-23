@@ -371,6 +371,48 @@ def test_events_stream_sse_emits_live_events(tmp_path, monkeypatch):
     assert "step.update" in resp.text and "好" in resp.text
 
 
+def test_cancel_timeout_does_not_release_a_live_turn(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(engine, "project", lambda name: (workspace, tmp_path / "artifacts"))
+    entered = threading.Event()
+    release = threading.Event()
+    runtime = FakeRuntime()
+
+    def slow_turn(self, **kwargs):
+        entered.set()
+        release.wait(5)
+        return {"status": "cancelled", "usage": {}}
+
+    def request_cancel(db_path, run_id):
+        return True
+
+    class Clock:
+        @staticmethod
+        def monotonic():
+            return next(ticks)
+
+    monkeypatch.setattr(FakeWorker, "run_turn", slow_turn)
+    monkeypatch.setattr(runtime, "cancel_turn", request_cancel)
+    sessions = engine.AntiSessions(tmp_path / "anti.sqlite", runtime)
+    sid = sessions.create("project")["id"]
+    run = sessions.submit(sid, "slow-cancel", "wait")
+    rid = run["id"]
+    try:
+        assert entered.wait(2)
+        ticks = iter([0.0, 3.1])
+        with monkeypatch.context() as clock:
+            clock.setattr(engine, "time", Clock)
+            assert sessions.cancel(sid, rid)["status"] in engine.ACTIVE
+        assert sessions.run(sid, rid)["status"] in engine.ACTIVE
+    finally:
+        release.set()
+    deadline = time.monotonic() + 2
+    while sessions.run(sid, rid)["status"] not in engine.TERMINAL and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert sessions.run(sid, rid)["status"] == "cancelled"
+
+
 def test_account_cooldown_blocks_submit_until_reset_or_switch(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

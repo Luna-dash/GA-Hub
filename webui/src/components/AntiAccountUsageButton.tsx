@@ -30,6 +30,11 @@ const resetFormat = new Intl.DateTimeFormat('zh-CN', {
   hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
 })
 
+function formatReset(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '时间未知' : resetFormat.format(date)
+}
+
 function limitLabel(limit: string) {
   if (limit === 'Weekly Limit Remaining') return '每周额度'
   if (limit === 'Five Hour Limit Remaining') return '5 小时额度'
@@ -85,15 +90,11 @@ export function AntiAccountUsageButton({
   const [calibrating, setCalibrating] = useState<string | null>(null)
   const [calibratePct, setCalibratePct] = useState('100')
   const [calibrateNote, setCalibrateNote] = useState('')
-  const [hovered, setHovered] = useState(false)
-  const [focused, setFocused] = useState(false)
-  const [dismissed, setDismissed] = useState(false)
-  const tooltipId = useId()
+  const [open, setOpen] = useState(false)
+  const popoverId = useId()
   const button = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
-  const [tapped, setTapped] = useState(false)
   const [position, setPosition] = useState<{ top: number; left: number; maxHeight: number }>()
-  const open = (hovered || focused || tapped) && !dismissed
   useLayoutEffect(() => {
     if (!open) return
     const update = () => {
@@ -107,22 +108,36 @@ export function AntiAccountUsageButton({
     }
     const outside = (event: PointerEvent) => {
       if (event.target instanceof Node && !button.current?.contains(event.target) && !panel.current?.contains(event.target)) {
-        setTapped(false)
+        setOpen(false)
       }
+    }
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      if (!button.current?.contains(document.activeElement) && !panel.current?.contains(document.activeElement)) return
+      event.preventDefault()
+      setOpen(false)
+      button.current?.focus()
     }
     update()
     window.addEventListener('resize', update)
     window.addEventListener('scroll', update, true)
     document.addEventListener('pointerdown', outside)
+    document.addEventListener('keydown', escape)
     return () => {
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
       document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('keydown', escape)
     }
   }, [open])
-  const liveRows = usage.data?.rows
-  const fallbackRows = !usage.data && !usage.isError ? cachedUsage?.rows : undefined
-  const rows = running ? (liveRows ?? fallbackRows) : fallbackRows
+  useLayoutEffect(() => {
+    if (open && position && !panel.current?.contains(document.activeElement) && document.activeElement === button.current) {
+      panel.current?.querySelector<HTMLElement>('[role=dialog]')?.focus()
+    }
+  }, [open, !!position])
+  const liveRows = running ? usage.data?.rows : undefined
+  const fallbackRows = !running || (!usage.data && !usage.isError) ? cachedUsage?.rows : undefined
+  const rows = liveRows ?? fallbackRows
   const poolRows = pools.data
   const coolingPools = poolRows?.filter(p => poolStatusView(p).cooling) ?? []
   const message = !running ? '请先启用 Agy 运行时。'
@@ -134,39 +149,32 @@ export function AntiAccountUsageButton({
   const Icon = usage.isPending ? LoaderCircle : Gauge
 
   return (
-    <div
-      className="relative inline-flex"
-      onMouseEnter={() => { setHovered(true); setDismissed(false) }}
-      onMouseLeave={() => { setHovered(false); setTapped(false) }}
-    >
+    <div className="relative inline-flex">
       <button
         ref={button}
         type="button"
         aria-label="检测反重力额度"
-        aria-describedby={open ? tooltipId : undefined}
-        aria-disabled={!running || usage.isPending}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? popoverId : undefined}
         className={clsx('ga-btn-icon',
           rows?.length ? 'text-ink' : 'text-ink-muted',
           running && !usage.isPending ? '' : 'cursor-default opacity-65')}
-        onFocus={event => { setFocused(event.currentTarget.matches(':focus-visible')); setDismissed(false) }}
-        onBlur={() => setFocused(false)}
-        onKeyDown={event => { if (event.key === 'Escape') { setTapped(false); setDismissed(true) } }}
         onClick={() => {
-          if (!hovered && !focused) setTapped(true)
-          setDismissed(false)
-          if (running && !usage.isPending) usage.mutate()
+          if (!open && running && !usage.isPending) usage.mutate()
+          setOpen(!open)
         }}
       >
         <Icon size={16} aria-hidden="true" className={clsx(usage.isPending && 'motion-safe:animate-spin')} />
       </button>
       {open && position && createPortal(
         <div ref={panel} className="fixed z-[60] w-[min(19.5rem,calc(100vw-16px))] pt-2" style={{ top: position.top, left: position.left }}>
-          <div id={tooltipId} role="tooltip" className="ga-paper-popover overflow-y-auto overscroll-contain rounded-xl p-3 text-xs text-ink" style={{ maxHeight: position.maxHeight }}>
+          <div id={popoverId} tabIndex={-1} role="dialog" aria-label="反重力剩余额度" className="ga-paper-popover overflow-y-auto overscroll-contain rounded-xl p-3 text-xs text-ink" style={{ maxHeight: position.maxHeight }}>
             <div className="flex items-center justify-between gap-2">
               <span className="font-semibold">反重力剩余额度</span>
               {!liveRows && fallbackRows?.length && cachedUsage?.checked_at ? (
                 <span className="text-[11px] text-ink-muted tabular-nums">
-                  {running ? '缓存' : '离线缓存'} · {resetFormat.format(new Date(cachedUsage.checked_at))}
+                  {running ? '缓存' : '离线缓存'} · {formatReset(cachedUsage.checked_at)}
                 </span>
               ) : null}
             </div>
@@ -177,7 +185,7 @@ export function AntiAccountUsageButton({
                     <span className="min-w-0 break-words font-medium">{row.model}</span>
                     <span className="text-right font-semibold tabular-nums">{row.remaining_pct}%</span>
                     <span className="text-ink-muted">{limitLabel(row.limit)}</span>
-                    <time dateTime={row.resets_at} className="text-right text-ink-muted tabular-nums">{resetFormat.format(new Date(row.resets_at))} 重置</time>
+                    <time dateTime={row.resets_at} className="text-right text-ink-muted tabular-nums">{formatReset(row.resets_at)} 重置</time>
                   </li>
                 ))}
               </ul>

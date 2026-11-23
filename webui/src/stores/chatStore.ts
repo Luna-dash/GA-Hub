@@ -33,6 +33,7 @@ import type { PasteAttachment } from '@/api/types'
 import { type ViewportResumePolicy } from '@/utils/conversationViewport'
 
 interface SessionView {
+  readingOlderHistory: boolean
   msgs: ChatMsg[]
   streaming: boolean
   /** Final landing policy for the next activation of this session. */
@@ -143,6 +144,7 @@ const runtime = {
   historyGeneration: 0,
   historyAbort: null as AbortController | null,
   olderHistoryAbort: null as AbortController | null,
+  allHistoryOwner: null as symbol | null,
   /** 当前连接的节流清理器（flush 尾巴 + 定时器），start 切换时先结算 */
   liveCleanup: null as (() => void) | null,
   webuiStageSequence: 0,
@@ -329,9 +331,11 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     runtime.olderHistoryAbort = null
 
     const switching = current.sessionId !== sessionId
+    if (switching) runtime.allHistoryOwner = null
     const sessionViews = { ...current.sessionViews }
     if (current.sessionId && switching) {
       const previousView: SessionView = {
+        readingOlderHistory: current.readingOlderHistory,
         msgs: current.msgs,
         streaming: current.streaming,
         resumePolicy: current.streaming ? 'follow-latest' : 'restore-position',
@@ -365,10 +369,10 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       historyBefore: resumeCachedView ? cached.historyBefore : null,
       olderHistoryStatus: resumeCachedView ? cached.olderHistoryStatus : 'idle',
       olderHistoryError: resumeCachedView ? cached.olderHistoryError : null,
-      loadingAllHistory: false,
-      allHistoryLoadedItems: 0,
-      allHistoryNotice: null,
-      readingOlderHistory: false,
+      loadingAllHistory: runtime.allHistoryOwner !== null,
+      allHistoryLoadedItems: switching || forceHistory ? 0 : current.allHistoryLoadedItems,
+      allHistoryNotice: switching || forceHistory ? null : current.allHistoryNotice,
+      readingOlderHistory: switching ? (cached?.readingOlderHistory ?? false) : current.readingOlderHistory,
       sessionViews: pruneSessionViews(sessionViews),
       // Like the Tauri desktop, switching only rebinds the already-live
       // per-session projection.  The cursor WebSocket catches up events that
@@ -644,7 +648,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       if (get().historyRevision !== revision) {
         set({ olderHistoryStatus: 'idle', olderHistoryError: null })
         queueMicrotask(() => {
-          if (get().sessionId === sessionId) get().start(sessionId, { forceHistory: true })
+          if (!abort.signal.aborted && get().sessionId === sessionId) get().start(sessionId, { forceHistory: true })
         })
         return
       }
@@ -692,12 +696,15 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     ) return
 
     const sessionId = current.sessionId
+    const owner = Symbol()
+    runtime.allHistoryOwner = owner
+    const ownsLoad = () => runtime.allHistoryOwner === owner && get().sessionId === sessionId
     const deadline = Date.now() + 5 * 60_000
     let stalled = 0
     set({ loadingAllHistory: true, allHistoryLoadedItems: 0, allHistoryNotice: null, olderHistoryError: null })
     const reportPartial = () => {
       const state = get()
-      if (state.sessionId === sessionId && state.historyHasMore) {
+      if (ownsLoad() && state.historyHasMore) {
         set({ allHistoryNotice: '本次未加载全部历史，仍可点击「加载更早消息」继续查看。' })
       }
     }
@@ -705,7 +712,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     try {
       for (let step = 0; step < 600; step += 1) {
         const state = get()
-        if (state.sessionId !== sessionId) return
+        if (!ownsLoad()) return
         if (Date.now() > deadline) { reportPartial(); return }
         if (state.historyStatus === 'history_error') return
         if (state.historyStatus !== 'ready') {
@@ -725,7 +732,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
         await get().loadOlderHistory(beforePrepend)
 
         const after = get()
-        if (after.sessionId !== sessionId) return
+        if (!ownsLoad()) return
         if (after.olderHistoryStatus === 'error' || after.historyStatus === 'history_error') {
           stalled += 1
           if (stalled >= 3) { reportPartial(); return }
@@ -754,7 +761,10 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       }
       reportPartial()
     } finally {
-      if (get().sessionId === sessionId) set({ loadingAllHistory: false })
+      if (ownsLoad()) {
+        runtime.allHistoryOwner = null
+        set({ loadingAllHistory: false })
+      }
     }
   },
 
@@ -772,6 +782,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     runtime.historyAbort?.abort()
     runtime.olderHistoryAbort?.abort()
     runtime.olderHistoryAbort = null
+    runtime.allHistoryOwner = null
     runtime.liveCleanup?.()
     runtime.liveCleanup = null
     runtime.abortedStreams.clear()
@@ -807,6 +818,7 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
     runtime.historyAbort?.abort()
     runtime.olderHistoryAbort?.abort()
     runtime.olderHistoryAbort = null
+    runtime.allHistoryOwner = null
     runtime.liveCleanup?.()
     runtime.liveCleanup = null
     runtime.abortedStreams.clear()

@@ -103,7 +103,7 @@ describe('conversation turn ordering', () => {
     useChatStore.setState({ sessionId: null, sock: null, msgs: [], sessionViews: {
       cached: { msgs: [...turn('new', 20), ...turn('old', 10)], streaming: false, resumePolicy: 'restore-position', projectionReady: true,
         historyStatus: 'ready', historyError: null, historyRevision: 'rev', historyHasMore: false, historyBefore: null,
-        olderHistoryStatus: 'idle', olderHistoryError: null, lastAccessedAt: 1 },
+        olderHistoryStatus: 'idle', olderHistoryError: null, readingOlderHistory: false, lastAccessedAt: 1 },
     } })
     const history = vi.spyOn(api, 'getSessionMessages')
     useChatStore.getState().start('cached')

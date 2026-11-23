@@ -319,8 +319,6 @@ class AntiSessions:
         key = (self._db_key, rid)
         add_dirs = tuple(str(d) for d in staging_dirs)
         allowed_roots = [workspace, *staging_dirs, _paths.admin_uploads_dir()]
-        worker = self.runtime.get_worker(str(self._db_key), profile_id, sid, workspace)
-        self.runtime.register_turn(self._db_key, rid, worker)
 
         def on_event(evt: dict[str, Any]) -> None:
             etype = evt.get("type")
@@ -340,7 +338,11 @@ class AntiSessions:
                 _EVENT_BUS.notify(key, finished=False)
 
         result: dict[str, Any] = {}
+        registered = False
         try:
+            worker = self.runtime.get_worker(str(self._db_key), profile_id, sid, workspace)
+            self.runtime.register_turn(self._db_key, rid, worker)
+            registered = True
             result = worker.run_turn(
                 run_id=rid,
                 prompt_text=prompt_text,
@@ -361,9 +363,8 @@ class AntiSessions:
             log.exception("Unexpected Agy ACP run failure")
             result = {"status": "cli_error", "error": f"Agy 运行异常: {exc}", "usage": {}}
         finally:
-            self.runtime.unregister_turn(self._db_key, rid)
-            with self._local_lock:
-                self._local_runs.discard(key)
+            if registered:
+                self.runtime.unregister_turn(self._db_key, rid)
             for directory in staging_dirs:
                 shutil.rmtree(directory, ignore_errors=True)
 
@@ -377,19 +378,24 @@ class AntiSessions:
         if isinstance(error, str) and ("login" in error.lower() or "auth" in error.lower()):
             error_detail = "请先在顶部账号管理完成官方 Agy 登录后再试。"
 
-        with self.connect() as db, db:
-            if isinstance(conv_id, str) and conv_id:
+        try:
+            with self.connect() as db, db:
+                if isinstance(conv_id, str) and conv_id:
+                    db.execute(
+                        "INSERT INTO profile_conversations (session_id,profile_id,conversation) VALUES (?,?,?) "
+                        "ON CONFLICT(session_id,profile_id) DO UPDATE SET conversation=excluded.conversation",
+                        (sid, profile_id, conv_id),
+                    )
+                    if profile_id == agy_profile.DEFAULT:
+                        db.execute("UPDATE sessions SET conversation=? WHERE id=?", (conv_id, sid))
                 db.execute(
-                    "INSERT INTO profile_conversations (session_id,profile_id,conversation) VALUES (?,?,?) "
-                    "ON CONFLICT(session_id,profile_id) DO UPDATE SET conversation=excluded.conversation",
-                    (sid, profile_id, conv_id),
+                    "UPDATE runs SET status=?, answer=?, error=?, error_detail=?, usage_json=? WHERE id=? "
+                    "AND status IN ('submitting','queued','running','unknown')",
+                    (status, answer, error, error_detail, usage_json, rid),
                 )
-                if profile_id == agy_profile.DEFAULT:
-                    db.execute("UPDATE sessions SET conversation=? WHERE id=?", (conv_id, sid))
-            db.execute(
-                "UPDATE runs SET status=?, answer=?, error=?, error_detail=?, usage_json=? WHERE id=?",
-                (status, answer, error, error_detail, usage_json, rid),
-            )
+        finally:
+            with self._local_lock:
+                self._local_runs.discard(key)
 
         cooldown = 60 if status == "rate_limited" else 0
         self.ledger.record_run(
@@ -628,16 +634,15 @@ class AntiSessions:
         run = self.run(sid, rid)
         if run["status"] in TERMINAL:
             return run
-        self.runtime.cancel_turn(self._db_key, rid)
         deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
+        sent = False
+        while True:
             current = self.run(sid, rid)
             if current["status"] in TERMINAL:
                 return current
+            if not sent:
+                sent = self.runtime.cancel_turn(self._db_key, rid)
+            if time.monotonic() >= deadline:
+                # A live worker still owns the turn until it commits the result.
+                return self.refresh(sid, rid)
             time.sleep(0.05)
-        with self.connect() as db, db:
-            db.execute(
-                "UPDATE runs SET status=? WHERE id=? AND status IN ('submitting','queued','running','unknown')",
-                ("cancelled", rid),
-            )
-        return self.run(sid, rid)
