@@ -29,6 +29,7 @@ import { usePageState } from '@/utils/pageState'
 import { CHAT_FONT_SCALE_EVENT, chatFontPercent, getChatFontScale } from '@/utils/chatAppearance'
 import { UI_SETTINGS_HYDRATED_EVENT } from '@/stores/uiSettingsStore'
 import { resolveApiUrl } from '@/runtime/runtimeConfig'
+import { queryKeys } from '@/queries/queryKeys'
 import { ThemedSelect } from '@/components/ThemedSelect'
 import {
   antiApi, api, HttpError,
@@ -175,7 +176,7 @@ export default function AntiChat() {
   const [headerActions, setHeaderActions] = useState<HTMLDivElement | null>(null)
   const daemon = useAntiDaemonStatus()
   const profiles = useAgyProfiles()
-  const projects = useQuery({ queryKey: ['anti-projects'], queryFn: api.projects })
+  const projects = useQuery({ queryKey: queryKeys.projects, queryFn: api.projects })
   const sessions = useQuery({ queryKey: sessionsKey, queryFn: ({ signal }) => antiApi.sessions(signal), refetchInterval: 5000 })
   const updateList = async (update: (rows: Session[]) => Session[]) => {
     await cache.cancelQueries({ queryKey: sessionsKey, exact: true })

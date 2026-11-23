@@ -126,7 +126,7 @@ export default function Conductor() {
   // Bumped to move focus into the composer (retry prefill).
   const [composerFocusTick, setComposerFocusTick] = useState(0)
   const [antiProject, setAntiProject] = useState('')
-  const { data: antiProjects } = useQuery({ queryKey: ['anti-projects'], queryFn: api.projects })
+  const { data: antiProjects } = useQuery({ queryKey: queryKeys.projects, queryFn: api.projects })
   const actionInFlightRef = useRef(false)
   const ensureFiredRef = useRef(false)
   const ensureInFlightRef = useRef(false)

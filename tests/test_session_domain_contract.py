@@ -137,3 +137,66 @@ def test_domain_builds_each_producer_once(tmp_path, monkeypatch) -> None:
     marker = object()
     domain.attach_coordinator(marker)
     assert domain.peek_coordinator() is marker
+
+
+def test_routes_do_not_eagerly_construct_metadata_store_on_module_top_level() -> None:
+    offenders: list[str] = []
+    for path in ROUTES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for stmt in tree.body:
+            for node in ast.walk(stmt):
+                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    break
+                if isinstance(node, ast.Call):
+                    func = node.func
+                    name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+                    if name == "SessionMetadataStore":
+                        offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+    assert offenders == []
+
+
+def test_conversations_and_tokens_routes_resolve_app_owned_metadata_store(tmp_path, monkeypatch) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.routes import conversations, tokens
+    from server.services.session_lifecycle import SessionLifecycle
+    from server.services.session_metadata import SessionMetadataStore
+
+    archive = tmp_path / "bound.txt"
+    archive.write_text("hello", encoding="utf-8")
+    store = SessionMetadataStore(tmp_path / "app-metadata")
+    created = store.create(title="应用域唯一会话")
+    store.bind_archive(created["id"], archive)
+
+    monkeypatch.setattr(
+        conversations,
+        "list_archive_sessions",
+        lambda: [(str(archive), 1.0, "preview", 1)],
+    )
+
+    app = FastAPI()
+    app.state.session_lifecycle = SessionLifecycle(store=store)
+    app.include_router(conversations.router)
+    app.include_router(tokens.router)
+
+    with TestClient(app) as client:
+        conv_resp = client.get("/api/conversations?source=session")
+        assert conv_resp.status_code == 200
+        payload = conv_resp.json()
+        assert payload["total"] == 1
+        assert payload["items"][0]["bound_session_id"] == created["id"]
+        assert payload["items"][0]["title"] == "应用域唯一会话"
+
+        if tokens.usage_bridge is not None:
+            monkeypatch.setattr(
+                tokens.usage_bridge,
+                "read_usage_ledger",
+                lambda: [{"k": f"GA-{created['id']}", "t": 1700000000, "i": 10, "o": 5}],
+            )
+            stats_resp = client.get("/api/tokens/stats")
+            assert stats_resp.status_code == 200
+            threads = stats_resp.json()["threads"]
+            assert [(row["thread"], row["title"]) for row in threads] == [
+                (created["id"], "应用域唯一会话")
+            ]

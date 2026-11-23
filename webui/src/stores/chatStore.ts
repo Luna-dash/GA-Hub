@@ -84,6 +84,8 @@ interface ChatState {
   /** Page back from the newest edge until the whole archive is loaded. */
   loadAllHistory: (beforePrepend?: () => void) => Promise<void>
   dropSessionView: (sessionId: string) => void
+  /** Clear streaming protection on a parked session once the backend reports it idle. */
+  settleInactiveSessionView: (sessionId: string) => void
   /**
    * Tear down the live connection and local projection state (session
    * unbind / app-level logout). This does NOT abort a running task —
@@ -249,14 +251,14 @@ function sessionViewChars(view: SessionView): number {
 
 function pruneSessionViews(views: Record<string, SessionView>): Record<string, SessionView> {
   const entries = Object.entries(views)
-  const protectedEntries = entries.filter(([, view]) => view.streaming)
-  const ordinaryEntries = entries
-    .filter(([, view]) => !view.streaming)
-    .sort(([, left], [, right]) => right.lastAccessedAt - left.lastAccessedAt)
+  const prioritized = [
+    ...entries.filter(([, view]) => view.streaming).sort(([, left], [, right]) => right.lastAccessedAt - left.lastAccessedAt),
+    ...entries.filter(([, view]) => !view.streaming).sort(([, left], [, right]) => right.lastAccessedAt - left.lastAccessedAt),
+  ]
 
-  const kept = new Map(protectedEntries)
-  let retainedChars = protectedEntries.reduce((total, [, view]) => total + sessionViewChars(view), 0)
-  for (const [sessionId, view] of ordinaryEntries) {
+  const kept = new Map<string, SessionView>()
+  let retainedChars = 0
+  for (const [sessionId, view] of prioritized) {
     if (kept.size >= MAX_CACHED_SESSION_VIEWS) break
     const chars = sessionViewChars(view)
     if (chars > MAX_CACHED_SESSION_CHARS || retainedChars + chars > MAX_CACHED_SESSION_CHARS) continue
@@ -807,6 +809,18 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
       sessionViews,
     })
   },
+
+  settleInactiveSessionView: (sessionId) => set((st) => {
+    if (st.sessionId === sessionId) return st
+    const view = st.sessionViews[sessionId]
+    if (!view?.streaming) return st
+    return {
+      sessionViews: pruneSessionViews({
+        ...st.sessionViews,
+        [sessionId]: { ...view, streaming: false },
+      }),
+    }
+  }),
 
   /**
    * Tear down the live connection and local projection state (session

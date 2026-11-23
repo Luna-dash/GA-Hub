@@ -443,3 +443,41 @@ def test_restore_rejects_unknown_target_session_before_loading_archive(
 
     assert response.status_code == 404
     assert archive_lookup_called is False
+
+
+def test_list_conversations_filters_by_source_before_pagination(tmp_path, monkeypatch):
+    local_a = tmp_path / "local-a.txt"
+    local_b = tmp_path / "local-b.txt"
+    session_c = tmp_path / "session-c.txt"
+    for archive in (local_a, local_b, session_c):
+        archive.write_text("hello", encoding="utf-8")
+
+    monkeypatch.setattr(
+        conversations,
+        "list_archive_sessions",
+        lambda: [
+            (str(local_a), 3.0, "a", 1),
+            (str(local_b), 2.0, "b", 1),
+            (str(session_c), 1.0, "c", 1),
+        ],
+    )
+
+    class Store:
+        def find_by_archive(self, path):
+            if os.path.basename(str(path)) == "session-c.txt":
+                return {"id": "sess-owner"}
+            return None
+
+        def title_for_archive(self, _path):
+            return "Bound session"
+
+    monkeypatch.setattr(conversations, "_metadata", Store())
+
+    result = asyncio.run(
+        conversations.list_conversations(offset=0, limit=2, source="session")
+    )
+
+    assert result["total"] == 1
+    assert [item["id"] for item in result["items"]] == ["session-c.txt"]
+    assert result["items"][0]["bound_session_id"] == "sess-owner"
+    assert result["items"][0]["source"] == "session"

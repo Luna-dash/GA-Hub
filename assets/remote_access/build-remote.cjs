@@ -1,7 +1,9 @@
-// Run: node assets/remote_access/build-remote.cjs (from repository root).
+// Run: node assets/remote_access/build-remote.cjs (from any working directory).
 const path = require('node:path');
-const modules = path.resolve(__dirname, '../../webui/node_modules');
+const repoRoot = path.resolve(__dirname, '../..');
+const modules = path.join(repoRoot, 'webui/node_modules');
 require(path.join(modules, 'esbuild')).buildSync({
+  absWorkingDir: repoRoot,
   entryPoints: [path.join(__dirname, 'remote-app.js')],
   outfile: path.join(__dirname, 'remote.js'),
   bundle: true, minify: true, format: 'iife', platform: 'browser', target: ['es2020'],
@@ -11,7 +13,8 @@ require(path.join(modules, 'esbuild')).buildSync({
 
 // Built with the shared desktop semantics, executed only by the Hub service.
 require(path.join(modules, 'esbuild')).buildSync({
-  entryPoints: [path.join(__dirname, '../../server/services/message-presentation-worker.ts')],
-  outfile: path.join(__dirname, '../../server/services/message-presentation-worker.cjs'),
+  absWorkingDir: repoRoot,
+  entryPoints: [path.join(repoRoot, 'server/services/message-presentation-worker.ts')],
+  outfile: path.join(repoRoot, 'server/services/message-presentation-worker.cjs'),
   bundle: true, platform: 'node', format: 'cjs', target: ['node18'],
 });

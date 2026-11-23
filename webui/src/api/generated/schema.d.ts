@@ -7233,6 +7233,7 @@ export interface operations {
                 q?: string | null;
                 offset?: number;
                 limit?: number;
+                source?: ("all" | "session" | "im" | "local") | null;
             };
             header?: never;
             path?: never;

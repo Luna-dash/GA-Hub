@@ -391,13 +391,14 @@ class EventBus:
         owner_loop = asyncio.get_running_loop()
         async with self._lock:
             with self._state_lock:
+                history = list(self._history) if replay else []
                 self._subs.append((prefixes, q))
                 self._subscriber_loops[q] = owner_loop
         try:
             if replay:
                 matching_history = [
                     evt
-                    for evt in list(self._history)
+                    for evt in history
                     if _matches_topic(evt.topic, prefixes)
                 ]
                 for evt in matching_history[-replay:]:

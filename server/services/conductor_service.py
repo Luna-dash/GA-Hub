@@ -394,7 +394,6 @@ class ConductorService:
         self._shutdown_monitor_stopped = False
         self._closed = False
         self.chat_messages: list = []
-        self._chat_lock = threading.RLock()
         self.workflow_tracker = WorkflowTracker()
         self._started = False
         self._conductor_llm_index = None
@@ -997,7 +996,9 @@ class ConductorService:
             if (item.get("role") == "user"
                     and item.get("request_id") == request_id):
                 return item.get("msg", "")
-        for item in reversed(self.chat_messages):
+        with self._chat_guard:
+            local_items = list(reversed(self.chat_messages))
+        for item in local_items:
             if (item.get("role") == "user"
                     and item.get("request_id") == request_id):
                 return item.get("msg", "")
@@ -1120,7 +1121,7 @@ class ConductorService:
                         self.publish_workflow_transition(transition)
 
             def mirror():
-                with self._chat_lock:
+                with self._chat_guard:
                     if item.get("id") in self._relayed_chat_ids:
                         return
                     self.chat_messages.append(hub_item)

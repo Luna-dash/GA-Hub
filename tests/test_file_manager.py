@@ -85,6 +85,24 @@ def test_slow_launch_does_not_spawn_more_on_retry(tmp_path, environment):
     assert launch.call_count == 1
 
 
+def test_expired_pending_launch_recovers_instead_of_wedging(tmp_path, environment, monkeypatch):
+    manager, shell, windows, launch = environment
+    launch.side_effect = None
+    with pytest.raises(OSError, match="still opening"):
+        manager._reveal(shell, tmp_path)
+    assert launch.call_count == 1
+    assert manager._pending is not None
+
+    # Advance past PENDING_LAUNCH_TTL_SECONDS so an orphaned launch is discarded.
+    stale_started = manager._pending[2] - fm.PENDING_LAUNCH_TTL_SECONDS - 1.0
+    manager._pending = (manager._pending[0], manager._pending[1], stale_started)
+    launch.side_effect = lambda command: windows.append(Window(77, tmp_path))
+    manager._reveal(shell, tmp_path)
+    assert launch.call_count == 2
+    assert manager._hwnd == 77
+    assert manager._pending is None
+
+
 def test_failed_launch_can_be_retried(tmp_path, environment):
     manager, shell, windows, launch = environment
     launch.side_effect = OSError("missing explorer")

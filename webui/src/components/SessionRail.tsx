@@ -304,31 +304,36 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
 
   const acknowledgeSession = useCallback((sessionId: string) => {
     const completedRunId = runtimes[sessionId]?.completed_run_id
-    if (completedRunId) {
+    if (completedRunId && seenCompletedRuns[sessionId] !== completedRunId) {
       const storedSeen = readJson<Record<string, string>>(seen_completed_key, {})
-      if (storedSeen[sessionId] !== completedRunId) {
-        const nextSeen = { ...storedSeen, [sessionId]: completedRunId }
-        localStorage.setItem(seen_completed_key, JSON.stringify(nextSeen))
-        setSeenCompletedRuns(nextSeen)
-      }
+      const nextSeen = { ...storedSeen, ...seenCompletedRuns, [sessionId]: completedRunId }
+      try { localStorage.setItem(seen_completed_key, JSON.stringify(nextSeen)) } catch { /* 私有模式等 */ }
+      setSeenCompletedRuns(nextSeen)
     }
 
-    const storedTerminal = readJson<TerminalMap>(terminal_key, {})
-    if (storedTerminal[sessionId]) {
-      const nextStored = { ...storedTerminal }
+    if (terminalState[sessionId]) {
+      const storedTerminal = readJson<TerminalMap>(terminal_key, {})
+      const nextStored = { ...storedTerminal, ...terminalState }
       delete nextStored[sessionId]
-      localStorage.setItem(terminal_key, JSON.stringify(nextStored))
+      try { localStorage.setItem(terminal_key, JSON.stringify(nextStored)) } catch { /* 私有模式等 */ }
+      setTerminalState((current) => {
+        if (!current[sessionId]) return current
+        const next = { ...current }
+        delete next[sessionId]
+        return next
+      })
     }
-    setTerminalState((current) => {
-      if (!current[sessionId]) return current
-      const next = { ...current }
-      delete next[sessionId]
-      return next
-    })
-  }, [runtimes])
+  }, [runtimes, seenCompletedRuns, seen_completed_key, terminalState, terminal_key])
+
+  const currentNeedsAcknowledge = Boolean(
+    currentId && (
+      terminalState[currentId]
+      || (runtimes[currentId]?.completed_run_id && seenCompletedRuns[currentId] !== runtimes[currentId]?.completed_run_id)
+    ),
+  )
 
   useEffect(() => {
-    if (!currentId) return
+    if (!currentId || !currentNeedsAcknowledge) return
     const acknowledgeCurrent = () => acknowledgeSession(currentId)
     window.addEventListener('pointerdown', acknowledgeCurrent, true)
     window.addEventListener('keydown', acknowledgeCurrent, true)
@@ -340,7 +345,7 @@ function SessionRailComponent({ projects: projectItems, sessions, runtimes, curr
       window.removeEventListener('wheel', acknowledgeCurrent, true)
       window.removeEventListener('focus', acknowledgeCurrent)
     }
-  }, [acknowledgeSession, currentId])
+  }, [acknowledgeSession, currentId, currentNeedsAcknowledge])
 
   const selectSession = (sessionId: string) => {
     acknowledgeSession(sessionId)

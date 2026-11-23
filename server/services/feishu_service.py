@@ -542,18 +542,21 @@ class FeishuService:
             log_file = self.log_file()
             log_file.parent.mkdir(parents=True, exist_ok=True)
             log_fh = log_file.open("a", encoding="utf-8", errors="replace")
-            log_fh.write("\n" + "=" * 18 + " GA-Hub start feishuapp " + time.strftime("%Y-%m-%d %H:%M:%S") + " " + "=" * 18 + "\n")
-            log_fh.flush()
-            self._proc = child_job.spawn(
-                [self._python(), "-X", "utf8", "-u", str(fsapp)],
-                kind="feishu",
-                cwd=str(_paths.GA_ROOT),
-                env=self._base_env(),
-                stdout=log_fh,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                **hidden_process_kwargs(new_process_group=True),
-            )
+            try:
+                log_fh.write("\n" + "=" * 18 + " GA-Hub start feishuapp " + time.strftime("%Y-%m-%d %H:%M:%S") + " " + "=" * 18 + "\n")
+                log_fh.flush()
+                self._proc = child_job.spawn(
+                    [self._python(), "-X", "utf8", "-u", str(fsapp)],
+                    kind="feishu",
+                    cwd=str(_paths.GA_ROOT),
+                    env=self._base_env(),
+                    stdout=log_fh,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    **hidden_process_kwargs(new_process_group=True),
+                )
+            finally:
+                log_fh.close()
             pid = self._proc.pid
         evt = {"started": True, "running": True, "pid": pid, "log_file": str(self.log_file())}
         self._publish_chat_events_from_log()

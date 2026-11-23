@@ -419,6 +419,7 @@ def _resolve_hub_client() -> Any:
 
 def start_hub_session_projection(
     *,
+    store: Any = None,
     get_coordinator: Callable[[], Any] | None = None,
     peek_coordinator: Callable[[], Any] | None = None,
 ) -> bool:
@@ -433,6 +434,7 @@ def start_hub_session_projection(
         if _service is not None:
             return True
         service = HubSessionProjectionService(
+            store=store,
             get_coordinator=get_coordinator,
             peek_coordinator=peek_coordinator,
         )

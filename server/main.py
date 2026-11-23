@@ -481,6 +481,12 @@ def create_app() -> FastAPI:
         log.info("conductor service owned (monitor running)")
 
         try:
+            from .services.agy_runtime import runtime as agy_runtime_instance
+            services.agy_runtime = agy_runtime_instance
+        except Exception:
+            log.debug("agy runtime unavailable during startup", exc_info=True)
+
+        try:
             fs = FeishuService.instance()
             services.feishu = fs
             fs.start_log_watcher()
@@ -496,7 +502,10 @@ def create_app() -> FastAPI:
         # unlink, so it belongs to startup (off the event loop) instead of the
         # first point-lookup request.
         from .routes import conversations as conversations_routes
-        await asyncio.to_thread(conversations_routes.run_legacy_title_migration_once)
+        await asyncio.to_thread(
+            conversations_routes.run_legacy_title_migration_once,
+            lifecycle.store,
+        )
 
         # Phone projection: expose chat sessions as hub peers (plan §7.3).
         # The composition root injects the accessors it owns — services/ must
@@ -506,6 +515,7 @@ def create_app() -> FastAPI:
             from .services.hub_session_projection import start_hub_session_projection
 
             start_hub_session_projection(
+                store=lifecycle.store,
                 get_coordinator=lifecycle.coordinator,
                 peek_coordinator=lifecycle.peek_coordinator,
             )

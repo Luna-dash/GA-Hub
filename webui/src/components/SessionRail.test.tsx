@@ -332,6 +332,15 @@ describe('SessionRail', () => {
     expect(JSON.parse(localStorage.getItem('gahub.sessionRailSeenCompletedRuns') || '{}')).toEqual({
       [sessions[0].id]: 'completed-current',
     })
+
+    // Subsequent scroll/wheel/key activity on an already-acknowledged session must not re-parse localStorage.
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem')
+    act(() => {
+      window.dispatchEvent(new Event('wheel'))
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
+    })
+    expect(getItemSpy).not.toHaveBeenCalled()
+    getItemSpy.mockRestore()
   })
 
   it('groups sessions into project drawers ordered by latest activity', () => {

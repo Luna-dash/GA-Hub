@@ -29,6 +29,7 @@ class AppServices:
     scheduler_host: SchedulerHost | None = None
     mykey_sync: Any | None = None
     goalhive: Any | None = None
+    agy_runtime: Any | None = None
 
     def clear(self) -> None:
         """Forget every owner before a new lifespan or after teardown."""
@@ -38,6 +39,7 @@ class AppServices:
         self.scheduler_host = None
         self.mykey_sync = None
         self.goalhive = None
+        self.agy_runtime = None
 
     def status_snapshot(self) -> dict[str, Any]:
         """Merge per-service status reports; failures degrade, never raise."""
@@ -99,7 +101,12 @@ class AppServices:
                     log.warning("agent shutdown missed its graceful deadline")
             except Exception:
                 log.exception("agent shutdown failed")
-        if "server.services.agy_runtime" in sys.modules:
+        if self.agy_runtime is not None:
+            try:
+                self.agy_runtime.shutdown()
+            except Exception:
+                log.exception("agy runtime shutdown failed")
+        elif "server.services.agy_runtime" in sys.modules:
             try:
                 sys.modules["server.services.agy_runtime"].runtime.shutdown()
             except Exception:

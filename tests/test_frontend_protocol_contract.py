@@ -25,12 +25,12 @@ def test_live_chat_lazily_creates_sessions_only_on_submit_or_explicit_new():
     init_block = source[source.index("  useEffect(() => {"):source.index("  const submit =")]
     assert "api.createSession" not in init_block
     assert "if (!current) {" in init_block
-    assert "setSession(null)" in init_block
+    assert "setSelectedSessionId(null)" in init_block
 
     # The empty state remains sendable; submit owns the lazy create path.
     assert "disabled={creatingSession}" in source
     submit_block = source[source.index("  const submit ="):source.index("  const newConv =")]
-    assert "api.createSession({ title: '', llm_key: defaultLlmKey })" in submit_block
+    assert "api.createSession({ title: '', llm_key: resolvedDefaultKey })" in submit_block
     assert "api.createSession({ title: '', llm_key: null })" not in source
     assert "liveChat:pending" in source
 

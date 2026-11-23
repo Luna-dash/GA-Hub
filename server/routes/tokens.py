@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from .. import _paths
 from ..schemas import TokenStatsResp
@@ -15,8 +16,49 @@ from ..services.session_metadata import SessionMetadataStore
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tokens", tags=["tokens"])
-_SESSION_METADATA = SessionMetadataStore()
+
+
+class _LazySessionMetadataProxy:
+    """Lazy fallback store for standalone unit callers; routes prefer app.state."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._store: SessionMetadataStore | None = None
+
+    def _target(self) -> SessionMetadataStore:
+        store = self._store
+        if store is None:
+            with self._lock:
+                store = self._store
+                if store is None:
+                    store = self._store = SessionMetadataStore()
+        return store
+
+    def _has_overrides(self) -> bool:
+        for key, value in self.__dict__.items():
+            if key in {"_lock", "_store"}:
+                continue
+            if self._store is None or value != getattr(self._store, key, object()):
+                return True
+        return False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._target(), name)
+
+
+_DEFAULT_SESSION_METADATA = _LazySessionMetadataProxy()
+_SESSION_METADATA: Any = _DEFAULT_SESSION_METADATA
 _TOTAL_KEYS = ("requests", "input", "output", "cache_create", "cache_read", "total")
+
+
+def _resolve_session_metadata(request: Request | None = None) -> Any:
+    if _SESSION_METADATA is not _DEFAULT_SESSION_METADATA or _DEFAULT_SESSION_METADATA._has_overrides():
+        return _SESSION_METADATA
+    if request is not None:
+        lifecycle = getattr(request.app.state, "session_lifecycle", None)
+        if lifecycle is not None:
+            return lifecycle.store
+    return _DEFAULT_SESSION_METADATA
 
 try:
     from frontends.gahub.bridge import usage as usage_bridge
@@ -83,14 +125,14 @@ def _add_totals(left: dict[str, Any], right: dict[str, Any]) -> dict[str, int]:
     return {key: a[key] + b[key] for key in _TOTAL_KEYS}
 
 
-def _native_ledger_usage() -> dict[str, Any]:
+def _native_ledger_usage(metadata: Any = None) -> dict[str, Any]:
     """Read GA's official ledger and adapt it to the existing WebUI schema."""
     now = int(time.time())
     if usage_bridge is None:
         empty = _normalise_totals({})
         usage = {"days": {}, "all_time": empty, "sessions": {}}
         result = {"available": False, "totals": _with_rate(empty), "timestamp": now}
-        result.update(_weekly_response(usage, now))
+        result.update(_weekly_response(usage, now, metadata=metadata))
         return result
 
     days: dict[str, dict[str, int]] = {}
@@ -119,7 +161,7 @@ def _native_ledger_usage() -> dict[str, Any]:
 
     usage = {"days": days, "all_time": all_time, "sessions": sessions}
     result = {"available": True, "totals": _with_rate(all_time), "timestamp": now}
-    result.update(_weekly_response(usage, now))
+    result.update(_weekly_response(usage, now, metadata=metadata))
     return result
 
 
@@ -140,10 +182,11 @@ def _session_title(metadata: dict[str, Any]) -> str:
     return "未命名会话"
 
 
-def _session_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
+def _session_rows(data: dict[str, Any], metadata: Any = None) -> list[dict[str, Any]]:
     source = data.get("sessions") if isinstance(data.get("sessions"), dict) else {}
+    store = metadata if metadata is not None else _resolve_session_metadata()
     try:
-        metadata_rows = _SESSION_METADATA.list()
+        metadata_rows = store.list()
     except (OSError, ValueError):
         log.warning("could not read session titles for token statistics", exc_info=True)
         metadata_rows = []
@@ -204,7 +247,7 @@ def _weeks_from_days(days_source: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def _weekly_response(data: dict[str, Any], timestamp: int) -> dict[str, Any]:
+def _weekly_response(data: dict[str, Any], timestamp: int, *, metadata: Any = None) -> dict[str, Any]:
     days_source = data.get("days") if isinstance(data.get("days"), dict) else {}
     days = [
         {"date": date, **_with_rate(_normalise_totals(days_source[date]))}
@@ -228,24 +271,10 @@ def _weekly_response(data: dict[str, Any], timestamp: int) -> dict[str, Any]:
         "current_week": current,
         "weeks": rows,
         "days": days,
-        "threads": _session_rows(data),
+        "threads": _session_rows(data, metadata=metadata),
     }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 @router.get("/stats", response_model=TokenStatsResp)
-def token_stats():
-    return _native_ledger_usage()
+def token_stats(request: Request = None):  # type: ignore[assignment]
+    return _native_ledger_usage(metadata=_resolve_session_metadata(request))

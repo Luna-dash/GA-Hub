@@ -202,6 +202,25 @@ def test_conductor_panel_uses_live_lifecycle_instead_of_cached_started() -> None
     lifecycle_status.assert_called_once_with()
 
 
+def test_conductor_panel_skips_http_probe_when_never_started() -> None:
+    lifecycle_status = mock.Mock(side_effect=AssertionError("must not HTTP-probe stopped engine"))
+    conductor_service = SimpleNamespace(
+        _started=False,
+        lifecycle_status=lifecycle_status,
+        pool=SimpleNamespace(counts=lambda: (0, 0)),
+        chat_messages=[],
+    )
+
+    with mock.patch(
+        "server.services.conductor_service.ConductorService._instance",
+        conductor_service,
+    ):
+        conductor = ServiceRegistry()._conductor()
+
+    assert (conductor.state, conductor.summary) == ("stopped", "当前未运行")
+    lifecycle_status.assert_not_called()
+
+
 def test_agent_and_feishu_status_readers_never_construct_services(tmp_path) -> None:
     from server import _paths
     from server.services.agent_service import AgentService

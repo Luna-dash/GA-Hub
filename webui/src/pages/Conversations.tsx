@@ -144,8 +144,12 @@ export default function Conversations() {
   }, [q])
 
   const listQuery = useQuery({
-    queryKey: conversationKeys.list(debouncedQ, page * limit, limit),
-    queryFn: () => api.conversations(debouncedQ || undefined, page * limit, limit),
+    queryKey: conversationKeys.list(debouncedQ, page * limit, limit, sourceFilter),
+    queryFn: () => (
+      sourceFilter === 'all'
+        ? api.conversations(debouncedQ || undefined, page * limit, limit)
+        : api.conversations(debouncedQ || undefined, page * limit, limit, sourceFilter)
+    ),
   })
   const { data, isLoading: listLoading } = listQuery
 
@@ -163,10 +167,10 @@ export default function Conversations() {
 
   const total = data?.total ?? 0
   const items = data?.items ?? []
-  // Display-only narrowing of the loaded page: the query, the detail pane and
-  // every row action keep working off the unfiltered item either way.
+  // Server-side `source` filters before pagination; keep the client predicate
+  // as a fallback for legacy/mock responses that omit `source` filtering.
   const visibleItems = useMemo(
-    () => (sourceFilter === 'all' ? items : items.filter((c) => c.source === sourceFilter)),
+    () => (sourceFilter === 'all' ? items : items.filter((c) => !c.source || c.source === sourceFilter)),
     [items, sourceFilter],
   )
   const filterLabel = SOURCE_FILTERS.find((f) => f.value === sourceFilter)?.label ?? '全部'
@@ -486,7 +490,7 @@ export default function Conversations() {
                     key={f.value}
                     type="button"
                     aria-pressed={activeFilter}
-                    onClick={() => setSourceFilter(f.value)}
+                    onClick={() => { setSourceFilter(f.value); setPage(0) }}
                     className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
                       activeFilter
                         ? 'bg-accent-soft text-accent-deep ring-1 ring-accent/35'
@@ -522,16 +526,16 @@ export default function Conversations() {
               <div className="px-3 py-8 text-center">
                 <Inbox size={18} strokeWidth={1.75} aria-hidden="true" className="mx-auto mb-2 text-ink-faint/70" />
                 <div className="text-xs text-ink-muted">
-                  {items.length > 0
-                    ? `本页没有「${filterLabel}」会话`
+                  {sourceFilter !== 'all'
+                    ? (items.length > 0 ? `本页没有「${filterLabel}」会话` : `暂无「${filterLabel}」归档会话`)
                     : debouncedQ
                       ? '未找到匹配的归档会话'
                       : '暂无历史对话归档'}
                 </div>
-                {items.length > 0 && sourceFilter !== 'all' && (
+                {sourceFilter !== 'all' && (
                   <button
                     type="button"
-                    onClick={() => setSourceFilter('all')}
+                    onClick={() => { setSourceFilter('all'); setPage(0) }}
                     className="mt-2 text-[11px] font-medium text-accent hover:underline"
                   >
                     查看全部来源

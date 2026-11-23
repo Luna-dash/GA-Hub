@@ -1033,6 +1033,31 @@ describe('chatStore viewport resume handoff', () => {
       projectionReady: false,
     })
   })
+
+  it('caps parked streaming sessionViews at MAX_CACHED_SESSION_VIEWS and settles finished background views', async () => {
+    vi.spyOn(api, 'getSessionMessages').mockImplementation(async (sessionId) => ({
+      session_id: sessionId,
+      archive_bound: true,
+      revision: `${sessionId}-rev`,
+      items: [],
+    }))
+
+    for (const sessionId of ['s1', 's2', 's3', 's4', 's5']) {
+      useChatStore.getState().start(sessionId)
+      await vi.waitFor(() => expect(useChatStore.getState().historyStatus).toBe('ready'))
+      const sock = FakeWebSocket.instances.at(-1)!
+      sock.emit({ type: 'next', stream_id: `${sessionId}-live`, content: 'chunk' })
+      await vi.waitFor(() => expect(useChatStore.getState().streaming).toBe(true))
+      await new Promise((resolve) => setTimeout(resolve, 2))
+    }
+
+    const viewsBeforeSettle = useChatStore.getState().sessionViews
+    expect(Object.keys(viewsBeforeSettle)).toEqual(['s4', 's3', 's2'])
+    expect(viewsBeforeSettle.s4.streaming).toBe(true)
+
+    useChatStore.getState().settleInactiveSessionView('s4')
+    expect(useChatStore.getState().sessionViews.s4.streaming).toBe(false)
+  })
 })
 
 

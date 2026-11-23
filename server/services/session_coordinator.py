@@ -325,11 +325,11 @@ class SessionCoordinator:
         cannot recreate a runtime between shutdown and persistent deletion.
         """
         def _release() -> bool:
-            runtime = self._runtimes.pop(session_id, None)
             # The terminal state goes with the runtime: without this,
             # completed/failed states accumulate for every session ever run
             # in the process (session_snapshot re-defaults on the miss).
             with self._lock:
+                runtime = self._runtimes.pop(session_id, None)
                 self._states.pop(session_id, None)
                 # Invalidate any creation still in flight for this session: a
                 # restore that started before the deletion must not resurrect
@@ -1045,26 +1045,36 @@ class SessionCoordinator:
                 outcome = getattr(handle, "run_outcome", None)
                 if active.status == STATUS_ABORTING:
                     outcome = "cancelled"
-                try:
-                    from .archive_messages import read_archive_total
-                    from .archive_identity import finish_run
-                    archive_path = runtime.agent.log_path
-                    finish_run(archive_path, run_id,
-                               ordinal=read_archive_total(archive_path),
-                               outcome=outcome or "completed")
-                except Exception:
-                    log.warning("identity_finish_failed session=%s run=%s", session_id, run_id, exc_info=True)
+            resolved_outcome = outcome or "completed"
+            final_text = getattr(handle, "run_final_text", "")
+            # Persist archive identity and final theme report outside self._lock
+            # so slow disk I/O never stalls unrelated sessions; _active_by_session
+            # still holds this session's reservation until the final lock block.
+            try:
+                from .archive_messages import read_archive_total
+                from .archive_identity import finish_run
+                archive_path = runtime.agent.log_path
+                finish_run(archive_path, run_id,
+                           ordinal=read_archive_total(archive_path),
+                           outcome=resolved_outcome)
+            except Exception:
+                log.warning("identity_finish_failed session=%s run=%s", session_id, run_id, exc_info=True)
+            from . import theme_task_runs
+            theme_task_runs.finish(
+                session_id, run_id, resolved_outcome, final_text,
+            )
+            with self._lock:
+                active = self._active_by_session.get(session_id)
+                if active is None or active.run_id != run_id:
+                    return
+                if active.status == STATUS_ABORTING and resolved_outcome != "cancelled":
+                    resolved_outcome = "cancelled"
+                    theme_task_runs.finish(
+                        session_id, run_id, resolved_outcome, final_text,
+                    )
                 completed = RuntimeState(
                     session_id, completed_run_id=run_id,
-                    outcome=outcome or "completed",
-                )
-                # Persist the final report before publishing idle or admitting a
-                # new run. Otherwise clients can cache an unfinished report after
-                # the terminal event, or a new begin can overtake this finish.
-                from . import theme_task_runs
-                theme_task_runs.finish(
-                    session_id, run_id, completed.outcome or "failed",
-                    getattr(handle, "run_final_text", ""),
+                    outcome=resolved_outcome,
                 )
                 self._abort_started.pop(run_id, None)
                 self._active_by_session.pop(session_id, None)

@@ -13,6 +13,7 @@ metadata, delete orchestration, restore, export and ZIP browsing.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import io
 import json
 import logging
@@ -20,7 +21,7 @@ import os
 import threading
 import zipfile
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
@@ -65,10 +66,62 @@ from ..services.session_metadata import SessionMetadataStore, is_archive_metadat
 
 log = logging.getLogger(__name__)
 router = APIRouter()
-_metadata = SessionMetadataStore()
+
+
+class _LazyMetadataProxy:
+    """Lazy fallback store for standalone unit callers; routes prefer app.state."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._store: SessionMetadataStore | None = None
+
+    def _target(self) -> SessionMetadataStore:
+        store = self._store
+        if store is None:
+            with self._lock:
+                store = self._store
+                if store is None:
+                    store = self._store = SessionMetadataStore()
+        return store
+
+    def _has_overrides(self) -> bool:
+        for key, value in self.__dict__.items():
+            if key in {"_lock", "_store"}:
+                continue
+            if self._store is None or value != getattr(self._store, key, object()):
+                return True
+        return False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._target(), name)
+
+
+_DEFAULT_METADATA = _LazyMetadataProxy()
+_metadata: Any = _DEFAULT_METADATA
+_scoped_metadata: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "_scoped_metadata", default=None
+)
 _legacy_titles_migrated = False
 _legacy_titles_lock = threading.Lock()
 _ZIP_ENTRY_MAX_SIZE = 10 * 1024 * 1024
+
+
+def _metadata_for(target: Request | SessionLifecycle | Any | None = None) -> Any:
+    """Resolve the app-owned metadata store unless a test explicitly patched ``_metadata``."""
+    if _metadata is not _DEFAULT_METADATA or _DEFAULT_METADATA._has_overrides():
+        return _metadata
+    if isinstance(target, SessionLifecycle):
+        return target.store
+    if isinstance(target, Request):
+        lifecycle = getattr(target.app.state, "session_lifecycle", None)
+        if lifecycle is not None:
+            return lifecycle.store
+    if target is not None and hasattr(target, "find_by_archive"):
+        return target
+    scoped = _scoped_metadata.get()
+    if scoped is not None:
+        return scoped
+    return _DEFAULT_METADATA
 
 
 def _request_lifecycle(request: Request) -> SessionLifecycle:
@@ -97,7 +150,7 @@ def _read_zip_entry_limited(entry) -> bytes:
 
 
 # ── GA archive helpers ────────────────────────────────────────────
-def run_legacy_title_migration_once() -> None:
+def run_legacy_title_migration_once(metadata: Any = None) -> None:
     """Sweep legacy titles once; run from lifespan startup, off the event loop.
 
     The sid→path map doubles as the resolver for the migration: sessions
@@ -119,7 +172,7 @@ def run_legacy_title_migration_once() -> None:
                 _legacy_titles_migrated = True
                 return
             migrate_legacy_titles(
-                _metadata,
+                _metadata_for(metadata),
                 lambda sid: (index.get(sid) or (None,))[0],
             )
             _legacy_titles_migrated = True
@@ -133,7 +186,7 @@ def _ga_extract(path: str):
 
 
 # ── conversation list / detail / export / restore ─────────────────
-def _bound_session_id(archive_path) -> str | None:
+def _bound_session_id(archive_path, metadata: Any = None) -> str | None:
     """Hub session owning this archive, or None when it is free to import.
 
     Surfaced on every listing row so the UI can tell "open that session" from
@@ -144,14 +197,15 @@ def _bound_session_id(archive_path) -> str | None:
     and they own no runtime. Counting one would strand the archive — renaming
     it would flip the row to "open that session" forever (and 409 the import).
     """
-    row = _metadata.find_by_archive(archive_path)
+    store = metadata if metadata is not None else _metadata_for()
+    row = store.find_by_archive(archive_path)
     if not row:
         return None
     session_id = str(row["id"])
     return None if is_archive_metadata_id(session_id) else session_id
 
 
-def _conversation_source(archive_path) -> str:
+def _conversation_source(archive_path, metadata: Any = None) -> str:
     """Where one archive came from: ``"session"``, ``"im"`` or ``"local"``.
 
     Deliberately no finer grain: archives do not record which frontend wrote
@@ -165,64 +219,79 @@ def _conversation_source(archive_path) -> str:
       header into the first user question.
     * ``"local"``   — the rest: command-line / local runs.
     """
-    if _bound_session_id(archive_path) is not None:
+    if _bound_session_id(archive_path, metadata=metadata) is not None:
         return "session"
     return "im" if first_user_has_file_hint(archive_path) else "local"
+
+
+ConversationSourceFilter = Literal["all", "session", "im", "local"]
 
 
 def _list_conversations_sync(
     q: str | None,
     offset: int,
     limit: int,
+    source: ConversationSourceFilter | None = None,
+    metadata: Any = None,
 ):
-    sessions = list_archive_sessions()
-    items = []
-    for path, mtime, preview, rounds in sessions:
-        cid = os.path.basename(path)
-        items.append({
-            "id": cid,
-            "title": _metadata.title_for_archive(path),
-            "message_count": rounds,
-            "mtime": int(mtime),
-            "last_user_preview": preview,
-            "bound_session_id": _bound_session_id(path),
-            "source": _conversation_source(path),
-            "_archive_path": path,
-        })
-    if q:
-        ql = q.lower()
-        # Search id + last-user preview first (cheap). For sessions that miss on
-        # those, fall back to scanning the raw archive text so the "search title
-        # or content" promise in the UI actually holds (GA archives carry no
-        # title and the preview is only the last user message).
-        keep = []
-        for it, (path, _mt, _pv, _rd) in zip(items, sessions):
-            if (ql in it["id"].lower()
-                    or ql in (it["title"] or "").lower()
-                    or ql in (it["last_user_preview"] or "").lower()):
-                keep.append(it)
+    store = metadata if metadata is not None else _metadata_for()
+    token = _scoped_metadata.set(store)
+    try:
+        sessions = list_archive_sessions()
+        items = []
+        for path, mtime, preview, rounds in sessions:
+            cid = os.path.basename(path)
+            bound_id = _bound_session_id(path)
+            row_source = _conversation_source(path)
+            if source and source != "all" and row_source != source:
                 continue
-            if archive_contains(path, ql):
-                keep.append(it)
-        items = keep
-    total = len(items)
-    page = items[offset: offset + limit]
-    for item in page:
-        path = item.pop("_archive_path")
-        try:
-            item["dialogue_count"], item["turn_count"] = read_archive_counts(path)
-        except HistoryUnavailableError:
-            # Concurrent deletion/locking: unknown counts must not appear as zero.
-            item["dialogue_count"] = item["turn_count"] = None
-        item["original_user_preview"] = (
-            "" if item["title"] else first_user_preview(path)
-        )
-    return {
-        "total": total,
-        "offset": offset,
-        "limit": limit,
-        "items": page,
-    }
+            items.append({
+                "id": cid,
+                "title": store.title_for_archive(path),
+                "message_count": rounds,
+                "mtime": int(mtime),
+                "last_user_preview": preview,
+                "bound_session_id": bound_id,
+                "source": row_source,
+                "_archive_path": path,
+            })
+        if q:
+            ql = q.lower()
+            # Search id + last-user preview first (cheap). For sessions that miss on
+            # those, fall back to scanning the raw archive text so the "search title
+            # or content" promise in the UI actually holds (GA archives carry no
+            # title and the preview is only the last user message).
+            keep = []
+            for it in items:
+                path = it["_archive_path"]
+                if (ql in it["id"].lower()
+                        or ql in (it["title"] or "").lower()
+                        or ql in (it["last_user_preview"] or "").lower()):
+                    keep.append(it)
+                    continue
+                if archive_contains(path, ql):
+                    keep.append(it)
+            items = keep
+        total = len(items)
+        page = items[offset: offset + limit]
+        for item in page:
+            path = item.pop("_archive_path")
+            try:
+                item["dialogue_count"], item["turn_count"] = read_archive_counts(path)
+            except HistoryUnavailableError:
+                # Concurrent deletion/locking: unknown counts must not appear as zero.
+                item["dialogue_count"] = item["turn_count"] = None
+            item["original_user_preview"] = (
+                "" if item["title"] else first_user_preview(path)
+            )
+        return {
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "items": page,
+        }
+    finally:
+        _scoped_metadata.reset(token)
 
 
 @router.get("/api/conversations", response_model=ConversationListResp)
@@ -230,25 +299,35 @@ async def list_conversations(
     q: str | None = None,
     offset: int = 0,
     limit: int = 50,
+    source: ConversationSourceFilter | None = None,
+    request: Request = None,  # type: ignore[assignment]
 ):
-    return await asyncio.to_thread(_list_conversations_sync, q, offset, limit)
+    store = _metadata_for(request)
+    return await asyncio.to_thread(_list_conversations_sync, q, offset, limit, source, store)
 
 
 @router.get("/api/conversations/{cid}", response_model=ConversationDetailResp)
-async def get_conversation(cid: str):
+async def get_conversation(cid: str, request: Request = None):  # type: ignore[assignment]
+    store = _metadata_for(request)
     # Catalogue refresh stats/scans the archive dir — keep it off the loop.
     s = await asyncio.to_thread(archive_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = s[0]
     messages = await asyncio.to_thread(_ga_extract, path)
-    title = await asyncio.to_thread(_metadata.title_for_archive, path)
+    title = await asyncio.to_thread(store.title_for_archive, path)
+    token = _scoped_metadata.set(store)
+    try:
+        bound_id = await asyncio.to_thread(_bound_session_id, path)
+        source = await asyncio.to_thread(_conversation_source, path)
+    finally:
+        _scoped_metadata.reset(token)
     return {
         "id": cid,
         "title": title,
         "messages": messages,
-        "bound_session_id": await asyncio.to_thread(_bound_session_id, path),
-        "source": await asyncio.to_thread(_conversation_source, path),
+        "bound_session_id": bound_id,
+        "source": source,
     }
 
 
@@ -256,13 +335,14 @@ async def get_conversation(cid: str):
     "/api/conversations/{cid}",
     response_model=ConversationUpdateResp,
 )
-async def update_conversation(cid: str, req: ConversationUpdate):
+async def update_conversation(cid: str, req: ConversationUpdate, request: Request = None):  # type: ignore[assignment]
+    store = _metadata_for(request)
     # Catalogue refresh stats/scans the archive dir — keep it off the loop.
     s = await asyncio.to_thread(archive_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     title = req.title.strip()
-    await asyncio.to_thread(_metadata.set_title_for_archive, s[0], title)
+    await asyncio.to_thread(store.set_title_for_archive, s[0], title)
     return {"ok": True, "id": cid, "title": title}
 
 
@@ -271,12 +351,13 @@ async def update_conversation(cid: str, req: ConversationUpdate):
     response_model=ConversationMutationResp,
 )
 async def delete_conversation(lifecycle: SessionDomain, cid: str):
+    store = _metadata_for(lifecycle)
     # Catalogue refresh stats/scans the archive dir — keep it off the loop.
     s = await asyncio.to_thread(archive_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = Path(s[0]).resolve()
-    bound_session = await asyncio.to_thread(_metadata.find_by_archive, path)
+    bound_session = await asyncio.to_thread(store.find_by_archive, path)
     if bound_session is not None:
         # Peek (never construct) and keep the shutdown admission gate — same
         # refusal semantics as every other runtime-touching endpoint.
@@ -286,14 +367,14 @@ async def delete_conversation(lifecycle: SessionDomain, cid: str):
                 # The binding was resolved before this session reservation was
                 # acquired. Refuse rather than unlink through a reservation that
                 # may now belong to a different archive identity.
-                current_binding = _metadata.find_by_archive(path)
+                current_binding = store.find_by_archive(path)
                 if current_binding and current_binding["id"] != bound_session["id"]:
                     raise HTTPException(409, {
                         "code": "archive_binding_changed",
                         "detail": "该归档的绑定会话已变化，请刷新后重试。",
                         "session_id": current_binding["id"],
                     })
-                _unlink_archive(cid, path)
+                _unlink_archive(cid, path, metadata=store)
 
             try:
                 # runtime.shutdown() joins worker threads — keep it off the loop.
@@ -320,13 +401,14 @@ async def delete_conversation(lifecycle: SessionDomain, cid: str):
             invalidate_archive_catalogue()
             return {"ok": True, "id": cid}
 
-    await asyncio.to_thread(_unlink_archive, cid, path)
+    await asyncio.to_thread(_unlink_archive, cid, path, store)
     invalidate_archive_catalogue()
     return {"ok": True, "id": cid}
 
 
-def _unlink_archive(cid: str, path: Path) -> None:
+def _unlink_archive(cid: str, path: Path, metadata: Any = None) -> None:
     """Delete an archive whose identity was resolved from GA enumeration."""
+    store = metadata if metadata is not None else _metadata_for()
     try:
         path.unlink()
     except FileNotFoundError:
@@ -334,8 +416,8 @@ def _unlink_archive(cid: str, path: Path) -> None:
     except OSError as exc:
         log.exception("failed to delete conversation %s", cid)
         raise HTTPException(500, f"failed to delete conversation: {exc}")
-    bound_session = _metadata.find_by_archive(path)
-    _metadata.delete_by_archive(path)
+    bound_session = store.find_by_archive(path)
+    store.delete_by_archive(path)
     if bound_session is not None:
         from ..services import theme_task_runs
         theme_task_runs.discard(bound_session["id"])
@@ -361,11 +443,12 @@ async def restore_conversation(
     AgentService, so the history continues on whatever session the caller is
     attached to.
     """
+    store = _metadata_for(lifecycle)
     # The target session must exist before any archive I/O: restoring into a
     # session that cannot receive the history is a client error, not a
     # half-loaded archive.
     try:
-        _metadata.get(request.session_id)
+        store.get(request.session_id)
     except KeyError:
         # SessionNotFoundError subclasses KeyError; catching the base keeps
         # the mapping correct for any store implementation raising the
@@ -411,24 +494,25 @@ async def restore_conversation(
     return {
         "ok": True,
         "id": cid,
-        "title": await asyncio.to_thread(_metadata.title_for_archive, path),
+        "title": await asyncio.to_thread(store.title_for_archive, path),
         "restored_lines": len(restored),
     }
 
 
-async def _rollback_import(session_id: str, new_path: Path | None) -> None:
+async def _rollback_import(session_id: str, new_path: Path | None, metadata: Any = None) -> None:
     """Undo a half-finished import: the new session row and its copy both go.
 
     The source archive is never part of this — import only reads it — so a
     rolled-back import leaves it byte-identical.
     """
+    store = metadata if metadata is not None else _metadata_for()
     if new_path is not None:
         try:
             await asyncio.to_thread(Path(new_path).unlink, missing_ok=True)
         except OSError:
             log.warning("failed to remove imported copy %s", new_path, exc_info=True)
     try:
-        await asyncio.to_thread(_metadata.delete, session_id)
+        await asyncio.to_thread(store.delete, session_id)
     except KeyError:
         pass
     except Exception:
@@ -452,6 +536,7 @@ async def import_conversation(lifecycle: SessionDomain, cid: str):
     to roll back: by the end of this handler a session either owns a complete
     copy, or nothing happened and the source is untouched.
     """
+    store = _metadata_for(lifecycle)
     # Catalogue refresh stats/scans the archive dir — keep it off the loop.
     s = await asyncio.to_thread(archive_session_by_id, cid)
     if s is None:
@@ -461,7 +546,11 @@ async def import_conversation(lifecycle: SessionDomain, cid: str):
     # One archive belongs to at most one session; a second binding would give
     # two runtimes the same file. The UI keys its action on the same lookup
     # (and the same "title-only rows do not count" narrowing).
-    bound_session_id = await asyncio.to_thread(_bound_session_id, source)
+    token = _scoped_metadata.set(store)
+    try:
+        bound_session_id = await asyncio.to_thread(_bound_session_id, source)
+    finally:
+        _scoped_metadata.reset(token)
     if bound_session_id is not None:
         raise HTTPException(409, {
             "code": "archive_already_bound",
@@ -469,13 +558,13 @@ async def import_conversation(lifecycle: SessionDomain, cid: str):
             "session_id": bound_session_id,
         })
 
-    title = await asyncio.to_thread(_metadata.title_for_archive, source)
+    title = await asyncio.to_thread(store.title_for_archive, source)
     if not title:
         # Untitled archive: the first real user question titles the session,
         # exactly like the archive listing's own fallback.
         title = await asyncio.to_thread(first_user_preview, source)
 
-    row = await asyncio.to_thread(_metadata.create, title=title)
+    row = await asyncio.to_thread(store.create, title=title)
     session_id = row["id"]
     new_path: Path | None = None
     try:
@@ -484,13 +573,13 @@ async def import_conversation(lifecycle: SessionDomain, cid: str):
         new_path, imported_lines = await asyncio.to_thread(
             copy_archive_for_import, source
         )
-        await asyncio.to_thread(_metadata.bind_archive, session_id, new_path)
+        await asyncio.to_thread(store.bind_archive, session_id, new_path)
         # Cold start on the normal factory path: the bound copy is now the
         # session's archive, so this loads it exactly like any other session
         # (no override, no rebinding).
         await asyncio.to_thread(_session_coordinator(lifecycle).ensure_runtime, session_id)
     except BaseException as exc:
-        await _rollback_import(session_id, new_path)
+        await _rollback_import(session_id, new_path, metadata=store)
         if isinstance(exc, ArchiveNotImportableError):
             raise HTTPException(409, {
                 "code": "archive_not_importable",
@@ -507,14 +596,19 @@ async def import_conversation(lifecycle: SessionDomain, cid: str):
 
 
 @router.get("/api/conversations/{cid}/export")
-async def export_conversation(cid: str, format: str = Query("md", pattern="^(md|json)$")):
+async def export_conversation(
+    cid: str,
+    format: str = Query("md", pattern="^(md|json)$"),
+    request: Request = None,  # type: ignore[assignment]
+):
+    store = _metadata_for(request)
     # Catalogue refresh stats/scans the archive dir — keep it off the loop.
     s = await asyncio.to_thread(archive_session_by_id, cid)
     if s is None:
         raise HTTPException(404, "conversation not found")
     path = s[0]
     messages = await asyncio.to_thread(_ga_extract, path)
-    title = await asyncio.to_thread(_metadata.title_for_archive, path)
+    title = await asyncio.to_thread(store.title_for_archive, path)
 
     if format == "json":
         payload = {"id": cid, "title": title, "messages": messages}

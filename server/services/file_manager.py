@@ -13,11 +13,14 @@ from pathlib import Path
 from threading import Lock
 
 
+PENDING_LAUNCH_TTL_SECONDS = 30.0
+
+
 class ExplorerWindow:
     def __init__(self):
         self._lock = Lock()
         self._hwnd: int | None = None
-        self._pending: tuple[set[int], Path] | None = None
+        self._pending: tuple[set[int], Path, float] | None = None
 
     def reveal(self, path: Path) -> None:
         # Bounded admission also exists at the route; serialize COM navigation.
@@ -64,13 +67,16 @@ class ExplorerWindow:
         window = windows.get(self._hwnd)
         if window is None:
             self._hwnd = None
+            now = time.monotonic()
+            if self._pending is not None and now - self._pending[2] >= PENDING_LAUNCH_TTL_SECONDS:
+                self._pending = None
             if self._pending is None:
                 # /n requests a new window even when this directory is already
                 # open. Only newly registered HWNDs may subsequently be owned.
                 before = set(windows)
                 subprocess.Popen(f'explorer.exe /n,"{folder}"')
-                self._pending = (before, folder)
-            before, launched_folder = self._pending
+                self._pending = (before, folder, now)
+            before, launched_folder, _started_at = self._pending
             launched = os.path.normcase(os.path.normpath(str(launched_folder)))
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:

@@ -23,6 +23,7 @@ import type {
   ConversationDeleteResponse,
   ConversationImportResponse,
   ConversationListResponse,
+  ConversationSource,
   ConversationUpdateResponse,
   LLMInfo,
   MemoryTextResponse,
@@ -324,9 +325,10 @@ export const api = {
   ),
 
   // ── conversations ────────────────────────────────────
-  conversations: (q?: string, offset = 0, limit = 50) => {
+  conversations: (q?: string, offset = 0, limit = 50, source?: ConversationSource) => {
     const sp = new URLSearchParams()
     if (q) sp.set('q', q)
+    if (source) sp.set('source', source)
     sp.set('offset', String(offset))
     sp.set('limit', String(limit))
     return http<ConversationListResponse>(

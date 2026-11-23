@@ -578,6 +578,10 @@ def main(argv: list[str] | None = None) -> int:
                 extra_env=test_env,
             )
             run_stage("前端测试", [npm, "--prefix", "webui", "test", "--", "--run"])
+            run_stage(
+                "Rust 桌面壳单测",
+                [shutil.which("cargo") or "cargo", "test", "--manifest-path", "src-tauri/Cargo.toml"],
+            )
         run_stage(
             "Python sidecar",
             [sidecar_python, "desktop/build_sidecar.py", "--target", args.target],

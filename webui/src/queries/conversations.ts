@@ -1,13 +1,15 @@
 import { QueryClient } from '@tanstack/react-query'
-import type { ConversationListResponse, Conversation } from '@/api/types'
+import type { ConversationListResponse, Conversation, ConversationSource } from '@/api/types'
 
 export type ConversationListData = ConversationListResponse
 
 export const conversationKeys = {
   all: ['conversations'] as const,
   lists: () => [...conversationKeys.all, 'list'] as const,
-  list: (q: string, offset: number, limit: number) =>
-    [...conversationKeys.lists(), q, offset, limit] as const,
+  list: (q: string, offset: number, limit: number, source: 'all' | ConversationSource = 'all') =>
+    (source === 'all'
+      ? [...conversationKeys.lists(), q, offset, limit] as const
+      : [...conversationKeys.lists(), q, offset, limit, source] as const),
   details: () => [...conversationKeys.all, 'detail'] as const,
   detail: (id: string) => [...conversationKeys.details(), id] as const,
 }

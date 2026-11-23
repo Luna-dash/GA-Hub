@@ -520,7 +520,7 @@ class MainFlowTests(unittest.TestCase):
         self.assertEqual(code, build_all.EXIT_ARTIFACT_GUARD)
         self.assertNotIn("构建链全部通过", stream.getvalue())
 
-    def test_full_chain_adds_the_two_test_stages(self):
+    def test_full_chain_adds_the_three_test_stages(self):
         patches = self._patched()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
              mock.patch.object(build_all, "run_stage") as stage, \
@@ -531,7 +531,7 @@ class MainFlowTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 code = build_all.main(["--full"])
         self.assertEqual(code, 0)
-        self.assertEqual(stage.call_count, 6)  # 前端 / pytest / vitest / sidecar / tauri / helper
+        self.assertEqual(stage.call_count, 7)  # 前端 / pytest / vitest / cargo test / sidecar / tauri / helper
 
     def test_full_chain_builds_frontend_before_backend_tests(self):
         """顺序不变式：--full 必须「先构建前端，再跑后端测试」。
@@ -556,7 +556,7 @@ class MainFlowTests(unittest.TestCase):
         titles = [call.args[0] for call in stage.call_args_list]
         self.assertEqual(
             titles,
-            ["前端生产构建", "后端测试", "前端测试", "Python sidecar", "Tauri 桌面壳", "独立更新助手"],
+            ["前端生产构建", "后端测试", "前端测试", "Rust 桌面壳单测", "Python sidecar", "Tauri 桌面壳", "独立更新助手"],
         )
         self.assertLess(titles.index("前端生产构建"), titles.index("后端测试"))
 

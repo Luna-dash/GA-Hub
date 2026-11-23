@@ -14,7 +14,6 @@ import { api } from '@/api/client'
 import { storageKeys } from '@/config/storageKeys'
 import type {
   HubSession,
-  LLMInfo,
   ScheduledChat,
   SessionRuntime,
 } from '@/api/types'
@@ -49,7 +48,7 @@ import { MainModelSelect } from '@/components/ModelSelect'
 import { ProjectSelect } from '@/components/ProjectSelect'
 import { useHubEvent } from '@/hooks/useHubEvent'
 import { useSessionSelectionGuard } from '@/hooks/useSessionSelectionGuard'
-import { createAndOpenSession, markSessionUsed } from '@/queries/sessions'
+import { createAndOpenSession, markSessionUsed, upsertSessionInList, type SessionListData } from '@/queries/sessions'
 import { queryKeys } from '@/queries/queryKeys'
 
 export default function LiveChat() {
@@ -63,6 +62,7 @@ export default function LiveChat() {
   const retryPending = useChatStore((s) => s.retryPending)
   const conn = useChatStore((s) => s.conn)
   const dropSessionView = useChatStore((s) => s.dropSessionView)
+  const settleInactiveSessionView = useChatStore((s) => s.settleInactiveSessionView)
   const startChat = useChatStore((s) => s.start)
   const teardownChat = useChatStore((s) => s.teardown)
   const stageWebui = useChatStore((s) => s.stageWebui)
@@ -70,13 +70,27 @@ export default function LiveChat() {
   const clearLocal = useChatStore((s) => s.clearLocal)
   const pushSystem = useChatStore((s) => s.pushSystem)
 
-  const [session, setSession] = useState<HubSession | null>(null)
+  const queryClient = useQueryClient()
+  const sessionsQuery = useQuery({
+    queryKey: queryKeys.sessions,
+    queryFn: api.sessions,
+  })
+  const sessions = useMemo(() => sessionsQuery.data?.items ?? [], [sessionsQuery.data])
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const session = useMemo(
+    () => (selectedSessionId ? sessions.find((item) => item.id === selectedSessionId) ?? null : null),
+    [selectedSessionId, sessions],
+  )
   const draftKey = session ? `liveChat:${session.id}` : 'liveChat:pending'
   const draftKeyRef = useRef(draftKey)
   draftKeyRef.current = draftKey
   const [sessionError, setSessionError] = useState('')
-  const [llms, setLlms] = useState<LLMInfo[]>([])
-  const [llmLoading, setLlmLoading] = useState(false)
+  const llmsQuery = useQuery({
+    queryKey: queryKeys.llms,
+    queryFn: api.llms,
+  })
+  const llms = useMemo(() => llmsQuery.data?.llms ?? [], [llmsQuery.data])
+  const llmLoading = llmsQuery.isLoading
   const [llmSaving, setLlmSaving] = useState(false)
   const [projectSaving, setProjectSaving] = useState(false)
   const projectChangeSeqRef = useRef(0)
@@ -94,12 +108,6 @@ export default function LiveChat() {
   const [scheduleNow, setScheduleNow] = useState(() => Date.now())
   const llmChangeSeqRef = useRef(0)
   const llmRepairAttemptedRef = useRef(new Map<string, string>())
-  const queryClient = useQueryClient()
-  const sessionsQuery = useQuery({
-    queryKey: queryKeys.sessions,
-    queryFn: api.sessions,
-  })
-  const sessions = useMemo(() => sessionsQuery.data?.items ?? [], [sessionsQuery.data])
   const projectsQuery = useQuery({
     queryKey: queryKeys.projects,
     queryFn: api.projects,
@@ -144,7 +152,7 @@ export default function LiveChat() {
     const runtime = event.payload as Partial<SessionRuntime>
     if (typeof runtime.session_id !== 'string') return
     queryClient.setQueryData<Record<string, SessionRuntime>>(
-      ['session.runtimes'],
+      queryKeys.runtimes,
       (current) => ({
         ...(current ?? {}),
         [runtime.session_id as string]: {
@@ -153,6 +161,9 @@ export default function LiveChat() {
         } as SessionRuntime,
       }),
     )
+    if (runtime.status && runtime.status !== 'starting' && runtime.status !== 'running' && runtime.status !== 'aborting') {
+      settleInactiveSessionView(runtime.session_id)
+    }
   })
 
   useEffect(() => {
@@ -172,7 +183,7 @@ export default function LiveChat() {
           sessionIdRef.current = null
           localStorage.removeItem(storageKeys.currentSessionId)
           setSessionError('')
-          setSession(null)
+          setSelectedSessionId(null)
           teardownChat()
           clearLocal()
           return
@@ -180,7 +191,7 @@ export default function LiveChat() {
         sessionIdRef.current = current.id
         localStorage.setItem(storageKeys.currentSessionId, current.id)
         setSessionError('')
-        setSession(current)
+        setSelectedSessionId(current.id)
         startChat(current.id)
       } catch (e: any) {
         if (!cancelled && sessionSwitchSeqRef.current === initSeq) {
@@ -189,23 +200,13 @@ export default function LiveChat() {
       }
     })()
     return () => { cancelled = true }
-  }, [startChat, location.search, queryClient])
+  }, [startChat, location.search, queryClient, teardownChat, clearLocal])
 
   useEffect(() => {
-    let cancelled = false
-    setLlmLoading(true)
-    void api.llms()
-      .then((result) => {
-        if (!cancelled) setLlms(result.llms)
-      })
-      .catch((e: any) => {
-        if (!cancelled) pushSystem(`_加载模型列表失败:${errorMessageFromError(e)}_`)
-      })
-      .finally(() => {
-        if (!cancelled) setLlmLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [pushSystem])
+    if (llmsQuery.isError && llmsQuery.error) {
+      pushSystem(`_加载模型列表失败:${errorMessageFromError(llmsQuery.error)}_`)
+    }
+  }, [llmsQuery.isError, llmsQuery.error, pushSystem])
 
   const runtime = session ? runtimes[session.id] : undefined
   const refreshRuntime = useCallback(async (sessionId?: string) => {
@@ -213,7 +214,7 @@ export default function LiveChat() {
     if (!sid || sessionIdRef.current !== sid) return
     const state = await api.sessionRuntime(sid)
     if (!state || typeof state !== 'object' || sessionIdRef.current !== sid) return
-    queryClient.setQueryData<Record<string, SessionRuntime>>(['session.runtimes'], (cached) => ({
+    queryClient.setQueryData<Record<string, SessionRuntime>>(queryKeys.runtimes, (cached) => ({
       ...(cached ?? {}),
       [sid]: state,
     }))
@@ -266,12 +267,7 @@ export default function LiveChat() {
     void api.updateSessionModel(sid, selectedLlmKey)
       .then((updated) => {
         if (sessionIdRef.current !== sid || llmChangeSeqRef.current !== changeSeq) return
-        setSession(updated)
-        queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => (
-          cached
-            ? { ...cached, items: cached.items.map((item) => item.id === sid ? updated : item) }
-            : cached
-        ))
+        queryClient.setQueryData<SessionListData>(queryKeys.sessions, (cached) => upsertSessionInList(cached, updated))
       })
       .catch((e: any) => {
         if (sessionIdRef.current === sid && llmChangeSeqRef.current === changeSeq) {
@@ -281,7 +277,7 @@ export default function LiveChat() {
       .finally(() => {
         if (llmChangeSeqRef.current === changeSeq) setLlmSaving(false)
       })
-  }, [llmLoading, llmSaving, queryClient, selectedLlmKey, session?.id, session?.llm_index, session?.llm_key, sessionLlmNeedsRepair, sessionRunning])
+  }, [llmLoading, llmSaving, pushSystem, queryClient, selectedLlmKey, session?.id, session?.llm_index, session?.llm_key, sessionLlmNeedsRepair, sessionRunning])
 
   const changeModel = async (value: string) => {
     const sid = session?.id
@@ -292,21 +288,14 @@ export default function LiveChat() {
       || (value === selectedLlmKey && session.llm_key === selectedLlmKey)
     ) return
     const changeSeq = ++llmChangeSeqRef.current
-    const previousKey = session.llm_key
     setLlmSaving(true)
     try {
       const updated = await api.updateSessionModel(sid, value)
       if (sessionIdRef.current !== sid || llmChangeSeqRef.current !== changeSeq) return
-      setSession(updated)
-      queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => (
-        cached
-          ? { ...cached, items: cached.items.map((item) => item.id === sid ? updated : item) }
-          : cached
-      ))
+      queryClient.setQueryData<SessionListData>(queryKeys.sessions, (cached) => upsertSessionInList(cached, updated))
       pushSystem(`_已切换模型:${llms.find((item) => item.key === updated.llm_key)?.name || updated.llm_key}_`, noticeKeys.llmSwitch)
     } catch (e: any) {
       if (sessionIdRef.current === sid && llmChangeSeqRef.current === changeSeq) {
-        setSession((current) => current ? { ...current, llm_key: previousKey } : current)
         pushSystem(`_切换模型失败:${errorMessageFromError(e)}_`, noticeKeys.llmSwitchFail)
       }
     } finally {
@@ -343,20 +332,20 @@ export default function LiveChat() {
         const switchSeq = ++sessionSwitchSeqRef.current
         const canSelect = captureSelection()
         try {
-          if (!defaultLlmKey) throw new Error('当前没有可用模型，请先配置模型')
-          const created = await api.createSession({ title: '', llm_key: defaultLlmKey })
+          const resolvedDefaultKey = defaultLlmKey ?? defaultSessionLlmKey(
+            (await queryClient.fetchQuery({ queryKey: queryKeys.llms, queryFn: api.llms })).llms,
+          )
+          if (!resolvedDefaultKey) throw new Error('当前没有可用模型，请先配置模型')
+          const created = await api.createSession({ title: '', llm_key: resolvedDefaultKey })
           if (!canSelect() || sessionSwitchSeqRef.current !== switchSeq || sessionIdRef.current) {
             useDraftStore.getState().failSubmission(transaction.id)
             return
           }
           sid = created.id
           useDraftStore.getState().moveSubmission(transaction.id, `liveChat:${created.id}`)
-          queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
-            total: (cached?.total ?? 0) + 1,
-            items: [created, ...(cached?.items ?? [])],
-          }))
+          queryClient.setQueryData<SessionListData>(queryKeys.sessions, (cached) => upsertSessionInList(cached, created))
           sessionIdRef.current = created.id
-          setSession(created)
+          setSelectedSessionId(created.id)
           setSessionError('')
           localStorage.setItem(storageKeys.currentSessionId, created.id)
           nav(sessionChatHref(created.id), { replace: true })
@@ -472,16 +461,16 @@ export default function LiveChat() {
       if (localPaths.length) await referenceAttachments(localPaths)
       let sid = session?.id
       if (!sid) {
-        if (!defaultLlmKey) throw new Error('当前没有可用模型，请先配置模型')
-        const created = await api.createSession({ title: '', llm_key: defaultLlmKey })
+        const resolvedDefaultKey = defaultLlmKey ?? defaultSessionLlmKey(
+          (await queryClient.fetchQuery({ queryKey: queryKeys.llms, queryFn: api.llms })).llms,
+        )
+        if (!resolvedDefaultKey) throw new Error('当前没有可用模型，请先配置模型')
+        const created = await api.createSession({ title: '', llm_key: resolvedDefaultKey })
         sid = created.id
         if (transaction) useDraftStore.getState().moveSubmission(transaction.id, `liveChat:${sid}`)
-        queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
-          total: (cached?.total ?? 0) + 1,
-          items: [created, ...(cached?.items ?? [])],
-        }))
+        queryClient.setQueryData<SessionListData>(queryKeys.sessions, (cached) => upsertSessionInList(cached, created))
         sessionIdRef.current = sid
-        setSession(created)
+        setSelectedSessionId(sid)
         localStorage.setItem(storageKeys.currentSessionId, sid)
         nav(sessionChatHref(sid), { replace: true })
         startChat(sid)
@@ -525,7 +514,9 @@ export default function LiveChat() {
     const previousSid = sessionIdRef.current
     const canSelect = captureSelection()
     try {
-      const llmKey = session?.llm_key ?? defaultLlmKey
+      const llmKey = session?.llm_key ?? defaultLlmKey ?? defaultSessionLlmKey(
+        (await queryClient.fetchQuery({ queryKey: queryKeys.llms, queryFn: api.llms })).llms,
+      )
       return await createAndOpenSession(queryClient, nav, llmKey, () => (
         canSelect() && sessionSwitchSeqRef.current === switchSeq && sessionIdRef.current === previousSid
       ))
@@ -557,11 +548,7 @@ export default function LiveChat() {
   const renameSession = useCallback(async (id: string, title: string) => {
     try {
       const updated = await api.updateSession(id, { title })
-      queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
-        total: cached?.total ?? 0,
-        items: (cached?.items ?? []).map((item) => item.id === id ? updated : item),
-      }))
-      if (sessionIdRef.current === id) setSession(updated)
+      queryClient.setQueryData<SessionListData>(queryKeys.sessions, (cached) => upsertSessionInList(cached, updated))
     } catch (error: any) {
       pushSystem(`_重命名失败：${errorMessageFromError(error)}_`)
       throw error
@@ -615,11 +602,7 @@ export default function LiveChat() {
         if (!selected) throw new Error('所选项目已不存在，请刷新后重试')
         updated = await api.bindProject(sid, selected.name, selected.path)
       }
-      queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
-        total: cached?.total ?? 0,
-        items: (cached?.items ?? []).map((item) => item.id === sid ? updated : item),
-      }))
-      if (sessionIdRef.current === sid) setSession(updated)
+      queryClient.setQueryData<SessionListData>(queryKeys.sessions, (cached) => upsertSessionInList(cached, updated))
     } catch (error: unknown) {
       pushSystem(`_切换项目失败：${errorMessageFromError(error)}_`, noticeKeys.projectSwitchFail)
     } finally {
@@ -643,11 +626,7 @@ export default function LiveChat() {
     setProjectSaving(true)
     try {
       const updated = await api.unbindProject(sid)
-      queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], (cached) => ({
-        total: cached?.total ?? 0,
-        items: (cached?.items ?? []).map((item) => item.id === sid ? updated : item),
-      }))
-      if (sessionIdRef.current === sid) setSession(updated)
+      queryClient.setQueryData<SessionListData>(queryKeys.sessions, (cached) => upsertSessionInList(cached, updated))
 
       await api.deleteProject(selected.name)
       await queryClient.invalidateQueries({ queryKey: queryKeys.projects })
@@ -666,7 +645,7 @@ export default function LiveChat() {
       useDraftStore.getState().clearDraft(`liveChat:${id}`)
       const remaining = sessions.filter((item) => item.id !== id)
       const remainingRegular = remaining.filter((item) => !item.theme_task)
-      queryClient.setQueryData<{ total: number; items: HubSession[] }>(['sessions'], {
+      queryClient.setQueryData<SessionListData>(queryKeys.sessions, {
         total: remaining.length,
         items: remaining,
       })
@@ -679,7 +658,7 @@ export default function LiveChat() {
         return
       }
 
-      setSession(null)
+      setSelectedSessionId(null)
       localStorage.removeItem(storageKeys.currentSessionId)
       nav('/chat', { replace: true })
     } catch (error: any) {
@@ -874,7 +853,7 @@ export default function LiveChat() {
                 void api.abortSession(sid)
                   .then((nextState) => {
                     if (sessionIdRef.current === sid && nextState && typeof nextState === 'object') {
-                      queryClient.setQueryData<Record<string, SessionRuntime>>(['session.runtimes'], (cached) => ({
+                      queryClient.setQueryData<Record<string, SessionRuntime>>(queryKeys.runtimes, (cached) => ({
                         ...(cached ?? {}),
                         [sid]: nextState,
                       }))

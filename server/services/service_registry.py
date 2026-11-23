@@ -241,15 +241,20 @@ class ServiceRegistry:
         if svc is None:
             return ServicePanelItem("conductor", "Conductor", "stopped", "尚未启用", "/conductor")
         running, stopped = svc.pool.counts()
+        started = bool(getattr(svc, "_started", False))
         lifecycle_status = getattr(svc, "lifecycle_status", None)
-        if callable(lifecycle_status):
+        if started and callable(lifecycle_status):
             started = bool(lifecycle_status()["started"])
+        chat_guard = getattr(svc, "chat_guard", None)
+        if callable(chat_guard):
+            with chat_guard():
+                message_count = len(svc.chat_messages)
         else:
-            started = bool(getattr(svc, "_started", False))
+            message_count = len(svc.chat_messages)
         return ServicePanelItem(
             "conductor", "Conductor", "running" if started else "stopped",
             "编排器运行中" if started else "当前未运行", "/conductor",
-            {"子 Agent": running, "已停止": stopped, "消息": len(svc.chat_messages)},
+            {"子 Agent": running, "已停止": stopped, "消息": message_count},
         )
 
     def _goalhive(self=None) -> ServicePanelItem:
