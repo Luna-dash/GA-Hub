@@ -231,9 +231,11 @@ header:has(.conductor-header-history) > div:has(.conductor-header-history) { fle
   .conductor-recovery { margin: -12px -14px 10px; }
 }
 @media (max-width: 640px) {
+  .ga-page-header > div:has(> .conductor-header-actions) { min-width: 0; max-width: 100%; }
   .conductor-header-actions { flex-wrap: wrap; width: 100%; gap: 12px; }
   .conductor-header-model-label { display: none; }
-  .conductor-header-actions select { flex: 1; width: 140px; min-width: 100px; }
+  .conductor-header-actions > div { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+  .conductor-header-actions .model-select-trigger { min-width: 0; max-width: 100%; }
   .conductor-board { padding: 10px 12px 8px; max-height: 52%; }
   .conductor-recovery { margin: -10px -12px 8px; }
   .conductor-history-row { gap: 8px; }

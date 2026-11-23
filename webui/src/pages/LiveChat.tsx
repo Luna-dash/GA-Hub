@@ -780,14 +780,14 @@ export default function LiveChat() {
           />
         }
         middleArea={
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
             <label
               htmlFor="current-project-select"
               className="shrink-0 text-xs font-medium text-ink-faint"
             >
               绑定项目：
             </label>
-            <div className="flex min-w-0 shrink-0 items-center">
+            <div className="flex min-w-0 max-w-full items-center">
               <ProjectSelect
                 id="current-project-select"
                 value={session?.project_path || ''}
@@ -830,7 +830,7 @@ export default function LiveChat() {
             value={selectedLlmKey ?? ''}
             onChange={(llmKey) => { void changeModel(llmKey) }}
             disabled={!session || !selectedLlmKey || llmLoading || llmSaving || sessionRunning}
-            className="max-w-[400px]"
+            className="min-w-0 max-w-full sm:max-w-[min(400px,100%)]"
             title={sessionRunning ? '任务运行中，结束后可切换模型' : !session || !selectedLlmKey ? '当前没有可用模型，请先在「LLM管理」中配置模型' : '选择当前会话使用的模型'}
             aria-label="当前会话模型"
           />

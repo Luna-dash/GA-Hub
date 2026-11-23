@@ -29,7 +29,7 @@ export function PageShell({ title, titleExtra, middleArea, actions, children, la
               {titleExtra}
             </div>
           </div>
-          {middleArea && <div className={`min-w-0 flex-1 flex items-center justify-start ${layout === 'panel' ? 'pl-0 lg:pl-10 xl:pl-24' : ''} ${wrapHeader ? 'basis-20' : ''}`}>{middleArea}</div>}
+          {middleArea && <div className={`min-w-0 flex-1 flex items-center justify-start ${layout === 'panel' ? 'pl-0 lg:pl-10 xl:pl-24' : ''} ${wrapHeader ? 'basis-full md:basis-56' : ''}`}>{middleArea}</div>}
           <div className={`flex items-center gap-2 flex-wrap justify-end shrink-0 ml-auto ${wrapHeader ? 'max-w-full' : ''}`}>{actions}</div>
         </header>
         <div className="flex-1 min-h-0 overflow-y-auto bg-bg-soft">{children}</div>
