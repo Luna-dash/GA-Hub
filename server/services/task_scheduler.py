@@ -192,8 +192,10 @@ class TaskScheduler(SchedulerDomainBase):
             base["cron"] = "0 8 * * *"
 
 _FINAL_MARKER_RE = re.compile(
-    r"\n*(?:`{3,5}[^\r\n]*\r?\n?)?\[Info\]\s*Final response to user\.\s*(?:\r?\n?`{3,5})?\s*$",
-    re.IGNORECASE,
+    r"^[ \t]*(?:(?P<fence>`{3,5})[ \t]*\r?\n)?"
+    r"\[Info\][ \t]*Final response to user\.[ \t]*"
+    r"(?(fence)\r?\n[ \t]*(?P=fence)[ \t]*)\s*$",
+    re.IGNORECASE | re.MULTILINE,
 )
 _TURN_MARKER_RE = re.compile(
     r"^[ \t]*(?:\*\*)?(?:LLM Running \(Turn \d+\)|Turn \d+) \.\.\.(?:\*\*)?[ \t]*\r?$",
@@ -313,6 +315,28 @@ def _split_top_level_turns(source: str) -> list[str]:
     return turns
 
 
+def _clean_conclusion_prose(text: str) -> str:
+    def clean(prose: str) -> str:
+        prose = _STATUS_LINE_RE.sub("", prose)
+        prose = _THINKING_BLOCK_RE.sub("", prose)
+        prose = _SUMMARY_BLOCK_RE.sub("", prose)
+        return _OPEN_SUMMARY_RE.sub("", prose)
+
+    parts: list[str] = []
+    start = pos = 0
+    while pos < len(text):
+        if _FENCE_EDGE_RE.match(text, pos):
+            parts.append(clean(text[start:pos]))
+            end = _fence_end(text, pos)
+            parts.append(text[pos:end])
+            start = pos = end
+        else:
+            newline = text.find("\n", pos)
+            pos = len(text) if newline < 0 else newline + 1
+    parts.append(clean(text[start:]))
+    return "".join(parts)
+
+
 def _extract_turn_conclusion(turn_text: str) -> tuple[str, list[str]]:
     """Return ``(conclusion_after_last_tool, summaries)`` for one turn."""
     summaries: list[str] = []
@@ -390,11 +414,7 @@ def _extract_turn_conclusion(turn_text: str) -> tuple[str, list[str]]:
         prose_after_tool.append(turn_text[pos:next_special])
         pos = next_special
 
-    raw_conclusion = "".join(prose_after_tool)
-    raw_conclusion = _STATUS_LINE_RE.sub("", raw_conclusion)
-    raw_conclusion = _THINKING_BLOCK_RE.sub("", raw_conclusion)
-    raw_conclusion = _SUMMARY_BLOCK_RE.sub("", raw_conclusion)
-    raw_conclusion = _OPEN_SUMMARY_RE.sub("", raw_conclusion).strip()
+    raw_conclusion = _clean_conclusion_prose("".join(prose_after_tool)).strip()
     if last_tool_seen and not raw_conclusion:
         return "", summaries
     return raw_conclusion, summaries
@@ -404,6 +424,22 @@ def extract_task_result(raw: str) -> str:
     """Identify final answer prose, not earlier turns, tool output or progress summaries."""
     raw = (raw or "").strip()
     marker = _FINAL_MARKER_RE.search(raw)
+    if marker:
+        # The legacy bare-fence wrapper is allowed at top level, but status
+        # text inside a user code block (including an unclosed one) is data.
+        pos = 0
+        while pos < marker.start():
+            if _FENCE_EDGE_RE.match(raw, pos):
+                end = _fence_end(raw, pos)
+                if end > marker.start():
+                    marker = None
+                    break
+                pos = end
+            else:
+                newline = raw.find("\n", pos)
+                if newline < 0:
+                    break
+                pos = newline + 1
     text = raw[:marker.start()].strip() if marker else raw
     turns = _split_top_level_turns(text)
     # The caller already verified successful logical completion. The legacy

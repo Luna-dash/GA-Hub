@@ -333,6 +333,7 @@ def test_task_finalize_run_extracts_final_conclusion_over_opening_summary(tmp_pa
     assert "LLM Running" not in preview
     assert "### 最终结论" in preview
     assert "归档已核验完成，释放 12 MB。" in preview
+    assert "Final response to user" not in preview
 
     short_turns = "\nTurn 1 ...\n\n正在核验\n\nTurn 2 ...\n\n**核验完成**"
     assert extract_task_result(short_turns) == "**核验完成**"
@@ -379,3 +380,24 @@ def _assert_task_result_saved(service, expected):
     assert service.get_run_result(run_id) == expected
     assert service.get_run_result("0" * 32) is None
     assert service.get_run_result("../runs") is None
+
+
+def test_task_result_preserves_status_like_lines_in_fenced_code():
+    from server.services.task_scheduler import extract_task_result
+
+    example = "~~~text\n[Status] Backup complete\n[Error] Example error\n~~~"
+    assert extract_task_result("[Info] Starting\n" + example + "\n[Status] Done") == example
+    assert extract_task_result("```text\n[Status] Backup complete\n```") == (
+        "```text\n[Status] Backup complete\n```"
+    )
+
+
+@pytest.mark.parametrize("sample", [
+    "```text\n[Info] Final response to user.\n```",
+    "```text\n[Info] Final response to user.",
+    "~~~text\n[Info] Final response to user.\n~~~",
+])
+def test_task_result_preserves_legacy_marker_inside_user_code(sample):
+    from server.services.task_scheduler import extract_task_result
+
+    assert extract_task_result(sample) == sample
