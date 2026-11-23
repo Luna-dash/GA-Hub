@@ -25,8 +25,10 @@ async function checkUsage(): Promise<Usage> {
   return response.json()
 }
 
-const resetFormat = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric',
-  hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+const resetFormat = new Intl.DateTimeFormat('zh-CN', {
+  month: 'numeric', day: 'numeric',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+})
 
 function limitLabel(limit: string) {
   if (limit === 'Weekly Limit Remaining') return '每周额度'
@@ -98,8 +100,10 @@ export function AntiAccountUsageButton({
       const anchor = button.current?.getBoundingClientRect()
       if (!anchor) return
       const width = Math.min(312, window.innerWidth - 16)
-      setPosition({ top: anchor.bottom, left: Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8)),
-        maxHeight: Math.max(0, window.innerHeight - anchor.bottom - 16) })
+      setPosition({
+        top: anchor.bottom, left: Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8)),
+        maxHeight: Math.max(0, window.innerHeight - anchor.bottom - 16)
+      })
     }
     const outside = (event: PointerEvent) => {
       if (event.target instanceof Node && !button.current?.contains(event.target) && !panel.current?.contains(event.target)) {
@@ -123,10 +127,10 @@ export function AntiAccountUsageButton({
   const coolingPools = poolRows?.filter(p => poolStatusView(p).cooling) ?? []
   const message = !running ? '请先启用 Agy 运行时。'
     : usage.isPending ? '正在检测官方额度…'
-    : usage.isError ? usage.error.message
-    : usage.data?.state === 'login_required' ? '请先登录 agy，再重新检测。'
-    : usage.data ? '未能读取官方额度，请重试。'
-    : '点击检测官方剩余额度。'
+      : usage.isError ? usage.error.message
+        : usage.data?.state === 'login_required' ? '请先登录 agy，再重新检测。'
+          : usage.data ? '未能读取官方额度，请重试。'
+            : '点击检测官方剩余额度。'
   const Icon = usage.isPending ? LoaderCircle : Gauge
 
   return (
